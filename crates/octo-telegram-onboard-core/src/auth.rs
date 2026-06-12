@@ -635,14 +635,23 @@ pub async fn drive_user_auth(
 }
 
 /// Extract identity via `get_me` after auth completes.
+/// Uses a 5s timeout to prevent indefinite blocking if TDLib is hung.
 async fn extract_identity(
     client_id: i32,
     creds: &Credentials,
     data_dir: &Path,
 ) -> Result<TelegramSession> {
-    let me_enum = tdlib_rs::functions::get_me(client_id)
-        .await
-        .map_err(|e| classify_tdlib_error(e.message))?;
+    let get_me_timeout = std::time::Duration::from_secs(5);
+    let me_enum =
+        match tokio::time::timeout(get_me_timeout, tdlib_rs::functions::get_me(client_id)).await {
+            Ok(Ok(u)) => u,
+            Ok(Err(e)) => return Err(classify_tdlib_error(e.message)),
+            Err(_) => {
+                return Err(OnboardError::Cancelled(
+                    "get_me timed out after auth (5s)".into(),
+                ))
+            }
+        };
 
     // M3: Match instead of unwrap to handle future TDLib variants gracefully
     #[allow(unreachable_patterns)]
@@ -684,14 +693,14 @@ async fn extract_identity(
 /// The raw buffer (with trailing newline) is zeroized before returning.
 /// The returned trimmed String is a new heap allocation — unavoidable
 /// because TDLib's `check_authentication_code` takes `String` by value.
+/// Prompts are written to stderr to avoid polluting `--stdout` JSON output.
 fn read_line_from_stdin(prompt: &str) -> std::result::Result<String, std::io::Error> {
     use std::io::{BufRead, Write};
     use zeroize::Zeroize;
     let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
-    write!(stdout, "{}", prompt)?;
-    stdout.flush()?;
+    let mut stderr = std::io::stderr();
+    write!(stderr, "{}", prompt)?;
+    stderr.flush()?;
     let mut line = String::new();
     stdin.lock().read_line(&mut line)?;
     let trimmed = line.trim().to_string();

@@ -103,3 +103,54 @@ impl SessionMeta {
         serde_json::from_slice(&bytes).ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_session() -> TelegramSession {
+        TelegramSession {
+            username: Some("testuser".into()),
+            user_id: 12345,
+            mode: Some("bot".into()),
+            data_dir: PathBuf::from("/tmp/test-session"),
+            verifying_key: None,
+        }
+    }
+
+    #[test]
+    fn session_meta_write_read_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let session = sample_session();
+        SessionMeta::from_session(&session)
+            .write(dir.path())
+            .unwrap();
+        let read = SessionMeta::read(dir.path()).unwrap();
+        assert_eq!(read.user_id, session.user_id);
+        assert_eq!(read.mode, session.mode.unwrap());
+        assert_eq!(read.username, session.username);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn session_meta_from_session_coerces_none_to_bot() {
+        // Documents the (questionable) release behavior.
+        let mut session = sample_session();
+        session.mode = None;
+        let meta = SessionMeta::from_session(&session);
+        assert_eq!(meta.mode, "bot");
+    }
+
+    #[test]
+    fn session_meta_read_missing_returns_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(SessionMeta::read(dir.path()).is_none());
+    }
+
+    #[test]
+    fn session_meta_read_corrupted_returns_none_silently() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("session_meta.json"), "not json").unwrap();
+        assert!(SessionMeta::read(dir.path()).is_none());
+    }
+}

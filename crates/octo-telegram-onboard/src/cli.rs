@@ -166,30 +166,29 @@ impl SessionListArgs {
     }
 }
 
+/// Default Telegram data directory for bot-setup and user-login.
+fn default_telegram_data_dir() -> PathBuf {
+    let mut base = dirs::data_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.push("octo");
+    base.push("telegram");
+    base.push("default");
+    base
+}
+
 impl BotSetupArgs {
     pub fn resolved_data_dir(&self) -> PathBuf {
-        self.data_dir.clone().unwrap_or_else(|| {
-            let mut base = dirs::data_dir()
-                .or_else(dirs::home_dir)
-                .unwrap_or_else(|| PathBuf::from("."));
-            base.push("octo");
-            base.push("telegram");
-            base.push("default");
-            base
-        })
+        self.data_dir
+            .clone()
+            .unwrap_or_else(default_telegram_data_dir)
     }
 }
 
 impl UserLoginArgs {
     pub fn resolved_data_dir(&self) -> PathBuf {
-        self.data_dir.clone().unwrap_or_else(|| {
-            let mut base = dirs::data_dir()
-                .or_else(dirs::home_dir)
-                .unwrap_or_else(|| PathBuf::from("."));
-            base.push("octo");
-            base.push("telegram");
-            base.push("default");
-            base
-        })
+        self.data_dir
+            .clone()
+            .unwrap_or_else(default_telegram_data_dir)
     }
 }

@@ -28,3 +28,45 @@ pub fn validate_verifying_key(key: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    #[test]
+    fn validate_verifying_key_accepts_44_char_32_byte() {
+        let key = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        assert_eq!(key.len(), 44);
+        assert!(validate_verifying_key(&key).is_ok());
+    }
+
+    #[test]
+    fn validate_verifying_key_rejects_short() {
+        assert!(validate_verifying_key("short").is_err());
+    }
+
+    #[test]
+    fn validate_verifying_key_rejects_43_char() {
+        assert!(validate_verifying_key(&"A".repeat(43)).is_err());
+    }
+
+    #[test]
+    fn validate_verifying_key_rejects_45_char() {
+        assert!(validate_verifying_key(&"A".repeat(45)).is_err());
+    }
+
+    #[test]
+    fn validate_verifying_key_rejects_url_safe() {
+        let mut key = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+        key = key.replace('+', "-").replace('/', "_");
+        let key_no_pad = key.trim_end_matches('=');
+        assert!(validate_verifying_key(key_no_pad).is_err());
+    }
+
+    #[test]
+    fn validate_verifying_key_rejects_non_32_byte_decoded() {
+        let short = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
+        assert!(validate_verifying_key(&short).is_err());
+    }
+}

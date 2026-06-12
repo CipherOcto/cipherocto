@@ -391,77 +391,63 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
             let db_path = path.join("database");
             let db_file = db_path.join("db.sqlite");
             if db_file.exists() {
-                // H3: AC line 65 — fallback to get_me() with 5s timeout
+                // AC line 65 — fallback to get_me() with 5s timeout
                 // for sidecar-less dirs that have a real TDLib database.
-                if let Some(meta) = SessionMeta::read(&path) {
-                    println!(
-                        "{:<50} {:<6} {:<15} {:<20} yes",
-                        path.display(),
-                        meta.mode,
-                        meta.user_id,
-                        meta.username.as_deref().unwrap_or("(none)")
-                    );
-                } else {
-                    // Try get_me fallback — read config for api_id/api_hash
-                    // Only use config credentials if the config's data_dir matches
-                    // this session's path (prevents wrong credentials in multi-account setups).
-                    let config_path = args.config.clone().or_else(default_config_path_opt);
-                    let fallback = if let Some(cp) = config_path {
-                        if let Ok(bytes) = std::fs::read(&cp) {
-                            if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                let config_data_dir = cfg["data_dir"].as_str();
-                                if config_data_dir != Some(path.to_string_lossy().as_ref()) {
-                                    None // Different session, skip fallback
-                                } else {
-                                    let api_id = cfg["api_id"]
-                                        .as_i64()
-                                        .and_then(|v| validate_api_id(v).ok());
-                                    let api_hash = cfg["api_hash"]
-                                        .as_str()
-                                        .filter(|s| !s.is_empty())
-                                        .map(String::from);
-                                    if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
-                                        tdlib_get_me_with_timeout(
-                                            &path,
-                                            aid,
-                                            &ahash,
-                                            SESSION_VERIFY_TIMEOUT_SECS,
-                                        )
-                                        .await
-                                        .ok()
-                                    } else {
-                                        None
-                                    }
-                                }
+                let config_path = args.config.clone().or_else(default_config_path_opt);
+                let fallback = if let Some(cp) = config_path {
+                    if let Ok(bytes) = std::fs::read(&cp) {
+                        if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                            let config_data_dir = cfg["data_dir"].as_str();
+                            if config_data_dir != Some(path.to_string_lossy().as_ref()) {
+                                None // Different session, skip fallback
                             } else {
-                                None
+                                let api_id =
+                                    cfg["api_id"].as_i64().and_then(|v| validate_api_id(v).ok());
+                                let api_hash = cfg["api_hash"]
+                                    .as_str()
+                                    .filter(|s| !s.is_empty())
+                                    .map(String::from);
+                                if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
+                                    tdlib_get_me_with_timeout(
+                                        &path,
+                                        aid,
+                                        &ahash,
+                                        SESSION_VERIFY_TIMEOUT_SECS,
+                                    )
+                                    .await
+                                    .ok()
+                                } else {
+                                    None
+                                }
                             }
                         } else {
                             None
                         }
                     } else {
                         None
-                    };
-
-                    if let Some((user_id, username, _first_name)) = fallback {
-                        println!(
-                            "{:<50} {:<6} {:<15} {:<20} yes (via get_me)",
-                            path.display(),
-                            "?",
-                            user_id,
-                            username.as_deref().unwrap_or("(none)")
-                        );
-                    } else {
-                        let (q, no_sidecar, unk) = ("?", "(no sidecar)", "unknown");
-                        println!(
-                            "{:<50} {:<6} {:<15} {:<20} {}",
-                            path.display(),
-                            q,
-                            q,
-                            no_sidecar,
-                            unk
-                        );
                     }
+                } else {
+                    None
+                };
+
+                if let Some((user_id, username, _first_name)) = fallback {
+                    println!(
+                        "{:<50} {:<6} {:<15} {:<20} yes (via get_me)",
+                        path.display(),
+                        "?",
+                        user_id,
+                        username.as_deref().unwrap_or("(none)")
+                    );
+                } else {
+                    let (q, no_sidecar, unk) = ("?", "(no sidecar)", "unknown");
+                    println!(
+                        "{:<50} {:<6} {:<15} {:<20} {}",
+                        path.display(),
+                        q,
+                        q,
+                        no_sidecar,
+                        unk
+                    );
                 }
             } else {
                 println!(

@@ -32,46 +32,74 @@ fn is_sensitive_key(name: &str) -> bool {
 }
 
 /// Redact sensitive key substrings in a rendered message body.
-/// Only matches `key=value` or `key: value` shapes where the key is a
-/// REDACT_KEYS entry. The value is terminated by whitespace, JSON brackets,
-/// quotes, semicolons, or end of string.
+/// Uses a single-pass approach per key: finds all occurrences, calculates
+/// each value's extent (to next key boundary or end of string), and applies
+/// redactions with offset tracking. Values may contain spaces (for phone
+/// numbers etc.) but stop at JSON brackets, quotes, semicolons, or the
+/// next key boundary.
 fn redact_body_substrings(body: &str) -> String {
     let mut result = body.to_string();
+
     for &key in REDACT_KEYS {
+        let mut start_from: usize = 0;
         loop {
             let lower = result.to_ascii_lowercase();
-            let Some(pos) = lower.find(key) else {
+            let Some(pos) = lower[start_from..].find(key) else {
                 break;
             };
-            let key_end = pos + key.len();
-            // Only match if followed by = or : (not just whitespace)
+            let abs_pos = start_from + pos;
+            let key_end = abs_pos + key.len();
+            // Only match if followed by = or :
             if key_end >= result.len() || !matches!(result.as_bytes()[key_end], b'=' | b':') {
-                break;
+                start_from = key_end;
+                continue;
             }
             // Skip separator (= or :) to find value start
             let mut val_start = key_end + 1;
-            // For : separator, skip optional space
             if result.as_bytes()[key_end] == b':'
                 && val_start < result.len()
                 && result.as_bytes()[val_start] == b' '
             {
                 val_start += 1;
             }
-            // Find the end of the value (terminated by whitespace, brackets, quotes, etc.)
+            // Find value end: next key boundary, JSON bracket, quote, semicolon, or EOL
             let mut val_end = val_start;
-            while val_end < result.len()
-                && !matches!(
-                    result.as_bytes()[val_end],
-                    b' ' | b'\t' | b'\n' | b'\r' | b',' | b'"' | b']' | b'}' | b')' | b';'
-                )
-            {
+            while val_end < result.len() {
+                let b = result.as_bytes()[val_end];
+                // Hard terminators: JSON brackets, quotes, semicolons, newlines
+                if matches!(b, b'"' | b']' | b'}' | b')' | b';' | b'\n' | b'\r') {
+                    break;
+                }
+                // Soft terminator: space followed by a key-like pattern (word= or word:)
+                if b == b' ' || b == b'\t' {
+                    let after_space = val_end + 1;
+                    // Check if the next word is a REDACT_KEY
+                    let rest_lower = result[after_space..].to_ascii_lowercase();
+                    let is_key_boundary = REDACT_KEYS.iter().any(|&k| {
+                        rest_lower.starts_with(k)
+                            && after_space + k.len() < result.len()
+                            && matches!(result.as_bytes()[after_space + k.len()], b'=' | b':')
+                    });
+                    if is_key_boundary {
+                        break;
+                    }
+                    // Also break if next word looks like a key (word= pattern)
+                    if let Some(eq_pos) = rest_lower.find('=') {
+                        let word = &rest_lower[..eq_pos];
+                        if !word.is_empty() && word.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        {
+                            break;
+                        }
+                    }
+                }
                 val_end += 1;
             }
             if val_end > val_start {
                 let original_val = &result[val_start..val_end].to_string();
                 let replacement = redact_value(original_val);
                 if replacement == *original_val {
-                    break;
+                    start_from = val_end;
+                    continue;
                 }
                 result = format!(
                     "{}{}{}",
@@ -79,8 +107,9 @@ fn redact_body_substrings(body: &str) -> String {
                     replacement,
                     &result[val_end..]
                 );
+                start_from = val_start + replacement.len();
             } else {
-                break;
+                start_from = val_end;
             }
         }
     }
@@ -270,5 +299,39 @@ mod tests {
             "other=val should survive, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn redact_body_multi_occurrence() {
+        let input = "bot_token=*** bot_token=realsecret";
+        let result = redact_body_substrings(input);
+        assert!(
+            !result.contains("realsecret"),
+            "second bot_token should be redacted, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn redact_body_phone_with_spaces() {
+        let input = "phone: +1 (555) 123-4567";
+        let result = redact_body_substrings(input);
+        assert!(
+            !result.contains("555"),
+            "full phone should be redacted, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn redact_body_multiple_keys() {
+        let input = "password=secret api_hash=abc123 user_id=42";
+        let result = redact_body_substrings(input);
+        assert!(
+            result.contains("user_id=42"),
+            "non-sensitive key should survive"
+        );
+        assert!(!result.contains("secret"), "password should be redacted");
+        assert!(!result.contains("abc123"), "api_hash should be redacted");
     }
 }

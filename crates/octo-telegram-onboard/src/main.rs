@@ -345,20 +345,12 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         .as_str()
         .ok_or_else(|| OnboardError::BadConfig("config missing data_dir".into()))?;
 
-    // Try reading sidecar first
+    // Try reading sidecar for display, but always validate via get_me()
     let data_path = std::path::Path::new(data_dir);
-    if let Some(meta) = SessionMeta::read(data_path) {
-        println!(
-            "User ID: {}\nUsername: {}\nMode: {}",
-            meta.user_id,
-            meta.username.as_deref().unwrap_or("(none)"),
-            meta.mode
-        );
-        return Ok(());
-    }
+    let cached = SessionMeta::read(data_path);
 
-    // No sidecar — use tdlib_get_me_with_timeout
-    tracing::info!("No session_meta.json found, attempting get_me() via TDLib...");
+    // Always call get_me() to validate the session (AC line 64: exit 2 for expired)
+    tracing::info!("Validating session via get_me()...");
     let api_id_raw = config["api_id"]
         .as_i64()
         .ok_or_else(|| OnboardError::BadConfig("config missing api_id".into()))?;
@@ -373,9 +365,13 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         tdlib_get_me_with_timeout(data_path, api_id, &api_hash, 10).await?;
     let username = username.unwrap_or_else(|| "(none)".into());
     let first_name = first_name.unwrap_or_else(|| "(none)".into());
+    let mode = cached
+        .as_ref()
+        .map(|m| m.mode.as_str())
+        .unwrap_or("unknown");
     println!(
-        "User ID: {}\nUsername: {}\nFirst name: {}",
-        user_id, username, first_name
+        "User ID: {}\nUsername: {}\nFirst name: {}\nMode: {}",
+        user_id, username, first_name, mode
     );
     Ok(())
 }

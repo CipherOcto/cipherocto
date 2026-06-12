@@ -45,13 +45,16 @@ pub fn try_acquire_receive_lock() -> std::result::Result<ReceiveLockGuard, Onboa
 /// Best-effort: if the close or wait fails, logs and returns (the client
 /// handle will leak until process exit, which is the same as not calling this).
 pub async fn close_tdlib_client(client_id: i32) {
-    // Attempt close; on error, still try to drain the receive queue for 2s
+    // Attempt close; on error, still try to drain the receive queue for timeout
     if let Err(e) = tdlib_rs::functions::close(client_id).await {
-        tracing::debug!("tdlib close() failed: {}", e.message);
+        tracing::debug!(
+            "tdlib close() failed: {} (see TDLib logs for details)",
+            e.message.len()
+        );
     }
-    // Wait up to 2s for the Closed update (even if close() failed)
+    // Wait up to 10s for the Closed update (even if close() failed)
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(2);
+    let timeout = std::time::Duration::from_secs(10);
     while start.elapsed() < timeout {
         if let Some((tdlib_rs::enums::Update::AuthorizationState(ref update), cid)) =
             tdlib_rs::receive()
@@ -133,8 +136,10 @@ fn create_auth_dirs(data_dir: &Path) -> Result<()> {
 
 /// Spawn the TDLib receive loop on a blocking thread.
 /// Returns a channel receiver for updates, a shutdown flag, and a receive lock guard.
-/// A watchdog thread ensures the receive thread can exit promptly on shutdown,
-/// even if `tdlib_rs::receive()` is blocking.
+/// NOTE: `tdlib_rs::receive()` blocks for up to ~2s (tdjson timeout). After
+/// `shutdown` is set, the thread will exit when the current `receive()` call
+/// returns. There is no way to interrupt a synchronous `receive()` call — the
+/// thread naturally drains within one timeout cycle.
 fn spawn_receive_loop() -> std::result::Result<
     (
         mpsc::Receiver<tdlib_rs::enums::Update>,
@@ -147,24 +152,6 @@ fn spawn_receive_loop() -> std::result::Result<
     let (tx, rx) = mpsc::channel(256);
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
-    // Channel to wake the receive thread: the watchdog sends a message after
-    // shutdown to ensure the thread exits even if `receive()` is blocking.
-    let (wake_tx, wake_rx) = std::sync::mpsc::channel::<()>();
-    let wake_tx_clone = wake_tx;
-
-    // Watchdog: after shutdown is set, send a wakeup so the receive thread
-    // can exit its `receive()` call promptly.
-    let shutdown_watch = shutdown.clone();
-    std::thread::Builder::new()
-        .name("tdlib-recv-watchdog".into())
-        .spawn(move || {
-            while !shutdown_watch.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            // Send wakeup to unblock receive() — ignore error if thread already exited
-            let _ = wake_tx_clone.send(());
-        })
-        .expect("failed to spawn tdlib-recv-watchdog thread");
 
     std::thread::Builder::new()
         .name("tdlib-receive".into())
@@ -180,9 +167,6 @@ fn spawn_receive_loop() -> std::result::Result<
                         break; // receiver dropped
                     }
                 }
-                // Check shutdown between receive() calls (short poll)
-                // and also check if the watchdog sent a wakeup.
-                let _ = wake_rx.recv_timeout(std::time::Duration::from_millis(100));
             }
         })
         .expect("failed to spawn tdlib-receive thread");
@@ -228,6 +212,9 @@ async fn set_tdlib_parameters(client_id: i32, creds: &Credentials, data_dir: &Pa
 }
 
 /// Drive TDLib auth to completion for bot mode.
+/// The receive lock guard is held internally through `close_tdlib_client` on
+/// error paths. On success, the receive thread has already exited (shutdown
+/// was set), so the guard is safely dropped.
 pub async fn drive_bot_auth(
     client_id: i32,
     creds: &Credentials,
@@ -295,27 +282,28 @@ pub async fn drive_bot_auth(
     shutdown.store(true, Ordering::Relaxed);
     handle.abort();
 
-    if wait_result.is_err() {
-        close_tdlib_client(client_id).await;
-        return Err(OnboardError::Cancelled(
-            "auth timed out waiting for Ready".into(),
-        ));
-    }
-
+    // Keep _receive_guard alive through close_tdlib_client calls on error paths.
+    // On success, the receive thread has already exited (shutdown was set).
     let auth_result = result.lock().clone();
-    match auth_result {
-        Some(Ok(())) => {}
-        Some(Err(msg)) => {
+    let auth_err = match auth_result {
+        Some(Ok(())) => None,
+        Some(Err(msg)) => Some(classify_tdlib_error(msg)),
+        None => Some(OnboardError::Cancelled("auth did not complete".into())),
+    };
+
+    if let Some(e) = auth_err {
+        if wait_result.is_err() {
             close_tdlib_client(client_id).await;
-            return Err(classify_tdlib_error(msg));
+            return Err(OnboardError::Cancelled(
+                "auth timed out waiting for Ready".into(),
+            ));
         }
-        None => {
-            close_tdlib_client(client_id).await;
-            return Err(OnboardError::Cancelled("auth did not complete".into()));
-        }
+        close_tdlib_client(client_id).await;
+        return Err(e);
     }
 
-    extract_identity(client_id, creds, data_dir).await
+    let session = extract_identity(client_id, creds, data_dir).await?;
+    Ok(session)
 }
 
 /// Drive TDLib auth to completion for user mode.
@@ -480,27 +468,26 @@ pub async fn drive_user_auth(
     shutdown.store(true, Ordering::Relaxed);
     handle.abort();
 
-    if wait_result.is_err() {
-        close_tdlib_client(client_id).await;
-        return Err(OnboardError::Cancelled(
-            "auth timed out waiting for Ready".into(),
-        ));
-    }
-
     let auth_result = result.lock().clone();
-    match auth_result {
-        Some(Ok(())) => {}
-        Some(Err(msg)) => {
+    let auth_err = match auth_result {
+        Some(Ok(())) => None,
+        Some(Err(msg)) => Some(classify_tdlib_error(msg)),
+        None => Some(OnboardError::Cancelled("auth did not complete".into())),
+    };
+
+    if let Some(e) = auth_err {
+        if wait_result.is_err() {
             close_tdlib_client(client_id).await;
-            return Err(classify_tdlib_error(msg));
+            return Err(OnboardError::Cancelled(
+                "auth timed out waiting for Ready".into(),
+            ));
         }
-        None => {
-            close_tdlib_client(client_id).await;
-            return Err(OnboardError::Cancelled("auth did not complete".into()));
-        }
+        close_tdlib_client(client_id).await;
+        return Err(e);
     }
 
-    extract_identity(client_id, creds, data_dir).await
+    let session = extract_identity(client_id, creds, data_dir).await?;
+    Ok(session)
 }
 
 /// Extract identity via `get_me` after auth completes.

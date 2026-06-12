@@ -46,10 +46,12 @@ impl SessionMeta {
             user_id: session.user_id,
             username: session.username.clone(),
             mode: session.mode.clone().unwrap_or_else(|| "bot".into()),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64,
+            timestamp: {
+                let now = std::time::SystemTime::now();
+                now.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO)
+                    .as_secs() as i64
+            },
         }
     }
 

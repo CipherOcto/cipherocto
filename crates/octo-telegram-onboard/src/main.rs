@@ -10,6 +10,7 @@ use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
     classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_user_auth,
     set_tdlib_parameters, try_acquire_receive_lock, validate_api_id, Credentials,
+    IDLE_CLOSE_TIMEOUT,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::keys::validate_verifying_key;
@@ -22,7 +23,6 @@ use zeroize::Zeroizing;
 
 const WHOAMI_TIMEOUT_SECS: u64 = 10;
 const SESSION_VERIFY_TIMEOUT_SECS: u64 = 5;
-const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -103,7 +103,7 @@ async fn tdlib_get_me_with_timeout(
 
     let params_err = set_tdlib_parameters(client_id, api_id, api_hash, data_dir).await;
     if let Err(e) = params_err {
-        close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+        close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
         return Err(e);
     }
 
@@ -137,7 +137,7 @@ async fn tdlib_get_me_with_timeout(
         }) {
         Ok(h) => h,
         Err(e) => {
-            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+            close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
             return Err(OnboardError::Generic(anyhow::anyhow!(
                 "failed to spawn receive thread: {}",
                 e
@@ -148,13 +148,15 @@ async fn tdlib_get_me_with_timeout(
     let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
     // Ensure the receive thread has exited before proceeding.
     // The thread has already sent its value (or timed out), so join completes immediately.
-    let _ = receive_handle.join();
+    receive_handle.join().unwrap_or_else(|e| {
+        tracing::warn!("tdlib-get-me-receive thread panicked: {:?}", e);
+    });
     match channel_result {
         Ok(Some(true)) => {
             let me_enum = match tdlib_rs::functions::get_me(client_id).await {
                 Ok(u) => u,
                 Err(e) => {
-                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
                     return Err(classify_tdlib_error(e.message));
                 }
             };
@@ -165,11 +167,11 @@ async fn tdlib_get_me_with_timeout(
                         .usernames
                         .as_ref()
                         .and_then(|names| names.active_usernames.first().cloned());
-                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
                     Ok((u.id, username, Some(u.first_name)))
                 }
                 _ => {
-                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
                     Err(OnboardError::Generic(anyhow::anyhow!(
                         "get_me returned unexpected User variant"
                     )))
@@ -177,17 +179,17 @@ async fn tdlib_get_me_with_timeout(
             }
         }
         Ok(Some(false)) => {
-            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+            close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
             Err(OnboardError::AuthRejected(
                 "session expired or invalid".into(),
             ))
         }
         Ok(None) => {
-            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+            close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
             Err(OnboardError::Cancelled("whoami channel closed".into()))
         }
         Err(_) => {
-            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
+            close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
             Err(OnboardError::Cancelled("whoami timed out".into()))
         }
     }

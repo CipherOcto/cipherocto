@@ -12,6 +12,14 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 use zeroize::Zeroizing;
 
+/// Close-phase timeout for a freshly-created auth client.
+/// The client may have pending state that requires a longer drain window.
+pub const AUTH_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Close-phase timeout for a client that has already completed auth
+/// and is idle (e.g., whoami, session verify).
+pub const IDLE_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Process-global lock ensuring only one TDLib receive loop is active at a time.
 /// `tdlib_rs::receive()` is process-global; concurrent consumers would steal
 /// each other's updates. This flag is checked-and-set by `spawn_receive_loop`
@@ -47,7 +55,7 @@ pub fn try_acquire_receive_lock() -> std::result::Result<ReceiveLockGuard, Onboa
 /// Best-effort: if the close or wait fails, logs and returns (the client
 /// handle will leak until process exit, which is the same as not calling this).
 pub async fn close_tdlib_client(client_id: i32) {
-    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(10)).await;
+    close_tdlib_client_with_timeout(client_id, AUTH_CLOSE_TIMEOUT).await;
 }
 
 /// Send `AuthorizationState::Close` to TDLib and wait for `Closed` with a
@@ -145,8 +153,8 @@ pub fn classify_tdlib_error(msg: String) -> OnboardError {
 }
 
 /// Sanitize a TDLib error message by stripping file paths and other PII.
-/// Uses a blacklist of terminators (not a whitelist of path chars) to
-/// correctly handle Windows paths like `C:\Users\foo\file.db`.
+/// Uses a blacklist of terminators. The scan starts AFTER the matched
+/// pattern prefix (e.g., after `C:\`) to avoid splitting Windows paths.
 fn sanitize_tdlib_message(msg: &str) -> String {
     let mut result = msg.to_string();
     let path_patterns = [
@@ -155,17 +163,22 @@ fn sanitize_tdlib_message(msg: &str) -> String {
     ];
     for pattern in &path_patterns {
         while let Some(start) = result.find(pattern) {
-            // Blacklist approach: value extends to first whitespace, quote,
-            // bracket, or other non-path terminator. Includes `:` to stop
-            // before Windows drive-colon separators.
-            let end = result[start..]
+            // Scan for terminators AFTER the pattern prefix.
+            // For `C:\Users\foo\file.db`, pattern `C:\` starts at pos N,
+            // so we scan from N+3 to find the end of `Users\foo\file.db`.
+            let scan_start = start + pattern.len();
+            if scan_start >= result.len() {
+                result = format!("{}<path>", &result[..start]);
+                continue;
+            }
+            let end = result[scan_start..]
                 .find(|c: char| {
                     matches!(
                         c,
-                        ' ' | '\t' | '\n' | '\r' | '"' | '\'' | ')' | ']' | '>' | ',' | ';' | ':'
+                        ' ' | '\t' | '\n' | '\r' | '"' | '\'' | ')' | ']' | '>' | ',' | ';'
                     )
                 })
-                .map(|e| start + e)
+                .map(|e| scan_start + e)
                 .unwrap_or(result.len());
             result = format!("{}<path>{}", &result[..start], &result[end..]);
         }
@@ -204,6 +217,16 @@ fn create_auth_dirs(data_dir: &Path) -> Result<()> {
         .map_err(|e| OnboardError::BadConfig(format!("create database dir: {}", e)))?;
     std::fs::create_dir_all(data_dir.join("files"))
         .map_err(|e| OnboardError::BadConfig(format!("create files dir: {}", e)))?;
+
+    // Set 0700 on subdirs to protect TDLib data (auth keys, media).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode_0700 = std::fs::Permissions::from_mode(0o700);
+        let _ = std::fs::set_permissions(data_dir.join("database"), mode_0700.clone());
+        let _ = std::fs::set_permissions(data_dir.join("files"), mode_0700);
+    }
+
     Ok(())
 }
 
@@ -658,11 +681,12 @@ async fn extract_identity(
 }
 
 /// Read a single line from stdin (verification code, etc.).
-/// Returns a plain `String` because TDLib's `check_authentication_code`
-/// takes `String` by value — the clone is inevitable. The buffer is
-/// microseconds-lived and will be overwritten on the next allocation.
+/// The raw buffer (with trailing newline) is zeroized before returning.
+/// The returned trimmed String is a new heap allocation — unavoidable
+/// because TDLib's `check_authentication_code` takes `String` by value.
 fn read_line_from_stdin(prompt: &str) -> std::result::Result<String, std::io::Error> {
     use std::io::{BufRead, Write};
+    use zeroize::Zeroize;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
@@ -670,7 +694,9 @@ fn read_line_from_stdin(prompt: &str) -> std::result::Result<String, std::io::Er
     stdout.flush()?;
     let mut line = String::new();
     stdin.lock().read_line(&mut line)?;
-    Ok(line)
+    let trimmed = line.trim().to_string();
+    line.zeroize();
+    Ok(trimmed)
 }
 
 #[cfg(test)]

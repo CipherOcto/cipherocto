@@ -20,6 +20,11 @@ pub const AUTH_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// and is idle (e.g., whoami, session verify).
 pub const IDLE_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Timeout for `get_me` after auth completes. The client is idle
+/// but the timeout is shorter than `AUTH_CLOSE_TIMEOUT` because
+/// `get_me` is a single request, not a drain window.
+pub const GET_ME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Process-global lock ensuring only one TDLib receive loop is active at a time.
 /// `tdlib_rs::receive()` is process-global; concurrent consumers would steal
 /// each other's updates. This flag is checked-and-set by `spawn_receive_loop`
@@ -278,8 +283,12 @@ fn spawn_receive_loop() -> std::result::Result<
 }
 
 /// Read 2FA password from stdin with echo disabled (rpassword).
+/// The prompt is written to stderr to avoid polluting `--stdout` JSON output.
 fn read_password_stdin(prompt: &str) -> Result<Zeroizing<String>> {
-    let pwd = rpassword::prompt_password(prompt)
+    use rpassword::ConfigBuilder;
+    let stderr = std::io::stderr();
+    let config = ConfigBuilder::new().output_writer(stderr).build();
+    let pwd = rpassword::prompt_password_with_config(prompt, config)
         .map_err(|e| OnboardError::Cancelled(format!("read password: {}", e)))?;
     Ok(Zeroizing::new(pwd))
 }
@@ -641,9 +650,8 @@ async fn extract_identity(
     creds: &Credentials,
     data_dir: &Path,
 ) -> Result<TelegramSession> {
-    let get_me_timeout = std::time::Duration::from_secs(5);
     let me_enum =
-        match tokio::time::timeout(get_me_timeout, tdlib_rs::functions::get_me(client_id)).await {
+        match tokio::time::timeout(GET_ME_TIMEOUT, tdlib_rs::functions::get_me(client_id)).await {
             Ok(Ok(u)) => u,
             Ok(Err(e)) => return Err(classify_tdlib_error(e.message)),
             Err(_) => {

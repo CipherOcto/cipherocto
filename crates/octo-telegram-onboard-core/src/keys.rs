@@ -58,10 +58,17 @@ mod tests {
 
     #[test]
     fn validate_verifying_key_rejects_url_safe() {
-        let mut key = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
-        key = key.replace('+', "-").replace('/', "_");
-        let key_no_pad = key.trim_end_matches('=');
-        assert!(validate_verifying_key(key_no_pad).is_err());
+        // Pick bytes that produce +/ characters in standard base64
+        let bytes = [0xfb, 0xff].repeat(16);
+        let key = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(key.len(), 44, "test input must be 44 chars");
+        assert!(
+            key.contains('+') || key.contains('/'),
+            "test input must contain +/"
+        );
+        let key_url_safe = key.replace('+', "-").replace('/', "_");
+        assert_eq!(key_url_safe.len(), 44);
+        assert!(validate_verifying_key(&key_url_safe).is_err());
     }
 
     #[test]

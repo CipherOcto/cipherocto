@@ -131,14 +131,12 @@ mod tests {
         assert_eq!(read.username, session.username);
     }
 
-    #[cfg(not(debug_assertions))]
     #[test]
-    fn session_meta_from_session_coerces_none_to_bot() {
-        // Documents the (questionable) release behavior.
+    #[should_panic(expected = "SessionMeta::from_session called without mode set")]
+    fn session_meta_from_session_panics_on_none_mode() {
         let mut session = sample_session();
         session.mode = None;
-        let meta = SessionMeta::from_session(&session);
-        assert_eq!(meta.mode, "bot");
+        let _ = SessionMeta::from_session(&session);
     }
 
     #[test]

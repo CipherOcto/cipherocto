@@ -155,26 +155,27 @@ pub struct SessionListArgs {
 
 impl SessionListArgs {
     pub fn resolved_base_dir(&self) -> PathBuf {
-        self.base_dir.clone().unwrap_or_else(|| {
-            let mut base = dirs::data_dir()
-                .or_else(dirs::home_dir)
-                .unwrap_or_else(|| PathBuf::from("."));
-            base.push("octo");
-            base.push("telegram");
-            base
-        })
+        self.base_dir
+            .clone()
+            .unwrap_or_else(default_octo_telegram_dir)
     }
 }
 
-/// Default Telegram data directory for bot-setup and user-login.
-fn default_telegram_data_dir() -> PathBuf {
+/// Base directory for all Telegram sessions: `~/.local/share/octo/telegram/`.
+fn default_octo_telegram_dir() -> PathBuf {
     let mut base = dirs::data_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."));
     base.push("octo");
     base.push("telegram");
-    base.push("default");
     base
+}
+
+/// Default data dir for bot-setup/user-login: `<base>/default`.
+fn default_telegram_data_dir() -> PathBuf {
+    let mut dir = default_octo_telegram_dir();
+    dir.push("default");
+    dir
 }
 
 impl BotSetupArgs {

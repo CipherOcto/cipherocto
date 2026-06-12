@@ -153,7 +153,6 @@ pub fn classify_tdlib_error(msg: String) -> OnboardError {
     {
         OnboardError::TelegramUnreachable(sanitized)
     } else if lower.contains("session expired")
-        || lower.contains("session is closing")
         || lower.contains("logged out")
         || lower.contains("authorization revoked")
     {
@@ -806,10 +805,47 @@ mod tests {
     }
 
     #[test]
-    fn classify_session_is_closing_is_cancelled() {
-        let e = classify_tdlib_error("session is closing".into());
+    fn classify_logged_out_is_cancelled() {
+        let e = classify_tdlib_error("logged out".into());
         assert!(matches!(e, OnboardError::Cancelled(_)));
         assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn classify_authorization_revoked_is_cancelled() {
+        let e = classify_tdlib_error("authorization revoked".into());
+        assert!(matches!(e, OnboardError::Cancelled(_)));
+        assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn classify_flood_wait_is_not_cancelled() {
+        let e = classify_tdlib_error("FLOOD_WAIT_60".into());
+        assert!(
+            !matches!(e, OnboardError::Cancelled(_)),
+            "FLOOD_WAIT should be RateLimited, not Cancelled"
+        );
+    }
+
+    #[test]
+    fn classify_network_error_is_not_cancelled() {
+        let e = classify_tdlib_error("network timeout".into());
+        assert!(
+            !matches!(e, OnboardError::Cancelled(_)),
+            "network should be TelegramUnreachable, not Cancelled"
+        );
+    }
+
+    #[test]
+    fn classify_cancelled_is_case_insensitive() {
+        assert!(matches!(
+            classify_tdlib_error("SESSION EXPIRED".into()),
+            OnboardError::Cancelled(_)
+        ));
+        assert!(matches!(
+            classify_tdlib_error("Session Expired".into()),
+            OnboardError::Cancelled(_)
+        ));
     }
 
     #[test]

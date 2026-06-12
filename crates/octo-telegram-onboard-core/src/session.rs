@@ -32,16 +32,6 @@ impl std::fmt::Debug for TelegramSession {
     }
 }
 
-/// Session info for session list/verify.
-#[derive(Debug, Clone)]
-pub struct SessionInfo {
-    pub data_dir: PathBuf,
-    pub user_id: Option<i64>,
-    pub username: Option<String>,
-    pub mode: Option<String>,
-    pub is_valid: bool,
-}
-
 /// Metadata sidecar written alongside the TDLib database for fast `session list`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionMeta {

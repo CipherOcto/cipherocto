@@ -12,8 +12,9 @@ use octo_telegram_onboard_core::auth::{
     try_acquire_receive_lock, validate_api_id, Credentials,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
+use octo_telegram_onboard_core::keys::validate_verifying_key;
 use octo_telegram_onboard_core::output::{
-    build_config_json, default_config_path_opt, validate_verifying_key, write_config,
+    build_config_json, default_config_path_opt, write_config,
 };
 use octo_telegram_onboard_core::session::{SessionMeta, TelegramSession};
 use std::process::ExitCode;
@@ -124,7 +125,7 @@ async fn tdlib_get_me_with_timeout(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
-    let receive_handle = std::thread::Builder::new()
+    let receive_handle = match std::thread::Builder::new()
         .name("tdlib-get-me-receive".into())
         .spawn(move || {
             let start = std::time::Instant::now();
@@ -148,8 +149,16 @@ async fn tdlib_get_me_with_timeout(
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             let _ = tx.blocking_send(false);
-        })
-        .expect("failed to spawn tdlib-get-me-receive thread");
+        }) {
+        Ok(h) => h,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(OnboardError::Generic(anyhow::anyhow!(
+                "failed to spawn receive thread: {}",
+                e
+            )));
+        }
+    };
 
     let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
     // Ensure the receive thread has exited before proceeding.
@@ -216,8 +225,6 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
         OnboardError::BadConfig("bot-setup requires --api-hash or $TELEGRAM_API_HASH".into())
     })?;
 
-    let api_id = validate_api_id(api_id_raw as i64)?;
-
     if let Some(ref key) = args.verifying_key {
         validate_verifying_key(key)?;
     }
@@ -226,7 +233,7 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
 
     let creds = Credentials::try_new(
         None,
-        api_id,
+        api_id_raw,
         Zeroizing::new(api_hash),
         Some(Zeroizing::new(bot_token)),
         verifying_key,
@@ -272,8 +279,6 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
         OnboardError::BadConfig("user-login requires --phone or $TELEGRAM_PHONE".into())
     })?;
 
-    let api_id = validate_api_id(api_id_raw as i64)?;
-
     if let Some(ref key) = args.verifying_key {
         validate_verifying_key(key)?;
     }
@@ -282,7 +287,7 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
 
     let creds = Credentials::try_new(
         Some(phone),
-        api_id,
+        api_id_raw,
         Zeroizing::new(api_hash),
         None,
         verifying_key,
@@ -397,9 +402,10 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
             );
         } else {
             let db_path = path.join("database");
-            if db_path.exists() {
+            let db_file = db_path.join("db.sqlite");
+            if db_file.exists() {
                 // H3: AC line 65 — fallback to get_me() with 5s timeout
-                // for sidecar-less dirs that have a TDLib database.
+                // for sidecar-less dirs that have a real TDLib database.
                 if let Some(meta) = SessionMeta::read(&path) {
                     println!(
                         "{:<50} {:<6} {:<15} {:<20} yes",
@@ -463,6 +469,14 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
                         );
                     }
                 }
+            } else {
+                println!(
+                    "{:<50} {:<6} {:<15} {:<20} no",
+                    path.display(),
+                    "?",
+                    "?",
+                    "(no db.sqlite)"
+                );
             }
         }
     }

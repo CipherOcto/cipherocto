@@ -35,7 +35,9 @@ pub fn try_acquire_receive_lock() -> std::result::Result<ReceiveLockGuard, Onboa
         .is_err()
     {
         return Err(OnboardError::Cancelled(
-            "concurrent TDLib operations not supported".into(),
+            "another TDLib operation is already in progress; \
+             wait for it to finish or check for a stale process holding the receive lock"
+                .into(),
         ));
     }
     Ok(ReceiveLockGuard)
@@ -45,6 +47,12 @@ pub fn try_acquire_receive_lock() -> std::result::Result<ReceiveLockGuard, Onboa
 /// Best-effort: if the close or wait fails, logs and returns (the client
 /// handle will leak until process exit, which is the same as not calling this).
 pub async fn close_tdlib_client(client_id: i32) {
+    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(10)).await;
+}
+
+/// Send `AuthorizationState::Close` to TDLib and wait for `Closed` with a
+/// configurable timeout.
+pub async fn close_tdlib_client_with_timeout(client_id: i32, timeout: std::time::Duration) {
     // Attempt close; on error, still try to drain the receive queue for timeout
     if let Err(e) = tdlib_rs::functions::close(client_id).await {
         tracing::debug!(
@@ -52,9 +60,7 @@ pub async fn close_tdlib_client(client_id: i32) {
             e.message.len()
         );
     }
-    // Wait up to 10s for the Closed update (even if close() failed)
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(10);
     while start.elapsed() < timeout {
         if let Some((tdlib_rs::enums::Update::AuthorizationState(ref update), cid)) =
             tdlib_rs::receive()
@@ -144,7 +150,8 @@ fn sanitize_tdlib_message(msg: &str) -> String {
     let mut result = msg.to_string();
     // Match common path patterns: /home/..., /tmp/..., /var/..., C:\, etc.
     let path_patterns = [
-        "/home/", "/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "C:\\", "D:\\",
+        "/home/", "/Users/", "/root/", "/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "/srv/",
+        "/mnt/", "/run/", "/data/", "C:\\", "D:\\",
     ];
     for pattern in &path_patterns {
         while let Some(start) = result.find(pattern) {
@@ -211,7 +218,7 @@ fn spawn_receive_loop() -> std::result::Result<
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
 
-    std::thread::Builder::new()
+    match std::thread::Builder::new()
         .name("tdlib-receive".into())
         .spawn(move || {
             loop {
@@ -226,8 +233,15 @@ fn spawn_receive_loop() -> std::result::Result<
                     }
                 }
             }
-        })
-        .expect("failed to spawn tdlib-receive thread");
+        }) {
+        Ok(_) => {}
+        Err(e) => {
+            return Err(OnboardError::Generic(anyhow::anyhow!(
+                "failed to spawn receive thread: {}",
+                e
+            )));
+        }
+    }
 
     Ok((rx, shutdown, _guard))
 }
@@ -352,16 +366,13 @@ pub async fn drive_bot_auth(
     let auth_err = match auth_result {
         Some(Ok(())) => None,
         Some(Err(msg)) => Some(classify_tdlib_error(msg)),
+        None if wait_result.is_err() => Some(OnboardError::Cancelled(
+            "auth timed out waiting for Ready".into(),
+        )),
         None => Some(OnboardError::Cancelled("auth did not complete".into())),
     };
 
     if let Some(e) = auth_err {
-        if wait_result.is_err() {
-            close_tdlib_client(client_id).await;
-            return Err(OnboardError::Cancelled(
-                "auth timed out waiting for Ready".into(),
-            ));
-        }
         close_tdlib_client(client_id).await;
         return Err(e);
     }
@@ -561,16 +572,13 @@ pub async fn drive_user_auth(
     let auth_err = match auth_result {
         Some(Ok(())) => None,
         Some(Err(msg)) => Some(classify_tdlib_error(msg)),
+        None if wait_result.is_err() => Some(OnboardError::Cancelled(
+            "auth timed out waiting for Ready".into(),
+        )),
         None => Some(OnboardError::Cancelled("auth did not complete".into())),
     };
 
     if let Some(e) = auth_err {
-        if wait_result.is_err() {
-            close_tdlib_client(client_id).await;
-            return Err(OnboardError::Cancelled(
-                "auth timed out waiting for Ready".into(),
-            ));
-        }
         close_tdlib_client(client_id).await;
         return Err(e);
     }
@@ -633,7 +641,8 @@ async fn extract_identity(
 }
 
 /// Read a single line from stdin (non-secret input like verification code).
-fn read_line_from_stdin(prompt: &str) -> std::io::Result<String> {
+/// Returns `Zeroizing<String>` to ensure the buffer is zeroed on drop.
+fn read_line_from_stdin(prompt: &str) -> std::result::Result<Zeroizing<String>, std::io::Error> {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -642,7 +651,7 @@ fn read_line_from_stdin(prompt: &str) -> std::io::Result<String> {
     stdout.flush()?;
     let mut line = String::new();
     stdin.lock().read_line(&mut line)?;
-    Ok(line)
+    Ok(Zeroizing::new(line))
 }
 
 #[cfg(test)]

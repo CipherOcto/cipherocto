@@ -10,5 +10,6 @@
 
 pub mod auth;
 pub mod error;
+pub mod keys;
 pub mod output;
 pub mod session;

@@ -8,8 +8,8 @@ mod logging;
 use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
-    classify_tdlib_error, close_tdlib_client, drive_bot_auth, drive_user_auth, validate_api_id,
-    Credentials,
+    classify_tdlib_error, close_tdlib_client, drive_bot_auth, drive_user_auth,
+    try_acquire_receive_lock, validate_api_id, Credentials,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::output::{
@@ -82,13 +82,23 @@ fn build_full_config(creds: &Credentials, session: &TelegramSession) -> serde_js
     json
 }
 
-/// L1: Validate verifying_key is valid base64 and 32 bytes (Ed25519).
+/// Validate verifying_key is valid base64, exactly 44 chars, and decodes to 32 bytes (Ed25519).
 fn validate_verifying_key(key: &str) -> Result<()> {
     use base64::Engine as _;
+    if key.len() != 44 {
+        return Err(OnboardError::BadConfig(format!(
+            "verifying_key must be exactly 44 characters (standard base64 of 32 bytes), got {}",
+            key.len()
+        )));
+    }
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(key.as_bytes())
-        .map_err(|e| {
-            OnboardError::BadConfig(format!("verifying_key is not valid base64: {}", e))
+        .map_err(|_| {
+            OnboardError::BadConfig(
+                "verifying_key is not valid standard base64 (URL-safe or unpadded not supported; \
+                 use `base64` CLI or `openssl base64` to convert)"
+                    .into(),
+            )
         })?;
     if decoded.len() != 32 {
         return Err(OnboardError::BadConfig(format!(
@@ -108,6 +118,7 @@ async fn tdlib_get_me_with_timeout(
     api_hash: &str,
     timeout_secs: u64,
 ) -> std::result::Result<(i64, Option<String>, Option<String>), OnboardError> {
+    let _receive_guard = try_acquire_receive_lock()?;
     let client_id = tdlib_rs::create_client();
     let db_dir = data_dir.join("database");
     let files_dir = data_dir.join("files");
@@ -232,7 +243,6 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
         phone: None,
         api_id,
         api_hash: Zeroizing::new(api_hash),
-        password: None,
         bot_token: Some(Zeroizing::new(bot_token)),
         verifying_key,
     };
@@ -290,7 +300,6 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
         phone: Some(phone),
         api_id,
         api_hash: Zeroizing::new(api_hash),
-        password: None,
         bot_token: None,
         verifying_key,
     };
@@ -360,10 +369,14 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         .ok_or_else(|| OnboardError::BadConfig("config missing or empty api_hash".into()))?
         .to_string();
 
-    let (user_id, username, _first_name) =
+    let (user_id, username, first_name) =
         tdlib_get_me_with_timeout(data_path, api_id, &api_hash, 10).await?;
     let username = username.unwrap_or_else(|| "(none)".into());
-    println!("User ID: {}\nUsername: {}", user_id, username);
+    let first_name = first_name.unwrap_or_else(|| "(none)".into());
+    println!(
+        "User ID: {}\nUsername: {}\nFirst name: {}",
+        user_id, username, first_name
+    );
     Ok(())
 }
 

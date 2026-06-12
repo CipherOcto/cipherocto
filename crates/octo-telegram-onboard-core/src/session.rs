@@ -48,8 +48,8 @@ impl SessionMeta {
             mode: session.mode.clone().unwrap_or_else(|| "bot".into()),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0),
+                .unwrap_or_default()
+                .as_secs() as i64,
         }
     }
 
@@ -59,8 +59,15 @@ impl SessionMeta {
         let json = serde_json::to_string_pretty(self).map_err(|e| {
             crate::error::OnboardError::Generic(anyhow::anyhow!("serialize meta: {}", e))
         })?;
-        std::fs::write(&path, json)
+        std::fs::write(&path, &json)
             .map_err(|e| crate::error::OnboardError::BadConfig(format!("write meta: {}", e)))?;
+        // Set 0600 permissions on Unix for defense-in-depth (parent dir is 0700,
+        // but macOS/Windows ancestors may not be).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
         Ok(())
     }
 

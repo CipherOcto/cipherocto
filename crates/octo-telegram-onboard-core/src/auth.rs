@@ -303,6 +303,7 @@ pub async fn drive_bot_auth(
     }
 
     let session = extract_identity(client_id, creds, data_dir).await?;
+    close_tdlib_client(client_id).await;
     Ok(session)
 }
 
@@ -487,6 +488,7 @@ pub async fn drive_user_auth(
     }
 
     let session = extract_identity(client_id, creds, data_dir).await?;
+    close_tdlib_client(client_id).await;
     Ok(session)
 }
 

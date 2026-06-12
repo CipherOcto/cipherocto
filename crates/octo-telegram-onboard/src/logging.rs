@@ -32,14 +32,16 @@ fn is_sensitive_key(name: &str) -> bool {
 }
 
 /// Redact sensitive key substrings in a rendered message body.
-/// Uses a single-pass approach per key: finds all occurrences, calculates
-/// each value's extent (to next key boundary or end of string), and applies
-/// redactions with offset tracking. Values may contain spaces (for phone
-/// numbers etc.) but stop at JSON brackets, quotes, semicolons, or the
-/// next key boundary.
+/// Two passes:
+/// 1. `key=value` and `key: value` patterns (non-JSON)
+/// 2. `"key": "value"` patterns (JSON-style)
+///
+/// Values may contain spaces (for phone numbers etc.) but stop at JSON
+/// brackets, quotes, semicolons, or the next key boundary.
 fn redact_body_substrings(body: &str) -> String {
     let mut result = body.to_string();
 
+    // Pass 1: key=value and key: value patterns
     for &key in REDACT_KEYS {
         let mut start_from: usize = 0;
         loop {
@@ -73,7 +75,6 @@ fn redact_body_substrings(body: &str) -> String {
                 // Soft terminator: space followed by a key-like pattern (word= or word:)
                 if b == b' ' || b == b'\t' {
                     let after_space = val_end + 1;
-                    // Check if the next word is a REDACT_KEY
                     let rest_lower = result[after_space..].to_ascii_lowercase();
                     let is_key_boundary = REDACT_KEYS.iter().any(|&k| {
                         rest_lower.starts_with(k)
@@ -83,7 +84,6 @@ fn redact_body_substrings(body: &str) -> String {
                     if is_key_boundary {
                         break;
                     }
-                    // Also break if next word looks like a key (word= pattern)
                     if let Some(eq_pos) = rest_lower.find('=') {
                         let word = &rest_lower[..eq_pos];
                         if !word.is_empty() && word.chars().all(|c| c.is_alphanumeric() || c == '_')
@@ -113,19 +113,72 @@ fn redact_body_substrings(body: &str) -> String {
             }
         }
     }
+
+    // Pass 2: JSON-style "key": "value" patterns
+    for &key in REDACT_KEYS {
+        let search_pattern = format!("\"{}\"", key);
+        let mut start_from: usize = 0;
+        loop {
+            let lower = result.to_ascii_lowercase();
+            let Some(pos) = lower[start_from..].find(&search_pattern.to_lowercase()) else {
+                break;
+            };
+            let abs_pos = start_from + pos;
+            let key_end = abs_pos + search_pattern.len();
+            // Skip optional whitespace and colon: "key": or "key" :
+            let mut colon_pos = key_end;
+            while colon_pos < result.len()
+                && matches!(result.as_bytes()[colon_pos], b' ' | b'\t' | b':')
+            {
+                colon_pos += 1;
+            }
+            // Expect opening quote of value
+            if colon_pos >= result.len() || result.as_bytes()[colon_pos] != b'"' {
+                start_from = key_end;
+                continue;
+            }
+            let val_start = colon_pos + 1;
+            // Find closing quote (value ends at unescaped ")
+            let mut val_end = val_start;
+            while val_end < result.len() {
+                let b = result.as_bytes()[val_end];
+                if b == b'\\' {
+                    val_end += 2; // skip escaped char
+                    continue;
+                }
+                if b == b'"' {
+                    break;
+                }
+                val_end += 1;
+            }
+            if val_end > val_start {
+                let original_val = &result[val_start..val_end].to_string();
+                let replacement = redact_value(original_val);
+                if replacement == *original_val {
+                    start_from = val_end + 1;
+                    continue;
+                }
+                result = format!(
+                    "{}{}{}",
+                    &result[..val_start],
+                    replacement,
+                    &result[val_end..]
+                );
+                start_from = val_start + replacement.len();
+            } else {
+                start_from = val_end + 1;
+            }
+        }
+    }
+
     result
 }
 
-fn redact_value(v: &str) -> String {
-    if v.len() > 8 {
-        let mut end = 8.min(v.len());
-        while end > 0 && !v.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}***", &v[..end])
-    } else {
-        "***".to_string()
-    }
+/// Fully redact a value — always returns "***" regardless of length.
+/// Previous versions leaked the first 8 chars; this was a defense-in-depth
+/// trade-off that exposed bot IDs, area codes, and hash prefixes.
+fn redact_value(_v: &str) -> String {
+    "***".to_string()
 }
 
 /// Marker layer for the spec's "custom Layer<S> impl" requirement.
@@ -204,6 +257,57 @@ impl<'a> Visit for RedactingVisitor<'a> {
             self.buf.push_str(&format!("{}={}", name, value));
         }
     }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        self.buf.push_str(&format!("{}={}", field.name(), value));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        self.buf.push_str(&format!("{}={}", field.name(), value));
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        self.buf.push_str(&format!("{}={}", field.name(), value));
+    }
+
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        // Delegate to record_debug — errors implement Debug
+        self.record_debug(field, &value);
+    }
+
+    fn record_bytes(&mut self, field: &Field, value: &[u8]) {
+        let name = field.name();
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        if is_sensitive_key(name) {
+            self.buf.push_str(&format!("{}=***", name));
+        } else {
+            self.buf
+                .push_str(&format!("{}=<bytes len={}>", name, value.len()));
+        }
+    }
 }
 
 /// Initialize tracing with the redaction layer.
@@ -233,7 +337,7 @@ mod tests {
 
     #[test]
     fn redact_long_value() {
-        assert_eq!(redact_value("1234567890"), "12345678***");
+        assert_eq!(redact_value("1234567890"), "***");
     }
 
     #[test]
@@ -253,8 +357,8 @@ mod tests {
     fn redact_body_redacts_sensitive_values() {
         let input = "bot_token=abc123def456ghi api_hash=secretvalue user_id=12345";
         let result = redact_body_substrings(input);
-        assert!(result.contains("bot_token=abc123de***"));
-        assert!(result.contains("api_hash=secretva***"));
+        assert!(result.contains("bot_token=***"));
+        assert!(result.contains("api_hash=***"));
         assert!(result.contains("user_id=12345"));
     }
 
@@ -268,7 +372,7 @@ mod tests {
     fn redact_body_colon_separator() {
         let input = "error: password=secretvalue123 leaked";
         let result = redact_body_substrings(input);
-        assert!(result.contains("password=secretva***"));
+        assert!(result.contains("password=***"));
     }
 
     #[test]
@@ -293,7 +397,7 @@ mod tests {
     fn redact_body_stops_at_parens_and_semicolons() {
         let input = "error: password=secretphrase inside code; other=val";
         let result = redact_body_substrings(input);
-        assert!(result.contains("password=secretph***"), "got: {}", result);
+        assert!(result.contains("password=***"), "got: {}", result);
         assert!(
             result.contains("other=val"),
             "other=val should survive, got: {}",
@@ -324,14 +428,70 @@ mod tests {
     }
 
     #[test]
-    fn redact_body_multiple_keys() {
-        let input = "password=secret api_hash=abc123 user_id=42";
+    fn redact_body_phone_no_parens() {
+        let input = "phone: +1 555 1234";
         let result = redact_body_substrings(input);
         assert!(
-            result.contains("user_id=42"),
-            "non-sensitive key should survive"
+            !result.contains("555"),
+            "phone without parens should be fully redacted, got: {}",
+            result
         );
-        assert!(!result.contains("secret"), "password should be redacted");
-        assert!(!result.contains("abc123"), "api_hash should be redacted");
+    }
+
+    #[test]
+    fn redact_body_phone_e164() {
+        let input = "phone: +15551234567";
+        let result = redact_body_substrings(input);
+        assert!(
+            !result.contains("1555123"),
+            "E.164 phone should be fully redacted, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn redact_body_json_format() {
+        let input = r#"{"bot_token": "abc123def456"}"#;
+        let result = redact_body_substrings(input);
+        assert!(
+            !result.contains("abc123def456"),
+            "JSON secret should be redacted, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn redact_body_json_with_colon() {
+        let input = r#"{"api_hash": "secretvalue"}"#;
+        let result = redact_body_substrings(input);
+        assert!(
+            !result.contains("secretvalue"),
+            "JSON api_hash should be redacted, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn telegram_session_debug_redacts_verifying_key() {
+        use octo_telegram_onboard_core::session::TelegramSession;
+        use std::path::PathBuf;
+        let session = TelegramSession {
+            username: Some("testbot".into()),
+            user_id: 12345,
+            mode: Some("bot".into()),
+            data_dir: PathBuf::from("/tmp/test"),
+            verifying_key: Some("MCowBQYDK2VwAyEArealkey123456789012345678901234".into()),
+        };
+        let debug = format!("{:?}", session);
+        assert!(
+            !debug.contains("MCowBQYDK2Vw"),
+            "Debug output should not contain verifying_key, got: {}",
+            debug
+        );
+        assert!(
+            debug.contains("[REDACTED]"),
+            "Debug output should show [REDACTED], got: {}",
+            debug
+        );
     }
 }

@@ -256,7 +256,6 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
         std::time::Duration::from_secs(timeout),
     )
     .await?;
-    close_tdlib_client(client_id).await;
 
     SessionMeta::from_session(&session).write(&session.data_dir)?;
 
@@ -313,7 +312,6 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
         std::time::Duration::from_secs(timeout),
     )
     .await?;
-    close_tdlib_client(client_id).await;
 
     SessionMeta::from_session(&session).write(&session.data_dir)?;
 

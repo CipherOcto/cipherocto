@@ -31,7 +31,9 @@ async fn main() -> ExitCode {
             Command::Whoami(args) => run_whoami(args).await,
             Command::Session { action } => match action {
                 SessionAction::List(args) => run_session_list(args).await,
-                SessionAction::Verify { dir } => run_session_verify(&dir).await,
+                SessionAction::Verify { dir, config } => {
+                    run_session_verify(&dir, config.as_deref()).await
+                }
                 SessionAction::Remove { dir, yes } => run_session_remove(&dir, yes).await,
             },
             Command::Version => {
@@ -149,31 +151,37 @@ async fn tdlib_get_me_with_timeout(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
     let timeout = std::time::Duration::from_secs(timeout_secs);
 
-    let _receive_handle = tokio::task::spawn_blocking(move || {
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout {
-            if let Some((tdlib_rs::enums::Update::AuthorizationState(ref auth_update), _cid)) =
-                tdlib_rs::receive()
-            {
-                match &auth_update.authorization_state {
-                    tdlib_rs::enums::AuthorizationState::Ready => {
-                        let _ = tx.blocking_send(true);
-                        return;
+    let receive_handle = std::thread::Builder::new()
+        .name("tdlib-get-me-receive".into())
+        .spawn(move || {
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                if let Some((tdlib_rs::enums::Update::AuthorizationState(ref auth_update), _cid)) =
+                    tdlib_rs::receive()
+                {
+                    match &auth_update.authorization_state {
+                        tdlib_rs::enums::AuthorizationState::Ready => {
+                            drop(tx.send(true));
+                            return;
+                        }
+                        tdlib_rs::enums::AuthorizationState::Closed
+                        | tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
+                            drop(tx.send(false));
+                            return;
+                        }
+                        _ => {}
                     }
-                    tdlib_rs::enums::AuthorizationState::Closed
-                    | tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
-                        let _ = tx.blocking_send(false);
-                        return;
-                    }
-                    _ => {}
                 }
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let _ = tx.blocking_send(false);
-    });
+            drop(tx.send(false));
+        })
+        .expect("failed to spawn tdlib-get-me-receive thread");
 
     let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
+    // Ensure the receive thread has exited before proceeding.
+    // The thread has already sent its value (or timed out), so join completes immediately.
+    let _ = receive_handle.join();
     match channel_result {
         Ok(Some(true)) => {
             let me_enum = tdlib_rs::functions::get_me(client_id)
@@ -430,20 +438,28 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
                     );
                 } else {
                     // Try get_me fallback — read config for api_id/api_hash
+                    // Only use config credentials if the config's data_dir matches
+                    // this session's path (prevents wrong credentials in multi-account setups).
                     let config_path = args.config.clone().or_else(default_config_path_opt);
                     let fallback = if let Some(cp) = config_path {
                         if let Ok(bytes) = std::fs::read(&cp) {
                             if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                let api_id =
-                                    cfg["api_id"].as_i64().and_then(|v| validate_api_id(v).ok());
-                                let api_hash = cfg["api_hash"]
-                                    .as_str()
-                                    .filter(|s| !s.is_empty())
-                                    .map(String::from);
-                                if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
-                                    tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await.ok()
+                                let config_data_dir = cfg["data_dir"].as_str();
+                                if config_data_dir != Some(path.to_string_lossy().as_ref()) {
+                                    None // Different session, skip fallback
                                 } else {
-                                    None
+                                    let api_id = cfg["api_id"]
+                                        .as_i64()
+                                        .and_then(|v| validate_api_id(v).ok());
+                                    let api_hash = cfg["api_hash"]
+                                        .as_str()
+                                        .filter(|s| !s.is_empty())
+                                        .map(String::from);
+                                    if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
+                                        tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await.ok()
+                                    } else {
+                                        None
+                                    }
                                 }
                             } else {
                                 None
@@ -482,7 +498,10 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_session_verify(dir: &std::path::Path) -> Result<()> {
+async fn run_session_verify(
+    dir: &std::path::Path,
+    config_path: Option<&std::path::Path>,
+) -> Result<()> {
     if !dir.exists() {
         return Err(OnboardError::BadConfig(format!(
             "directory does not exist: {}",
@@ -490,9 +509,50 @@ async fn run_session_verify(dir: &std::path::Path) -> Result<()> {
         )));
     }
 
-    if let Some(meta) = SessionMeta::read(dir) {
+    let cached = SessionMeta::read(dir);
+
+    // Try to validate via get_me() using config credentials
+    let cp = config_path
+        .map(std::path::PathBuf::from)
+        .or_else(default_config_path_opt);
+
+    if let Some(config_path) = cp {
+        if let Ok(bytes) = std::fs::read(&config_path) {
+            if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let api_id = cfg["api_id"].as_i64().and_then(|v| validate_api_id(v).ok());
+                let api_hash = cfg["api_hash"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from);
+                if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
+                    match tdlib_get_me_with_timeout(dir, aid, &ahash, 5).await {
+                        Ok((user_id, username, _)) => {
+                            let username = username.unwrap_or_else(|| "(none)".into());
+                            println!(
+                                "Valid session: user_id={}, username={}, mode={}",
+                                user_id,
+                                username,
+                                cached
+                                    .as_ref()
+                                    .map(|m| m.mode.as_str())
+                                    .unwrap_or("unknown")
+                            );
+                            return Ok(());
+                        }
+                        Err(_) => {
+                            println!("Expired or invalid session in {}", dir.display());
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: read sidecar only (no get_me possible without credentials)
+    if let Some(meta) = cached {
         println!(
-            "Valid session: user_id={}, username={}, mode={}",
+            "Session metadata (unvalidated): user_id={}, username={}, mode={}",
             meta.user_id,
             meta.username.as_deref().unwrap_or("(none)"),
             meta.mode

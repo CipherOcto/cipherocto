@@ -108,8 +108,13 @@ fn write_atomic(path: &Path, json: &serde_json::Value) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(tmp.path(), perms)
-            .map_err(|e| OnboardError::BadConfig(format!("set_permissions: {}", e)))?;
+        if let Err(e) = std::fs::set_permissions(tmp.path(), perms) {
+            tracing::warn!(
+                path = %tmp.path().display(),
+                error = %e,
+                "could not set 0600 on config file"
+            );
+        }
     }
 
     tmp.write_all(text.as_bytes())
@@ -118,11 +123,6 @@ fn write_atomic(path: &Path, json: &serde_json::Value) -> Result<()> {
     tmp.as_file()
         .sync_all()
         .map_err(|e| OnboardError::BadConfig(format!("sync tmp: {}", e)))?;
-
-    #[cfg(not(unix))]
-    if path.exists() {
-        std::fs::remove_file(path).ok();
-    }
 
     tmp.persist(path).map_err(|e| {
         OnboardError::BadConfig(format!("persist tmp to {}: {}", path.display(), e))

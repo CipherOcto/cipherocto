@@ -116,8 +116,8 @@ pub struct UserLoginArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct WhoamiArgs {
-    /// Path to TelegramConfig JSON file.
-    #[arg(long)]
+    /// Path to TelegramConfig JSON file (or $TELEGRAM_CONFIG).
+    #[arg(long, env = "TELEGRAM_CONFIG")]
     pub config: Option<PathBuf>,
 }
 
@@ -129,6 +129,9 @@ pub enum SessionAction {
     Verify {
         /// Directory to verify.
         dir: PathBuf,
+        /// Path to TelegramConfig JSON for get_me validation (default: ~/.config/octo/telegram.json).
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
     /// Delete a TDLib database dir (with confirmation).
     Remove {
@@ -145,8 +148,8 @@ pub struct SessionListArgs {
     /// Base directory to scan (default: ~/.local/share/octo/telegram/).
     #[arg(long)]
     pub base_dir: Option<PathBuf>,
-    /// Path to TelegramConfig JSON for get_me fallback (default: ~/.config/octo/telegram.json).
-    #[arg(long)]
+    /// Path to TelegramConfig JSON for get_me fallback (default: ~/.config/octo/telegram.json; or $TELEGRAM_CONFIG).
+    #[arg(long, env = "TELEGRAM_CONFIG")]
     pub config: Option<PathBuf>,
 }
 

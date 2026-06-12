@@ -81,6 +81,42 @@ pub struct Credentials {
     pub verifying_key: Option<String>,
 }
 
+impl Credentials {
+    /// Create credentials with validation. Returns Err if api_id is invalid,
+    /// api_hash is empty, or bot_token is empty (when provided).
+    pub fn try_new(
+        phone: Option<String>,
+        api_id: i32,
+        api_hash: Zeroizing<String>,
+        bot_token: Option<Zeroizing<String>>,
+        verifying_key: Option<String>,
+    ) -> Result<Self> {
+        if api_id <= 0 {
+            return Err(OnboardError::BadConfig(format!(
+                "api_id must be positive and fit in i32, got {}",
+                api_id
+            )));
+        }
+        if api_hash.is_empty() {
+            return Err(OnboardError::BadConfig("api_hash must not be empty".into()));
+        }
+        if let Some(ref token) = bot_token {
+            if token.is_empty() {
+                return Err(OnboardError::BadConfig(
+                    "bot_token must not be empty".into(),
+                ));
+            }
+        }
+        Ok(Self {
+            phone,
+            api_id,
+            api_hash,
+            bot_token,
+            verifying_key,
+        })
+    }
+}
+
 /// Classify a TDLib error message into the appropriate `OnboardError` variant.
 pub fn classify_tdlib_error(msg: String) -> OnboardError {
     let lower = msg.to_lowercase();
@@ -381,7 +417,11 @@ pub async fn drive_user_auth(
                         }
                     }
                     AuthAction::AwaitCode => {
-                        let code = read_line_from_stdin("Enter verification code: ");
+                        let code = tokio::task::spawn_blocking(|| {
+                            read_line_from_stdin("Enter verification code: ")
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(std::io::Error::other(e)));
                         match code {
                             Ok(c) => {
                                 let resp = tdlib_rs::functions::check_authentication_code(
@@ -432,7 +472,15 @@ pub async fn drive_user_auth(
                     }
                     AuthAction::Error(AuthError::TwoFactorRequired) => {
                         // H1: Read 2FA password from stdin with echo disabled
-                        match read_password_stdin("Enter 2FA password: ") {
+                        // H2: Wrapped in spawn_blocking so abort can interrupt the await
+                        let pwd_result = tokio::task::spawn_blocking(|| {
+                            read_password_stdin("Enter 2FA password: ")
+                        })
+                        .await
+                        .unwrap_or_else(|e| {
+                            Err(OnboardError::Cancelled(format!("spawn_blocking: {}", e)))
+                        });
+                        match pwd_result {
                             Ok(pwd) => {
                                 let resp = tdlib_rs::functions::check_authentication_password(
                                     pwd.to_string(),

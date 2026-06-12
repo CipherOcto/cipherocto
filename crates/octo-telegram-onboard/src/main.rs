@@ -9,7 +9,7 @@ use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
     classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_user_auth,
-    set_tdlib_parameters_raw, try_acquire_receive_lock, validate_api_id, Credentials,
+    set_tdlib_parameters, try_acquire_receive_lock, validate_api_id, Credentials,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::keys::validate_verifying_key;
@@ -19,6 +19,10 @@ use octo_telegram_onboard_core::output::{
 use octo_telegram_onboard_core::session::{SessionMeta, TelegramSession};
 use std::process::ExitCode;
 use zeroize::Zeroizing;
+
+const WHOAMI_TIMEOUT_SECS: u64 = 10;
+const SESSION_VERIFY_TIMEOUT_SECS: u64 = 5;
+const CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -97,9 +101,9 @@ async fn tdlib_get_me_with_timeout(
     let _receive_guard = try_acquire_receive_lock()?;
     let client_id = tdlib_rs::create_client();
 
-    let params_err = set_tdlib_parameters_raw(client_id, api_id, api_hash, data_dir).await;
+    let params_err = set_tdlib_parameters(client_id, api_id, api_hash, data_dir).await;
     if let Err(e) = params_err {
-        close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+        close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
         return Err(e);
     }
 
@@ -133,7 +137,7 @@ async fn tdlib_get_me_with_timeout(
         }) {
         Ok(h) => h,
         Err(e) => {
-            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
             return Err(OnboardError::Generic(anyhow::anyhow!(
                 "failed to spawn receive thread: {}",
                 e
@@ -150,8 +154,7 @@ async fn tdlib_get_me_with_timeout(
             let me_enum = match tdlib_rs::functions::get_me(client_id).await {
                 Ok(u) => u,
                 Err(e) => {
-                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
-                        .await;
+                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
                     return Err(classify_tdlib_error(e.message));
                 }
             };
@@ -162,13 +165,11 @@ async fn tdlib_get_me_with_timeout(
                         .usernames
                         .as_ref()
                         .and_then(|names| names.active_usernames.first().cloned());
-                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
-                        .await;
+                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
                     Ok((u.id, username, Some(u.first_name)))
                 }
                 _ => {
-                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
-                        .await;
+                    close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
                     Err(OnboardError::Generic(anyhow::anyhow!(
                         "get_me returned unexpected User variant"
                     )))
@@ -176,17 +177,17 @@ async fn tdlib_get_me_with_timeout(
             }
         }
         Ok(Some(false)) => {
-            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
             Err(OnboardError::AuthRejected(
                 "session expired or invalid".into(),
             ))
         }
         Ok(None) => {
-            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
             Err(OnboardError::Cancelled("whoami channel closed".into()))
         }
         Err(_) => {
-            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+            close_tdlib_client_with_timeout(client_id, CLOSE_TIMEOUT).await;
             Err(OnboardError::Cancelled("whoami timed out".into()))
         }
     }
@@ -334,7 +335,7 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         .to_string();
 
     let (user_id, username, first_name) =
-        tdlib_get_me_with_timeout(data_path, api_id, &api_hash, 10).await?;
+        tdlib_get_me_with_timeout(data_path, api_id, &api_hash, WHOAMI_TIMEOUT_SECS).await?;
     let username = username.unwrap_or_else(|| "(none)".into());
     let first_name = first_name.unwrap_or_else(|| "(none)".into());
     let mode = cached
@@ -418,7 +419,14 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
                                         .filter(|s| !s.is_empty())
                                         .map(String::from);
                                     if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
-                                        tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await.ok()
+                                        tdlib_get_me_with_timeout(
+                                            &path,
+                                            aid,
+                                            &ahash,
+                                            SESSION_VERIFY_TIMEOUT_SECS,
+                                        )
+                                        .await
+                                        .ok()
                                     } else {
                                         None
                                     }
@@ -495,7 +503,9 @@ async fn run_session_verify(
                     .filter(|s| !s.is_empty())
                     .map(String::from);
                 if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
-                    match tdlib_get_me_with_timeout(dir, aid, &ahash, 5).await {
+                    match tdlib_get_me_with_timeout(dir, aid, &ahash, SESSION_VERIFY_TIMEOUT_SECS)
+                        .await
+                    {
                         Ok((user_id, username, _)) => {
                             let username = username.unwrap_or_else(|| "(none)".into());
                             println!(

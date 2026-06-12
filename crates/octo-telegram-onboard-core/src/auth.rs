@@ -145,23 +145,24 @@ pub fn classify_tdlib_error(msg: String) -> OnboardError {
 }
 
 /// Sanitize a TDLib error message by stripping file paths and other PII.
+/// Uses a blacklist of terminators (not a whitelist of path chars) to
+/// correctly handle Windows paths like `C:\Users\foo\file.db`.
 fn sanitize_tdlib_message(msg: &str) -> String {
-    // Replace Unix-style file paths with <path>
     let mut result = msg.to_string();
-    // Match common path patterns: /home/..., /tmp/..., /var/..., C:\, etc.
     let path_patterns = [
         "/home/", "/Users/", "/root/", "/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "/srv/",
-        "/mnt/", "/run/", "/data/", "C:\\", "D:\\",
+        "/mnt/", "/run/", "/data/", "C:\\", "D:\\", "\\\\",
     ];
     for pattern in &path_patterns {
         while let Some(start) = result.find(pattern) {
-            // Find the end of the path: first character that's NOT a valid path char.
-            // Valid path chars: / . _ - a-z A-Z 0-9 (covers Unix and Windows paths).
+            // Blacklist approach: value extends to first whitespace, quote,
+            // bracket, or other non-path terminator. Includes `:` to stop
+            // before Windows drive-colon separators.
             let end = result[start..]
                 .find(|c: char| {
-                    !matches!(
+                    matches!(
                         c,
-                        '/' | '.' | '_' | '-' | 'a'..='z' | 'A'..='Z' | '0'..='9'
+                        ' ' | '\t' | '\n' | '\r' | '"' | '\'' | ')' | ']' | '>' | ',' | ';' | ':'
                     )
                 })
                 .map(|e| start + e)
@@ -260,13 +261,8 @@ fn read_password_stdin(prompt: &str) -> Result<Zeroizing<String>> {
     Ok(Zeroizing::new(pwd))
 }
 
-/// Set TDLib parameters (shared between bot and user modes).
-async fn set_tdlib_parameters(client_id: i32, creds: &Credentials, data_dir: &Path) -> Result<()> {
-    set_tdlib_parameters_raw(client_id, creds.api_id, &creds.api_hash, data_dir).await
-}
-
-/// Set TDLib parameters with raw values (used by both auth drivers and get_me fallback).
-pub async fn set_tdlib_parameters_raw(
+/// Set TDLib parameters with raw values (used by auth drivers and get_me fallback).
+pub async fn set_tdlib_parameters(
     client_id: i32,
     api_id: i32,
     api_hash: &str,
@@ -319,7 +315,7 @@ pub async fn drive_bot_auth(
         close_tdlib_client(client_id).await;
         return Err(e);
     }
-    if let Err(e) = set_tdlib_parameters(client_id, creds, data_dir).await {
+    if let Err(e) = set_tdlib_parameters(client_id, creds.api_id, &creds.api_hash, data_dir).await {
         close_tdlib_client(client_id).await;
         return Err(e);
     }
@@ -423,7 +419,7 @@ pub async fn drive_user_auth(
         close_tdlib_client(client_id).await;
         return Err(e);
     }
-    if let Err(e) = set_tdlib_parameters(client_id, creds, data_dir).await {
+    if let Err(e) = set_tdlib_parameters(client_id, creds.api_id, &creds.api_hash, data_dir).await {
         close_tdlib_client(client_id).await;
         return Err(e);
     }

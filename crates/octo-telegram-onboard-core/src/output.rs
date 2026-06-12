@@ -63,6 +63,10 @@ pub fn write_config(
     json: &serde_json::Value,
 ) -> Result<()> {
     if stdout {
+        tracing::warn!(
+            "--stdout prints api_hash, phone, and bot_token to the terminal; \
+             consider --out <path> for 0600-protected storage"
+        );
         let text =
             serde_json::to_string_pretty(json).map_err(|e| OnboardError::Generic(e.into()))?;
         println!("{}", text);

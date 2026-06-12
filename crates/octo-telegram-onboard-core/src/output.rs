@@ -64,7 +64,7 @@ pub fn write_config(
 ) -> Result<()> {
     if stdout {
         tracing::warn!(
-            "--stdout prints api_hash, phone, and bot_token to the terminal; \
+            "WARNING: --stdout prints api_hash, phone, and bot_token to the terminal; \
              consider --out <path> for 0600-protected storage"
         );
         let text =

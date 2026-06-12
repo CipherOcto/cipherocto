@@ -148,8 +148,8 @@ async fn tdlib_get_me_with_timeout(
     let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
     // Ensure the receive thread has exited before proceeding.
     // The thread has already sent its value (or timed out), so join completes immediately.
-    receive_handle.join().unwrap_or_else(|e| {
-        tracing::warn!("tdlib-get-me-receive thread panicked: {:?}", e);
+    receive_handle.join().unwrap_or_else(|_e| {
+        tracing::warn!("tdlib-get-me-receive thread panicked");
     });
     match channel_result {
         Ok(Some(true)) => {

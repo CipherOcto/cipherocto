@@ -396,6 +396,15 @@ pub async fn drive_bot_auth(
                         notify_clone.notify_one();
                         break;
                     }
+                    // Treat LoggingOut/Closing as session-ending states —
+                    // skip the redundant close phase (same as Closed).
+                    tdlib_rs::enums::AuthorizationState::LoggingOut
+                    | tdlib_rs::enums::AuthorizationState::Closing => {
+                        saw_closed_clone.store(true, Ordering::SeqCst);
+                        *result_clone.lock() = Some(Err("TDLib session is closing".into()));
+                        notify_clone.notify_one();
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -505,6 +514,9 @@ pub async fn drive_user_auth(
                     }
                     tdlib_rs::enums::AuthorizationState::Ready => AuthStateKey::Ready,
                     tdlib_rs::enums::AuthorizationState::Closed => AuthStateKey::Closed,
+                    // Treat LoggingOut/Closing as session-ending states.
+                    tdlib_rs::enums::AuthorizationState::LoggingOut
+                    | tdlib_rs::enums::AuthorizationState::Closing => AuthStateKey::Closed,
                     _ => AuthStateKey::Other,
                 };
 

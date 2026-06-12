@@ -135,9 +135,16 @@ mod tests {
 
     #[test]
     fn session_meta_from_session_errors_on_none_mode() {
+        use crate::error::OnboardError;
         let mut session = sample_session();
         session.mode = None;
-        assert!(SessionMeta::from_session(&session).is_err());
+        let err = SessionMeta::from_session(&session).unwrap_err();
+        assert!(
+            matches!(err, OnboardError::BadConfig(_)),
+            "expected BadConfig, got {:?}",
+            err
+        );
+        assert_eq!(err.exit_code(), 5);
     }
 
     #[test]

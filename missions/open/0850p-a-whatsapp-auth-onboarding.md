@@ -128,6 +128,21 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Build `WhatsAppConfig` stub with `pair_phone: Some(phone)`, `pair_code: Some(custom_code_from_arg_or_env)` (R1-C2: the `custom_code` is passed to `WhatsAppWebAdapter` for the link, then **dropped** after `Event::Connected`. It never enters the on-disk config, the sidecar, or the `WhatsAppSession` struct)
   - Same `start_bot` + `wait_for_connected` flow as `qr_link::run` (R5-H1: the phone-validation and pair-code path is different but the wait logic is shared; `wait_for_connected` is called once with `args.timeout_secs`)
   - Same `crate::sidecar::write_sidecar` call as `qr_link::run` (R5-M2 + R6-H1)
+- [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — constants block at the top of the file (R8-H1: defines the four constants that R1-M2, R4-H2, R5-H2, and R7-M2 introduced by name but never declared):
+  ```rust
+  /// R1-M2: poll interval for wait_for_connected and wait_for_health.
+  /// Unit test pins to 250ms ± 10ms.
+  const POLL_INTERVAL_MS: u64 = 250;
+  /// R4-H2: grace period after Event::Connected to catch the
+  /// Connected -> LoggedOut race window. Unit test pins to 100ms ± 10ms.
+  const POST_CONNECT_GRACE_MS: u64 = 100;
+  /// R7-M2: session list fallback timeout (not operator-tunable).
+  const SESSION_LIST_HEALTH_TIMEOUT_SECS: u64 = 5;
+  /// R5-H2: whoami and session verify wait_for_connected timeout.
+  /// 30s is hardcoded; if Event::Connected has already fired, the
+  /// function returns on the first poll (<10ms).
+  const WHOAMI_TIMEOUT_SECS: u64 = 30;
+  ```
 - [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError>`
   - Polling loop with 250ms granularity, `tokio::time::sleep` between polls
   - On `Event::LoggedOut` (observable via `self_handle() == None AND bot_handle == None` after deadline): return `Err(CoreError::SessionExpired)`
@@ -162,7 +177,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `octo-whatsapp-onboard whoami --config CONFIG`
   - Loads config JSON, extracts `session_path`
   - Builds `WhatsAppWebAdapter` against `session_path`
-  - Calls `wait_for_connected` with **30s** timeout (R5-H2: 10s was tight for slow networks; the timeout is internal to `wait_for_connected` — if `Event::Connected` has already fired, the function returns on the first poll (<10ms). 30s is only hit in pathological network cases.)
+  - Calls `wait_for_connected` with `Duration::from_secs(WHOAMI_TIMEOUT_SECS)` (R8-H1: uses the named constant, not `Duration::from_secs(30)`; the constant is defined in `core/session.rs` and is hardcoded — the 30s is not a CLI flag. R5-H2: 10s was tight for slow networks; the timeout is internal to `wait_for_connected` — if `Event::Connected` has already fired, the function returns on the first poll (<10ms). 30s is only hit in pathological network cases.)
   - Match on the result (R7-M1): `Ok(phone) => { println!("+{phone}"); Ok(()) }`, `Err(CoreError::SessionExpired) => Err(OnboardError::SessionExpired("Session expired or invalid".into()))`, `Err(CoreError::Timeout { secs }) => Err(OnboardError::Cancelled(format!("Timeout after {secs}s")))`, `Err(e) => Err(OnboardError::from(e))`. Exit per `OnboardError::as_exit_code()`.
   - On success: prints `+{self_phone}` and exits 0
   - On `Event::LoggedOut` / timeout: prints "Session expired or invalid" and exits 7 (`SessionExpired`)
@@ -174,7 +189,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Tabular output: `SESSION_PATH`, `SELF_PHONE`, `LINKED_AT`, `VALID` columns
   - Exits 0
 - [ ] `octo-whatsapp-onboard session verify <DB-PATH>`
-  - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with **30s** timeout (R5-H2: same reasoning as `whoami`)
+  - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with `Duration::from_secs(WHOAMI_TIMEOUT_SECS)` (R5-H2: same reasoning as `whoami`. R8-H1: uses the constant.)
   - Prints "valid" or "expired" and exits 0 / 7
 - [ ] `octo-whatsapp-onboard session remove <DB-PATH>`
   - Uses `dialoguer::Confirm::new().with_prompt(format!("Remove session at {db_path:?}?")).default(false).interact()?` for the confirmation (R2-H2: interactive y/N with default No catches the CI misconfiguration case where `echo "y" | ...` would otherwise silently delete a session DB; `dialoguer` dep added to `Cargo.toml`)
@@ -239,7 +254,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `cargo fmt -- --check` passes
 - [ ] No regression in `octo-adapter-whatsapp` existing tests (the adapter change is additive; the 13 existing tests must all still pass)
 - [ ] No regression in `octo-matrix-onboard`, `octo-matrix-onboard-core`, `octo-telegram-onboard`, `octo-telegram-onboard-core` (the workspace build must succeed for all crates)
-- [ ] Binary size <20 MB stripped (target from RFC §Performance Targets)
+- [ ] Binary size: tracked but not enforced (R8-M1: matches R1-L2's demotion to stretch target; reported in the PR description for awareness, not a CI gate. Actual size depends on `whatsapp-rust` + `wacore` + `waproto` feature flags.)
 
 ### Type Coverage
 

@@ -166,7 +166,7 @@ octo-whatsapp-onboard
 │   ├── --timeout <SECS>          (default: 300)
 │   └── --verbose
 │
-├── whoami               — Verify existing session
+├── whoami               — Verify existing session (30s hardcoded timeout per R5-H2; R8-L1)
 │   ├── --config <PATH>           (load WhatsAppConfig JSON)
 │   └── --verbose
 │   # Future: --store <PATH> for multi-account session store (Phase 2)
@@ -882,6 +882,7 @@ After successful `pair-link`:
 | 1.5 | 2026-06-12 | R5 fixes: `qr_link::run` and `pair_link::run` now call `wait_for_connected` (R5-H1), bumped `whoami` and `session verify` `wait_for_connected` timeouts from 10s to 30s for slow networks (R5-H2), clarified `to_disk_json` round-trip is via adapter instantiation (R5-M1), sidecar is **required** (not optimization), written before config JSON (R5-M2), `format_rfc3339_secs` call site conversion shown (R5-L2) |
 | 1.6 | 2026-06-12 | R6 fixes: `sidecar::write_sidecar` is `crate::sidecar::write_sidecar` (R6-H1), added `wait_for_health` helper for `session list` fallback (R6-H2), qr-link and pair-link AC specify sidecar-first ordering (R6-M1), pair-link and qr-link sequence diagrams show `Bot + on_event` as a composite of the adapter (R6-M2), dedupe of sidecar fast-path sentence (R6-L1) |
 | 1.7 | 2026-06-12 | R7 fixes: `wait_for_health` RFC pseudocode added (R7-H1), `whoami` `Result<String, CoreError>` → display conversion shown (R7-M1), `SESSION_LIST_HEALTH_TIMEOUT_SECS = 5` constant extracted (R7-M2), CLI subcommand AC cross-references core AC instead of restating (R7-L1) |
+| 1.8 | 2026-06-12 | R8 fixes: four constants (POLL_INTERVAL_MS, POST_CONNECT_GRACE_MS, SESSION_LIST_HEALTH_TIMEOUT_SECS, WHOAMI_TIMEOUT_SECS) defined in `core/session.rs` constants block (R8-H1), Quality Gates binary size demoted to "tracked but not enforced" matching R1-L2 (R8-M1), `whoami` CLI surface shows 30s hardcoded timeout (R8-L1) |
 
 ## Related RFCs
 

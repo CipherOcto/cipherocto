@@ -819,33 +819,60 @@ mod tests {
     }
 
     #[test]
-    fn classify_flood_wait_is_not_cancelled() {
+    fn classify_flood_wait_is_rate_limited_not_cancelled() {
         let e = classify_tdlib_error("FLOOD_WAIT_60".into());
         assert!(
-            !matches!(e, OnboardError::Cancelled(_)),
-            "FLOOD_WAIT should be RateLimited, not Cancelled"
+            matches!(e, OnboardError::RateLimited(_)),
+            "FLOOD_WAIT should be RateLimited, got {:?}",
+            e
         );
-    }
-
-    #[test]
-    fn classify_network_error_is_not_cancelled() {
-        let e = classify_tdlib_error("network timeout".into());
         assert!(
             !matches!(e, OnboardError::Cancelled(_)),
-            "network should be TelegramUnreachable, not Cancelled"
+            "FLOOD_WAIT should not be Cancelled"
+        );
+        assert_eq!(e.exit_code(), 6, "RateLimited should have exit code 6");
+    }
+
+    #[test]
+    fn classify_network_error_is_unreachable_not_cancelled() {
+        let e = classify_tdlib_error("network timeout".into());
+        assert!(
+            matches!(e, OnboardError::TelegramUnreachable(_)),
+            "network should be TelegramUnreachable, got {:?}",
+            e
+        );
+        assert!(
+            !matches!(e, OnboardError::Cancelled(_)),
+            "network should not be Cancelled"
+        );
+        assert_eq!(
+            e.exit_code(),
+            3,
+            "TelegramUnreachable should have exit code 3"
         );
     }
 
     #[test]
-    fn classify_cancelled_is_case_insensitive() {
-        assert!(matches!(
-            classify_tdlib_error("SESSION EXPIRED".into()),
-            OnboardError::Cancelled(_)
-        ));
-        assert!(matches!(
-            classify_tdlib_error("Session Expired".into()),
-            OnboardError::Cancelled(_)
-        ));
+    fn classify_cancelled_is_case_insensitive_for_all_keywords() {
+        let keywords = ["session expired", "logged out", "authorization revoked"];
+        for keyword in &keywords {
+            let upper = keyword.to_uppercase();
+            assert!(
+                matches!(classify_tdlib_error(upper), OnboardError::Cancelled(_)),
+                "{} (uppercase) should be Cancelled",
+                keyword
+            );
+            let mixed: String = keyword
+                .chars()
+                .enumerate()
+                .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c })
+                .collect();
+            assert!(
+                matches!(classify_tdlib_error(mixed), OnboardError::Cancelled(_)),
+                "{} (mixed case) should be Cancelled",
+                keyword
+            );
+        }
     }
 
     #[test]

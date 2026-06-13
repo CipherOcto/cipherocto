@@ -101,20 +101,10 @@ where
             }
         }
 
-        // Now render the message. The Event itself doesn't
-        // expose the format string or args directly via Visit, but
-        // the field visitor captures them if the format args are
-        // passed as fields (tracing's `tracing::info!("hello {x}",
-        // x = 5)`) — see `RecordFields` for the dual path.
-        //
-        // For the common case (`tracing::info!("hello {x}", x)`),
-        // the message is stored on the Event and rendered via the
-        // subscriber's internal display mechanism. We approximate
-        // this by rendering the visitor's captured fields as the
-        // message body, which is what the operator sees.
-
-        // Render captured fields as ` key=value` pairs (space-
-        // separated). Secret keys are replaced with `<redacted>`.
+        // Render the captured fields as ` key=value` pairs (space-
+        // separated). The `message` field is special-cased in
+        // `FieldCollector::record_debug` / `record_str` to render
+        // without the `message=` prefix (R3-H1).
         if !field_buf.is_empty() {
             write!(writer, " {field_buf}")?;
         }

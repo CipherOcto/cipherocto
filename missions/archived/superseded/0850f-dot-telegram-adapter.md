@@ -4,6 +4,10 @@
 
 **Superseded** — Replaced by [Mission 0850ab](./0850ab-dot-telegram-tdlib-adapter.md) (TDLib-backed implementation)
 
+## Original Status
+
+Implemented (9 tests, retry/backoff, self_handle, health_check)
+
 ## RFC
 
 RFC-0850: Deterministic Overlay Transport (DOT) — §8.1

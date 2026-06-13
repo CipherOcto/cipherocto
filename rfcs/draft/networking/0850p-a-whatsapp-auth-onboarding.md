@@ -148,9 +148,9 @@ octo-whatsapp-onboard
 │   ├── --session-path <DIR>      (default: ~/.local/share/octo/whatsapp/default.session.db)
 │   ├── --ws-url <URL>            (test/proxy; or $OCTO_WHATSAPP_WS_URL)
 │   ├── --groups <ID,ID,ID>       (initial group IDs to monitor; default: empty. R2-L1: accepts digits-only `120363012345678901` OR full JID `120363012345678901@g.us`; the adapter's `group_to_jid` normalizes either form on receive. R2-L2: comma-separated; whitespace trimmed; empty entries rejected; duplicates NOT deduplicated.)
-│   ├── --out <PATH>              (default: ~/.config/octo/whatsapp.json)
-│   ├── --stdout                  (write JSON to stdout instead of file)
-│   ├── --force                   (overwrite existing config)
+│   ├── --out <PATH>              (OutputArgs: flatten target [R3-C1]; default: ~/.config/octo/whatsapp.json)
+│   ├── --stdout                  (OutputArgs: conflicts_with out)
+│   ├── --force                   (OutputArgs: requires out)
 │   ├── --timeout <SECS>          (default: 300, how long to wait for Event::Connected)
 │   └── --verbose                 (DEBUG-level tracing)
 │
@@ -160,9 +160,9 @@ octo-whatsapp-onboard
 │   ├── --pair-code <CODE>        (optional custom code; or $OCTO_WHATSAPP_PAIR_CODE)
 │   ├── --ws-url <URL>            (test/proxy; or $OCTO_WHATSAPP_WS_URL)
 │   ├── --groups <ID,ID,ID>       (as qr-link; same parsing rules per R2-L1/R2-L2)
-│   ├── --out <PATH>              (as qr-link)
-│   ├── --stdout
-│   ├── --force
+│   ├── --out <PATH>              (OutputArgs: flatten target; same defaults)
+│   ├── --stdout                  (OutputArgs: conflicts_with out)
+│   ├── --force                   (OutputArgs: requires out)
 │   ├── --timeout <SECS>          (default: 300)
 │   └── --verbose
 │
@@ -347,9 +347,9 @@ This is the **first deviation from the matrix/telegram exit code table** in the 
 
 Same pattern as `octo-matrix-onboard` (logging.rs:38-44) and `octo-telegram-onboard` (logging.rs:REDACT_KEYS):
 
-- `tracing-subscriber` with a custom `Layer` that redacts fields named `session_path`, `pair_phone`, `pair_code`, `ws_url`, `access_token` (none of these are emitted by the WhatsApp adapter, but the redaction layer must cover them in case future fields leak), and `pn` (the device phone number field from `wacore::store::Device`).
-- **Auto-generated pair codes** (from `Event::PairingCode`) are NOT redacted — they are short-lived (60s TTL per the WhatsApp Web protocol) and are the operator's intended display.
-- **Custom pair codes** (operator-supplied via `--pair-code`) ARE redacted — they may be reused and are operator-typed.
+- `tracing-subscriber` with a custom `Layer` that redacts fields named `session_path`, `pair_phone`, `pair_code`, `ws_url`, `access_token` (none of these are emitted by the WhatsApp adapter, but the redaction layer must cover them in case future fields leak), and the Signal Protocol key fields (`noise_key`, `identity_key`, `signed_pre_key`, `prekey`, `sender_key`) if any are emitted by a future adapter change. **R3-H1: `pn` is REMOVED from the redaction list** — the device's own phone number (`wacore::store::Device.pn`) is the same value as `self_phone`, which is explicitly logged with a `+E164` prefix and is **not** a secret (it's the operator's own phone, displayed by WhatsApp in the linked devices list). The substring-match redaction would have caught the `pn` field name in the existing log message at adapter.rs:234 (`"resolved bot identity: +{user_part}"`), over-redacting the very log line that confirms the link succeeded.
+- **Auto-generated pair codes** (from `Event::PairingCode`) are printed to stderr via the adapter's `eprintln!` (adapter.rs:248-251) — operator's intended display; NOT redacted because the eprintln path bypasses the tracing layer.
+- **Custom pair codes** (operator-supplied via `--pair-code` or `$OCTO_WHATSAPP_PAIR_CODE`) are passed to `PairCodeOptions::custom_code` (adapter.rs:261). R3-L1: the current adapter does NOT log the custom code anywhere (only the auto-generated path eprintlns), so there is nothing to redact. If a future adapter change adds `tracing::debug!` for the custom code, the redaction layer's `pair_code` key catches it. The custom code is **never visible in the terminal at any point**.
 - The resolved `self_phone` (from `Event::Connected`) is logged with a `+E164` prefix and is **not** a secret (it's the bot's own phone, displayed by WhatsApp in the linked devices list).
 - Identity fields (`self_phone`, `session_path`, `groups`) are safe to log.
 - `--verbose` enables DEBUG level; PII stays redacted at every level.
@@ -440,13 +440,53 @@ pub struct SessionInfo {
 The onboard core reuses `WhatsAppWebAdapter::start_bot()` to launch the bot, but the **identity observation** is custom to the onboard tool. The adapter's existing `Event::Connected` handler populates `self_phone` (adapter.rs:226-237), but the CLI needs to know **when** that happens. The algorithm:
 
 ```rust
+// R3-C2: the binary converts CoreError to OnboardError via this From impl
+// (defined in the binary, not the core — the core stays free of clap types).
+// The mapping is 1-to-1 and stable.
+impl From<CoreError> for OnboardError {
+    fn from(e: CoreError) -> Self {
+        match e {
+            CoreError::Adapter { source } => OnboardError::Generic(source),
+            CoreError::ClientBuild => OnboardError::Unreachable("client build failed".into()),
+            CoreError::InvalidPhone { value, reason } => {
+                OnboardError::BadConfig(format!("invalid phone {value:?}: {reason}"))
+            }
+            CoreError::InvalidSessionPath { path, reason } => {
+                OnboardError::BadConfig(format!("invalid session_path {:?}: {}", path, reason))
+            }
+            CoreError::Parse { path, source } => {
+                OnboardError::BadConfig(format!("parse {:?}: {}", path, source))
+            }
+            CoreError::Read { path, source } => {
+                OnboardError::BadConfig(format!("read {:?}: {}", path, source))
+            }
+            CoreError::SessionExpired => {
+                OnboardError::SessionExpired("Event::LoggedOut after a successful link".into())
+            }
+            CoreError::Timeout { secs } => {
+                OnboardError::Cancelled(format!("timed out after {secs}s waiting for Event::Connected"))
+            }
+        }
+    }
+}
+
 // R2-M3: returns CoreError (not OnboardError — the core lib and binary
 // have separate error enums; the binary converts via From<CoreError>).
+// R3-M1: after self_handle() returns Some, re-verify after a 100ms grace
+// period. The race window (Event::Connected → device.pn resolution vs.
+// Event::LoggedOut → bot_handle = None) is ~10-100ms in practice. If
+// the re-verify finds self_handle() is None or bot_handle is None,
+// the link was unlinked mid-handshake: treat as Event::LoggedOut.
 async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(phone) = adapter.self_handle() {
-            return Ok(phone);
+            // Re-verify after grace period (catches the Connected→LoggedOut race)
+            tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
+            if adapter.bot_handle_is_alive() && adapter.self_handle().is_some() {
+                return Ok(phone);
+            }
+            return Err(CoreError::SessionExpired);
         }
         if Instant::now() >= deadline {
             return Err(CoreError::Timeout { secs: timeout.as_secs() });
@@ -809,6 +849,7 @@ After successful `pair-link`:
 | 1.0 | 2026-06-12 | Initial draft |
 | 1.1 | 2026-06-12 | R1 fixes: removed internal Notify vs polling contradiction (R1-C1), removed `pair_code` field from `WhatsAppSession` (R1-C2), clarified `validate()` is in-memory only (R1-H1), added `$OCTO_WHATSAPP_PAIR_CODE` env var (R1-H2), reconciled deserialize vs adapter-instantiation schema check (R1-H3), pinned `WhatsAppSession` derives to `Debug, Clone` only (R1-M1), pinned polling interval to 250ms in mission AC (R1-M2), renamed `custom_pair_code` to `custom_code` (R1-M3), reframed determinism claim (R1-M4), justified "empty groups is OK" (R1-L1), demoted binary size to stretch target (R1-L2) |
 | 1.2 | 2026-06-12 | R2 fixes: fixed `to_disk_json` signature `&self` (R2-C1), removed `pair_code: null` from on-disk test vectors (R2-C2), added `OutputArgs` type to mission data structures (R2-H1), made `session remove` interactive with `--yes` flag and non-TTY fallback (R2-H2), clarified `chrono` is transitive (R2-H3), pinned sidecar `linked_at` to RFC 3339 UTC no-subsec (R2-M1), reordered `CoreError` variants alphabetically (R2-M2), fixed `wait_for_connected` to return `CoreError` (R2-M3), documented `--groups` JID form (R2-L1), documented `--groups` parsing edge cases (R2-L2) |
+| 1.3 | 2026-06-12 | R3 fixes: updated RFC CLI surface to show `OutputArgs` flatten (R3-C1), added explicit `From<CoreError> for OnboardError` impl (R3-C2), removed `pn` from `REDACT_KEYS` to avoid over-redacting `self_phone` log (R3-H1), added `core/time.rs` for the format helper (R3-H2), added 100ms grace period for `Connected→LoggedOut` race (R3-M1), added `parse_groups` value parser (R3-M2), made binary `write` layering explicit (R3-M3), reframed custom pair code redaction as defense-in-depth (R3-L1), added integration test for `Event::StreamError` exhaustion (R3-L2) |
 
 ## Related RFCs
 

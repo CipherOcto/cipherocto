@@ -63,7 +63,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `crates/octo-whatsapp-onboard/src/logging.rs` — tracing-subscriber init with redaction layer
   - Custom `Layer<S>` marker `RedactLayer` (mirrors `octo-matrix-onboard/src/logging.rs:RedactLayer`)
   - Custom `FormatEvent` impl `RedactingFormat` that walks event fields, applies redaction, writes formatted output
-  - `REDACT_KEYS = &["session_path", "pair_phone", "pair_code", "ws_url", "access_token", "pn", "noise_key", "identity_key", "signed_pre_key", "prekey"]` (case-insensitive substring match)
+  - `REDACT_KEYS = &["session_path", "pair_phone", "pair_code", "ws_url", "access_token", "noise_key", "identity_key", "signed_pre_key", "prekey", "sender_key"]` (case-insensitive substring match; R3-H1: `pn` is removed — the device's own phone number is logged unredacted with `+E164` prefix because it is the operator's own phone, not a secret)
   - Auto-generated pair codes from `Event::PairingCode` are NOT redacted (60s TTL, operator-visible by design)
   - Resolved `self_phone` from `Event::Connected` is NOT redacted (logged with `+E164` prefix, e.g., `+1 555 123 4567`)
 - [ ] `crates/octo-whatsapp-onboard/src/error.rs` — `OnboardError` enum:
@@ -82,7 +82,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - `pub fn as_exit_code(&self) -> std::process::ExitCode`
   - 7 distinct exit codes (one more than matrix/telegram's 6)
 - [ ] `crates/octo-whatsapp-onboard/src/output.rs` — config writer (atomic, 0600, --stdout, --force)
-  - `pub fn write(args: &OutputArgs, session: &WhatsAppSession) -> Result<()>`
+  - `pub fn write(args: &OutputArgs, session: &WhatsAppSession) -> Result<()>` (R3-M3: calls `session.to_disk_json()` from the core lib, then `write_atomic()` binary-private helper; the layering is: binary→core for JSON shape, binary→filesystem for atomic write; matches `octo-matrix-onboard/src/output.rs:40-63` pattern)
   - `write_atomic()` uses `tempfile::NamedTempFile` + `persist` (same as `octo-matrix-onboard/src/output.rs:65-118`)
   - `default_path()` returns `~/.config/octo/whatsapp.json` (uses `dirs::config_dir()`)
 
@@ -132,6 +132,8 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Writes `session_meta.json` next to the stoolap DB with `{ self_phone, linked_at, mode: "qr-link" | "pair-link", groups }`
   - Atomic write via `tempfile::NamedTempFile` + `persist`
   - Mode 0600 on Unix
+  - `linked_at` is formatted via `core::time::format_rfc3339_now()` (R3-H2: new module; see below)
+- [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_now() -> String` (R3-H2: helper for the sidecar's `linked_at` field; mirrors `octo-matrix-onboard/src/logging.rs:55-73`'s `format_rfc3339_now` and `crates/octo-matrix-onboard/src/logging.rs:82-95`'s `format_rfc3339_secs`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. The output is always UTC and always 30 characters wide for `format_rfc3339_now` or 20 for `format_rfc3339_secs`; falls back to `<unknown-ts>` on clock skew so a logging bug never breaks startup.)
 - [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs:22-59`)
   - Variants: alphabetical order (R2-M2: matches `cargo doc` and IDE jump-to-definition; documented as a project convention; deviation requires an RFC amendment). `Adapter { source }`, `ClientBuild`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `Parse { path, source }`, `Read { path, source }`, `SessionExpired`, `Timeout { secs }`
 
@@ -192,14 +194,18 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `output.rs`: atomic write, refuse overwrite without `--force`, force overwrite, file mode 0600, bare-filename path (`matrix.json` in cwd)
 - [ ] `error.rs`: 7-variant enum tests, `exit_code()` mapping, `as_exit_code()` conversion
 - [ ] `cli.rs`: clap parse tests (valid args, missing required, conflicting flags); `--groups` parsing tests (R2-L2: comma-separated, whitespace-trimmed, empty entries rejected, duplicates NOT deduplicated; e.g., `"a,b,c"` → `["a","b","c"]`, `"a, b, c"` → `["a","b","c"]`, `"a,,b"` → error exit 5, `"a,a,b"` → `["a","a","b"]`)
+  - Custom value parser `parse_groups(s: &str) -> Result<Vec<String>, String>` (R3-M2: clap's default `Vec<String>` does NOT trim whitespace and does NOT reject empty entries; the parser splits on `,`, trims, errors on empty, returns `Vec<String>`. Used via `#[arg(value_parser = parse_groups)]` on `--groups`.)
 - [ ] `logging.rs`: redaction layer tests (8-12 cases)
 - [ ] `core/output.rs`: `to_disk_json` round-trip with `WhatsAppConfig`, omit-when-None, never-include-`pair_code` (defense-in-depth: even if a future maintainer adds a `pair_code` field to the in-memory `WhatsAppSession`, the `to_disk_json` function must NOT include it; pin with a unit test)
 - [ ] `core/sidecar.rs`: write+read sidecar JSON, atomic write, mode 0600, `linked_at` format is RFC 3339 UTC with no sub-second precision (`%Y-%m-%dT%H:%M:%SZ`; R2-M1: pin with a regex test `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` to prevent drift)
 - [ ] `core/qr_link.rs` / `core/pair_link.rs`: input validation tests (no integration with real WhatsApp — those go in the integration test below)
 - [ ] Adapter change: `WhatsAppConfig::validate()` tests (3-5 cases: malformed phone [e.g., `"5551234"`, `"+0123456789"`, `"+1-555-123-4567"`], malformed ws_url [e.g., `"http://example.com"`, `"ftp://example.com"`], valid config with all fields, valid config with empty `groups`, valid config with `ws_url = None` and `pair_phone = None`)
 - [ ] `core/session.rs`: `wait_for_connected` polls `self_handle()` every 250ms (constant `POLL_INTERVAL_MS`); unit test pins the constant to 250ms ± 10ms to catch accidental changes (R1-M2)
+- [ ] `core/session.rs`: `wait_for_connected` re-verifies after a 100ms grace period (`POST_CONNECT_GRACE_MS`); unit test stubs `bot_handle_is_alive() = false` to assert `SessionExpired` is returned (R3-M1)
+- [ ] `logging.rs`: redaction layer tests (8 cases) — including one that verifies `pn` is **NOT** in the redact keys (R3-H1: `assert!(!REDACT_KEYS.contains(&"pn"))`) and one that verifies the resolved `self_phone` log line at adapter.rs:234 is **not** redacted (`assert!(formatted.contains("+1 555 123 4567"))`)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--phone` from CLI arg OR `$OCTO_WHATSAPP_PHONE` env var; CLI arg wins if both are set; unit test for env-var-only form (R1-H2)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--pair-code` from CLI arg OR `$OCTO_WHATSAPP_PAIR_CODE` env var; same precedence (CLI arg wins); unit test for env-var-only form (companion to R1-H2 phone test)
+- [ ] `error.rs`: unit tests for `impl From<CoreError> for OnboardError` (R3-C2: 8 cases, one per `CoreError` variant; asserts the exit code mapping is stable — `CoreError::Timeout { secs: 5 }` → `OnboardError::Cancelled` → exit 4; `CoreError::SessionExpired` → `OnboardError::SessionExpired` → exit 7; `CoreError::InvalidPhone` → `OnboardError::BadConfig` → exit 5; etc.)
 
 #### Adapter compatibility
 
@@ -212,6 +218,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `crates/octo-adapter-whatsapp/tests/integration_whatsapp.rs` — feature-gated `#[cfg(feature = "integration-whatsapp")]`
 - [ ] Requires `--ws-url` to a test WebSocket fixture (not a real WhatsApp server)
 - [ ] Asserts: `qr-link` exits 0, config JSON matches `WhatsAppConfig` schema, sidecar JSON parses, adapter can load the config
+- [ ] Asserts: stub `Event::StreamError` 11 times in a row; CLI exits 3 (Unreachable) within ~10 minutes (R3-L2: verifies the adapter's `run_reconnect_loop` exhausts `MAX_RETRIES = 10` then `start_bot()` returns `Err`, which the binary maps to `OnboardError::Unreachable`)
 - [ ] Driver: `scripts/integration-whatsapp.sh up|down` — `up` starts a fixture WebSocket server (e.g., `websocat -s 8080`), `down` stops it
 - [ ] Run: `cargo test -p octo-adapter-whatsapp --features integration-whatsapp --test integration_whatsapp -- --nocapture`
 

@@ -133,6 +133,14 @@ struct FieldCollector<'a> {
 impl<'a> Visit for FieldCollector<'a> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         use std::fmt::Write as _;
+        // R3-H1: the `message` field carries the formatted message
+        // body. Render it without the `message=` prefix so the
+        // operator sees natural log output. Other fields render
+        // as `key=value` pairs as before.
+        if field.name() == "message" {
+            let _ = write!(self.buf, " {:?}", value);
+            return;
+        }
         if !self.started {
             self.buf.push(' ');
             self.started = true;
@@ -147,6 +155,13 @@ impl<'a> Visit for FieldCollector<'a> {
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
         use std::fmt::Write as _;
+        // R3-H1: same special-case for the `message` field
+        // (record_str is called for &str values, which `tracing`
+        // uses for plain string fields).
+        if field.name() == "message" {
+            let _ = write!(self.buf, " {:?}", value);
+            return;
+        }
         if !self.started {
             self.buf.push(' ');
             self.started = true;
@@ -216,5 +231,59 @@ mod tests {
     #[test]
     fn non_redacted_field_does_not_match() {
         assert!(!is_redact_key("self_phone"));
+    }
+
+    // R3-H1: verify the message field renders without the
+    // `message=` prefix. We exercise the visitor via a real
+    // tracing Event by capturing the rendered output to a
+    // buffer.
+    #[test]
+    fn message_field_renders_without_prefix() {
+        use std::io::Write as _;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        // A `MakeWriter` impl that captures to a shared `Vec<u8>`.
+        #[derive(Clone)]
+        struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for CaptureWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for CaptureWriter {
+            type Writer = CaptureWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = CaptureWriter(buf.clone());
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .event_format(RedactingFormat::new())
+                    .with_writer(writer),
+            )
+            .try_init();
+
+        // Emit a message via the standard `info!` macro.
+        tracing::info!("resolved bot identity: +1 555 123 4567");
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        // The rendered output should contain the message body
+        // WITHOUT the `message=` prefix.
+        assert!(
+            captured.contains("resolved bot identity: +1 555 123 4567"),
+            "captured log: {captured}"
+        );
+        assert!(
+            !captured.contains("message="),
+            "captured log should NOT contain 'message=' prefix: {captured}"
+        );
     }
 }

@@ -287,4 +287,69 @@ mod tests {
             "message should NOT be surrounded by Debug quotes: {captured}"
         );
     }
+
+    // R6 regression check: when an event has BOTH a message
+    // AND a structured field, the rendered output should have
+    // a single space separator between them (not a double
+    // space). The message special-case in `FieldCollector`
+    // pre-pends its own space; the structured-field path also
+    // pre-pends a space (via the `started` flag). Without
+    // coordination, a single event with both would render as
+    // `... "message"  field1=value1` (double space).
+    #[test]
+    fn message_and_field_have_single_separator() {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for CaptureWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for CaptureWriter {
+            type Writer = CaptureWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = CaptureWriter(buf.clone());
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .event_format(RedactingFormat::new())
+                    .with_writer(writer),
+            )
+            .try_init();
+
+        // Emit a message WITH a structured field.
+        tracing::info!(user = "alice", "user logged in");
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        // The captured output should NOT contain a double space
+        // in the message-to-field separator. (Double spaces in
+        // the path / target are expected; the assertion is
+        // scoped to the message field.)
+        //
+        // The expected structure is: `target INFO path:line
+        //  "user logged in" user="alice"` (single space
+        // between the message and the field).
+        let msg_idx = captured.find("user logged in").expect("message should be in output");
+        // Look at the substring after the message: the field
+        // should be immediately after (with one space).
+        let after_msg = &captured[msg_idx + "user logged in".len()..];
+        assert!(
+            after_msg.starts_with(" user="),
+            "expected single space between message and field, got: {after_msg:?}"
+        );
+        // Both the message body and the field should be present.
+        assert!(captured.contains("user logged in"), "captured: {captured}");
+        assert!(captured.contains("user=\"alice\""), "captured: {captured}");
+    }
 }

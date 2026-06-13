@@ -178,9 +178,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Loads config JSON, extracts `session_path`
   - Builds `WhatsAppWebAdapter` against `session_path`
   - Calls `wait_for_connected` with `Duration::from_secs(WHOAMI_TIMEOUT_SECS)` (R8-H1: uses the named constant, not `Duration::from_secs(30)`; the constant is defined in `core/session.rs` and is hardcoded — the 30s is not a CLI flag. R5-H2: 10s was tight for slow networks; the timeout is internal to `wait_for_connected` — if `Event::Connected` has already fired, the function returns on the first poll (<10ms). 30s is only hit in pathological network cases.)
-  - Match on the result (R7-M1): `Ok(phone) => { println!("+{phone}"); Ok(()) }`, `Err(CoreError::SessionExpired) => Err(OnboardError::SessionExpired("Session expired or invalid".into()))`, `Err(CoreError::Timeout { secs }) => Err(OnboardError::Cancelled(format!("Timeout after {secs}s")))`, `Err(e) => Err(OnboardError::from(e))`. Exit per `OnboardError::as_exit_code()`.
-  - On success: prints `+{self_phone}` and exits 0
-  - On `Event::LoggedOut` / timeout: prints "Session expired or invalid" and exits 7 (`SessionExpired`)
+  - Match on the result (R7-M1): `Ok(phone) => { println!("+{phone}"); Ok(()) }`, `Err(CoreError::SessionExpired) => Err(OnboardError::SessionExpired("Session expired or invalid".into()))`, `Err(CoreError::Timeout { secs }) => Err(OnboardError::Cancelled(format!("Timeout after {secs}s")))`, `Err(e) => Err(OnboardError::from(e))`. Exit per `OnboardError::as_exit_code()`. (R9-M1: the natural-language bullets that previously summarized the success/failure cases have been subsumed by the match; the match is the canonical spec.)
 - [ ] `octo-whatsapp-onboard session list --base-dir DIR`
   - Scans `~/.local/share/octo/whatsapp/` (or `--base-dir`)
   - For each `*.session.db`: check for `session_meta.json` sidecar
@@ -190,7 +188,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Exits 0
 - [ ] `octo-whatsapp-onboard session verify <DB-PATH>`
   - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with `Duration::from_secs(WHOAMI_TIMEOUT_SECS)` (R5-H2: same reasoning as `whoami`. R8-H1: uses the constant.)
-  - Prints "valid" or "expired" and exits 0 / 7
+  - Match on the result (R9-L1): same pattern as `whoami` line ~181, but the user-facing messages are `'valid'` on `Ok(_)`, `'expired'` on `Err(CoreError::SessionExpired)`, and the per-error message for other variants. Consider extracting a shared `format_session_status(Result<String, CoreError>) -> Result<(), OnboardError>` helper if the two call sites duplicate the match. Exit per `OnboardError::as_exit_code()`.
 - [ ] `octo-whatsapp-onboard session remove <DB-PATH>`
   - Uses `dialoguer::Confirm::new().with_prompt(format!("Remove session at {db_path:?}?")).default(false).interact()?` for the confirmation (R2-H2: interactive y/N with default No catches the CI misconfiguration case where `echo "y" | ...` would otherwise silently delete a session DB; `dialoguer` dep added to `Cargo.toml`)
   - If stdin is not a TTY (CI): refuse to prompt, return `OnboardError::BadConfig("session remove requires a TTY (pass --yes to skip the interactive prompt)")`; exit 5

@@ -238,7 +238,7 @@ sequenceDiagram
     participant WA as WhatsApp Web
 
     Op->>CLI: pair-link --phone +15551234567 --out CONFIG
-    CLI->>CLI: Validate phone (E.164, digits-only after +)
+    CLI->>CLI: Validate phone (E.164, digits-only after +) + session_path dir created mode 0700 (R13-L1: same as qr-link; the validation step was on qr-link line 196 but missing from pair-link after R6-M2 refactor)
     CLI->>Adapter: WhatsAppWebAdapter::new(config with pair_phone)
     CLI->>Adapter: start_bot()
     Adapter->>Adapter: builder.with_pair_code(PairCodeOptions { phone_number, custom_code, .. })
@@ -887,6 +887,7 @@ After successful `pair-link`:
 | 1.10 | 2026-06-12 | R10 fixes: `SessionInfo::last_linked_at` changed from `Option<chrono::DateTime<Utc>>` to `Option<String>` (R10-L1: sidecar JSON is a String; avoids chrono dep and parse-from-RFC-3339 complexity); R2-H3's "chrono::Utc::now() in sidecar" claim removed (R4-L2 replaced it with `format_rfc3339_secs`) |
 | 1.11 | 2026-06-12 | R11 fixes: RFC `SessionInfo::last_linked_at` updated to match the mission's R10-L1 fix (R10 fix was incomplete — only updated the mission, not the RFC; drift between the two docs) |
 | 1.12 | 2026-06-12 | R12 fixes: mission's Location section updated to match the RFC's R1-H1 fix (workspace is auto-included via `members = ["crates/*"]` glob; no manual edit required) |
+| 1.13 | 2026-06-12 | R13 fixes: pair-link sequence diagram now includes the `session_path dir created mode 0700` validation step (was on qr-link line 196 but missing from pair-link after R6-M2 refactor) |
 
 ## Related RFCs
 

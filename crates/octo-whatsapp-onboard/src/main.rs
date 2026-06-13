@@ -118,10 +118,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
 }
 
 async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), OnboardError> {
-    let base_dir = args
-        .base_dir
-        .clone()
-        .unwrap_or_else(default_session_base_dir);
+    // R4-L1: no clone needed; args is by-value and args.base_dir
+    // is the only consumer of `args`.
+    let base_dir = args.base_dir.unwrap_or_else(default_session_base_dir);
     let infos = list_sessions(&base_dir).await?;
     println!(
         "{:<60}  {:<15}  {:<22}  VALID",

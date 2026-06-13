@@ -239,7 +239,6 @@ mod tests {
     // buffer.
     #[test]
     fn message_field_renders_without_prefix() {
-        use std::io::Write as _;
         use std::sync::{Arc, Mutex};
         use tracing_subscriber::fmt::MakeWriter;
 
@@ -284,6 +283,18 @@ mod tests {
         assert!(
             !captured.contains("message="),
             "captured log should NOT contain 'message=' prefix: {captured}"
+        );
+        // R4-M1 regression check: the message should NOT be
+        // surrounded by Debug's `\"...\"` quotes. The standard
+        // tracing-subscriber Format uses format_args! for messages
+        // (no Debug wrapping). For `&str` fields, the rendered
+        // body is the unwrapped string. If a future maintainer
+        // uses `{:?}` for the message, the body would be
+        // `"resolved bot identity: +1 555 123 4567"` (with
+        // surrounding quotes). Pin against this.
+        assert!(
+            !captured.contains("\"resolved bot identity: +1 555 123 4567\""),
+            "message should NOT be surrounded by Debug quotes: {captured}"
         );
     }
 }

@@ -120,12 +120,14 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Validate inputs (`session_path` parent dir creatable, `groups` non-empty strings, `ws_url` starts with `ws://` or `wss://` if set)
   - Build `WhatsAppConfig` stub `{ session_path, groups, ws_url: None, pair_phone: None, pair_code: None }` (R1-H2: `pair_phone` may be pre-set from `$OCTO_WHATSAPP_PHONE`; `pair_code` is set by `pair-link` from `--pair-code` or `$OCTO_WHATSAPP_PAIR_CODE` and is never persisted to disk)
   - Call `WhatsAppWebAdapter::new(config).start_bot().await`
-  - Poll `adapter.self_handle()` every 250ms with `--timeout` deadline
+  - Calls `wait_for_connected(adapter, Duration::from_secs(args.timeout_secs))` (R5-H1: use the shared helper, do not inline-poll; the helper's 100ms grace period + `health_check` re-verify + `From<CoreError>` flow all live in one place)
+  - Calls `sidecar::write_sidecar(&session_path, &session)` (R5-M2: sidecar is required, written immediately after `wait_for_connected` returns Ok, **before** the config JSON write)
   - On success: return `WhatsAppSession { self_phone, session_path, groups, .. }`
 - [ ] `crates/octo-whatsapp-onboard-core/src/pair_link.rs` — `pub async fn run(args: PairLinkArgs) -> Result<WhatsAppSession, CoreError>`
   - Validate phone with regex `^\+[1-9]\d{6,14}$` (E.164) — reject with `CoreError::InvalidPhone` otherwise
   - Build `WhatsAppConfig` stub with `pair_phone: Some(phone)`, `pair_code: Some(custom_code_from_arg_or_env)` (R1-C2: the `custom_code` is passed to `WhatsAppWebAdapter` for the link, then **dropped** after `Event::Connected`. It never enters the on-disk config, the sidecar, or the `WhatsAppSession` struct)
-  - Same `start_bot` + poll-`self_handle` flow
+  - Same `start_bot` + `wait_for_connected` flow as `qr_link::run` (R5-H1: the phone-validation and pair-code path is different but the wait logic is shared; `wait_for_connected` is called once with `args.timeout_secs`)
+  - Same `sidecar::write_sidecar` call as `qr_link::run` (R5-M2)
 - [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError>`
   - Polling loop with 250ms granularity, `tokio::time::sleep` between polls
   - On `Event::LoggedOut` (observable via `self_handle() == None AND bot_handle == None` after deadline): return `Err(CoreError::SessionExpired)`
@@ -133,11 +135,11 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Field-by-field `serde_json::Map` (mirrors `octo-matrix-onboard-core/src/lib.rs:161-187`)
   - Omits `pair_phone` when `None`, `ws_url` when `None` (matches adapter's `#[serde(default)]` behavior)
   - NEVER serializes `pair_code` (operator-typed, ephemeral; field is not on `WhatsAppSession` per R1-C2)
-- [ ] `crates/octo-whatsapp-onboard-core/src/sidecar.rs` — `pub fn write_sidecar(session_path: &Path, session: &WhatsAppSession) -> Result<()>`
+- [ ] `crates/octo-whatsapp-onboard-core/src/sidecar.rs` — `pub fn write_sidecar(session_path: &Path, session: &WhatsAppSession) -> Result<()>` (R5-M2: sidecar is **required**, not an optimization. Written immediately after `wait_for_connected` returns Ok, **before** the config JSON write. If the sidecar write fails, the link fails with `CoreError::Adapter { source }` — the operator should not get a "linked" exit 0 if the metadata is missing, because `session list` would then have to fall back to 5s bot startup per session. The "optimization" framing from earlier rounds was wrong: the matrix-onboard's `LAST_USED` is required for the same reason.)
   - Writes `session_meta.json` next to the stoolap DB with `{ self_phone, linked_at, mode: "qr-link" | "pair-link", groups }`
   - Atomic write via `tempfile::NamedTempFile` + `persist`
   - Mode 0600 on Unix
-  - `linked_at` is formatted via `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H1 / R4-L2: the call site uses `crate::time::...`, not `core::time::...` — the crate does not have a `core` module name; `core` would shadow the standard library's `core` crate in some contexts. The helper takes an explicit `epoch_secs: u64` arg, returns the 20-char no-subsec format `YYYY-MM-DDTHH:MM:SSZ`; mirrors `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs`. `format_rfc3339_now` is `pub fn` in `octo-whatsapp-onboard-core/src/time.rs`)
+  - `linked_at` is formatted via `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H1 / R4-L2: the call site uses `crate::time::...`, not `core::time::...` — the crate does not have a `core` module name; `core` would shadow the standard library's `core` crate in some contexts. The helper takes an explicit `epoch_secs: u64` arg, returns the 20-char no-subsec format `YYYY-MM-DDTHH:MM:SSZ`; mirrors `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs`. R5-L2: call site is `let linked_at = crate::time::format_rfc3339_secs(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));` — the `unwrap_or(0)` propagates the pre-1970 fallback to the helper (which returns `<unknown>`).)
 - [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_secs(epoch_secs: u64) -> String` (R4-L2: renamed from `format_rfc3339_now`; takes explicit epoch-seconds arg, returns 20-char no-subsec `YYYY-MM-DDTHH:MM:SSZ` format. Mirrors `octo-matrix-onboard/src/logging.rs:82`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. Returns `<unknown>` for `epoch_secs == 0` so a missing/wrong field doesn't carry a misleading 1969-12-31 timestamp. Unit tests: (1) `format_rfc3339_secs(0)` returns `<unknown>`; (2) `format_rfc3339_secs(1700000000)` returns `2023-11-14T22:13:20Z`; (3) negative durations from `SystemTime` are pre-1970 and return `<unknown>`.)
 - [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs:22-59`)
   - Variants: alphabetical order (R2-M2: matches `cargo doc` and IDE jump-to-definition; documented as a project convention; deviation requires an RFC amendment). `Adapter { source }`, `ClientBuild`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `Parse { path, source }`, `Read { path, source }`, `SessionExpired`, `Timeout { secs }`
@@ -159,7 +161,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `octo-whatsapp-onboard whoami --config CONFIG`
   - Loads config JSON, extracts `session_path`
   - Builds `WhatsAppWebAdapter` against `session_path`
-  - Calls `wait_for_connected` with 10s timeout
+  - Calls `wait_for_connected` with **30s** timeout (R5-H2: 10s was tight for slow networks; the timeout is internal to `wait_for_connected` — if `Event::Connected` has already fired, the function returns on the first poll (<10ms). 30s is only hit in pathological network cases.)
   - On success: prints `+{self_phone}` and exits 0
   - On `Event::LoggedOut` / timeout: prints "Session expired or invalid" and exits 7 (`SessionExpired`)
 - [ ] `octo-whatsapp-onboard session list --base-dir DIR`
@@ -170,7 +172,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Tabular output: `SESSION_PATH`, `SELF_PHONE`, `LINKED_AT`, `VALID` columns
   - Exits 0
 - [ ] `octo-whatsapp-onboard session verify <DB-PATH>`
-  - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with 10s timeout
+  - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with **30s** timeout (R5-H2: same reasoning as `whoami`)
   - Prints "valid" or "expired" and exits 0 / 7
 - [ ] `octo-whatsapp-onboard session remove <DB-PATH>`
   - Uses `dialoguer::Confirm::new().with_prompt(format!("Remove session at {db_path:?}?")).default(false).interact()?` for the confirmation (R2-H2: interactive y/N with default No catches the CI misconfiguration case where `echo "y" | ...` would otherwise silently delete a session DB; `dialoguer` dep added to `Cargo.toml`)
@@ -201,8 +203,9 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `cli.rs`: clap parse tests (valid args, missing required, conflicting flags); `--groups` parsing tests (R2-L2: comma-separated, whitespace-trimmed, empty entries rejected, duplicates NOT deduplicated; e.g., `"a,b,c"` → `["a","b","c"]`, `"a, b, c"` → `["a","b","c"]`, `"a,,b"` → error exit 5, `"a,a,b"` → `["a","a","b"]`)
   - Custom value parser `parse_groups(s: &str) -> Result<Vec<String>, String>` (R3-M2: clap's default `Vec<String>` does NOT trim whitespace and does NOT reject empty entries; the parser splits on `,`, trims, errors on empty, returns `Vec<String>`. Used via `#[arg(value_parser = parse_groups)]` on `--groups`.)
 - [ ] `logging.rs`: redaction layer tests (8-12 cases)
-- [ ] `core/output.rs`: `to_disk_json` round-trip with `WhatsAppConfig`, omit-when-None, never-include-`pair_code` (defense-in-depth: even if a future maintainer adds a `pair_code` field to the in-memory `WhatsAppSession`, the `to_disk_json` function must NOT include it; pin with a unit test)
+- [ ] `core/output.rs`: round-trip via adapter instantiation (R5-M1: build `WhatsAppConfig::from(to_disk_json(&session))`, call `WhatsAppWebAdapter::new(cfg)`, assert `Ok(())`; matches R1-H3's "config-from-onboard → adapter instantiation" strongest claim. The deserialize-only round-trip is also covered as a faster pre-flight check via `serde_json::from_value::<WhatsAppConfig>(to_disk_json(&session))`), omit-when-None, never-include-`pair_code` (defense-in-depth: even if a future maintainer adds a `pair_code` field to the in-memory `WhatsAppSession`, the `to_disk_json` function must NOT include it; pin with a unit test)
 - [ ] `core/sidecar.rs`: write+read sidecar JSON, atomic write, mode 0600, `linked_at` format is RFC 3339 UTC with no sub-second precision (`%Y-%m-%dT%H:%M:%SZ`; R2-M1: pin with a regex test `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` to prevent drift)
+- [ ] `core/sidecar.rs`: sidecar write failure returns `CoreError::Adapter` (R5-M2: sidecar is required, not optional; the unit test stubs `tempfile::NamedTempFile::new_in` to return an error and asserts the `CoreError::Adapter` variant is returned)
 - [ ] `core/qr_link.rs` / `core/pair_link.rs`: input validation tests (no integration with real WhatsApp — those go in the integration test below)
 - [ ] Adapter change: `WhatsAppConfig::validate()` tests (3-5 cases: malformed phone [e.g., `"5551234"`, `"+0123456789"`, `"+1-555-123-4567"`], malformed ws_url [e.g., `"http://example.com"`, `"ftp://example.com"`], valid config with all fields, valid config with empty `groups`, valid config with `ws_url = None` and `pair_phone = None`)
 - [ ] `core/session.rs`: `wait_for_connected` polls `self_handle()` every 250ms (constant `POLL_INTERVAL_MS`); unit test pins the constant to 250ms ± 10ms to catch accidental changes (R1-M2)

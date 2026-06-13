@@ -92,6 +92,12 @@ pub async fn close_tdlib_client_with_timeout(client_id: i32, timeout: std::time:
 }
 
 /// Credentials provided by the operator (CLI args or env vars).
+///
+/// Known limitation: `api_hash` and `bot_token` are `Zeroizing<String>`
+/// (zeroed on drop), but TDLib's API requires `String` by value. The
+/// `to_string()` clones at the TDLib boundary produce plain `String`s
+/// that are not zeroized. This is documented per R16-C2/R25-M1.
+/// Fixing this requires upstream TDLib API changes or unsafe zeroize.
 pub struct Credentials {
     pub phone: Option<String>,
     pub api_id: i32,
@@ -706,6 +712,9 @@ async fn extract_identity(
             )))
         }
     };
+
+    // R19-M4: Telegram user IDs are always positive; lock in the assumption.
+    debug_assert!(me.id > 0, "get_me returned non-positive user_id: {}", me.id);
 
     let mode = if creds.bot_token.is_some() {
         "bot".to_string()

@@ -188,8 +188,7 @@ octo-whatsapp-onboard
 sequenceDiagram
     participant Op as Operator
     participant CLI as octo-whatsapp-onboard
-    participant Adapter as WhatsAppWebAdapter
-    participant Bot as Bot::on_event
+    participant Adapter as WhatsAppWebAdapter<br/>(incl. Bot + on_event)
     participant WA as WhatsApp Web
     participant SP as StoolapStore
 
@@ -199,20 +198,20 @@ sequenceDiagram
     CLI->>Adapter: WhatsAppWebAdapter::new(config)
     CLI->>Adapter: start_bot()
     Adapter->>SP: StoolapStore::new(session_path) (init schema)
-    Adapter->>Bot: builder.build().await
-    Adapter->>Bot: bot.run().await → BotHandle
-    Bot->>WA: WS connect + noise handshake
-    WA-->>Bot: Event::PairingQrCode { code, .. }
-    Bot->>CLI: eprintln QR (unicode half-block via qrcode crate)
+    Adapter->>Adapter: builder.build().await
+    Adapter->>Adapter: bot.run().await → BotHandle
+    Adapter->>WA: WS connect + noise handshake
+    WA-->>Adapter: Event::PairingQrCode { code, .. }
+    Adapter->>CLI: eprintln QR (unicode half-block via qrcode crate; via on_event closure)
     Op->>Op: Open WhatsApp > Linked Devices > Link a Device
     Op->>WA: Scan QR code
-    WA-->>Bot: Event::Connected
-    Bot->>SP: Persist device.pn (signal identity)
-    Bot->>Bot: Resolve self_phone from device snapshot
-    Bot-->>CLI: tracing::info "resolved bot identity: +{user_part}"
+    WA-->>Adapter: Event::Connected
+    Adapter->>SP: Persist device.pn (signal identity)
+    Adapter->>Adapter: Resolve self_phone from device snapshot
+    Adapter-->>CLI: tracing::info "resolved bot identity: +{user_part}" (via on_event closure)
     CLI->>Adapter: self_handle() → Some("15551234567")
-    CLI->>CLI: Build final WhatsAppConfig { session_path, groups, ... }
-    CLI->>CLI: Atomic write (tempfile + persist, mode 0600)
+    CLI->>CLI: (1) write_sidecar (2) build final WhatsAppConfig { session_path, groups, ... } (R6-M1: sidecar first)
+    CLI->>CLI: (3) Atomic write (tempfile + persist, mode 0600)
     CLI->>CLI: Print: "Authenticated as +1 555 123 4567 (session: DIR)"
     CLI-->>Op: Exit 0
 ```
@@ -235,23 +234,23 @@ sequenceDiagram
 sequenceDiagram
     participant Op as Operator
     participant CLI as octo-whatsapp-onboard
-    participant Adapter as WhatsAppWebAdapter
-    participant Bot as Bot::on_event
+    participant Adapter as WhatsAppWebAdapter<br/>(incl. Bot + on_event)
     participant WA as WhatsApp Web
 
     Op->>CLI: pair-link --phone +15551234567 --out CONFIG
     CLI->>CLI: Validate phone (E.164, digits-only after +)
     CLI->>Adapter: WhatsAppWebAdapter::new(config with pair_phone)
     CLI->>Adapter: start_bot()
-    Adapter->>Bot: builder.with_pair_code(PairCodeOptions { phone_number, custom_code, .. })
-    Bot->>WA: Request pair code
-    WA-->>Bot: Event::PairingCode { code: "ABCD-EFGH", .. }
-    Bot->>CLI: eprintln "WhatsApp pair code: ABCD-EFGH"
+    Adapter->>Adapter: builder.with_pair_code(PairCodeOptions { phone_number, custom_code, .. })
+    Adapter->>WA: Request pair code
+    WA-->>Adapter: Event::PairingCode { code: "ABCD-EFGH", .. }
+    Adapter->>CLI: eprintln "WhatsApp pair code: ABCD-EFGH" (via on_event closure)
     Op->>Op: Open WhatsApp > Linked Devices > Link with phone number
     Op->>WA: Enter code "ABCD-EFGH"
-    WA-->>Bot: Event::Connected
+    WA-->>Adapter: Event::Connected
+    Adapter->>Adapter: resolve device.pn → self_phone (via on_event closure)
     CLI->>Adapter: self_handle() → Some("15551234567")
-    CLI->>CLI: Build final config, atomic write
+    CLI->>CLI: (1) write_sidecar (2) build final config, atomic write (R6-M1: sidecar first)
     CLI-->>Op: Exit 0
 ```
 
@@ -369,7 +368,7 @@ Same pattern as `octo-matrix-onboard` (logging.rs:38-44) and `octo-telegram-onbo
 
 The `session_path` is the **path to the stoolap database file itself**, not a containing directory. The stoolap store is a single-file database (CipherOcto fork, `feat/blockchain-sql` branch). Operators managing multiple accounts use distinct `--session-path` values.
 
-The `session list` subcommand scans the `~/.local/share/octo/whatsapp/` base directory, reads metadata from a `session_meta.json` sidecar file written by `qr-link`/`pair-link` alongside the stoolap DB (fast, no bot startup needed), and prints account info. If no sidecar exists, the tool falls back to starting a `WhatsAppWebAdapter` against the session DB and calling `self_handle()` with a 5s timeout.
+The `session list` subcommand scans the `~/.local/share/octo/whatsapp/` base directory. See §Session Management Implementation for the sidecar fast-path and bot-startup fallback details. (R6-L1: removed duplicate sentence; the §Session Management section is the canonical location.)
 
 ### RFC-0008 Execution Class Mapping
 
@@ -615,7 +614,7 @@ SESSION_PATH                                    SELF_PHONE     LINKED_AT        
 /home/user/.local/share/octo/whatsapp/old.session.db        <unknown>      <unknown>            no (expired)
 ```
 
-**Implementation:** For each `*.session.db` file in the base dir, the tool first checks for a `session_meta.json` sidecar file (written by `qr-link`/`pair-link` alongside the stoolap DB). If the sidecar exists, it reads `self_phone`, `linked_at`, `mode`, `groups` directly (fast, no bot startup needed). If no sidecar exists, it creates a temporary `WhatsAppWebAdapter` against the DB, waits up to 5s for `self_handle()`, and prints the result.
+**Implementation:** For each `*.session.db` file in the base dir, the tool first checks for a `session_meta.json` sidecar file (written by `qr-link`/`pair-link` alongside the stoolap DB). If the sidecar exists, it reads `self_phone`, `linked_at`, `mode`, `groups` directly (fast, no bot startup needed). If no sidecar exists, it creates a temporary `WhatsAppWebAdapter` against the DB, calls `wait_for_health(adapter, Duration::from_secs(5))` (R6-H2: use the shared helper, do not inline-poll), and prints the result.
 
 `session verify <DB-PATH>` checks if a specific stoolap database has a valid Signal session (same `self_handle()` check, no fallback to a sidecar). `session remove <DB-PATH>` deletes a database file after confirmation.
 
@@ -856,6 +855,7 @@ After successful `pair-link`:
 | 1.3 | 2026-06-12 | R3 fixes: updated RFC CLI surface to show `OutputArgs` flatten (R3-C1), added explicit `From<CoreError> for OnboardError` impl (R3-C2), removed `pn` from `REDACT_KEYS` to avoid over-redacting `self_phone` log (R3-H1), added `core/time.rs` for the format helper (R3-H2), added 100ms grace period for `Connected→LoggedOut` race (R3-M1), added `parse_groups` value parser (R3-M2), made binary `write` layering explicit (R3-M3), reframed custom pair code redaction as defense-in-depth (R3-L1), added integration test for `Event::StreamError` exhaustion (R3-L2) |
 | 1.4 | 2026-06-12 | R4 fixes: replaced phantom `bot_handle_is_alive()` with existing `health_check()` (R4-C1; R3-M1 regression — method doesn't exist on `WhatsAppWebAdapter`), use `crate::time::` not `core::time::` in call site (R4-H1), added `POST_CONNECT_GRACE_MS` constant definition + unit test (R4-H2), dropped `[R3-C1]` tag from CLI surface for consistency (R4-M1), removed dead `format_rfc3339_secs` reference (R4-M2), added `From<CoreError>` stub to mission data structure block (R4-M3), reframed whoami latency as <10s (network-bound) not <2s (R4-L1), renamed helper to `format_rfc3339_secs(epoch_secs)` matching matrix pattern (R4-L2) |
 | 1.5 | 2026-06-12 | R5 fixes: `qr_link::run` and `pair_link::run` now call `wait_for_connected` (R5-H1), bumped `whoami` and `session verify` `wait_for_connected` timeouts from 10s to 30s for slow networks (R5-H2), clarified `to_disk_json` round-trip is via adapter instantiation (R5-M1), sidecar is **required** (not optimization), written before config JSON (R5-M2), `format_rfc3339_secs` call site conversion shown (R5-L2) |
+| 1.6 | 2026-06-12 | R6 fixes: `sidecar::write_sidecar` is `crate::sidecar::write_sidecar` (R6-H1), added `wait_for_health` helper for `session list` fallback (R6-H2), qr-link and pair-link AC specify sidecar-first ordering (R6-M1), pair-link and qr-link sequence diagrams show `Bot + on_event` as a composite of the adapter (R6-M2), dedupe of sidecar fast-path sentence (R6-L1) |
 
 ## Related RFCs
 

@@ -121,16 +121,17 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Build `WhatsAppConfig` stub `{ session_path, groups, ws_url: None, pair_phone: None, pair_code: None }` (R1-H2: `pair_phone` may be pre-set from `$OCTO_WHATSAPP_PHONE`; `pair_code` is set by `pair-link` from `--pair-code` or `$OCTO_WHATSAPP_PAIR_CODE` and is never persisted to disk)
   - Call `WhatsAppWebAdapter::new(config).start_bot().await`
   - Calls `wait_for_connected(adapter, Duration::from_secs(args.timeout_secs))` (R5-H1: use the shared helper, do not inline-poll; the helper's 100ms grace period + `health_check` re-verify + `From<CoreError>` flow all live in one place)
-  - Calls `sidecar::write_sidecar(&session_path, &session)` (R5-M2: sidecar is required, written immediately after `wait_for_connected` returns Ok, **before** the config JSON write)
+  - Calls `crate::sidecar::write_sidecar(&session_path, &session)` (R5-M2: sidecar is required, written immediately after `wait_for_connected` returns Ok, **before** the config JSON write. R6-H1: the call site uses `crate::sidecar::...`, not the unqualified `sidecar::...` — the call is across modules, in the same crate, so the `crate::` prefix is required.)
   - On success: return `WhatsAppSession { self_phone, session_path, groups, .. }`
 - [ ] `crates/octo-whatsapp-onboard-core/src/pair_link.rs` — `pub async fn run(args: PairLinkArgs) -> Result<WhatsAppSession, CoreError>`
   - Validate phone with regex `^\+[1-9]\d{6,14}$` (E.164) — reject with `CoreError::InvalidPhone` otherwise
   - Build `WhatsAppConfig` stub with `pair_phone: Some(phone)`, `pair_code: Some(custom_code_from_arg_or_env)` (R1-C2: the `custom_code` is passed to `WhatsAppWebAdapter` for the link, then **dropped** after `Event::Connected`. It never enters the on-disk config, the sidecar, or the `WhatsAppSession` struct)
   - Same `start_bot` + `wait_for_connected` flow as `qr_link::run` (R5-H1: the phone-validation and pair-code path is different but the wait logic is shared; `wait_for_connected` is called once with `args.timeout_secs`)
-  - Same `sidecar::write_sidecar` call as `qr_link::run` (R5-M2)
+  - Same `crate::sidecar::write_sidecar` call as `qr_link::run` (R5-M2 + R6-H1)
 - [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError>`
   - Polling loop with 250ms granularity, `tokio::time::sleep` between polls
   - On `Event::LoggedOut` (observable via `self_handle() == None AND bot_handle == None` after deadline): return `Err(CoreError::SessionExpired)`
+- [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_health(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<(), CoreError>` (R6-H2: dedicated helper for `session list` fallback. Same `POLL_INTERVAL_MS` polling + `POST_CONNECT_GRACE_MS` re-verify as `wait_for_connected`, but returns `Result<(), CoreError>` (no phone-number resolution) — `session list` only needs `is_valid: bool`, not the phone number. Without this helper, the fallback re-implements polling inline and skips the 100ms grace period.)
 - [ ] `crates/octo-whatsapp-onboard-core/src/output.rs` — `pub fn to_disk_json(&self) -> serde_json::Value` (R2-C1: method on `WhatsAppSession`, matches the `octo-matrix-onboard-core::Session::to_disk_json` pattern at `crates/octo-matrix-onboard-core/src/lib.rs:161`)
   - Field-by-field `serde_json::Map` (mirrors `octo-matrix-onboard-core/src/lib.rs:161-187`)
   - Omits `pair_phone` when `None`, `ws_url` when `None` (matches adapter's `#[serde(default)]` behavior)
@@ -150,13 +151,13 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Validates inputs, builds adapter, starts bot
   - QR code rendered to stderr (via adapter's existing `eprintln!` on `Event::PairingQrCode`)
   - Blocks on `wait_for_connected` until `Event::Connected` or `--timeout`
-  - On success: writes `session_meta.json` sidecar + atomic config JSON to `--out`
+  - On success: (1) `crate::sidecar::write_sidecar` first, then (2) atomic config JSON to `--out` (R6-M1: sidecar-first ordering — a sidecar write failure leaves the stoolap DB linked but without fast metadata, which is recoverable via `session list` fallback. Config-first ordering would leave a config pointing at a half-state sidecar-less session, which is harder to recover. The order is the inverse of the matrix-onboard's `output::write` flow because the sidecar is required for fast `session list`; the matrix-onboard's `LAST_USED` is not a correctness requirement.)
   - Exits 0
 - [ ] `octo-whatsapp-onboard pair-link --phone +15551234567 --out CONFIG`
   - Validates phone (E.164), builds adapter with `pair_phone`, starts bot
   - Pair code printed to stderr (via adapter's existing `eprintln!` on `Event::PairingCode`)
   - Blocks on `wait_for_connected` until `Event::Connected` or `--timeout`
-  - On success: writes sidecar + atomic config JSON
+  - On success: (1) `crate::sidecar::write_sidecar` first, then (2) atomic config JSON to `--out` (R6-M1: same ordering as qr-link)
   - Exits 0
 - [ ] `octo-whatsapp-onboard whoami --config CONFIG`
   - Loads config JSON, extracts `session_path`
@@ -168,7 +169,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Scans `~/.local/share/octo/whatsapp/` (or `--base-dir`)
   - For each `*.session.db`: check for `session_meta.json` sidecar
   - If sidecar exists: parse with `serde_json` and print directly (fast path)
-  - If sidecar missing: build adapter, call `self_handle()` with 5s timeout, print result with `<unknown>` for missing fields
+  - If sidecar missing: build adapter, call `wait_for_health(adapter, Duration::from_secs(5))` (R6-H2: use the shared helper, do not inline-poll), print result with `<unknown>` for missing fields
   - Tabular output: `SESSION_PATH`, `SELF_PHONE`, `LINKED_AT`, `VALID` columns
   - Exits 0
 - [ ] `octo-whatsapp-onboard session verify <DB-PATH>`

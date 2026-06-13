@@ -219,7 +219,8 @@ impl WhatsAppWebAdapter {
     /// Start the WhatsApp Web bot in a background task.
     pub async fn start_bot(&self) -> Result<()> {
         let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
-        let storage = StoolapStore::new(&expanded_path)?;
+        let storage = StoolapStore::new(&expanded_path)
+            .map_err(|e| anyhow::anyhow!("stoolap store init at {expanded_path:?}: {e:#}"))?;
         let backend = Arc::new(storage);
 
         // Create transport factory

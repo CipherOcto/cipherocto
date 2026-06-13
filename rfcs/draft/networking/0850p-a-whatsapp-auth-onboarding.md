@@ -148,7 +148,7 @@ octo-whatsapp-onboard
 │   ├── --session-path <DIR>      (default: ~/.local/share/octo/whatsapp/default.session.db)
 │   ├── --ws-url <URL>            (test/proxy; or $OCTO_WHATSAPP_WS_URL)
 │   ├── --groups <ID,ID,ID>       (initial group IDs to monitor; default: empty. R2-L1: accepts digits-only `120363012345678901` OR full JID `120363012345678901@g.us`; the adapter's `group_to_jid` normalizes either form on receive. R2-L2: comma-separated; whitespace trimmed; empty entries rejected; duplicates NOT deduplicated.)
-│   ├── --out <PATH>              (OutputArgs: flatten target [R3-C1]; default: ~/.config/octo/whatsapp.json)
+│   ├── --out <PATH>              (OutputArgs: flatten target; default: ~/.config/octo/whatsapp.json)
 │   ├── --stdout                  (OutputArgs: conflicts_with out)
 │   ├── --force                   (OutputArgs: requires out)
 │   ├── --timeout <SECS>          (default: 300, how long to wait for Event::Connected)
@@ -477,13 +477,17 @@ impl From<CoreError> for OnboardError {
 // Event::LoggedOut → bot_handle = None) is ~10-100ms in practice. If
 // the re-verify finds self_handle() is None or bot_handle is None,
 // the link was unlinked mid-handshake: treat as Event::LoggedOut.
+// R4-C1: use adapter.health_check() (existing method) instead of the
+// non-existent adapter.bot_handle_is_alive(). health_check() returns
+// Ok(()) iff bot_handle.is_some() (verified at octo-adapter-whatsapp/
+// src/adapter.rs:438-445), which is the semantic we want.
 async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(phone) = adapter.self_handle() {
             // Re-verify after grace period (catches the Connected→LoggedOut race)
             tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
-            if adapter.bot_handle_is_alive() && adapter.self_handle().is_some() {
+            if adapter.health_check().await.is_ok() && adapter.self_handle().is_some() {
                 return Ok(phone);
             }
             return Err(CoreError::SessionExpired);
@@ -538,7 +542,7 @@ After successful link, the CLI writes `session_meta.json` alongside the stoolap 
 }
 ```
 
-The `linked_at` field uses `chrono::Utc::now()` (the `chrono` crate is already a dependency of the adapter at adapter/Cargo.toml:29) formatted as **RFC 3339 UTC with no sub-second precision** (`YYYY-MM-DDTHH:MM:SSZ`), matching `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs` helper (R2-M1). Use `chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()`. The format is unit-test-pinned to prevent drift to SQLite-style or epoch-seconds. The `mode` field is `"qr-link"` or `"pair-link"`. The `groups` field is the operator-supplied list, so `session list` can display it without a bot startup.
+The `linked_at` field is written by `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H2 / R3-H2: hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. See `crates/octo-whatsapp-onboard-core/src/time.rs` for the helper. R4-L2: the helper is renamed from `format_rfc3339_now` to `format_rfc3339_secs(epoch_secs: u64) -> String` to match the matrix-onboard's `octo-matrix-onboard/src/logging.rs:82` pattern; takes an explicit epoch-seconds arg, returns the 20-char no-subsec format. The output is **RFC 3339 UTC with no sub-second precision** (`YYYY-MM-DDTHH:MM:SSZ`, 20 characters wide). For the sidecar's `linked_at`, the call site does `format_rfc3339_secs(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())`. The format is unit-test-pinned to prevent drift to SQLite-style or epoch-seconds. The `mode` field is `"qr-link"` or `"pair-link"`. The `groups` field is the operator-supplied list, so `session list` can display it without a bot startup.)
 
 **Config serialization:**
 
@@ -621,7 +625,7 @@ SESSION_PATH                                    SELF_PHONE     LINKED_AT        
 |--------|--------|-------|
 | qr-link latency | <2s + operator time | WS handshake + QR render (operator scan typically 2-10s) |
 | pair-link latency | <1s + operator time | WS handshake + code display (operator entry typically 5-15s) |
-| whoami latency | <2s | Load stoolap DB + identity resolution |
+| whoami latency | <10s (R4-L1) | Load config, **connect to WhatsApp via WebSocket**, noise-key handshake, identity resolution. Not a "load and check" semantic — the whoami flow re-establishes the session because the adapter does not expose a "read device.pn without starting the bot" method. A future mission could add `WhatsAppWebAdapter::read_device_pn() -> Option<String>` for a <100ms pure-local whoami. |
 | session list latency | <100ms (sidecar) / <5s (fallback) | Sidecar fast path is the default; fallback is rare |
 | Binary size | <20 MB stripped (R1-L2: stretch target, not enforced; actual size depends on `whatsapp-rust` + `wacore` + `waproto` feature flags; tracked but not blocking) | whatsapp-rust + wacore are heavier than matrix-sdk; lean features |
 | Config write | <100ms | Atomic JSON write |
@@ -850,6 +854,7 @@ After successful `pair-link`:
 | 1.1 | 2026-06-12 | R1 fixes: removed internal Notify vs polling contradiction (R1-C1), removed `pair_code` field from `WhatsAppSession` (R1-C2), clarified `validate()` is in-memory only (R1-H1), added `$OCTO_WHATSAPP_PAIR_CODE` env var (R1-H2), reconciled deserialize vs adapter-instantiation schema check (R1-H3), pinned `WhatsAppSession` derives to `Debug, Clone` only (R1-M1), pinned polling interval to 250ms in mission AC (R1-M2), renamed `custom_pair_code` to `custom_code` (R1-M3), reframed determinism claim (R1-M4), justified "empty groups is OK" (R1-L1), demoted binary size to stretch target (R1-L2) |
 | 1.2 | 2026-06-12 | R2 fixes: fixed `to_disk_json` signature `&self` (R2-C1), removed `pair_code: null` from on-disk test vectors (R2-C2), added `OutputArgs` type to mission data structures (R2-H1), made `session remove` interactive with `--yes` flag and non-TTY fallback (R2-H2), clarified `chrono` is transitive (R2-H3), pinned sidecar `linked_at` to RFC 3339 UTC no-subsec (R2-M1), reordered `CoreError` variants alphabetically (R2-M2), fixed `wait_for_connected` to return `CoreError` (R2-M3), documented `--groups` JID form (R2-L1), documented `--groups` parsing edge cases (R2-L2) |
 | 1.3 | 2026-06-12 | R3 fixes: updated RFC CLI surface to show `OutputArgs` flatten (R3-C1), added explicit `From<CoreError> for OnboardError` impl (R3-C2), removed `pn` from `REDACT_KEYS` to avoid over-redacting `self_phone` log (R3-H1), added `core/time.rs` for the format helper (R3-H2), added 100ms grace period for `Connected→LoggedOut` race (R3-M1), added `parse_groups` value parser (R3-M2), made binary `write` layering explicit (R3-M3), reframed custom pair code redaction as defense-in-depth (R3-L1), added integration test for `Event::StreamError` exhaustion (R3-L2) |
+| 1.4 | 2026-06-12 | R4 fixes: replaced phantom `bot_handle_is_alive()` with existing `health_check()` (R4-C1; R3-M1 regression — method doesn't exist on `WhatsAppWebAdapter`), use `crate::time::` not `core::time::` in call site (R4-H1), added `POST_CONNECT_GRACE_MS` constant definition + unit test (R4-H2), dropped `[R3-C1]` tag from CLI surface for consistency (R4-M1), removed dead `format_rfc3339_secs` reference (R4-M2), added `From<CoreError>` stub to mission data structure block (R4-M3), reframed whoami latency as <10s (network-bound) not <2s (R4-L1), renamed helper to `format_rfc3339_secs(epoch_secs)` matching matrix pattern (R4-L2) |
 
 ## Related RFCs
 

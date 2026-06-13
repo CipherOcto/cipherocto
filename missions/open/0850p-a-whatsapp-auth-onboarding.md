@@ -104,6 +104,11 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   // (crates/octo-matrix-onboard/src/cli.rs:103-120).
   #[derive(Args, Debug, Clone)]
   pub struct OutputArgs { pub out: Option<PathBuf>, #[arg(long, conflicts_with = "out")] pub stdout: bool, #[arg(long, requires = "out")] pub force: bool }
+  // R4-M3: the From impl is in the binary, not the core. The full impl
+  // is in RFC §Algorithms line ~446. The mapping is 1-to-1 and stable.
+  // (Variant list omitted here for brevity; the unit test in the AC block
+  // pins the mapping to prevent drift.)
+  impl From<CoreError> for OnboardError { /* see RFC §Algorithms */ }
   pub enum CoreError { /* Read, Parse, InvalidPhone, ClientBuild, SessionExpired, ... */ }
   pub async fn qr_link(args: QrLinkArgs) -> Result<WhatsAppSession, CoreError>
   pub async fn pair_link(args: PairLinkArgs) -> Result<WhatsAppSession, CoreError>
@@ -132,8 +137,8 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Writes `session_meta.json` next to the stoolap DB with `{ self_phone, linked_at, mode: "qr-link" | "pair-link", groups }`
   - Atomic write via `tempfile::NamedTempFile` + `persist`
   - Mode 0600 on Unix
-  - `linked_at` is formatted via `core::time::format_rfc3339_now()` (R3-H2: new module; see below)
-- [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_now() -> String` (R3-H2: helper for the sidecar's `linked_at` field; mirrors `octo-matrix-onboard/src/logging.rs:55-73`'s `format_rfc3339_now` and `crates/octo-matrix-onboard/src/logging.rs:82-95`'s `format_rfc3339_secs`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. The output is always UTC and always 30 characters wide for `format_rfc3339_now` or 20 for `format_rfc3339_secs`; falls back to `<unknown-ts>` on clock skew so a logging bug never breaks startup.)
+  - `linked_at` is formatted via `crate::time::format_rfc3339_secs(epoch_secs)` (R4-H1 / R4-L2: the call site uses `crate::time::...`, not `core::time::...` — the crate does not have a `core` module name; `core` would shadow the standard library's `core` crate in some contexts. The helper takes an explicit `epoch_secs: u64` arg, returns the 20-char no-subsec format `YYYY-MM-DDTHH:MM:SSZ`; mirrors `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs`. `format_rfc3339_now` is `pub fn` in `octo-whatsapp-onboard-core/src/time.rs`)
+- [ ] `crates/octo-whatsapp-onboard-core/src/time.rs` — `pub fn format_rfc3339_secs(epoch_secs: u64) -> String` (R4-L2: renamed from `format_rfc3339_now`; takes explicit epoch-seconds arg, returns 20-char no-subsec `YYYY-MM-DDTHH:MM:SSZ` format. Mirrors `octo-matrix-onboard/src/logging.rs:82`. Hand-rolled from `SystemTime` + `Duration` to avoid pulling in `chrono` as a direct dep — `chrono` is a transitive dep via the adapter, but using it directly would create a circular-import risk. Returns `<unknown>` for `epoch_secs == 0` so a missing/wrong field doesn't carry a misleading 1969-12-31 timestamp. Unit tests: (1) `format_rfc3339_secs(0)` returns `<unknown>`; (2) `format_rfc3339_secs(1700000000)` returns `2023-11-14T22:13:20Z`; (3) negative durations from `SystemTime` are pre-1970 and return `<unknown>`.)
 - [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs:22-59`)
   - Variants: alphabetical order (R2-M2: matches `cargo doc` and IDE jump-to-definition; documented as a project convention; deviation requires an RFC amendment). `Adapter { source }`, `ClientBuild`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `Parse { path, source }`, `Read { path, source }`, `SessionExpired`, `Timeout { secs }`
 
@@ -201,7 +206,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `core/qr_link.rs` / `core/pair_link.rs`: input validation tests (no integration with real WhatsApp — those go in the integration test below)
 - [ ] Adapter change: `WhatsAppConfig::validate()` tests (3-5 cases: malformed phone [e.g., `"5551234"`, `"+0123456789"`, `"+1-555-123-4567"`], malformed ws_url [e.g., `"http://example.com"`, `"ftp://example.com"`], valid config with all fields, valid config with empty `groups`, valid config with `ws_url = None` and `pair_phone = None`)
 - [ ] `core/session.rs`: `wait_for_connected` polls `self_handle()` every 250ms (constant `POLL_INTERVAL_MS`); unit test pins the constant to 250ms ± 10ms to catch accidental changes (R1-M2)
-- [ ] `core/session.rs`: `wait_for_connected` re-verifies after a 100ms grace period (`POST_CONNECT_GRACE_MS`); unit test stubs `bot_handle_is_alive() = false` to assert `SessionExpired` is returned (R3-M1)
+- [ ] `core/session.rs`: `wait_for_connected` re-verifies after a 100ms grace period (`POST_CONNECT_GRACE_MS: u64 = 100` constant in `core/session.rs`; R4-H2: unit test pins the constant to 100ms ± 10ms, matching the R1-M2 `POLL_INTERVAL_MS` test pattern). Unit test stubs `health_check() = Err(...)` after the grace period to assert `SessionExpired` is returned (R3-M1 + R4-C1: uses `health_check()` because `bot_handle_is_alive()` does not exist)
 - [ ] `logging.rs`: redaction layer tests (8 cases) — including one that verifies `pn` is **NOT** in the redact keys (R3-H1: `assert!(!REDACT_KEYS.contains(&"pn"))`) and one that verifies the resolved `self_phone` log line at adapter.rs:234 is **not** redacted (`assert!(formatted.contains("+1 555 123 4567"))`)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--phone` from CLI arg OR `$OCTO_WHATSAPP_PHONE` env var; CLI arg wins if both are set; unit test for env-var-only form (R1-H2)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--pair-code` from CLI arg OR `$OCTO_WHATSAPP_PAIR_CODE` env var; same precedence (CLI arg wins); unit test for env-var-only form (companion to R1-H2 phone test)

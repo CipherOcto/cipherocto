@@ -150,26 +150,27 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `octo-whatsapp-onboard qr-link --session-path DIR --groups ID,ID --out CONFIG --timeout 300`
   - Validates inputs, builds adapter, starts bot
   - QR code rendered to stderr (via adapter's existing `eprintln!` on `Event::PairingQrCode`)
-  - Blocks on `wait_for_connected` until `Event::Connected` or `--timeout`
+  - Blocks on `core::qr_link::run(args)` until `Event::Connected` or `--timeout` (R7-L1: see core AC line ~124 for the internal `wait_for_connected(adapter, Duration::from_secs(args.timeout_secs))` call with the 100ms grace period and the `From<CoreError>` conversion; the CLI AC stays at this level to avoid duplicating the core AC's precision)
   - On success: (1) `crate::sidecar::write_sidecar` first, then (2) atomic config JSON to `--out` (R6-M1: sidecar-first ordering — a sidecar write failure leaves the stoolap DB linked but without fast metadata, which is recoverable via `session list` fallback. Config-first ordering would leave a config pointing at a half-state sidecar-less session, which is harder to recover. The order is the inverse of the matrix-onboard's `output::write` flow because the sidecar is required for fast `session list`; the matrix-onboard's `LAST_USED` is not a correctness requirement.)
   - Exits 0
 - [ ] `octo-whatsapp-onboard pair-link --phone +15551234567 --out CONFIG`
   - Validates phone (E.164), builds adapter with `pair_phone`, starts bot
   - Pair code printed to stderr (via adapter's existing `eprintln!` on `Event::PairingCode`)
-  - Blocks on `wait_for_connected` until `Event::Connected` or `--timeout`
+  - Blocks on `core::pair_link::run(args)` until `Event::Connected` or `--timeout` (R7-L1: same as qr-link; see core AC line ~129)
   - On success: (1) `crate::sidecar::write_sidecar` first, then (2) atomic config JSON to `--out` (R6-M1: same ordering as qr-link)
   - Exits 0
 - [ ] `octo-whatsapp-onboard whoami --config CONFIG`
   - Loads config JSON, extracts `session_path`
   - Builds `WhatsAppWebAdapter` against `session_path`
   - Calls `wait_for_connected` with **30s** timeout (R5-H2: 10s was tight for slow networks; the timeout is internal to `wait_for_connected` — if `Event::Connected` has already fired, the function returns on the first poll (<10ms). 30s is only hit in pathological network cases.)
+  - Match on the result (R7-M1): `Ok(phone) => { println!("+{phone}"); Ok(()) }`, `Err(CoreError::SessionExpired) => Err(OnboardError::SessionExpired("Session expired or invalid".into()))`, `Err(CoreError::Timeout { secs }) => Err(OnboardError::Cancelled(format!("Timeout after {secs}s")))`, `Err(e) => Err(OnboardError::from(e))`. Exit per `OnboardError::as_exit_code()`.
   - On success: prints `+{self_phone}` and exits 0
   - On `Event::LoggedOut` / timeout: prints "Session expired or invalid" and exits 7 (`SessionExpired`)
 - [ ] `octo-whatsapp-onboard session list --base-dir DIR`
   - Scans `~/.local/share/octo/whatsapp/` (or `--base-dir`)
   - For each `*.session.db`: check for `session_meta.json` sidecar
   - If sidecar exists: parse with `serde_json` and print directly (fast path)
-  - If sidecar missing: build adapter, call `wait_for_health(adapter, Duration::from_secs(5))` (R6-H2: use the shared helper, do not inline-poll), print result with `<unknown>` for missing fields
+  - If sidecar missing: build adapter, call `wait_for_health(adapter, Duration::from_secs(SESSION_LIST_HEALTH_TIMEOUT_SECS))` (R6-H2: use the shared helper, do not inline-poll. R7-M2: `SESSION_LIST_HEALTH_TIMEOUT_SECS: u64 = 5` constant in `core/session.rs`; hardcoded, not a CLI flag — the 5s is a fallback-path timeout, not an operator-tunable knob. The RFC's `wait_for_health` call uses the same constant.), print result with `<unknown>` for missing fields
   - Tabular output: `SESSION_PATH`, `SELF_PHONE`, `LINKED_AT`, `VALID` columns
   - Exits 0
 - [ ] `octo-whatsapp-onboard session verify <DB-PATH>`
@@ -211,6 +212,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] Adapter change: `WhatsAppConfig::validate()` tests (3-5 cases: malformed phone [e.g., `"5551234"`, `"+0123456789"`, `"+1-555-123-4567"`], malformed ws_url [e.g., `"http://example.com"`, `"ftp://example.com"`], valid config with all fields, valid config with empty `groups`, valid config with `ws_url = None` and `pair_phone = None`)
 - [ ] `core/session.rs`: `wait_for_connected` polls `self_handle()` every 250ms (constant `POLL_INTERVAL_MS`); unit test pins the constant to 250ms ± 10ms to catch accidental changes (R1-M2)
 - [ ] `core/session.rs`: `wait_for_connected` re-verifies after a 100ms grace period (`POST_CONNECT_GRACE_MS: u64 = 100` constant in `core/session.rs`; R4-H2: unit test pins the constant to 100ms ± 10ms, matching the R1-M2 `POLL_INTERVAL_MS` test pattern). Unit test stubs `health_check() = Err(...)` after the grace period to assert `SessionExpired` is returned (R3-M1 + R4-C1: uses `health_check()` because `bot_handle_is_alive()` does not exist)
+- [ ] `core/session.rs`: `wait_for_health` polls `health_check().await` every 250ms (shared `POLL_INTERVAL_MS` and `POST_CONNECT_GRACE_MS` constants with `wait_for_connected`; R7-H1: same constants, not duplicated; refactor the two helpers to share the inner polling loop, or document that the constants are module-level). Unit test stubs `health_check() = Ok(())` to assert `wait_for_health` returns `Ok(())` immediately on the first poll. Unit test stubs `health_check() = Err(...)` after the grace period to assert `SessionExpired` is returned.
 - [ ] `logging.rs`: redaction layer tests (8 cases) — including one that verifies `pn` is **NOT** in the redact keys (R3-H1: `assert!(!REDACT_KEYS.contains(&"pn"))`) and one that verifies the resolved `self_phone` log line at adapter.rs:234 is **not** redacted (`assert!(formatted.contains("+1 555 123 4567"))`)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--phone` from CLI arg OR `$OCTO_WHATSAPP_PHONE` env var; CLI arg wins if both are set; unit test for env-var-only form (R1-H2)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--pair-code` from CLI arg OR `$OCTO_WHATSAPP_PAIR_CODE` env var; same precedence (CLI arg wins); unit test for env-var-only form (companion to R1-H2 phone test)

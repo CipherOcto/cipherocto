@@ -505,6 +505,31 @@ async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> 
 
 **Why polling and not Notify?** The adapter's `self_phone` field is a `parking_lot::Mutex<Option<String>>` — there is no signal exposed. Adding a `Notify` to the adapter is out of scope for this mission (it would be a one-line change to the adapter, but cross-crate refactors during an auth-onboarding mission are a high-risk / low-reward change). A 250ms polling loop is acceptable because the wait is bounded by the operator's scan latency (typically 2-10s), not by polling granularity.
 
+**Wait for health (R7-H1):** `wait_for_health` is the same shape as `wait_for_connected` but returns `Result<(), CoreError>` (no phone-number resolution). Used by `session list` fallback (RFC §Session Management) and `whoami`'s quick health probe path.
+
+```rust
+// R7-H1: same constants as wait_for_connected (POLL_INTERVAL_MS,
+// POST_CONNECT_GRACE_MS). Returns () because session list only
+// needs is_valid: bool, not the phone number.
+async fn wait_for_health(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<(), CoreError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if adapter.health_check().await.is_ok() {
+            // Re-verify after grace period (catches the Connected→LoggedOut race)
+            tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
+            if adapter.health_check().await.is_ok() {
+                return Ok(());
+            }
+            return Err(CoreError::SessionExpired);
+        }
+        if Instant::now() >= deadline {
+            return Err(CoreError::Timeout { secs: timeout.as_secs() });
+        }
+        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+    }
+}
+```
+
 **Alternative considered (R0-L0):** Add a `tokio::sync::watch::Receiver<Option<String>>` to `WhatsAppWebAdapter` that fires on `Event::Connected`. **Rejected** because the polling loop is sufficient (4 polls/second) and avoids cross-crate ABI changes during the auth-onboarding mission. If a future mission adds high-frequency health checks, the watch channel can be introduced then.
 
 **Identity extraction from Event::Connected:**
@@ -614,7 +639,7 @@ SESSION_PATH                                    SELF_PHONE     LINKED_AT        
 /home/user/.local/share/octo/whatsapp/old.session.db        <unknown>      <unknown>            no (expired)
 ```
 
-**Implementation:** For each `*.session.db` file in the base dir, the tool first checks for a `session_meta.json` sidecar file (written by `qr-link`/`pair-link` alongside the stoolap DB). If the sidecar exists, it reads `self_phone`, `linked_at`, `mode`, `groups` directly (fast, no bot startup needed). If no sidecar exists, it creates a temporary `WhatsAppWebAdapter` against the DB, calls `wait_for_health(adapter, Duration::from_secs(5))` (R6-H2: use the shared helper, do not inline-poll), and prints the result.
+**Implementation:** For each `*.session.db` file in the base dir, the tool first checks for a `session_meta.json` sidecar file (written by `qr-link`/`pair-link` alongside the stoolap DB). If the sidecar exists, it reads `self_phone`, `linked_at`, `mode`, `groups` directly (fast, no bot startup needed). If no sidecar exists, it creates a temporary `WhatsAppWebAdapter` against the DB, calls `wait_for_health(adapter, Duration::from_secs(SESSION_LIST_HEALTH_TIMEOUT_SECS))` (R6-H2: use the shared helper, do not inline-poll. R7-M2: `SESSION_LIST_HEALTH_TIMEOUT_SECS = 5` constant, shared with the mission AC. The 5s is a fallback-path timeout, not an operator-tunable knob.), and prints the result.
 
 `session verify <DB-PATH>` checks if a specific stoolap database has a valid Signal session (same `self_handle()` check, no fallback to a sidecar). `session remove <DB-PATH>` deletes a database file after confirmation.
 
@@ -856,6 +881,7 @@ After successful `pair-link`:
 | 1.4 | 2026-06-12 | R4 fixes: replaced phantom `bot_handle_is_alive()` with existing `health_check()` (R4-C1; R3-M1 regression — method doesn't exist on `WhatsAppWebAdapter`), use `crate::time::` not `core::time::` in call site (R4-H1), added `POST_CONNECT_GRACE_MS` constant definition + unit test (R4-H2), dropped `[R3-C1]` tag from CLI surface for consistency (R4-M1), removed dead `format_rfc3339_secs` reference (R4-M2), added `From<CoreError>` stub to mission data structure block (R4-M3), reframed whoami latency as <10s (network-bound) not <2s (R4-L1), renamed helper to `format_rfc3339_secs(epoch_secs)` matching matrix pattern (R4-L2) |
 | 1.5 | 2026-06-12 | R5 fixes: `qr_link::run` and `pair_link::run` now call `wait_for_connected` (R5-H1), bumped `whoami` and `session verify` `wait_for_connected` timeouts from 10s to 30s for slow networks (R5-H2), clarified `to_disk_json` round-trip is via adapter instantiation (R5-M1), sidecar is **required** (not optimization), written before config JSON (R5-M2), `format_rfc3339_secs` call site conversion shown (R5-L2) |
 | 1.6 | 2026-06-12 | R6 fixes: `sidecar::write_sidecar` is `crate::sidecar::write_sidecar` (R6-H1), added `wait_for_health` helper for `session list` fallback (R6-H2), qr-link and pair-link AC specify sidecar-first ordering (R6-M1), pair-link and qr-link sequence diagrams show `Bot + on_event` as a composite of the adapter (R6-M2), dedupe of sidecar fast-path sentence (R6-L1) |
+| 1.7 | 2026-06-12 | R7 fixes: `wait_for_health` RFC pseudocode added (R7-H1), `whoami` `Result<String, CoreError>` → display conversion shown (R7-M1), `SESSION_LIST_HEALTH_TIMEOUT_SECS = 5` constant extracted (R7-M2), CLI subcommand AC cross-references core AC instead of restating (R7-L1) |
 
 ## Related RFCs
 

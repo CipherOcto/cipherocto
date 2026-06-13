@@ -111,21 +111,44 @@ impl StoolapStore {
         // (with the original multi-col uniqueness dropped — the
         // 4 storage traits don't depend on it for correctness).
         let stmts = [
+            // R10 schema fix (stoolap fork has a parser bug:
+            // `parse_column_definition` has a misplaced `_ => break`
+            // catch-all in the column-constraint match that intercepts
+            // `AUTO_INCREMENT` before the dedicated arm at statements.rs
+            // :1916 can run, so AUTO_INCREMENT is dead code in the
+            // parser. We can't depend on autoincrement; the actual
+            // uniqueness we need is the `UNIQUE (col1, col2)`
+            // constraints already present on every non-device table.)
+            //
+            // The 14 non-device tables previously had
+            // `rowid INTEGER PRIMARY KEY` (a vestigial synthetic PK
+            // standing in for SQLite-style rowid). Stoolap's strict
+            // NOT NULL on the inline PK rejected INSERTs that didn't
+            // supply an explicit rowid with "NULL value not allowed
+            // for PRIMARY KEY column 'rowid'". Removing the `rowid`
+            // column entirely: it's not referenced by any INSERT/SELECT
+            // in this file, and the multi-col UNIQUE constraints
+            // provide the real identity. The `device` table keeps
+            // `id INTEGER PRIMARY KEY` because its INSERTs always
+            // supply an explicit id (self.device_id), so PK works
+            // for it. Stoolap also doesn't support multi-column
+            // `PRIMARY KEY (a, b)` (the `KEY` keyword trips its
+            // parser), which is the R9 reason we had `rowid` at all.
             "CREATE TABLE IF NOT EXISTS device (id INTEGER PRIMARY KEY, lid TEXT, pn TEXT, registration_id INTEGER NOT NULL, noise_key BLOB NOT NULL, identity_key BLOB NOT NULL, signed_pre_key BLOB NOT NULL, signed_pre_key_id INTEGER NOT NULL, signed_pre_key_signature BLOB NOT NULL, adv_secret_key BLOB NOT NULL, account BLOB, push_name TEXT NOT NULL, app_version_primary INTEGER NOT NULL, app_version_secondary INTEGER NOT NULL, app_version_tertiary INTEGER NOT NULL, app_version_last_fetched_ms INTEGER NOT NULL, edge_routing_info BLOB, props_hash TEXT, next_pre_key_id INTEGER NOT NULL DEFAULT 0, server_has_prekeys INTEGER NOT NULL DEFAULT 0, nct_salt BLOB, server_cert_chain BLOB, login_counter INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE IF NOT EXISTS identities (rowid INTEGER PRIMARY KEY, address TEXT NOT NULL, \"key\" BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
-            "CREATE TABLE IF NOT EXISTS sessions (rowid INTEGER PRIMARY KEY, address TEXT NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
-            "CREATE TABLE IF NOT EXISTS prekeys (rowid INTEGER PRIMARY KEY, id INTEGER NOT NULL, \"key\" BLOB NOT NULL, uploaded INTEGER NOT NULL DEFAULT 0, device_id INTEGER NOT NULL, UNIQUE (id, device_id))",
-            "CREATE TABLE IF NOT EXISTS signed_prekeys (rowid INTEGER PRIMARY KEY, id INTEGER NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (id, device_id))",
-            "CREATE TABLE IF NOT EXISTS sender_keys (rowid INTEGER PRIMARY KEY, address TEXT NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
-            "CREATE TABLE IF NOT EXISTS app_state_keys (rowid INTEGER PRIMARY KEY, key_id BLOB NOT NULL, key_data BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (key_id, device_id))",
-            "CREATE TABLE IF NOT EXISTS app_state_versions (rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, state_data BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (name, device_id))",
-            "CREATE TABLE IF NOT EXISTS app_state_mutation_macs (rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, index_mac BLOB NOT NULL, value_mac BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (name, index_mac, device_id))",
-            "CREATE TABLE IF NOT EXISTS lid_pn_mapping (rowid INTEGER PRIMARY KEY, lid TEXT NOT NULL, phone_number TEXT NOT NULL, created_at INTEGER NOT NULL, learning_source TEXT NOT NULL, updated_at INTEGER NOT NULL, device_id INTEGER NOT NULL, UNIQUE (lid, device_id))",
-            "CREATE TABLE IF NOT EXISTS device_registry (rowid INTEGER PRIMARY KEY, user_id TEXT NOT NULL, devices_json TEXT NOT NULL, timestamp INTEGER NOT NULL, phash TEXT, raw_id INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (user_id, device_id))",
-            "CREATE TABLE IF NOT EXISTS sender_key_devices (rowid INTEGER PRIMARY KEY, group_jid TEXT NOT NULL, device_jid TEXT NOT NULL, has_key INTEGER NOT NULL, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (group_jid, device_jid, device_id))",
-            "CREATE TABLE IF NOT EXISTS sent_messages (rowid INTEGER PRIMARY KEY, chat_jid TEXT NOT NULL, message_id TEXT NOT NULL, payload BLOB NOT NULL, device_id INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE (chat_jid, message_id, device_id))",
-            "CREATE TABLE IF NOT EXISTS base_keys (rowid INTEGER PRIMARY KEY, address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
-            "CREATE TABLE IF NOT EXISTS tc_tokens (rowid INTEGER PRIMARY KEY, jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
+            "CREATE TABLE IF NOT EXISTS identities (address TEXT NOT NULL, \"key\" BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
+            "CREATE TABLE IF NOT EXISTS sessions (address TEXT NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
+            "CREATE TABLE IF NOT EXISTS prekeys (id INTEGER NOT NULL, \"key\" BLOB NOT NULL, uploaded INTEGER NOT NULL DEFAULT 0, device_id INTEGER NOT NULL, UNIQUE (id, device_id))",
+            "CREATE TABLE IF NOT EXISTS signed_prekeys (id INTEGER NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (id, device_id))",
+            "CREATE TABLE IF NOT EXISTS sender_keys (address TEXT NOT NULL, record BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, device_id))",
+            "CREATE TABLE IF NOT EXISTS app_state_keys (key_id BLOB NOT NULL, key_data BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (key_id, device_id))",
+            "CREATE TABLE IF NOT EXISTS app_state_versions (name TEXT NOT NULL, state_data BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (name, device_id))",
+            "CREATE TABLE IF NOT EXISTS app_state_mutation_macs (name TEXT NOT NULL, version INTEGER NOT NULL, index_mac BLOB NOT NULL, value_mac BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (name, index_mac, device_id))",
+            "CREATE TABLE IF NOT EXISTS lid_pn_mapping (lid TEXT NOT NULL, phone_number TEXT NOT NULL, created_at INTEGER NOT NULL, learning_source TEXT NOT NULL, updated_at INTEGER NOT NULL, device_id INTEGER NOT NULL, UNIQUE (lid, device_id))",
+            "CREATE TABLE IF NOT EXISTS device_registry (user_id TEXT NOT NULL, devices_json TEXT NOT NULL, timestamp INTEGER NOT NULL, phash TEXT, raw_id INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (user_id, device_id))",
+            "CREATE TABLE IF NOT EXISTS sender_key_devices (group_jid TEXT NOT NULL, device_jid TEXT NOT NULL, has_key INTEGER NOT NULL, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (group_jid, device_jid, device_id))",
+            "CREATE TABLE IF NOT EXISTS sent_messages (chat_jid TEXT NOT NULL, message_id TEXT NOT NULL, payload BLOB NOT NULL, device_id INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE (chat_jid, message_id, device_id))",
+            "CREATE TABLE IF NOT EXISTS base_keys (address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
+            "CREATE TABLE IF NOT EXISTS tc_tokens (jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
         ];
         for stmt in stmts {
             exec(&self.db, stmt, vec![])?;
@@ -463,10 +486,19 @@ impl AppSyncStore for StoolapStore {
                 serde_json::from_slice(&data)
                     .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))
             }
+            // R10 / R11 fix: missing version must return
+            // `HashState::default()` (version=0), not an error. The
+            // caller in `sync_collections_batched_inner`
+            // (whatsapp-rust client.rs:2676) treats `state.version == 0`
+            // as the signal to request a fresh snapshot; an error
+            // would short-circuit the IQ handshake and log
+            // "Failed critical app state sync: database operation
+            // error". Matches `InMemoryStore::get_version`
+            // (wacore/store/in_memory.rs:289) and the SQLite reference
+            // store, both of which return the default for unknown
+            // names.
             Some(Err(e)) => Err(to_store_err(e)),
-            None => Err(wacore::store::error::StoreError::Database(
-                format!("version not found: {name}").into(),
-            )),
+            None => Ok(HashState::default()),
         }
     }
 
@@ -495,13 +527,41 @@ impl AppSyncStore for StoolapStore {
         version: u64,
         mutations: &[AppStateMutationMAC],
     ) -> wacore::store::error::Result<()> {
+        // R12 fix (storage format): store index_mac and value_mac as
+        // raw bytes, NOT serde_json-encoded. These fields are 32-byte
+        // HMAC outputs (Signal Integrity value MACs). The hash state
+        // in `WAPATCH_INTEGRITY.subtract_then_add_in_place` is a sum
+        // of these 32-byte values; a single byte difference corrupts
+        // the ltHash and produces "patch snapshot MAC mismatch" on
+        // the next sync. JSON-wrapping the bytes (e.g. b"\"qrvM...\""
+        // = 8 bytes for 3 bytes of input) was the bug — the value
+        // MACs were being read back as their JSON representation
+        // instead of the original bytes, so the hash update
+        // subtracted the wrong previous values. The in-memory and
+        // SQLite reference stores store these as raw bytes (the
+        // SQLite store wraps them in bincode which is also a binary
+        // encoding of the Vec<u8> field, i.e. raw bytes on the
+        // wire). Must match this for the ltHash to be stable.
+        //
+        // R13 fix (idempotency): DELETE-then-INSERT instead of plain
+        // INSERT. The schema has `UNIQUE (name, index_mac, device_id)`
+        // and the same index_mac can legitimately appear twice: a
+        // patch SET can overwrite a snapshot SET, and a multi-mutation
+        // patch can contain multiple entries with the same index_mac
+        // (e.g. a SET followed by a REMOVE of the same key in the
+        // same patch, where the REMOVE's value MAC lookup references
+        // the SET we just inserted). Without the DELETE, the second
+        // INSERT raises a unique-constraint violation, which
+        // propagates as "database operation error" and aborts the
+        // entire critical-sync flow. The SQLite reference uses
+        // `on_conflict do update` for the same reason; we achieve
+        // the same effect with DELETE+INSERT (matching our
+        // set_sync_key / set_version pattern).
         for m in mutations {
-            let idx = serde_json::to_vec(&m.index_mac)
-                .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
-            let val = serde_json::to_vec(&m.value_mac)
-                .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
+            exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+                vec![name.to_string().into(), stoolap::core::Value::blob(m.index_mac.clone()), (self.device_id as i64).into()])?;
             exec(&self.db, "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id) VALUES ($1, $2, $3, $4, $5)",
-                vec![name.to_string().into(), (version as i64).into(), stoolap::core::Value::blob(idx), stoolap::core::Value::blob(val), (self.device_id as i64).into()])?;
+                vec![name.to_string().into(), (version as i64).into(), stoolap::core::Value::blob(m.index_mac.clone()), stoolap::core::Value::blob(m.value_mac.clone()), (self.device_id as i64).into()])?;
         }
         Ok(())
     }
@@ -511,10 +571,10 @@ impl AppSyncStore for StoolapStore {
         name: &str,
         index_mac: &[u8],
     ) -> wacore::store::error::Result<Option<Vec<u8>>> {
-        let idx = serde_json::to_vec(index_mac)
-            .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
+        // R12 fix: lookup and return the value_mac as raw bytes (see
+        // put_mutation_macs above for the rationale).
         let mut rows = query(&self.db, "SELECT value_mac FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-            vec![name.to_string().into(), stoolap::core::Value::blob(idx), (self.device_id as i64).into()])?;
+            vec![name.to_string().into(), stoolap::core::Value::blob(index_mac.to_vec()), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => {
                 let mac: Vec<u8> = row.get(0).map_err(to_store_err)?;
@@ -530,11 +590,10 @@ impl AppSyncStore for StoolapStore {
         name: &str,
         index_macs: &[Vec<u8>],
     ) -> wacore::store::error::Result<()> {
+        // R12 fix: lookup by raw bytes to match put_mutation_macs.
         for idx in index_macs {
-            let idx_json = serde_json::to_vec(idx)
-                .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
             exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                vec![name.to_string().into(), stoolap::core::Value::blob(idx_json), (self.device_id as i64).into()])?;
+                vec![name.to_string().into(), stoolap::core::Value::blob(idx.clone()), (self.device_id as i64).into()])?;
         }
         Ok(())
     }
@@ -1134,5 +1193,185 @@ impl DeviceStore for StoolapStore {
     ) -> wacore::store::error::Result<()> {
         tracing::warn!("snapshot_db: stoolap does not support file snapshots, skipping");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wacore::store::traits::AppStateSyncKey;
+
+    #[tokio::test]
+    async fn sync_key_roundtrip_preserves_bytes() {
+        // The critical-app-state-sync path computes HMAC-SHA256 keys via
+        // `expand_app_state_keys(&key_data)`. If the bytes that come out
+        // of get_sync_key differ from the bytes that went in via
+        // set_sync_key, all derived keys are wrong and every snapshot/patch
+        // MAC mismatches (this is exactly the "patch snapshot MAC
+        // mismatch" failure mode we hit in R10 production runs). This
+        // test pins the roundtrip and would have caught the bug.
+        let store = StoolapStore::new_in_memory().unwrap();
+        let key_id: Vec<u8> = (0..32).collect();
+        let original = AppStateSyncKey {
+            // Pick bytes that exercise all 64 byte values, including
+            // ones that base64 might mangle in some implementations.
+            key_data: (0u8..=255).collect(),
+            fingerprint: vec![0xAB; 32],
+            timestamp: 1_700_000_000_000,
+        };
+        store
+            .set_sync_key(&key_id, original.clone())
+            .await
+            .expect("set_sync_key should succeed");
+        let roundtripped = store
+            .get_sync_key(&key_id)
+            .await
+            .expect("get_sync_key should succeed")
+            .expect("get_sync_key should find the key");
+        assert_eq!(
+            roundtripped.key_data, original.key_data,
+            "key_data bytes must roundtrip exactly (HMAC key material)"
+        );
+        assert_eq!(roundtripped.fingerprint, original.fingerprint);
+        assert_eq!(roundtripped.timestamp, original.timestamp);
+    }
+
+    #[tokio::test]
+    async fn hash_state_roundtrip_preserves_bytes() {
+        // Same pin for the app-state version state. The snapshot MAC is
+        // HMAC(snapshot_mac_key, hash || version_be || collection_name),
+        // so a corrupted `hash` field would also produce "patch snapshot
+        // MAC mismatch" errors.
+        let store = StoolapStore::new_in_memory().unwrap();
+        let original = HashState {
+            version: 7,
+            hash: [0xCD; 128],
+            index_value_map: std::collections::HashMap::new(),
+        };
+        store
+            .set_version("critical_block", original.clone())
+            .await
+            .expect("set_version should succeed");
+        let roundtripped = store
+            .get_version("critical_block")
+            .await
+            .expect("get_version should succeed");
+        assert_eq!(roundtripped.version, original.version);
+        assert_eq!(roundtripped.hash, original.hash);
+    }
+
+    #[tokio::test]
+    async fn sync_key_roundtrip_persisted_file() {
+        // The in-memory path is one code path; the file-backed
+        // `Database::open("file://...")` used in production is another.
+        // Pin the roundtrip through the file-backed DSN path, which is
+        // the exact code path the CLI exercises in `start_bot`.
+        use wacore::store::traits::AppStateSyncKey;
+        let dir = tempdir_unique();
+        let store = StoolapStore::new(&dir).expect("file-backed store should open");
+        let key_id: Vec<u8> = (0..32).collect();
+        let original = AppStateSyncKey {
+            key_data: (0u8..=255).collect(),
+            fingerprint: vec![0xAB; 32],
+            timestamp: 1_700_000_000_000,
+        };
+        store
+            .set_sync_key(&key_id, original.clone())
+            .await
+            .expect("set_sync_key should succeed");
+        drop(store);
+        // Reopen to force a read from disk (not just from a page cache).
+        let store2 = StoolapStore::new(&dir).expect("reopen should work");
+        let roundtripped = store2
+            .get_sync_key(&key_id)
+            .await
+            .expect("get_sync_key should succeed")
+            .expect("key should be present after reopen");
+        assert_eq!(
+            roundtripped.key_data, original.key_data,
+            "key_data bytes must roundtrip exactly through the file-backed DSN"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn tempdir_unique() -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        p.push(format!("octo-store-test-{nanos}"));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[tokio::test]
+    async fn mutation_mac_value_bytes_roundtrip_raw() {
+        // R12 pin: get_mutation_mac must return the original 32-byte
+        // value MAC, not a JSON/base64 wrapper. The ltHash arithmetic
+        // in `WAPATCH_INTEGRITY.subtract_then_add_in_place` runs over
+        // these exact bytes — a JSON wrapper would change every value
+        // MAC by a few bytes, corrupting the ltHash and producing
+        // "patch snapshot MAC mismatch" on the next sync.
+        let store = StoolapStore::new_in_memory().unwrap();
+        let index_mac: Vec<u8> = (0u8..32).collect();
+        let value_mac: Vec<u8> = (0u8..32).map(|b| b ^ 0xAA).collect();
+        let mac = wacore::appstate::processor::AppStateMutationMAC {
+            index_mac: index_mac.clone(),
+            value_mac: value_mac.clone(),
+        };
+        store
+            .put_mutation_macs("critical_block", 1, &[mac])
+            .await
+            .expect("put_mutation_macs should succeed");
+        let got = store
+            .get_mutation_mac("critical_block", &index_mac)
+            .await
+            .expect("get_mutation_mac should succeed")
+            .expect("mutation mac should be present");
+        assert_eq!(
+            got, value_mac,
+            "value_mac must roundtrip as the original 32 raw bytes, not JSON-wrapped"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_mutation_macs_is_idempotent_on_overwrite() {
+        // R13 pin: a patch can legitimately SET an index_mac that was
+        // already SET by a snapshot (or by an earlier mutation in the
+        // same patch — the in-patch prev-value lookup happens after
+        // put_mutation_macs runs, so the second insert for the same
+        // index_mac is a real case). The UNIQUE(name, index_mac,
+        // device_id) constraint would reject a plain INSERT, aborting
+        // the whole critical-sync with a "database operation error".
+        // The fix is DELETE-then-INSERT; pin it.
+        let store = StoolapStore::new_in_memory().unwrap();
+        let index_mac: Vec<u8> = (0u8..32).collect();
+        let first = wacore::appstate::processor::AppStateMutationMAC {
+            index_mac: index_mac.clone(),
+            value_mac: vec![0x11; 32],
+        };
+        let second = wacore::appstate::processor::AppStateMutationMAC {
+            index_mac: index_mac.clone(),
+            value_mac: vec![0x22; 32],
+        };
+        store
+            .put_mutation_macs("critical_block", 1, &[first])
+            .await
+            .expect("first put_mutation_macs should succeed");
+        store
+            .put_mutation_macs("critical_block", 2, &[second])
+            .await
+            .expect("second put_mutation_macs with same index_mac must succeed (DELETE-then-INSERT)");
+        let got = store
+            .get_mutation_mac("critical_block", &index_mac)
+            .await
+            .expect("get_mutation_mac should succeed")
+            .expect("mutation mac should be present after overwrite");
+        assert_eq!(
+            got,
+            vec![0x22; 32],
+            "second put must overwrite the first value_mac"
+        );
     }
 }

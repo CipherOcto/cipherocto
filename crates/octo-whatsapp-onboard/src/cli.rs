@@ -94,7 +94,13 @@ pub struct QrLinkArgs {
     /// Initial group IDs to monitor (comma-separated, accepts digits-only
     /// or full JID like `120363012345678901@g.us`).
     /// Default: no groups (empty list).
-    #[arg(long, value_parser = parse_groups, default_value = "")]
+    /// R9: the previous `default_value = ""` caused a clap
+    /// downcast panic. clap 4.x requires a `ToString`-implementing
+    /// type for `default_value_t` on `Vec<T>`, which `Vec<String>`
+    /// does not provide. The fix is to omit `default_value_t` and
+    /// rely on clap's default for `Vec<T>` (which is `vec![]`).
+    /// `parse_groups` handles the empty-input case (R2-L2).
+    #[arg(long, value_parser = parse_groups)]
     pub groups: Vec<String>,
     /// WebSocket URL override (test/proxy). Or $OCTO_WHATSAPP_WS_URL.
     #[arg(long)]
@@ -104,6 +110,7 @@ pub struct QrLinkArgs {
     /// Timeout in seconds (default: 300, how long to wait for Event::Connected).
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 
 #[derive(Args, Debug)]
@@ -118,7 +125,8 @@ pub struct PairLinkArgs {
     pub pair_code: Option<String>,
     /// Initial group IDs to monitor (comma-separated, accepts digits-only
     /// or full JID). Default: no groups (empty list).
-    #[arg(long, value_parser = parse_groups, default_value = "")]
+    /// R9: omit `default_value_t` (same rationale as qr-link).
+    #[arg(long, value_parser = parse_groups)]
     pub groups: Vec<String>,
     #[arg(long)]
     pub ws_url: Option<String>,

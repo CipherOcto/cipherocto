@@ -37,8 +37,8 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 
 #### Workspace setup
 
-- [ ] `crates/octo-whatsapp-onboard/Cargo.toml` (binary) — depends on `octo-whatsapp-onboard-core`, `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }`, `clap = { version = "4.5", features = ["derive"] }`, `tokio = { version = "1", features = ["full"] }`, `tracing`, `tracing-subscriber`, `serde`, `serde_json`, `anyhow`, `chrono = { version = "0.4", features = ["clock"] }`, `tempfile = "3"`
-- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `chrono`, `parking_lot`
+- [ ] `crates/octo-whatsapp-onboard/Cargo.toml` (binary) — depends on `octo-whatsapp-onboard-core`, `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }`, `clap = { version = "4.5", features = ["derive"] }`, `tokio = { version = "1", features = ["full"] }`, `tracing`, `tracing-subscriber`, `serde`, `serde_json`, `anyhow`, `dialoguer = "0.11"` (R2-H2: for the `session remove` interactive prompt), `tempfile = "3"`
+- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`, and the transitive `chrono` dep already declared in the adapter's `Cargo.toml:29`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `parking_lot`. R2-H3: `chrono` is a transitive dep — used only for `chrono::DateTime<Utc>` in `SessionInfo` and `chrono::Utc::now()` in sidecar `linked_at`. No direct dep required.
 - [ ] Verify workspace `Cargo.toml` uses `members = ["crates/*"]` (auto-includes the new crates) — no manual edit required
 - [ ] `cargo build --release` passes for both new crates
 
@@ -59,7 +59,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - `PairLinkArgs`: as `QrLinkArgs` + `phone: String` (required; or `$OCTO_WHATSAPP_PHONE`) + `custom_code: Option<String>` (R1-M3: renamed from `custom_pair_code` to match the SDK's `PairCodeOptions::custom_code` at `octo-adapter-whatsapp/src/adapter.rs:261`; the flag is `--pair-code` and the env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity, but the field name is `custom_code` to match the SDK)
   - `WhoamiArgs`: `config: PathBuf`
   - `SessionAction` enum: `List(SessionListArgs)`, `Verify(SessionVerifyArgs)`, `Remove(SessionRemoveArgs)`
-  - `OutputArgs` (flattened into QrLinkArgs / PairLinkArgs): `out`, `stdout` (conflicts_with `out`), `force` (requires `out`)
+  - `OutputArgs` (flattened into QrLinkArgs / PairLinkArgs; R2-H1: real type defined in the data structure block below): `out`, `stdout` (conflicts_with `out`), `force` (requires `out`)
 - [ ] `crates/octo-whatsapp-onboard/src/logging.rs` — tracing-subscriber init with redaction layer
   - Custom `Layer<S>` marker `RedactLayer` (mirrors `octo-matrix-onboard/src/logging.rs:RedactLayer`)
   - Custom `FormatEvent` impl `RedactingFormat` that walks event fields, applies redaction, writes formatted output
@@ -99,6 +99,11 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   #[derive(Debug, Clone)]
   pub struct WhatsAppSession { pub self_phone: Option<String>, pub session_path: PathBuf, pub groups: Vec<String>, pub pair_phone: Option<String> }
   pub struct SessionInfo { pub session_path: PathBuf, pub self_phone: Option<String>, pub is_valid: bool, pub last_linked_at: Option<chrono::DateTime<chrono::Utc>> }
+  // R2-H1: OutputArgs is the clap-flatten target for the (--out, --stdout, --force)
+  // triple shared by qr-link and pair-link. Mirrors octo-matrix-onboard::OutputArgs
+  // (crates/octo-matrix-onboard/src/cli.rs:103-120).
+  #[derive(Args, Debug, Clone)]
+  pub struct OutputArgs { pub out: Option<PathBuf>, #[arg(long, conflicts_with = "out")] pub stdout: bool, #[arg(long, requires = "out")] pub force: bool }
   pub enum CoreError { /* Read, Parse, InvalidPhone, ClientBuild, SessionExpired, ... */ }
   pub async fn qr_link(args: QrLinkArgs) -> Result<WhatsAppSession, CoreError>
   pub async fn pair_link(args: PairLinkArgs) -> Result<WhatsAppSession, CoreError>
@@ -119,16 +124,16 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 - [ ] `crates/octo-whatsapp-onboard-core/src/session.rs` — `pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError>`
   - Polling loop with 250ms granularity, `tokio::time::sleep` between polls
   - On `Event::LoggedOut` (observable via `self_handle() == None AND bot_handle == None` after deadline): return `Err(CoreError::SessionExpired)`
-- [ ] `crates/octo-whatsapp-onboard-core/src/output.rs` — `pub fn to_disk_json(session: &WhatsAppSession) -> serde_json::Value`
+- [ ] `crates/octo-whatsapp-onboard-core/src/output.rs` — `pub fn to_disk_json(&self) -> serde_json::Value` (R2-C1: method on `WhatsAppSession`, matches the `octo-matrix-onboard-core::Session::to_disk_json` pattern at `crates/octo-matrix-onboard-core/src/lib.rs:161`)
   - Field-by-field `serde_json::Map` (mirrors `octo-matrix-onboard-core/src/lib.rs:161-187`)
   - Omits `pair_phone` when `None`, `ws_url` when `None` (matches adapter's `#[serde(default)]` behavior)
-  - NEVER serializes `pair_code` (operator-typed, ephemeral)
+  - NEVER serializes `pair_code` (operator-typed, ephemeral; field is not on `WhatsAppSession` per R1-C2)
 - [ ] `crates/octo-whatsapp-onboard-core/src/sidecar.rs` — `pub fn write_sidecar(session_path: &Path, session: &WhatsAppSession) -> Result<()>`
   - Writes `session_meta.json` next to the stoolap DB with `{ self_phone, linked_at, mode: "qr-link" | "pair-link", groups }`
   - Atomic write via `tempfile::NamedTempFile` + `persist`
   - Mode 0600 on Unix
 - [ ] `crates/octo-whatsapp-onboard-core/src/error.rs` — typed `CoreError` enum (mirrors `octo-matrix-onboard-core/src/lib.rs:22-59`)
-  - Variants: `Read { path, source }`, `Parse { path, source }`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `ClientBuild`, `SessionExpired`, `Timeout { secs }`, `Adapter { source }`
+  - Variants: alphabetical order (R2-M2: matches `cargo doc` and IDE jump-to-definition; documented as a project convention; deviation requires an RFC amendment). `Adapter { source }`, `ClientBuild`, `InvalidPhone { value, reason }`, `InvalidSessionPath { path, reason }`, `Parse { path, source }`, `Read { path, source }`, `SessionExpired`, `Timeout { secs }`
 
 #### Per-subcommand behavior
 
@@ -161,11 +166,11 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   - Builds adapter against `<DB-PATH>`, calls `wait_for_connected` with 10s timeout
   - Prints "valid" or "expired" and exits 0 / 7
 - [ ] `octo-whatsapp-onboard session remove <DB-PATH>`
-  - Prints "Remove session at <DB-PATH>? [y/N]"
-  - Reads confirmation from stdin (single line, case-insensitive)
-  - On 'y' / 'yes': deletes the file, prints "removed", exits 0
-  - On 'n' / EOF: prints "aborted", exits 0
-  - On any other: prints "aborted", exits 0
+  - Uses `dialoguer::Confirm::new().with_prompt(format!("Remove session at {db_path:?}?")).default(false).interact()?` for the confirmation (R2-H2: interactive y/N with default No catches the CI misconfiguration case where `echo "y" | ...` would otherwise silently delete a session DB; `dialoguer` dep added to `Cargo.toml`)
+  - If stdin is not a TTY (CI): refuse to prompt, return `OnboardError::BadConfig("session remove requires a TTY (pass --yes to skip the interactive prompt)")`; exit 5
+  - `--yes` flag on `session remove`: skip the interactive prompt (for CI)
+  - On Yes: deletes the file, prints "removed", exits 0
+  - On No / EOF / non-TTY: prints "aborted", exits 0
 - [ ] `octo-whatsapp-onboard version`
   - Prints `octo-whatsapp-onboard {CARGO_PKG_VERSION}` and exits 0
 
@@ -186,14 +191,15 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 
 - [ ] `output.rs`: atomic write, refuse overwrite without `--force`, force overwrite, file mode 0600, bare-filename path (`matrix.json` in cwd)
 - [ ] `error.rs`: 7-variant enum tests, `exit_code()` mapping, `as_exit_code()` conversion
-- [ ] `cli.rs`: clap parse tests (valid args, missing required, conflicting flags)
+- [ ] `cli.rs`: clap parse tests (valid args, missing required, conflicting flags); `--groups` parsing tests (R2-L2: comma-separated, whitespace-trimmed, empty entries rejected, duplicates NOT deduplicated; e.g., `"a,b,c"` → `["a","b","c"]`, `"a, b, c"` → `["a","b","c"]`, `"a,,b"` → error exit 5, `"a,a,b"` → `["a","a","b"]`)
 - [ ] `logging.rs`: redaction layer tests (8-12 cases)
 - [ ] `core/output.rs`: `to_disk_json` round-trip with `WhatsAppConfig`, omit-when-None, never-include-`pair_code` (defense-in-depth: even if a future maintainer adds a `pair_code` field to the in-memory `WhatsAppSession`, the `to_disk_json` function must NOT include it; pin with a unit test)
-- [ ] `core/sidecar.rs`: write+read sidecar JSON, atomic write, mode 0600
+- [ ] `core/sidecar.rs`: write+read sidecar JSON, atomic write, mode 0600, `linked_at` format is RFC 3339 UTC with no sub-second precision (`%Y-%m-%dT%H:%M:%SZ`; R2-M1: pin with a regex test `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` to prevent drift)
 - [ ] `core/qr_link.rs` / `core/pair_link.rs`: input validation tests (no integration with real WhatsApp — those go in the integration test below)
 - [ ] Adapter change: `WhatsAppConfig::validate()` tests (3-5 cases: malformed phone [e.g., `"5551234"`, `"+0123456789"`, `"+1-555-123-4567"`], malformed ws_url [e.g., `"http://example.com"`, `"ftp://example.com"`], valid config with all fields, valid config with empty `groups`, valid config with `ws_url = None` and `pair_phone = None`)
 - [ ] `core/session.rs`: `wait_for_connected` polls `self_handle()` every 250ms (constant `POLL_INTERVAL_MS`); unit test pins the constant to 250ms ± 10ms to catch accidental changes (R1-M2)
 - [ ] `cli.rs`: `PairLinkArgs` accepts `--phone` from CLI arg OR `$OCTO_WHATSAPP_PHONE` env var; CLI arg wins if both are set; unit test for env-var-only form (R1-H2)
+- [ ] `cli.rs`: `PairLinkArgs` accepts `--pair-code` from CLI arg OR `$OCTO_WHATSAPP_PAIR_CODE` env var; same precedence (CLI arg wins); unit test for env-var-only form (companion to R1-H2 phone test)
 
 #### Adapter compatibility
 

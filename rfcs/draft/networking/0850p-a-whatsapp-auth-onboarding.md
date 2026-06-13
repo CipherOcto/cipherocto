@@ -147,7 +147,7 @@ octo-whatsapp-onboard
 ├── qr-link              — Render QR code in terminal, wait for phone scan
 │   ├── --session-path <DIR>      (default: ~/.local/share/octo/whatsapp/default.session.db)
 │   ├── --ws-url <URL>            (test/proxy; or $OCTO_WHATSAPP_WS_URL)
-│   ├── --groups <ID,ID,ID>       (initial group JIDs to monitor; default: empty)
+│   ├── --groups <ID,ID,ID>       (initial group IDs to monitor; default: empty. R2-L1: accepts digits-only `120363012345678901` OR full JID `120363012345678901@g.us`; the adapter's `group_to_jid` normalizes either form on receive. R2-L2: comma-separated; whitespace trimmed; empty entries rejected; duplicates NOT deduplicated.)
 │   ├── --out <PATH>              (default: ~/.config/octo/whatsapp.json)
 │   ├── --stdout                  (write JSON to stdout instead of file)
 │   ├── --force                   (overwrite existing config)
@@ -159,7 +159,7 @@ octo-whatsapp-onboard
 │   ├── --phone <E164>            (required; or $OCTO_WHATSAPP_PHONE; e.g. +15551234567)
 │   ├── --pair-code <CODE>        (optional custom code; or $OCTO_WHATSAPP_PAIR_CODE)
 │   ├── --ws-url <URL>            (test/proxy; or $OCTO_WHATSAPP_WS_URL)
-│   ├── --groups <ID,ID,ID>       (as qr-link)
+│   ├── --groups <ID,ID,ID>       (as qr-link; same parsing rules per R2-L1/R2-L2)
 │   ├── --out <PATH>              (as qr-link)
 │   ├── --stdout
 │   ├── --force
@@ -302,15 +302,12 @@ pub struct WhatsAppSession {
 
 ### Config Output
 
-The tool writes a `WhatsAppConfig`-compatible JSON file:
+The tool writes a `WhatsAppConfig`-compatible JSON file (R2-C2: `pair_code` is **never** present on disk — the field was removed from the in-memory `WhatsAppSession` in R1-C2; `ws_url` and `pair_phone` are present only when set):
 
 ```json
 {
   "session_path": "/home/user/.local/share/octo/whatsapp/default.session.db",
-  "groups": ["120363012345678901@g.us"],
-  "ws_url": null,
-  "pair_phone": null,
-  "pair_code": null
+  "groups": ["120363012345678901@g.us"]
 }
 ```
 
@@ -320,9 +317,7 @@ For `pair-link`:
 {
   "session_path": "/home/user/.local/share/octo/whatsapp/default.session.db",
   "groups": [],
-  "ws_url": null,
-  "pair_phone": "15551234567",
-  "pair_code": null
+  "pair_phone": "15551234567"
 }
 ```
 
@@ -445,22 +440,22 @@ pub struct SessionInfo {
 The onboard core reuses `WhatsAppWebAdapter::start_bot()` to launch the bot, but the **identity observation** is custom to the onboard tool. The adapter's existing `Event::Connected` handler populates `self_phone` (adapter.rs:226-237), but the CLI needs to know **when** that happens. The algorithm:
 
 ```rust
-async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String> {
+// R2-M3: returns CoreError (not OnboardError — the core lib and binary
+// have separate error enums; the binary converts via From<CoreError>).
+async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String, CoreError> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(phone) = adapter.self_handle() {
             return Ok(phone);
         }
         if Instant::now() >= deadline {
-            return Err(OnboardError::Cancelled(format!(
-                "timed out after {timeout:?} waiting for Event::Connected (operator may not have scanned the QR)"
-            )));
+            return Err(CoreError::Timeout { secs: timeout.as_secs() });
         }
         // Poll every 250ms — coarse-grained; Event::Connected is a
         // single-shot event so the wakeup latency is bounded by
         // the adapter's own `Event::Connected` handler latency
         // (which resolves device.pn in <100ms in practice).
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 }
 ```
@@ -503,13 +498,15 @@ After successful link, the CLI writes `session_meta.json` alongside the stoolap 
 }
 ```
 
-The `linked_at` field uses `chrono::Utc::now()` (the `chrono` crate is already a dependency of the adapter at adapter/Cargo.toml:29). The `mode` field is `"qr-link"` or `"pair-link"`. The `groups` field is the operator-supplied list, so `session list` can display it without a bot startup.
+The `linked_at` field uses `chrono::Utc::now()` (the `chrono` crate is already a dependency of the adapter at adapter/Cargo.toml:29) formatted as **RFC 3339 UTC with no sub-second precision** (`YYYY-MM-DDTHH:MM:SSZ`), matching `octo-matrix-onboard/src/logging.rs:82`'s `format_rfc3339_secs` helper (R2-M1). Use `chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()`. The format is unit-test-pinned to prevent drift to SQLite-style or epoch-seconds. The `mode` field is `"qr-link"` or `"pair-link"`. The `groups` field is the operator-supplied list, so `session list` can display it without a bot startup.
 
 **Config serialization:**
 
 The on-disk config is built field-by-field in a `serde_json::Map` (mirroring `octo-matrix-onboard-core/src/lib.rs:161-187`):
 
 ```rust
+// R2-C1: method on WhatsAppSession (matches octo-matrix-onboard-core::Session
+// pattern at crates/octo-matrix-onboard-core/src/lib.rs:161).
 pub fn to_disk_json(&self) -> serde_json::Value {
     let mut map = serde_json::Map::with_capacity(5);
     map.insert("session_path".to_string(),
@@ -811,6 +808,7 @@ After successful `pair-link`:
 |---------|------|---------|
 | 1.0 | 2026-06-12 | Initial draft |
 | 1.1 | 2026-06-12 | R1 fixes: removed internal Notify vs polling contradiction (R1-C1), removed `pair_code` field from `WhatsAppSession` (R1-C2), clarified `validate()` is in-memory only (R1-H1), added `$OCTO_WHATSAPP_PAIR_CODE` env var (R1-H2), reconciled deserialize vs adapter-instantiation schema check (R1-H3), pinned `WhatsAppSession` derives to `Debug, Clone` only (R1-M1), pinned polling interval to 250ms in mission AC (R1-M2), renamed `custom_pair_code` to `custom_code` (R1-M3), reframed determinism claim (R1-M4), justified "empty groups is OK" (R1-L1), demoted binary size to stretch target (R1-L2) |
+| 1.2 | 2026-06-12 | R2 fixes: fixed `to_disk_json` signature `&self` (R2-C1), removed `pair_code: null` from on-disk test vectors (R2-C2), added `OutputArgs` type to mission data structures (R2-H1), made `session remove` interactive with `--yes` flag and non-TTY fallback (R2-H2), clarified `chrono` is transitive (R2-H3), pinned sidecar `linked_at` to RFC 3339 UTC no-subsec (R2-M1), reordered `CoreError` variants alphabetically (R2-M2), fixed `wait_for_connected` to return `CoreError` (R2-M3), documented `--groups` JID form (R2-L1), documented `--groups` parsing edge cases (R2-L2) |
 
 ## Related RFCs
 

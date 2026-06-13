@@ -38,7 +38,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
 #### Workspace setup
 
 - [ ] `crates/octo-whatsapp-onboard/Cargo.toml` (binary) — depends on `octo-whatsapp-onboard-core`, `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }`, `clap = { version = "4.5", features = ["derive"] }`, `tokio = { version = "1", features = ["full"] }`, `tracing`, `tracing-subscriber`, `serde`, `serde_json`, `anyhow`, `dialoguer = "0.11"` (R2-H2: for the `session remove` interactive prompt), `tempfile = "3"`
-- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`, and the transitive `chrono` dep already declared in the adapter's `Cargo.toml:29`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `parking_lot`. R2-H3: `chrono` is a transitive dep — used only for `chrono::DateTime<Utc>` in `SessionInfo` and `chrono::Utc::now()` in sidecar `linked_at`. No direct dep required.
+- [ ] `crates/octo-whatsapp-onboard-core/Cargo.toml` (lib) — depends on `octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }` (for `WhatsAppConfig`, `WhatsAppWebAdapter`, `StoolapStore`, and the transitive `chrono` dep already declared in the adapter's `Cargo.toml:29`), `tokio`, `tracing`, `serde`, `serde_json`, `anyhow`, `parking_lot`. R2-H3 + R10-L1: `chrono` is a transitive dep via the adapter (used by `chrono::DateTime<Utc>` in the adapter's public types, but not directly in the core lib). The core lib uses `format_rfc3339_secs` (hand-rolled from `SystemTime + Duration`) for the sidecar's `linked_at` and `SessionInfo::last_linked_at`. No direct `chrono` dep required in the core lib's `Cargo.toml`.
 - [ ] Verify workspace `Cargo.toml` uses `members = ["crates/*"]` (auto-includes the new crates) — no manual edit required
 - [ ] `cargo build --release` passes for both new crates
 
@@ -98,7 +98,7 @@ See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) fo
   pub struct PairLinkArgs { /* as QrLinkArgs + phone: String + custom_code: Option<String> */ }
   #[derive(Debug, Clone)]
   pub struct WhatsAppSession { pub self_phone: Option<String>, pub session_path: PathBuf, pub groups: Vec<String>, pub pair_phone: Option<String> }
-  pub struct SessionInfo { pub session_path: PathBuf, pub self_phone: Option<String>, pub is_valid: bool, pub last_linked_at: Option<chrono::DateTime<chrono::Utc>> }
+  pub struct SessionInfo { pub session_path: PathBuf, pub self_phone: Option<String>, pub is_valid: bool, pub last_linked_at: Option<String> /* R10-L1: was Option<chrono::DateTime<chrono::Utc>>; the sidecar JSON is a String, mirroring the on-disk shape. Avoids the chrono dep and the parse-from-RFC-3339-string complexity */ }
   // R2-H1: OutputArgs is the clap-flatten target for the (--out, --stdout, --force)
   // triple shared by qr-link and pair-link. Mirrors octo-matrix-onboard::OutputArgs
   // (crates/octo-matrix-onboard/src/cli.rs:103-120).

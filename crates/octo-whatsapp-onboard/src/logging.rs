@@ -227,9 +227,15 @@ mod tests {
     // `message=` prefix. We exercise the visitor via a real
     // tracing Event by capturing the rendered output to a
     // buffer.
+    //
+    // R7: use `tracing::subscriber::with_default` (a thread-local
+    // default) instead of `try_init` (a global). See the
+    // `message_and_field_have_single_separator` test for the
+    // rationale.
     #[test]
     fn message_field_renders_without_prefix() {
         use std::sync::{Arc, Mutex};
+        use tracing::subscriber::with_default;
         use tracing_subscriber::fmt::MakeWriter;
 
         // A `MakeWriter` impl that captures to a shared `Vec<u8>`.
@@ -252,16 +258,17 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
         let writer = CaptureWriter(buf.clone());
-        let _ = tracing_subscriber::registry()
+        let subscriber = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
                     .event_format(RedactingFormat::new())
                     .with_writer(writer),
-            )
-            .try_init();
+            );
 
-        // Emit a message via the standard `info!` macro.
-        tracing::info!("resolved bot identity: +1 555 123 4567");
+        with_default(subscriber, || {
+            // Emit a message via the standard `info!` macro.
+            tracing::info!("resolved bot identity: +1 555 123 4567");
+        });
 
         let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         // The rendered output should contain the message body
@@ -296,9 +303,18 @@ mod tests {
     // pre-pends a space (via the `started` flag). Without
     // coordination, a single event with both would render as
     // `... "message"  field1=value1` (double space).
+    //
+    // R7: use `tracing::subscriber::with_default` (a thread-local
+    // default) instead of `try_init` (a global). `try_init` only
+    // succeeds once across the test suite; the second test would
+    // see the FIRST test's subscriber (whose writer points to
+    // the FIRST test's buffer), so `tracing::info!` writes to the
+    // wrong place. `with_default` scopes the subscriber to the
+    // closure, so each test gets its own subscriber.
     #[test]
     fn message_and_field_have_single_separator() {
         use std::sync::{Arc, Mutex};
+        use tracing::subscriber::with_default;
         use tracing_subscriber::fmt::MakeWriter;
 
         #[derive(Clone)]
@@ -320,16 +336,17 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
         let writer = CaptureWriter(buf.clone());
-        let _ = tracing_subscriber::registry()
+        let subscriber = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
                     .event_format(RedactingFormat::new())
                     .with_writer(writer),
-            )
-            .try_init();
+            );
 
-        // Emit a message WITH a structured field.
-        tracing::info!(user = "alice", "user logged in");
+        with_default(subscriber, || {
+            // Emit a message WITH a structured field.
+            tracing::info!(user = "alice", "user logged in");
+        });
 
         let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         // The captured output should NOT contain a double space

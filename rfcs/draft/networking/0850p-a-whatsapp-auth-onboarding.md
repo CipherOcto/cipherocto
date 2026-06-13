@@ -886,6 +886,7 @@ After successful `pair-link`:
 | 1.9 | 2026-06-12 | R9 fixes: whoami AC subsumed duplicated natural-language bullets into the explicit match (R9-M1), session verify has same `Result<String, CoreError>` → display conversion as whoami (R9-L1) |
 | 1.10 | 2026-06-12 | R10 fixes: `SessionInfo::last_linked_at` changed from `Option<chrono::DateTime<Utc>>` to `Option<String>` (R10-L1: sidecar JSON is a String; avoids chrono dep and parse-from-RFC-3339 complexity); R2-H3's "chrono::Utc::now() in sidecar" claim removed (R4-L2 replaced it with `format_rfc3339_secs`) |
 | 1.11 | 2026-06-12 | R11 fixes: RFC `SessionInfo::last_linked_at` updated to match the mission's R10-L1 fix (R10 fix was incomplete — only updated the mission, not the RFC; drift between the two docs) |
+| 1.12 | 2026-06-12 | R12 fixes: mission's Location section updated to match the RFC's R1-H1 fix (workspace is auto-included via `members = ["crates/*"]` glob; no manual edit required) |
 
 ## Related RFCs
 

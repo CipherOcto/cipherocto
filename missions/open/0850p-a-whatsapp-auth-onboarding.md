@@ -288,7 +288,7 @@ Companion guide for code-level patterns:
 
 - `crates/octo-whatsapp-onboard/` (new, binary)
 - `crates/octo-whatsapp-onboard-core/` (new, lib)
-- `Cargo.toml` (workspace members update)
+- (workspace) | Auto-included via `members = ["crates/*"]` in root `Cargo.toml`; no manual edit required (R12-L1: R1-H1 fix was applied to the RFC's Key Files but missed the mission's Location section; cross-document drift)
 - `crates/octo-adapter-whatsapp/src/adapter.rs` (additive: `WhatsAppConfig::validate()`)
 
 ## Complexity

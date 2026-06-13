@@ -1,0 +1,152 @@
+//! Pair-code-based linking.
+//!
+//! R5-H1: use the shared `wait_for_connected` helper. R5-M2:
+//! sidecar-first ordering. R1-C2: the `custom_code` is passed to
+//! `WhatsAppWebAdapter` for the link, then **dropped** after
+//! `Event::Connected`. It never enters the on-disk config, the
+//! sidecar, or the `WhatsAppSession` struct.
+//!
+//! R1-M3: the field name is `custom_code` to match the SDK's
+//! `PairCodeOptions::custom_code`. The flag is `--pair-code` and the
+//! env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity.
+
+use std::path::Path;
+
+use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+
+use crate::error::{CoreError, Result};
+use crate::output::WhatsAppSession;
+use crate::output::PairLinkArgs;
+use crate::sidecar::{write_sidecar, SidecarMode};
+
+/// Run the pair-link flow: validate phone, build adapter with
+/// `pair_phone` and `custom_code`, start bot, wait for
+/// `Event::Connected`, write sidecar + session.
+pub async fn run(args: PairLinkArgs) -> Result<WhatsAppSession> {
+    validate_pair_link_args(&args)?;
+
+    let config = WhatsAppConfig {
+        session_path: args.session_path.to_string_lossy().into_owned(),
+        pair_phone: Some(args.phone.clone()),
+        pair_code: args.custom_code.clone(),
+        ws_url: args.ws_url.clone(),
+        groups: args.groups.clone(),
+    };
+    config.validate().map_err(|e| CoreError::InvalidPhone {
+        value: args.phone.clone(),
+        reason: e,
+    })?;
+
+    let adapter = WhatsAppWebAdapter::new(config);
+    adapter
+        .start_bot()
+        .await
+        .map_err(|e| CoreError::Adapter(anyhow::anyhow!("start_bot: {e}")))?;
+
+    let phone = crate::session::wait_for_connected(
+        &adapter,
+        std::time::Duration::from_secs(args.timeout_secs),
+    )
+    .await?;
+
+    let session = WhatsAppSession {
+        self_phone: Some(phone),
+        session_path: args.session_path.clone(),
+        groups: args.groups.clone(),
+        pair_phone: Some(args.phone.clone()),
+    };
+
+    // R5-M2: sidecar first, before any config write.
+    write_sidecar(&args.session_path, &session, SidecarMode::PairLink)?;
+
+    Ok(session)
+}
+
+fn validate_pair_link_args(args: &PairLinkArgs) -> Result<()> {
+    validate_phone(&args.phone)?;
+
+    if let Some(parent) = args.session_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| CoreError::InvalidSessionPath {
+                path: parent.to_path_buf(),
+                reason: format!("cannot create parent directory: {e}"),
+            })?;
+        }
+    }
+    for group in &args.groups {
+        if group.is_empty() {
+            return Err(CoreError::InvalidSessionPath {
+                path: args.session_path.clone(),
+                reason: "groups contains an empty string".to_string(),
+            });
+        }
+    }
+    if let Some(ref ws_url) = args.ws_url {
+        if !(ws_url.starts_with("ws://") || ws_url.starts_with("wss://")) {
+            return Err(CoreError::InvalidSessionPath {
+                path: args.session_path.clone(),
+                reason: format!("ws_url {ws_url:?} must start with ws:// or wss://"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// E.164 phone validation: `+` followed by 7-15 ASCII digits,
+/// no leading 0 after `+`. Mirrors the adapter's `is_e164` helper.
+fn validate_phone(phone: &str) -> Result<()> {
+    if !phone.starts_with('+') {
+        return Err(CoreError::InvalidPhone {
+            value: phone.to_string(),
+            reason: "missing leading +".to_string(),
+        });
+    }
+    let digits = &phone[1..];
+    if digits.is_empty() || digits.len() < 7 || digits.len() > 15 {
+        return Err(CoreError::InvalidPhone {
+            value: phone.to_string(),
+            reason: format!("expected 7-15 digits, got {}", digits.len()),
+        });
+    }
+    if !digits.chars().all(|c| c.is_ascii_digit()) {
+        return Err(CoreError::InvalidPhone {
+            value: phone.to_string(),
+            reason: "non-digit character".to_string(),
+        });
+    }
+    if digits.starts_with('0') {
+        return Err(CoreError::InvalidPhone {
+            value: phone.to_string(),
+            reason: "leading 0 after +".to_string(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_phone_accepts_e164() {
+        assert!(validate_phone("+15551234567").is_ok());
+        assert!(validate_phone("+1234567").is_ok());
+    }
+
+    #[test]
+    fn validate_phone_rejects_malformed() {
+        for bad in [
+            "5551234",       // no +
+            "+0123456789",   // leading 0
+            "+1-555-1234567", // non-digit
+            "+",             // no digits
+            "+abcdefg",      // non-digit
+        ] {
+            assert!(validate_phone(bad).is_err(), "phone {bad:?} should be rejected");
+        }
+    }
+}
+
+pub fn session_path(args: &PairLinkArgs) -> &Path {
+    &args.session_path
+}

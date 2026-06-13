@@ -39,12 +39,70 @@ impl std::fmt::Debug for WhatsAppConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WhatsAppConfig")
             .field("session_path", &self.session_path)
-            .field("pair_phone", &self.pair_phone)
-            .field("pair_code", &self.pair_code)
+            .field("pair_phone", &self.pair_phone.as_ref().map(|_| "<redacted>"))
+            .field("pair_code", &self.pair_code.as_ref().map(|_| "<redacted>"))
             .field("ws_url", &self.ws_url)
             .field("groups", &self.groups)
             .finish()
     }
+}
+
+impl WhatsAppConfig {
+    /// Validate the config in-memory.
+    ///
+    /// R1-H1: pure field-shape check (no filesystem I/O). Filesystem
+    /// writability of `session_path` is a CLI pre-flight concern in
+    /// `pair_link::run` / `qr_link::run`, not part of `validate()`.
+    /// Modeled after `TelegramConfig::validate()` at
+    /// `octo-adapter-telegram/src/config.rs:94-110`.
+    ///
+    /// Checks:
+    /// - `pair_phone` is E.164 if set: `+` followed by 7-15 digits
+    /// - `ws_url` starts with `ws://` or `wss://` if set
+    /// - `groups` entries are non-empty strings (empty groups Vec is OK
+    ///   — the operator may have no chats to monitor yet)
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if let Some(ref phone) = self.pair_phone {
+            if !is_e164(phone) {
+                return Err(format!(
+                    "pair_phone {:?} is not a valid E.164 number (expected + followed by 7-15 digits)",
+                    phone
+                ));
+            }
+        }
+        if let Some(ref ws_url) = self.ws_url {
+            if !(ws_url.starts_with("ws://") || ws_url.starts_with("wss://")) {
+                return Err(format!(
+                    "ws_url {:?} must start with ws:// or wss://",
+                    ws_url
+                ));
+            }
+        }
+        for group in &self.groups {
+            if group.is_empty() {
+                return Err("groups contains an empty string".to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// E.164 validation: `+` followed by 7-15 ASCII digits, no leading 0 after `+`.
+fn is_e164(phone: &str) -> bool {
+    if !phone.starts_with('+') {
+        return false;
+    }
+    let digits = &phone[1..];
+    if digits.is_empty() || digits.len() < 7 || digits.len() > 15 {
+        return false;
+    }
+    if !digits.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if digits.starts_with('0') {
+        return false;
+    }
+    true
 }
 
 // ── Reconnect constants ────────────────────────────────────────────
@@ -585,5 +643,85 @@ mod tests {
     #[test]
     fn test_decode_envelope_invalid_base64() {
         assert!(WhatsAppWebAdapter::decode_envelope("DOT/1/!!!invalid!!!").is_err());
+    }
+
+    // ── WhatsAppConfig::validate() tests (R1 mission AC) ────────
+
+    fn cfg_with(
+        session_path: &str,
+        pair_phone: Option<&str>,
+        pair_code: Option<&str>,
+        ws_url: Option<&str>,
+        groups: Vec<&str>,
+    ) -> WhatsAppConfig {
+        WhatsAppConfig {
+            session_path: session_path.to_string(),
+            pair_phone: pair_phone.map(str::to_string),
+            pair_code: pair_code.map(str::to_string),
+            ws_url: ws_url.map(str::to_string),
+            groups: groups.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_config_with_all_fields() {
+        let cfg = cfg_with(
+            "/tmp/test.db",
+            Some("+15551234567"),
+            None,
+            Some("wss://example.com"),
+            vec!["120363012345678901@g.us"],
+        );
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_minimal_config() {
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_malformed_phone() {
+        for bad in [
+            "5551234",       // no leading +
+            "+0123456789",   // leading 0 after +
+            "+1-555-1234567", // non-digit
+            "+",             // no digits
+            "+abcdefg",      // non-digit
+        ] {
+            let cfg = cfg_with("/tmp/test.db", Some(bad), None, None, vec![]);
+            assert!(cfg.validate().is_err(), "phone {bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_malformed_ws_url() {
+        for bad in ["http://example.com", "ftp://example.com", "example.com"] {
+            let cfg = cfg_with("/tmp/test.db", None, None, Some(bad), vec![]);
+            assert!(cfg.validate().is_err(), "ws_url {bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_accepts_ws_and_wss() {
+        for good in ["ws://localhost:8080", "wss://example.com"] {
+            let cfg = cfg_with("/tmp/test.db", None, None, Some(good), vec![]);
+            assert!(cfg.validate().is_ok(), "ws_url {good:?} should be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_empty_group() {
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec!["valid", ""]);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_empty_groups_vec() {
+        // R1-L1: empty groups Vec is OK; the operator may have no chats
+        // to monitor yet; groups can be added later by editing the config.
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+        assert!(cfg.validate().is_ok());
     }
 }

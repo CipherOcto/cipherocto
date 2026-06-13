@@ -258,7 +258,7 @@ sequenceDiagram
 
 1. **Phone validation.** E.164 format: `+` followed by 7-15 digits. The CLI rejects `--phone 5551234` (no `+`) and `--phone +0123456789` (leading 0 after `+`) with exit code 5 (bad config). Validation is identical to the adapter's `normalize_phone` (adapter.rs:148-150) plus a length check.
 
-2. **Custom pair code.** If `--pair-code` is provided, it's passed to `PairCodeOptions::custom_code` (adapter.rs:261). The CLI never logs the custom code (it's a secret the operator chose); it's redacted in the output JSON when `--verbose` is set (see §Logging & Redaction).
+2. **Custom pair code.** If `--pair-code` is provided, it's passed to `PairCodeOptions::custom_code` (adapter.rs:261). The CLI never logs the custom code (it's a secret the operator chose). R14-L1: the earlier claim "redacted in the output JSON when `--verbose` is set" was wrong; R3-L1 already established that the current adapter does NOT log the custom code anywhere (only the auto-generated path eprintlns), so there is nothing to redact. The custom code is **never visible in the terminal at any point**.
 
 3. **Pair code redaction.** The auto-generated pair code is **not a secret** (it's time-limited and the operator's choice whether to display it on a shared screen), but the **custom pair code is** (it's operator-chosen and may be reused). The CLI distinguishes the two in the redaction layer.
 
@@ -888,6 +888,7 @@ After successful `pair-link`:
 | 1.11 | 2026-06-12 | R11 fixes: RFC `SessionInfo::last_linked_at` updated to match the mission's R10-L1 fix (R10 fix was incomplete — only updated the mission, not the RFC; drift between the two docs) |
 | 1.12 | 2026-06-12 | R12 fixes: mission's Location section updated to match the RFC's R1-H1 fix (workspace is auto-included via `members = ["crates/*"]` glob; no manual edit required) |
 | 1.13 | 2026-06-12 | R13 fixes: pair-link sequence diagram now includes the `session_path dir created mode 0700` validation step (was on qr-link line 196 but missing from pair-link after R6-M2 refactor) |
+| 1.14 | 2026-06-12 | R14 fixes: §Auth Flow pair-link "Custom pair code" Key design decision no longer claims redaction in output JSON (R3-L1 already established the custom code is never logged; this contradicts) |
 
 ## Related RFCs
 

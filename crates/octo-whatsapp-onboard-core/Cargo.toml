@@ -17,7 +17,6 @@ anyhow = "1"
 thiserror = "1"
 parking_lot = "0.12"
 tempfile = "3"
-chrono = { version = "0.4", features = ["clock"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

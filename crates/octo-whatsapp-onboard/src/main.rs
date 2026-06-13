@@ -17,9 +17,9 @@ use cli::{
 use error::OnboardError;
 use octo_network::dot::adapters::PlatformAdapter; // brings self_handle + health_check into scope
 use octo_whatsapp_onboard_core::{
-    wait_for_connected, wait_for_health, CoreError, PairLinkArgs as CorePairLinkArgs,
+    wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs,
     QrLinkArgs as CoreQrLinkArgs, SessionInfo, WhatsAppConfig,
-    SESSION_LIST_HEALTH_TIMEOUT_SECS,
+    WHOAMI_TIMEOUT_SECS,
 };
 use std::process::ExitCode;
 
@@ -62,15 +62,17 @@ async fn main() -> ExitCode {
 }
 
 async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> {
-    let output = args.output.clone();
-    let session = octo_whatsapp_onboard_core::qr_link::run(to_core_qr(args)).await?;
-    run_link(&output, session).await
+    // R1-M4: pass args by reference; no clone of OutputArgs needed.
+    let core_args = to_core_qr(&args);
+    let session = octo_whatsapp_onboard_core::qr_link::run(&core_args).await?;
+    run_link(&args.output, session).await
 }
 
 async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardError> {
-    let output = args.output.clone();
-    let session = octo_whatsapp_onboard_core::pair_link::run(to_core_pair(args)).await?;
-    run_link(&output, session).await
+    // R1-M4: pass args by reference; no clone of OutputArgs needed.
+    let core_args = to_core_pair(&args);
+    let session = octo_whatsapp_onboard_core::pair_link::run(&core_args).await?;
+    run_link(&args.output, session).await
 }
 
 async fn run_link(
@@ -94,10 +96,11 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
             }
         }
     }
-    let adapter = build_adapter(&session_path, &[])?;
+    let adapter = build_adapter(&session_path, &[]);
+    start_bot(&adapter).await?; // R1-C2
     match wait_for_connected(
         &adapter,
-        Duration::from_secs(octo_whatsapp_onboard_core::WHOAMI_TIMEOUT_SECS),
+        Duration::from_secs(WHOAMI_TIMEOUT_SECS),
     )
     .await
     {
@@ -136,10 +139,11 @@ async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), Onbo
 }
 
 async fn run_session_verify(args: SessionVerifyArgs) -> std::result::Result<(), OnboardError> {
-    let adapter = build_adapter(&args.db_path, &[])?;
+    let adapter = build_adapter(&args.db_path, &[]);
+    start_bot(&adapter).await?; // R1-H2
     match wait_for_connected(
         &adapter,
-        Duration::from_secs(octo_whatsapp_onboard_core::WHOAMI_TIMEOUT_SECS),
+        Duration::from_secs(WHOAMI_TIMEOUT_SECS),
     )
     .await
     {
@@ -195,24 +199,55 @@ async fn run_session_remove(args: SessionRemoveArgs) -> std::result::Result<(), 
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-fn to_core_qr(args: QrLinkArgs) -> CoreQrLinkArgs {
+// R1-M4: take by reference (the core's `run` now takes by ref too).
+fn to_core_qr(args: &QrLinkArgs) -> CoreQrLinkArgs {
+    // R1-H1: env var fallback for --ws-url. CLI arg wins if both
+    // are set (the operator typed it explicitly, so honor that).
+    let ws_url = env_or_arg_opt(args.ws_url.as_ref(), "OCTO_WHATSAPP_WS_URL");
     CoreQrLinkArgs {
-        session_path: args.session_path,
-        groups: args.groups,
-        ws_url: args.ws_url,
+        session_path: args.session_path.clone(),
+        groups: args.groups.clone(),
+        ws_url,
         timeout_secs: args.timeout,
     }
 }
 
-fn to_core_pair(args: PairLinkArgs) -> CorePairLinkArgs {
+fn to_core_pair(args: &PairLinkArgs) -> CorePairLinkArgs {
+    // R1-H1: env var fallback for --phone and --pair-code. CLI
+    // arg wins if both are set.
+    let phone = env_or_arg(&args.phone, "OCTO_WHATSAPP_PHONE");
+    let custom_code = env_or_arg_opt(args.pair_code.as_ref(), "OCTO_WHATSAPP_PAIR_CODE");
+    let ws_url = env_or_arg_opt(args.ws_url.as_ref(), "OCTO_WHATSAPP_WS_URL");
     CorePairLinkArgs {
-        session_path: args.session_path,
-        phone: args.phone,
-        custom_code: args.pair_code,
-        groups: args.groups,
-        ws_url: args.ws_url,
+        session_path: args.session_path.clone(),
+        phone,
+        custom_code,
+        groups: args.groups.clone(),
+        ws_url,
         timeout_secs: args.timeout,
     }
+}
+
+/// R1-H1: env var fallback. Returns the CLI arg if non-empty,
+/// else the env var. Returns empty string if both are empty
+/// (the core lib's `validate_phone` will reject empty).
+fn env_or_arg(arg: &str, env_var: &str) -> String {
+    if !arg.is_empty() {
+        return arg.to_string();
+    }
+    std::env::var(env_var).unwrap_or_default()
+}
+
+/// R1-H1: env var fallback for `Option<String>` args. Returns
+/// the CLI arg if non-empty, else the env var. Returns None if
+/// both are absent or empty.
+fn env_or_arg_opt(arg: Option<&String>, env_var: &str) -> Option<String> {
+    if let Some(s) = arg {
+        if !s.is_empty() {
+            return Some(s.clone());
+        }
+    }
+    std::env::var(env_var).ok().filter(|s| !s.is_empty())
 }
 
 fn default_session_base_dir() -> std::path::PathBuf {
@@ -229,10 +264,12 @@ fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, On
         .map_err(|e| OnboardError::BadConfig(format!("parse {path:?}: {e}")))
 }
 
+// R1-L1: `build_adapter` doesn't error (WhatsAppWebAdapter::new
+// never fails). Changed to return the adapter directly.
 fn build_adapter(
     session_path: &std::path::Path,
     groups: &[String],
-) -> std::result::Result<octo_whatsapp_onboard_core::WhatsAppWebAdapter, OnboardError> {
+) -> octo_whatsapp_onboard_core::WhatsAppWebAdapter {
     let cfg = WhatsAppConfig {
         session_path: format!("{}", session_path.display()),
         pair_phone: None,
@@ -240,11 +277,28 @@ fn build_adapter(
         ws_url: None,
         groups: groups.to_vec(),
     };
-    Ok(octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg))
+    octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg)
+}
+
+// R1-C2 / R1-H2: whoami and session verify must start the bot
+// before polling self_handle() / health_check(). Without this,
+// self_handle() is always None (the bot's on_event handler
+// populates it after Event::Connected) and the call always
+// times out.
+async fn start_bot(adapter: &octo_whatsapp_onboard_core::WhatsAppWebAdapter) -> std::result::Result<(), OnboardError> {
+    adapter.start_bot().await.map_err(|e| {
+        OnboardError::Generic(anyhow::anyhow!("start_bot: {e}"))
+    })
 }
 
 /// List sessions under `base_dir`. Reads `*.meta.json` sidecar if
 /// present, else falls back to `wait_for_health` on the DB.
+///
+/// R1-M1: `is_valid` is reported from the sidecar presence (the
+/// sidecar is only written after `Event::Connected`, so its
+/// presence IS a validity signal). This avoids a 5s bot-startup
+/// per DB in the common case. The fallback is documented as a
+/// hint, not a live health check.
 async fn list_sessions(base_dir: &std::path::Path) -> std::result::Result<Vec<SessionInfo>, OnboardError> {
     if !base_dir.exists() {
         return Ok(vec![]);
@@ -257,33 +311,24 @@ async fn list_sessions(base_dir: &std::path::Path) -> std::result::Result<Vec<Se
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("db"))
         .collect();
-    let futs: Vec<_> = db_paths
-        .into_iter()
-        .map(|path| async move {
-            let sidecar = path.with_extension("db.meta.json");
-            let (self_phone, last_linked_at) = if sidecar.exists() {
-                read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
-            } else {
-                (None, None)
-            };
-            let adapter = build_adapter(&path, &[])?;
-            let is_valid = wait_for_health(
-                &adapter,
-                Duration::from_secs(SESSION_LIST_HEALTH_TIMEOUT_SECS),
-            )
-            .await
-            .is_ok();
-            Ok::<_, OnboardError>(SessionInfo {
-                session_path: path,
-                self_phone: self_phone.or_else(|| adapter.self_handle()),
-                is_valid,
-                last_linked_at,
-            })
-        })
-        .collect();
-    let mut out = Vec::with_capacity(futs.len());
-    for r in futures::future::join_all(futs).await {
-        out.push(r?);
+    let mut out = Vec::with_capacity(db_paths.len());
+    for path in db_paths {
+        let sidecar = path.with_extension("db.meta.json");
+        let (self_phone, last_linked_at) = if sidecar.exists() {
+            read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
+        } else {
+            (None, None)
+        };
+        // R1-M1: sidecar presence indicates successful link at last
+        // write. Not a live health check — for that, use
+        // `session verify <db-path>`.
+        let is_valid = sidecar.exists();
+        out.push(SessionInfo {
+            session_path: path,
+            self_phone,
+            is_valid,
+            last_linked_at,
+        });
     }
     Ok(out)
 }

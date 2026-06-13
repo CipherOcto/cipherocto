@@ -102,8 +102,6 @@ pub struct QrLinkArgs {
     /// Timeout in seconds (default: 300, how long to wait for Event::Connected).
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -124,8 +122,6 @@ pub struct PairLinkArgs {
     pub output: OutputArgs,
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -133,8 +129,6 @@ pub struct WhoamiArgs {
     /// Path to a config file written by `qr-link` or `pair-link`.
     #[arg(long)]
     pub config: PathBuf,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -142,16 +136,12 @@ pub struct SessionListArgs {
     /// Base directory to scan (default: ~/.local/share/octo/whatsapp/).
     #[arg(long)]
     pub base_dir: Option<PathBuf>,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
 pub struct SessionVerifyArgs {
     /// Path to the session DB to verify.
     pub db_path: PathBuf,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -161,8 +151,6 @@ pub struct SessionRemoveArgs {
     /// Skip the interactive confirmation (for CI).
     #[arg(long)]
     pub yes: bool,
-    #[arg(short, long)]
-    pub verbose: bool,
 }
 
 #[cfg(test)]

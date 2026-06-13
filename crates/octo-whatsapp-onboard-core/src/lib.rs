@@ -17,6 +17,7 @@ pub mod qr_link;
 pub mod session;
 pub mod sidecar;
 pub mod time;
+pub mod validate;
 
 pub use error::{CoreError, Result};
 pub use output::{PairLinkArgs, QrLinkArgs, SessionInfo, WhatsAppSession};
@@ -33,3 +34,18 @@ pub use session::{
 /// Re-export the adapter types for downstream consumers (the
 /// binary's `cli.rs` and integration tests).
 pub use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+
+/// Shared validation for session link args (parent dir creation).
+/// The adapter's `WhatsAppConfig::validate()` handles field-shape
+/// checks (ws_url format, groups non-empty, pair_phone E.164).
+pub fn validate_session_args(session_path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = session_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| CoreError::InvalidSessionPath {
+                path: parent.to_path_buf(),
+                reason: format!("cannot create parent directory: {e}"),
+            })?;
+        }
+    }
+    Ok(())
+}

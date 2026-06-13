@@ -8,13 +8,15 @@ use std::process::ExitCode;
 
 use octo_whatsapp_onboard_core::CoreError;
 
+/// R1-L2: `AuthRejected` and `RateLimited` are reserved for future
+/// error states (e.g., when the adapter exposes more event-driven
+/// failure modes). The mission AC requires all 7 variants to
+/// support the 7 exit codes (0-7), so they're kept but unused.
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum OnboardError {
     #[error("{0}")]
     Generic(#[from] anyhow::Error),
-
-    #[error("auth rejected")]
-    AuthRejected(String),
 
     #[error("unreachable")]
     Unreachable(String),
@@ -24,9 +26,6 @@ pub enum OnboardError {
 
     #[error("bad config")]
     BadConfig(String),
-
-    #[error("rate limited")]
-    RateLimited(String),
 
     #[error("session expired")]
     SessionExpired(String),
@@ -39,11 +38,9 @@ impl OnboardError {
     pub fn inner(&self) -> Option<&str> {
         match self {
             OnboardError::Generic(_) => None,
-            OnboardError::AuthRejected(s)
-            | OnboardError::Unreachable(s)
+            OnboardError::Unreachable(s)
             | OnboardError::Cancelled(s)
             | OnboardError::BadConfig(s)
-            | OnboardError::RateLimited(s)
             | OnboardError::SessionExpired(s) => Some(s.as_str()),
         }
     }
@@ -52,11 +49,9 @@ impl OnboardError {
     pub fn exit_code(&self) -> u8 {
         match self {
             OnboardError::Generic(_) => 1,
-            OnboardError::AuthRejected(_) => 2,
             OnboardError::Unreachable(_) => 3,
             OnboardError::Cancelled(_) => 4,
             OnboardError::BadConfig(_) => 5,
-            OnboardError::RateLimited(_) => 6,
             OnboardError::SessionExpired(_) => 7,
         }
     }
@@ -103,13 +98,10 @@ mod tests {
 
     #[test]
     fn exit_code_mapping_is_stable() {
-        // R3-C2: 8 cases, one per CoreError variant
         assert_eq!(OnboardError::Generic(anyhow::anyhow!("x")).exit_code(), 1);
-        assert_eq!(OnboardError::AuthRejected("x".into()).exit_code(), 2);
         assert_eq!(OnboardError::Unreachable("x".into()).exit_code(), 3);
         assert_eq!(OnboardError::Cancelled("x".into()).exit_code(), 4);
         assert_eq!(OnboardError::BadConfig("x".into()).exit_code(), 5);
-        assert_eq!(OnboardError::RateLimited("x".into()).exit_code(), 6);
         assert_eq!(OnboardError::SessionExpired("x".into()).exit_code(), 7);
     }
 
@@ -146,7 +138,7 @@ mod tests {
 
     #[test]
     fn inner_accessor_returns_message() {
-        let e = OnboardError::AuthRejected("details".into());
+        let e = OnboardError::Cancelled("details".into());
         assert_eq!(e.inner(), Some("details"));
     }
 }

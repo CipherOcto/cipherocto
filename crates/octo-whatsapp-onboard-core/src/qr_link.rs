@@ -8,8 +8,6 @@
 //! creatable, `groups` non-empty strings, `ws_url` starts with
 //! `ws://` or `wss://`.
 
-use std::path::Path;
-
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 
 use crate::error::{CoreError, Result};
@@ -20,8 +18,12 @@ use crate::sidecar::{write_sidecar, SidecarMode};
 /// Run the qr-link flow: build adapter, start bot, wait for
 /// `Event::Connected`, write sidecar + session (the binary writes
 /// the config separately).
-pub async fn run(args: QrLinkArgs) -> Result<WhatsAppSession> {
-    validate_qr_link_args(&args)?;
+///
+/// R1-M4: takes `&QrLinkArgs` (by reference) so the binary can
+/// pass the args struct directly without `clone()`-ing the
+/// `OutputArgs` field. This matches the matrix-onboard pattern.
+pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
+    validate_qr_link_args(args)?;
 
     let config = WhatsAppConfig {
         session_path: args.session_path.to_string_lossy().into_owned(),
@@ -61,36 +63,5 @@ pub async fn run(args: QrLinkArgs) -> Result<WhatsAppSession> {
 }
 
 fn validate_qr_link_args(args: &QrLinkArgs) -> Result<()> {
-    if let Some(parent) = args.session_path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            // Try to create it.
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::InvalidSessionPath {
-                path: parent.to_path_buf(),
-                reason: format!("cannot create parent directory: {e}"),
-            })?;
-        }
-    }
-    for group in &args.groups {
-        if group.is_empty() {
-            return Err(CoreError::InvalidSessionPath {
-                path: args.session_path.clone(),
-                reason: "groups contains an empty string".to_string(),
-            });
-        }
-    }
-    if let Some(ref ws_url) = args.ws_url {
-        if !(ws_url.starts_with("ws://") || ws_url.starts_with("wss://")) {
-            return Err(CoreError::InvalidSessionPath {
-                path: args.session_path.clone(),
-                reason: format!("ws_url {ws_url:?} must start with ws:// or wss://"),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// R7-L1: get the session path (used by the binary's `output::write`
-/// to know where to put the config file).
-pub fn session_path(args: &QrLinkArgs) -> &Path {
-    &args.session_path
+    crate::validate_session_args(&args.session_path)
 }

@@ -54,7 +54,7 @@ impl WhatsAppSession {
         let mut map = serde_json::Map::with_capacity(4);
         map.insert(
             "session_path".to_string(),
-            serde_json::Value::String(self.session_path.to_string_lossy().into_owned()),
+            serde_json::Value::String(format!("{}", self.session_path.display())),
         );
         if !self.groups.is_empty() {
             map.insert(

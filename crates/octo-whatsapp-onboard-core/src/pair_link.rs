@@ -10,8 +10,6 @@
 //! `PairCodeOptions::custom_code`. The flag is `--pair-code` and the
 //! env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity.
 
-use std::path::Path;
-
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 
 use crate::error::{CoreError, Result};
@@ -22,18 +20,22 @@ use crate::sidecar::{write_sidecar, SidecarMode};
 /// Run the pair-link flow: validate phone, build adapter with
 /// `pair_phone` and `custom_code`, start bot, wait for
 /// `Event::Connected`, write sidecar + session.
-pub async fn run(args: PairLinkArgs) -> Result<WhatsAppSession> {
-    validate_pair_link_args(&args)?;
+///
+/// R1-M4: takes `&PairLinkArgs` (by reference) so the binary can
+/// pass the args struct directly without `clone()`-ing the
+/// `OutputArgs` field.
+pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
+    validate_pair_link_args(args)?;
 
     let config = WhatsAppConfig {
-        session_path: args.session_path.to_string_lossy().into_owned(),
+        session_path: format!("{}", args.session_path.display()),
         pair_phone: Some(args.phone.clone()),
         pair_code: args.custom_code.clone(),
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
     };
-    config.validate().map_err(|e| CoreError::InvalidPhone {
-        value: args.phone.clone(),
+    config.validate().map_err(|e| CoreError::InvalidSessionPath {
+        path: args.session_path.clone(),
         reason: e,
     })?;
 
@@ -64,32 +66,7 @@ pub async fn run(args: PairLinkArgs) -> Result<WhatsAppSession> {
 
 fn validate_pair_link_args(args: &PairLinkArgs) -> Result<()> {
     validate_phone(&args.phone)?;
-
-    if let Some(parent) = args.session_path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::InvalidSessionPath {
-                path: parent.to_path_buf(),
-                reason: format!("cannot create parent directory: {e}"),
-            })?;
-        }
-    }
-    for group in &args.groups {
-        if group.is_empty() {
-            return Err(CoreError::InvalidSessionPath {
-                path: args.session_path.clone(),
-                reason: "groups contains an empty string".to_string(),
-            });
-        }
-    }
-    if let Some(ref ws_url) = args.ws_url {
-        if !(ws_url.starts_with("ws://") || ws_url.starts_with("wss://")) {
-            return Err(CoreError::InvalidSessionPath {
-                path: args.session_path.clone(),
-                reason: format!("ws_url {ws_url:?} must start with ws:// or wss://"),
-            });
-        }
-    }
-    Ok(())
+    crate::validate_session_args(&args.session_path)
 }
 
 /// E.164 phone validation: `+` followed by 7-15 ASCII digits,
@@ -145,8 +122,4 @@ mod tests {
             assert!(validate_phone(bad).is_err(), "phone {bad:?} should be rejected");
         }
     }
-}
-
-pub fn session_path(args: &PairLinkArgs) -> &Path {
-    &args.session_path
 }

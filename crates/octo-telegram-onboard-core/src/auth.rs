@@ -819,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_flood_wait_is_rate_limited_not_cancelled() {
+    fn classify_flood_wait_is_rate_limited_with_exit_code_6() {
         let e = classify_tdlib_error("FLOOD_WAIT_60".into());
         assert!(
             matches!(e, OnboardError::RateLimited(_)),
@@ -831,10 +831,15 @@ mod tests {
             "FLOOD_WAIT should not be Cancelled"
         );
         assert_eq!(e.exit_code(), 6, "RateLimited should have exit code 6");
+        assert!(
+            e.inner().unwrap_or("").contains("FLOOD_WAIT"),
+            "RateLimited message should contain input keyword, got: {:?}",
+            e.inner()
+        );
     }
 
     #[test]
-    fn classify_network_error_is_unreachable_not_cancelled() {
+    fn classify_network_error_is_unreachable_with_exit_code_3() {
         let e = classify_tdlib_error("network timeout".into());
         assert!(
             matches!(e, OnboardError::TelegramUnreachable(_)),
@@ -849,6 +854,11 @@ mod tests {
             e.exit_code(),
             3,
             "TelegramUnreachable should have exit code 3"
+        );
+        assert!(
+            e.inner().unwrap_or("").contains("network"),
+            "TelegramUnreachable message should contain input keyword, got: {:?}",
+            e.inner()
         );
     }
 

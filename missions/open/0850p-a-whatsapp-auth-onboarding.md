@@ -2,11 +2,11 @@
 
 ## Status
 
-Open (2026-06-12)
+Claimed (2026-06-12)
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding CLI (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`)
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding CLI (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`, version 1.14 after 15-round adversarial review)
 
 ## Dependencies
 
@@ -17,7 +17,7 @@ RFC-0850p-a (Networking): WhatsApp Auth Onboarding CLI (`rfcs/draft/networking/0
 
 ## Claimant
 
-@unclaimed (RFC drafted by @mmacedoeu, agent-assisted)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

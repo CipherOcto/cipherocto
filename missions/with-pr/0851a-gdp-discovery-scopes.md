@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (35 tests: scope filtering, lifecycle transitions, TTL, stake requirements, bootstrap methods)
+Completed (35 tests: scope filtering, lifecycle transitions, TTL, stake requirements, bootstrap methods)
 
 ## RFC
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (19 tests: path builder, rotation, identity preservation, diversity)
+Completed (19 tests: path builder, rotation, identity preservation, diversity)
 
 ## RFC
 

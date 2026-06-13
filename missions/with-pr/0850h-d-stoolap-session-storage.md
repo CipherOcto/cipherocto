@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (2026-06-02) — awaits PR
+Completed (2026-06-02) — PR submission pending
 
 ## RFC
 

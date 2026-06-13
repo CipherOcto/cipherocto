@@ -11,15 +11,15 @@ use std::time::Duration;
 
 use clap::Parser;
 use cli::{
-    Cli, Command, PairLinkArgs, QrLinkArgs, SessionAction, SessionListArgs, SessionRemoveArgs,
-    SessionVerifyArgs, WhoamiArgs,
+    Cli, Command, OutputArgs, PairLinkArgs, QrLinkArgs, SessionAction, SessionListArgs,
+    SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
 use octo_network::dot::adapters::PlatformAdapter; // brings self_handle + health_check into scope
 use octo_whatsapp_onboard_core::{
     wait_for_connected, wait_for_health, CoreError, PairLinkArgs as CorePairLinkArgs,
     QrLinkArgs as CoreQrLinkArgs, SessionInfo, WhatsAppConfig,
-    SESSION_LIST_HEALTH_TIMEOUT_SECS, WHOAMI_TIMEOUT_SECS,
+    SESSION_LIST_HEALTH_TIMEOUT_SECS,
 };
 use std::process::ExitCode;
 
@@ -64,25 +64,37 @@ async fn main() -> ExitCode {
 async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> {
     let output = args.output.clone();
     let session = octo_whatsapp_onboard_core::qr_link::run(to_core_qr(args)).await?;
-    output::write(&output, &session)?;
-    println!("Authenticated as +{} (session: {})", session.self_phone.as_deref().unwrap_or("?"), session.session_path.display());
-    Ok(())
+    run_link(&output, session).await
 }
 
 async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardError> {
     let output = args.output.clone();
     let session = octo_whatsapp_onboard_core::pair_link::run(to_core_pair(args)).await?;
-    output::write(&output, &session)?;
+    run_link(&output, session).await
+}
+
+async fn run_link(
+    output: &OutputArgs,
+    session: octo_whatsapp_onboard_core::WhatsAppSession,
+) -> std::result::Result<(), OnboardError> {
+    output::write(output, &session)?;
     println!("Authenticated as +{} (session: {})", session.self_phone.as_deref().unwrap_or("?"), session.session_path.display());
     Ok(())
 }
 
 async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
-    let _cfg = load_config(&args.config)?;
-    // Build a WhatsAppWebAdapter against the session_path
-    let session_path = cfg_session_path(&args.config)?;
+    let cfg = load_config(&args.config)?;
+    let session_path = std::path::PathBuf::from(&cfg.session_path);
+    let sidecar = session_path.with_extension("db.meta.json");
+    if sidecar.exists() {
+        if let Ok((phone, _)) = read_sidecar(&sidecar) {
+            if let Some(p) = phone {
+                println!("+{p}");
+                return Ok(());
+            }
+        }
+    }
     let adapter = build_adapter(&session_path, &[])?;
-
     match wait_for_connected(
         &adapter,
         Duration::from_secs(octo_whatsapp_onboard_core::WHOAMI_TIMEOUT_SECS),
@@ -173,6 +185,10 @@ async fn run_session_remove(args: SessionRemoveArgs) -> std::result::Result<(), 
     std::fs::remove_file(&args.db_path).map_err(|e| {
         OnboardError::BadConfig(format!("remove {}: {}", args.db_path.display(), e))
     })?;
+    let sidecar = args.db_path.with_extension("db.meta.json");
+    if sidecar.exists() {
+        let _ = std::fs::remove_file(&sidecar);
+    }
     println!("removed");
     Ok(())
 }
@@ -213,17 +229,12 @@ fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, On
         .map_err(|e| OnboardError::BadConfig(format!("parse {path:?}: {e}")))
 }
 
-fn cfg_session_path(path: &std::path::Path) -> std::result::Result<std::path::PathBuf, OnboardError> {
-    let cfg = load_config(path)?;
-    Ok(std::path::PathBuf::from(cfg.session_path))
-}
-
 fn build_adapter(
     session_path: &std::path::Path,
     groups: &[String],
 ) -> std::result::Result<octo_whatsapp_onboard_core::WhatsAppWebAdapter, OnboardError> {
     let cfg = WhatsAppConfig {
-        session_path: session_path.to_string_lossy().into_owned(),
+        session_path: format!("{}", session_path.display()),
         pair_phone: None,
         pair_code: None,
         ws_url: None,
@@ -238,35 +249,41 @@ async fn list_sessions(base_dir: &std::path::Path) -> std::result::Result<Vec<Se
     if !base_dir.exists() {
         return Ok(vec![]);
     }
-    let mut out = Vec::new();
     let entries = std::fs::read_dir(base_dir).map_err(|e| {
         OnboardError::BadConfig(format!("read_dir {base_dir:?}: {e}"))
     })?;
-    for entry in entries {
-        let entry = entry.map_err(|e| OnboardError::BadConfig(format!("read_dir entry: {e}")))?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("db") {
-            continue;
-        }
-        let sidecar = path.with_extension("db.meta.json");
-        let (self_phone, last_linked_at) = if sidecar.exists() {
-            read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
-        } else {
-            (None, None)
-        };
-        let adapter = build_adapter(&path, &[])?;
-        let is_valid = wait_for_health(
-            &adapter,
-            Duration::from_secs(SESSION_LIST_HEALTH_TIMEOUT_SECS),
-        )
-        .await
-        .is_ok();
-        out.push(SessionInfo {
-            session_path: path,
-            self_phone: self_phone.or_else(|| adapter.self_handle()),
-            is_valid,
-            last_linked_at,
-        });
+    let db_paths: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("db"))
+        .collect();
+    let futs: Vec<_> = db_paths
+        .into_iter()
+        .map(|path| async move {
+            let sidecar = path.with_extension("db.meta.json");
+            let (self_phone, last_linked_at) = if sidecar.exists() {
+                read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
+            } else {
+                (None, None)
+            };
+            let adapter = build_adapter(&path, &[])?;
+            let is_valid = wait_for_health(
+                &adapter,
+                Duration::from_secs(SESSION_LIST_HEALTH_TIMEOUT_SECS),
+            )
+            .await
+            .is_ok();
+            Ok::<_, OnboardError>(SessionInfo {
+                session_path: path,
+                self_phone: self_phone.or_else(|| adapter.self_handle()),
+                is_valid,
+                last_linked_at,
+            })
+        })
+        .collect();
+    let mut out = Vec::with_capacity(futs.len());
+    for r in futures::future::join_all(futs).await {
+        out.push(r?);
     }
     Ok(out)
 }

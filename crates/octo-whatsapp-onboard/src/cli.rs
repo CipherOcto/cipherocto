@@ -91,7 +91,9 @@ pub struct QrLinkArgs {
     /// Path to stoolap session database (default: ~/.local/share/octo/whatsapp/default.session.db).
     #[arg(long)]
     pub session_path: PathBuf,
-    /// Initial group IDs to monitor (comma-separated). Accepts digits-only or full JID.
+    /// Initial group IDs to monitor (comma-separated, accepts digits-only
+    /// or full JID like `120363012345678901@g.us`).
+    /// Default: no groups (empty list).
     #[arg(long, value_parser = parse_groups, default_value = "")]
     pub groups: Vec<String>,
     /// WebSocket URL override (test/proxy). Or $OCTO_WHATSAPP_WS_URL.
@@ -114,6 +116,8 @@ pub struct PairLinkArgs {
     /// Custom pair code (operator-chosen). Or $OCTO_WHATSAPP_PAIR_CODE.
     #[arg(long)]
     pub pair_code: Option<String>,
+    /// Initial group IDs to monitor (comma-separated, accepts digits-only
+    /// or full JID). Default: no groups (empty list).
     #[arg(long, value_parser = parse_groups, default_value = "")]
     pub groups: Vec<String>,
     #[arg(long)]
@@ -122,6 +126,7 @@ pub struct PairLinkArgs {
     pub output: OutputArgs,
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 
 #[derive(Args, Debug)]

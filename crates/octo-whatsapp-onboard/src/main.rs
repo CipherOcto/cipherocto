@@ -15,7 +15,6 @@ use cli::{
     SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
-use octo_network::dot::adapters::PlatformAdapter; // brings self_handle + health_check into scope
 use octo_whatsapp_onboard_core::{
     wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs,
     QrLinkArgs as CoreQrLinkArgs, SessionInfo, WhatsAppConfig,
@@ -96,7 +95,7 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
             }
         }
     }
-    let adapter = build_adapter(&session_path, &[]);
+    let adapter = build_adapter(&session_path, &[])?;
     start_bot(&adapter).await?; // R1-C2
     match wait_for_connected(
         &adapter,
@@ -139,7 +138,7 @@ async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), Onbo
 }
 
 async fn run_session_verify(args: SessionVerifyArgs) -> std::result::Result<(), OnboardError> {
-    let adapter = build_adapter(&args.db_path, &[]);
+    let adapter = build_adapter(&args.db_path, &[])?;
     start_bot(&adapter).await?; // R1-H2
     match wait_for_connected(
         &adapter,
@@ -170,16 +169,7 @@ async fn run_session_remove(args: SessionRemoveArgs) -> std::result::Result<(), 
             .with_prompt(prompt)
             .default(false)
             .interact()
-            .map_err(|e| {
-                if e.to_string().contains("not a terminal") {
-                    OnboardError::BadConfig(
-                        "session remove requires a TTY (pass --yes to skip the interactive prompt)"
-                            .into(),
-                    )
-                } else {
-                    OnboardError::BadConfig(format!("prompt failed: {e}"))
-                }
-            })?;
+            .map_err(|e| not_tty_to_bad_config(&e).unwrap_or_else(|| OnboardError::BadConfig(format!("prompt failed: {e}"))))?;
         if !confirmed {
             println!("aborted");
             return Ok(());
@@ -264,12 +254,34 @@ fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, On
         .map_err(|e| OnboardError::BadConfig(format!("parse {path:?}: {e}")))
 }
 
+// R2-H1: check if a `dialoguer::Error` is a "stdin is not a TTY"
+// condition. The previous string-match `e.to_string().contains(
+// "not a terminal")` was fragile (depends on dialoguer's exact
+// error wording). Now we check the structured `std::io::ErrorKind`
+// inside the `dialoguer::Error::IO` variant. Note: dialoguer 0.11's
+// `Error` is a single-variant enum (just `IO(IoError)`), so the
+// destructure is irrefutable.
+fn not_tty_to_bad_config(e: &dialoguer::Error) -> Option<OnboardError> {
+    let dialoguer::Error::IO(io_err) = e;
+    if io_err.kind() == std::io::ErrorKind::NotConnected {
+        Some(OnboardError::BadConfig(
+            "session remove requires a TTY (pass --yes to skip the interactive prompt)"
+                .into(),
+        ))
+    } else {
+        None
+    }
+}
+
 // R1-L1: `build_adapter` doesn't error (WhatsAppWebAdapter::new
 // never fails). Changed to return the adapter directly.
+// R2-L2: also call cfg.validate() for defense-in-depth (catches
+// config corruption from `whoami` / `session verify` paths that
+// load a pre-existing config from disk).
 fn build_adapter(
     session_path: &std::path::Path,
     groups: &[String],
-) -> octo_whatsapp_onboard_core::WhatsAppWebAdapter {
+) -> Result<octo_whatsapp_onboard_core::WhatsAppWebAdapter, OnboardError> {
     let cfg = WhatsAppConfig {
         session_path: format!("{}", session_path.display()),
         pair_phone: None,
@@ -277,7 +289,13 @@ fn build_adapter(
         ws_url: None,
         groups: groups.to_vec(),
     };
-    octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg)
+    // Validate field shape (R1-H1 + R2-L2). For link flows, the
+    // binary has already validated inputs via clap; this is
+    // belt-and-suspenders for the whoami / verify / list paths
+    // that load configs from disk.
+    cfg.validate()
+        .map_err(|e| OnboardError::BadConfig(format!("invalid config: {e}")))?;
+    Ok(octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg))
 }
 
 // R1-C2 / R1-H2: whoami and session verify must start the bot

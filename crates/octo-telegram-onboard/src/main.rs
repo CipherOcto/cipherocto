@@ -157,11 +157,32 @@ async fn tdlib_get_me_with_timeout(
     });
     match channel_result {
         Ok(Some(true)) => {
-            let me_enum = match tdlib_rs::functions::get_me(client_id).await {
-                Ok(u) => u,
-                Err(e) => {
+            // Wrap get_me in a timeout. The 60s `timeout` was
+            // only applied to the Ready-wait channel above —
+            // once Ready fires, get_me is awaited with no
+            // upper bound. Observed: TDLib reaches Ready but
+            // never processes getMe (only keepalive pings in
+            // the log). Without this wrapper, the binary hangs
+            // forever. We give it the remaining time from the
+            // overall budget; for a healthy session this is
+            // plenty.
+            let me_enum = match tokio::time::timeout(
+                timeout,
+                tdlib_rs::functions::get_me(client_id),
+            )
+            .await
+            {
+                Ok(Ok(u)) => u,
+                Ok(Err(e)) => {
                     close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
                     return Err(classify_tdlib_error(e.message));
+                }
+                Err(_elapsed) => {
+                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
+                    return Err(OnboardError::Cancelled(format!(
+                        "get_me timed out after {}s",
+                        timeout.as_secs()
+                    )));
                 }
             };
             #[allow(unreachable_patterns)]

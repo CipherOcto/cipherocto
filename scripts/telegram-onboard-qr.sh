@@ -50,26 +50,44 @@
 # Time cost:
 #   First run:  ~30s apt + ~5min cargo build (cold cache) + auth
 #   Subsequent: ~5s (cargo cache is hot, just relinks) + auth
+#
+# Defaults:
+#   If TELEGRAM_API_ID / TELEGRAM_API_HASH are unset, this script
+#   uses TDesktop's currently-registered api_id/api_hash pair
+#   (sourced from /home/mmacedoeu/_w/tools/tdesktop at commit
+#   e505b391e1, Telegram/SourceFiles/config.h:88-89). Override
+#   by exporting either var before running this script — e.g.:
+#     export TELEGRAM_API_ID=12345
+#     export TELEGRAM_API_HASH=my_own_32_char_hex
+#     ./scripts/telegram-onboard-qr.sh
+#   Note: using TDesktop's values violates Telegram API Terms §4
+#   (must use your own credentials). Fine for personal one-shots;
+#   register your own at https://my.telegram.org/apps for anything
+#   you intend to keep running.
 
 set -euo pipefail
+
+# === Defaults (TDesktop mainline, config.h:88-89 @ e505b391e1) ===
+
+if [[ -z "${TELEGRAM_API_ID+x}" ]]; then
+  echo "notice: TELEGRAM_API_ID not set, using TDesktop default (17349)" >&2
+  echo "  override with: export TELEGRAM_API_ID=<your-app-id>" >&2
+  TELEGRAM_API_ID=17349
+fi
+
+if [[ -z "${TELEGRAM_API_HASH+x}" ]]; then
+  echo "notice: TELEGRAM_API_HASH not set, using TDesktop default" >&2
+  echo "  override with: export TELEGRAM_API_HASH=<your-32-char-hex>" >&2
+  TELEGRAM_API_HASH=344583e45741c457fe1862106095a5eb
+fi
+export TELEGRAM_API_ID
+export TELEGRAM_API_HASH
 
 # === Prerequisite checks ===
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found in PATH" >&2
   echo "  install Docker: https://docs.docker.com/engine/install/" >&2
-  exit 1
-fi
-
-if [[ -z "${TELEGRAM_API_ID:-}" ]]; then
-  echo "error: TELEGRAM_API_ID env var is not set" >&2
-  echo "  get API credentials at https://my.telegram.org/apps" >&2
-  exit 1
-fi
-
-if [[ -z "${TELEGRAM_API_HASH:-}" ]]; then
-  echo "error: TELEGRAM_API_HASH env var is not set" >&2
-  echo "  get API credentials at https://my.telegram.org/apps" >&2
   exit 1
 fi
 

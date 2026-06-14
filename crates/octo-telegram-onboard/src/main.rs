@@ -459,15 +459,29 @@ async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
     // of `config["user_id"]`/`config["username"]` below.
     let data_path: std::path::PathBuf = data_dir.into();
     let meta_path = data_path.join("session_meta.json");
-    let api_id_raw = config["api_id"]
-        .as_i64()
-        .ok_or_else(|| OnboardError::BadConfig("config missing api_id".into()))?;
-    let api_id = validate_api_id(api_id_raw)?;
-    let api_hash = config["api_hash"]
+    // Fallback: if the config doesn't have api_id/api_hash (e.g.,
+    // a partial session from qr-link, which only writes
+    // data_dir/mode/username), use the --api-id/--api-hash args
+    // (or $TELEGRAM_API_ID/$TELEGRAM_API_HASH env vars).
+    let api_id = match config["api_id"].as_i64() {
+        Some(raw) => validate_api_id(raw)?,
+        None => args.api_id.ok_or_else(|| {
+            OnboardError::BadConfig(
+                "config missing api_id and --api-id / $TELEGRAM_API_ID not set".into(),
+            )
+        })?,
+    };
+    let api_hash = match config["api_hash"]
         .as_str()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| OnboardError::BadConfig("config missing or empty api_hash".into()))?
-        .to_string();
+    {
+        Some(h) => h.to_string(),
+        None => args.api_hash.clone().ok_or_else(|| {
+            OnboardError::BadConfig(
+                "config missing api_hash and --api-hash / $TELEGRAM_API_HASH not set".into(),
+            )
+        })?,
+    };
 
     tracing::info!(
         data_dir = %data_path.display(),

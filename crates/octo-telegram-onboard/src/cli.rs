@@ -178,6 +178,17 @@ pub struct RefreshIdentityArgs {
     #[arg(long, env = "TELEGRAM_CONFIG")]
     pub config: Option<PathBuf>,
 
+    /// API ID (or $TELEGRAM_API_ID). Used as a fallback when the
+    /// config doesn't have api_id (e.g., partial sessions from
+    /// qr-link, which only writes data_dir/mode/username).
+    #[arg(long, env = "TELEGRAM_API_ID")]
+    pub api_id: Option<i32>,
+
+    /// API hash (or $TELEGRAM_API_HASH). Same fallback rationale
+    /// as --api-id.
+    #[arg(long, env = "TELEGRAM_API_HASH")]
+    pub api_hash: Option<String>,
+
     /// Timeout in seconds for the get_me call (default: 60).
     /// Should be longer than the post-auth bookkeeping TDLib
     /// needs to settle; 60s is generous for a healthy session.

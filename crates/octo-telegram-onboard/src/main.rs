@@ -24,6 +24,7 @@ use zeroize::Zeroizing;
 
 const WHOAMI_TIMEOUT_SECS: u64 = 10;
 const SESSION_VERIFY_TIMEOUT_SECS: u64 = 5;
+const REFRESH_IDENTITY_TIMEOUT_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -36,6 +37,7 @@ async fn main() -> ExitCode {
             Command::QrLink(args) => run_qr_link(args).await,
             Command::UserLogin(args) => run_user_login(args).await,
             Command::Whoami(args) => run_whoami(args).await,
+            Command::RefreshIdentity(args) => run_refresh_identity(args).await,
             Command::Session { action } => match action {
                 SessionAction::List(args) => run_session_list(args).await,
                 SessionAction::Verify { dir, config } => {
@@ -429,6 +431,161 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         "User ID: {}\nUsername: {}\nFirst name: {}\nMode: {}",
         user_id, username, first_name, mode
     );
+    Ok(())
+}
+
+/// Re-open an existing TDLib session and call get_me() to fetch the
+/// real user_id/username, then patch telegram.json and
+/// session_meta.json in place. Use after a partial-session auth
+/// (user_id=0) to populate identity without re-authenticating.
+async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
+    let config_path = args
+        .config
+        .or_else(default_config_path_opt)
+        .ok_or_else(|| {
+            OnboardError::BadConfig("could not determine config path (use --config)".into())
+        })?;
+
+    let bytes = std::fs::read(&config_path)
+        .map_err(|e| OnboardError::BadConfig(format!("read {}: {}", config_path.display(), e)))?;
+    let mut config: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| OnboardError::BadConfig(format!("parse {}: {}", config_path.display(), e)))?;
+
+    let data_dir = config["data_dir"]
+        .as_str()
+        .ok_or_else(|| OnboardError::BadConfig("config missing data_dir".into()))?;
+    // Clone to an owned PathBuf so the borrow of `config` (via
+    // `data_dir` &str) doesn't extend past the later mutation
+    // of `config["user_id"]`/`config["username"]` below.
+    let data_path: std::path::PathBuf = data_dir.into();
+    let meta_path = data_path.join("session_meta.json");
+    let api_id_raw = config["api_id"]
+        .as_i64()
+        .ok_or_else(|| OnboardError::BadConfig("config missing api_id".into()))?;
+    let api_id = validate_api_id(api_id_raw)?;
+    let api_hash = config["api_hash"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| OnboardError::BadConfig("config missing or empty api_hash".into()))?
+        .to_string();
+
+    tracing::info!(
+        data_dir = %data_path.display(),
+        timeout_secs = args.timeout,
+        "Refreshing identity via get_me() on existing session..."
+    );
+
+    let (user_id, username, _first_name) = tdlib_get_me_with_timeout(
+        &data_path,
+        api_id,
+        &api_hash,
+        if args.timeout == 0 {
+            REFRESH_IDENTITY_TIMEOUT_SECS
+        } else {
+            args.timeout
+        },
+    )
+    .await?;
+
+    // Patch telegram.json — add user_id and username at top level.
+    // The field might not exist (partial session from R16.3 fallback),
+    // so we set it unconditionally. If the field exists with a stale
+    // value, it's overwritten with the real one.
+    config["user_id"] = serde_json::Value::Number(user_id.into());
+    if let Some(ref u) = username {
+        config["username"] = serde_json::Value::String(u.clone());
+    }
+    let json_str = serde_json::to_string_pretty(&config).map_err(|e| {
+        OnboardError::Generic(anyhow::anyhow!("serialize config: {}", e))
+    })?;
+    write_atomic(&config_path, json_str.as_bytes())?;
+
+    // Patch session_meta.json — same fields. If the file doesn't
+    // exist (e.g., user deleted it), just skip with a warning.
+    let meta_path = data_path.join("session_meta.json");
+    match std::fs::read(&meta_path) {
+        Ok(meta_bytes) => {
+            match serde_json::from_slice::<serde_json::Value>(&meta_bytes) {
+                Ok(mut meta) => {
+                    meta["user_id"] = serde_json::Value::Number(user_id.into());
+                    if let Some(ref u) = username {
+                        meta["username"] = serde_json::Value::String(u.clone());
+                    }
+                    let meta_str = serde_json::to_string_pretty(&meta).map_err(|e| {
+                        OnboardError::Generic(anyhow::anyhow!("serialize meta: {}", e))
+                    })?;
+                    write_atomic(&meta_path, meta_str.as_bytes())?;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %meta_path.display(),
+                        error = %e,
+                        "session_meta.json is corrupted; not patching"
+                    );
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(
+                path = %meta_path.display(),
+                "session_meta.json not found; only patched telegram.json. \
+                 Re-run the auth flow (or run 'session verify') to regenerate."
+            );
+        }
+        Err(e) => {
+            return Err(OnboardError::BadConfig(format!(
+                "read {}: {}",
+                meta_path.display(),
+                e
+            )));
+        }
+    }
+
+    tracing::info!(
+        user_id,
+        username = %username.as_deref().unwrap_or("(none)"),
+        "Identity refreshed"
+    );
+    println!(
+        "Refreshed: user_id={}, username={}\n  telegram.json: {}\n  session_meta.json: {}",
+        user_id,
+        username.as_deref().unwrap_or("(none)"),
+        config_path.display(),
+        meta_path.display()
+    );
+    Ok(())
+}
+
+/// Atomic file write: write to a tempfile in the same dir, then
+/// rename. This avoids leaving a half-written file if the process
+/// is killed mid-write. Sets 0600 perms on Unix.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| OnboardError::BadConfig(format!("create tmp in {}: {}", parent.display(), e)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) =
+            std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))
+        {
+            tracing::warn!(
+                path = %tmp.path().display(),
+                error = %e,
+                "could not set 0600 on tmp file"
+            );
+        }
+    }
+    std::io::Write::write_all(&mut tmp, bytes)
+        .map_err(|e| OnboardError::BadConfig(format!("write tmp: {}", e)))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| OnboardError::BadConfig(format!("sync tmp: {}", e)))?;
+    tmp.persist(path)
+        .map_err(|e| OnboardError::BadConfig(format!("persist to {}: {}", path.display(), e)))?;
     Ok(())
 }
 

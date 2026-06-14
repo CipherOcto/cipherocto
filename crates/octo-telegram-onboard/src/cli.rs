@@ -30,6 +30,11 @@ pub enum Command {
     UserLogin(UserLoginArgs),
     /// Verify existing session by calling get_me().
     Whoami(WhoamiArgs),
+    /// Refresh user_id/username in an existing config by calling
+    /// get_me() on the existing TDLib session. Useful when the
+    /// initial auth wrote a partial session (user_id=0) because
+    /// get_me timed out.
+    RefreshIdentity(RefreshIdentityArgs),
     /// Session management (list, verify, remove).
     Session {
         #[command(subcommand)]
@@ -165,6 +170,19 @@ pub struct WhoamiArgs {
     /// Path to TelegramConfig JSON file (or $TELEGRAM_CONFIG).
     #[arg(long, env = "TELEGRAM_CONFIG")]
     pub config: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct RefreshIdentityArgs {
+    /// Path to TelegramConfig JSON file (or $TELEGRAM_CONFIG).
+    #[arg(long, env = "TELEGRAM_CONFIG")]
+    pub config: Option<PathBuf>,
+
+    /// Timeout in seconds for the get_me call (default: 60).
+    /// Should be longer than the post-auth bookkeeping TDLib
+    /// needs to settle; 60s is generous for a healthy session.
+    #[arg(long, default_value = "60")]
+    pub timeout: u64,
 }
 
 #[derive(Subcommand, Debug)]

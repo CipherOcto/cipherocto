@@ -23,7 +23,13 @@ pub const IDLE_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// Timeout for `get_me` after auth completes. The client is idle
 /// but the timeout is shorter than `AUTH_CLOSE_TIMEOUT` because
 /// `get_me` is a single request, not a drain window.
-pub const GET_ME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// R16.1 fix: increased from 5s to 30s. Observed on Ubuntu 24.04 +
+/// TDesktop api_id: TDLib's main task thread is busy with post-`Ready`
+/// bookkeeping (loading sticker sets, terms of service, notification
+/// settings, etc.) for 10+ seconds after auth completes. `get_me` is
+/// queued behind these and the 5s timeout fired before TDLib got to
+/// it. 30s is generous but bounded.
+pub const GET_ME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Process-global lock ensuring only one TDLib receive loop is active at a time.
 /// `tdlib_rs::receive()` is process-global; concurrent consumers would steal
@@ -319,13 +325,23 @@ fn spawn_receive_loop() -> std::result::Result<
                 if shutdown_clone.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Some((update, _cid)) = tdlib_rs::receive() {
-                    if matches!(update, tdlib_rs::enums::Update::AuthorizationState(_))
-                        && tx.blocking_send(update).is_err()
-                    {
-                        break; // receiver dropped
-                    }
+            if let Some((update, _cid)) = tdlib_rs::receive() {
+                if matches!(update, tdlib_rs::enums::Update::AuthorizationState(_)) {
+                    // R16.1 fix: use try_send instead of blocking_send.
+                    // The auth handle is the primary consumer; after
+                    // it's done (`Ready`/`Closed`), no one is reading
+                    // the channel. `blocking_send` would stall this
+                    // thread waiting for space, which means we stop
+                    // calling `tdlib_rs::receive()` — and since
+                    // `receive()` is what routes RPC responses to
+                    // their futures via `OBSERVER.notify`, every
+                    // subsequent RPC (`get_me`, `close`, …) hangs
+                    // until its timeout fires. `try_send` drops the
+                    // update if the channel is full/closed; the
+                    // thread keeps looping and keeps routing.
+                    let _ = tx.try_send(update);
                 }
+            }
             }
         }) {
         Ok(_) => {}
@@ -1054,7 +1070,7 @@ async fn extract_identity(
             Ok(Err(e)) => return Err(classify_tdlib_error(e.message)),
             Err(_) => {
                 return Err(OnboardError::Cancelled(
-                    "get_me timed out after auth (5s)".into(),
+                    "get_me timed out after auth (30s)".into(),
                 ))
             }
         };

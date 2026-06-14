@@ -168,6 +168,36 @@ pub fn classify_tdlib_error(msg: String) -> OnboardError {
     }
 }
 
+/// Return a short, human-readable name for a TDLib `AuthorizationState`
+/// variant. Used by the auth state machines in this module to log every
+/// transition so a hang is self-diagnosing — e.g., if the CLI is stuck
+/// waiting for `Ready`, the log shows the last state it entered (most
+/// commonly `WaitEncryptionKey` on a fresh TDLib database).
+///
+/// The match is exhaustive against the 13 variants exposed by
+/// `tdlib-rs` 1.4.0. If a future TDLib version adds a new variant,
+/// this match will fail to compile and force an explicit decision
+/// (better than silently returning `"Other"` and confusing the
+/// operator reading the hang-diagnosis log).
+pub fn auth_state_name(state: &tdlib_rs::enums::AuthorizationState) -> &'static str {
+    use tdlib_rs::enums::AuthorizationState::*;
+    match state {
+        WaitTdlibParameters => "WaitTdlibParameters",
+        WaitPhoneNumber => "WaitPhoneNumber",
+        WaitPremiumPurchase(_) => "WaitPremiumPurchase",
+        WaitEmailAddress(_) => "WaitEmailAddress",
+        WaitEmailCode(_) => "WaitEmailCode",
+        WaitCode(_) => "WaitCode",
+        WaitOtherDeviceConfirmation(_) => "WaitOtherDeviceConfirmation",
+        WaitRegistration(_) => "WaitRegistration",
+        WaitPassword(_) => "WaitPassword",
+        Ready => "Ready",
+        LoggingOut => "LoggingOut",
+        Closing => "Closing",
+        Closed => "Closed",
+    }
+}
+
 /// Sanitize a TDLib error message by stripping file paths and other PII.
 /// Uses a blacklist of terminators. The scan starts AFTER the matched
 /// pattern prefix (e.g., after `C:\`) to avoid splitting Windows paths.
@@ -383,6 +413,16 @@ pub async fn drive_bot_auth(
     let handle = tokio::task::spawn(async move {
         while let Some(update) = rx.recv().await {
             if let tdlib_rs::enums::Update::AuthorizationState(auth_update) = update {
+                // Log every state transition at INFO so a hang is
+                // self-diagnosing. The auth_state_name helper covers
+                // all current TDLib variants (with a catch-all for
+                // future additions). The receive loop below still
+                // decides what to *do* with each state.
+                tracing::info!(
+                    client_id,
+                    state = auth_state_name(&auth_update.authorization_state),
+                    "auth state transition"
+                );
                 match auth_update.authorization_state {
                     tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
                         let resp = tdlib_rs::functions::check_authentication_bot_token(
@@ -512,6 +552,16 @@ pub async fn drive_user_auth(
     let handle = tokio::task::spawn(async move {
         while let Some(update) = rx.recv().await {
             if let tdlib_rs::enums::Update::AuthorizationState(auth_update) = update {
+                // Log every state transition at INFO so a hang is
+                // self-diagnosing. The auth_state_name helper covers
+                // all current TDLib variants (with a catch-all for
+                // future additions). The receive loop below still
+                // decides what to *do* with each state.
+                tracing::info!(
+                    client_id,
+                    state = auth_state_name(&auth_update.authorization_state),
+                    "auth state transition"
+                );
                 let key = match &auth_update.authorization_state {
                     tdlib_rs::enums::AuthorizationState::WaitTdlibParameters => {
                         AuthStateKey::WaitTdlibParameters
@@ -733,6 +783,16 @@ pub async fn drive_qr_auth(
         let mut last_emitted_link: Option<String> = None;
         while let Some(update) = rx.recv().await {
             if let tdlib_rs::enums::Update::AuthorizationState(auth_update) = update {
+                // Log every state transition at INFO so a hang is
+                // self-diagnosing. The auth_state_name helper covers
+                // all current TDLib variants (with a catch-all for
+                // future additions). The receive loop below still
+                // decides what to *do* with each state.
+                tracing::info!(
+                    client_id,
+                    state = auth_state_name(&auth_update.authorization_state),
+                    "auth state transition"
+                );
                 match &auth_update.authorization_state {
                     tdlib_rs::enums::AuthorizationState::WaitTdlibParameters => {
                         // set_tdlib_parameters was already issued before the

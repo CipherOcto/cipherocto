@@ -18,4 +18,5 @@ pub mod output;
 pub mod qr_link;
 pub mod session;
 
+pub use auth::auth_state_name;
 pub use auth::drive_qr_auth;

@@ -67,6 +67,12 @@
 
 set -euo pipefail
 
+# Subcommand to run (default: qr-link). Pass as first arg:
+#   ./scripts/telegram-onboard-qr.sh                  # qr-link (default)
+#   ./scripts/telegram-onboard-qr.sh refresh-identity  # patch existing config
+SUBCOMMAND="${1:-qr-link}"
+shift 2>/dev/null || true
+
 # === Defaults (TDesktop mainline, config.h:88-89 @ e505b391e1) ===
 
 if [[ -z "${TELEGRAM_API_ID+x}" ]]; then
@@ -167,9 +173,20 @@ docker run -it --rm \
       LIBDIR=\$(find /workspace/target/release/build/tdlib-rs-*/out/tdlib/lib -name 'libtdjson.so.1.8.61' 2>/dev/null | head -1 | xargs dirname)
       export LD_LIBRARY_PATH=\"\$LIBDIR\"
       mkdir -p /octo-state/data
-      exec /workspace/target/release/octo-telegram-onboard qr-link \
-        --data-dir /octo-state/data \
-        --out /octo-state/telegram.json \
-        --force
+      case '$SUBCOMMAND' in
+        qr-link)
+          exec /workspace/target/release/octo-telegram-onboard qr-link \
+            --data-dir /octo-state/data \
+            --out /octo-state/telegram.json \
+            --force
+          ;;
+        refresh-identity)
+          exec /workspace/target/release/octo-telegram-onboard refresh-identity \
+            --config /octo-state/telegram.json \"\$@\"
+          ;;
+        *)
+          exec /workspace/target/release/octo-telegram-onboard '$SUBCOMMAND' \"\$@\"
+          ;;
+      esac
     "
   ' 2>&1 | tee "$LOG_FILE"

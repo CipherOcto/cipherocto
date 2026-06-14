@@ -763,6 +763,44 @@ pub async fn drive_qr_auth(
         return Err(e);
     }
 
+    // R14 fix (mirrors `tg` at src/client.rs:1891): our receive loop
+    // only sees `Update::AuthorizationState` *events* — i.e. state
+    // changes. If TDLib settles into `WaitPhoneNumber` (or any other
+    // state) without a *change* after the receive loop spawns, we'd
+    // hang forever. Query the current state immediately and act on
+    // it. If `WaitPhoneNumber`, fire the QR request now.
+    let link_request_sent = Arc::new(AtomicBool::new(false));
+    if let Ok(state) = tdlib_rs::functions::get_authorization_state(client_id).await {
+        tracing::info!(
+            client_id,
+            state = auth_state_name(&state),
+            "current auth state (queried post-set_tdlib_parameters)"
+        );
+        if let tdlib_rs::enums::AuthorizationState::WaitPhoneNumber = &state {
+            match tdlib_rs::functions::request_qr_code_authentication(vec![], client_id).await {
+                Ok(_) => {
+                    link_request_sent.store(true, Ordering::SeqCst);
+                    tracing::info!(
+                        client_id,
+                        "issued request_qr_code_authentication from immediate get_authorization_state"
+                    );
+                }
+                Err(e) => {
+                    close_tdlib_client(client_id).await;
+                    return Err(classify_tdlib_error(e.message));
+                }
+            }
+        }
+    }
+
+    // R14 fix (mirrors `tg` at src/client.rs:1887-1889): TDLib doesn't
+    // emit `Update` events until at least one request is made. The
+    // `set_tdlib_parameters` call above may or may not count depending
+    // on internal TDLib timing; this `get_option` ping is a
+    // belt-and-suspenders that guarantees the update channel starts
+    // flowing before we spawn the receive loop.
+    let _ = tdlib_rs::functions::get_option("version".to_string(), client_id).await;
+
     let (mut rx, shutdown, _receive_guard) = match spawn_receive_loop() {
         Ok(t) => t,
         Err(e) => {
@@ -777,9 +815,13 @@ pub async fn drive_qr_auth(
     let result_clone = result.clone();
     let saw_closed = Arc::new(AtomicBool::new(false));
     let saw_closed_clone = saw_closed.clone();
+    // Share the immediate-fire flag with the receive loop so a
+    // delayed `WaitPhoneNumber` event from TDLib doesn't re-issue
+    // the request (TDLib would reject the duplicate but we'd waste a
+    // roundtrip and pollute the logs).
+    let link_request_sent_for_loop = link_request_sent.clone();
 
     let handle = tokio::task::spawn(async move {
-        let mut link_request_sent = false;
         let mut last_emitted_link: Option<String> = None;
         while let Some(update) = rx.recv().await {
             if let tdlib_rs::enums::Update::AuthorizationState(auth_update) = update {
@@ -799,18 +841,22 @@ pub async fn drive_qr_auth(
                         // receive loop was spawned.
                     }
                     tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
-                        if !link_request_sent {
-                            let resp = tdlib_rs::functions::request_qr_code_authentication(
+                        if !link_request_sent_for_loop.load(Ordering::SeqCst) {
+                            match tdlib_rs::functions::request_qr_code_authentication(
                                 vec![],
                                 client_id,
                             )
-                            .await;
-                            if let Err(e) = resp {
-                                *result_clone.lock() = Some(Err(e.message));
-                                notify_clone.notify_one();
-                                break;
+                            .await
+                            {
+                                Ok(_) => {
+                                    link_request_sent_for_loop.store(true, Ordering::SeqCst);
+                                }
+                                Err(e) => {
+                                    *result_clone.lock() = Some(Err(e.message));
+                                    notify_clone.notify_one();
+                                    break;
+                                }
                             }
-                            link_request_sent = true;
                         }
                     }
                     tdlib_rs::enums::AuthorizationState::WaitOtherDeviceConfirmation(link_info) => {

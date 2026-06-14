@@ -66,13 +66,30 @@ pub async fn close_tdlib_client(client_id: i32) {
 /// Send `AuthorizationState::Close` to TDLib and wait for `Closed` with a
 /// configurable timeout.
 pub async fn close_tdlib_client_with_timeout(client_id: i32, timeout: std::time::Duration) {
-    // Attempt close; on error, still try to drain the receive queue for timeout
-    if let Err(e) = tdlib_rs::functions::close(client_id).await {
-        tracing::debug!(
-            "tdlib close() failed: {} (see TDLib logs for details)",
-            e.message.len()
-        );
-    }
+    // R16 fix: wrap the close RPC in a timeout. Observed on Ubuntu
+    // 24.04 + TDesktop api_id: the `.await` can hang forever because
+    // tdlib_rs's response routing requires a dedicated consumer of
+    // `tdlib_rs::receive()`, and the 10s polling-loop timeout below
+    // never saves us if we never reach the loop. 3s is generous for
+    // a local C call; the only way it hits is if TDLib is hung.
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tdlib_rs::functions::close(client_id),
+    )
+    .await;
+
+    // R16 fix: acquire the receive lock before polling. Without it,
+    // the polling loop's `tdlib_rs::receive()` races with the
+    // background thread from `spawn_receive_loop()`, which can cause
+    // the close RPC response (or any other update) to be consumed
+    // and dropped — the loop only matches `AuthorizationState`
+    // updates. If the lock is held, trust the other consumer to see
+    // `Closed` and exit.
+    let _lock = match try_acquire_receive_lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
         if let Some((tdlib_rs::enums::Update::AuthorizationState(ref update), cid)) =

@@ -130,27 +130,40 @@ fi
 #                       Ctrl-C goes straight to the CLI signal handler
 
 exec docker run -it --rm \
+  -e HOME=/home/ci \
+  -e CARGO_HOME=/home/ci/.cargo \
+  -e RUSTUP_HOME=/home/ci/.rustup \
   -v "$HOST_PERSIST:/octo-state" \
   -v "$HOST_WORKSPACE:/workspace" \
-  -v "$HOST_CARGO:/root/.cargo" \
-  -v "$HOST_RUSTUP:/root/.rustup" \
+  -v "$HOST_CARGO:/home/ci/.cargo" \
+  -v "$HOST_RUSTUP:/home/ci/.rustup" \
   -e TELEGRAM_API_ID \
   -e TELEGRAM_API_HASH \
   -w /workspace \
   ubuntu:24.04 \
   bash -c '
     set -e
+    mkdir -p /home/ci
+    chown -R 1000:1000 /home/ci
+    # Add a uid-1000 user entry so runuser can switch to it. The
+    # ubuntu:24.04 base image has a "ubuntu" user at uid 1000 already,
+    # but adding a second entry with the same uid lets us name it
+    # "ci" for clarity and ensures the home dir is correct.
+    echo "ci:x:1000:" >> /etc/group
+    echo "ci:x:1000:1000::/home/ci:/bin/bash" >> /etc/passwd
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
     apt-get install -y -qq libc++1 libc++abi1 build-essential pkg-config libssl-dev cmake >/dev/null
-    export PATH="$HOME/.cargo/bin:$PATH"
-    rustup default 1.92 2>&1 | tail -1
-    cargo build -p octo-telegram-onboard --release 2>&1 | tail -1
-    LIBDIR=$(find /workspace/target/release/build/tdlib-rs-*/out/tdlib/lib -name "libtdjson.so.1.8.61" 2>/dev/null | head -1 | xargs dirname)
-    export LD_LIBRARY_PATH="$LIBDIR"
-    mkdir -p /octo-state/data
-    exec /workspace/target/release/octo-telegram-onboard qr-link \
-      --data-dir /octo-state/data \
-      --out /octo-state/telegram.json \
-      --force
+    exec runuser -u ci -- bash -c "
+      export PATH=\"\$HOME/.cargo/bin:\$PATH\"
+      rustup default 1.92 2>&1 | tail -1
+      cargo build -p octo-telegram-onboard --release 2>&1 | tail -1
+      LIBDIR=\$(find /workspace/target/release/build/tdlib-rs-*/out/tdlib/lib -name 'libtdjson.so.1.8.61' 2>/dev/null | head -1 | xargs dirname)
+      export LD_LIBRARY_PATH=\"\$LIBDIR\"
+      mkdir -p /octo-state/data
+      exec /workspace/target/release/octo-telegram-onboard qr-link \
+        --data-dir /octo-state/data \
+        --out /octo-state/telegram.json \
+        --force
+    "
   '

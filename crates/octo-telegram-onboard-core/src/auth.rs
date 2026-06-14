@@ -769,27 +769,74 @@ pub async fn drive_qr_auth(
     // state) without a *change* after the receive loop spawns, we'd
     // hang forever. Query the current state immediately and act on
     // it. If `WaitPhoneNumber`, fire the QR request now.
+    //
+    // R15 fix: each TDLib request below is wrapped in a
+    // `tokio::time::timeout`. Observed on Ubuntu 24.04 + TDesktop
+    // api_id: TDLib's main task thread can block indefinitely on
+    // these calls while the auth-data sub-session stays busy with
+    // keepalives, and the .await never returns. Without the
+    // timeouts the CLI appears frozen with no log output (no
+    // tracing line fires, no AuthorizationState event is emitted).
+    // 5 seconds is generous for a local C call; the only way it
+    // hits is if TDLib is hung.
+    const TDLIB_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let link_request_sent = Arc::new(AtomicBool::new(false));
-    if let Ok(state) = tdlib_rs::functions::get_authorization_state(client_id).await {
-        tracing::info!(
-            client_id,
-            state = auth_state_name(&state),
-            "current auth state (queried post-set_tdlib_parameters)"
-        );
-        if let tdlib_rs::enums::AuthorizationState::WaitPhoneNumber = &state {
-            match tdlib_rs::functions::request_qr_code_authentication(vec![], client_id).await {
-                Ok(_) => {
-                    link_request_sent.store(true, Ordering::SeqCst);
-                    tracing::info!(
-                        client_id,
-                        "issued request_qr_code_authentication from immediate get_authorization_state"
-                    );
-                }
-                Err(e) => {
-                    close_tdlib_client(client_id).await;
-                    return Err(classify_tdlib_error(e.message));
+    match tokio::time::timeout(
+        TDLIB_RPC_TIMEOUT,
+        tdlib_rs::functions::get_authorization_state(client_id),
+    )
+    .await
+    {
+        Ok(Ok(state)) => {
+            tracing::info!(
+                client_id,
+                state = auth_state_name(&state),
+                "current auth state (queried post-set_tdlib_parameters)"
+            );
+            if let tdlib_rs::enums::AuthorizationState::WaitPhoneNumber = &state {
+                match tokio::time::timeout(
+                    TDLIB_RPC_TIMEOUT,
+                    tdlib_rs::functions::request_qr_code_authentication(vec![], client_id),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
+                        link_request_sent.store(true, Ordering::SeqCst);
+                        tracing::info!(
+                            client_id,
+                            "issued request_qr_code_authentication from immediate get_authorization_state"
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        close_tdlib_client(client_id).await;
+                        return Err(classify_tdlib_error(e.message));
+                    }
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            client_id,
+                            elapsed_secs = TDLIB_RPC_TIMEOUT.as_secs(),
+                            "request_qr_code_authentication (from get_authorization_state) hit its 5s RPC timeout; TDLib main task is blocked. \
+                             Likely cause: TDesktop api_id/api_hash triggering a pre-auth handshake that never returns an AuthorizationState event. \
+                             Falling through to the receive loop — if TDLib recovers, the next state event will re-fire the request."
+                        );
+                    }
                 }
             }
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                client_id,
+                error = %e.message,
+                "get_authorization_state returned an error; falling through to receive loop"
+            );
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                client_id,
+                elapsed_secs = TDLIB_RPC_TIMEOUT.as_secs(),
+                "get_authorization_state hit its 5s RPC timeout; TDLib main task is blocked. \
+                 Falling through to the receive loop."
+            );
         }
     }
 
@@ -798,8 +845,23 @@ pub async fn drive_qr_auth(
     // `set_tdlib_parameters` call above may or may not count depending
     // on internal TDLib timing; this `get_option` ping is a
     // belt-and-suspenders that guarantees the update channel starts
-    // flowing before we spawn the receive loop.
-    let _ = tdlib_rs::functions::get_option("version".to_string(), client_id).await;
+    // flowing before we spawn the receive loop. Also timeout-wrapped
+    // per R15 — same rationale as the calls above.
+    match tokio::time::timeout(
+        TDLIB_RPC_TIMEOUT,
+        tdlib_rs::functions::get_option("version".to_string(), client_id),
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(_elapsed) => {
+            tracing::warn!(
+                client_id,
+                elapsed_secs = TDLIB_RPC_TIMEOUT.as_secs(),
+                "get_option(\"version\") hit its 5s RPC timeout; falling through to receive loop"
+            );
+        }
+    }
 
     let (mut rx, shutdown, _receive_guard) = match spawn_receive_loop() {
         Ok(t) => t,

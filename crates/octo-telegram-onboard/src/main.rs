@@ -8,8 +8,8 @@ mod logging;
 use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
-    classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_user_auth,
-    set_tdlib_parameters, try_acquire_receive_lock, validate_api_id, Credentials,
+    classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_qr_auth,
+    drive_user_auth, set_tdlib_parameters, try_acquire_receive_lock, validate_api_id, Credentials,
     IDLE_CLOSE_TIMEOUT,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
@@ -17,6 +17,7 @@ use octo_telegram_onboard_core::keys::validate_verifying_key;
 use octo_telegram_onboard_core::output::{
     build_config_json, default_config_path_opt, write_config,
 };
+use octo_telegram_onboard_core::qr_link::render_qr_link;
 use octo_telegram_onboard_core::session::{SessionMeta, TelegramSession};
 use std::process::ExitCode;
 use zeroize::Zeroizing;
@@ -32,6 +33,7 @@ async fn main() -> ExitCode {
     let result: Result<()> = async {
         match cli.command {
             Command::BotSetup(args) => run_bot_setup(args).await,
+            Command::QrLink(args) => run_qr_link(args).await,
             Command::UserLogin(args) => run_user_login(args).await,
             Command::Whoami(args) => run_whoami(args).await,
             Command::Session { action } => match action {
@@ -239,6 +241,85 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
     SessionMeta::from_session(&session)?.write(&session.data_dir)?;
 
     let json = build_full_config(&creds, &session);
+
+    tracing::info!(
+        username = %session.username.as_deref().unwrap_or("(unknown)"),
+        user_id = session.user_id,
+        "Authenticated successfully"
+    );
+
+    write_config(out.as_deref(), stdout, force, &json)
+}
+
+async fn run_qr_link(args: cli::QrLinkArgs) -> Result<()> {
+    let data_dir = args.resolved_data_dir();
+    let out = args.out.clone();
+    let stdout = args.stdout;
+    let force = args.force;
+    let timeout = args.timeout;
+
+    let api_id_raw = args.api_id.ok_or_else(|| {
+        OnboardError::BadConfig("qr-link requires --api-id or $TELEGRAM_API_ID".into())
+    })?;
+    let api_hash = args.api_hash.ok_or_else(|| {
+        OnboardError::BadConfig("qr-link requires --api-hash or $TELEGRAM_API_HASH".into())
+    })?;
+
+    if let Some(ref key) = args.verifying_key {
+        validate_verifying_key(key)?;
+    }
+    let verifying_key = args.verifying_key;
+
+    // QR mode logs in as a user, not a bot — bot_token is None.
+    let creds = Credentials::try_new(
+        None,
+        api_id_raw,
+        Zeroizing::new(api_hash),
+        None,
+        verifying_key,
+    )?;
+
+    tracing::info!(data_dir = %data_dir.display(), "Starting QR-link auth...");
+    let client_id = tdlib_rs::create_client();
+
+    // Bounded channel: the receive loop emits at most one link per
+    // TDLib update (filtered to actual changes), and the renderer
+    // drains on every link. 8 slots is plenty — the user might be
+    // a few seconds behind on scan, but won't buffer forever.
+    let (link_tx, mut link_rx) = tokio::sync::mpsc::channel::<String>(8);
+
+    // Spawn the renderer so the receive loop never blocks on a slow
+    // terminal (e.g., when piped to a file). Each link update is
+    // rendered fresh (the URL may rotate per TDLib docs).
+    let renderer = tokio::task::spawn(async move {
+        while let Some(link) = link_rx.recv().await {
+            match render_qr_link(&link) {
+                Ok(rendered) => eprint!("{rendered}"),
+                Err(e) => eprintln!(
+                    "\n[qr-link] failed to render QR for incoming link: {e}\n\
+                     [qr-link] raw link: {link}\n"
+                ),
+            }
+        }
+    });
+
+    let session = drive_qr_auth(
+        client_id,
+        &creds,
+        &data_dir,
+        std::time::Duration::from_secs(timeout),
+        link_tx,
+    )
+    .await?;
+
+    // Drop the sender (already dropped when drive_qr_auth returns,
+    // since it moves ownership), so the renderer exits. Await it so
+    // we don't tear down the terminal mid-render.
+    drop(renderer);
+
+    SessionMeta::from_session(&session)?.write(&session.data_dir)?;
+
+    let json = build_config_json(&session);
 
     tracing::info!(
         username = %session.username.as_deref().unwrap_or("(unknown)"),

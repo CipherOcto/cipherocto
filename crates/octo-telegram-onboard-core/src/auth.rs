@@ -684,6 +684,154 @@ pub async fn drive_user_auth(
     Ok(session)
 }
 
+/// Drive the QR-code login flow: TDLib generates a `tg://login?token=...`
+/// link, the CLI renders it as a QR code in the terminal, the user
+/// scans it from their Telegram app, TDLib transitions to `Ready`,
+/// and we extract the session identity.
+///
+/// `link_tx` is the channel the core uses to push link updates to the
+/// caller. The Telegram `WaitOtherDeviceConfirmation` state includes
+/// a `link: String` field and is updated "frequently" per the
+/// generated TDLib docs — callers should re-render on each. If the
+/// caller drops the receiver, `link_tx.send` fails and we just stop
+/// pushing updates; the auth flow continues regardless (we never
+/// depend on the QR being actually displayed, only on TDLib's
+/// confirmation of the scan).
+pub async fn drive_qr_auth(
+    client_id: i32,
+    creds: &Credentials,
+    data_dir: &Path,
+    timeout: std::time::Duration,
+    link_tx: tokio::sync::mpsc::Sender<String>,
+) -> Result<TelegramSession> {
+    if let Err(e) = create_auth_dirs(data_dir) {
+        close_tdlib_client(client_id).await;
+        return Err(e);
+    }
+    if let Err(e) = set_tdlib_parameters(client_id, creds.api_id, &creds.api_hash, data_dir).await {
+        close_tdlib_client(client_id).await;
+        return Err(e);
+    }
+
+    let (mut rx, shutdown, _receive_guard) = match spawn_receive_loop() {
+        Ok(t) => t,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+    };
+    let notify = Arc::new(Notify::new());
+    let result: Arc<parking_lot::Mutex<Option<std::result::Result<(), String>>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let notify_clone = notify.clone();
+    let result_clone = result.clone();
+    let saw_closed = Arc::new(AtomicBool::new(false));
+    let saw_closed_clone = saw_closed.clone();
+
+    let handle = tokio::task::spawn(async move {
+        let mut link_request_sent = false;
+        let mut last_emitted_link: Option<String> = None;
+        while let Some(update) = rx.recv().await {
+            if let tdlib_rs::enums::Update::AuthorizationState(auth_update) = update {
+                match &auth_update.authorization_state {
+                    tdlib_rs::enums::AuthorizationState::WaitTdlibParameters => {
+                        // set_tdlib_parameters was already issued before the
+                        // receive loop was spawned.
+                    }
+                    tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
+                        if !link_request_sent {
+                            let resp = tdlib_rs::functions::request_qr_code_authentication(
+                                vec![],
+                                client_id,
+                            )
+                            .await;
+                            if let Err(e) = resp {
+                                *result_clone.lock() = Some(Err(e.message));
+                                notify_clone.notify_one();
+                                break;
+                            }
+                            link_request_sent = true;
+                        }
+                    }
+                    tdlib_rs::enums::AuthorizationState::WaitOtherDeviceConfirmation(link_info) => {
+                        // The link is "updated frequently" per the TDLib
+                        // generated docs; emit only on actual change to
+                        // avoid spamming the caller's renderer.
+                        if last_emitted_link.as_deref() != Some(link_info.link.as_str()) {
+                            // Best-effort send: if the caller dropped the
+                            // receiver (e.g., on Ctrl-C), we don't break
+                            // — the auth flow continues server-side and
+                            // the user can still scan with a sibling
+                            // device if they want to.
+                            let _ = link_tx.send(link_info.link.clone()).await;
+                            last_emitted_link = Some(link_info.link.clone());
+                        }
+                    }
+                    tdlib_rs::enums::AuthorizationState::Ready => {
+                        *result_clone.lock() = Some(Ok(()));
+                        notify_clone.notify_one();
+                        break;
+                    }
+                    tdlib_rs::enums::AuthorizationState::Closed => {
+                        saw_closed_clone.store(true, Ordering::SeqCst);
+                        *result_clone.lock() = Some(Err("auth client closed".into()));
+                        notify_clone.notify_one();
+                        break;
+                    }
+                    // Treat LoggingOut/Closing as session-ending states.
+                    tdlib_rs::enums::AuthorizationState::LoggingOut
+                    | tdlib_rs::enums::AuthorizationState::Closing => {
+                        saw_closed_clone.store(true, Ordering::SeqCst);
+                        *result_clone.lock() = Some(Err("auth client logging out".into()));
+                        notify_clone.notify_one();
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    let wait_result = tokio::time::timeout(timeout, notify.notified()).await;
+
+    // M1: Signal shutdown before aborting
+    shutdown.store(true, Ordering::Relaxed);
+    handle.abort();
+    // Wait for the auth task to actually exit before proceeding.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+
+    let auth_result = result.lock().clone();
+    let auth_err = match auth_result {
+        Some(Ok(())) => None,
+        Some(Err(msg)) => Some(classify_tdlib_error(msg)),
+        None if wait_result.is_err() => Some(OnboardError::Cancelled(
+            "auth timed out waiting for Ready".into(),
+        )),
+        None => Some(OnboardError::Cancelled("auth did not complete".into())),
+    };
+
+    if let Some(e) = auth_err {
+        if !saw_closed.load(Ordering::SeqCst) {
+            close_tdlib_client(client_id).await;
+        }
+        return Err(e);
+    }
+
+    let session = match extract_identity(client_id, creds, data_dir).await {
+        Ok(s) => s,
+        Err(e) => {
+            if !saw_closed.load(Ordering::SeqCst) {
+                close_tdlib_client(client_id).await;
+            }
+            return Err(e);
+        }
+    };
+    if !saw_closed.load(Ordering::SeqCst) {
+        close_tdlib_client(client_id).await;
+    }
+    Ok(session)
+}
+
 /// Extract identity via `get_me` after auth completes.
 /// Uses a 5s timeout to prevent indefinite blocking if TDLib is hung.
 async fn extract_identity(
@@ -884,7 +1032,13 @@ mod tests {
             let mixed: String = keyword
                 .chars()
                 .enumerate()
-                .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c })
+                .map(|(i, c)| {
+                    if i % 2 == 0 {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c
+                    }
+                })
                 .collect();
             assert!(
                 matches!(classify_tdlib_error(mixed), OnboardError::Cancelled(_)),

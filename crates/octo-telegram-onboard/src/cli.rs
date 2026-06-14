@@ -23,6 +23,9 @@ pub struct Cli {
 pub enum Command {
     /// Non-interactive bot auth via TDLib.
     BotSetup(BotSetupArgs),
+    /// QR-code login: render a QR in the terminal, scan it from your
+    /// already-logged-in Telegram app on another device.
+    QrLink(QrLinkArgs),
     /// Interactive user-account auth via TDLib (phone + code + 2FA).
     UserLogin(UserLoginArgs),
     /// Verify existing session by calling get_me().
@@ -73,6 +76,49 @@ pub struct BotSetupArgs {
     /// Auth timeout in seconds (default: 30).
     #[arg(long, default_value = "30")]
     pub timeout: u64,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct QrLinkArgs {
+    /// API ID from my.telegram.org (or $TELEGRAM_API_ID).
+    #[arg(long, env = "TELEGRAM_API_ID")]
+    pub api_id: Option<i32>,
+
+    /// API hash from my.telegram.org (or $TELEGRAM_API_HASH).
+    #[arg(long, env = "TELEGRAM_API_HASH")]
+    pub api_hash: Option<String>,
+
+    /// TDLib data directory (default: ~/.local/share/octo/telegram/default/).
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
+
+    /// Ed25519 verifying key (base64, optional; or $TELEGRAM_VERIFYING_KEY).
+    #[arg(long, env = "TELEGRAM_VERIFYING_KEY")]
+    pub verifying_key: Option<String>,
+
+    /// Output config file path (default: ~/.config/octo/telegram.json).
+    #[arg(long, conflicts_with = "stdout")]
+    pub out: Option<PathBuf>,
+
+    /// Write JSON to stdout instead of a file.
+    #[arg(long, conflicts_with = "out")]
+    pub stdout: bool,
+
+    /// Overwrite existing config file.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Auth timeout in seconds (default: 300 = 5min to scan the QR).
+    #[arg(long, default_value = "300")]
+    pub timeout: u64,
+}
+
+impl QrLinkArgs {
+    pub fn resolved_data_dir(&self) -> PathBuf {
+        self.data_dir
+            .clone()
+            .unwrap_or_else(default_telegram_data_dir)
+    }
 }
 
 #[derive(Args, Debug, Clone)]

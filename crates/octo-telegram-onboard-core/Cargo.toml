@@ -33,6 +33,10 @@ base64 = "0.22"
 rpassword = "7"
 # Mutex (non-poisoning)
 parking_lot = "0.12"
+# QR-code generation for the qr-link subcommand. Same crate/version
+# the whatsapp adapter uses (`crates/octo-adapter-whatsapp/src/adapter.rs`
+# :299), so we don't add a new transitive dep graph.
+qrcode = "0.14"
 
 [dev-dependencies]
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread", "test-util"] }

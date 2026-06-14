@@ -1060,7 +1060,18 @@ pub async fn drive_qr_auth(
 }
 
 /// Extract identity via `get_me` after auth completes.
-/// Uses a 5s timeout to prevent indefinite blocking if TDLib is hung.
+/// Uses a 120s timeout to prevent indefinite blocking if TDLib is hung.
+///
+/// R16.3 (Option 2): If `get_me` times out or errors, fall back to a
+/// partial session with `user_id=0` instead of returning Err. Rationale
+/// (mirrored from tgt/src/tg/tg_backend.rs:104-111): the me info is
+/// non-essential — tgt logs and continues if `get_me` fails, since
+/// the TUI works without it (just shows blank where the user name
+/// would be). For us, the session IS valid (Ready was reached, TDLib
+/// database has the auth keys), and the adapter can detect
+/// `user_id=0` and fetch the real user info on first use. This
+/// avoids the 5-minute wait for a TDLib that's already idle and
+/// just not processing `getMe`.
 async fn extract_identity(
     client_id: i32,
     creds: &Credentials,
@@ -1068,28 +1079,32 @@ async fn extract_identity(
 ) -> Result<TelegramSession> {
     let me_enum =
         match tokio::time::timeout(GET_ME_TIMEOUT, tdlib_rs::functions::get_me(client_id)).await {
-            Ok(Ok(u)) => u,
-            Ok(Err(e)) => return Err(classify_tdlib_error(e.message)),
+            Ok(Ok(u)) => Some(u),
+            Ok(Err(e)) => {
+                // R16.3: don't propagate. Fall through to the fallback
+                // below (user_id=0). The adapter can refresh on first use.
+                tracing::warn!(
+                    error = %e.message,
+                    "get_me returned an error; falling back to partial session with user_id=0. \
+                     The adapter can fetch real user info on first use."
+                );
+                None
+            }
             Err(_) => {
-                return Err(OnboardError::Cancelled(
-                    "get_me timed out after auth (120s)".into(),
-                ))
+                // R16.3: don't propagate. TDLib is idle but not
+                // processing getMe (observed: only session keepalive
+                // pings in the log between getMe send and timeout).
+                // The session IS valid — just don't have the me info.
+                tracing::warn!(
+                    timeout_secs = GET_ME_TIMEOUT.as_secs(),
+                    "get_me timed out after auth; TDLib appears to be idle but not processing \
+                     the request. Falling back to partial session with user_id=0. \
+                     The adapter can fetch real user info on first use, or you can fill it \
+                     in manually by editing telegram.json."
+                );
+                None
             }
         };
-
-    // M3: Match instead of unwrap to handle future TDLib variants gracefully
-    #[allow(unreachable_patterns)]
-    let me = match me_enum {
-        tdlib_rs::enums::User::User(u) => u,
-        _ => {
-            return Err(OnboardError::Generic(anyhow::anyhow!(
-                "get_me returned unexpected User variant"
-            )))
-        }
-    };
-
-    // R19-M4: Telegram user IDs are always positive; lock in the assumption.
-    debug_assert!(me.id > 0, "get_me returned non-positive user_id: {}", me.id);
 
     let mode = if creds.bot_token.is_some() {
         "bot".to_string()
@@ -1097,19 +1112,39 @@ async fn extract_identity(
         "user".to_string()
     };
 
-    let username = me.usernames.as_ref().and_then(|u| {
-        u.active_usernames.first().cloned().or_else(|| {
-            if u.editable_username.is_empty() {
-                None
-            } else {
-                Some(u.editable_username.clone())
-            }
-        })
-    });
+    // M3: Match instead of unwrap to handle future TDLib variants gracefully
+    #[allow(unreachable_patterns)]
+    let (username, user_id) = match me_enum {
+        Some(tdlib_rs::enums::User::User(me)) => {
+            // R19-M4: Telegram user IDs are always positive; lock in the assumption.
+            debug_assert!(me.id > 0, "get_me returned non-positive user_id: {}", me.id);
+            let username = me.usernames.as_ref().and_then(|u| {
+                u.active_usernames.first().cloned().or_else(|| {
+                    if u.editable_username.is_empty() {
+                        None
+                    } else {
+                        Some(u.editable_username.clone())
+                    }
+                })
+            });
+            (username, me.id)
+        }
+        _ => {
+            // Either get_me failed/timeout (None) or returned an
+            // unexpected User variant. Either way, use user_id=0 as
+            // a placeholder. The adapter should detect this and
+            // fetch real user info on first use.
+            tracing::warn!(
+                "writing telegram.json with user_id=0 (partial session). \
+                 Auth succeeded but get_me did not return valid user data."
+            );
+            (None, 0)
+        }
+    };
 
     Ok(TelegramSession {
         username,
-        user_id: me.id,
+        user_id,
         mode: Some(mode),
         data_dir: data_dir.to_path_buf(),
         verifying_key: creds.verifying_key.clone(),

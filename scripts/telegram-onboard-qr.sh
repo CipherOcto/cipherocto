@@ -105,6 +105,7 @@ HOST_WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOST_PERSIST="$HOME/.local/share/octo/telegram/persistent"
 HOST_CARGO="$HOME/.cargo"
 HOST_RUSTUP="$HOME/.rustup"
+LOG_FILE="$HOST_PERSIST/onboard.log"
 
 mkdir -p "$HOST_PERSIST"
 
@@ -126,10 +127,15 @@ fi
 #   -v RUSTUP:…       — mount the host's rustup (toolchain install)
 #   -e …              — propagate the API credentials to the container
 #   -w /workspace     — set the working dir
-#   exec … qr-link    — replace the bash process with the CLI so
+#   2>&1 | tee LOG    — mirror all container output to the host log file
+#                       (survives --rm) while still showing it live in
+#                       the terminal for the QR code. The QR renders
+#                       as Unicode half-block chars; tee passes them
+#                       through unchanged.
+#   inner exec …      — replace the bash process with the CLI so
 #                       Ctrl-C goes straight to the CLI signal handler
 
-exec docker run -it --rm \
+docker run -it --rm \
   -e HOME=/home/ci \
   -e CARGO_HOME=/home/ci/.cargo \
   -e RUSTUP_HOME=/home/ci/.rustup \
@@ -166,4 +172,4 @@ exec docker run -it --rm \
         --out /octo-state/telegram.json \
         --force
     "
-  '
+  ' 2>&1 | tee "$LOG_FILE"

@@ -754,13 +754,48 @@ pub async fn drive_qr_auth(
     timeout: std::time::Duration,
     link_tx: tokio::sync::mpsc::Sender<String>,
 ) -> Result<TelegramSession> {
+    // R15 fix: every TDLib RPC in this function is wrapped in a
+    // `tokio::time::timeout`. Observed on Ubuntu 24.04 + TDesktop
+    // api_id: TDLib's main task thread can block indefinitely on
+    // these calls while the auth-data sub-session stays busy with
+    // keepalives, and the .await never returns. Without the
+    // timeouts the CLI appears frozen with no log output.
+    // 5 seconds is generous for a local C call; the only way it
+    // hits is if TDLib is hung.
+    const TDLIB_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
     if let Err(e) = create_auth_dirs(data_dir) {
         close_tdlib_client(client_id).await;
         return Err(e);
     }
-    if let Err(e) = set_tdlib_parameters(client_id, creds.api_id, &creds.api_hash, data_dir).await {
-        close_tdlib_client(client_id).await;
-        return Err(e);
+    // R15 fix: `set_tdlib_parameters.await` can also hang on Ubuntu
+    // 24.04 with TDesktop api_id (TDLib processes the request but
+    // the .await doesn't return; same root cause as the
+    // get_authorization_state hang in R14). Wrap in a 5s timeout.
+    let set_params_result = tokio::time::timeout(
+        TDLIB_RPC_TIMEOUT,
+        set_tdlib_parameters(client_id, creds.api_id, &creds.api_hash, data_dir),
+    )
+    .await;
+    match set_params_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            // `set_tdlib_parameters` already converts the raw TDLib
+            // error via `classify_tdlib_error`, so `e` is an
+            // `OnboardError` (no `.message` field — use `.inner()`
+            // for the message or just propagate). Propagate directly.
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                client_id,
+                elapsed_secs = TDLIB_RPC_TIMEOUT.as_secs(),
+                "set_tdlib_parameters hit its 5s RPC timeout; TDLib main task is blocked. \
+                 Falling through to get_authorization_state anyway — if the DB is at least \
+                 half-initialized we may still get a usable state query."
+            );
+        }
     }
 
     // R14 fix (mirrors `tg` at src/client.rs:1891): our receive loop
@@ -769,17 +804,6 @@ pub async fn drive_qr_auth(
     // state) without a *change* after the receive loop spawns, we'd
     // hang forever. Query the current state immediately and act on
     // it. If `WaitPhoneNumber`, fire the QR request now.
-    //
-    // R15 fix: each TDLib request below is wrapped in a
-    // `tokio::time::timeout`. Observed on Ubuntu 24.04 + TDesktop
-    // api_id: TDLib's main task thread can block indefinitely on
-    // these calls while the auth-data sub-session stays busy with
-    // keepalives, and the .await never returns. Without the
-    // timeouts the CLI appears frozen with no log output (no
-    // tracing line fires, no AuthorizationState event is emitted).
-    // 5 seconds is generous for a local C call; the only way it
-    // hits is if TDLib is hung.
-    const TDLIB_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     let link_request_sent = Arc::new(AtomicBool::new(false));
     match tokio::time::timeout(
         TDLIB_RPC_TIMEOUT,

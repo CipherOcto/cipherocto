@@ -39,27 +39,25 @@
 
 set -euo pipefail
 
-# === Args ===
-
+# TELEGRAM_PHONE is OPTIONAL — the test reads it from the on-disk
+# telegram.json (written by the auth flow) and uses the env var only
+# as an override. Pass --phone or export TELEGRAM_PHONE to override
+# the phone in the config without re-running the auth flow.
 PHONE="${TELEGRAM_PHONE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --phone) PHONE="$2"; shift 2 ;;
     -h|--help)
       echo "Usage: $0 [--phone +15551234567]"
-      echo "Env: TELEGRAM_PHONE, TELEGRAM_API_ID, TELEGRAM_API_HASH"
+      echo "Env: TELEGRAM_PHONE (optional override), TELEGRAM_API_ID, TELEGRAM_API_HASH"
+      echo ""
+      echo "The test reads config from the mounted telegram.json."
+      echo "TELEGRAM_PHONE is only needed if the config is missing the phone field."
       exit 0
       ;;
     *) echo "error: unknown arg: $1" >&2; exit 1 ;;
   esac
 done
-
-if [[ -z "$PHONE" ]]; then
-  echo "error: TELEGRAM_PHONE is required (e.g. +15551234567)" >&2
-  echo "  set it via: export TELEGRAM_PHONE=+15551234567" >&2
-  echo "  or:        $0 --phone +15551234567" >&2
-  exit 1
-fi
 
 # === Defaults ===
 
@@ -71,7 +69,10 @@ if [[ -z "${TELEGRAM_API_HASH+x}" ]]; then
   echo "notice: TELEGRAM_API_HASH not set, using TDesktop default" >&2
   TELEGRAM_API_HASH=344583e45741c457fe1862106095a5eb
 fi
-export TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_PHONE
+export TELEGRAM_API_ID TELEGRAM_API_HASH
+if [[ -n "$PHONE" ]]; then
+  export TELEGRAM_PHONE
+fi
 export TELEGRAM_MODE=user
 
 # === Prereq checks ===

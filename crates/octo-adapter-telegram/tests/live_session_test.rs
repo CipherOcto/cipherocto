@@ -38,17 +38,49 @@ use octo_adapter_telegram::real_client::RealTelegramClient;
 use octo_network::dot::adapters::PlatformAdapter;
 use std::time::Duration;
 
-/// Build a `TelegramConfig` from env vars, panicking with a clear
-/// message if anything is missing. Kept in a helper so each test
-/// gets a self-explanatory failure if the env isn't set up.
+/// Build a `TelegramConfig` for the live test. Resolution order:
+///
+/// 1. Read `telegram.json` from `TELEGRAM_CONFIG` (default
+///    `/octo-state/telegram.json` — the path the docker script mounts
+///    the persistent dir at). The auth flow writes this file, so it
+///    already has `data_dir`, `mode`, `api_id`, `api_hash`, and (after
+///    the build_full_config fix lands) `phone`.
+/// 2. If the file is missing, fall back to `TelegramConfig::from_env()`
+///    so the test still works in a pure-env setup (e.g., CI).
+/// 3. `TELEGRAM_PHONE` env var, if set, overrides the `phone` field
+///    loaded from the file. This is the escape hatch for the current
+///    configs that don't have a phone (the qr-link flow uses
+///    `build_config_json`, not `build_full_config`).
+///
+/// Panics with a clear message if the resolved config is invalid.
 fn live_config() -> TelegramConfig {
-    let config = TelegramConfig::from_env();
+    let config_path = std::env::var("TELEGRAM_CONFIG")
+        .unwrap_or_else(|_| "/octo-state/telegram.json".to_string());
+
+    let mut config = TelegramConfig::from_file_or_env(std::path::Path::new(&config_path))
+        .unwrap_or_else(|e| {
+            panic!(
+                "could not load Telegram config from {config_path}: {e}\n\
+                 ensure the auth flow has been run, or set TELEGRAM_* env vars"
+            )
+        });
+
+    // TELEGRAM_PHONE is an optional override. The auth flow should
+    // write it to telegram.json, but older configs (pre-build_full_config
+    // fix) don't have it; the env var lets those still work.
+    if let Ok(phone) = std::env::var("TELEGRAM_PHONE") {
+        if !phone.is_empty() {
+            config.phone = Some(phone);
+        }
+    }
+
     if let Err(e) = config.validate() {
         panic!(
-            "TELEGRAM_* env vars are not set up for a live test: {e}\n\
-             required: TELEGRAM_DATA_DIR, TELEGRAM_MODE=user, \
-             TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE\n\
-             see scripts/run-live-telegram-tests.sh for the docker wrapper"
+            "TELEGRAM config is not valid for a live test: {e}\n\
+             required fields by mode:\n\
+               user: data_dir, api_id (>0), api_hash, phone\n\
+               bot:  bot_token, api_id (>0), api_hash\n\
+             loaded from {config_path} (+ TELEGRAM_PHONE override if set)"
         );
     }
     config

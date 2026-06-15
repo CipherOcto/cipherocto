@@ -191,4 +191,31 @@ impl TelegramConfig {
             verifying_key: std::env::var("TELEGRAM_VERIFYING_KEY").ok(),
         }
     }
+
+    /// Load config from a JSON file. Returns Err with a human-readable
+    /// message if the file can't be read or parsed. Use this for
+    /// "load an existing on-disk config" use cases (live tests, CLI
+    /// tools that read the config the auth flow wrote). For fresh
+    /// env-only construction, use `from_env()`.
+    pub fn from_file(path: &std::path::Path) -> std::result::Result<Self, String> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("read {}: {}", path.display(), e))?;
+        serde_json::from_slice(&bytes)
+            .map_err(|e| format!("parse {}: {}", path.display(), e))
+    }
+
+    /// Load from file; fall back to env vars if the file is missing.
+    /// Other read/parse errors are returned (not silently masked).
+    /// This is the common path for live tests: the auth flow wrote
+    /// `telegram.json`, the test reads it, and we want env vars as
+    /// an override layer.
+    pub fn from_file_or_env(path: &std::path::Path) -> std::result::Result<Self, String> {
+        match Self::from_file(path) {
+            Ok(c) => Ok(c),
+            Err(e) if e.contains("No such file") || e.contains("not found") => {
+                Ok(Self::from_env())
+            }
+            Err(e) => Err(e),
+        }
+    }
 }

@@ -6,6 +6,33 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Default: no live network. Unit tests run with this.
+default = []
+# Live WhatsApp Web tests: enables the `tests/live_session_test.rs` suite,
+# which talks to the production WhatsApp Web servers (no `--ws-url` override).
+# Off by default because the tests require an existing authenticated session
+# (a `.session.db` produced by `octo-whatsapp-onboard qr-link` / `pair-link`),
+# take a long time, and produce real network traffic that the operator is
+# rate-limited for. Enable with:
+#
+#   cargo test -p octo-adapter-whatsapp \
+#     --features live-whatsapp \
+#     --test live_session_test \
+#     -- --include-ignored --nocapture --test-threads=1
+#
+# The session database is read from $OCTO_WHATSAPP_PERSIST_DIR (default
+# `$HOME/.local/share/octo/whatsapp/`, with session name `default.session.db`
+# — the on-disk layout that `octo-whatsapp-onboard` writes via
+# `default_session_base_dir` in `octo-whatsapp-onboard/src/main.rs`).
+#
+# Note: this feature only gates the test file (via `#[cfg(feature =
+# "live-whatsapp")]`). The `tracing-subscriber` dev-dep is always present
+# so the workspace `cargo check` doesn't need a feature switch to find it,
+# but it's only used in the live-session test, so the default `cargo test`
+# build cost is unaffected.
+live-whatsapp = []
+
 [dependencies]
 # WhatsApp Web protocol (oxidezap/whatsapp-rust)
 whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
@@ -42,3 +69,8 @@ octo-network = { path = "../octo-network" }
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Live-session test tracing setup. Only used by `tests/live_session_test.rs`
+# (gated on the `live-whatsapp` feature). The dep is unconditional because
+# `[dev-dependencies]` cannot be optional; the cost is purely compile time
+# (this dep is only resolved when running `cargo test` for this crate).
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

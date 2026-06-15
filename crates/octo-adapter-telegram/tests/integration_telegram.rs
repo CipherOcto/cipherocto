@@ -5,8 +5,14 @@
 //! `cargo test`; enable with:
 //!
 //! ```bash
-//! cargo test -p octo-adapter-telegram --features integration-test --test integration_matrix
+//! cargo test -p octo-adapter-telegram --features integration-test --test integration_telegram
 //! ```
+//!
+//! Named `integration_telegram` (not `integration_matrix`) because these
+//! were originally sourced from `octo-adapter-matrix-sdk/tests/integration_matrix.rs`
+//! and the name was kept when the tests were ported — but the name is
+//! misleading. Renamed in R17 to reflect that this is the Telegram suite.
+//! The matrix adapter still owns the original `integration_matrix.rs`.
 //!
 //! Mission AC line 145: "Integration test (feature-gated) round-trips a real
 //! envelope against Telegram's test DC".

@@ -7,6 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use octo_network::dot::adapters::{
@@ -33,16 +34,44 @@ pub struct WhatsAppConfig {
     pub ws_url: Option<String>,
     /// Group IDs to monitor for DOT envelopes
     pub groups: Vec<String>,
+    /// Per-group sender allowlist (defense in depth for RFC-0850p-a v1.15 D-WA-10).
+    ///
+    /// Key: a group identifier (must match an entry in `groups`, either with
+    ///      the explicit `@g.us` suffix or as the bare digits form).
+    /// Value: list of E.164 phone numbers that are allowed to inject `DOT/1/...`
+    ///        envelopes into this group. Normalized to digits-only at runtime,
+    ///        so formatting (`+1 555 123 4567`, `15551234567`, etc.) is flexible.
+    ///
+    /// Semantics: if a group has no entry in this map, or its entry is an empty
+    /// `Vec`, the legacy behavior applies: any current member of the WhatsApp
+    /// group can inject a `DOT/1/...` envelope. This is backwards-compatible
+    /// for existing configs that don't set the field.
+    #[serde(default)]
+    pub sender_allowlist: BTreeMap<String, Vec<String>>,
 }
 
 impl std::fmt::Debug for WhatsAppConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WhatsAppConfig")
             .field("session_path", &self.session_path)
-            .field("pair_phone", &self.pair_phone.as_ref().map(|_| "<redacted>"))
+            .field(
+                "pair_phone",
+                &self.pair_phone.as_ref().map(|_| "<redacted>"),
+            )
             .field("pair_code", &self.pair_code.as_ref().map(|_| "<redacted>"))
             .field("ws_url", &self.ws_url)
             .field("groups", &self.groups)
+            .field(
+                "sender_allowlist",
+                &format!(
+                    "<{} groups, {} total senders>",
+                    self.sender_allowlist.len(),
+                    self.sender_allowlist
+                        .values()
+                        .map(|v| v.len())
+                        .sum::<usize>()
+                ),
+            )
             .finish()
     }
 }
@@ -136,6 +165,20 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 // ── WhatsAppWebAdapter ─────────────────────────────────────────────
 
+/// Per-message accept decision for the inbound on_event handler.
+///
+/// Returned by [`WhatsAppWebAdapter::accept_message`]. Distinguishes the
+/// security-relevant rejection (sender not in the per-group allowlist)
+/// from the routine filtering rejections (empty text, unconfigured
+/// group, not a DOT envelope). Only the first is logged via
+/// `tracing::warn!` at the call site; the others are silent to preserve
+/// the existing behavior.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum AcceptDecision {
+    Accept,
+    Reject { reason: &'static str },
+}
+
 /// WhatsApp Web adapter implementing DOT PlatformAdapter
 pub struct WhatsAppWebAdapter {
     config: WhatsAppConfig,
@@ -216,6 +259,75 @@ impl WhatsAppWebAdapter {
         }
     }
 
+    /// Pure accept-reject decision for an inbound message.
+    ///
+    /// Encapsulates the filtering logic that was previously inlined at
+    /// `adapter.rs:261-280` (the legacy "anyone in a configured group can
+    /// inject a DOT/1/... envelope" check) and adds the optional per-group
+    /// sender allowlist (defense in depth for the D-WA-10 gap documented
+    /// in RFC-0850p-a v1.15 §Adversary Analysis).
+    ///
+    /// Backwards-compatible: when `sender_allowlist` has no entry for the
+    /// configured group, or the entry is an empty `Vec`, the legacy
+    /// "anyone in the group can inject" behavior applies.
+    ///
+    /// Pure: no I/O, no logging, no side effects. Safe to call from tests.
+    pub(crate) fn accept_message(
+        chat_jid: &str,
+        sender: &str,
+        text: &str,
+        groups: &[String],
+        sender_allowlist: &BTreeMap<String, Vec<String>>,
+    ) -> AcceptDecision {
+        let text_trimmed = text.trim();
+        if text_trimmed.is_empty() {
+            return AcceptDecision::Reject {
+                reason: "empty text",
+            };
+        }
+
+        // Match against configured groups (preserves the `<digits>@g.us` JID
+        // hack from the original code: a chat JID like `1234567890:0@s.whatsapp.net`
+        // matches a configured group `1234567890@g.us` because the latter's
+        // `@g.us` suffix is 4 chars and `1234567890` is 10 chars, so the
+        // `starts_with` check on the 10-char prefix succeeds).
+        let configured_group = groups.iter().find(|g| {
+            let jid = Self::group_to_jid(g);
+            chat_jid == jid || (jid.len() >= 4 && chat_jid.starts_with(&jid[..jid.len() - 4]))
+        });
+        let group_id = match configured_group {
+            Some(g) => g,
+            None => {
+                return AcceptDecision::Reject {
+                    reason: "unconfigured group",
+                }
+            }
+        };
+
+        if !text_trimmed.starts_with("DOT/1/") {
+            return AcceptDecision::Reject {
+                reason: "not a DOT envelope",
+            };
+        }
+
+        // Per-group sender allowlist. Empty allowlist = legacy behavior.
+        if let Some(allowed) = sender_allowlist.get(group_id) {
+            if !allowed.is_empty() {
+                let sender_normalized = Self::normalize_phone(sender);
+                let is_allowed = allowed
+                    .iter()
+                    .any(|p| Self::normalize_phone(p) == sender_normalized);
+                if !is_allowed {
+                    return AcceptDecision::Reject {
+                        reason: "sender not in allowlist",
+                    };
+                }
+            }
+        }
+
+        AcceptDecision::Accept
+    }
+
     /// Start the WhatsApp Web bot in a background task.
     pub async fn start_bot(&self) -> Result<()> {
         let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
@@ -236,6 +348,7 @@ impl WhatsAppWebAdapter {
         let inbound_tx = self.inbound_tx.clone();
         let self_phone = self.self_phone.clone();
         let groups = self.config.groups.clone();
+        let sender_allowlist = self.config.sender_allowlist.clone();
 
         // Build the bot
         let mut builder = whatsapp_rust::bot::Bot::builder()
@@ -252,6 +365,7 @@ impl WhatsAppWebAdapter {
                 let inbound_tx = inbound_tx.clone();
                 let self_phone = self_phone.clone();
                 let groups = groups.clone();
+                let sender_allowlist = sender_allowlist.clone();
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
@@ -259,24 +373,45 @@ impl WhatsAppWebAdapter {
 
                     match &*event {
                         Event::Message(msg, info) => {
-                            let text = msg.text_content().unwrap_or("").trim().to_string();
-                            if text.is_empty() { return; }
-
+                            let text = msg.text_content().unwrap_or("").to_string();
                             let chat = info.source.chat.to_string();
-                            let chat_jid = chat.as_str();
-                            // Match against configured groups
-                            let is_configured = groups.iter().any(|g| {
-                                let jid = Self::group_to_jid(g);
-                                chat_jid == jid || chat_jid.starts_with(&jid[..jid.len().saturating_sub(4)])
-                            });
-                            if !is_configured { return; }
-                            if !text.starts_with("DOT/1/") { return; }
-
                             let sender = info.source.sender.to_string();
+
+                            let decision = Self::accept_message(
+                                &chat,
+                                &sender,
+                                &text,
+                                &groups,
+                                &sender_allowlist,
+                            );
+
+                            // Emit a single warn! for the security-relevant
+                            // rejection (D-WA-10 mitigation). Routine filtering
+                            // rejections remain silent to preserve the existing
+                            // log volume behavior.
+                            if let AcceptDecision::Reject {
+                                reason: "sender not in allowlist",
+                            } = &decision
+                            {
+                                tracing::warn!(
+                                    "rejecting DOT envelope: non-allowlisted sender {} in {}",
+                                    Self::normalize_phone(&sender),
+                                    chat,
+                                );
+                            }
+                            if !matches!(decision, AcceptDecision::Accept) {
+                                return;
+                            }
+
                             let raw = RawPlatformMessage {
                                 platform_id: format!("{}:{}", chat, uuid::Uuid::new_v4()),
                                 payload: text.into_bytes(),
-                                metadata: [("chat".to_string(), chat), ("sender".to_string(), sender)].into_iter().collect(),
+                                metadata: [
+                                    ("chat".to_string(), chat),
+                                    ("sender".to_string(), sender),
+                                ]
+                                .into_iter()
+                                .collect(),
                             };
                             if let Err(e) = inbound_tx.try_send(raw) {
                                 tracing::warn!("inbound channel full or closed: {e}");
@@ -601,6 +736,7 @@ mod tests {
             pair_code: None,
             ws_url: None,
             groups: vec![],
+            sender_allowlist: BTreeMap::new(),
         };
         let adapter = WhatsAppWebAdapter::new(config);
         let caps = adapter.capabilities();
@@ -618,6 +754,7 @@ mod tests {
             pair_code: None,
             ws_url: None,
             groups: vec![],
+            sender_allowlist: BTreeMap::new(),
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.health_check().await.is_err());
@@ -631,6 +768,7 @@ mod tests {
             pair_code: None,
             ws_url: None,
             groups: vec![],
+            sender_allowlist: BTreeMap::new(),
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.self_handle().is_none());
@@ -661,7 +799,23 @@ mod tests {
             pair_code: pair_code.map(str::to_string),
             ws_url: ws_url.map(str::to_string),
             groups: groups.into_iter().map(str::to_string).collect(),
+            sender_allowlist: BTreeMap::new(),
         }
+    }
+
+    fn cfg_with_allowlist(
+        session_path: &str,
+        groups: Vec<&str>,
+        allowlist: &[(&str, &[&str])],
+    ) -> WhatsAppConfig {
+        let mut cfg = cfg_with(session_path, None, None, None, groups);
+        for (group, senders) in allowlist {
+            cfg.sender_allowlist.insert(
+                group.to_string(),
+                senders.iter().map(|s| s.to_string()).collect(),
+            );
+        }
+        cfg
     }
 
     #[test]
@@ -685,11 +839,11 @@ mod tests {
     #[test]
     fn validate_rejects_malformed_phone() {
         for bad in [
-            "5551234",       // no leading +
-            "+0123456789",   // leading 0 after +
+            "5551234",        // no leading +
+            "+0123456789",    // leading 0 after +
             "+1-555-1234567", // non-digit
-            "+",             // no digits
-            "+abcdefg",      // non-digit
+            "+",              // no digits
+            "+abcdefg",       // non-digit
         ] {
             let cfg = cfg_with("/tmp/test.db", Some(bad), None, None, vec![]);
             assert!(cfg.validate().is_err(), "phone {bad:?} should be rejected");
@@ -724,5 +878,172 @@ mod tests {
         // to monitor yet; groups can be added later by editing the config.
         let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
         assert!(cfg.validate().is_ok());
+    }
+
+    // ── Sender allowlist tests (D-WA-10 mitigation) ─────────────
+
+    #[test]
+    fn accept_message_accepts_configured_group_without_allowlist() {
+        // Legacy behavior: no allowlist entry means anyone in the group can inject.
+        let cfg = cfg_with(
+            "/tmp/test.db",
+            None,
+            None,
+            None,
+            vec!["120363012345678901@g.us"],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "+15551234567@s.whatsapp.net",
+            "DOT/1/abc",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(decision, AcceptDecision::Accept);
+    }
+
+    #[test]
+    fn accept_message_rejects_unconfigured_group() {
+        let cfg = cfg_with(
+            "/tmp/test.db",
+            None,
+            None,
+            None,
+            vec!["120363012345678901@g.us"],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363099999999999@g.us", // different group
+            "+15551234567@s.whatsapp.net",
+            "DOT/1/abc",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(
+            decision,
+            AcceptDecision::Reject {
+                reason: "unconfigured group"
+            }
+        );
+    }
+
+    #[test]
+    fn accept_message_rejects_non_dot_envelope() {
+        let cfg = cfg_with(
+            "/tmp/test.db",
+            None,
+            None,
+            None,
+            vec!["120363012345678901@g.us"],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "+15551234567@s.whatsapp.net",
+            "not a dot envelope",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(
+            decision,
+            AcceptDecision::Reject {
+                reason: "not a DOT envelope"
+            }
+        );
+    }
+
+    #[test]
+    fn accept_message_accepts_allowlisted_sender() {
+        let cfg = cfg_with_allowlist(
+            "/tmp/test.db",
+            vec!["120363012345678901@g.us"],
+            &[("120363012345678901@g.us", &["+15551234567"])],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "+15551234567@s.whatsapp.net",
+            "DOT/1/abc",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(decision, AcceptDecision::Accept);
+    }
+
+    #[test]
+    fn accept_message_rejects_non_allowlisted_sender() {
+        // D-WA-10 mitigation: when an allowlist is configured, only listed
+        // senders can inject envelopes into the corresponding broadcast domain.
+        let cfg = cfg_with_allowlist(
+            "/tmp/test.db",
+            vec!["120363012345678901@g.us"],
+            &[("120363012345678901@g.us", &["+15551234567"])],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "+15559998888@s.whatsapp.net", // not in the allowlist
+            "DOT/1/abc",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(
+            decision,
+            AcceptDecision::Reject {
+                reason: "sender not in allowlist",
+            }
+        );
+    }
+
+    #[test]
+    fn accept_message_empty_allowlist_vec_means_legacy_open_group() {
+        // An empty allowlist `Vec` (operator explicitly set the entry to empty)
+        // is equivalent to no entry: legacy "anyone in the group can inject".
+        let cfg = cfg_with_allowlist(
+            "/tmp/test.db",
+            vec!["120363012345678901@g.us"],
+            &[("120363012345678901@g.us", &[])],
+        );
+        let groups = cfg.groups.clone();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "+15559998888@s.whatsapp.net", // arbitrary sender
+            "DOT/1/abc",
+            &groups,
+            &cfg.sender_allowlist,
+        );
+        assert_eq!(decision, AcceptDecision::Accept);
+    }
+
+    #[test]
+    fn accept_message_allowlist_phone_numbers_normalized() {
+        // The allowlist comparison normalizes both sides to digits-only, so
+        // formatting differences (`+1 555 123 4567`, `+15551234567`,
+        // `15551234567@s.whatsapp.net`) all match the same logical sender.
+        let cfg = cfg_with_allowlist(
+            "/tmp/test.db",
+            vec!["120363012345678901@g.us"],
+            &[("120363012345678901@g.us", &["+1 555 123 4567"])],
+        );
+        let groups = cfg.groups.clone();
+        for sender_form in [
+            "+15551234567@s.whatsapp.net",
+            "15551234567",
+            "+1 (555) 123-4567",
+        ] {
+            let decision = WhatsAppWebAdapter::accept_message(
+                "120363012345678901@g.us",
+                sender_form,
+                "DOT/1/abc",
+                &groups,
+                &cfg.sender_allowlist,
+            );
+            assert_eq!(
+                decision,
+                AcceptDecision::Accept,
+                "sender {sender_form:?} should be accepted"
+            );
+        }
     }
 }

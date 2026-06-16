@@ -374,7 +374,7 @@ The DomainCoordinator monitors three platform events:
 **Split-brain prevention on reconnection (R2-DC-3 fix, R3-1 / R3-6 follow-up):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
 1. Reconnected node queries the local `GroupRegistry` for the current binding state.
 2. If a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)`, the reconnected node MUST NOT issue a BIND.
-3. The reconnected node MAY challenge the current DomainCoordinator via `CoordinatorChallenge` (per RFC-0855p-b §"Coordinator Challenge") if it has evidence of misbehavior; otherwise, it accepts the new DomainCoordinator and transitions to `MissionParticipant`.
+3. The reconnected node MAY challenge the current DomainCoordinator via a slash vote (reason 0x0005: Coordinator misbehavior; per RFC-0855p-b §"Slash Offense Codes") if it has evidence of misbehavior; otherwise, it accepts the new DomainCoordinator and transitions to `MissionParticipant`. **R5-4 fix:** the previous wording referenced "CoordinatorChallenge" (per RFC-0855p-b §"Coordinator Challenge") but no such section exists in RFC-0855p-b (verified by grep; the term "challenge" does not appear in 0855p-b). The challenge mechanism is now specified as a slash vote, which is the canonical challenge path in 0855p-b.
 4. If no DomainCoordinator is `Active` (e.g., the new one was also disconnected), the reconnected node MAY issue a BIND as a fresh designator. The `BindEnvelope` MUST set `is_reconnect: true` (R3-6 fix — replaces the previous `reconnect_epoch: u64` field; the witness rule #10 in RFC-0850p-c §8 enforces the split-brain check).
 
 The `is_reconnect: bool` field on `BindEnvelope` is `false` for first-time BINDs and `true` for reconnection attempts. This addition to `BindEnvelope` is a pre-1.0 spec change tracked in RFC-0850p-c's changelog. The field is part of `bind_hash` (R3-1 fix) so it cannot be mutated post-signing.
@@ -502,7 +502,7 @@ DomainCoordinator
 | IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
 | IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
 
-**Open assumptions:** None unaddressed. All 12 are MITIGATED or ACCEPTED with named Future Work (F1, F2).
+**Open assumptions:** None unaddressed. All 13 (R5-1 fix — was 12; IA-DC-3a added in R3) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
 
 ## Security Considerations
 

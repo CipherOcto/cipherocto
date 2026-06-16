@@ -344,7 +344,7 @@ A new mission with 1 participant has no peer to witness the genesis. A 2-partici
 
 When the first coordinator transitions from `GenesisActive` to the normal `CoordinatorLifecycle`, the election has quorum = 0 (creator is the only voter, and the creator voted for themselves at genesis). This is the only time an election has quorum < `min_participants / 2 + 1`. Implementations MUST special-case this transition.
 
-**Determinism:** All 3 transitions are RFC-0008 Class A. The witness count is deterministic; the witness set is sorted lexicographically by `witness_peer_id` for canonical ordering.
+**Determinism:** All 5 transitions (R5-3 fix — was 3; v1.1 added GenesisSelfAttest → GenesisDesignated rollback and GenesisActive → Inactive failure path) are RFC-0008 Class A. The witness count is deterministic; the witness set is sorted lexicographically by `witness_peer_id` for canonical ordering.
 
 **Cross-reference:** This section supersedes the v1.0 §"Mission Creator" entry that said the role was "stateless". The creator IS stateful during genesis; the state machine is `GenesisState` (3 states) above.
 

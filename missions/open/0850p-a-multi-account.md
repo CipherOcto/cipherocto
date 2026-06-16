@@ -55,6 +55,60 @@ CLI subcommands:
 - [ ] Integration test: import → list → use → whoami round-trip
 - [ ] Documentation: migration guide for operators currently using `--session-path`
 
+## Dependencies
+
+Depends on:
+- RFC-0850p-a status: Accepted
+- Stoolap `CipherOcto/stoolap` fork (branch `feat/blockchain-sql`) — required for the multi-account index
+- The `whoami` subcommand (mission 0850p-a base, not yet created)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-whatsapp-onboard-core/src/multi_account.rs` (new); `crates/octo-whatsapp-onboard/src/cli.rs` (new subcommands).
+
+## Complexity
+
+Medium (~600 lines; stoolap integration, migration logic, 4 new CLI subcommands).
+
+## Prerequisites
+
+- Stoolap `CipherOcto/stoolap` fork at branch `feat/blockchain-sql`
+- Phase 1 (this mission) uses filesystem; Phase 3 (future) migrates to stoolap
+
+## Notes
+
+### Why stoolap?
+
+`docs/BLUEPRINT.md` §'Persistence Convention' mandates any new persistence in CipherOcto uses the `CipherOcto/stoolap` fork. Phase 1 (this mission) uses filesystem only as a transitional step.
+
+### Why not a separate `octo-whatsapp-multi-account` binary?
+
+The `session` subcommands fit naturally in `octo-whatsapp-onboard`; the operator already has this binary installed. A separate binary would split the user-facing surface.
+
+### Why per-host index?
+
+Each host has its own account set; the index is per-host (not global). Cross-host account sharing is a separate concern (out of scope; see mission 0850p-a-session-export).
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `MultiAccountStore` struct | This mission |
+| `session {list,use,import,export}` CLI subcommands | This mission |
+| `whoami --store <PATH>` | This mission |
+
+### Implementation Guide
+
+Companion guide needed: `docs/07-developers/whatsapp-multi-account-implementation-guide.md`. Stoolap schema for the account index, store migration plan, and sidecar management.
+
 ## Mitigates
 
 Operational scaling; not a security issue.

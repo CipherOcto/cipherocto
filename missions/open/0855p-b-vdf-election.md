@@ -36,6 +36,56 @@ A Verifiable Delay Function (VDF) per RFC-0855p-c §"Random Beacon" (currently b
 - [ ] Documentation: VDF security assumptions (setup ceremony, prime selection)
 - [ ] Documentation: operator guide for VDF computation (CPU cost: ~1 core × 60s per candidate per election)
 
+## Dependencies
+
+Depends on:
+- A VDF library (the `class_groups` crate)
+- A beacon randomness source (the `SlashEvent` hash for the epoch)
+- RFC-0855p-c §'Random Beacon' being spec-ed (currently a forward reference; this mission triggers its creation)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-network/src/election/vdf.rs` (new).
+
+## Complexity
+
+High (~700 lines; VDF wrapper, proof verification, election state machine, beacon seed derivation).
+
+## Prerequisites
+
+- `class_groups` crate version pinning
+- VDF security review (setup ceremony, prime selection)
+
+## Notes
+
+### Why Wesolowski?
+
+Wesolowski VDFs are well-studied and have a simple, fast verifier. The alternative (Pietrzak) is more complex and slower to verify.
+
+### Why 60s?
+
+VDF computation is CPU-intensive (1 core × 60s per candidate). 60s is the minimum that produces unpredictable randomness; shorter VDFs are too easy to grind. Longer VDFs slow down the election.
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `crates/octo-network/src/election/vdf.rs` | This mission |
+| `EPOCH_DURATION_SECONDS = 60` constant | This mission |
+| Tie-break: lex `candidate_pubkey` ordering | This mission |
+
+### Implementation Guide
+
+Reference: Wesolowski VDF paper; `class_groups` crate documentation; RFC-0855p-c (Random Beacon section).
+
 ## Mitigates
 
 D-CL-1 (predictable leader election); D-CL-2 (grinding attacks on election)

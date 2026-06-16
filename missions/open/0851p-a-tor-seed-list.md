@@ -37,6 +37,53 @@ The Tor exit node sees only the gateway's Tor circuit, not its real IP. The seed
 - [ ] Integration test: gateway IP not visible to seed list operator (verified via network trace)
 - [ ] Documentation: how to set up a `.onion` seed list service using `tor` or `arti-server`
 
+## Dependencies
+
+Depends on:
+- The `arti` crate (Rust Tor client)
+- A `.onion` seed list service (out-of-scope for this mission; documented in operator guide)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-bootstrap/src/transport/tor.rs` (new); `crates/octo-bootstrap/src/config.rs` (add mode enum).
+
+## Complexity
+
+Low (~200 lines; arti wrapper, SOCKS5 client, mode dispatch).
+
+## Prerequisites
+
+- `arti` crate version pinning in `Cargo.toml`
+
+## Notes
+
+### Why `arti` not `tor`?
+
+`arti` is the Rust-native Tor client; `tor` is the C implementation. `arti` is easier to embed (no C bindings, no FFI).
+
+### Why no IP fallback in TorOnly mode?
+
+A silent fallback defeats the privacy guarantee. The operator who chose TorOnly wants Tor-only; if Tor is down, the bootstrap should fail loudly.
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `bootstrap_mode = TorOnly` config option | This mission |
+| `crates/octo-bootstrap/src/transport/tor.rs` | This mission |
+
+### Implementation Guide
+
+Reference: `arti` crate (Rust Tor client); RFC-0851p-a (existing bootstrap modes).
+
 ## Mitigates
 
 D-NB-7 (network-level deanonymization via seed list operator)

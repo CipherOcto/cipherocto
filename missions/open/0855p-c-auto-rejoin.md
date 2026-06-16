@@ -53,6 +53,55 @@ A kicked member (e.g., removed by platform admin) can request rejoin via a `REJO
 - [ ] Documentation: how to request rejoin (peer guide)
 - [ ] Documentation: when DCs should sign rejoin tickets (best practices)
 
+## Dependencies
+
+Depends on:
+- Platform API integration for kick evidence
+- Mission 0855p-c-admin-attestation (the DC's authority verification flow)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-network/src/dc/rejoin.rs` (new).
+
+## Complexity
+
+Medium (~400 lines; rejoin request handler, ticket issuance, rate limiting).
+
+## Prerequisites
+
+- Mission 0855p-c-admin-attestation (the DC's authority)
+- Platform API integration for kick evidence
+
+## Notes
+
+### Why 1000-epoch cooldown?
+
+1000 minutes (~16 hours) prevents rejoin abuse (a peer requesting rejoin many times to spam the DC). After 16 hours, the cooldown expires and rejoin can be requested again.
+
+### Why a ticket, not a direct admission?
+
+A ticket can be verified offline (the peer shows the ticket to the platform group; the group verifies the DC's signature). A direct admission would require an online check with the DC, which may not be available.
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `REJOIN_REQUEST` envelope type | This mission |
+| `RejoinTicket` envelope type | This mission |
+| `REJOIN_COOLDOWN_EPOCHS = 1000` constant | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/dc/rejoin.rs` (new).
+
 ## Mitigates
 
 D-DC-10 (accidental mass-kick recovery)

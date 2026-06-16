@@ -37,6 +37,52 @@ The libp2p-delivered BIND is informational; the authoritative BIND is the one de
 - [ ] Integration test: non-member pre-fetches mission config from libp2p-delivered BIND
 - [ ] Documentation: how to enable libp2p BIND gossip (off by default for privacy)
 
+## Dependencies
+
+Depends on RFC-0850p-c status: Accepted. Depends on RFC-0852 (Deterministic Gossip Protocol) being Accepted.
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-network/src/gossip/bind.rs` (new); `crates/octo-network/src/mon/bind_envelope.rs` (add gossip codec).
+
+## Complexity
+
+Medium (~300 lines; gossip codec, pre-admission handler, privacy controls).
+
+## Prerequisites
+
+- RFC-0852 status: Accepted
+
+## Notes
+
+### Why off by default?
+
+Pre-admission nodes may be in a privacy-sensitive location (e.g., a journalist's laptop). Defaulting to off means the operator opts into receiving BIND gossip for specific `domain_id`s.
+
+### Why informational?
+
+The libp2p-delivered BIND is not authoritative. The authoritative BIND is the one delivered via the platform group (where the DC has actual admin status). The libp2p delivery is for pre-fetching only.
+
+### Type Coverage
+
+| RFC-0850p-c Type | Implemented By |
+|-----------------|----------------|
+| `BindEnvelope` gossipable on libp2p mesh | This mission |
+| `/dot/bind/{domain_id}` gossip topic | This mission |
+| Pre-admission notification handler | This mission |
+
+### Implementation Guide
+
+Reference: RFC-0852 (gossip protocol); `crates/octo-network/src/gossip/bind.rs` (new).
+
 ## Mitigates
 
 Operational scaling; not a security issue (informational, signed by DomainCoordinator).

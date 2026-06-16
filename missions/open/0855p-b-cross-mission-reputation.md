@@ -31,6 +31,55 @@ Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`
 - [ ] Integration test: gossip propagation of slash reputation
 - [ ] Documentation: how slash reputation is computed and used in elections
 
+## Dependencies
+
+Depends on:
+- RFC-0855p-b status: Accepted
+- Mission 0855p-b (slash reason codes base implementation)
+- The libp2p mesh (already operational)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-network/src/reputation/slash_store.rs` (new); `crates/octo-network/src/gossip/reputation.rs` (new).
+
+## Complexity
+
+Medium (~400 lines; store type, gossip protocol, priority formula).
+
+## Prerequisites
+
+- RFC-0855p-b status: Accepted
+
+## Notes
+
+### Why a soft penalty?
+
+A hard disqualification is a one-strike-and-out policy that is too aggressive. A slashed coordinator may have been a victim of platform misbehavior (e.g., admin key compromise by an attacker). The soft penalty (priority = stake / (1 + count)) reduces the chance of re-election but doesn't forbid it.
+
+### Why a hard threshold at 5?
+
+5 slashes is a strong signal of repeated misbehavior. Beyond this, the coordinator is excluded.
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `SlashReputationStore` type | This mission |
+| `/dot/reputation/{coordinator_pubkey}` gossip topic | This mission |
+| Priority formula: `stake / (1 + global_slash_count)` | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/reputation/slash_store.rs` (new); `crates/octo-network/src/gossip/reputation.rs` (new).
+
 ## Mitigates
 
 D-CL-3 (re-election of repeatedly-misbehaving coordinators)

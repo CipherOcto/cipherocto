@@ -34,6 +34,53 @@ The mode is opt-in (`--ci`); a normal `pair-link` invocation still requires the 
 - [ ] Unit test: `--ci` with an empty/invalid DB exits 1 with a clear error
 - [ ] Documentation: CI integration guide (Kubernetes Secret, GitHub Actions encrypted secret, etc.)
 
+## Dependencies
+
+Depends on:
+- Mission 0850p-a-session-export (the source of pre-paired session DBs)
+- Mission 0850p-a-multi-account (the CI host's account store)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-whatsapp-onboard/src/pair_link.rs` (add `--no-wait` flag).
+
+## Complexity
+
+Trivial (~30 lines; one new flag, no-wait path).
+
+## Prerequisites
+
+- Mission 0850p-a-session-export (to produce the pre-paired DB)
+
+## Notes
+
+### Why pre-paired DBs?
+
+CI environments have no human to scan a QR code. The pre-paired DB is created on a host that does have a human, exported via `session export`, and mounted into the CI container.
+
+### Why is this LOW severity?
+
+The CI use case is narrow. Most operators use `octo-whatsapp-onboard` interactively.
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `pair-link --no-wait --session-db <PATH>` flag | This mission |
+| CI-friendly error codes | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-whatsapp-onboard/src/pair_link.rs` (existing `pair-link` subcommand).
+
 ## Mitigates
 
 Operational scaling; not a security issue. **Security note:** the session DB contains Signal keys; CI must use encrypted secret storage.

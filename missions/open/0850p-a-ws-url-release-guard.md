@@ -40,6 +40,51 @@ fn check_ws_url_allowed(args: &Cli) -> Result<(), CliError> {
 - [ ] `--help` text for `--ws-url` documents the env-var override
 - [ ] Unit test: simulated release build (compile-time check) refuses without env-var
 
+## Dependencies
+
+Depends on the base 0850p-a RFC being Accepted. No prerequisite missions; this is a release-build guard on the CLI.
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-whatsapp-onboard/src/cli.rs` (add release guard after arg parsing).
+
+## Complexity
+
+Trivial (~10 lines; one check).
+
+## Prerequisites
+
+- RFC-0850p-a status: Accepted
+
+## Notes
+
+### Why release-only?
+
+Debug builds may use `--ws-url` for local testing (a custom WebSocket endpoint, e.g., a test server). Release builds should never use a custom URL because the official WhatsApp servers are the only trusted endpoints.
+
+### Why an env-var override?
+
+Operators running a custom proxy (e.g., a corporate MITM) can opt-in with the env var. The check is opt-out (default: forbidden in release).
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `CliError::WsUrlReleaseForbidden` variant | This mission |
+| `OCTO_WHATSAPP_ALLOW_WS_URL` env var check | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-whatsapp-onboard/src/cli.rs` (CLI arg parsing); `cfg!(debug_assertions)` macro.
+
 ## Mitigates
 
 D-WA-5 (`--ws-url` flag for test injection in Adversary Analysis)

@@ -39,6 +39,52 @@ The `Event::LoggedOut` handler checks the `cause` field (whatsapp-rust exposes `
 - [ ] State machine unit tests updated; transition table updated
 - [ ] Integration test: simulating `Event::LoggedOut { cause: Replaced }` exits with code 8
 
+## Dependencies
+
+Depends on the base 0850p-a RFC being Accepted. No prerequisite missions; this is a state machine addition.
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-adapter-whatsapp/src/state.rs` (add `Replaced` state); `crates/octo-whatsapp-onboard/src/whoami.rs` (add `--detect-replacement` flag).
+
+## Complexity
+
+Low (~80 lines; one new state, one new exit code, mapping update).
+
+## Prerequisites
+
+- RFC-0850p-a status: Accepted
+- whatsapp-rust library must expose the `cause` field on `Event::LoggedOut` (verify in the pinned version)
+
+## Notes
+
+### Why a distinct `Replaced` state?
+
+Currently `Replaced` is silently mapped to `LoggedOut`, which is misleading: a replaced session is a different kind of failure (the session is still valid but owned by another device). The user needs to know to re-pair, not just reconnect.
+
+### Why a distinct exit code?
+
+CI pipelines and monitoring systems can detect "replaced" and trigger a re-pair workflow automatically.
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `BotState::Replaced` variant | This mission |
+| `whoami --detect-replacement` exit code | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-adapter-whatsapp/src/state.rs` (existing state machine); `whatsapp-rust` documentation for `Event::LoggedOut` fields.
+
 ## Mitigates
 
 D-WA-7 (multi-device pairing does not silently log out the adapter)

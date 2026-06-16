@@ -33,6 +33,55 @@ The transition is a hard fork: from a specific epoch `EPOCH_GOVERNANCE_TAKEOVER`
 - [ ] Integration test: full seed list load with DAO multi-sig
 - [ ] Documentation: governance guide for updating `SEED_LIST_AUTHORITY_PUBKEY`
 
+## Dependencies
+
+Depends on:
+- MissionSlashing v1.0 shipping (the slash infrastructure for invalid seed lists)
+- RFC-0851p-a status: Accepted
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-bootstrap/src/authority/dao_multisig.rs` (new); `crates/octo-bootstrap/src/seed_list.rs` (replace foundation multi-sig verifier).
+
+## Complexity
+
+Medium (~500 lines; DKG ceremony, threshold key derivation, hard-fork gate).
+
+## Prerequisites
+
+- MissionSlashing v1.0 (for slashing malicious seed list updates)
+- RFC-0855 §11 governance key ceremony completed
+
+## Notes
+
+### Why 3-of-5 foundation at launch?
+
+No slashing exists at launch to punish a malicious seed list update. The foundation multi-sig is a centralized trust anchor until slashing ships. Once slashing is live, governance can take over.
+
+### Why a hard fork?
+
+A soft fork (backward-compatible) would require both old and new authorities to be accepted indefinitely. A hard fork cleanly transitions: from `EPOCH_GOVERNANCE_TAKEOVER` onward, only DAO multi-sig is valid.
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `crates/octo-bootstrap/src/authority/dao_multisig.rs` | This mission |
+| `EPOCH_GOVERNANCE_TAKEOVER` constant | This mission |
+| Hard-fork gate for foundation multi-sig deprecation | This mission |
+
+### Implementation Guide
+
+Reference: SLIP-10 threshold key derivation; RFC-0855 §11 (governance key).
+
 ## Mitigates
 
 D-NB-2 (single point of failure on seed list authority)

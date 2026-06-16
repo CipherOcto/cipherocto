@@ -36,6 +36,54 @@ A new `bootstrap_mode = Nostr` configuration. The bootstrap adapter resolves a N
 - [ ] Integration test: full Nostr bootstrap flow with 5 contacts
 - [ ] Documentation: how to publish a DOT capability claim (NIP-78 or similar)
 
+## Dependencies
+
+Depends on:
+- A Nostr relay list (configurable)
+- NIP-05 resolution infrastructure (HTTPS endpoint per NIP-05)
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-bootstrap/src/mode/nostr.rs` (new).
+
+## Complexity
+
+High (~800 lines; NIP-05 resolution, contact list fetch, capability verification, libp2p peer ID mapping).
+
+## Prerequisites
+
+- nostr-sdk crate version pinning
+- NIP-78 specification review (kind 30078 with `d` tag)
+
+## Notes
+
+### Why NIP-05 + contact list?
+
+NIP-05 gives a human-readable identifier (`user@domain`); the contact list (kind 3) is the trust graph. Together, they form a Sybil-resistant bootstrap channel that doesn't depend on a centralized IP seed list.
+
+### Why Future (not post-launch)?
+
+The Nostr ecosystem is still maturing. Until key Nostr libraries are stable and the DOT capability claim (kind 30078) is widely adopted, the NIP-05 bootstrap mode is experimental.
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `bootstrap_mode = Nostr` config option | This mission |
+| `crates/octo-bootstrap/src/mode/nostr.rs` | This mission |
+
+### Implementation Guide
+
+Reference: `nostr-sdk` crate; NIP-05 spec; NIP-78 (kind 30078 events).
+
 ## Mitigates
 
 D-NB-9 (cold-start bootstrapping without IP-based seed list) — Nostr provides a trust-anchored bootstrap channel that doesn't depend on a centralized IP seed list.

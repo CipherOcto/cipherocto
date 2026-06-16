@@ -35,6 +35,54 @@ The `session import` command decompresses, validates the sidecar (checksum match
 - [ ] Unit test: round-trip export → import → list shows the account
 - [ ] Documentation: security warning about exporting session DBs (they contain Signal keys)
 
+## Dependencies
+
+Depends on:
+- Mission 0850p-a-multi-account (the stoolap store for cross-host import)
+- RFC-0850p-a status: Accepted
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-whatsapp-onboard/src/session_export.rs` (new).
+
+## Complexity
+
+Low (~200 lines; bundle format, import/export CLI).
+
+## Prerequisites
+
+- Mission 0850p-a-multi-account (the target store for imports)
+
+## Notes
+
+### Why a portable bundle?
+
+A bare TDLib SQLite DB is not portable across hosts without its sidecar (`session_meta.json`) and config. The bundle packages all three into a single `tar.gz`.
+
+### Why not just copy the DB file?
+
+Sidecar management is per-host; the bundle includes the sidecar so the import can recreate it on the new host.
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `session export <DB> --out <FILE>` CLI subcommand | This mission |
+| `session import <FILE>` CLI subcommand | This mission |
+| Portable bundle format (DB + sidecar + config) | This mission |
+
+### Implementation Guide
+
+Reference: TDLib database format (`sqlite3` file); `tar` crate for the portable bundle.
+
 ## Mitigates
 
 Operational scaling; not a security issue.

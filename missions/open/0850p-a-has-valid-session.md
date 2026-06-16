@@ -34,6 +34,51 @@ In `crates/octo-whatsapp-onboard/src/whoami.rs`, replace the polling loop with a
 - [ ] Unit test: `has_valid_session` returns `false` when only one of the two handles is set
 - [ ] Integration test: `whoami` exits 0 in <2s for an already-paired bot
 
+## Dependencies
+
+Depends on the base 0850p-a RFC being Accepted. No prerequisite missions; this is a small adapter API addition.
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-adapter-whatsapp/src/lib.rs` (add `has_valid_session` method).
+
+## Complexity
+
+Trivial (~20 lines; one new method).
+
+## Prerequisites
+
+- RFC-0850p-a status: Accepted
+
+## Notes
+
+### Why a new method instead of polling?
+
+The 250ms polling pattern in `whoami` is wasteful. `has_valid_session()` can use the adapter's internal state (which already knows the session validity) to return a synchronous boolean.
+
+### Why purely additive?
+
+This change is purely additive — no existing API is removed. The polling path is kept as a fallback for back-compat with operators that rely on it.
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `WhatsAppWebAdapter::has_valid_session()` | This mission |
+| `whoami` switches from polling to `has_valid_session` | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-adapter-whatsapp/src/lib.rs` (existing `WhatsAppWebAdapter` struct).
+
 ## Mitigates
 
 Performance optimization; not a security issue. Replaces the R8-H1 polling-loop pattern.

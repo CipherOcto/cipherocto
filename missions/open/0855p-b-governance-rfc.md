@@ -46,6 +46,60 @@ A new RFC-0855p-d "Governance Lifecycle" specifies: (1) `governance_id` rotation
 - [ ] Documentation: governance key ceremony step-by-step
 - [ ] Documentation: HSM setup for governance key holders
 
+## Dependencies
+
+Depends on:
+- RFC-0855 §11 (Governance) status: Accepted
+- A new RFC-0855p-d (Governance Lifecycle) being created (this mission creates it)
+- DKG (Distributed Key Generation) library
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-network/src/governance/rotation.rs` (new); `rfcs/accepted/networking/0855p-d-governance-lifecycle.md` (new RFC).
+
+## Complexity
+
+High (~1200 lines; new RFC, DKG ceremony spec, recovery multi-sig, slash semantics, migration window logic).
+
+## Prerequisites
+
+- RFC-0855 §11 status: Accepted
+
+## Notes
+
+### Why 5-of-7 recovery?
+
+5-of-7 is a higher threshold than the 3-of-5 governance multi-sig, providing defense-in-depth. The recovery multi-sig is harder to compromise (requires 5 of 7 holders colluding).
+
+### Why 100 epoch migration window?
+
+100 minutes is enough time for missions to update their `governance_id` references (which involves a coordinated upgrade) without being so long that slashed missions operate in limbo.
+
+### Why a new RFC?
+
+The governance lifecycle (rotation, compromise, ceremony) is a substantial spec in its own right. It deserves its own RFC for review and maintenance.
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `GOVERNANCE_ROTATION` envelope type | This mission |
+| `GOVERNANCE_MIGRATION_WINDOW = 100` constant | This mission |
+| `0x000E` slash reason code (governance key compromise) | This mission |
+| 5-of-7 recovery multi-sig | This mission |
+
+### Implementation Guide
+
+Reference: New RFC-0855p-d (created by this mission); DKG literature.
+
 ## Mitigates
 
 D-CL-6 (governance key compromise → mass slash event); D-CL-7 (governance key loss → frozen slash system)

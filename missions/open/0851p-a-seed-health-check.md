@@ -34,6 +34,52 @@ At `start_node`, verify that each seed in the seed list has been signed within t
 - [ ] Unit tests: 0% stale (pass), 20% stale (log only), 50% stale (log + alert), 100% stale (refuse to start)
 - [ ] Documentation: operator guide for investigating stale seed alerts
 
+## Dependencies
+
+Depends on RFC-0851p-a status: Accepted. No prerequisite missions; this is a startup-time check.
+
+## Claimant
+
+(none — Open mission)
+
+## Pull Request
+
+(none — Open mission)
+
+## Location
+
+`crates/octo-bootstrap/src/seed_list.rs` (add check); `crates/octo-bootstrap/src/config.rs` (add constant).
+
+## Complexity
+
+Low (~80 lines; one new check, one new metric).
+
+## Prerequisites
+
+- RFC-0851p-a status: Accepted
+
+## Notes
+
+### Why 10 epochs?
+
+At 1-minute epochs, 10 minutes is a reasonable staleness threshold. Older seeds are likely abandoned or compromised.
+
+### Why 20% threshold for alert?
+
+20% is high enough to be a strong signal (random churn rarely produces this) but low enough to catch attacks before the seed list is mostly stale.
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `MAX_SEED_AGE_EPOCHS = 10` constant | This mission |
+| Stale seed detection in `seed_list::load_and_validate` | This mission |
+| `seed_stale_ratio` Prometheus metric | This mission |
+
+### Implementation Guide
+
+Reference: `crates/octo-bootstrap/src/seed_list.rs` (existing seed list loader).
+
 ## Mitigates
 
 IA-NB-11 (Sybil/eclipse via stale seeds)

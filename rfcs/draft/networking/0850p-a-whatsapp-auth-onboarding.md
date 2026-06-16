@@ -816,6 +816,70 @@ stateDiagram-v2
 | The `groups: Vec<String>` config field is the only source of broadcast domain registration | `adapter.rs:400-411` linear scan | High: unconfigured groups silently drop inbound messages | Per RFC-0850p, this is the current design. **ACCEPTED RISK**; RFC-0855p-b F1 (`DomainCoordinator`) will add `register_domain` / `list_domains` |
 | Multi-device pairing does not silently log out the adapter | Adapter runs in a long-lived WS connection | High: operator's phone activity (e.g., pairing a new tablet) could log out the gateway | whatsapp-rust handles reconnection; **ACCEPTED RISK**; F5: add explicit `Replaced` state to the adapter (currently mapped to `LoggedOut`) |
 | `whoami` re-establishing the WS connection is sufficient verification | `whoami` subcommand re-uses the adapter's start_bot path | Low: false positive if the WS is open but the device identity is wrong | Cross-checked with `self_handle()` returning the canonical phone; sidecar `self_phone` is the source of truth |
+| `group_jid` is shared out-of-band via invite link or mission descriptor | Adapter only joins groups listed in `groups: Vec<String>` | High: node cannot find the group to join without out-of-band coordination | Specified in §"Group Discovery" (E2E IS-1.1 fix) |
+| DOT envelopes are gossiped within the bound group | Adapter relays all DOT envelopes received in a joined group | Medium: routing topology must be defined to avoid loops and ensure delivery | Specified in §"Message Routing Topology" (E2E IS-1.4 fix) |
+| Adapter exposes a KickEvent stream for platform-loss detection | DomainCoordinator must react to kicks within the liveness window | Critical: without kick detection, the DomainCoordinator cannot transition to Inactive | Specified in §"Kick Detection" (E2E IS-5.1 fix) |
+
+## Security Considerations (E2E fixes)
+
+### Group Discovery (E2E IS-1.1 fix)
+
+The `group_jid` (the platform-specific group identifier, e.g., `120363012345678901@g.us` for WhatsApp) is shared out-of-band via one of three channels:
+
+1. **Invite link (Mode C bootstrap, RFC-0851p-a):** the `Invite` envelope embeds the `group_jid` as a typed field. The node parses the invite, extracts the `group_jid`, and uses it to join.
+2. **Mission descriptor:** the canonical `(mission_id, domain_id, platform) -> group_jid` mapping is stored in the mission descriptor (RFC-0855p-b §"Data Structures"). The node looks up the mapping when binding.
+3. **BIND envelope validation:** the `BindEnvelope` (RFC-0850p-c §3) carries the `group_jid` as a typed field. The node MUST validate the `group_jid` against a platform-specific regex before attempting to join:
+   - WhatsApp: `^\d+@g\.us$` or `^\d+-[a-z]+@g\.us$`
+   - Matrix: `^![A-Za-z0-9]+:[a-z0-9.-]+$`
+   - Telegram: `^-100\d+$` (supergroup) or `^-?\d+$` (basic group)
+
+**Order of operations at group join:**
+1. Node receives `group_jid` from one of the 3 channels above.
+2. Node validates the `group_jid` against the platform regex.
+3. Node calls `adapter.join_group(group_jid)`.
+4. Adapter returns `JoinResult { joined: bool, retry_after: Option<Duration> }`.
+5. If `joined = false` and `retry_after = Some(d)`, the node waits `d` and retries up to 3 times.
+6. If all 3 retries fail, the node surfaces a user-facing error and transitions to `UnboundQuarantined`.
+
+### Message Routing Topology (E2E IS-1.4 fix)
+
+DOT envelopes are gossiped (epidemic broadcast) within the bound group. Every node that receives an envelope re-broadcasts it to its peers (other DOT members in the same group) with a small random delay to avoid thundering herd.
+
+- Each envelope carries a `seen_by: BTreeSet<NodeId>` field that tracks which nodes have already seen it. A node drops an envelope whose `seen_by` already contains its own `NodeId`.
+- The gossip fanout is `GOSSIP_FANOUT = 3` peers per round (configurable, but 3 is the default).
+- The re-broadcast jitter is `GOSSIP_REBROADCAST_JITTER_MS = 500` ms (uniform random in [0, 500]).
+- For groups with > 256 members, a Bloom filter (`BLOOM_FILTER_CAPACITY = 1024`, `BLOOM_FILTER_FP_RATE = 0.01`) is used instead of `seen_by` to keep the envelope size bounded.
+- RFC-0008 Class B (deterministic per input, but latency-dependent).
+
+### Kick Detection (Platform Adapter API) (E2E IS-5.1 fix)
+
+Each `PlatformAdapter` MUST expose a `KickEvent` stream (or callback) that fires when the bot is removed from a group by an admin or by the platform itself. This is the entry point for the PlatformLoss flow (RFC-0855p-c §"PlatformLoss Envelope").
+
+```rust
+/// Event payload for a kick detection.
+pub struct KickEvent {
+    pub group_id: BroadcastDomainId,
+    pub kicked_by: Option<NodeId>,
+    pub kicked_at_epoch: u64,
+    pub reason: KickReason,
+}
+
+pub enum KickReason {
+    KickedByAdmin,
+    BannedByAdmin,
+    LeftVoluntarily,
+    GroupDeleted,
+    PlatformKick,
+}
+```
+
+- Detection mechanism: the adapter MUST use the platform's native event stream (e.g., WhatsApp's "removed from group" event from `whatsapp-rust::Event::GroupLeave`). Polling-based detection is NOT permitted.
+- Detection latency: ≤ 5 epochs (the HEARTBEAT interval is 30 epochs, so 5 epochs is well within the liveness window). Epoch-by-epoch breakdown: epoch 0 = event occurs on platform, epoch 1 = adapter receives the event, epochs 2-5 = DomainCoordinator processes the event and transitions to Suspect.
+- Consumer behavior per `KickReason`:
+  - `KickedByAdmin` / `BannedByAdmin` → CoordinatorLifecycle::Active → Suspect → Inactive (slash reason 0x0005: coordinator misbehavior)
+  - `LeftVoluntarily` → CoordinatorLifecycle::Active → Handover → Inactive (graceful exit)
+  - `GroupDeleted` → CoordinatorLifecycle::Active → Inactive (no slash; the group no longer exists)
+  - `PlatformKick` → CoordinatorLifecycle::Active → Inactive (slash reason 0x0005 + operator notification)
 
 ## Security Considerations
 

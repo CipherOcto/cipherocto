@@ -364,7 +364,7 @@ The DomainCoordinator monitors three platform events:
 2. DomainCoordinator signs `PlatformLossEnvelope { coordinator_id, group_jid, loss_epoch, reason }` (see §"PlatformLoss Envelope" below)
 3. State transitions `Active → Suspect → Inactive` (no grace period; kicked is permanent loss)
 4. GroupRegistry updated: state = `Unbound` (or `UnboundQuarantined` if cooldown)
-5. Mission participants run election for new DomainCoordinator (per RFC-0855p-b §"Election Algorithm") OR explicit founder issues `DOT/1/BIND` for a new platform
+5. Mission participants run election for new DomainCoordinator (per RFC-0855p-b §"Election Algorithm (per governance model)") OR explicit founder issues `DOT/1/BIND` for a new platform
 
 **Adapter-disconnected path (R1-DC-4 fix — deadlock resolution):**
 1. Adapter connection lost for >2 × heartbeat

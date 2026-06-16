@@ -820,7 +820,12 @@ stateDiagram-v2
 | DOT envelopes are gossiped within the bound group | Adapter relays all DOT envelopes received in a joined group | Medium: routing topology must be defined to avoid loops and ensure delivery | Specified in §"Message Routing Topology" (E2E IS-1.4 fix) |
 | Adapter exposes a KickEvent stream for platform-loss detection | DomainCoordinator must react to kicks within the liveness window | Critical: without kick detection, the DomainCoordinator cannot transition to Inactive | Specified in §"Kick Detection" (E2E IS-5.1 fix) |
 
-## Security Considerations (E2E fixes)
+## Security Considerations
+
+> **E2E fixes (R9-4 fix — structural):** the three subsections below were originally
+> added under a duplicate `## Security Considerations (E2E fixes)` heading (which
+> was a structural defect in the previous version). They are now merged into
+> this `## Security Considerations` section as ordered subsections.
 
 ### Group Discovery (E2E IS-1.1 fix)
 
@@ -880,8 +885,6 @@ pub enum KickReason {
   - `LeftVoluntarily` → CoordinatorLifecycle::Active → Handover → Inactive (graceful exit)
   - `GroupDeleted` → CoordinatorLifecycle::Active → Inactive (no slash; the group no longer exists)
   - `PlatformKick` → CoordinatorLifecycle::Active → Inactive (slash reason 0x0005 + operator notification)
-
-## Security Considerations
 
 ### Credential handling
 

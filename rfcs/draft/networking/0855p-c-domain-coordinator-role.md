@@ -577,7 +577,7 @@ struct StateTransitionEvent {
 }
 ```
 
-The `StateTransitionEvent` is gossiped to all mission participants. The `trigger_event_id` is a `BLAKE3-256` of the triggering event's canonical bytes (a slash vote, a platform event, etc.). Self-driven transitions (e.g., latch `Elected → Active` after 30 epochs) use `trigger_event_id = [0; 32]`.
+The `StateTransitionEvent` is gossiped to all mission participants. The `trigger_event_id` is a `BLAKE3-256` of the triggering event's canonical bytes (a slash vote, a platform event, etc.). Self-driven transitions (e.g., latch `Elected → Active` after 30 epochs) use `trigger_event_id = [0u8; 32]`.
 
 Verification: mission participants verify the signature against the DomainCoordinator's term public key (looked up via the mission's pubkey registry). Invalid signatures are dropped silently (per the "routine filtering silent" rule, §RFC-0855p-b).
 

@@ -428,15 +428,15 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 **Slash evidence is publicly auditable (E2E IS-5.7 fix):** the `evidence` payload of a slash proof is part of the mission's permanent state. After a slash tally closes (succeeds or fails), the evidence is gossiped to all mission participants as a `SlashEvidenceArchive` envelope. The envelope is signed by the `Slashing Adjudicator` and contains the full evidence payload (which may be large — e.g., a transcript of coordinator misbehavior). All mission participants MUST store the evidence for at least `EVIDENCE_RETENTION_EPOCHS = 7_776_000` (~90 days) to allow post-hoc review.
 
 **Slash reason 0x0001-0x0009 reserved; 0x0009 = `genesis-compromise` (E2E IS-5.4 fix):** the slash reason codes are:
-- `0x0001` = `double-sign` (coordinator signed two conflicting envelopes for the same slot)
-- `0x0002` = `liveness-failure` (coordinator missed 10+ consecutive heartbeats)
-- `0x0003` = `founder-squat` (BIND issued by founder without intent to govern)
-- `0x0004` = `censorship` (coordinator refused to relay a valid envelope for 100+ epochs)
-- `0x0005` = `coordinator-misbehavior` (umbrella reason for unspecified misbehavior)
-- `0x0006` = `key-compromise` (coordinator's signing key was compromised)
-- `0x0007` = `banning-legitimate-member` (DomainCoordinator banned a member who had not violated any rule)
-- `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes)
-- `0x0009` = `genesis-compromise` (creator's key was compromised after `GenesisActive` but before handoff to `CoordinatorLifecycle`)
+- `0x0001` = `double-sign` (coordinator signed two conflicting envelopes for the same slot) — penalty: 100% OCTO-O
+- `0x0002` = `liveness-failure` (coordinator missed 10+ consecutive heartbeats) — penalty: 100% all stakes
+- `0x0003` = `founder-squat` (BIND issued by founder without intent to govern) — penalty: 100% OCTO-B/O + 1000-epoch cooldown
+- `0x0004` = `censorship` (coordinator refused to relay a valid envelope for 100+ epochs) — penalty: proportional to inactivity
+- `0x0005` = `coordinator-misbehavior` (umbrella reason for unspecified misbehavior) — penalty: 100% OCTO-O + 2^slash_count cooldown
+- `0x0006` = `key-compromise` (coordinator's signing key was compromised) — penalty: 50% OCTO-O
+- `0x0007` = `banning-legitimate-member` (DomainCoordinator banned a member who had not violated any rule) — penalty: 25% OCTO-O
+- `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes) — penalty: 100% OCTO-O
+- `0x0009` = `genesis-compromise` (creator's key was compromised after `GenesisActive` but before handoff to `CoordinatorLifecycle`) — penalty: 100% OCTO-O + immediate `Inactive`
 
 Codes `0x000A-0xFFFF` are reserved for transport-level (0850p-c) and platform-coordination-level (0855p-c) slash reasons. Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §"Platform Migration"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8).
 

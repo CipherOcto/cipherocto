@@ -440,17 +440,24 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 
 ### 6. Unbind Reasons
 
+> **Cross-RFC consistency fix (R9-1, R9-2, R9-3):** the unbind reason codes below are aligned with RFC-0855p-b §B "Slash Offense Codes" (the canonical slash reason code reference). The 0x0001-0x000B codes are protocol-level and MUST be globally consistent. The previous version of this table had conflicts with 0855p-b (e.g., 0x0003 = "Mission terminated" here vs 0x0003 = "Founder squat" in 0855p-b); this version resolves those conflicts by deferring to 0855p-b §B.
+
 | Code | Reason | Authority | Cooldown |
 |------|--------|-----------|----------|
-| 0x0001 | DomainCoordinator voluntary resignation | DomainCoordinator | 100 epochs |
-| 0x0002 | DomainCoordinator ejected from physical group | DomainCoordinator | 100 epochs |
-| 0x0003 | Mission terminated | MissionCreator or governance | N/A (no rebind) |
-| 0x0004 | Slash (2/3 vote) | Governance | 2^slash_count epochs |
-| 0x0005 | Founder squat detected (BIND was invalid) | Any witness | 1000 epochs |
-| 0x0006 | REBIND to new group (not really unbind, but emitted for registry consistency) | DomainCoordinator | N/A |
-| 0x0007-0xFFFF | Reserved | — | — |
-| **0x000A (E2E IS-3.1 fix)** | **Platform migration (BIND for a different platform than the current DomainCoordinator's)** | MissionCreator + 2/3 governance vote | 1000 epochs |
-| **0x000B (E2E IS-1.6 fix)** | **`is_reconnect_lie`: the reconnect claim was falsified (e.g., the claimant is not the same peer as the original BIND signer)** | Any witness | 500 epochs |
+| 0x0001 | Double-sign (per 0855p-b §B) | — (slash proof, not unbind) | — |
+| 0x0002 | Liveness-failure (per 0855p-b §B) | — (slash proof, not unbind) | — |
+| 0x0003 | **Founder squat** (BIND without intent to govern) | Any witness | 1000 epochs |
+| 0x0004 | **Censorship** (refused to relay valid envelope for 100+ epochs, per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
+| 0x0005 | **Coordinator misbehavior** (umbrella, per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
+| 0x0006 | **Key compromise** (per 0855p-b §B) | Governance (slash tally) | 2^slash_count epochs |
+| 0x0007 | **Banning legitimate member** (per 0855p-b §B) | Governance (slash tally) | 25% OCTO-O |
+| 0x0008 | **Vote-buying** (per 0855p-b §B) | Governance (slash tally) | 100% OCTO-O |
+| 0x0009 | **Genesis compromise** (per 0855p-b §B; creator's key revoked after `GenesisActive`) | MissionCreator (slash proof) | immediate `Inactive` |
+| 0x000A | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §"Platform Migration") | MissionCreator + 2/3 governance vote | 1000 epochs |
+| 0x000B | **`is_reconnect_lie`** (E2E IS-1.6 fix): the reconnect claim was falsified (claimant is not the same peer as the original BIND signer) | Any witness | 500 epochs |
+| 0x000C-0xFFFF | Reserved | — | — |
+
+**Note on unbind vs slash:** the unbind reason codes 0x0001-0x000B are a SUPERSET of the slash reason codes from RFC-0855p-b §B. Codes 0x0001-0x0009 are shared with 0855p-b (slash reasons); 0x000A-0x000B are transport-level (0850p-c); 0x000C-0xFFFF are reserved. The cooldown column applies when the unbind is the OUTCOME of a slash (cooldown before re-binding allowed); codes 0x0001-0x0002 are slash-only (not unbind outcomes).
 
 ### 6a. Platform Migration (E2E IS-4.8 fix)
 

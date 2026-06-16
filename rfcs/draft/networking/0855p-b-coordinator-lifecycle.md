@@ -432,7 +432,7 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 - `0x0002` = `liveness-failure` (coordinator missed 10+ consecutive heartbeats) — penalty: 100% all stakes
 - `0x0003` = `founder-squat` (BIND issued by founder without intent to govern) — penalty: 100% OCTO-B/O + 1000-epoch cooldown
 - `0x0004` = `censorship` (coordinator refused to relay a valid envelope for 100+ epochs) — penalty: proportional to inactivity
-- `0x0005` = `coordinator-misbehavior` (umbrella reason for unspecified misbehavior) — penalty: 100% OCTO-O + 2^slash_count cooldown
+- `0x0005` = `coordinator-misbehavior` (umbrella reason for unspecified misbehavior) — penalty: 100% OCTO-O + 2^slash_count-epoch cooldown
 - `0x0006` = `key-compromise` (coordinator's signing key was compromised) — penalty: 50% OCTO-O
 - `0x0007` = `banning-legitimate-member` (DomainCoordinator banned a member who had not violated any rule) — penalty: 25% OCTO-O
 - `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes) — penalty: 100% OCTO-O
@@ -928,7 +928,7 @@ stateDiagram-v2
 | 0x000B | `is_reconnect_lie` (per RFC-0850p-c §8) | 500-epoch cooldown | RFC-0850p-c | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true` |
 | 0x000C-0xFFFF | Reserved | — | — | — |
 
-Codes 0x0001-0x0009 are defined in this RFC; codes 0x000A-0x000B are defined in RFC-0850p-c (transport-level slash reasons); codes 0x000C-0xFFFF are reserved for future slash reasons (e.g., F2 cross-domain slash, F3 small-group slash). The evidence schema column is new in v1.1 (E2E IS-7.1 fix) — previously "evidence" was undefined for most codes.
+Codes 0x0001-0x0009 are defined in this RFC; codes 0x000A-0x000B are defined in RFC-0850p-c (transport-level slash reasons); codes 0x000C-0xFFFF are reserved for future slash reasons (e.g., RFC-0855p-c F3 cross-domain slash, F4 small-group slash). The evidence schema column is new in v1.1 (E2E IS-7.1 fix) — previously "evidence" was undefined for most codes.
 
 Refer to §"Slashing Integration" (above) for the full slash tally protocol (open to all mission participants, binary vote, 500-epoch deadline, cryptographic finality, observability, rate-limiting, public auditability).
 

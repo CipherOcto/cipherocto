@@ -83,10 +83,10 @@ MUST enumerate:
 
 - **Stable identifier**: `creator_peer_id: [u8; 32]`
 - **Base capabilities**: designate the first Mission Coordinator at mission creation time
-- **Authority scope**: `designate-at-genesis` (one-shot, at mission creation only; extends to `Elected` and `Active` transitions without further vote per §3.2 Genesis State)
+- **Authority scope**: `designate-at-genesis` (one-shot, at mission creation only; extends to `Elected` and `Active` transitions without further vote per §"Genesis State Machine")
 - **Who can assume**: any peer that creates a mission descriptor and signs the genesis envelope
 - **Who can revoke**: no one (one-shot authority)
-- **Lifecycle**: `genesis_state` (see §3.2 Genesis State Machine) — 3 states (`GenesisDesignated → GenesisSelfAttest → GenesisActive`)
+- **Lifecycle**: `genesis_state` (see §"Genesis State Machine") — 3 states (`GenesisDesignated → GenesisSelfAttest → GenesisActive`)
 - **Out of scope for replacement**: subsequent coordinators are elected per §Election Algorithm, not re-designated by the creator (this is the Centralized governance model's "designator-may-not-replace" rule; see §Election Algorithm)
 
 ### 3. Mission Participant (voter)

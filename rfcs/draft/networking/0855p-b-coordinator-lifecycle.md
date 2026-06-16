@@ -2,9 +2,11 @@
 
 ## Status
 
-Draft
+Draft (v1.1, 2026-06-16)
 
 > **Patch RFC for RFC-0855 (Mission Overlay Networks).** This RFC fills the §16.3 → §11 forward-reference gap: §16.3 states "New Coordinator elected via governance model (Section 11)" but §11 defines 5 governance models, none of which include an election algorithm. The implementation timeline at §20 lists "3.4 Implement coordinator election" as a future task; this RFC is that task.
+>
+> **v1.1 patch (2026-06-16):** adds §"Genesis State Machine" subsection (3-state machine) to fix the v1.0 "stateless creator" gap. Mission Creator role entry updated; Test Vector TV-6 added; Future Work F1 now points to RFC-0855p-c (DomainCoordinator).
 
 ## Authors
 
@@ -17,6 +19,8 @@ Draft
 ## Summary
 
 Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type, the per-governance-model election algorithm, term limits, handover protocols, slashing conditions, and liveness check semantics for the Mission Coordinator role defined in RFC-0855 §4.2. The result is a typed, deterministic, adversarial-resistant coordinator lifecycle that RFC-0855 can reference from §16.3, §11, and §17 in place of its current one-line forward reference.
+
+**v1.1 adds** the `GenesisState` 3-state machine (§"Genesis State Machine" subsection) for the Mission Creator's first-coordinator bootstrap. This fills the v1.0 gap where the creator was described as "stateless" but the §Election Algorithm table assumed ≥2 candidates — implementations would have invented their own genesis logic.
 
 ## Dependencies
 
@@ -79,10 +83,10 @@ MUST enumerate:
 
 - **Stable identifier**: `creator_peer_id: [u8; 32]`
 - **Base capabilities**: designate the first Mission Coordinator at mission creation time
-- **Authority scope**: `designate-at-genesis` (one-shot, at mission creation only)
+- **Authority scope**: `designate-at-genesis` (one-shot, at mission creation only; extends to `Elected` and `Active` transitions without further vote per §3.2 Genesis State)
 - **Who can assume**: any peer that creates a mission descriptor and signs the genesis envelope
 - **Who can revoke**: no one (one-shot authority)
-- **Lifecycle**: stateless (no persistent state; the designation is recorded in the mission descriptor)
+- **Lifecycle**: `genesis_state` (see §3.2 Genesis State Machine) — 3 states (`GenesisDesignated → GenesisSelfAttest → GenesisActive`)
 - **Out of scope for replacement**: subsequent coordinators are elected per §Election Algorithm, not re-designated by the creator (this is the Centralized governance model's "designator-may-not-replace" rule; see §Election Algorithm)
 
 ### 3. Mission Participant (voter)
@@ -264,6 +268,45 @@ pub struct CoordinatorRecord {
 | **Autonomous** | No election; protocol-defined rotation by `coordinator_term_id` ordering. Mission genesis names a deterministic order (e.g., BLAKE3-ordered `peer_id` list). | BLAKE3 of `(mission_id, slot_index)` | n/a |
 
 For Centralized, the `creator-may-not-replace` rule: the Mission Creator designates the first coordinator at genesis, but cannot replace a sitting coordinator except via the 2/3 vote path. This prevents a creator from indefinitely controlling a mission by repeatedly replacing coordinators.
+
+#### Genesis State Machine (v1.1 addition)
+
+The Mission Creator's `designate-at-genesis` authority triggers a 3-state machine that bootstraps the first coordinator **without** an election, because there are no peers to vote in a 1-participant mission. This fills a gap in the v1.0 RFC where the §Election Algorithm table assumes ≥2 candidates.
+
+```rust
+/// Lifecycle of the genesis designator's first-coordinator bootstrap
+/// (v1.1 — was "stateless" in v1.0, which was implicit and broken)
+#[repr(u8)]
+enum GenesisState {
+    /// Mission descriptor published; creator self-designated
+    GenesisDesignated = 0x00,
+    /// Creator signed GenesisAttest envelope; awaiting first peer witness
+    GenesisSelfAttest = 0x01,
+    /// At least one peer has acknowledged the GenesisAttest
+    GenesisActive = 0x02,
+}
+```
+
+**Transitions:**
+
+| From | To | Trigger | Deterministic? |
+|------|----|---------|----------------|
+| (none) | GenesisDesignated | Mission descriptor committed with `creator_peer_id == coordinator_peer_id` in `MissionDescriptor` | Yes (from genesis material) |
+| GenesisDesignated | GenesisSelfAttest | Creator signs `GenesisAttest { mission_id, coordinator_peer_id, attest_epoch, coordinator_term_id }` and broadcasts | Yes |
+| GenesisSelfAttest | GenesisActive | ≥1 peer (other than creator) receives GenesisAttest, validates signature against creator's public key, and broadcasts `GenesisWitness { mission_id, witness_peer_id, attest_hash }` | Yes (deterministic count) |
+| GenesisActive | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §Election Algorithm (with quorum = 0) | Yes |
+
+**Why a 3-state machine, not just `Designated → Active`?**
+
+A new mission with 1 participant has no peer to witness the genesis. A 2-participant mission needs the second peer to acknowledge before the first peer can be considered a coordinator (otherwise the first peer is a coordinator in name only, with no other mission members). The 3-state machine (`GenesisDesignated → GenesisSelfAttest → GenesisActive`) makes the witness requirement explicit.
+
+**Quorum = 0 election:**
+
+When the first coordinator transitions from `GenesisActive` to the normal `CoordinatorLifecycle`, the election has quorum = 0 (creator is the only voter, and the creator voted for themselves at genesis). This is the only time an election has quorum < `min_participants / 2 + 1`. Implementations MUST special-case this transition.
+
+**Determinism:** All 3 transitions are RFC-0008 Class A. The witness count is deterministic; the witness set is sorted lexicographically by `witness_peer_id` for canonical ordering.
+
+**Cross-reference:** This section supersedes the v1.0 §"Mission Creator" entry that said the role was "stateless". The creator IS stateful during genesis; the state machine is `GenesisState` (3 states) above.
 
 #### Term Limits
 
@@ -592,6 +635,39 @@ Test: at epoch 1059, election eligibility filter returns NOT eligible.
       at epoch 1060, election eligibility filter returns eligible.
 ```
 
+### TV-6: Genesis State Bootstrap (v1.1 addition)
+
+```text
+creator_peer_id: 0xBBBB...
+coordinator_peer_id: 0xBBBB... (same as creator)
+governance_model: Centralized (0x0001)
+creation_epoch: 1000
+
+Step 1 (epoch 1000): Mission descriptor published with creator_peer_id == coordinator_peer_id.
+  Expected: GenesisState = GenesisDesignated (0x00)
+
+Step 2 (epoch 1000, +1s): Creator signs GenesisAttest { mission_id, coordinator_peer_id: 0xBBBB,
+  attest_epoch: 1000, coordinator_term_id: BLAKE3(0xBBBB || 1000 || GenesisDesignation) }.
+  Expected: GenesisState = GenesisSelfAttest (0x01)
+
+Step 3 (epoch 1000, +5s): First peer 0xCCCC receives GenesisAttest, validates
+  signature against 0xBBBB's public key, broadcasts GenesisWitness.
+  Expected: GenesisState = GenesisActive (0x02)
+  CoordinatorRecord.source = GenesisDesignation (0x00)
+  CoordinatorRecord.state = Designated (from main CoordinatorLifecycle)
+
+Step 4 (epoch 1000, +6s): Creator transitions Designated → Elected → Active
+  with quorum = 0 (special case: 1-participant mission, creator votes for self).
+  Expected: CoordinatorRecord.state = Active (0x02)
+  GenesisState remains GenesisActive (no further transitions needed)
+
+Verify:
+  - GenesisState never regresses (monotonic)
+  - CoordinatorRecord.coordinator_term_id is BLAKE3-bound to genesis material
+  - No election ballot is generated (this is genesis, not election)
+  - Subsequent elections (epoch 1030+) use the normal 2/3 vote path
+```
+
 ## Alternatives Considered
 
 | Approach | Pros | Cons | Decision |
@@ -658,7 +734,7 @@ Test: at epoch 1059, election eligibility filter returns NOT eligible.
 
 ## Future Work
 
-- **F1**: `DomainCoordinator` — specialization of `CoordinatorLifecycle` for physical broadcast domains (e.g., WhatsApp groups). Will reference this RFC's `CoordinatorRecord` and add platform-specific states (`WAGroupAdmin`, `TelegramCreator`).
+- **F1**: `DomainCoordinator` — specialization of `CoordinatorLifecycle` for physical broadcast domains (e.g., WhatsApp groups). See RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) which reuses this RFC's `CoordinatorRecord` and adds platform-specific states (`WAGroupAdmin`, `TelegramCreator`, `MatrixRoomAdmin`) and platform-admin authority checks.
 - **F2**: Cross-mission coordinator reputation (slash history aggregated across missions).
 - **F3**: Election by random beacon (VDF).
 - **F4**: Stake-weighted quadratic-cost voting.
@@ -680,6 +756,7 @@ Slashing is integrated as a state (`Demoting`) rather than a one-shot event beca
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-06-16 | Patch: added §"Genesis State Machine" subsection (3-state machine `GenesisDesignated → GenesisSelfAttest → GenesisActive`) to fix v1.0's "stateless creator" gap. Mission Creator role entry updated to reference new state machine. Test Vector TV-6 added. Future Work F1 updated to point to RFC-0855p-c (DomainCoordinator). |
 | 1.0 | 2026-06-15 | Initial draft — fills RFC-0855 §16.3 → §11 forward-reference gap; defines `CoordinatorLifecycle`, `CoordinatorRecord`, per-governance-model election, handover, slashing, liveness check |
 
 ## Related RFCs

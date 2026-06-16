@@ -434,13 +434,10 @@ Slash uses RFC-0855p-b §"Slashing Integration" verbatim. The DomainCoordinator'
 
 Slash proof structure is identical to RFC-0855p-b; the only addition is the `domain_id` field in the slash envelope (so the slash is scoped to the bound domain, not the mission).
 
-**Slash reasons (extends RFC-0855p-b):**
-
-| Code | Reason | Slash authority |
-|------|--------|-----------------|
-| 0x0006 | Platform-admin key compromise | Platform-reported (rare) |
-| 0x0007 | DomainCoordinator banned a legitimate member | 2/3 slash vote |
-| 0x0008 | DomainCoordinator signed conflicting BINDs (equivocation) | 2/3 slash vote |
+**Slash reasons:** the DomainCoordinator role uses the slash reason codes from RFC-0855p-b §B verbatim (0x0001-0x0009 are slash-only; 0x000A-0x000B are transport-level per 0850p-c). **R9-5 fix — duplicate table removed:** the previous version of this RFC had a stale "slash reasons (extends RFC-0855p-b)" table that used 0x0006, 0x0007, 0x0008 for DIFFERENT reasons than 0855p-b §B (which has those codes as `key-compromise`, `banning-legitimate-member`, `vote-buying` respectively). The stale table has been removed; refer to RFC-0855p-b §B for the canonical mapping. The DomainCoordinator-specific behavioral notes are:
+- 0x0005 (coordinator misbehavior) is the most common DomainCoordinator slash reason (covers censorship, kick evasion, BIND equivocation).
+- 0x0007 (banning legitimate member) is DomainCoordinator-specific but the reason code is global.
+- 0x000A (platform migration) and 0x000B (is_reconnect_lie) are platform/transport-level (per 0850p-c).
 
 ### 7. Cross-RFC Integration
 
@@ -608,8 +605,8 @@ Verification: mission participants verify the signature against the DomainCoordi
 | D-DC-4 | Slash vote (2/3) | DomainCoordinator abuse | Coordinator key | Any time | One domain_id | 2/3 quorum; UNBIND for < 4 members | HIGH | MITIGATED |
 | D-DC-5 | Slash reason 0x0006 (key compromise) | Platform-reported attack | Platform key | Rare | One domain_id | REBIND to new coordinator | CRITICAL | MITIGATED |
 | D-DC-6 | Slash reason 0x0007 (banning member) | DomainCoordinator overreach | Coordinator key | Any time | One domain_id | Slash vote; cross-domain slash (F2) | HIGH | **ACCEPTED RISK** — F2 |
-| D-DC-7 | Slash reason 0x0008 (equivocation) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting BINDs detected; slash | HIGH | MITIGATED |
-| D-DC-8 | Implicit designator (0850p-c §3) races | Founder squatter | Own key | First DOT in group | One domain_id | RFC-0850p-c D-TGB-1 + UNBIND 0x0005 | HIGH | MITIGATED |
+| D-DC-7 | Slash reason 0x0001 (equivocation / double-sign, per RFC-0855p-b §B) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting BINDs detected; slash | HIGH | MITIGATED |
+| D-DC-8 | Implicit designator (0850p-c §3) races | Founder squatter | Own key | First DOT in group | One domain_id | RFC-0850p-c D-TGB-1 + UNBIND 0x0003 (founder squat) | HIGH | MITIGATED |
 | D-DC-9 | Mission-level coordinator conflict | Two coordinators | Own keys | Mission creation | One mission | Mission governance decides; DomainCoordinator is sub-role | LOW | MITIGATED |
 | D-DC-10 | `coordinator_term_id` chain break | Coordinated handover attack | Two keys | At handover | One domain_id | BLAKE3 chain enforced; chain break = slash | MEDIUM | MITIGATED |
 
@@ -646,7 +643,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 ### Forward Compatibility
 
-- New slash reasons are additive (u16 enum, 0x0009-0xFFFF reserved)
+- New slash reasons are additive (u16 enum; per RFC-0855p-b §B, 0x0001-0x0009 are slash-only; per 0850p-c, 0x000A-0x000B are transport-level; 0x000C-0xFFFF reserved)
 - New platform events (e.g., `PlatformEvent::SubgroupCreated`) can be added
 - New authority checks (e.g., "must also be mission-level coordinator") can be added
 
@@ -654,7 +651,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 - `DomainCoordinatorRecord.base = CoordinatorRecord` — full reuse
 - `DomainCoordinatorLifecycle = CoordinatorLifecycle` — same 8 states
-- Slash reasons 0x0006-0x0008 extend RFC-0855p-b's 0x0001-0x0005
+- Slash reasons use the canonical mapping from RFC-0855p-b §B (0x0001-0x0009 slash-only; 0x000A-0x000B transport-level per 0850p-c)
 - Election: only `Centralized` governance model uses platform-admin authority; others (DAO, Federated, AI-Assisted, Autonomous) use RFC-0855p-b's election algorithms
 
 ### RFC-0850p-c Integration
@@ -725,7 +722,7 @@ Verify:
 ```
 Setup: DomainCoordinator A; 5-member group
        A signs a malicious DOT envelope
-Action: 4 of 4 other members sign SlashVote { coordinator: A, reason: 0x0007 }
+Action: 4 of 4 other members sign SlashVote { coordinator: A, reason: 0x0005 (coordinator misbehavior) }
 Expected: A: Active → Demoting → Inactive
           slash_count += 1
           cooldown = 2^slash_count epochs
@@ -747,13 +744,13 @@ Verify:
   - Group can still UNBIND via DomainCoordinator resignation or 2/3 of remaining
 ```
 
-### TV-7: Slash Reason 0x0008 (Equivocation)
+### TV-7: Slash Reason 0x0001 (Equivocation / Double-Sign)
 
 ```
 Setup: DomainCoordinator A
 Action: A signs two conflicting BIND envelopes for the same (mission_id, domain_id)
 Expected: Both BINDs detected as equivocation
-          Slash proof generated (reason 0x0008)
+          Slash proof generated (reason 0x0001, double-sign, per RFC-0855p-b §B)
           A: Active → Demoting → Inactive
 Verify:
   - Two BINDs with different group_jid or domain_id but same coordinator_id
@@ -777,7 +774,7 @@ Verify:
 
 - `DomainCoordinatorRecord` extending `CoordinatorRecord`
 - `DomainCoordinatorLifecycle` reuses `CoordinatorLifecycle`
-- Slash reason codes 0x0006-0x0008
+- Slash reason codes per RFC-0855p-b §B (0x0001-0x0009) and RFC-0850p-c §6 (0x000A-0x000B)
 - Unit tests for type compatibility
 
 ### Phase 2: Platform-Admin Check (Months 2-3)
@@ -803,7 +800,7 @@ Verify:
 
 ### Phase 5: Slash Integration (Months 5-6)
 
-- Slash reasons 0x0006-0x0008
+- Slash reason codes per RFC-0855p-b §B and RFC-0850p-c §6 (no RFC-specific additions)
 - Slash vote tally for small groups (UNBIND alternative)
 - Cross-domain slash (F2, post-launch)
 

@@ -610,9 +610,9 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | BIND_ACK aggregation | <3s |
 | REBIND propagation (both groups) | <10s |
 | Unbind propagation | <5s |
-| Cooldown (UNBIND reason 0x0001) | 100 epochs |
-| Cooldown (UNBIND reason 0x0004 slash) | 2^slash_count epochs |
-| Cooldown (UNBIND reason 0x0005 squat) | 1000 epochs |
+| Cooldown (UNBIND reason 0x0003 founder-squat) | 1000 epochs |
+| Cooldown (UNBIND reason 0x0004 censorship) | 2^slash_count epochs |
+| Cooldown (UNBIND reason 0x0005 coordinator-misbehavior) | 2^slash_count epochs |
 
 ## Implicit Assumptions Audit
 
@@ -621,7 +621,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | # | Assumption | Type | Status | Mitigation / Deadline |
 |---|-----------|------|--------|----------------------|
 | IA-TGB-1 | The physical group membership is a trustworthy signal of who is in the mission | TRUST | **ACCEPTED RISK** | WhatsApp group admin can add/remove members arbitrarily. Mitigated by per-sender allowlist in 0850p-a v1.15 D-WA-10. Long-term: DomainCoordinator vouches for members (0855p-c). |
-| IA-TGB-2 | First DOT-sender is a reasonable DomainCoordinator | PROTOCOL | **ACCEPTED RISK** | Race condition handled by `bind_hash` ordering. Founder squat mitigated by UNBIND reason 0x0005 with 1000-epoch cooldown. |
+| IA-TGB-2 | First DOT-sender is a reasonable DomainCoordinator | PROTOCOL | **ACCEPTED RISK** | Race condition handled by `bind_hash` ordering. Founder squat mitigated by UNBIND reason 0x0003 with 1000-epoch cooldown. |
 | IA-TGB-3 | The DomainCoordinator's pubkey is in the mission's trust set | CRYPTO | MITIGATED | BIND signature verified by all witnesses; rejection if pubkey is unknown. |
 | IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule §8.7 |
 | IA-TGB-5 | Multi-platform rule is enforced consistently | PROTOCOL | MITIGATED | Each node's `GroupRegistry` enforces; conflict rejected on BIND. |
@@ -657,7 +657,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
 | BIND replay | Medium | Nonce + epoch binding |
-| Founder squat (illegitimate first-DOT-sender) | High | UNBIND reason 0x0005; 1000-epoch cooldown |
+| Founder squat (illegitimate first-DOT-sender) | High | UNBIND reason 0x0003; 1000-epoch cooldown |
 | DomainCoordinator key compromise | Critical | Slash (2/3 vote) + REBIND to new coordinator |
 | Slash vote forgery | High | Ed25519 signature + quorum check |
 | Multi-platform violation (2 groups same platform) | Medium | Local registry enforcement; rejection on BIND |
@@ -674,7 +674,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 
 | ID | Decision | Adversary | Control | When | Blast | Defense | Severity | Status |
 |----|----------|-----------|---------|------|-------|---------|----------|--------|
-| D-TGB-1 | Implicit designator = first DOT-sender | Founder squatter | Own DOT key | First DOT in group | Single domain_id | BIND race + UNBIND 0x0005 | HIGH | MITIGATED |
+| D-TGB-1 | Implicit designator = first DOT-sender | Founder squatter | Own DOT key | First DOT in group | Single domain_id | BIND race + UNBIND 0x0003 | HIGH | MITIGATED |
 | D-TGB-2 | Explicit founder BIND | Mission creator abuse | Creator key | Mission creation | One mission | One-shot per 0855p-b v1.1 | MEDIUM | MITIGATED |
 | D-TGB-3 | BIND signature check | Impersonator | Own key | Any time | One binding | Ed25519 verify | LOW | MITIGATED |
 | D-TGB-4 | Multi-platform rule enforcement | BIND spammer | Own keys | Any time | One domain_id | Local registry rejects | MEDIUM | MITIGATED |
@@ -685,7 +685,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | D-TGB-9 | Witness membership check | Fake witness | Own key | At BIND | One binding | Adapter-level filter (envelope arrived in group) | MEDIUM | MITIGATED |
 | D-TGB-10 | DomainCoordinator trust root | Key compromise | DomainCoordinator key | Any time | One domain_id | Per-sender allowlist (0850p-a v1.15) + REBIND | HIGH | MITIGATED |
 | D-TGB-11 | REBIND atomicity | Network partition | Network | During REBIND | One domain_id | Each node enforces local atomicity | LOW | **ACCEPTED RISK** — F1 (cross-node atomicity) |
-| D-TGB-12 | Unbind reason 0x0005 (squat) cooldown | Repeated squatter | Own keys | After UNBIND | One domain_id | 1000-epoch cooldown | MEDIUM | MITIGATED |
+| D-TGB-12 | Unbind reason 0x0003 (squat) cooldown | Repeated squatter | Own keys | After UNBIND | One domain_id | 1000-epoch cooldown | MEDIUM | MITIGATED |
 
 ### Multi-Round Review
 
@@ -722,7 +722,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 ### Forward Compatibility
 
 - New envelope subtypes (e.g., `DOT/1/BIND_PARTIAL` for partial bindings) can be added
-- New unbind reasons are additive (u16 enum, 0x0007-0xFFFF reserved)
+- New unbind reasons are additive (u16 enum; per §6 codes 0x0001-0x000B are mapped, 0x000C-0xFFFF reserved)
 - New platforms (Nostr, IRC, Slack) can be added by extending the `platform` enum
 
 ### RFC-0855p-b Integration

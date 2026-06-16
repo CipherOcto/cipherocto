@@ -1,0 +1,47 @@
+# Mission: 0850p-c F2 — Partial bindings
+
+## Status
+
+Open (2026-06-16) — future
+
+## RFC
+
+RFC-0850p-c (Networking): Transport Group Binding — §"Future Work" F2
+
+## Summary
+
+Allow a BIND envelope to specify a subset of the physical group that participates in the mission. Currently a BIND binds the entire physical group; for large public groups (e.g., a 1000-member WhatsApp community), only a handful of members may be DOT participants. The non-participating members still receive all DOT messages (waste of bandwidth) and the participant list is implicit (must be inferred from envelope signatures).
+
+## Design
+
+Add an optional field to the BIND envelope:
+
+```rust
+pub struct BindEnvelope {
+    // existing fields...
+    pub participant_filter: Option<Vec<PeerId>>,
+}
+```
+
+When `participant_filter` is `Some(list)`, the adapter filters DOT messages: only those with a `peer_id` in `list` are accepted; others are dropped silently (they're not DOT participants, just other members of the physical group).
+
+When `participant_filter` is `None`, behavior is unchanged (all members participate).
+
+The `participant_filter` is signed as part of the BIND envelope (binding the filter to the DomainCoordinator's authority).
+
+## Acceptance Criteria
+
+- [ ] `BindEnvelope::participant_filter: Option<Vec<PeerId>>` field
+- [ ] Adapter filters DOT messages per `participant_filter`
+- [ ] Filter is part of the signed payload (signature covers it)
+- [ ] Unit test: 1000-member group with `participant_filter = [A, B, C]` only delivers DOT messages to/from A, B, C
+- [ ] Documentation: when to use partial bindings (large public groups; small private groups should use full binding)
+- [ ] Backward compatibility: envelopes without `participant_filter` work unchanged
+
+## Mitigates
+
+Bandwidth optimization for large public groups; not a security issue (the filter is authority-bound).
+
+## Deadline
+
+Future

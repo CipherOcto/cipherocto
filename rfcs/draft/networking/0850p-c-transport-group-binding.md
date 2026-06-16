@@ -877,14 +877,16 @@ Verify:
 
 ## Future Work
 
-| ID | Title | Severity | Deadline |
-|----|-------|----------|----------|
-| F1 | Cross-node REBIND atomicity (D-TGB-11) | LOW | Post-launch |
-| F2 | Partial bindings (subset of group participates in mission) | LOW | Future |
-| F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch |
-| F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c |
-| F5 | Cross-platform witness aggregation (e.g., WhatsApp witness + Matrix witness) | MEDIUM | Future |
-| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 "Token Economics Integration" evolution |
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
+
+| ID | Title | Severity | Deadline | Spec | Mission |
+|----|-------|----------|----------|------|---------|
+| F1 | Cross-node REBIND atomicity (mitigates D-TGB-11) | LOW | Post-launch | Mission: distributed REBIND coordination across N physical groups; uses a 2-phase commit on the BIND log + tie-break by `domain_id` lex order. Fallback: 30s timeout, manual operator reconciliation. | `missions/open/0850p-c-f1-cross-node-rebind.md` |
+| F2 | Partial bindings (subset of group participates in mission) | LOW | Future | Mission: optional `participant_filter: Vec<PeerId>` field on the BIND envelope; the adapter filters DOT messages from non-listed peers. Useful for large public groups where only a subset is mission-relevant. | `missions/open/0850p-c-f2-partial-bindings.md` |
+| F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch | Mission: the BIND envelope is also gossiped on the libp2p mesh (alongside platform-group delivery), so nodes not yet in the physical group can learn about the binding and request admission. | `missions/open/0850p-c-f3-libp2p-propagation.md` |
+| F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c | (DONE — see RFC-0855p-c §"Platform-Admin Authority Check", 2026-06-16 draft) | — |
+| F5 | Cross-platform witness aggregation (e.g., WhatsApp witness + Matrix witness) | MEDIUM | Future | Mission: 0855p-b §B defines slash reason codes per-witness; aggregation is 2/3 majority of N witnesses across platforms, similar to 0855p-c F1 cross-platform consensus. | `missions/open/0850p-c-f5-cross-platform-witness.md` |
+| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 "Token Economics Integration" evolution | (DONE — range allocation lives in 0855p-b §B "Slash Offense Codes"; future governance events use this range, no new spec needed) | — |
 
 ## Rationale
 
@@ -901,6 +903,7 @@ The 100-epoch / 1000-epoch cooldowns prevent rapid rebinding attacks without bei
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft |
+| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with mission stubs in `missions/open/0850p-c-f{1,2,3,5}-*.md` for the 4 unspecced items; F4 (DomainCoordinator) marked DONE (RFC-0855p-c, 2026-06-16 draft); F6 (UNBIND reason range) marked DONE (allocation in 0855p-b §B "Slash Offense Codes"). |
 
 ## Related RFCs
 

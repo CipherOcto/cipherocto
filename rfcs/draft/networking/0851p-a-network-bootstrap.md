@@ -68,7 +68,7 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 
 - **Operational reality:** most users will run CipherOcto on phones, behind NATs, with no static IP, no port forwarding, no always-on DHT node. Mode A (centralized bootstrap) is the only realistic default.
 - **Sovereignty requirement:** RFC-0850 G7 (Censorship Resistance: "Survive single-platform block") and 0851 G1 (Sovereign Discovery: "No centralized registry") create tension. Three modes resolve the tension: A is the default, B is the privacy fallback, C is the off-grid fallback.
-- **Security requirement:** the Sybil / eclipse / DNS-hijack / BGP-hijack surface is largest at bootstrap. This RFC is the **first line of defense** — once a node has diverse peers, GDP §11 (Anti-Sybil Mechanisms) defenses kick in.
+- **Security requirement:** the Sybil / eclipse / DNS-hijack / BGP-hijack surface is largest at bootstrap. This RFC is the **first line of defense** — once a node has diverse peers, GDP §11 "Anti-Sybil Mechanisms" defenses kick in.
 
 ## Roles and Authorities
 
@@ -99,9 +99,9 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 - **Stable identifier**: `[u8; 32]` `SeedListAuthorityId` (multi-sig public key)
 - **Base capabilities**: sign and publish `SeedList` documents; rotate the set of recognized bootstrap nodes; publish revocation lists
 - **Authority scope**: `seed_list_authority` (highest-trust role in this RFC; compromises allow attacker-chosen bootstrap node set)
-- **Who can assume**: CipherOcto foundation (genesis) OR ≥2/3 OCTO-O stake-weighted vote (post-launch, per RFC-0855 §11.1 `GovernanceModel::Dao`)
+- **Who can assume**: CipherOcto foundation (genesis) OR ≥2/3 OCTO-O stake-weighted vote (post-launch, per RFC-0855 §11.1 "Governance Flexibility" `GovernanceModel::Dao`)
 - **Who can revoke**: same mechanism, reversed (slash the seed list authority itself)
-- **Lifecycle**: out of scope for this RFC (governed by RFC-0855 §11)
+- **Lifecycle**: out of scope for this RFC (governed by RFC-0855 §11 "Governance Models")
 - **Term**: tied to governance epoch; rotation cadence is operator-configurable (default: every 90 days)
 
 ### 4. Inviter (Mode C role)
@@ -127,7 +127,7 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 |------|-----------|-----------|--------------|-----------|
 | Bootstrap Node | `bootstrap_serve` | Yes (4 states) | Governance / Self | 0851 §M-GDP-3 |
 | Bootstrapping Node | `bootstrap_request` | Yes (5 states) | Self | 0851 §M-GDP-3 |
-| Seed List Authority | `seed_list_authority` | Out of scope (governance) | Governance (slash) | 0855 §11.1 (Dao model) + §11.2 (Policies) |
+| Seed List Authority | `seed_list_authority` | Out of scope (governance) | Governance (slash) | 0855 §11.1 "Governance Flexibility" (Dao model) + §11.2 "Governance Policies" |
 | Inviter | `invite_issue` | One-shot (no state) | Self / Governance | New in this RFC |
 | DHT Walker | `dht_walk` | Passive | N/A | RFC-0843 |
 
@@ -201,7 +201,7 @@ struct SeedList {
 | foundation-4 | sa-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
 | foundation-5 | ap-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
 
-Five geographically diverse bootstrap nodes. New nodes connect to all 5 in parallel and require ≥3 responses to agree on peer list (Sybil defense, see §6).
+Five geographically diverse bootstrap nodes. New nodes connect to all 5 in parallel and require ≥3 responses to agree on peer list (Sybil defense, see §6 "Sybil / Eclipse Defense").
 
 **R1-NB-4 fix:** the table now includes the `signed_at_epoch` column (was previously omitted even though the struct has the field). At launch, all entries are signed at epoch 0.
 
@@ -480,18 +480,18 @@ enum BootstrapClientLifecycle {
 | # | Assumption | Type | Status | Mitigation / Deadline |
 |---|-----------|------|--------|----------------------|
 | IA-NB-1 | SeedListAuthority is honest | TRUST | **ACCEPTED RISK** | Multi-sig foundation key at launch; DAO vote post-launch. Deadline: post-launch F1 (SeedListAuthority decentralization). |
-| IA-NB-2 | 5 bootstrap nodes is sufficient for Sybil resistance | SCALE | MITIGATED | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as MITIGATED with 5-of-5 trust assumption in 0851 §11 (Anti-Sybil Mechanisms). |
+| IA-NB-2 | 5 bootstrap nodes is sufficient for Sybil resistance | SCALE | MITIGATED | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as MITIGATED with 5-of-5 trust assumption in 0851 §11 "Anti-Sybil Mechanisms". |
 | IA-NB-3 | DNS resolution is honest | TRUST | **ACCEPTED RISK** | Use Tor onion or I2P addresses for at least 2 of 5 bootstrap nodes. Deadline: F2 (Tor-only seed list). |
 | IA-NB-4 | TCP/TLS to bootstrap node is not censored | TRUST | **ACCEPTED RISK** | Mode C invite works without internet. Mode B DHT works over non-TCP transports (WebSocket, etc.) per RFC-0843. |
 | IA-NB-5 | Ed25519 is collision-resistant | CRYPTO | MITIGATED | Standard assumption; BLAKE3-256 of public key is the node_id. |
 | IA-NB-6 | Epoch is synchronized across nodes | TIME | MITIGATED | RFC-0850 §5 "Logical Timestamp Model" defines the epoch as a monotonic `u64` counter; nodes within ±1 epoch are acceptable. |
-| IA-NB-7 | Inviter is trustworthy (Mode C) | TRUST | **ACCEPTED RISK** | Web-of-trust depth 1, max 3 hops. User trusts inviter. Documented in §5. |
+| IA-NB-7 | Inviter is trustworthy (Mode C) | TRUST | **ACCEPTED RISK** | Web-of-trust depth 1, max 3 hops. User trusts inviter. Documented in §5 "Mode C — Invite Link (Offline)". |
 | IA-NB-8 | Kademlia DHT is functional (Mode B) | PROTOCOL | MITIGATED | RFC-0843 is battle-tested; if Kademlia fails, Mode C is the fallback. |
 | IA-NB-9 | 256-peer initial list is enough to grow | SCALE | MITIGATED | Once bootstrapped, GDP §M-GDP-3 DiscoveryLifecycle::Bootstrap → Expansion handles growth. |
 | IA-NB-10 | Seed list version monotonicity is preserved | PROTOCOL | MITIGATED | Effective_epoch < expires_epoch invariant enforced at signature verify. |
 | IA-NB-11 | Public addresses in seed list are routable | NETWORK | **MISSING CHECK** | No validation that `public_addrs` are actually reachable until first BOOTSTRAP_REQ. Add health check at seed list load (F3). |
-| IA-NB-12 | At least one node is reachable in any region | NETWORK | **ACCEPTED RISK** | Geographic diversity; documented in §1 default table. |
-| IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR | MITIGATED | Specified in §7 Failure Modes (E2E IS-2.4 fix) |
+| IA-NB-12 | At least one node is reachable in any region | NETWORK | **ACCEPTED RISK** | Geographic diversity; documented in §1 "BootstrapNode Registry" default table. |
+| IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR | MITIGATED | Specified in §7 "Failure Modes" (E2E IS-2.4 fix) |
 | IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence | SECURITY | MITIGATED | Specified in §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix) |
 
 **Open assumption:** IA-NB-11 (seed list health check at load) is **MISSING** — flagged for implementation F3.
@@ -549,7 +549,7 @@ enum BootstrapClientLifecycle {
 
 ### Bootstrap Node Economics
 
-- Bootstrap nodes earn 10% of the DOT bandwidth fee for advertisements they serve (per RFC-0850 §13)
+- Bootstrap nodes earn 10% of the DOT bandwidth fee for advertisements they serve (per RFC-0850 §13 "Token Economics Integration")
 - Bootstrap nodes do NOT earn discovery rewards separately (they serve a different role than GDP-discovered gateways)
 - Bootstrap nodes pay for their own uptime (no subsidy)
 
@@ -715,7 +715,7 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 - RFC-0850 (Networking): Deterministic Overlay Transport — uses DeterministicEnvelope
 - RFC-0843 (Networking): OCTO-Network Protocol — Kademlia base (Mode B)
 - RFC-0860 (Networking): Proof of Relay — trust scores for Sybil defense
-- RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.1 (Dao governance model) and §11.2 (Governance Policies)
+- RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.1 "Governance Flexibility" (Dao governance model) and §11.2 "Governance Policies"
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 - RFC-0000-template v1.3 — Roles, Lifecycle, Implicit Assumptions, Adversary Analysis sections
 
@@ -727,7 +727,7 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 
 ### A. Default Seed List (Genesis)
 
-See §1. Distributed separately as `config/seed_list_v1.json` and embedded in the first binary.
+See §1 "BootstrapNode Registry". Distributed separately as `config/seed_list_v1.json` and embedded in the first binary.
 
 ### B. Invite URL Encoding
 

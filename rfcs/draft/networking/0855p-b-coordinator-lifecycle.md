@@ -20,7 +20,7 @@ Draft (v1.1, 2026-06-16)
 
 Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type, the per-governance-model election algorithm, term limits, handover protocols, slashing conditions, and liveness check semantics for the Mission Coordinator role defined in RFC-0855 §4.2. The result is a typed, deterministic, adversarial-resistant coordinator lifecycle that RFC-0855 can reference from §16.3, §11, and §17 in place of its current one-line forward reference.
 
-**v1.1 adds** the `GenesisState` 3-state machine (§"Genesis State Machine" subsection) for the Mission Creator's first-coordinator bootstrap. This fills the v1.0 gap where the creator was described as "stateless" but the §Election Algorithm table assumed ≥2 candidates — implementations would have invented their own genesis logic.
+**v1.1 adds** the `GenesisState` 3-state machine (§"Genesis State Machine" subsection) for the Mission Creator's first-coordinator bootstrap. This fills the v1.0 gap where the creator was described as "stateless" but the §"Election Algorithm (per governance model)" table assumed ≥2 candidates — implementations would have invented their own genesis logic.
 
 ## Dependencies
 
@@ -74,7 +74,7 @@ MUST enumerate:
 - **Stable identifier**: `[u8; 32]` `CoordinatorId` (alias for `PeerId` in the mission's namespace)
 - **Base capabilities**: sign coordination envelopes; receive `ExecutionTask` results; emit mission-state transitions
 - **Authority scope**: `coordinate` (read mission state, dispatch tasks, propose mission-state transitions, sign coordination envelopes)
-- **Who can assume**: genesis designator (creator), or election winner per §Election Algorithm
+- **Who can assume**: genesis designator (creator), or election winner per §"Election Algorithm (per governance model)"
 - **Who can revoke**: slashing adjudicator (governance), or self (resignation)
 - **Lifecycle**: `CoordinatorLifecycle` (see Lifecycle Requirements) — 8 states
 - **Term**: `term_start_epoch: u64`, `term_end_epoch: u64` (0 = no limit, mission-defined)
@@ -87,7 +87,7 @@ MUST enumerate:
 - **Who can assume**: any peer that creates a mission descriptor and signs the genesis envelope
 - **Who can revoke**: no one (one-shot authority)
 - **Lifecycle**: `genesis_state` (see §"Genesis State Machine") — 3 states (`GenesisDesignated → GenesisSelfAttest → GenesisActive`)
-- **Out of scope for replacement**: subsequent coordinators are elected per §Election Algorithm, not re-designated by the creator (this is the Centralized governance model's "designator-may-not-replace" rule; see §Election Algorithm)
+- **Out of scope for replacement**: subsequent coordinators are elected per §"Election Algorithm (per governance model)", not re-designated by the creator (this is the Centralized governance model's "designator-may-not-replace" rule; see §"Election Algorithm (per governance model)")
 
 ### 3. Mission Participant (voter)
 
@@ -283,7 +283,7 @@ Rejected ballots are silently dropped (per the "routine filtering silent" rule).
 
 #### Genesis State Machine (v1.1 addition)
 
-The Mission Creator's `designate-at-genesis` authority triggers a 3-state machine that bootstraps the first coordinator **without** an election, because there are no peers to vote in a 1-participant mission. This fills a gap in the v1.0 RFC where the §Election Algorithm table assumes ≥2 candidates.
+The Mission Creator's `designate-at-genesis` authority triggers a 3-state machine that bootstraps the first coordinator **without** an election, because there are no peers to vote in a 1-participant mission. This fills a gap in the v1.0 RFC where the §"Election Algorithm (per governance model)" table assumes ≥2 candidates.
 
 ```rust
 /// Lifecycle of the genesis designator's first-coordinator bootstrap
@@ -306,7 +306,7 @@ enum GenesisState {
 | (none) | GenesisDesignated | Mission descriptor committed with `creator_peer_id == coordinator_peer_id` in `MissionDescriptor` | Yes (from genesis material) |
 | GenesisDesignated | GenesisSelfAttest | Creator signs `GenesisAttest { mission_id, coordinator_peer_id, attest_epoch, coordinator_term_id }` and broadcasts | Yes |
 | GenesisSelfAttest | GenesisActive | ≥1 peer (other than creator) receives GenesisAttest, validates signature against creator's public key, and broadcasts `GenesisWitness { mission_id, witness_peer_id, attest_hash }` | Yes (deterministic count) |
-| GenesisActive | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §Election Algorithm (with quorum = 0) | Yes |
+| GenesisActive | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §"Election Algorithm (per governance model)" (with quorum = 0) | Yes |
 | GenesisSelfAttest | GenesisDesignated (rollback) | GenesisWitness validation fails (invalid signature on GenesisAttest, OR no witness received within `genesis_witness_timeout = 100 epochs`) | Yes (timeout is deterministic) |
 | GenesisActive | Inactive (failure path) | Creator's key is revoked / compromised after GenesisActive but before handoff to CoordinatorLifecycle. Creator signs `CoordinatorSlash { coordinator_id, mission_id, reason: 0x0009 (genesis-compromise) }` (slash reason code 0x0009 from this RFC's reserved 0x0009-0xFFFF range; codes 0x0001-0x0008 are already taken — see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes"). Forces immediate `Inactive`; next election runs normally. | Yes |
 
@@ -561,8 +561,8 @@ pub enum CoordinatorError {
 | Term limits (`term_end_epoch`) are honored by the coordinator | Term end trigger | Coordinator overstays; mission drifts to single-leader | `Suspect → Handover` trigger on `current_epoch >= term_end_epoch` regardless of heartbeat. **MITIGATED**. |
 | Cool-down after Resignation is enforced | Re-election eligibility | Slashed/resigned coordinator immediately re-elected | Cool-down check in election eligibility filter. **MITIGATED**. |
 | Handover message queue survives process crash | Message preservation | Envelopes lost during handover | Queue is durable (RFC-0857 mempool); crash recovery replays queue. **MITIGATED**. |
-| IA-CL-1 (E2E IS-4.1) | Election eligibility filter runs BEFORE ballot tally | ELECTION | MITIGATED | Specified in §"Election Algorithm" (E2E IS-4.1 fix) — the tally function rejects voters/candidates who fail the eligibility check |
-| IA-CL-2 (E2E IS-4.2) | Election `closed_epoch` is set when quorum is reached OR `ELECTION_TIMEOUT` fires, whichever is first | ELECTION | MITIGATED | Specified in §"Election Algorithm" (E2E IS-4.2 fix) — `ELECTION_TIMEOUT = 1000` epochs |
+| IA-CL-1 (E2E IS-4.1) | Election eligibility filter runs BEFORE ballot tally | ELECTION | MITIGATED | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.1 fix) — the tally function rejects voters/candidates who fail the eligibility check |
+| IA-CL-2 (E2E IS-4.2) | Election `closed_epoch` is set when quorum is reached OR `ELECTION_TIMEOUT` fires, whichever is first | ELECTION | MITIGATED | Specified in §"Election Algorithm (per governance model)" (E2E IS-4.2 fix) — `ELECTION_TIMEOUT = 1000` epochs |
 | IA-CL-3 (E2E IS-4.4) | Handover success or failure is observable to the mission within `HANDOVER_TIMEOUT = 500` epochs | LIFECYCLE | MITIGATED | Specified in §"Handover Protocol" (E2E IS-4.4 fix) |
 | IA-CL-4 (E2E IS-4.5) | Slash proof's `evidence` is replay-protected | SECURITY | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.5 fix) — slash_id is `BLAKE3(coordinator_term_id || offense || evidence_hash)` |
 | IA-CL-5 (E2E IS-4.6) | Slash tally base is 2/3 of the **mission's current eligible voter count** (not a fixed number) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.6 fix) |
@@ -951,7 +951,7 @@ const MIN_GENESIS_WITNESSES: usize = 1;
 
 /// Maximum acceptable clock skew between attest_epoch and local epoch.
 /// R3-5 fix: this matches the ±1 epoch tolerance used elsewhere in DOT
-/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm"
+/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm (per governance model)"
 /// ballot timestamp tolerance). Using a different tolerance for genesis
 /// would create inconsistency; e.g., if BIND tolerates ±1 epoch but
 /// GenesisAttest tolerates ±2, an attacker could replay a BIND from

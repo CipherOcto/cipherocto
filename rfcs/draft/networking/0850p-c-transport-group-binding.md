@@ -495,8 +495,8 @@ REBIND is the operation that changes the physical group for an existing `domain_
 
 - `new_coordinator_id` MAY be the same as the old (no handover) or different (handover).
 - If `new_coordinator_id` is different, the new coordinator MUST satisfy **all** of:
-  - Eligible per RFC-0855p-b §"Election Algorithm" (stake + trust score ≥ threshold)
-  - Has signed and broadcast at least one `CoordinatorHeartbeat` (per RFC-0855p-b §"Heartbeat Protocol"; R2-TGB-2 fix: envelope name was previously incorrectly given as `DOT/1/HEARTBEAT` — the canonical name is `CoordinatorHeartbeat`) in the new group (proves presence)
+  - Eligible per RFC-0855p-b §"Election Algorithm (per governance model)" (stake + trust score ≥ threshold)
+  - Has signed and broadcast at least one `CoordinatorHeartbeat` (per RFC-0855p-b §"Liveness Check"; R2-TGB-2 fix: envelope name was previously incorrectly given as `DOT/1/HEARTBEAT` — the canonical name is `CoordinatorHeartbeat`) in the new group (proves presence)
   - Has `peer_id` matching the canonical `BLAKE3(participant_id || mission_id)` (verifies key ownership)
   - Is a current member of the new group (verified via the adapter's membership API)
   

@@ -224,7 +224,7 @@ struct BootstrapRequest {
     epoch: u64,
     /// Capabilities the sender is interested in (filter)
     capability_filter: u64,
-    /// Max peer list size requested (bounded by MAX_PEER_LIST = 256; see §Appendix C)
+    /// Max peer list size requested (bounded by MAX_PEER_LIST = 256; see §D. Constants) (R7-1 fix — was §Appendix C, which is §C. References)
     max_peers: u16,
     /// Requester's signature over (requester_id || requester_pubkey || nonce || epoch
     ///                         || capability_filter || max_peers)

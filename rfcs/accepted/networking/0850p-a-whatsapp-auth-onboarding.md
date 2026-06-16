@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-06-12)
+Accepted (2026-06-16)
 
 ## Authors
 

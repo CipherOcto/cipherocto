@@ -6,7 +6,7 @@ Claimed (2026-06-12)
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding CLI (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`, version 1.14 after 15-round adversarial review)
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding CLI (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`, version 1.14 after 15-round adversarial review)
 
 ## Dependencies
 
@@ -29,7 +29,7 @@ Standalone `octo-whatsapp-onboard` binary + sibling `octo-whatsapp-onboard-core`
 
 ## Design
 
-See RFC-0850p-a (`rfcs/draft/networking/0850p-a-whatsapp-auth-onboarding.md`) for the full specification. Companion doc with code-level patterns: this mission's "Implementation Guide" §.
+See RFC-0850p-a (`rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`) for the full specification. Companion doc with code-level patterns: this mission's "Implementation Guide" §.
 
 ## Acceptance Criteria
 

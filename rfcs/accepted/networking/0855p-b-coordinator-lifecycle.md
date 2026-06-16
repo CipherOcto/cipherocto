@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.1, 2026-06-16)
+Accepted (2026-06-16)
 
 > **Patch RFC for RFC-0855 (Mission Overlay Networks).** This RFC fills the §16.3 "AI Swarm Specification (MON-H6 fix)" → §11 "Governance Models" forward-reference gap: §16.3 states "New Coordinator elected via governance model (Section 11)" but §11 defines 5 governance models, none of which include an election algorithm. The implementation timeline at §20 lists "3.4 Implement coordinator election" as a future task; this RFC is that task.
 >

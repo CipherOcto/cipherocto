@@ -375,7 +375,7 @@ The DomainCoordinator monitors three platform events:
 
 **Deadlock resolution:** the previous wording "mission participants MAY elect a new DomainCoordinator" was ambiguous — if the old DomainCoordinator is in `Suspect` (not `Inactive`), the election cannot designate a successor (the role is still occupied). The fix: `Suspect` is a grace state, not a permanent state. After `3 × heartbeat` (deterministic timeout), the DomainCoordinator is forced to `Handover → Inactive` regardless of connection state. Mission participants can then run an election or wait for reconnection.
 
-**Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3) — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
+**Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3 "Binding Ceremony — Implicit Designator") — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
 
 **Split-brain prevention on reconnection (R2-DC-3 fix, R3-1 / R3-6 follow-up):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
 1. Reconnected node queries the local `GroupRegistry` for the current binding state.

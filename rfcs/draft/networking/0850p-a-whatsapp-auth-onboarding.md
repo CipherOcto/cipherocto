@@ -35,7 +35,7 @@ Define a standalone CLI binary (`octo-whatsapp-onboard`) and companion library (
 | G1 | Standalone auth without gateway | `octo-whatsapp-onboard qr-link` exits 0 without loading adapter cdylib |
 | G2 | Interactive QR pairing in terminal | QR rendered as unicode half-block; scan completion drives `Event::Connected` |
 | G3 | Pair-code linking as alternative to QR | `octo-whatsapp-onboard pair-link --phone +15551234567` issues a 6-char code via the WhatsApp Web protocol |
-| G4 | Config produced is adapter-compatible | `WhatsAppConfig::validate()` passes on output JSON (or deserialize round-trip succeeds, see §Schema Compatibility) |
+| G4 | Config produced is adapter-compatible | `WhatsAppConfig::validate()` passes on output JSON (or deserialize round-trip succeeds, see §"Config Output" schema compat note) |
 | G5 | No plaintext secrets in CLI logs | tracing redaction layer test passes; PII (resolved phone, custom pair code) never emitted unredacted |
 | G6 | Exit codes distinguish failure classes | 7 distinct exit codes (0-6) matching the matrix/telegram table |
 | G7 | Session verification without re-pairing | `whoami` works on persisted stoolap session database |
@@ -398,7 +398,7 @@ For `pair-link`:
 }
 ```
 
-**Schema compatibility note (R1-H3):** `WhatsAppConfig` (adapter.rs:25-36) does not currently have a `validate()` method, only `serde::Deserialize`. The CLI round-trips via **adapter instantiation in unit tests** (load config → `WhatsAppWebAdapter::new(config)` → `start_bot()` short-circuits on missing DB) AND a fast pre-flight `serde_json::from_slice::<WhatsAppConfig>(...)` deserialize check before the instantiation. A `WhatsAppConfig::validate()` method analogous to `TelegramConfig::validate()` (config.rs:94-110) is added to the adapter in the same PR — see §Schema Compatibility.
+**Schema compatibility note (R1-H3):** `WhatsAppConfig` (adapter.rs:25-36) does not currently have a `validate()` method, only `serde::Deserialize`. The CLI round-trips via **adapter instantiation in unit tests** (load config → `WhatsAppWebAdapter::new(config)` → `start_bot()` short-circuits on missing DB) AND a fast pre-flight `serde_json::from_slice::<WhatsAppConfig>(...)` deserialize check before the instantiation. A `WhatsAppConfig::validate()` method analogous to `TelegramConfig::validate()` (config.rs:94-110) is added to the adapter in the same PR (this §"Config Output" section).
 
 **File permissions:** Mode 0600 on Unix. Same atomic-write pattern as `octo-matrix-onboard` and `octo-telegram-onboard` (`tempfile::NamedTempFile` + `persist`).
 
@@ -446,7 +446,7 @@ Same pattern as `octo-matrix-onboard` (logging.rs:38-44) and `octo-telegram-onbo
 
 The `session_path` is the **path to the stoolap database file itself**, not a containing directory. The stoolap store is a single-file database (CipherOcto fork, `feat/blockchain-sql` branch). Operators managing multiple accounts use distinct `--session-path` values.
 
-The `session list` subcommand scans the `~/.local/share/octo/whatsapp/` base directory. See §Session Management Implementation for the sidecar fast-path and bot-startup fallback details. (R6-L1: removed duplicate sentence; the §Session Management section is the canonical location.)
+The `session list` subcommand scans the `~/.local/share/octo/whatsapp/` base directory. See §"Session Management" for the sidecar fast-path and bot-startup fallback details. (R6-L1: removed duplicate sentence; the §"Session Management" section is the canonical location.)
 
 ### RFC-0008 Execution Class Mapping
 

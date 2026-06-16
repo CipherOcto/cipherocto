@@ -198,7 +198,7 @@ struct GroupBinding {
 
 ### 2. Binding Envelope Types
 
-> **R4-4 fix — global note on hash construction:** all `*_hash` fields in this RFC's envelopes (`bind_hash`, `unbind_hash`, `rebind_hash`, `ack_hash`) are computed as `BLAKE3-256(header || body)` per §Appendix A. The **header** is the canonical 10-byte prefix `envelope_type (4) || envelope_subtype (4) || version (2, big-endian)`. The **body** is the canonical serialization of the envelope's other fields in declaration order, with length-prefix encoding for variable-length fields (e.g., `String` is serialized as `length (4 bytes, big-endian) || utf8_bytes`). Individual envelope definitions below describe the **body** part of the hash (e.g., `BLAKE3-256(group_jid || ...)`); the reader MUST prepend the header per §Appendix A when computing the full hash. This note applies to all envelopes in this RFC; the `RFC-0855p-c` `PlatformLossEnvelope` follows the same convention.
+> **R4-4 fix — global note on hash construction:** all `*_hash` fields in this RFC's envelopes (`bind_hash`, `unbind_hash`, `rebind_hash`, `ack_hash`) are computed as `BLAKE3-256(header || body)` per §A "Canonical Envelope Serialization". The **header** is the canonical 10-byte prefix `envelope_type (4) || envelope_subtype (4) || version (2, big-endian)`. The **body** is the canonical serialization of the envelope's other fields in declaration order, with length-prefix encoding for variable-length fields (e.g., `String` is serialized as `length (4 bytes, big-endian) || utf8_bytes`). Individual envelope definitions below describe the **body** part of the hash (e.g., `BLAKE3-256(group_jid || ...)`); the reader MUST prepend the header per §A "Canonical Envelope Serialization" when computing the full hash. This note applies to all envelopes in this RFC; the `RFC-0855p-c` `PlatformLossEnvelope` follows the same convention.
 
 ```rust
 /// DOT/1/BIND — issued by DomainCoordinator candidate
@@ -260,7 +260,8 @@ struct BindEnvelope {
 struct BindAck {
     envelope_type: [u8; 4],       // b"DOT1" (R2-TGB-6 fix: added for consistency
                                    //          with BIND/REBIND/UNBD envelope_type;
-                                   //          canonical header per §Appendix A
+                                   //          canonical header per §A
+                                   //          "Canonical Envelope Serialization"
                                    //          requires both envelope_type and
                                    //          envelope_subtype)
     envelope_subtype: [u8; 4],    // b"BACK"
@@ -295,7 +296,8 @@ struct UnbindEnvelope {
     unbind_epoch: u64,
     /// BLAKE3-256(header || binding || reason || authority || unbind_epoch)
     /// R4-1 fix: explicit field list (was previously "BLAKE3 binding" with no
-    /// specification). `header` is the 10-byte canonical header per §Appendix A
+    /// specification). `header` is the 10-byte canonical header per §A
+    /// "Canonical Envelope Serialization"
     /// (envelope_type || envelope_subtype || version, big-endian). All hashes
     /// in this RFC follow this `header || body` pattern; see the global note
     /// at the top of the envelope definitions (R4-4 fix).

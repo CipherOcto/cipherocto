@@ -873,15 +873,15 @@ Reading any single RFC in isolation, the ordering is implicit. A new implementer
 
 ## Future Work
 
-| ID | Title | Severity | Deadline |
-|----|-------|----------|----------|
-| **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5 "Multi-Platform Binding Rule"), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). | **HIGH** (was MEDIUM; bumped in R1-DC-5 because the consequence is mission-level failure) | Pre-public-launch |
-| F2 (was F1 original, R9-15 fix — ID collision with new F1) | Cross-platform admin attestation (mitigates D-DC-1) | CRITICAL | Pre-public-launch |
-| F3 (was F2) | Cross-domain slash via mission-level coordinator (mitigates D-DC-6) | HIGH | Post-launch |
-| F4 (was F3) | Slash for < 4 member groups (alternative to UNBIND) | MEDIUM | Post-launch |
-| F5 (was F4) | Multi-admin groups (sub-admins with limited DomainCoordinator authority) | LOW | Future |
-| F6 (was F5) | DomainCoordinator reputation (slash history aggregated across domains) | LOW | Future |
-| F7 (was F6) | Platform-loss auto-rejoin (kicked member requests rejoin) | LOW | Future |
+| ID | Title | Spec | Mission |
+|----|-------|------|---------|
+| **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5 "Multi-Platform Binding Rule"), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). Spec: 2-phase commit per `missions/open/0855p-c-f1-cross-platform-consensus.md` (REBIND_PREPARE/REBIND_COMMIT/REBIND_ABORT). **Severity HIGH; deadline Pre-public-launch.** | `missions/open/0855p-c-f1-cross-platform-consensus.md` |
+| F2 (was F1 original, R9-15 fix — ID collision with new F1) | Cross-platform admin attestation (mitigates D-DC-1). Spec: each DomainCoordinator periodically publishes a `PLATFORM_ADMIN_ATTEST` envelope on the libp2p mesh under `/dot/admin/{domain_id}/{platform}` containing a fresh proof of admin status (e.g., a signed platform-API response). Other DomainCoordinators verify and challenge invalid attestations. **Severity CRITICAL; deadline Pre-public-launch.** | `missions/open/0855p-c-f2-admin-attestation.md` |
+| F3 (was F2) | Cross-domain slash via mission-level coordinator (mitigates D-DC-6). Spec: when a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855p-b) can slash the DomainCoordinator; the slash is recorded in the DomainCoordinator's cross-domain reputation. **Severity HIGH; deadline Post-launch.** | `missions/open/0855p-c-f3-cross-domain-slash.md` |
+| F4 (was F3) | Slash for < 4 member groups (alternative to UNBIND). Spec: for groups with < 4 members, slash (demote+cooldown) the misbehaving member instead of UNBIND (which would lose the entire group). Group size determined at BIND time. **Severity MEDIUM; deadline Post-launch.** | `missions/open/0855p-c-f4-slash-small-groups.md` |
+| F5 (was F4) | Multi-admin groups (sub-admins with limited DomainCoordinator authority). Spec: DomainCoordinators can designate sub-admins (e.g., a deputy admin in case the primary is unreachable); sub-admins can sign envelopes but only within a `SUB_ADMIN_AUTHORITY` policy (e.g., cannot REBIND, can sign BIND for new members). **Severity LOW; deadline Future.** | `missions/open/0855p-c-f5-sub-admins.md` |
+| F6 (was F5) | DomainCoordinator reputation (slash history aggregated across domains). Spec: similar to RFC-0855p-b F2 (cross-mission reputation), but per DomainCoordinator and across the domains it manages. **Severity LOW; deadline Future.** | `missions/open/0855p-c-f6-reputation.md` |
+| F7 (was F6) | Platform-loss auto-rejoin (kicked member requests rejoin). Spec: a kicked member (e.g., removed by platform admin) can request rejoin via a `REJOIN_REQUEST` envelope; the DomainCoordinator signs a rejoin ticket if the kick was unauthorized. **Severity LOW; deadline Future.** | `missions/open/0855p-c-f7-auto-rejoin.md` |
 
 **Note:** The new F1 (cross-platform consensus) and F2 (formerly F1 original, cross-platform admin attestation) are **separate concerns** — one is about consensus among DomainCoordinators, the other is about platform admin verification. Both are pre-public-launch. ID renumbering done in R9-15 to remove the F1 ID collision; cross-references elsewhere in this RFC have been updated to use the new F-IDs.
 
@@ -902,6 +902,7 @@ The multi-platform rule (one DomainCoordinator per platform per domain_id) is a 
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft — fills RFC-0855p-b F1; specializes `CoordinatorLifecycle` for DomainCoordinator |
+| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt with spec column — all 7 items (F1-F7) now have inline spec + mission paths in `missions/open/0855p-c-f{1,2,3,4,5,6,7}-*.md`. |
 
 ## Related RFCs
 

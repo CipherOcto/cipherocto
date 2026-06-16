@@ -14,7 +14,7 @@ Draft (2026-06-16)
 
 ## Summary
 
-Specifies the protocol that turns a raw physical broadcast domain (WhatsApp group, Matrix room, Telegram supergroup, etc.) into a **DOT transport group**: a group bound to a specific `domain_id` within a `mission_id`, with a `DomainCoordinator` authority, and a deterministic `GroupState` machine. Defines the `DOT/1/BIND`, `DOT/1/UNBIND`, and `DOT/1/REBIND` envelope types, the binding ceremony sequence, the multi-platform binding rule (one `domain_id` → one group per platform), and the unbind / re-bind lifecycle. Fills the gap that **no current RFC defines how a physical group becomes a transport group** — RFC-0850p-a covers the operator side (auth, listing groups in config) and RFC-0855 §3.1 covers the mission lifecycle, but the **binding ceremony** between them is implicit and implementation-defined.
+Specifies the protocol that turns a raw physical broadcast domain (WhatsApp group, Matrix room, Telegram supergroup, etc.) into a **DOT transport group**: a group bound to a specific `domain_id` within a `mission_id`, with a `DomainCoordinator` authority, and a deterministic `GroupState` machine. Defines the `DOT/1/BIND`, `DOT/1/UNBIND`, and `DOT/1/REBIND` envelope types, the binding ceremony sequence, the multi-platform binding rule (one `domain_id` → one group per platform), and the unbind / re-bind lifecycle. Fills the gap that **no current RFC defines how a physical group becomes a transport group** — RFC-0850p-a covers the operator side (auth, listing groups in config) and RFC-0855 §3.1 "Lifecycle States" covers the mission lifecycle, but the **binding ceremony** between them is implicit and implementation-defined.
 
 ## Dependencies
 

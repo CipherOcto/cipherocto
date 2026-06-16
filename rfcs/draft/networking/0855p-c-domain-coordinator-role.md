@@ -555,7 +555,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 | # | Assumption | Type | Status | Mitigation / Deadline |
 |---|-----------|------|--------|----------------------|
-| IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F1). |
+| IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F2, R9-15 renumbering). |
 | IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
 | IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
 | IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
@@ -565,7 +565,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 | IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id || mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
 | IA-DC-8 | Mission-level coordinator and DomainCoordinator are separate roles | PROTOCOL | MITIGATED | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator). |
 | IA-DC-9 | `coordinator_term_id` chain is preserved across handover | PROTOCOL | MITIGATED | Defined in §4 Platform-Mediated Handover. |
-| IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |
+| IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F3: cross-domain slash (mission-level coordinator can slash on behalf of a banned member; R9-15 renumbering).** |
 | IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
 | IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
 | IA-DC-13 (E2E IS-6.3) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.3 fix — Suspect→Active return bounded; 90-epoch Suspect window is the IS-6.2 fix). |
@@ -576,7 +576,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 | IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §9b "Cross-Platform Slash" (E2E IS-5.8 fix) above. |
 | IA-DC-19 (E2E IS-6.5) | DomainCoordinator's state transitions are observable to the mission | PROTOCOL | MITIGATED | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §9c "State Transition Observability" (E2E IS-6.5 fix) above. |
 
-**Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
+**Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1: cross-platform consensus; F2: cross-platform admin attestation [R9-15 renumbering]; F3: cross-domain slash [R9-15 renumbering]).
 
 > **R9-6 fix — section ordering:** the subsections 9a/9b/9c (Slash Vote Audit, Cross-Platform Slash, State Transition Observability) were originally placed AFTER this `## Implicit Assumptions Audit` section, which broke the spec section ordering. They have been moved to immediately after §9 RFC-0008 Execution Class Mapping (in `## Specification`).
 
@@ -585,9 +585,9 @@ Verification: mission participants verify the signature against the DomainCoordi
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
 | Platform-admin key compromise | Critical | Slash (reason 0x0006) + REBIND to new platform |
-| Platform lies about admin status | Critical | Trust root; long-term: cross-platform attestation (F1) |
+| Platform lies about admin status | Critical | Trust root; long-term: cross-platform attestation (F2, R9-15 renumbering) |
 | Slash vote failure for small groups | High | Disable slash for < 4 members; UNBIND alternative |
-| Banned member cannot slash | High | Cross-domain slash via mission-level coordinator (F2) |
+| Banned member cannot slash | High | Cross-domain slash via mission-level coordinator (F3, R9-15 renumbering) |
 | Platform-loss not detected | High | Adapter connection check + Suspect state |
 | Group admin transfer equivocation | Medium | `coordinator_term_id` chain enforces monotonicity |
 | DomainCoordinator impersonation | Medium | Platform-admin check; BIND signature verify |
@@ -601,12 +601,12 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 | ID | Decision | Adversary | Control | When | Blast | Defense | Severity | Status |
 |----|----------|-----------|---------|------|-------|---------|----------|--------|
-| D-DC-1 | Platform-admin is DomainCoordinator | Platform compromise | Platform server | Any time | All groups on platform | Cross-platform attestation (F1) | CRITICAL | **ACCEPTED RISK** — F1 |
+| D-DC-1 | Platform-admin is DomainCoordinator | Platform compromise | Platform server | Any time | All groups on platform | Cross-platform attestation (F2, R9-15 renumbering) | CRITICAL | **ACCEPTED RISK** — F2 |
 | D-DC-2 | Handover via admin transfer | Compromised old admin | Old admin key | At admin transfer | One domain_id | New admin must publish `coordinator_term_id` chain | MEDIUM | MITIGATED |
 | D-DC-3 | Platform-loss detection | Network censor | Network | At disconnect | One DomainCoordinator | Adapter connection check + Suspect | HIGH | MITIGATED |
 | D-DC-4 | Slash vote (2/3) | DomainCoordinator abuse | Coordinator key | Any time | One domain_id | 2/3 quorum; UNBIND for < 4 members | HIGH | MITIGATED |
 | D-DC-5 | Slash reason 0x0006 (key compromise) | Platform-reported attack | Platform key | Rare | One domain_id | REBIND to new coordinator | CRITICAL | MITIGATED |
-| D-DC-6 | Slash reason 0x0007 (banning member) | DomainCoordinator overreach | Coordinator key | Any time | One domain_id | Slash vote; cross-domain slash (F2) | HIGH | **ACCEPTED RISK** — F2 |
+| D-DC-6 | Slash reason 0x0007 (banning member) | DomainCoordinator overreach | Coordinator key | Any time | One domain_id | Slash vote; cross-domain slash (F3, R9-15 renumbering) | HIGH | **ACCEPTED RISK** — F3 |
 | D-DC-7 | Slash reason 0x0001 (double-sign, per RFC-0855p-b §B) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting envelopes detected; slash | HIGH | MITIGATED |
 | D-DC-8 | Implicit designator (0850p-c §3) races | Founder squatter | Own key | First DOT in group | One domain_id | RFC-0850p-c D-TGB-1 + UNBIND 0x0003 (founder squat) | HIGH | MITIGATED |
 | D-DC-9 | Mission-level coordinator conflict | Two coordinators | Own keys | Mission creation | One mission | Mission governance decides; DomainCoordinator is sub-role | LOW | MITIGATED |
@@ -614,8 +614,8 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 ### Multi-Round Review
 
-- **Round 1 (this RFC):** 10 decisions, 2 CRITICAL (D-DC-1 platform-admin trust [ACCEPTED RISK], D-DC-5 key compromise [MITIGATED]), 5 HIGH, 0 ACCEPTED RISK unaddressed (F1, F2 named; R9-11 fix — was "1 CRITICAL" which omitted D-DC-5)
-- **Round 2 (post-F1, post-F2):** D-DC-1 mitigated by cross-platform attestation; D-DC-6 mitigated by cross-domain slash
+- **Round 1 (this RFC):** 10 decisions, 2 CRITICAL (D-DC-1 platform-admin trust [ACCEPTED RISK], D-DC-5 key compromise [MITIGATED]), 5 HIGH, 0 ACCEPTED RISK unaddressed (F1, F2, F3 named [R9-15 fix — F1/F2 were previously mis-labeled; original F1 is now F2, original F2 is now F3]; R9-11 fix — was "1 CRITICAL" which omitted D-DC-5)
+- **Round 2 (post-F1, post-F2, post-F3):** D-DC-1 mitigated by cross-platform attestation (F2); D-DC-6 mitigated by cross-domain slash (F3); F1 (cross-platform consensus) closes the multi-platform mission-fragmentation gap.
 - **Severity classification:** 2 CRITICAL (D-DC-1 platform-admin trust [ACCEPTED RISK], D-DC-5 key compromise [MITIGATED]), 5 HIGH, 2 MEDIUM, 1 LOW (R9-11 fix — was "1 CRITICAL, 5 HIGH, 3 MEDIUM, 1 LOW" which miscounted D-DC-5 as not-CRITICAL)
 
 ## Economic Analysis
@@ -804,7 +804,7 @@ Verify:
 
 - Slash reason codes per RFC-0855p-b §B and RFC-0850p-c §6 (no RFC-specific additions)
 - Slash vote tally for small groups (UNBIND alternative)
-- Cross-domain slash (F2, post-launch)
+- Cross-domain slash (F3, post-launch [R9-15 renumbering])
 
 ## Key Files to Modify
 
@@ -876,14 +876,14 @@ Reading any single RFC in isolation, the ordering is implicit. A new implementer
 | ID | Title | Severity | Deadline |
 |----|-------|----------|----------|
 | **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). | **HIGH** (was MEDIUM; bumped in R1-DC-5 because the consequence is mission-level failure) | Pre-public-launch |
-| F1 (original) | Cross-platform admin attestation (mitigates D-DC-1) | CRITICAL | Pre-public-launch |
-| F2 | Cross-domain slash via mission-level coordinator (mitigates D-DC-6) | HIGH | Post-launch |
-| F3 | Slash for < 4 member groups (alternative to UNBIND) | MEDIUM | Post-launch |
-| F4 | Multi-admin groups (sub-admins with limited DomainCoordinator authority) | LOW | Future |
-| F5 | DomainCoordinator reputation (slash history aggregated across domains) | LOW | Future |
-| F6 | Platform-loss auto-rejoin (kicked member requests rejoin) | LOW | Future |
+| F2 (was F1 original, R9-15 fix — ID collision with new F1) | Cross-platform admin attestation (mitigates D-DC-1) | CRITICAL | Pre-public-launch |
+| F3 (was F2) | Cross-domain slash via mission-level coordinator (mitigates D-DC-6) | HIGH | Post-launch |
+| F4 (was F3) | Slash for < 4 member groups (alternative to UNBIND) | MEDIUM | Post-launch |
+| F5 (was F4) | Multi-admin groups (sub-admins with limited DomainCoordinator authority) | LOW | Future |
+| F6 (was F5) | DomainCoordinator reputation (slash history aggregated across domains) | LOW | Future |
+| F7 (was F6) | Platform-loss auto-rejoin (kicked member requests rejoin) | LOW | Future |
 
-**Note:** The new F1 (cross-platform consensus) and the original F1 (cross-platform admin attestation) are **separate concerns** — one is about consensus among DomainCoordinators, the other is about platform admin verification. Both are pre-public-launch.
+**Note:** The new F1 (cross-platform consensus) and F2 (formerly F1 original, cross-platform admin attestation) are **separate concerns** — one is about consensus among DomainCoordinators, the other is about platform admin verification. Both are pre-public-launch. ID renumbering done in R9-15 to remove the F1 ID collision; cross-references elsewhere in this RFC have been updated to use the new F-IDs.
 
 ## Rationale
 
@@ -893,7 +893,7 @@ The platform-admin authority is the natural choice for DomainCoordinator because
 2. **Slash is straightforward**: if the DomainCoordinator is malicious, governance can slash (2/3 vote). The platform's admin status can also be revoked (e.g., WhatsApp admin transfer) which cascades to DomainCoordinator loss.
 3. **Handover is automatic**: admin transfer is a single platform event; no separate DOT vote needed.
 
-The risk is platform-admin key compromise. F1 (cross-platform attestation) is the long-term mitigation. In the meantime, this RFC is **ACCEPTED RISK** with the slash path as defense.
+The risk is platform-admin key compromise. F2 (cross-platform admin attestation, R9-15 renumbering) is the long-term mitigation. In the meantime, this RFC is **ACCEPTED RISK** with the slash path as defense.
 
 The multi-platform rule (one DomainCoordinator per platform per domain_id) is a natural extension of RFC-0850p-c §5 — if you bind the same `domain_id` to two platforms, each platform has its own DomainCoordinator. This enables carrier migration (RFC-0850 G7) without losing coordination.
 

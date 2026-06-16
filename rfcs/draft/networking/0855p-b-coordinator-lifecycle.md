@@ -853,10 +853,26 @@ Verify:
 ## Future Work
 
 - **F1**: `DomainCoordinator` — specialization of `CoordinatorLifecycle` for physical broadcast domains (e.g., WhatsApp groups). See RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) which reuses this RFC's `CoordinatorRecord` and adds platform-specific states (`WAGroupAdmin`, `TelegramCreator`, `MatrixRoomAdmin`) and platform-admin authority checks.
-- **F2**: Cross-mission coordinator reputation (slash history aggregated across missions).
-- **F3**: Election by random beacon (VDF).
-- **F4**: Stake-weighted quadratic-cost voting.
-- **F5**: Governance RFC — specifies the `governance_id` rotation protocol and slash semantics for governance key compromise.
+- **F2**: Cross-mission coordinator reputation (slash history aggregated across missions). Spec inline below; tracked in `missions/open/0855p-b-f2-cross-mission-reputation.md`.
+- **F3**: Election by random beacon (VDF). Spec inline below; tracked in `missions/open/0855p-b-f3-vdf-election.md`.
+- **F4**: Stake-weighted quadratic-cost voting. Spec inline below; tracked in `missions/open/0855p-b-f4-stake-weighted-quadratic.md`.
+- **F5**: Governance RFC — specifies the `governance_id` rotation protocol and slash semantics for governance key compromise. Spec inline below; tracked in `missions/open/0855p-b-f5-governance-rfc.md`.
+
+### F2 spec (cross-mission coordinator reputation)
+
+Each `SlashEvent` (per §"Slash Reason Codes") carries `slash_count` which is local to the mission. For cross-mission reputation, augment the local `slash_count` with a global view fetched from a `SlashReputationStore` (a simple map `coordinator_pubkey -> Vec<SlashEvent>` from across all missions the coordinator has participated in). On election, candidates with a higher global slash count are deprioritized: `priority = stake / (1 + global_slash_count)`. This is a soft penalty, not a hard disqualification. Mission: `missions/open/0855p-b-f2-cross-mission-reputation.md`.
+
+### F3 spec (VDF election)
+
+A Verifiable Delay Function (VDF) per RFC-0855p-c §"Random Beacon" (currently being spec-ed) is used to elect the next coordinator. Each candidate computes `VDF(seed_for_epoch)` over `EPOCH_DURATION_SECONDS = 60`; the candidate whose VDF output is closest to the beacon's published randomness (lowest XOR distance) wins. The VDF is verified on receipt: the verifier checks `verify(vdf_proof, seed, output)`. VDF construction uses a Wesolowski-style prime-field VDF (`class_groups` crate or custom). Mission: `missions/open/0855p-b-f3-vdf-election.md`.
+
+### F4 spec (stake-weighted quadratic voting)
+
+Voting weight is `sqrt(stake) * cosigners`, where `cosigners` is the count of cross-signers on the candidate's `CoordinatorRecord` (a measure of social trust). This dampens the influence of large stakeholders (quadratic cost) while still rewarding stake and trust. The election algorithm is per governance model (e.g., DAO uses this, Centralized uses designator). Mission: `missions/open/0855p-b-f4-stake-weighted-quadratic.md`.
+
+### F5 spec (governance RFC)
+
+A new RFC-0855p-d "Governance Lifecycle" specifies: (1) `governance_id` rotation on key compromise (3-of-5 governance multi-sig signs a `GOVERNANCE_ROTATION` envelope, all subsequent slash votes must include the new `governance_id`); (2) slash semantics for governance key compromise (slashing the old key effectively burns it, all missions must migrate to the new key within `GOVERNANCE_MIGRATION_WINDOW = 100` epochs); (3) governance key ceremony (initial key gen, recovery key gen, etc.). Mission: `missions/open/0855p-b-f5-governance-rfc.md`.
 
 ## Rationale
 
@@ -874,7 +890,7 @@ Slashing is integrated as a state (`Demoting`) rather than a one-shot event beca
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-06-16 | Patch: added §"Genesis State Machine" subsection (3-state machine `GenesisDesignated → GenesisSelfAttest → GenesisActive`) to fix v1.0's "stateless creator" gap. Mission Creator role entry updated to reference new state machine. Test Vector TV-6 added. Future Work F1 updated to point to RFC-0855p-c (DomainCoordinator). |
+| 1.1 | 2026-06-16 | Patch: added §"Genesis State Machine" subsection (3-state machine `GenesisDesignated → GenesisSelfAttest → GenesisActive`) to fix v1.0's "stateless creator" gap. Mission Creator role entry updated to reference new state machine. Test Vector TV-6 added. Future Work F1 updated to point to RFC-0855p-c (DomainCoordinator). Deferred vs Unspecified Rule compliance (R10-batch): §Future Work F2-F5 each now have inline spec subsections + tracked mission paths in `missions/open/0855p-b-f{2,3,4,5}-*.md`. F1 already points to RFC-0855p-c. |
 | 1.0 | 2026-06-15 | Initial draft — fills RFC-0855 §16.3 → §11 forward-reference gap; defines `CoordinatorLifecycle`, `CoordinatorRecord`, per-governance-model election, handover, slashing, liveness check |
 
 ## Related RFCs

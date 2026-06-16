@@ -57,7 +57,7 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 
 A "transport group" is the bridge between a physical broadcast domain (WhatsApp group, Matrix room, etc.) and a DOT mission (the logical coordination unit). Yet:
 
-- **RFC-0850p-a** mentions "platform adapters" but does not define how a physical group becomes a transport group.
+- **RFC-0850** defines the transport layer abstractly. §8.2 (Platform Adapter Contract) is mentioned but does not define how a physical group becomes a transport group.
 - **RFC-0850p-a v1.15** covers the operator-side config (`groups: Vec<GroupConfig>` in `WhatsAppConfig`) but does not specify the binding ceremony — how a new group (created by the operator, or discovered by the adapter) is bound to a `domain_id`.
 - **RFC-0855 §3.1** defines the mission lifecycle: `Created → Discovering → Forming → Active`. The `Forming → Active` transition requires `active_participants >= min_participants` but does not specify how participants arrive from the physical group to the mission.
 - **RFC-0855p-b v1.0** reserved F1 for `DomainCoordinator` but left it unspecified.
@@ -938,7 +938,7 @@ struct GroupRegistry {
 
 ### C. References
 
-- RFC-0850p-a §"Roles and Authorities" (Platform Adapters) — abstract binding, no ceremony
+- RFC-0850 §8.2 (Platform Adapter Contract) — abstract binding, no ceremony
 - RFC-0855 §3 (Mission Lifecycle) — `Forming → Active` transition depends on binding
 - RFC-0855p-b v1.1 §"Genesis State Machine" — explicit founder BIND path
 - WhatsApp group admin API — for future platform-admin election (0855p-c)

@@ -697,7 +697,7 @@ Verify: bootstrap nodes NOT loaded
 
 The three-mode approach (A: bootstrap nodes, B: DHT, C: invite) is the established pattern across decentralized networks (Bitcoin, Tor, Matrix). Each mode has known weaknesses; combining them creates defense in depth.
 
-The Sybil threshold (3-of-5) is the minimum that allows any D-NB-* defense to work. A higher threshold (e.g., 5-of-5) would create availability problems when even one bootstrap node is offline; a lower threshold (e.g., 2-of-5) would allow trivial eclipse.
+The Sybil threshold (3-of-5) is the HIGH-CONFIDENCE minimum that allows the full D-NB-* defense set to work. A higher threshold (e.g., 5-of-5) would create availability problems when even one bootstrap node is offline. A LOWER threshold (2-of-5) is also accepted (E2E IS-2.5 fix; see §6 "Sybil Defense") but with the same 80% intersection requirement and tagged `bootstrap_confidence: Low` — a low-confidence bootstrap is not a trivial eclipse vector because the 80% intersection rule still applies, and the node is required to seek additional peers via GDP before joining a mission. The 2-of-5 case is a graceful-degradation fallback for when 1 bootstrap node is offline; the 1-of-5 and 0-of-5 cases fall through to Mode B.
 
 The 256-peer initial cap is a UX bound: a new node can show 256 peers in its dashboard without overwhelming the human. Subsequent GDP growth removes the cap.
 

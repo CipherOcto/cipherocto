@@ -99,7 +99,7 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 - **Stable identifier**: `[u8; 32]` `SeedListAuthorityId` (multi-sig public key)
 - **Base capabilities**: sign and publish `SeedList` documents; rotate the set of recognized bootstrap nodes; publish revocation lists
 - **Authority scope**: `seed_list_authority` (highest-trust role in this RFC; compromises allow attacker-chosen bootstrap node set)
-- **Who can assume**: CipherOcto foundation (genesis) OR ≥2/3 OCTO-O stake-weighted vote (post-launch, per RFC-0855 §11.2 `GovernanceModel::DAO`)
+- **Who can assume**: CipherOcto foundation (genesis) OR ≥2/3 OCTO-O stake-weighted vote (post-launch, per RFC-0855 §11.1 `GovernanceModel::Dao`)
 - **Who can revoke**: same mechanism, reversed (slash the seed list authority itself)
 - **Lifecycle**: out of scope for this RFC (governed by RFC-0855 §11)
 - **Term**: tied to governance epoch; rotation cadence is operator-configurable (default: every 90 days)
@@ -127,7 +127,7 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 |------|-----------|-----------|--------------|-----------|
 | Bootstrap Node | `bootstrap_serve` | Yes (4 states) | Governance / Self | 0851 §M-GDP-3 |
 | Bootstrapping Node | `bootstrap_request` | Yes (5 states) | Self | 0851 §M-GDP-3 |
-| Seed List Authority | `seed_list_authority` | Out of scope (governance) | Governance (slash) | 0855 §11.2 DAO |
+| Seed List Authority | `seed_list_authority` | Out of scope (governance) | Governance (slash) | 0855 §11.1 (Dao model) + §11.2 (Policies) |
 | Inviter | `invite_issue` | One-shot (no state) | Self / Governance | New in this RFC |
 | DHT Walker | `dht_walk` | Passive | N/A | RFC-0843 |
 
@@ -480,7 +480,7 @@ enum BootstrapClientLifecycle {
 | # | Assumption | Type | Status | Mitigation / Deadline |
 |---|-----------|------|--------|----------------------|
 | IA-NB-1 | SeedListAuthority is honest | TRUST | **ACCEPTED RISK** | Multi-sig foundation key at launch; DAO vote post-launch. Deadline: post-launch F1 (SeedListAuthority decentralization). |
-| IA-NB-2 | 5 bootstrap nodes is sufficient for Sybil resistance | SCALE | MITIGATED | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as ACCEPTED with 5-of-5 trust assumption in 0851 §11.2. |
+| IA-NB-2 | 5 bootstrap nodes is sufficient for Sybil resistance | SCALE | MITIGATED | 80% intersection requirement; if ≥3 of 5 are Sybils, eclipse succeeds. Documented as MITIGATED with 5-of-5 trust assumption in 0851 §11 (Anti-Sybil Mechanisms). |
 | IA-NB-3 | DNS resolution is honest | TRUST | **ACCEPTED RISK** | Use Tor onion or I2P addresses for at least 2 of 5 bootstrap nodes. Deadline: F2 (Tor-only seed list). |
 | IA-NB-4 | TCP/TLS to bootstrap node is not censored | TRUST | **ACCEPTED RISK** | Mode C invite works without internet. Mode B DHT works over non-TCP transports (WebSocket, etc.) per RFC-0843. |
 | IA-NB-5 | Ed25519 is collision-resistant | CRYPTO | MITIGATED | Standard assumption; BLAKE3-256 of public key is the node_id. |
@@ -715,7 +715,7 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 - RFC-0850 (Networking): Deterministic Overlay Transport — uses DeterministicEnvelope
 - RFC-0843 (Networking): OCTO-Network Protocol — Kademlia base (Mode B)
 - RFC-0860 (Networking): Proof of Relay — trust scores for Sybil defense
-- RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.2 DAO
+- RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.1 (Dao governance model) and §11.2 (Governance Policies)
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 - RFC-0000-template v1.3 — Roles, Lifecycle, Implicit Assumptions, Adversary Analysis sections
 

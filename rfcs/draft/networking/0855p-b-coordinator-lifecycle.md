@@ -915,11 +915,11 @@ stateDiagram-v2
 
 | Code | Offense | Penalty (default) | Source | Evidence schema (E2E IS-7.1) |
 |------|---------|-------------------|--------|-------------------------------|
-| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | RFC-0855 §17 + This RFC | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
-| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | RFC-0855 §17 + This RFC | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
-| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O + 1000-epoch cooldown | RFC-0855 §17 + This RFC | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
-| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | RFC-0855 §17 + This RFC | `CensorshipProof` envelope with censored envelope's hash + witness signature |
-| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | RFC-0855 §17 + This RFC | Free-form `evidence` payload + adjudicator signature |
+| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | This RFC (refines RFC-0855 §17 'Envelope forgery' into a specific code) | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
+| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | This RFC (extends RFC-0855 §17 slashing mechanism) | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
+| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O + 1000-epoch cooldown | This RFC (refines RFC-0855 §17 'Isolation breach' into a specific code) | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
+| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | This RFC (refines RFC-0855 §17 'Free-riding' into a specific code) | `CensorshipProof` envelope with censored envelope's hash + witness signature |
+| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | This RFC (refines RFC-0855 §17 'Coordinator misbehavior' into a specific code) | Free-form `evidence` payload + adjudicator signature |
 | 0x0006 | Key compromise (coordinator's signing key was compromised) | 50% OCTO-O | This RFC | `KeyRevocation` envelope + evidence revoked key was used |
 | 0x0007 | Banning legitimate member | 25% OCTO-O | This RFC | `MemberBan` envelope + evidence banned member had not violated any rule |
 | 0x0008 | Vote-buying | 100% OCTO-O | This RFC | Transcript of communications offering slash votes for payment |

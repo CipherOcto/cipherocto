@@ -192,6 +192,8 @@ struct GroupBinding {
 
 ### 2. Binding Envelope Types
 
+> **R4-4 fix — global note on hash construction:** all `*_hash` fields in this RFC's envelopes (`bind_hash`, `unbind_hash`, `rebind_hash`, `ack_hash`) are computed as `BLAKE3-256(header || body)` per §Appendix A. The **header** is the canonical 10-byte prefix `envelope_type (4) || envelope_subtype (4) || version (2, big-endian)`. The **body** is the canonical serialization of the envelope's other fields in declaration order, with length-prefix encoding for variable-length fields (e.g., `String` is serialized as `length (4 bytes, big-endian) || utf8_bytes`). Individual envelope definitions below describe the **body** part of the hash (e.g., `BLAKE3-256(group_jid || ...)`); the reader MUST prepend the header per §Appendix A when computing the full hash. This note applies to all envelopes in this RFC; the `RFC-0855p-c` `PlatformLossEnvelope` follows the same convention.
+
 ```rust
 /// DOT/1/BIND — issued by DomainCoordinator candidate
 #[derive(Clone, Debug)]
@@ -285,7 +287,12 @@ struct UnbindEnvelope {
     authority: UnbindAuthority,
     /// Epoch
     unbind_epoch: u64,
-    /// BLAKE3 binding
+    /// BLAKE3-256(header || binding || reason || authority || unbind_epoch)
+    /// R4-1 fix: explicit field list (was previously "BLAKE3 binding" with no
+    /// specification). `header` is the 10-byte canonical header per §Appendix A
+    /// (envelope_type || envelope_subtype || version, big-endian). All hashes
+    /// in this RFC follow this `header || body` pattern; see the global note
+    /// at the top of the envelope definitions (R4-4 fix).
     unbind_hash: [u8; 32],
     /// Ed25519 signature
     authority_signature: [u8; 64],
@@ -321,6 +328,11 @@ struct RebindEnvelope {
     /// Epoch
     rebind_epoch: u64,
     rebind_nonce: [u8; 16],  // CSPRNG with ≥128 bits entropy (same rule as bind_nonce)
+    /// BLAKE3-256(header || old_binding || new_group_jid || new_platform
+    ///              || mission_id || domain_id || new_coordinator_id
+    ///              || new_coordinator_pubkey || rebind_epoch || rebind_nonce)
+    /// R4-2 fix: explicit field list (was previously uncommented). See the
+    /// global note at the top of the envelope definitions (R4-4 fix).
     rebind_hash: [u8; 32],
     /// Ed25519 signature
     new_coordinator_signature: [u8; 64],
@@ -466,7 +478,7 @@ When a `DOT/1/BIND` is received, each member validates:
 7. **Epoch sanity**: `bind_epoch` is within ±1 of local epoch.
 8. **Nonce freshness (R1-TGB-4 fix):** the witness MUST have not seen the same `(bind_nonce, coordinator_id)` pair in the last 1000 epochs. Replays are silently dropped.
 9. **Pubkey binding (R2-TGB-4 fix):** `coordinator_id == BLAKE3(coordinator_pubkey)`. This binds the public key to the peer_id, preventing a malicious coordinator from substituting a different public key in the signed payload. Without this check, the witness would verify the signature against a public key that does not actually correspond to the claimed peer_id.
-10. **Reconnect split-brain check (R3-1, R3-6 fix):** if `is_reconnect == true` AND a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)` in the local registry, the BIND is silently dropped (with optional `tracing::debug!` for diagnostics). This prevents a former DomainCoordinator from clobbering the current one. **First-BIND-wins rule (R3-9 fix):** if two BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the first to be received AND validated by the witness is the canonical one; subsequent BINDs (including from a different sender) are silently dropped. This rule is implicit in check #5 (no existing binding) but is now explicit to handle the race where two BINDs are in-flight before either updates the registry.
+10. **Reconnect split-brain check (R3-1, R3-6 fix):** if `is_reconnect == true` AND a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)` in the local registry, the BIND is silently dropped (with optional `tracing::debug!` for diagnostics). This prevents a former DomainCoordinator from clobbering the current one. **First-BIND-wins rule (R3-9 fix, R4-7 tiebreaker):** if two BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the canonical BIND is the one with the **lowest `bind_hash` lexicographically** (this is a network-wide deterministic tiebreaker, not per-witness). The witness compares each incoming BIND's `bind_hash` to the locally-accepted binding's `bind_hash`; if the incoming `bind_hash` is lower AND the BIND is valid, the witness switches to the incoming BIND. This ensures that all witnesses converge to the same canonical BIND regardless of local reception order. The first-wins rule is implicit in check #5 (no existing binding) but is now explicit to handle the race where two BINDs are in-flight before either updates the registry.
 
 **Nonce-replay table (R2-TGB-1 fix, R3-4 / R3-7 fix — corrected):**
 

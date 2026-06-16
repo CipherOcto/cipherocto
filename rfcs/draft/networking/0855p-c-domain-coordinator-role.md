@@ -403,7 +403,13 @@ struct PlatformLossEnvelope {
     reason: u8,
     /// Epoch of loss
     loss_epoch: u64,
-    /// BLAKE3 binding all fields
+    /// BLAKE3-256(header || coordinator_id || mission_id || domain_id
+    ///              || group_jid || platform || reason || loss_epoch)
+    /// R4-3 fix: explicit field list (was "BLAKE3 binding all fields").
+    /// `header` is the 10-byte canonical header per §Appendix A (envelope_type
+    /// || envelope_subtype || version, big-endian). All hashes in this RFC
+    /// follow this `header || body` pattern; see the global note at the
+    /// top of the envelope definitions in RFC-0850p-c (R4-4 fix).
     loss_hash: [u8; 32],
     /// Ed25519 signature by DomainCoordinator over loss_hash
     coordinator_signature: [u8; 64],
@@ -485,7 +491,7 @@ DomainCoordinator
 | IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F1). |
 | IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
 | IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
-| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. |
+| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
 | IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
 | IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
 | IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |

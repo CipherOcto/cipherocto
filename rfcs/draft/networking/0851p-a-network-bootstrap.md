@@ -366,6 +366,8 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 
 **Sybil threshold:** with 5 bootstrap nodes and 80% intersection, an attacker must control ≥3 of 5 to eclipse. This is acceptable for bootstrap, given that the attacker also needs to compromise the SeedListAuthority signing key. **Documented as ACCEPTED RISK with deadline.**
 
+**2-of-5 case (E2E IS-2.5 fix):** if only 2 of 5 bootstrap nodes respond, the node applies a weaker acceptance rule: if the 2 responses have ≥80% peer-list intersection, the node accepts them as a valid (but low-confidence) bootstrap and proceeds. The resulting peer set is tagged `bootstrap_confidence: Low` (vs. `High` for the 3-of-5 case). A node with `Low` confidence SHOULD seek additional peers via GDP before joining a mission. Rationale: accepting 2-of-5 with ≥80% agreement is weaker than 3-of-5, so the node should not trust the result as fully.
+
 ### 7. Failure Modes
 
 | Failure | Detection | Response |
@@ -377,6 +379,12 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 | Signed seed list version < local version | Version check | Accept and use newer (governance rotation) |
 | Signed seed list version > local version | Version check | Accept and update local (governance rotation) |
 | Multiple valid seed lists (split) | Authority signature check | Reject both, log error, use cached |
+
+**Mode A → Mode B trigger (E2E IS-2.1 fix):** the fallback fires when fewer than `MIN_BOOTSTRAP_RESPONSES` (3) responses are received within `BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT` (90 epochs). The "All 5 timed out" row above is the degenerate case; the general rule is the 3-of-5 Sybil defense threshold. If exactly 2 of 5 respond, the node falls back to Mode B (DHT) (see IS-2.5 for the 2-of-5 acceptance rule).
+
+**Mode B → Mode C trigger (E2E IS-2.3 fix):** the fallback fires when fewer than `MIN_DHT_PEERS` (3) DHT lookups succeed within `DHT_DISCOVERY_TIMEOUT` (120 epochs). The invite link is the last-resort fallback because it requires user action (scanning a QR code or clicking a link).
+
+**All 3 modes fail (E2E IS-2.4 fix):** the node enters `BootstrapFailed` state. The node MUST surface a user-facing error ("Could not connect to DOT network — check your invite link or try again later") and retry with exponential backoff (initial delay 60 epochs, doubling up to a maximum of 3600 epochs). The retry loop is infinite; there is no maximum number of retries. Rationale: a node that cannot bootstrap is useless, so it must keep trying.
 
 ### 8. Determinism Requirements
 
@@ -483,6 +491,8 @@ enum BootstrapClientLifecycle {
 | IA-NB-10 | Seed list version monotonicity is preserved | PROTOCOL | MITIGATED | Effective_epoch < expires_epoch invariant enforced at signature verify. |
 | IA-NB-11 | Public addresses in seed list are routable | NETWORK | **MISSING CHECK** | No validation that `public_addrs` are actually reachable until first BOOTSTRAP_REQ. Add health check at seed list load (F3). |
 | IA-NB-12 | At least one node is reachable in any region | NETWORK | **ACCEPTED RISK** | Geographic diversity; documented in §1 default table. |
+| IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR | MITIGATED | Specified in §7 Failure Modes (E2E IS-2.4 fix) |
+| IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence | SECURITY | MITIGATED | Specified in §6 Sybil Defense (E2E IS-2.5 fix) |
 
 **Open assumption:** IA-NB-11 (seed list health check at load) is **MISSING** — flagged for implementation F3.
 
@@ -752,6 +762,12 @@ const BOOTSTRAP_NODE_HEARTBEAT_INTERVAL: u64 = 30; // epochs
 /// A bootstrap node is considered "suspect" after this many consecutive
 /// missed heartbeats. 3 × interval is the standard pattern across DOT.
 const BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT: u64 = 3 * BOOTSTRAP_NODE_HEARTBEAT_INTERVAL; // = 90 epochs
+
+/// Minimum DHT peers required for Mode B success (E2E IS-2.3 fix)
+const MIN_DHT_PEERS: usize = 3;
+
+/// DHT discovery timeout before falling back to Mode C (E2E IS-2.3 fix)
+const DHT_DISCOVERY_TIMEOUT: u64 = 120; // epochs
 
 /// DNS seed rotation cadence (governance-rotated)
 const SEED_LIST_ROTATION_EPOCHS: u64 = 7_776_000; // ~90 days @ 1 epoch/sec

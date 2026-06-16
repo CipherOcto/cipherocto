@@ -468,7 +468,7 @@ Platform migration moves a `domain_id` from one platform to another (e.g., from 
 - **Outcome:** if 2/3 approve, the platform migration is committed. The old group's BIND is replaced by the new group's BIND. The old group transitions `Bound → UnboundQuarantined` (skipping `ReBinding` because migration is not the same as REBIND). The new group transitions `Unbound → Bound` directly.
 - **Cooldown:** after migration, no further migration for the same `(mission_id, domain_id)` is allowed for `MIGRATION_RETRY_COOLDOWN = 500` epochs. This prevents migration thrashing.
 - **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
-- **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is the only slash reason 0x000A-0x000B that is used in this RFC; per the reservation in RFC-0855p-b, reason codes 0x000A-0xFFFF are reserved for transport-level (0850p-c) and platform-coordination-level (0855p-c) events.
+- **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is one of two slash reasons (0x000A-0x000B) defined in this RFC; per the canonical mapping in RFC-0855p-b §B, 0x000A-0x000B are transport-level slash reasons (defined here) and 0x000C-0xFFFF are reserved for future slash reasons.
 
 ### 7. REBIND Lifecycle
 

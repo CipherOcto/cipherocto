@@ -438,7 +438,7 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 - `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes) — penalty: 100% OCTO-O
 - `0x0009` = `genesis-compromise` (creator's key was compromised after `GenesisActive` but before handoff to `CoordinatorLifecycle`) — penalty: 100% OCTO-O + immediate `Inactive`
 
-Codes `0x000A-0xFFFF` are reserved for transport-level (0850p-c) and platform-coordination-level (0855p-c) slash reasons. Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §"Platform Migration"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8).
+Codes `0x000A-0x000B` are defined in RFC-0850p-c (transport-level slash reasons); codes `0x000C-0xFFFF` are reserved for future slash reasons (R9-9 fix — was "0x000A-0xFFFF reserved" which contradicted §B; see §B for the canonical mapping). Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §"Platform Migration"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8).
 
 **"Evidence of misbehavior" per slash reason (E2E IS-7.1 fix):** the expected evidence schema for each slash reason:
 - `0x0001 double-sign`: two conflicting `CoordinatorHeartbeat` envelopes (or other state-transition envelopes) signed by the same `coordinator_term_id`, with the same `epoch` field but different payloads.

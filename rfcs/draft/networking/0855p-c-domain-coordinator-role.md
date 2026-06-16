@@ -437,7 +437,7 @@ Slash proof structure is identical to RFC-0855p-b; the only addition is the `dom
 **Slash reasons:** the DomainCoordinator role uses the slash reason codes from RFC-0855p-b §B verbatim (0x0001-0x0009 are slash-only; 0x000A-0x000B are transport-level per 0850p-c). **R9-5 fix — duplicate table removed:** the previous version of this RFC had a stale "slash reasons (extends RFC-0855p-b)" table that used 0x0006, 0x0007, 0x0008 for DIFFERENT reasons than 0855p-b §B (which has those codes as `key-compromise`, `banning-legitimate-member`, `vote-buying` respectively). The stale table has been removed; refer to RFC-0855p-b §B for the canonical mapping. The DomainCoordinator-specific behavioral notes are:
 - 0x0005 (coordinator misbehavior) is the most common DomainCoordinator slash reason (covers censorship, kick evasion, BIND equivocation).
 - 0x0007 (banning legitimate member) is DomainCoordinator-specific but the reason code is global.
-- 0x000A (platform migration) and 0x000B (is_reconnect_lie) are platform/transport-level (per 0850p-c).
+- 0x000A (platform migration) and 0x000B (is_reconnect_lie) are transport-level (per 0850p-c §B).
 
 ### 7. Cross-RFC Integration
 
@@ -504,7 +504,7 @@ The audit log is replicated via the same mechanism as the slash tally itself (pe
 Each platform's DomainCoordinator is slashed **independently**. If a WhatsApp DomainCoordinator and a Matrix DomainCoordinator both serve the same `domain_id`, and the WhatsApp one is slashed, the Matrix one is NOT slashed by the same evidence. The slash reason code includes a platform tag:
 
 - Bit 0x8000 (high bit) is set: this is a platform-tagged slash
-- Bits 0-14: the slash reason (0x0001-0x0009 from RFC-0855p-b, 0x000A-0x3FFF reserved)
+- Bits 0-14: the slash reason (0x0001-0x0009 from RFC-0855p-b, 0x000A-0x000B transport-level per RFC-0850p-c §6, 0x000C-0x7FFF reserved for future slash reasons; 0x8000+ is the platform-tagged slash indicator)
 - Bit 15 is the platform tag indicator
 
 Example: a WhatsApp coordinator slashed for kick evasion is `0x8005` (platform-tagged reason 0x0005). A mission-level coordinator slashed for the same offense is `0x0005` (no platform tag, mission-level).

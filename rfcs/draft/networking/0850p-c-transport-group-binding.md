@@ -455,7 +455,7 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 | 0x0007 | **Banning legitimate member** (per 0855p-b §B) | Governance (slash tally) | 25% OCTO-O |
 | 0x0008 | **Vote-buying** (per 0855p-b §B) | Governance (slash tally) | 100% OCTO-O |
 | 0x0009 | **Genesis compromise** (per 0855p-b §B; creator's key revoked after `GenesisActive`) | MissionCreator (slash proof) | immediate `Inactive` |
-| 0x000A | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §"Platform Migration") | MissionCreator + 2/3 governance vote | 1000 epochs |
+| 0x000A | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)") | MissionCreator + 2/3 governance vote | 1000 epochs |
 | 0x000B | **`is_reconnect_lie`** (E2E IS-1.6 fix): the reconnect claim was falsified (claimant is not the same peer as the original BIND signer) | Any witness | 500 epochs |
 | 0x000C-0xFFFF | Reserved | — | — |
 

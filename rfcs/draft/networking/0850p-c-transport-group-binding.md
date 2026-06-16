@@ -82,7 +82,7 @@ Without a binding ceremony:
 - **Stable identifier**: `[u8; 32]` `DomainCoordinatorId` (alias for `PeerId` in the mission's namespace)
 - **Base capabilities**: sign `DOT/1/BIND`, `DOT/1/UNBIND`, `DOT/1/REBIND` envelopes; emit binding witnesses; resolve binding disputes
 - **Authority scope**: `bind_domain` (issue BIND/UNBIND/REBIND for the physical group; sign as the binding authority)
-- **Who can assume**: implicit designator (first member to send a DOT envelope in the group, see §3) OR explicit founder (creator of `mission_id` issues BIND at mission creation)
+- **Who can assume**: implicit designator (first member to send a DOT envelope in the group, see §3 "Binding Ceremony — Implicit Designator") OR explicit founder (creator of `mission_id` issues BIND at mission creation)
 - **Who can revoke**: self (resignation), governance (2/3 vote slash), or physical-group-admin-loss (e.g., kicked from WhatsApp group)
 - **Lifecycle**: `DomainCoordinatorLifecycle` (reuses `CoordinatorLifecycle` from RFC-0855p-b; specialized by RFC-0855p-c)
 - **Term**: tied to binding (`bound_at_epoch` to `unbound_at_epoch`)
@@ -375,7 +375,7 @@ sequenceDiagram
 
 **Multi-DOT-sender detection (E2E IS-3.2 fix):** if a node sees 2+ nodes send DOT envelopes in the same group within the same epoch, the node applies a deterministic tiebreaker: the candidate with the **lowest `peer_id` lexicographically** is the implicit DomainCoordinator; all others fall back to Witness role. This is the **3-way race tiebreaker** (lowest `peer_id` wins), which differs from the 2-way BIND tiebreaker (lowest `bind_hash` wins) by using `peer_id` as the sort key. The reason: BINDs may not have been received yet, so we tiebreak on the candidate's stable `peer_id` rather than the not-yet-computed `bind_hash`. The losers are NOT slashed; they are demoted to Witness role and continue participating.
 
-**Why implicit designator?** Most group members will not pre-coordinate a mission. The implicit designator lets a group "self-bootstrap" into a mission. Explicit founder BIND (§4) is for pre-coordinated missions.
+**Why implicit designator?** Most group members will not pre-coordinate a mission. The implicit designator lets a group "self-bootstrap" into a mission. Explicit founder BIND (§4 "Binding Ceremony — Explicit Founder") is for pre-coordinated missions.
 
 ### 4. Binding Ceremony — Explicit Founder
 

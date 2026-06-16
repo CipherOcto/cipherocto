@@ -199,6 +199,39 @@ struct DomainCoordinatorRecord {
 
 ### 3. Platform-Admin Authority Check
 
+**PlatformEvent enum (R2-DC-4 fix — full definition; was previously referenced in narrative form without a struct definition):**
+
+The adapter emits `PlatformEvent` envelopes when the underlying messaging platform reports a state change relevant to DOT binding. The enum is exhaustive over the events the DomainCoordinator subscribes to.
+
+```rust
+/// Events emitted by the platform layer that the DomainCoordinator subscribes to
+/// (R2-DC-4 fix: previously referenced without a struct definition)
+#[derive(Clone, Debug)]
+#[repr(u8)]
+enum PlatformEvent {
+    /// Group admin transfer (canonical handover path)
+    /// Payload: { old_admin: participant_id, new_admin: participant_id, group_jid, transfer_epoch }
+    AdminTransfer = 0x01,
+    /// Kicked from the physical group (e.g., by group admin or platform moderation)
+    /// Payload: { group_jid, kick_epoch, kicker_participant_id }
+    KickedFromGroup = 0x02,
+    /// Banned from the platform entirely (account-level)
+    /// Payload: { ban_epoch, ban_reason }
+    PlatformBan = 0x03,
+    /// Admin list observed (initial or refresh)
+    /// Payload: { group_jid, admins: Vec<participant_id>, observation_epoch }
+    AdminListObserved = 0x04,
+    /// Group membership change (new member or member left)
+    /// Payload: { group_jid, action: "join"|"leave", participant_id, change_epoch }
+    MembershipChange = 0x05,
+    /// Subgroup created (informational; not used for binding decisions)
+    /// Payload: { parent_group_jid, child_group_jid, creator_participant_id }
+    SubgroupCreated = 0x06,
+}
+```
+
+**R2-DC-5 fix — IA-DC-7 reconciliation:** the implicit-assumption audit row IA-DC-7 says "Platform admin ID can be mapped to PeerId" with mitigation "Each adapter implements the mapping (e.g., WhatsApp: phone → peer_id via mission's pubkey registry)". The platform layer returns admin identifiers in **platform-native** format (e.g., WhatsApp returns phone numbers like `+15551234567`). The adapter is responsible for **translating** platform-native format to the canonical DOT 32-byte `participant_id` (which is then mapped to `peer_id = BLAKE3(participant_id || mission_id)`). The function `is_platform_admin` operates on `participant_id` (post-translation); the platform's native format is only used at the adapter boundary. IA-DC-7 is updated accordingly.
+
 When a `DOT/1/BIND` is received, the receiving node verifies that the candidate DomainCoordinator is the platform-admin of the group.
 
 **Critical implementation note (R1-DC-1 fix):** The forward mapping `participant_id → peer_id = BLAKE3(participant_id || mission_id)` is one-way (BLAKE3 is a one-way hash). The reverse mapping `peer_id → participant_id` is **impossible** without a precomputed lookup table. Implementations MUST NOT attempt the reverse mapping; they MUST iterate the admin list and compute the expected peer_id for each admin, then check if any matches the candidate.
@@ -238,6 +271,8 @@ fn is_platform_admin(
 **For MissionCreator (founder BIND) path:** the founder is the DomainCoordinator without platform-admin check. This is the explicit founder path from RFC-0850p-c §4.
 
 **For implicit designator path:** the first-DOT-sender self-designates. Platform-admin check is **deferred** to the next platform event (when the adapter observes the group admin list). If the first-DOT-sender is NOT the platform admin, they are NOT the DomainCoordinator — the next platform event will trigger a `Designated → Resigned → Inactive` transition and the platform admin becomes the DomainCoordinator.
+
+**Implicit designator timeout (R2-DC-1 fix):** if no platform event arrives within `implicit_designator_timeout = 100 epochs` (deterministic, configurable per platform), the designator transitions `Designated → Resigned → Inactive` and the group remains `Unbound`. This prevents the designator from remaining in `Designated` indefinitely when the platform is slow to deliver admin-list events (e.g., debounced or throttled). Any subsequent DOT envelope is treated as a new first-DOT-sender (re-runs the implicit designator ceremony). The timeout MUST be longer than the platform's typical event-delivery SLA (e.g., WhatsApp delivers `participant_changed` events within a few seconds; 100 epochs = 100 × epoch_duration, default 10s/epoch = 1000s, well above the platform SLA).
 
 ### 4. Platform-Mediated Handover
 
@@ -294,6 +329,14 @@ The DomainCoordinator monitors three platform events:
 **Deadlock resolution:** the previous wording "mission participants MAY elect a new DomainCoordinator" was ambiguous — if the old DomainCoordinator is in `Suspect` (not `Inactive`), the election cannot designate a successor (the role is still occupied). The fix: `Suspect` is a grace state, not a permanent state. After `3 × heartbeat` (deterministic timeout), the DomainCoordinator is forced to `Handover → Inactive` regardless of connection state. Mission participants can then run an election or wait for reconnection.
 
 **Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3) — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
+
+**Split-brain prevention on reconnection (R2-DC-3 fix):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
+1. Reconnected node queries the local `GroupRegistry` for the current binding state.
+2. If a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)`, the reconnected node MUST NOT issue a BIND.
+3. The reconnected node MAY challenge the current DomainCoordinator via `CoordinatorChallenge` (per RFC-0855p-b §"Coordinator Challenge") if it has evidence of misbehavior; otherwise, it accepts the new DomainCoordinator and transitions to `MissionParticipant`.
+4. If no DomainCoordinator is `Active` (e.g., the new one was also disconnected), the reconnected node MAY issue a BIND as a fresh designator. The `BindEnvelope` MUST include a `reconnect_epoch` field (R2-DC-3 fix: new field on the envelope; the witness rule #1 validation must reject BINDs with `reconnect_epoch == 0` AND an active binding — this prevents a reconnecting node from clobbering the current DomainCoordinator).
+
+The `reconnect_epoch` field on `BindEnvelope` is set to the current epoch when the BIND is issued (non-zero for reconnection; same as `bind_epoch` for first-time BINDs; this addition to the `BindEnvelope` is a pre-1.0 spec change tracked in RFC-0850p-c's changelog).
 
 ### 5a. PlatformLoss Envelope (R1-DC-3 fix)
 
@@ -404,7 +447,7 @@ DomainCoordinator
 | IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
 | IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
 | IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |
-| IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping (e.g., WhatsApp: phone → peer_id via mission's pubkey registry). |
+| IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id || mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
 | IA-DC-8 | Mission-level coordinator and DomainCoordinator are separate roles | PROTOCOL | MITIGATED | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator). |
 | IA-DC-9 | `coordinator_term_id` chain is preserved across handover | PROTOCOL | MITIGATED | Defined in §4 Platform-Mediated Handover. |
 | IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |

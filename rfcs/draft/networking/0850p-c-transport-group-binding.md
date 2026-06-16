@@ -225,6 +225,14 @@ struct BindEnvelope {
     ///              || coordinator_id || coordinator_pubkey
     ///              || bind_epoch || bind_nonce)
     bind_hash: [u8; 32],
+    /// Reconnect epoch (R2-DC-3 fix — added to support split-brain prevention
+    /// when a former DomainCoordinator reconnects and tries to re-BIND while
+    /// another coordinator is already Active). Witnesses MUST reject a BIND
+    /// if `reconnect_epoch == 0` AND a different `coordinator_id` is currently
+    /// `Active` for the same `(mission_id, domain_id, platform)`. For
+    /// first-time BINDs, `reconnect_epoch == bind_epoch` (or set to 0 to
+    /// indicate "no reconnection").
+    reconnect_epoch: u64,
     /// Ed25519 signature by coordinator over bind_hash
     coordinator_signature: [u8; 64],
 }
@@ -233,6 +241,11 @@ struct BindEnvelope {
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct BindAck {
+    envelope_type: [u8; 4],       // b"DOT1" (R2-TGB-6 fix: added for consistency
+                                   //          with BIND/REBIND/UNBD envelope_type;
+                                   //          canonical header per §Appendix A
+                                   //          requires both envelope_type and
+                                   //          envelope_subtype)
     envelope_subtype: [u8; 4],    // b"BACK"
     /// The BindEnvelope being acknowledged (full, not just hash)
     bind_envelope: BindEnvelope,
@@ -253,6 +266,7 @@ struct BindAck {
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct UnbindEnvelope {
+    envelope_type: [u8; 4],       // b"DOT1" (R2-TGB-6 fix: added for consistency)
     envelope_subtype: [u8; 4],    // b"UNBD"
     /// The GroupBinding being unbound (full, for verification)
     binding: GroupBinding,
@@ -282,6 +296,7 @@ enum UnbindAuthority {
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct RebindEnvelope {
+    envelope_type: [u8; 4],       // b"DOT1" (R2-TGB-6 fix: added for consistency)
     envelope_subtype: [u8; 4],    // b"RBND"
     /// The existing GroupBinding
     old_binding: GroupBinding,
@@ -400,9 +415,9 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 
 REBIND is the operation that changes the physical group for an existing `domain_id` (e.g., "the mission moved from WhatsApp group A to WhatsApp group B"). The old group goes to `UnboundQuarantined`; the new group goes to `Bound`.
 
-**Multi-platform rule (clarified per 2026-06-16 batch review BR-6):**
+**Multi-platform rule (clarified per 2026-06-16 batch review BR-6, R2-TGB-3 fix for old-group state):**
 
-- **REBIND to a different platform** (e.g., WhatsApp → Matrix) is always allowed, regardless of cooldown. The new platform is independent per §5 multi-platform rule.
+- **REBIND to a different platform** (e.g., WhatsApp → Matrix) is always allowed, regardless of cooldown. The old group on the old platform transitions `Bound → ReBinding → UnboundQuarantined` (R2-TGB-3 fix: previous spec said "always allowed" but did not specify the old group's terminal state; clarification is that the old group quarantines regardless of whether the new group is on the same or different platform — quarantine is determined by the OLD group's REBIND participation, not by whether the new group is on the same platform). The new platform is independent per §5 multi-platform rule.
 - **REBIND to a group on the same platform** is allowed only if:
   - The old group is in `UnboundQuarantined` state (which it enters immediately on REBIND), AND
   - The cooldown has elapsed (default 100 epochs after UNBIND; 1000 epochs after founder-squat UNBIND), AND
@@ -422,7 +437,7 @@ REBIND is the operation that changes the physical group for an existing `domain_
 - `new_coordinator_id` MAY be the same as the old (no handover) or different (handover).
 - If `new_coordinator_id` is different, the new coordinator MUST satisfy **all** of:
   - Eligible per RFC-0855p-b §"Election Algorithm" (stake + trust score ≥ threshold)
-  - Has signed and broadcast at least one `DOT/1/HEARTBEAT` in the new group (proves presence)
+  - Has signed and broadcast at least one `CoordinatorHeartbeat` (per RFC-0855p-b §"Heartbeat Protocol"; R2-TGB-2 fix: envelope name was previously incorrectly given as `DOT/1/HEARTBEAT` — the canonical name is `CoordinatorHeartbeat`) in the new group (proves presence)
   - Has `peer_id` matching the canonical `BLAKE3(participant_id || mission_id)` (verifies key ownership)
   - Is a current member of the new group (verified via the adapter's membership API)
   
@@ -441,6 +456,39 @@ When a `DOT/1/BIND` is received, each member validates:
 6. **Coordinator eligibility**: `coordinator_id` is eligible per RFC-0855p-b (stake + trust).
 7. **Epoch sanity**: `bind_epoch` is within ±1 of local epoch.
 8. **Nonce freshness (R1-TGB-4 fix):** the witness MUST have not seen the same `(bind_nonce, coordinator_id)` pair in the last 1000 epochs. Replays are silently dropped.
+9. **Pubkey binding (R2-TGB-4 fix):** `coordinator_id == BLAKE3(coordinator_pubkey)`. This binds the public key to the peer_id, preventing a malicious coordinator from substituting a different public key in the signed payload. Without this check, the witness would verify the signature against a public key that does not actually correspond to the claimed peer_id.
+
+**Nonce-replay table (R2-TGB-1 fix — R2-TGB-1 spec for rule #8):**
+
+```rust
+/// Per-witness structure for tracking seen BIND nonces (R2-TGB-1)
+struct NonceReplayTable {
+    /// (bind_nonce, coordinator_id) -> first-seen epoch
+    entries: BTreeMap<([u8; 16], [u8; 32]), u64>,
+    /// Last eviction epoch
+    last_eviction_epoch: u64,
+}
+
+impl NonceReplayTable {
+    /// Returns true if the (nonce, coordinator_id) pair is a replay
+    fn is_replay(&self, nonce: [u8; 16], coord_id: [u8; 32], now_epoch: u64) -> bool {
+        // Evict entries older than 1000 epochs first
+        if now_epoch - self.last_eviction_epoch > 100 {
+            let cutoff = now_epoch.saturating_sub(1000);
+            self.entries.retain(|_, first_seen| *first_seen > cutoff);
+            // last_eviction_epoch = now_epoch; // mut self
+        }
+        self.entries.contains_key(&(nonce, coord_id))
+    }
+
+    /// Records the (nonce, coordinator_id) pair as seen
+    fn record(&mut self, nonce: [u8; 16], coord_id: [u8; 32], now_epoch: u64) {
+        self.entries.entry((nonce, coord_id)).or_insert(now_epoch);
+    }
+}
+```
+
+**Performance:** the table is O(N) where N = unique nonces in last 1000 epochs. With a heartbeat of 30 epochs and per-coordinator nonce generation, N is bounded by `num_active_coordinators × 1000 / heartbeat_interval = num_active_coordinators × 33`. For typical missions (< 100 active coordinators), N < 3300 entries, well within memory limits. Eviction is amortized to every 100 epochs.
 
 If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1/BIND_ACK`. If any fail, the witness silently drops the BIND (with optional `tracing::debug!` for diagnostics).
 

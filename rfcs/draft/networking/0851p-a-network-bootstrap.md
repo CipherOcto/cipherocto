@@ -160,6 +160,16 @@ struct BootstrapNode {
     ///              || capabilities || signed_at_epoch)
     /// R1-NB-3 fix: SeedListAuthorityId is the authority's public key (implicit
     /// in the verification flow; not a field in the struct).
+    /// R2-NB-1 fix — signing context: the authority's public key is NOT a
+    /// field in `BootstrapNode`. It is part of the **signing context** — the
+    /// entity that signs the seed list (e.g., the foundation or DAO multi-sig)
+    /// holds the private key and uses its own public key as a salt when
+    /// computing `entry_hash`. The verifier, who already knows the
+    /// authority's public key from a separate trust chain (e.g., built-in
+    /// foundation key at launch; DAO multi-sig post-launch), reconstructs
+    /// `entry_hash` using the same public key to verify the signature. This
+    /// design keeps `BootstrapNode` compact (no redundant field) while
+    /// binding each entry to a specific authority's key.
     entry_hash: [u8; 32],
     /// Ed25519 signature by SeedListAuthority over entry_hash
     authority_signature: [u8; 64],
@@ -736,8 +746,10 @@ const PEER_LIST_INTERSECTION_THRESHOLD: f64 = 0.80;
 /// Heartbeat interval for bootstrap node liveness
 const BOOTSTRAP_NODE_HEARTBEAT_INTERVAL: u64 = 30; // epochs
 
-/// Heartbeat timeout (3 missed heartbeats = suspect)
-const BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT: u64 = 90; // epochs (= 3 × interval)
+/// Heartbeat timeout (R2-NB-2 fix — derived from interval, not independent).
+/// A bootstrap node is considered "suspect" after this many consecutive
+/// missed heartbeats. 3 × interval is the standard pattern across DOT.
+const BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT: u64 = 3 * BOOTSTRAP_NODE_HEARTBEAT_INTERVAL; // = 90 epochs
 
 /// DNS seed rotation cadence (governance-rotated)
 const SEED_LIST_ROTATION_EPOCHS: u64 = 7_776_000; // ~90 days @ 1 epoch/sec

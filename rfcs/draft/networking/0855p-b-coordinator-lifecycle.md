@@ -300,7 +300,32 @@ enum GenesisState {
 
 **R1-CL-1 fix — failure transition:** the v1.1 spec previously treated `GenesisActive` as terminal (no failure path). The fix adds an explicit `GenesisActive → Inactive` transition for the case where the creator's key is revoked or compromised after genesis succeeds but before the mission becomes Active. Without this, a compromised creator would persist as coordinator until manual intervention. The slash reason 0x0009 is in the reserved 0x0009-0xFFFF range (codes 0x0001-0x0008 are taken; see §"Slash Reason Codes" table) and is defined here as `genesis-compromise`.
 
-**R1-CL-2 fix — GenesisWitness validation failure:** the transition from `GenesisSelfAttest` to `GenesisActive` requires ≥1 valid witness. The fix adds an explicit timeout-based rollback path: if no valid witness is received within `genesis_witness_timeout = 100 epochs`, the creator rolls back to `GenesisDesignated` and can re-attempt by signing a fresh `GenesisAttest` (with a new `attest_nonce` to prevent replay). The creator can also roll back immediately on receipt of a `GenesisAttest` with an invalid signature (e.g., signed by an unauthorized key). Rollback is silent (no broadcast required); the next genesis attempt uses a new `attest_epoch` and `attest_nonce`.
+**R1-CL-2 fix — GenesisWitness validation failure:** the transition from `GenesisSelfAttest` to `GenesisActive` requires ≥1 valid witness. The fix adds an explicit timeout-based rollback path: if no valid witness is received within `genesis_witness_timeout = 100 epochs` (R2-CL-3 fix: now defined in §"Constants" below), the creator rolls back to `GenesisDesignated` and can re-attempt by signing a fresh `GenesisAttest` (with a new `attest_nonce` to prevent replay). The creator can also roll back immediately on receipt of a `GenesisAttest` with an invalid signature (e.g., signed by an unauthorized key). Rollback is silent (no broadcast required); the next genesis attempt uses a new `attest_epoch` and `attest_nonce`.
+
+**R2-CL-1 fix — GenesisAttest stale nonce rejection (receiver-side rule):**
+
+When a node receives a `GenesisAttest` envelope, it MUST validate:
+
+1. **attest_nonce freshness:** the witness MUST have not seen the same `(attest_nonce, mission_id)` pair in the last `genesis_witness_timeout = 100 epochs`. Replays are silently dropped.
+2. **Creator signature validity:** `attest_signature` is valid for the creator's public key (from `MissionDescriptor.creator_pubkey`).
+3. **Creator is current mission creator:** the public key in the signature matches the canonical creator's pubkey (no role substitution).
+4. **Epoch sanity:** `attest_epoch` is within ±1 of local epoch (prevents stale genesis).
+
+If any of these fail, the node silently drops the `GenesisAttest` (with optional `tracing::debug!`). The creator's local `attest_nonce` must be incremented for every new attempt; a duplicate `(attest_nonce, mission_id)` is treated as a stale genesis and rejected by all witnesses.
+
+**R2-CL-3 fix — genesis_witness_timeout constant:**
+
+```rust
+/// Maximum epochs to wait for ≥1 GenesisWitness before rolling back
+/// GenesisSelfAttest → GenesisDesignated (R2-CL-3)
+const GENESIS_WITNESS_TIMEOUT: u64 = 100;
+
+/// Minimum number of GenesisWitnesses required to transition to GenesisActive
+const MIN_GENESIS_WITNESSES: usize = 1;
+
+/// Maximum acceptable clock skew between attest_epoch and local epoch
+const GENESIS_EPOCH_TOLERANCE: u64 = 1;
+```
 
 **Why a 3-state machine, not just `Designated → Active`?**
 
@@ -811,8 +836,10 @@ stateDiagram-v2
 | 0x0006 | Heartbeat falsification | 50% OCTO-O | This RFC |
 | 0x0007 | Handover message loss | 25% OCTO-O | This RFC |
 | 0x0008 | Term overstay (post `term_end_epoch`) | 100% OCTO-O | This RFC |
+| 0x0009 | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix) | 100% OCTO-O + immediate Inactive | This RFC (v1.1 patch) |
+| 0x000A-0xFFFF | Reserved | — | — |
 
-Codes 0x0006-0x0008 are new in this RFC; codes 0x0001-0x0005 extend RFC-0855 §17 with the cool-down requirement.
+Codes 0x0006-0x0009 are new in this RFC (0x0006-0x0008 in v1.0, 0x0009 added in v1.1 for genesis-compromise); codes 0x0001-0x0005 extend RFC-0855 §17 with the cool-down requirement. The reserved 0x000A-0xFFFF range is allocated for future slash reasons (e.g., F2 cross-domain slash, F3 small-group slash).
 
 ---
 

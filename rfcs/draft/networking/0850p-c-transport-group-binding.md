@@ -882,7 +882,7 @@ Verify:
 | F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch |
 | F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c |
 | F5 | Cross-platform witness aggregation (e.g., WhatsApp witness + Matrix witness) | MEDIUM | Future |
-| F6 | UNBIND reason 0x0006-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 evolution |
+| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 evolution |
 
 ## Rationale
 

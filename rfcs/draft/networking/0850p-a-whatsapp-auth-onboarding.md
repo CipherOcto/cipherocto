@@ -21,7 +21,7 @@ Define a standalone CLI binary (`octo-whatsapp-onboard`) and companion library (
 **Requires:**
 
 - Mission 0850p: DOT WhatsApp Adapter (Implemented) — the `WhatsAppConfig` schema this tool produces, and the `WhatsAppWebAdapter` runtime methods (`start_bot`, `run_reconnect_loop`, `self_handle`)
-- RFC-0850: Deterministic Overlay Transport, §8.1 (Platform Adapters)
+- RFC-0850p-c: Transport Group Binding, §"Specification" (companion to this RFC; defines how the bound groups become DOT transport groups)
 
 **Optional (architectural references):**
 

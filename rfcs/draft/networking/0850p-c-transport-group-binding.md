@@ -632,16 +632,16 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-10 | `group_jid` is unique per platform | PROTOCOL | MITIGATED | Platform-specific (e.g., WhatsApp `120363...@g.us` is globally unique). |
 | IA-TGB-11 | Replay of BIND across epochs is rejected | REPLAY | MITIGATED | `bind_nonce` + `bind_epoch` binding. |
 | IA-TGB-12 | REBIND atomicity is preserved | PROTOCOL | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. A node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
-| IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses | REPLAY | MITIGATED | Specified in §8 Witness Validation (E2E IS-1.2 fix) |
+| IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses | REPLAY | MITIGATED | Specified in §8 "Witness Validation Rules" (E2E IS-1.2 fix) |
 | IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout | TIMING | MITIGATED | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff |
 | IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs | AUTHORITY | MITIGATED | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003 |
-| IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B | SECURITY | MITIGATED | Specified in §8 Witness Validation (E2E IS-1.6 fix) |
+| IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B | SECURITY | MITIGATED | Specified in §8 "Witness Validation Rules" (E2E IS-1.6 fix) |
 | IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used | PROTOCOL | MITIGATED | Specified in §6 Unbind Reasons |
-| IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id` | PROTOCOL | MITIGATED | Specified in §3 Implicit Designator |
-| IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks | AUTHORITY | MITIGATED | Specified in §4 Explicit Founder |
+| IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id` | PROTOCOL | MITIGATED | Specified in §3 "Binding Ceremony — Implicit Designator" |
+| IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks | AUTHORITY | MITIGATED | Specified in §4 "Binding Ceremony — Explicit Founder" |
 | IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled | DETERMINISM | MITIGATED | First-seen-wins (per-witness) |
 | IA-TGB-21 (E2E IS-3.5) | 3-way BIND race resolves to a single canonical BIND | DETERMINISM | MITIGATED | Lowest `bind_hash` lex, then lowest `peer_id` lex |
-| IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level | GOVERNANCE | MITIGATED | Specified in §6a Platform Migration |
+| IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level | GOVERNANCE | MITIGATED | Specified in §6a "Platform Migration (E2E IS-4.8 fix)" |
 | IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter | SECURITY | MITIGATED | Specified in §8 witness check #3 (R1-TGB-5 fix) |
 | IA-TGB-24 (E2E IS-8.1) | BIND hash comparison is big-endian per RFC-0008 | DETERMINISM | MITIGATED | Raw 32-byte comparison, no endianness conversion |
 | IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!` | PROTOCOL | MITIGATED | Per R3-1 fix; routine filtering is silent per §"routine filtering silent" |

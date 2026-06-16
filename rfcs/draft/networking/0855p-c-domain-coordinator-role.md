@@ -164,7 +164,7 @@ The key difference: **platform events trigger state transitions**. The adapter e
 
 **Latch-on-Active, never directly Suspect (E2E IS-6.4 fix):** a node MUST pass through `Active` before reaching `Suspect`. The first time a node detects it is the platform admin (right after `join_group + BIND + Designated → Elected`), it enters `Elected` (NOT `Active`). Only after the FIRST `HEARTBEAT_INTERVAL` (30 epochs) of successful heartbeat emission does the node transition `Elected → Active`. This latching prevents a freshly-elected node that loses the group within seconds from being slashed on the same transition. Rationale: a 30-epoch warmup window lets the node confirm stable admin status before being held accountable for missing heartbeats.
 
-**Suspect → Inactive slash threshold (E2E IS-6.5 fix):** the DomainCoordinator remains in `Suspect` for `SUSPECT_WINDOW = 3 × HEARTBEAT_INTERVAL` (90 epochs). If the platform loss is confirmed (i.e., the platform event is delivered or `adapter_connected = false` for the full 90 epochs), the DomainCoordinator transitions to `Inactive` AND is slashed with reason 0x0005. If platform events resume before the 90 epochs expire, the DomainCoordinator transitions back to `Active` and no slash occurs. This gives the platform 90 epochs to recover from a transient outage without false-positive slashing.
+**Suspect → Inactive slash threshold (E2E IS-6.2 fix):** the DomainCoordinator remains in `Suspect` for `SUSPECT_WINDOW = 3 × HEARTBEAT_INTERVAL` (90 epochs). If the platform loss is confirmed (i.e., the platform event is delivered or `adapter_connected = false` for the full 90 epochs), the DomainCoordinator transitions to `Inactive` AND is slashed with reason 0x0005. If platform events resume before the 90 epochs expire, the DomainCoordinator transitions back to `Active` and no slash occurs. This gives the platform 90 epochs to recover from a transient outage without false-positive slashing.
 
 ### 2. DomainCoordinatorRecord
 
@@ -568,9 +568,9 @@ Verification: mission participants verify the signature against the DomainCoordi
 | IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |
 | IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
 | IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
-| IA-DC-13 (E2E IS-6.2) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.5 fix — 90-epoch Suspect window, then slash or recover) |
-| IA-DC-14 (E2E IS-6.3) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.4 fix — Elected → Active latch) |
-| IA-DC-15 (E2E IS-6.4) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss |
+| IA-DC-13 (E2E IS-6.3) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.3 fix — Suspect→Active return bounded; 90-epoch Suspect window is the IS-6.2 fix). |
+| IA-DC-14 (E2E IS-6.4) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.4 fix — Elected → Active latch) |
+| IA-DC-15 (E2E IS-6.2) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss (per IS-6.2 fix — 90-epoch Suspect window). |
 | IA-DC-16 (E2E IS-8.4) | Coordinator term is monotonic and never decreases across re-Active | PROTOCOL | MITIGATED | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 DomainCoordinatorLifecycle. |
 | IA-DC-17 (E2E IS-5.3) | Slash votes are public and auditable post-resolution | GOVERNANCE | MITIGATED | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §9a "Slash Vote Audit" (E2E IS-5.3 fix) above. |
 | IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §9b "Cross-Platform Slash" (E2E IS-5.8 fix) above. |
@@ -607,16 +607,16 @@ Verification: mission participants verify the signature against the DomainCoordi
 | D-DC-4 | Slash vote (2/3) | DomainCoordinator abuse | Coordinator key | Any time | One domain_id | 2/3 quorum; UNBIND for < 4 members | HIGH | MITIGATED |
 | D-DC-5 | Slash reason 0x0006 (key compromise) | Platform-reported attack | Platform key | Rare | One domain_id | REBIND to new coordinator | CRITICAL | MITIGATED |
 | D-DC-6 | Slash reason 0x0007 (banning member) | DomainCoordinator overreach | Coordinator key | Any time | One domain_id | Slash vote; cross-domain slash (F2) | HIGH | **ACCEPTED RISK** — F2 |
-| D-DC-7 | Slash reason 0x0001 (equivocation / double-sign, per RFC-0855p-b §B) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting BINDs detected; slash | HIGH | MITIGATED |
+| D-DC-7 | Slash reason 0x0001 (double-sign, per RFC-0855p-b §B) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting envelopes detected; slash | HIGH | MITIGATED |
 | D-DC-8 | Implicit designator (0850p-c §3) races | Founder squatter | Own key | First DOT in group | One domain_id | RFC-0850p-c D-TGB-1 + UNBIND 0x0003 (founder squat) | HIGH | MITIGATED |
 | D-DC-9 | Mission-level coordinator conflict | Two coordinators | Own keys | Mission creation | One mission | Mission governance decides; DomainCoordinator is sub-role | LOW | MITIGATED |
 | D-DC-10 | `coordinator_term_id` chain break | Coordinated handover attack | Two keys | At handover | One domain_id | BLAKE3 chain enforced; chain break = slash | MEDIUM | MITIGATED |
 
 ### Multi-Round Review
 
-- **Round 1 (this RFC):** 10 decisions, 1 CRITICAL (D-DC-1 platform-admin trust), 5 HIGH, 0 ACCEPTED RISK unaddressed (F1, F2 named)
+- **Round 1 (this RFC):** 10 decisions, 2 CRITICAL (D-DC-1 platform-admin trust [ACCEPTED RISK], D-DC-5 key compromise [MITIGATED]), 5 HIGH, 0 ACCEPTED RISK unaddressed (F1, F2 named; R9-11 fix — was "1 CRITICAL" which omitted D-DC-5)
 - **Round 2 (post-F1, post-F2):** D-DC-1 mitigated by cross-platform attestation; D-DC-6 mitigated by cross-domain slash
-- **Severity classification:** 1 CRITICAL, 5 HIGH, 3 MEDIUM, 1 LOW
+- **Severity classification:** 2 CRITICAL (D-DC-1 platform-admin trust [ACCEPTED RISK], D-DC-5 key compromise [MITIGATED]), 5 HIGH, 2 MEDIUM, 1 LOW (R9-11 fix — was "1 CRITICAL, 5 HIGH, 3 MEDIUM, 1 LOW" which miscounted D-DC-5 as not-CRITICAL)
 
 ## Economic Analysis
 

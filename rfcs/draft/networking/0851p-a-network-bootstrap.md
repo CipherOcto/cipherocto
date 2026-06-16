@@ -58,7 +58,7 @@ Specifies how a fresh CipherOcto node acquires its first peers and joins the DOT
 Network bootstrap is the **prerequisite for everything else**: a node cannot discover peers (GDP), join a mission (MON), elect a coordinator (0855p-b), or transport a DOT envelope (0850) until it has at least one peer. Yet:
 
 - **RFC-0851 §"Implementation Phases" Phase 1** line 490: `Bootstrap via seed list` — a task list entry with **zero specification**.
-- **RFC-0851 §"Internet Analogy"** table: `DHT bootstrap = Initial peer acquisition` — analogy, not spec.
+- **RFC-0851 §Summary "Internet Analogy"** table: `DHT bootstrap = Initial peer acquisition` — analogy, not spec.
 - **RFC-0850 §G5 "Gateway Federation: 1000+ gateways"** — no bootstrap prerequisite.
 - **RFC-0843** (Kademlia base) is referenced but the DOT/GDP layer above it is not specified.
 

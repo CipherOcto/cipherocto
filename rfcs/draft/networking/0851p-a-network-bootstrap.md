@@ -68,7 +68,7 @@ This is the **"chicken and egg" problem**: every decentralized network has it, a
 
 - **Operational reality:** most users will run CipherOcto on phones, behind NATs, with no static IP, no port forwarding, no always-on DHT node. Mode A (centralized bootstrap) is the only realistic default.
 - **Sovereignty requirement:** RFC-0850 G7 (Censorship Resistance: "Survive single-platform block") and 0851 G1 (Sovereign Discovery: "No centralized registry") create tension. Three modes resolve the tension: A is the default, B is the privacy fallback, C is the off-grid fallback.
-- **Security requirement:** the Sybil / eclipse / DNS-hijack / BGP-hijack surface is largest at bootstrap. This RFC is the **first line of defense** — once a node has diverse peers, GDP §"Sybil" defenses kick in.
+- **Security requirement:** the Sybil / eclipse / DNS-hijack / BGP-hijack surface is largest at bootstrap. This RFC is the **first line of defense** — once a node has diverse peers, GDP §11 (Anti-Sybil Mechanisms) defenses kick in.
 
 ## Roles and Authorities
 

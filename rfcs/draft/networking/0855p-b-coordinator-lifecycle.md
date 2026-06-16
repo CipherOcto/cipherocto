@@ -4,7 +4,7 @@
 
 Draft (v1.1, 2026-06-16)
 
-> **Patch RFC for RFC-0855 (Mission Overlay Networks).** This RFC fills the §16.3 → §11 forward-reference gap: §16.3 states "New Coordinator elected via governance model (Section 11)" but §11 defines 5 governance models, none of which include an election algorithm. The implementation timeline at §20 lists "3.4 Implement coordinator election" as a future task; this RFC is that task.
+> **Patch RFC for RFC-0855 (Mission Overlay Networks).** This RFC fills the §16.3 "AI Swarm Specification (MON-H6 fix)" → §11 "Governance Models" forward-reference gap: §16.3 states "New Coordinator elected via governance model (Section 11)" but §11 defines 5 governance models, none of which include an election algorithm. The implementation timeline at §20 lists "3.4 Implement coordinator election" as a future task; this RFC is that task.
 >
 > **v1.1 patch (2026-06-16):** adds §"Genesis State Machine" subsection (3-state machine) to fix the v1.0 "stateless creator" gap. Mission Creator role entry updated; Test Vector TV-6 added; Future Work F1 now points to RFC-0855p-c (DomainCoordinator).
 
@@ -18,7 +18,7 @@ Draft (v1.1, 2026-06-16)
 
 ## Summary
 
-Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type, the per-governance-model election algorithm, term limits, handover protocols, slashing conditions, and liveness check semantics for the Mission Coordinator role defined in RFC-0855 §4.2. The result is a typed, deterministic, adversarial-resistant coordinator lifecycle that RFC-0855 can reference from §16.3, §11, and §17 in place of its current one-line forward reference.
+Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type, the per-governance-model election algorithm, term limits, handover protocols, slashing conditions, and liveness check semantics for the Mission Coordinator role defined in RFC-0855 §4.2 "Membership Roles". The result is a typed, deterministic, adversarial-resistant coordinator lifecycle that RFC-0855 can reference from §16.3 "AI Swarm Specification (MON-H6 fix)", §11 "Governance Models", and §17 "Token Economics Integration" in place of its current one-line forward reference.
 
 **v1.1 adds** the `GenesisState` 3-state machine (§"Genesis State Machine" subsection) for the Mission Creator's first-coordinator bootstrap. This fills the v1.0 gap where the creator was described as "stateless" but the §"Election Algorithm (per governance model)" table assumed ≥2 candidates — implementations would have invented their own genesis logic.
 
@@ -26,13 +26,13 @@ Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type
 
 **Requires:**
 
-- RFC-0855 (Networking): Mission Overlay Networks — primary, especially §3 (lifecycle), §4 (membership), §11 (governance), §16.3 (coordinator failure), §17 (slashing)
+- RFC-0855 (Networking): Mission Overlay Networks — primary, especially §3 "Mission Lifecycle", §4 "Mission Membership", §11 "Governance Models", §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration"
 - RFC-0853 (Networking): Overlay Cryptography — for signature schemes and key derivation
 - RFC-0000-template v1.3 — for `Roles and Authorities`, `Lifecycle Requirements`, `Implicit Assumptions Audit`, `Adversary Analysis` sections
 
 **Optional:**
 
-- RFC-0860 (Networking): Proof of Relay — for trust score source feeding election eligibility (RFC-0855 §4.2 requires `trust_score >= 500`)
+- RFC-0860 (Networking): Proof of Relay — for trust score source feeding election eligibility (RFC-0855 §4.2 "Membership Roles" requires `trust_score >= 500`)
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG (no cycles) — this RFC depends on 0855; 0855 is unchanged.
@@ -55,9 +55,9 @@ Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type
 
 RFC-0855 has three structural gaps with respect to the Mission Coordinator role:
 
-1. **§16.3 forward reference**: "New Coordinator elected via governance model (Section 11)" references §11 (governance models) which defines 5 governance models, none of which include an election algorithm. The §20 implementation timeline lists "3.4 Implement coordinator election" as a future task.
-2. **§4.2 coordinator role without lifecycle**: The `MembershipRole::Coordinator` bit is defined but the coordinator has no state machine, no term, no handover protocol, and no recovery from `Active → Byzantine`.
-3. **§17 slashing ambiguity**: "Coordinator misbehavior → Slash OCTO-O stake + demotion" but `demotion` is undefined. Without a typed target state (this RFC defines `Demoting`), "demotion" is an implicit transition that implementations must invent independently.
+1. **§16.3 forward reference**: "New Coordinator elected via governance model (Section 11)" references §11 "Governance Models" (governance models) which defines 5 governance models, none of which include an election algorithm. The §20 implementation timeline lists "3.4 Implement coordinator election" as a future task.
+2. **§4.2 coordinator role without lifecycle**: The `MembershipRole::Coordinator` bit is defined (in RFC-0855 §4.2 "Membership Roles") but the coordinator has no state machine, no term, no handover protocol, and no recovery from `Active → Byzantine`.
+3. **§17 slashing ambiguity**: "Coordinator misbehavior → Slash OCTO-O stake + demotion" (in RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)") but `demotion` is undefined. Without a typed target state (this RFC defines `Demoting`), "demotion" is an implicit transition that implementations must invent independently.
 
 This RFC fills all three gaps with a single coherent state machine, election algorithm, handover protocol, and slashing integration that implementations can reference directly.
 
@@ -94,9 +94,9 @@ MUST enumerate:
 - **Stable identifier**: `peer_id: [u8; 32]`
 - **Base capabilities**: vote in coordinator elections; sign election ballots
 - **Authority scope**: `vote` (one vote per election per participant, weighted by stake or by domain depending on governance model)
-- **Who can assume**: any peer admitted to the mission per RFC-0855 §4.3 admission policy
-- **Who can revoke**: mission governance (per RFC-0855 §11.3 admission decisions)
-- **Lifecycle**: `mission_membership` (RFC-0855 §4.2 `MembershipState`)
+- **Who can assume**: any peer admitted to the mission per RFC-0855 §4.3 "Membership Admission" admission policy
+- **Who can revoke**: mission governance (per RFC-0855 §11.3 "Governance Specification (MON-H4 fix)" admission decisions)
+- **Lifecycle**: `mission_membership` (RFC-0855 §4.2 "Membership Roles" `MembershipState`)
 
 ### 4. Slashing Adjudicator (governance)
 
@@ -104,7 +104,7 @@ MUST enumerate:
 - **Base capabilities**: submit signed slash proofs; force `Active → Demoting` transition
 - **Authority scope**: `slash` (cause a coordinator to enter `Demoting` state, with attached penalty)
 - **Who can assume**: the governance authority designated by the mission descriptor (`mission_descriptor.governance_model: GovernanceModel`); for `Centralized` this is the same as the Mission Coordinator unless explicitly delegated
-- **Who can revoke**: mission participants via 2/3 vote (RFC-0855 §11.3)
+- **Who can revoke**: mission participants via 2/3 vote (RFC-0855 §11.3 "Governance Specification (MON-H4 fix)")
 - **Lifecycle**: `governance_session` (per-mission; stateless across missions)
 
 ### 5. Domain Coordinator (FUTURE — NOT in this RFC)
@@ -118,9 +118,9 @@ The "nothing should be implied" rule requires that the **out-of-scope statement 
 | Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
 |------|------------|-----------------|-----------|------------|
 | Mission Coordinator | `CoordinatorId` (`[u8;32]`) | `coordinate` | `CoordinatorLifecycle` (8 states) | This RFC §Lifecycle Requirements |
-| Mission Creator | `creator_peer_id` (`[u8;32]`) | `designate-at-genesis` (one-shot) | stateless | RFC-0855 §3 mission creation |
-| Mission Participant | `peer_id` (`[u8;32]`) | `vote` (per-election) | `mission_membership` (RFC-0855 §4.2) | RFC-0855 §4.2 |
-| Slashing Adjudicator | `governance_id` (`[u8;32]`) | `slash` | `governance_session` (per-mission) | RFC-0855 §11 + This RFC §Slashing |
+| Mission Creator | `creator_peer_id` (`[u8;32]`) | `designate-at-genesis` (one-shot) | stateless | RFC-0855 §3 "Mission Lifecycle" mission creation |
+| Mission Participant | `peer_id` (`[u8;32]`) | `vote` (per-election) | `mission_membership` (RFC-0855 §4.2 "Membership Roles") | RFC-0855 §4.2 "Membership Roles" |
+| Slashing Adjudicator | `governance_id` (`[u8;32]`) | `slash` | `governance_session` (per-mission) | RFC-0855 §11 "Governance Models" + This RFC §"Slashing Integration" |
 | Domain Coordinator | (TBD) | (TBD) | (TBD) | Future Work F1 — out of scope for this RFC |
 
 ## Specification
@@ -147,7 +147,7 @@ graph TB
 ### Data Structures
 
 ```rust
-/// Mission Coordinator role lifecycle (RFC-0855 §4.2 + This RFC)
+/// Mission Coordinator role lifecycle (RFC-0855 §4.2 "Membership Roles" + This RFC)
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CoordinatorLifecycle {
@@ -192,7 +192,7 @@ pub struct ElectionTally {
     pub election_epoch: u64,
     /// Epoch when election ended (quorum reached or timeout)
     pub closed_epoch: u64,
-    /// Governance model used (RFC-0855 §11.1)
+    /// Governance model used (RFC-0855 §11.1 "Governance Flexibility")
     pub governance_model: u16,
     /// Ballots sorted by (voter_peer_id, ballot_epoch) for determinism
     pub ballots: Vec<ElectionBallot>,
@@ -219,7 +219,7 @@ pub struct SlashProof {
     pub slash_id: [u8; 32],
     pub coordinator: CoordinatorId,
     pub coordinator_term_id: [u8; 32],
-    /// Offense type (reuses RFC-0855 §17 slash table)
+    /// Offense type (reuses RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" slash table)
     pub offense: u16,
     /// Evidence payload (proof of incorrect task, forged envelope, etc.)
     pub evidence: Vec<u8>,
@@ -261,7 +261,7 @@ pub struct CoordinatorRecord {
 
 | Governance Model | Election | Tie-Break | Eligibility |
 |------------------|----------|-----------|-------------|
-| **Centralized** | First coordinator: creator designates. Replacement: 2/3 vote. | n/a (designated) | `trust_score >= 500` (RFC-0855 §4.2) |
+| **Centralized** | First coordinator: creator designates. Replacement: 2/3 vote. | n/a (designated) | `trust_score >= 500` (RFC-0855 §4.2 "Membership Roles") |
 | **DAO** | Top-stake candidate wins if no candidate receives `>50%`. Otherwise top-stake wins. Re-election every `term_epochs`. | Lexicographic `peer_id` ascending | `octo_stake >= 1000` + `trust_score >= 500` |
 | **Federated** | One per organizational domain; consensus from `f+1` of `2f+1` domain representatives. | Domain index then `peer_id` | `domain_reputation >= threshold` |
 | **AI-Assisted** | AI proposes; humans ratify 2/3 within `proposal_deadline_epochs`. | n/a (proposed) | AI selection + human ratification |
@@ -378,7 +378,7 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 
 **Emergency Handover:**
 
-1. `EmergencyAuthority` (RFC-0855 §11.2) signs `EmergencyHandover { coordinator, reason }`.
+1. `EmergencyAuthority` (RFC-0855 §11.2 "Governance Policies") signs `EmergencyHandover { coordinator, reason }`.
 2. Coordinator transitions `Active → Handover` immediately.
 3. Successor elected per `Emergency` branch of the governance model.
 
@@ -390,7 +390,7 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 
 #### Slashing Integration
 
-Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a deterministic transition:
+Slashing extends RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" by making `Demoting` a typed state with a deterministic transition:
 
 1. `SlashProof` is submitted by `Slashing Adjudicator` (governance).
 2. Proof is verified: `adjudicator_signature` is valid; `evidence` matches the `offense` type; `coordinator_term_id` matches the current `CoordinatorRecord`.
@@ -469,7 +469,7 @@ If the mission is partitioned and the coordinator is in the minority partition:
 1. Coordinator's heartbeats do not reach majority.
 2. Majority runs election; new coordinator emerges.
 3. Minority coordinator, when partition heals, sees the new coordinator's activation envelope and transitions `Active → Inactive` (recognized as replaced).
-4. No slash (this is partition, not misbehavior — RFC-0855 §13.2 split-brain handling).
+4. No slash (this is partition, not misbehavior — RFC-0855 §13.2 "Reconciliation" split-brain handling).
 
 ### Determinism Requirements
 
@@ -586,7 +586,7 @@ pub enum CoordinatorError {
 
 MUST document:
 
-- **Consensus attacks**: Mission replay (mitigation: TTL + epoch validation, RFC-0855 §3.1); coordinator forgery (mitigation: signature verification on every envelope)
+- **Consensus attacks**: Mission replay (mitigation: TTL + epoch validation, RFC-0855 §3.1 "Lifecycle States"); coordinator forgery (mitigation: signature verification on every envelope)
 - **Economic exploits**: Sybil candidacy in elections (mitigation: stake-gated eligibility; M-of-N Sybil detection via RFC-0860 trust score); free-riding coordinator (mitigation: heartbeat-based slashing)
 - **Proof forgery**: Slash proof forgery (mitigation: adjudicator signature verification); election ballot forgery (mitigation: voter signature)
 - **Replay attacks**: Election ballot replay (mitigation: `election_id` binding); heartbeat replay (mitigation: `epoch` binding in heartbeat)
@@ -601,7 +601,7 @@ MUST document:
 | Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
 |----------|----------------|---------------------|------------------------|------------------------------|------------------|
 | **D1**: Term-limited re-election (incumbent cannot stay past `term_end_epoch` without re-election) | Incumbent coordinator | 0 (re-election is free) | Indefinite mission control | Term limit; re-election requires winning election; slash on `term_end_epoch` overstay | LOW. Re-election is itself adversarial (Sybil, bribery); mitigated by D2. |
-| **D2**: Election eligibility requires `trust_score >= 500` + minimum stake | Sybil cluster owner | 1000+ OCTO stake per identity | Election win via Sybil | Stake-gated admission (RFC-0851 §11) + M-of-N Sybil detection (RFC-0860 §6) | MEDIUM. Sophisticated Sybil with diverse funding and timing could pass; RFC-0860 behavioral correlation is the backstop. |
+| **D2**: Election eligibility requires `trust_score >= 500` + minimum stake | Sybil cluster owner | 1000+ OCTO stake per identity | Election win via Sybil | Stake-gated admission (RFC-0851 §11 "Anti-Sybil Mechanisms") + M-of-N Sybil detection (RFC-0860 §6) | MEDIUM. Sophisticated Sybil with diverse funding and timing could pass; RFC-0860 behavioral correlation is the backstop. |
 | **D3**: Slash proof requires governance signature | Griefing attacker | 0 (without governance key) | Mis-slash honest coordinator | Only `mission_descriptor.governance_id` can sign slash proofs; rotated per `governance_session` | MEDIUM. Governance key compromise = total control; mitigated by RFC-0860 slashing of governance key. |
 | **D4**: Heartbeat emitted every `heartbeat_interval` epochs | Eclipse attacker partitioning the coordinator | Eclipse requires sustained network control | Force coordinator into `Suspect` → `Handover` without the coordinator actually being Byzantine | Coordinator can emit heartbeat via multiple transports; partition must be sustained for `4 × heartbeat_interval` to trigger handover | LOW. Sustained eclipse at the gateway level is detectable and slashable. |
 | **D5**: Handover message preservation queue | Attacker flooding the predecessor with envelopes during handover | Mission gossip bandwidth | Memory exhaustion; predecessor OOM during handover | Queue size cap (mission-defined); excess envelopes are dropped with `tracing::warn!`; not a slash | MEDIUM. Predecessor could be coerced to OOM via legitimate-looking envelope flood; rate limit (RFC-0852 §rate-limit) is the backstop. |
@@ -635,8 +635,8 @@ Round 1 review SHOULD focus on the Election Algorithm table (per-governance-mode
 
 | Operation | Token | Amount | Rationale |
 |-----------|-------|--------|-----------|
-| Election candidacy (DAO) | OCTO | 1000 lock per candidacy | Anti-Sybil (RFC-0851 §11) |
-| Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17) |
+| Election candidacy (DAO) | OCTO | 1000 lock per candidacy | Anti-Sybil (RFC-0851 §11 "Anti-Sybil Mechanisms") |
+| Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)") |
 | Slash on `Active → Demoting` (0x0005 coordinator misbehavior) | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior |
 | Slash on `Censorship` (0x0004) | OCTO | proportional to inactivity | RFC-0855 §17 / 0x0004 in §B |
 | Heartbeat emission | none | 0 | Free (bandwidth only) |
@@ -664,9 +664,9 @@ Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + rol
 
 ### RFC-0855 Integration
 
-- RFC-0855 §16.3 ("New Coordinator elected via governance model (Section 11)") is updated to cite this RFC.
-- RFC-0855 §17 ("Slashing Conditions") is updated to cite this RFC for the `Demoting` state and `SlashProof` type.
-- RFC-0855 §11 (governance models) is unchanged; this RFC's Election Algorithm table extends §11 with the actual election mechanics per model.
+- RFC-0855 §16.3 "AI Swarm Specification (MON-H6 fix)" ("New Coordinator elected via governance model (Section 11)") is updated to cite this RFC.
+- RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" is updated to cite this RFC for the `Demoting` state and `SlashProof` type.
+- RFC-0855 §11 "Governance Models" is unchanged; this RFC's §"Election Algorithm (per governance model)" table extends §11 with the actual election mechanics per model.
 
 ## Test Vectors
 
@@ -848,7 +848,7 @@ Verify:
 | `crates/octo-network/src/mon/election.rs` | NEW: `ElectionTally`, `ElectionBallot`, per-governance-model election |
 | `crates/octo-network/src/mon/slashing.rs` | NEW: `SlashProof`, slash verification |
 | `crates/octo-network/src/mon/lifecycle.rs` | EXISTING: integrate `CoordinatorLifecycle` with mission lifecycle |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3, §17 |
+| `rfcs/draft/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" |
 
 ## Future Work
 
@@ -860,9 +860,9 @@ Verify:
 
 ## Rationale
 
-Mission lifecycle (RFC-0855 §3) is deterministic; coordinator lifecycle must be too. The state machine mirrors mission lifecycle: `Designated → Elected → Active → Inactive`, with explicit failure states (`Suspect`, `Demoting`, `Resigned`) for Byzantine behavior and voluntary exit.
+Mission lifecycle (RFC-0855 §3 "Mission Lifecycle") is deterministic; coordinator lifecycle must be too. The state machine mirrors mission lifecycle: `Designated → Elected → Active → Inactive`, with explicit failure states (`Suspect`, `Demoting`, `Resigned`) for Byzantine behavior and voluntary exit.
 
-Election is delegated to the existing governance model taxonomy (RFC-0855 §11) to avoid duplicating authority scope; this RFC only specifies the actual election algorithm per model. The 5 governance models have meaningfully different election needs (Centralized uses designator, DAO uses stake, Federated uses domain consensus, AI-Assisted uses AI proposal + human ratification, Autonomous uses protocol-defined rotation), so a single algorithm would either be too restrictive (forcing AI missions to use stake) or too vague (lacking a concrete algorithm per case).
+Election is delegated to the existing governance model taxonomy (RFC-0855 §11 "Governance Models") to avoid duplicating authority scope; this RFC only specifies the actual election algorithm per model. The 5 governance models have meaningfully different election needs (Centralized uses designator, DAO uses stake, Federated uses domain consensus, AI-Assisted uses AI proposal + human ratification, Autonomous uses protocol-defined rotation), so a single algorithm would either be too restrictive (forcing AI missions to use stake) or too vague (lacking a concrete algorithm per case).
 
 Handover is a separate state from Inactive, not collapsed into Election, because message preservation during handover is a real cost that election alone doesn't address. The predecessor must queue envelopes until the successor is `Active`; collapsing handover into election would either lose messages or require election to be aware of the queue (an awkward coupling).
 

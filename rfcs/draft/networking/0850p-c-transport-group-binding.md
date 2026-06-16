@@ -247,7 +247,7 @@ struct BindEnvelope {
     ///              || bind_epoch || bind_nonce || is_reconnect)
     /// R3-1 fix: `is_reconnect` is now included in `bind_hash`. Without
     /// this, an attacker could mutate `is_reconnect` from `false` to
-    /// `true` after signing, bypassing the split-brain check in §8
+    /// `true` after signing, bypassing the split-brain check in §8 "Witness Validation Rules"
     /// witness rule #10. (Previous R2-DC-3 design had this gap.)
     bind_hash: [u8; 32],
     /// Ed25519 signature by coordinator over bind_hash
@@ -288,7 +288,7 @@ struct UnbindEnvelope {
     envelope_subtype: [u8; 4],    // b"UNBD"
     /// The GroupBinding being unbound (full, for verification)
     binding: GroupBinding,
-    /// Reason code (u16; see §6)
+    /// Reason code (u16; see §6 "Unbind Reasons")
     reason: u16,
     /// Authority: DomainCoordinator OR SlashProof
     authority: UnbindAuthority,
@@ -469,7 +469,7 @@ Platform migration moves a `domain_id` from one platform to another (e.g., from 
 - **Vote:** the mission-level coordinator calls a 2/3 governance vote (per RFC-0855 §11 "Governance Models"). Vote period is `MIGRATION_VOTE_PERIOD = 1000` epochs. The vote is open to all mission participants.
 - **Outcome:** if 2/3 approve, the platform migration is committed. The old group's BIND is replaced by the new group's BIND. The old group transitions `Bound → UnboundQuarantined` (skipping `ReBinding` because migration is not the same as REBIND). The new group transitions `Unbound → Bound` directly.
 - **Cooldown:** after migration, no further migration for the same `(mission_id, domain_id)` is allowed for `MIGRATION_RETRY_COOLDOWN = 500` epochs. This prevents migration thrashing.
-- **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
+- **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5 "Multi-Platform Binding Rule"). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
 - **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is one of two slash reasons (0x000A-0x000B) defined in this RFC; per the canonical mapping in RFC-0855p-b §B, 0x000A-0x000B are transport-level slash reasons (defined here) and 0x000C-0xFFFF are reserved for future slash reasons.
 
 ### 7. REBIND Lifecycle
@@ -478,12 +478,12 @@ REBIND is the operation that changes the physical group for an existing `domain_
 
 **Multi-platform rule (clarified per 2026-06-16 batch review BR-6, R2-TGB-3 fix for old-group state):**
 
-- **REBIND to a different platform** (e.g., WhatsApp → Matrix) is always allowed, regardless of cooldown. The old group on the old platform transitions `Bound → ReBinding → UnboundQuarantined` (R2-TGB-3 fix: previous spec said "always allowed" but did not specify the old group's terminal state; clarification is that the old group quarantines regardless of whether the new group is on the same or different platform — quarantine is determined by the OLD group's REBIND participation, not by whether the new group is on the same platform). The new platform is independent per §5 multi-platform rule.
+- **REBIND to a different platform** (e.g., WhatsApp → Matrix) is always allowed, regardless of cooldown. The old group on the old platform transitions `Bound → ReBinding → UnboundQuarantined` (R2-TGB-3 fix: previous spec said "always allowed" but did not specify the old group's terminal state; clarification is that the old group quarantines regardless of whether the new group is on the same or different platform — quarantine is determined by the OLD group's REBIND participation, not by whether the new group is on the same platform). The new platform is independent (per §5 "Multi-Platform Binding Rule").
 - **REBIND to a group on the same platform** is allowed only if:
   - The old group is in `UnboundQuarantined` state (which it enters immediately on REBIND), AND
   - The cooldown has elapsed (default 100 epochs after UNBIND; 1000 epochs after founder-squat UNBIND), AND
   - The new group is on the same platform (different `group_jid`, same `platform`).
-- **REBIND cannot create a violation of §5** (e.g., REBIND to a 2nd group on the same platform when one is already bound is rejected by all witnesses per §8 validation).
+- **REBIND cannot create a violation of §5 "Multi-Platform Binding Rule"** (e.g., REBIND to a 2nd group on the same platform when one is already bound is rejected by all witnesses per §8 "Witness Validation Rules" validation).
 
 **Sequence:**
 
@@ -638,7 +638,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout | TIMING | MITIGATED | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff |
 | IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs | AUTHORITY | MITIGATED | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003 |
 | IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B | SECURITY | MITIGATED | Specified in §8 "Witness Validation Rules" (E2E IS-1.6 fix) |
-| IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used | PROTOCOL | MITIGATED | Specified in §6 Unbind Reasons |
+| IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used | PROTOCOL | MITIGATED | Specified in §6 "Unbind Reasons" |
 | IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id` | PROTOCOL | MITIGATED | Specified in §3 "Binding Ceremony — Implicit Designator" |
 | IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks | AUTHORITY | MITIGATED | Specified in §4 "Binding Ceremony — Explicit Founder" |
 | IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled | DETERMINISM | MITIGATED | First-seen-wins (per-witness) |

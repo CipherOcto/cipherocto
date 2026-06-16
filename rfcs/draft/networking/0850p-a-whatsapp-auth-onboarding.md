@@ -21,7 +21,7 @@ Define a standalone CLI binary (`octo-whatsapp-onboard`) and companion library (
 **Requires:**
 
 - Mission 0850p: DOT WhatsApp Adapter (Implemented) — the `WhatsAppConfig` schema this tool produces, and the `WhatsAppWebAdapter` runtime methods (`start_bot`, `run_reconnect_loop`, `self_handle`)
-- RFC-0850 (Networking): Deterministic Overlay Transport, §8.2 (Platform Adapter Contract)
+- RFC-0850 (Networking): Deterministic Overlay Transport, §8.2 "Platform Adapter Contract"
 
 **Optional (architectural references):**
 
@@ -138,7 +138,7 @@ The following are explicitly out of scope and become named "responsibility trans
 | Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
 |------|------------|-----------------|-----------|------------|
 | Operator | UID / SSH principal | `pair-phone-entry`, `config-edit`, `session-rotate` | `OperatorLifecycle` (out of scope) | This RFC; future `DomainCoordinator` |
-| WhatsApp Bot Identity | `self_phone` (E.164) | `platform-identity` | `BotLifecycle` (8 states) | This RFC §Lifecycle Requirements |
+| WhatsApp Bot Identity | `self_phone` (E.164) | `platform-identity` | `BotLifecycle` (8 states) | This RFC §"Lifecycle Requirements" |
 | WhatsApp Server | TLS endpoint | `platform-server` | stateless (Meta-side) | This RFC; ADVERSARIAL |
 | whatsapp-rust crate | `Cargo.toml` version | `protocol-implementation` | per crate version | This RFC |
 | Stoolap Session DB | `session_path` | `session-storage` | per bot pairing | This RFC |
@@ -298,7 +298,7 @@ sequenceDiagram
 
 1. **No stdin reading.** Unlike TDLib (which prompts for code/2FA), WhatsApp's `Event::PairingQrCode` carries the full QR payload in one event. The operator scans with their phone; the CLI blocks on the event stream. `--timeout` (default 300s) bounds the wait.
 
-2. **Identity resolution.** After `Event::Connected`, the adapter's `Event::Connected` handler (adapter.rs:226-237) resolves `self_phone` from the device snapshot. The onboard core's `whoami` / `start` logic calls `adapter.self_handle()` and **polls it on a 250ms interval** (see §Algorithms) until the `Option<String>` is `Some`. The polling is bounded by `--timeout` (default 300s) and is acceptable because the wait is operator-driven (typically 2-30s), not latency-sensitive.
+2. **Identity resolution.** After `Event::Connected`, the adapter's `Event::Connected` handler (adapter.rs:226-237) resolves `self_phone` from the device snapshot. The onboard core's `whoami` / `start` logic calls `adapter.self_handle()` and **polls it on a 250ms interval** (see §"Algorithms") until the `Option<String>` is `Some`. The polling is bounded by `--timeout` (default 300s) and is acceptable because the wait is operator-driven (typically 2-30s), not latency-sensitive.
 
 3. **Pairing vs. Ready distinction.** `Event::Connected` is NOT the same as "ready to send messages." It means the noise-key handshake completed and the session is persisted. The adapter's `health_check()` returns `Ok(())` only when `bot_handle.is_some()`. The onboard tool's "ready" state is `self_handle().is_some()`, which the adapter's event handler populates after persistence.
 
@@ -491,7 +491,7 @@ pub struct PairLinkArgs {
 
 /// Captured session after a successful Event::Connected.
 /// R1-C2: does NOT derive Serialize/Deserialize (see the longer docstring
-/// at line ~271 in §Session Extraction). The custom pair code is not a
+/// at line ~271 in §"Session Extraction"). The custom pair code is not a
 /// field; it lives only in the pair_link::run() local scope.
 #[derive(Debug, Clone)]
 pub struct WhatsAppSession {
@@ -583,7 +583,7 @@ async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> 
 
 **Why polling and not Notify?** The adapter's `self_phone` field is a `parking_lot::Mutex<Option<String>>` — there is no signal exposed. Adding a `Notify` to the adapter is out of scope for this mission (it would be a one-line change to the adapter, but cross-crate refactors during an auth-onboarding mission are a high-risk / low-reward change). A 250ms polling loop is acceptable because the wait is bounded by the operator's scan latency (typically 2-10s), not by polling granularity.
 
-**Wait for health (R7-H1):** `wait_for_health` is the same shape as `wait_for_connected` but returns `Result<(), CoreError>` (no phone-number resolution). Used by `session list` fallback (RFC §Session Management) and `whoami`'s quick health probe path.
+**Wait for health (R7-H1):** `wait_for_health` is the same shape as `wait_for_connected` but returns `Result<(), CoreError>` (no phone-number resolution). Used by `session list` fallback (RFC §"Session Management") and `whoami`'s quick health probe path.
 
 ```rust
 // R7-H1: same constants as wait_for_connected (POLL_INTERVAL_MS,

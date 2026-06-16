@@ -897,6 +897,99 @@ The risk is platform-admin key compromise. F2 (cross-platform admin attestation,
 
 The multi-platform rule (one DomainCoordinator per platform per domain_id) is a natural extension of RFC-0850p-c §5 "Multi-Platform Binding Rule" — if you bind the same `domain_id` to two platforms, each platform has its own DomainCoordinator. This enables carrier migration (RFC-0850 G7) without losing coordination.
 
+## Determinism Requirements
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| DC state machine transitions | A | All transitions deterministic; witness set sorted lex |
+| Platform admin verification (F2) | C | Platform API responses are non-deterministic (rate limits, network) |
+| Cross-platform consensus (F1) | B | 2-phase commit with timeout; happy path is deterministic |
+| Cross-domain slash (F3) | A | Slash reason code + 2/3 witness vote is deterministic |
+| Slash for small groups (F4) | A | Policy is deterministic given `member_count_at_bind` |
+| Sub-admin authority check (F5) | A | Pure function of `SubAdminAuthority` bitfield |
+| DC reputation aggregation (F6) | A | Pure function of the `DCRootedSlashReputationStore` |
+| Auto-rejoin ticket (F7) | A | Ticket signature is deterministic; rate limit is deterministic |
+
+**Consensus impact:** DC state transitions and cross-domain slash are consensus-critical (Class A/B). Platform admin verification (F2) is Class C because the platform API is the trust root; the DC trusts the platform's response. Cross-platform consensus (F1) is Class B because of the timeout fallback.
+## Error Handling
+
+### DC state errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `DcError::InvalidTransition` | State machine transition not in allowed set | Reject the trigger |
+| `DcError::PlatformNotAdmin` | DC's `public_key` is not a current admin on the platform | Emit warning; slash if persistent |
+| `DcError::AdminAttestStale` | `PlatformAdminAttest` is older than `MAX_ATTEST_AGE_EPOCHS` (F2) | Emit challenge; slash if no response in `CHALLENGE_RESPONSE_EPOCHS` |
+| `DcError::AdminAttestMissing` | No `PlatformAdminAttest` has been seen | Slash via 0x000F.02 (failed attest) |
+
+### Cross-platform consensus errors (F1)
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `DcConsensusError::QuorumNotMet` | < 2/3 of N DCs voted | Abort REBIND/UNBIND; manual reconciliation |
+| `DcConsensusError::Timeout` | `DC_CONSENSUS_TIMEOUT_EPOCHS` exceeded | Same as `QuorumNotMet` |
+| `DcConsensusError::TieBreakLost` | Concurrent REBIND; this one lost | Retry after winning REBIND completes |
+| `DcConsensusError::InvalidVoteSignature` | A DC vote signature doesn't verify | Reject that vote; recount |
+
+### Cross-domain slash errors (F3)
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `DcSlashError::InsufficientVotes` | < 2/3 of mission-level witnesses | Slash not finalized |
+| `DcSlashError::InvalidReasonCode` | Slash reason code not in 0x000F range | Reject the slash vote |
+| `DcSlashError::AppealPending` | DC has an open appeal | Defer slash until appeal resolves |
+
+### Sub-admin errors (F5)
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `SubAdminError::AuthorityDenied` | Sub-admin attempted an operation outside their policy | Reject the operation; emit warning |
+| `SubAdminError::NotActive` | Sub-admin attempted operation before activation or after deactivation | Reject the operation |
+
+### Error handling rules
+
+1. All DC errors are typed (`thiserror`-derived) and exhaustively matched.
+2. Cross-platform errors (F1) require manual reconciliation via `dc-reconcile`.
+3. Sub-admin authority errors (F5) are auditable: the attempted operation is logged.
+4. Auto-rejoin errors (F7) are rate-limited; `REJOIN_COOLDOWN_EPOCHS = 1000` prevents abuse.
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+|--------|--------|-----------|
+| Platform admin key compromise | CRITICAL | Cross-platform admin attestation (F2) detects within `MAX_ATTEST_AGE_EPOCHS`; slash via 0x000F |
+| Malicious DC signs invalid BIND/REBIND | CRITICAL | Cross-domain slash (F3); cross-domain reputation (F6) |
+| Cross-platform mission fragmentation | HIGH (mission failure) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
+| Cross-platform witness collusion | MEDIUM | Slash via 0x000F; cross-domain reputation (F6) |
+| Primary DC offline (single point of failure) | MEDIUM | Sub-admin (F5) activates after `SUB_ADMIN_ACTIVATION_EPOCHS` |
+| Platform-loss (kicked member) | LOW (operational) | Auto-rejoin (F7) with rate limit |
+| Repeat-offender DC | MEDIUM | Cross-domain reputation (F6) deprioritizes in election |
+| Small-group fragility | MEDIUM | Slash for small groups (F4) preserves the group |
+| DC slash censorship | MEDIUM | Mission-level coordinator (0855p-b) can slash a DC; appeal via governance (0855 §11) |
+| Silent admin revocation | MEDIUM | `ATTEST_CHALLENGE` flow (F2) detects within `CHALLENGE_RESPONSE_EPOCHS` |
+## Related Use Cases
+
+- **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The DomainCoordinator is the bridge between DOT (logical overlay) and the physical platform group. The DC's authority comes from being the platform's group admin (per RFC-0850p-c §5 "Multi-Platform Binding Rule").
+
+### Pipeline position
+
+```
+Use Case (Social Platform Transport Layer)
+   │
+   ▼
+RFC-0850 (Networking): Deterministic Overlay Transport
+   │
+   ▼
+RFC-0850p-c (Networking): Transport Group Binding Ceremony (defines `domain_id`)
+   │
+   ▼
+RFC-0855p-b (Networking): Mission Coordinator Lifecycle (general coordinator state machine)
+   │
+   ▼
+RFC-0855p-c (this RFC): DomainCoordinator Role (specializes for physical platforms)
+   │
+   ▼
+Missions: 0855p-c-{cross-platform-consensus, admin-attestation, cross-domain-slash, ...}
+```
 ## Version History
 
 | Version | Date | Changes |

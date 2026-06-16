@@ -898,6 +898,87 @@ The multi-platform rule (1 group per platform per domain_id) is a tension resolu
 
 The 100-epoch / 1000-epoch cooldowns prevent rapid rebinding attacks without being so long that legitimate migrations are blocked. The 2^slash_count exponential cooldown (per RFC-0855p-b) is reused for slash-derived unbinds.
 
+## Determinism Requirements
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| BIND envelope signing | A | Ed25519 signature is deterministic (RFC-0853 §3) |
+| BIND envelope verification | A | Pure function of signature + payload |
+| REBIND single-platform | A | Local atomic operation; ordering is by `domain_id` |
+| REBIND cross-platform (F1) | B | 2-phase commit with timeout; the timeout introduces non-determinism in pathological cases, but the happy path is deterministic |
+| UNBIND single-platform | A | Local atomic operation |
+| UNBIND cross-platform (F1) | B | Same as cross-platform REBIND |
+| `BindEnvelope::member_count_at_bind` | A | Field is signed; verifier checks it |
+| Adapter-side participant filter (F2) | A | Pure function of `BindEnvelope.participant_filter` |
+| BIND gossip delivery (F3) | C | libp2p gossip is best-effort; not consensus-critical |
+| Cross-platform witness aggregation (F5) | B | 60s vote collection window; finalization is deterministic given the vote set |
+
+**Consensus impact:** BIND/UNBIND operations affect mission membership, which is consensus-relevant. The 2-phase commit (F1) is RFC-0008 Class B because of the timeout fallback. The `dc-reconcile` manual operator flow is Class C (operator decision).
+## Error Handling
+
+### Binding errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `BindError::InvalidSignature` | BIND envelope signature does not verify | Reject BIND; do not add to local store |
+| `BindError::DomainMismatch` | BIND's `domain_id` does not match the expected one | Reject BIND |
+| `BindError::PlatformMismatch` | BIND's `platform` does not match the expected one | Reject BIND |
+| `BindError::DcUntrusted` | DC's `public_key` is not in the trusted set | Reject BIND (or trigger DC verification flow) |
+| `BindError::CrossPlatformConsensusFailed` | 2/3 majority not reached in F1's 2PC | Abort REBIND; manual reconciliation required |
+| `BindError::Timeout` | F1's 2PC exceeded `REBIND_TIMEOUT_EPOCHS` | Manual operator reconciliation via `dc-reconcile` |
+| `BindError::TieBreakLost` | Concurrent REBIND; this one lost the lex `domain_id` tie-break | Retry after the winning REBIND completes |
+
+### UNBIND errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `UnbindError::NotBound` | UNBIND for a `domain_id` that is not currently bound | Reject UNBIND; emit warning |
+| `UnbindError::CrossPlatformConsensusFailed` | 2/3 majority not reached | Same as `BindError::CrossPlatformConsensusFailed` |
+
+### Cross-platform witness errors (F5)
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `SlashError::InsufficientVotes` | < 2/3 of N witnesses voted | Slash not finalized; reject |
+| `SlashError::InvalidVoteSignature` | A witness vote's signature does not verify | Reject that vote; recount |
+| `SlashError::VoteWindowExpired` | 60s window passed | Slash not finalized; reject |
+
+### Error handling rules
+
+1. All BIND/UNBIND errors are typed (`thiserror`-derived) and exhaustively matched.
+2. Cross-platform errors (F1) require manual reconciliation; the CLI emits a structured error report.
+3. Witness errors (F5) are auditable: the vote set is logged for forensic analysis.
+4. No silent failures: every reject path emits a structured log entry with the `domain_id` and reason.
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+|--------|--------|-----------|
+| Malicious DC signs invalid BIND | HIGH | DC's signature is verified against the trusted set (cross-RFC: 0855p-c); invalid BIND is rejected |
+| DC private key compromise | HIGH | Cross-platform admin attestation (0855p-c F2) detects the compromise within `MAX_ATTEST_AGE_EPOCHS`; slash via 0855p-b F3 |
+| Replay of old BIND | MEDIUM | BIND envelope includes `signed_at_epoch`; verifier rejects BINDs older than `MAX_BIND_AGE_EPOCHS` |
+| Cross-platform race condition | HIGH (mission fragmentation) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
+| Network partition during 2PC | MEDIUM | `dc-reconcile` manual operator flow after `REBIND_TIMEOUT_EPOCHS` |
+| Cross-platform witness collusion | MEDIUM | Slash reason code 0x000F (0855p-c F3); reputation deprioritization (0855p-b F2) |
+| Large group bandwidth waste | LOW (operational) | Partial bindings (F2) with `participant_filter` |
+| BIND delivered before peer is in physical group | LOW (operational) | libp2p BIND gossip (F3) for pre-admission notification |
+## Related Use Cases
+
+- **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The primary use case. RFC-0850p-c is the binding layer that maps logical `domain_id`s to physical group instances on platforms (WhatsApp groups, Telegram supergroups, Matrix rooms, etc.).
+
+### Pipeline position
+
+```
+Use Case (Social Platform Transport Layer)
+   │
+   ▼
+RFC-0850 (Networking): Deterministic Overlay Transport
+   │
+   ▼
+RFC-0850p-c (this RFC): Transport Group Binding Ceremony
+   │
+   ▼
+Missions: 0850p-c-{cross-node-rebind, partial-bindings, libp2p-propagation, cross-platform-witness}
+```
 ## Version History
 
 | Version | Date | Changes |

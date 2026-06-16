@@ -1139,6 +1139,128 @@ Per the **deferred vs unspecified rule**, every future-work item MUST have a spe
 
 **Why one extra exit code (`SessionExpired = 7`)?** WhatsApp's `Event::LoggedOut` is ambiguous: it fires for both "link rejected outright" and "session later expired." A single exit code would conflate two operator-recovery paths. The matrix/telegram tables don't have this ambiguity because their error models are explicit (HTTP 401 vs. SDK state `Closed`).
 
+## Determinism Requirements
+
+All WhatsApp adapter operations are RFC-0008 **Class C** (Probabilistic) by nature, because the underlying WhatsApp Web protocol is non-deterministic (server-side message ordering, rate limits, reconnection backoff).
+
+However, the **adapter's exposed interface** has deterministic properties:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| `Event::PairingQrCode` delivery | C | WhatsApp server decides when to send a new QR |
+| `Event::Connected` delivery | C | Network reconnect is non-deterministic |
+| `has_valid_session()` (0850p-a F6) | A | Pure function of adapter's internal state |
+| QR code generation (PNG bytes) | A | Deterministic given the QR string |
+| Session DB file I/O | A | Local file system; deterministic ordering |
+| CLI argument parsing | A | Pure function of `std::env::args()` |
+| `whoami` exit codes | A | Determined by adapter state, not network |
+
+**Consensus impact:** Zero. The WhatsApp adapter is local to a single operator's gateway. The adapter's deterministic properties matter for CI testing and reproducible builds, not for protocol consensus.
+## Error Handling
+
+### Adapter-side errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `WhatsAppError::PairingTimeout` | QR not scanned within 60s | Re-run `octo-whatsapp-onboard pair-link` |
+| `WhatsAppError::ConnectionLost` | Network drop | Auto-reconnect with exponential backoff |
+| `WhatsAppError::SessionReplaced` | Another device paired | Re-pair required (`Event::LoggedOut` with `cause=Replaced`) |
+| `WhatsAppError::RateLimited` | Too many requests | Wait for the rate-limit window |
+| `WhatsAppError::BadCredentials` | Invalid `bot_token` / `api_hash` | Re-run with correct credentials |
+| `WhatsAppError::DbLocked` | TDLib DB in use by another process | Stop the other process; check file permissions |
+
+### CLI-side errors (octo-whatsapp-onboard)
+
+| Exit code | Meaning | Mitigation |
+|-----------|---------|------------|
+| 0 | Success | — |
+| 1 | Generic error | Check stderr for details |
+| 2 | Auth rejected (e.g., bad code, 2FA failure) | Re-run with correct credentials |
+| 3 | TDLib unreachable | Check `tdlib-rs` build, C++ deps |
+| 4 | User-cancelled (interactive prompt aborted) | Re-run |
+| 5 | Bad config (e.g., `TelegramConfig::validate()` failed) | Fix config |
+| 6 | Rate-limited (TDLib flood-wait) | Wait for the rate-limit window |
+
+### Secret-redaction errors
+
+The tracing layer in `octo-whatsapp-onboard` redacts: `bot_token`, `api_hash`, `phone`, `password`, `access_token`, `verifying_key`. A redacted field appearing in logs is logged as `[REDACTED]`. There is no `RedactionError` because redaction is infallible.
+
+### Error handling rules
+
+1. All adapter errors are typed (`thiserror`-derived) and exhaustively matched in the CLI.
+2. CLI exit codes follow the table above; no ad-hoc exit codes.
+3. Errors are logged with full context (session_path, command, env var name) but never with the secret values.
+4. Network errors trigger automatic retry with backoff; user errors do not.
+## Related Use Cases
+
+- **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The primary use case for the WhatsApp adapter. Defines the broader goal of "DOT transport on social platforms" of which WhatsApp is one instance.
+- **[Telegram Auth Onboarding](../../docs/use-cases/telegram-auth-onboarding.md)** — Architectural reference. The `octo-telegram-onboard` binary mirrors the `octo-whatsapp-onboard` design; the WhatsApp CLI was created to bring parity to the WhatsApp adapter, which lacked an equivalent onboard tool at the time of this RFC's authoring.
+
+### Pipeline position
+
+```
+Use Case (Social Platform Transport Layer)
+   │
+   ▼
+RFC-0850 (Networking): Deterministic Overlay Transport
+   │
+   ▼
+RFC-0850p-a (this RFC): WhatsApp Auth Onboarding
+   │
+   ▼
+Missions: 0850p-a-{serve-qr-http, symlink-check, multi-account, ...}
+```
+
+## Appendices
+
+### A. Canonical Envelope Serialization
+
+All `DOT/1/Pairing*` envelopes (events from the WhatsApp Web protocol) are serialized per RFC-0126 DCS:
+
+1. Header: `envelope_type (4 bytes) || envelope_subtype (4 bytes) || version (2 bytes, big-endian)`
+2. Body: `peer_id (32 bytes) || timestamp (8 bytes) || payload (variable)`
+3. Hash: `BLAKE3-256(header || body)`
+4. Signature: `Ed25519.sign(private_key, hash)` — for adapter-signed envelopes (e.g., `PairingAck`)
+
+### B. Session DB Schema
+
+The TDLib session DB is a SQLite database with the following key tables (managed by `tdlib-rs`):
+
+| Table | Purpose |
+|-------|---------|
+| `users` | Cached user info (id, name, phone) |
+| `chats` | Cached chat metadata |
+| `messages` | Cached message history (DOT envelopes) |
+| `sessions` | Active TDLib sessions (one per auth) |
+| `auths` | Auth state (bot-token or user-account) |
+
+The adapter does NOT directly query the TDLib DB; it uses the `tdlib_rs::client::Client` API. The DB schema is documented here for reference only.
+
+### C. `octo-whatsapp-onboard` Sidecar Format
+
+`session_meta.json` (sibling of the TDLib DB) contains:
+
+```json
+{
+  "schema_version": 1,
+  "user_id": "1234567890",
+  "username": "alice",
+  "mode": "Bot",  // or "User"
+  "auth_at_epoch": 12345,
+  "session_db_path": "/home/alice/.local/share/octo/whatsapp/default/td.db"
+}
+```
+
+This sidecar enables fast `session list` (no need to spin up a TDLib client for each entry).
+
+### D. References
+
+- RFC-0126 DCS — Canonical envelope serialization
+- RFC-0850 §8.2 — Platform Adapter Contract (Telegram, Matrix, etc. follow the same pattern)
+- RFC-0851p-a — Network Bootstrap (companion: how the adapter's node joins the libp2p mesh)
+- whatsapp-rust — `https://github.com/jhuntperson/whatsapp-rust` (the underlying Rust binding to the WhatsApp Web multidevice protocol)
+- TDLib — `https://github.com/tdlib/td` (the C++ Telegram Database Library; not used by WhatsApp but referenced for session DB schema conventions)
+
 ## Version History
 
 | Version | Date | Changes |

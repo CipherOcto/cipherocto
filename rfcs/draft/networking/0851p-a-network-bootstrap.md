@@ -705,6 +705,63 @@ The 256-peer initial cap is a UX bound: a new node can show 256 peers in its das
 
 The 60s timeout is the user-experience budget: longer timeouts cause users to give up; shorter timeouts are unreliable on slow networks.
 
+## Determinism Requirements
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| Seed list envelope signature verification | A | Pure function of signature + payload |
+| Seed staleness check (F3) | A | Pure function of `signed_at_epoch` and `current_epoch` |
+| `bootstrap_mode = Direct` IP connection | C | Network non-determinism (TCP, DNS, routing) |
+| `bootstrap_mode = TorOnly` connection (F2) | C | Tor path selection is non-deterministic |
+| `bootstrap_mode = Nostr` resolution (F5) | C | Nostr relay responses are non-deterministic |
+| Web-of-trust graph rendering (F4) | A | Pure function of the local trust store |
+| Slash reason code validation (`0x000D`, F6) | A | Pure function of envelope fields |
+| Slashed seed rejection (F6) | A | Pure function of local blacklist |
+
+**Consensus impact:** The seed list itself is signed by the `SeedListAuthority`; the authority's signature is the consensus root. Once a seed is accepted into the local list, the deterministic operations (staleness check, slash rejection) keep the local view consistent. Network operations (TCP, Tor, Nostr) are Class C because they only fetch the data; the verification of that data is Class A.
+## Error Handling
+
+### Bootstrap errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `BootstrapError::NoSeeds` | Seed list is empty | Operator must add seeds manually |
+| `BootstrapError::StaleSeed` | Seed is older than `MAX_SEED_AGE_EPOCHS` (F3) | Drop the seed; do not add to local list |
+| `BootstrapError::StaleList` | All seeds are stale | Refuse to start; emit `SEED_LIST_FULLY_STALE` |
+| `BootstrapError::SeedListUnreachable` | Cannot reach the seed list service (Tor, Nostr, etc.) | Retry with backoff; switch mode if `bootstrap_mode = TorWithIpFallback` |
+| `BootstrapError::InvalidSignature` | Seed list envelope signature does not verify | Reject; do not load |
+| `BootstrapError::SlashedSeed` | Seed is in the local blacklist (F6) | Reject silently; do not add to local list |
+| `BootstrapError::SeedHealthAlert` | > 20% of seeds are stale (F3) | Log WARN; emit metric `seed_stale_ratio`; start anyway (configurable) |
+
+### Network errors
+
+| Error variant | Cause | Recovery |
+|---------------|-------|----------|
+| `TorError::ArtiNotBuilt` | `arti` crate not in feature set | Rebuild with `tor` feature |
+| `TorError::OnionUnreachable` | `.onion` service is down | Retry; switch mode |
+| `NostrError::Nip05NotFound` | NIP-05 identifier does not resolve | Reject the bootstrap mode |
+| `NostrError::RelayUnreachable` | All configured Nostr relays are down | Retry; add more relays |
+
+### Error handling rules
+
+1. All bootstrap errors are typed (`thiserror`-derived) and exhaustively matched.
+2. Stale seed errors are non-fatal (drop the seed, continue) unless the entire list is stale.
+3. Network errors (Tor, Nostr) are retried with exponential backoff.
+4. Slashed seed errors (F6) are silent (no log) to avoid revealing the blacklist to attackers.
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+|--------|--------|-----------|
+| Malicious seed list authority | CRITICAL | Signature verification; slashing (F6) for known misbehavior |
+| Authority key compromise | CRITICAL | Decentralization via DAO multi-sig (F1) post-launch |
+| Stale seed list (Sybil/eclipse) | HIGH | F3 staleness check; alert at 20% stale ratio |
+| Sybil seeds in the list | HIGH | Web-of-trust + cross-referencing with other seeds |
+| Tor exit node deanonymization | MEDIUM | F2 Tor-only mode; no IP fallback in TorOnly |
+| Nostr relay poisoning | MEDIUM | Multiple relay queries; cross-reference results |
+| Bootstrap node withholding peers | MEDIUM | F6 slashing (0x000D.01); reputation deprioritization |
+| Bootstrap node censoring legit peer | MEDIUM | F6 slashing (0x000D.03); multi-seed consensus |
+| Replay of old seed list | LOW | `signed_at_epoch` check (F3) |
+| DoS on seed list service | LOW | Multi-seed fallback; service is replicated |
 ## Version History
 
 | Version | Date | Changes |

@@ -637,8 +637,8 @@ Round 1 review SHOULD focus on the Election Algorithm table (per-governance-mode
 |-----------|-------|--------|-----------|
 | Election candidacy (DAO) | OCTO | 1000 lock per candidacy | Anti-Sybil (RFC-0851 §11.1) |
 | Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17) |
-| Slash on `Active → Demoting` | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior |
-| Slash on `Free-riding` | OCTO | proportional to inactivity | RFC-0855 §17 free-riding slash |
+| Slash on `Active → Demoting` (0x0005 coordinator misbehavior) | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior |
+| Slash on `Censorship` (0x0004) | OCTO | proportional to inactivity | RFC-0855 §17 / 0x0004 in §B |
 | Heartbeat emission | none | 0 | Free (bandwidth only) |
 | Handover coordination envelope | none | 0 | Free (single envelope) |
 

@@ -464,7 +464,7 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 Platform migration moves a `domain_id` from one platform to another (e.g., from WhatsApp to Matrix because the WhatsApp group was banned). It is similar to REBIND but is initiated by a mission-level vote, not by the DomainCoordinator.
 
 - **Trigger:** the mission-level coordinator initiates a migration proposal. The proposal includes `(mission_id, domain_id, old_platform, new_platform, new_group_jid, new_coordinator_id)`. It is signed by the mission-level coordinator and broadcast to the mission.
-- **Vote:** the mission-level coordinator calls a 2/3 governance vote (per RFC-0855 §17). Vote period is `MIGRATION_VOTE_PERIOD = 1000` epochs. The vote is open to all mission participants.
+- **Vote:** the mission-level coordinator calls a 2/3 governance vote (per RFC-0855 §11 "Governance Models"). Vote period is `MIGRATION_VOTE_PERIOD = 1000` epochs. The vote is open to all mission participants.
 - **Outcome:** if 2/3 approve, the platform migration is committed. The old group's BIND is replaced by the new group's BIND. The old group transitions `Bound → UnboundQuarantined` (skipping `ReBinding` because migration is not the same as REBIND). The new group transitions `Unbound → Bound` directly.
 - **Cooldown:** after migration, no further migration for the same `(mission_id, domain_id)` is allowed for `MIGRATION_RETRY_COOLDOWN = 500` epochs. This prevents migration thrashing.
 - **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
@@ -625,7 +625,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-3 | The DomainCoordinator's pubkey is in the mission's trust set | CRYPTO | MITIGATED | BIND signature verified by all witnesses; rejection if pubkey is unknown. |
 | IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule §8.7 |
 | IA-TGB-5 | Multi-platform rule is enforced consistently | PROTOCOL | MITIGATED | Each node's `GroupRegistry` enforces; conflict rejected on BIND. |
-| IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855 §17 slash mechanism; `SlashVote` envelope signature-verified. |
+| IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from 0855 §11); `SlashVote` envelope signature-verified. |
 | IA-TGB-7 | Cooldown prevents rapid rebinding | TIME | MITIGATED | `UnboundQuarantined` state enforced; 100 / 2^n / 1000 epochs. |
 | IA-TGB-8 | Mission creator's `bind_at_genesis` is one-shot | AUTHORITY | MITIGATED | RFC-0855p-b v1.1 §"Genesis State Machine" limits to 3 states; creator cannot rebind after GenesisActive. |
 | IA-TGB-9 | Platform identifier is canonical (no spelling variants) | PROTOCOL | MITIGATED | Platform IDs are enum (`"whatsapp"`, `"matrix"`, `"telegram"`, ...); no free-form strings. |
@@ -704,7 +704,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | UNBIND | OCTO-O (orchestration) | Coordination-level event |
 | REBIND | OCTO-O (orchestration) | Same |
 | Cooldown timer | None | State machine, no on-chain cost |
-| Slash vote | OCTO-O (slash stake) | Per RFC-0855 §17 |
+| Slash vote | OCTO-O (slash stake) | Per RFC-0855p-b §B (slash reason codes 0x0001-0x000B) and §"Slashing Integration" |
 
 ### DomainCoordinator Economics
 

@@ -190,6 +190,12 @@ struct GroupBinding {
 
 **R1-TGB-1 fix — per-group clarity:** the state machine is **per-group**, not global. A REBIND operation affects TWO groups: the old group (Bound → ReBinding → UnboundQuarantined) and the new group (Unbound → Bound). The transitions table now specifies "Affected group" to make this explicit. The previous version conflated the two groups' transitions in a single row, which was misleading.
 
+**BIND witness timeout (E2E IS-1.3 fix):** if the implicit DomainCoordinator does not receive ≥1 `BIND_ACK` within `BIND_WITNESS_TIMEOUT = 100` epochs, the BIND is considered failed. The node resets the implicit designation (clears `pending_bind`) and waits `BIND_RETRY_LIMIT = 3` retries before giving up. After 3 failed retries, the node falls back to waiting for another member's BIND (and acts as a witness for them). The retries are spaced `BIND_RETRY_BACKOFF_EPOCHS = 50, 200, 800` (exponential 4×).
+
+**BIND tiebreaker on equal `bind_hash` (E2E IS-3.4 fix):** if two BINDs have identical `bind_hash` (same payload), the node keeps the first one it saw (per-witness deterministic) and drops subsequent ones. This is a degenerate case that should not occur in practice (collision-free hash), but the rule is named to prevent non-determinism. The first-seen order is determined by local reception order (not by network-wide canonical ordering).
+
+**3-way race tiebreaker (E2E IS-3.5 fix):** if three BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the canonical BIND is the one with the **lowest `bind_hash` lexicographically** (R4-7 fix). Ties on `bind_hash` are broken by the **lowest `peer_id` lexicographically** (per the 3-way race tiebreaker, derived from RFC-0008 canonical ordering). The 2-way and 3-way race tiebreakers are unified: rank by `bind_hash` first, then by `peer_id` as the secondary sort key.
+
 ### 2. Binding Envelope Types
 
 > **R4-4 fix — global note on hash construction:** all `*_hash` fields in this RFC's envelopes (`bind_hash`, `unbind_hash`, `rebind_hash`, `ack_hash`) are computed as `BLAKE3-256(header || body)` per §Appendix A. The **header** is the canonical 10-byte prefix `envelope_type (4) || envelope_subtype (4) || version (2, big-endian)`. The **body** is the canonical serialization of the envelope's other fields in declaration order, with length-prefix encoding for variable-length fields (e.g., `String` is serialized as `length (4 bytes, big-endian) || utf8_bytes`). Individual envelope definitions below describe the **body** part of the hash (e.g., `BLAKE3-256(group_jid || ...)`); the reader MUST prepend the header per §Appendix A when computing the full hash. This note applies to all envelopes in this RFC; the `RFC-0855p-c` `PlatformLossEnvelope` follows the same convention.
@@ -367,6 +373,8 @@ sequenceDiagram
 
 **Race condition:** If two nodes send DOT envelopes in the same group at roughly the same time, both may try to issue BIND. The first BIND to be witnessed wins (deterministic by `bind_hash` lexicographic order). The losing BIND is rejected; the loser re-joins as a Witness.
 
+**Multi-DOT-sender detection (E2E IS-3.2 fix):** if a node sees 2+ nodes send DOT envelopes in the same group within the same epoch, the node applies a deterministic tiebreaker: the candidate with the **lowest `peer_id` lexicographically** is the implicit DomainCoordinator; all others fall back to Witness role. This is the **3-way race tiebreaker** (lowest `peer_id` wins), which differs from the 2-way BIND tiebreaker (lowest `bind_hash` wins) by using `peer_id` as the sort key. The reason: BINDs may not have been received yet, so we tiebreak on the candidate's stable `peer_id` rather than the not-yet-computed `bind_hash`. The losers are NOT slashed; they are demoted to Witness role and continue participating.
+
 **Why implicit designator?** Most group members will not pre-coordinate a mission. The implicit designator lets a group "self-bootstrap" into a mission. Explicit founder BIND (§4) is for pre-coordinated missions.
 
 ### 4. Binding Ceremony — Explicit Founder
@@ -392,6 +400,16 @@ sequenceDiagram
 ```
 
 **Cross-reference:** This is the `bind_at_genesis` path referenced in §"Roles and Authorities" §4 MissionCreator. It uses the same `BindEnvelope` type as the implicit path; only the issuer differs (creator vs. first-DOT-sender).
+
+**Founder eligibility (E2E IS-3.3 fix):** the founder (mission creator) MUST satisfy all of:
+- Has a `MissionCreator` role per §"Roles and Authorities" §4
+- Has signed the mission descriptor with their term key
+- Is a current member of the target group (verified via the adapter's membership API)
+- Has not previously issued a BIND for any other `(mission_id, domain_id, platform)` in the same mission (one-shot per §IA-TGB-8)
+
+If any check fails, witnesses reject the BIND with `slash_reason = 0x0003` (founder squat / unauthorized BIND). The founder is notified via a `BIND_REJECTED` event; the founder can retry with corrected parameters (e.g., join the group first if membership was missing).
+
+**Founder squat detection (E2E IS-1.5 fix):** "founder squat" is when a founder issues a BIND for a `domain_id` they do not actually intend to govern (e.g., to deny other candidates). Detection: if a founder's BIND is accepted but the founder does not send any `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs, the binding is treated as a squat. All witnesses initiate a slash tally against the founder with `slash_reason = 0x0003` (founder squat) and a 1000-epoch cooldown is applied to the `(mission_id, domain_id)` pair. The founder is removed from the mission's trust set temporarily (1000 epochs).
 
 ### 5. Multi-Platform Binding Rule
 
@@ -431,6 +449,19 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 | 0x0005 | Founder squat detected (BIND was invalid) | Any witness | 1000 epochs |
 | 0x0006 | REBIND to new group (not really unbind, but emitted for registry consistency) | DomainCoordinator | N/A |
 | 0x0007-0xFFFF | Reserved | — | — |
+| **0x000A (E2E IS-3.1 fix)** | **Platform migration (BIND for a different platform than the current DomainCoordinator's)** | MissionCreator + 2/3 governance vote | 1000 epochs |
+| **0x000B (E2E IS-1.6 fix)** | **`is_reconnect_lie`: the reconnect claim was falsified (e.g., the claimant is not the same peer as the original BIND signer)** | Any witness | 500 epochs |
+
+### 6a. Platform Migration (E2E IS-4.8 fix)
+
+Platform migration moves a `domain_id` from one platform to another (e.g., from WhatsApp to Matrix because the WhatsApp group was banned). It is similar to REBIND but is initiated by a mission-level vote, not by the DomainCoordinator.
+
+- **Trigger:** the mission-level coordinator initiates a migration proposal. The proposal includes `(mission_id, domain_id, old_platform, new_platform, new_group_jid, new_coordinator_id)`. It is signed by the mission-level coordinator and broadcast to the mission.
+- **Vote:** the mission-level coordinator calls a 2/3 governance vote (per RFC-0855 §17). Vote period is `MIGRATION_VOTE_PERIOD = 1000` epochs. The vote is open to all mission participants.
+- **Outcome:** if 2/3 approve, the platform migration is committed. The old group's BIND is replaced by the new group's BIND. The old group transitions `Bound → UnboundQuarantined` (skipping `ReBinding` because migration is not the same as REBIND). The new group transitions `Unbound → Bound` directly.
+- **Cooldown:** after migration, no further migration for the same `(mission_id, domain_id)` is allowed for `MIGRATION_RETRY_COOLDOWN = 500` epochs. This prevents migration thrashing.
+- **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
+- **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is the only slash reason 0x000A-0x000B that is used in this RFC; per the reservation in RFC-0855p-b, reason codes 0x000A-0xFFFF are reserved for transport-level (0850p-c) and platform-coordination-level (0855p-c) events.
 
 ### 7. REBIND Lifecycle
 
@@ -479,6 +510,14 @@ When a `DOT/1/BIND` is received, each member validates:
 8. **Nonce freshness (R1-TGB-4 fix):** the witness MUST have not seen the same `(bind_nonce, coordinator_id)` pair in the last 1000 epochs. Replays are silently dropped.
 9. **Pubkey binding (R2-TGB-4 fix):** `coordinator_id == BLAKE3(coordinator_pubkey)`. This binds the public key to the peer_id, preventing a malicious coordinator from substituting a different public key in the signed payload. Without this check, the witness would verify the signature against a public key that does not actually correspond to the claimed peer_id.
 10. **Reconnect split-brain check (R3-1, R3-6 fix):** if `is_reconnect == true` AND a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)` in the local registry, the BIND is silently dropped (with optional `tracing::debug!` for diagnostics). This prevents a former DomainCoordinator from clobbering the current one. **First-BIND-wins rule (R3-9 fix, R4-7 tiebreaker):** if two BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the canonical BIND is the one with the **lowest `bind_hash` lexicographically** (this is a network-wide deterministic tiebreaker, not per-witness). The witness compares each incoming BIND's `bind_hash` to the locally-accepted binding's `bind_hash`; if the incoming `bind_hash` is lower AND the BIND is valid, the witness switches to the incoming BIND. This ensures that all witnesses converge to the same canonical BIND regardless of local reception order. The first-wins rule is implicit in check #5 (no existing binding) but is now explicit to handle the race where two BINDs are in-flight before either updates the registry.
+
+**is_reconnect validation (E2E IS-1.2 fix):** the `is_reconnect` flag in `BindEnvelope` is true when the BIND is being submitted by a node that was previously the DomainCoordinator for this `(mission_id, domain_id, platform)` and is reconnecting after a network partition. Validation steps for the witnesses:
+1. Look up the `(mission_id, domain_id, platform)` in the local registry.
+2. If a previous `coordinator_id` is in the local registry AND its `peer_id` matches the BIND's `coordinator_id` (via `BLAKE3(participant_id || mission_id)` comparison), the BIND is treated as a valid reconnect — accepted, and the registry is updated with the new `coordinator_term_id` and `bound_at_epoch`.
+3. If no previous `coordinator_id` is in the registry, the `is_reconnect = true` claim is FALSE — the BIND is treated as a fresh bind, not a reconnect. No slashing; just a `tracing::warn!` log.
+4. If a previous `coordinator_id` exists but its `peer_id` does NOT match the BIND's `coordinator_id`, this is **`is_reconnect_lie`** (slash reason 0x000B). The BIND is rejected silently; the witness initiates a slash tally against the lying claimant with reason 0x000B. The 500-epoch cooldown applies to the claimant's `(mission_id, domain_id, platform)` pair.
+
+**R3-13 fix — original BIND signer lookup:** the lookup in step 2 is done by querying the local `GroupRegistry`. The registry's `GroupBinding::domain_coordinator_id` field stores the most-recent accepted `coordinator_id`. If the registry is empty (e.g., this is a brand-new mission), step 2 short-circuits to step 3.
 
 **Nonce-replay table (R2-TGB-1 fix, R3-4 / R3-7 fix — corrected):**
 
@@ -586,8 +625,25 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-10 | `group_jid` is unique per platform | PROTOCOL | MITIGATED | Platform-specific (e.g., WhatsApp `120363...@g.us` is globally unique). |
 | IA-TGB-11 | Replay of BIND across epochs is rejected | REPLAY | MITIGATED | `bind_nonce` + `bind_epoch` binding. |
 | IA-TGB-12 | REBIND atomicity is preserved | PROTOCOL | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. Documented as MITIGATED with the caveat that a node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
+| IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses | REPLAY | MITIGATED | Specified in §8 Witness Validation (E2E IS-1.2 fix) |
+| IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout | TIMING | MITIGATED | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff |
+| IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs | AUTHORITY | MITIGATED | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003 |
+| IA-TGB-16 (E2E IS-1.6) | `is_reconnect_lie` is slashed with reason 0x000B | SECURITY | MITIGATED | Specified in §8 Witness Validation (E2E IS-1.6 fix) |
+| IA-TGB-17 (E2E IS-3.1) | Slash reason 0x000A (PlatformMigration) is reserved and used | PROTOCOL | MITIGATED | Specified in §6 Unbind Reasons |
+| IA-TGB-18 (E2E IS-3.2) | 3-way race tiebreaker uses lowest `peer_id` | PROTOCOL | MITIGATED | Specified in §3 Implicit Designator |
+| IA-TGB-19 (E2E IS-3.3) | Founder eligibility is verified by 4 explicit checks | AUTHORITY | MITIGATED | Specified in §4 Explicit Founder |
+| IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled | DETERMINISM | MITIGATED | First-seen-wins (per-witness) |
+| IA-TGB-21 (E2E IS-3.5) | 3-way BIND race resolves to a single canonical BIND | DETERMINISM | MITIGATED | Lowest `bind_hash` lex, then lowest `peer_id` lex |
+| IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level | GOVERNANCE | MITIGATED | Specified in §6a Platform Migration |
+| IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter | SECURITY | MITIGATED | Specified in §8 witness check #3 (R1-TGB-5 fix) |
+| IA-TGB-24 (E2E IS-8.1) | BIND hash comparison is big-endian per RFC-0008 | DETERMINISM | MITIGATED | Raw 32-byte comparison, no endianness conversion |
+| IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!` | PROTOCOL | MITIGATED | Per R3-1 fix; routine filtering is silent per §"routine filtering silent" |
+| IA-TGB-26 (E2E IS-8.5) | BIND envelope serialization is canonical (no trailing bytes) | SERIALIZATION | MITIGATED | Reuses RFC-0008 §"Serialization" with strict length validation |
+| IA-TGB-27 (E2E IS-8.6) | Empty allowlist means "anyone in group" | COMPATIBILITY | MITIGATED | Backwards-compatible: legacy deployments work without changes |
+| IA-TGB-28 (E2E IS-8.7) | Phone-number allowlist comparison normalizes format | COMPATIBILITY | MITIGATED | Adapter normalizes `+15551234567`, `15551234567`, `5551234567` to canonical form |
+| IA-TGB-29 (E2E IS-8.8) | BIND envelope hash includes the `state` field | SECURITY | MITIGATED | Per R1-TGB-2 fix; `state` and `renewed_at_epoch` are explicit in the hash field list |
 
-**Open assumptions:** None. All 12 are either MITIGATED or ACCEPTED with named Future Work references.
+**Open assumptions:** None. All 29 (R5-1 fix — was 12; 17 added in E2E round — IA-TGB-13 through IA-TGB-29) are either MITIGATED or ACCEPTED with named Future Work references.
 
 ## Security Considerations
 

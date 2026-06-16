@@ -401,10 +401,10 @@ sequenceDiagram
     Note over C,N2: All nodes have GroupState::Bound, founder is DomainCoordinator
 ```
 
-**Cross-reference:** This is the `bind_at_genesis` path referenced in §"Roles and Authorities" §4 MissionCreator. It uses the same `BindEnvelope` type as the implicit path; only the issuer differs (creator vs. first-DOT-sender).
+**Cross-reference:** This is the `bind_at_genesis` path referenced in §"Roles and Authorities" §4 "MissionCreator". It uses the same `BindEnvelope` type as the implicit path; only the issuer differs (creator vs. first-DOT-sender).
 
 **Founder eligibility (E2E IS-3.3 fix):** the founder (mission creator) MUST satisfy all of:
-- Has a `MissionCreator` role per §"Roles and Authorities" §4
+- Has a `MissionCreator` role per §"Roles and Authorities" §4 "MissionCreator"
 - Has signed the mission descriptor with their term key
 - Is a current member of the target group (verified via the adapter's membership API)
 - Has not previously issued a BIND for any other `(mission_id, domain_id, platform)` in the same mission (one-shot per §IA-TGB-8)
@@ -627,7 +627,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-3 | The DomainCoordinator's pubkey is in the mission's trust set | CRYPTO | MITIGATED | BIND signature verified by all witnesses; rejection if pubkey is unknown. |
 | IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule #7 (per §8 "Witness Validation Rules") |
 | IA-TGB-5 | Multi-platform rule is enforced consistently | PROTOCOL | MITIGATED | Each node's `GroupRegistry` enforces; conflict rejected on BIND. |
-| IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from 0855 §11); `SlashVote` envelope signature-verified. |
+| IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from RFC-0855 §11 "Governance Models"); `SlashVote` envelope signature-verified. |
 | IA-TGB-7 | Cooldown prevents rapid rebinding | TIME | MITIGATED | `UnboundQuarantined` state enforced; 100 / 2^n / 1000 epochs. |
 | IA-TGB-8 | Mission creator's `bind_at_genesis` is one-shot | AUTHORITY | MITIGATED | RFC-0855p-b v1.1 §"Genesis State Machine" limits to 3 states; creator cannot rebind after GenesisActive. |
 | IA-TGB-9 | Platform identifier is canonical (no spelling variants) | PROTOCOL | MITIGATED | Platform IDs are enum (`"whatsapp"`, `"matrix"`, `"telegram"`, ...); no free-form strings. |
@@ -884,7 +884,7 @@ Verify:
 | F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch |
 | F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c |
 | F5 | Cross-platform witness aggregation (e.g., WhatsApp witness + Matrix witness) | MEDIUM | Future |
-| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 evolution |
+| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 "Token Economics Integration" evolution |
 
 ## Rationale
 

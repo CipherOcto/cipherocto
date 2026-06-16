@@ -57,7 +57,7 @@ RFC-0855 has three structural gaps with respect to the Mission Coordinator role:
 
 1. **§16.3 forward reference**: "New Coordinator elected via governance model (Section 11)" references §11 "Governance Models" (governance models) which defines 5 governance models, none of which include an election algorithm. The §20 implementation timeline lists "3.4 Implement coordinator election" as a future task.
 2. **§4.2 coordinator role without lifecycle**: The `MembershipRole::Coordinator` bit is defined (in RFC-0855 §4.2 "Membership Roles") but the coordinator has no state machine, no term, no handover protocol, and no recovery from `Active → Byzantine`.
-3. **§17 slashing ambiguity**: "Coordinator misbehavior → Slash OCTO-O stake + demotion" (in RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)") but `demotion` is undefined. Without a typed target state (this RFC defines `Demoting`), "demotion" is an implicit transition that implementations must invent independently.
+3. **§17 slashing ambiguity**: "Coordinator misbehavior → Slash OCTO-O stake + demotion" (in RFC-0855 §17 "Token Economics Integration") but `demotion` is undefined. Without a typed target state (this RFC defines `Demoting`), "demotion" is an implicit transition that implementations must invent independently.
 
 This RFC fills all three gaps with a single coherent state machine, election algorithm, handover protocol, and slashing integration that implementations can reference directly.
 
@@ -219,7 +219,7 @@ pub struct SlashProof {
     pub slash_id: [u8; 32],
     pub coordinator: CoordinatorId,
     pub coordinator_term_id: [u8; 32],
-    /// Offense type (reuses RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" slash table)
+    /// Offense type (reuses RFC-0855 §17 "Token Economics Integration" slash table)
     pub offense: u16,
     /// Evidence payload (proof of incorrect task, forged envelope, etc.)
     pub evidence: Vec<u8>,
@@ -390,7 +390,7 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 
 #### Slashing Integration
 
-Slashing extends RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" by making `Demoting` a typed state with a deterministic transition:
+Slashing extends RFC-0855 §17 "Token Economics Integration" by making `Demoting` a typed state with a deterministic transition:
 
 1. `SlashProof` is submitted by `Slashing Adjudicator` (governance).
 2. Proof is verified: `adjudicator_signature` is valid; `evidence` matches the `offense` type; `coordinator_term_id` matches the current `CoordinatorRecord`.
@@ -636,7 +636,7 @@ Round 1 review SHOULD focus on the Election Algorithm table (per-governance-mode
 | Operation | Token | Amount | Rationale |
 |-----------|-------|--------|-----------|
 | Election candidacy (DAO) | OCTO | 1000 lock per candidacy | Anti-Sybil (RFC-0851 §11 "Anti-Sybil Mechanisms") |
-| Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)") |
+| Election candidacy (all models) | OCTO-O | 100 lock per term | Coordinator stake (RFC-0855 §17 "Token Economics Integration") |
 | Slash on `Active → Demoting` (0x0005 coordinator misbehavior) | OCTO-O | 100% of `octo_o_stake_locked` | Maximum penalty for coordinator misbehavior |
 | Slash on `Censorship` (0x0004) | OCTO | proportional to inactivity | RFC-0855 §17 / 0x0004 in §B |
 | Heartbeat emission | none | 0 | Free (bandwidth only) |
@@ -665,7 +665,7 @@ Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + rol
 ### RFC-0855 Integration
 
 - RFC-0855 §16.3 "AI Swarm Specification (MON-H6 fix)" ("New Coordinator elected via governance model (Section 11)") is updated to cite this RFC.
-- RFC-0855 §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" is updated to cite this RFC for the `Demoting` state and `SlashProof` type.
+- RFC-0855 §17 "Token Economics Integration" is updated to cite this RFC for the `Demoting` state and `SlashProof` type.
 - RFC-0855 §11 "Governance Models" is unchanged; this RFC's §"Election Algorithm (per governance model)" table extends §11 with the actual election mechanics per model.
 
 ## Test Vectors
@@ -848,7 +848,7 @@ Verify:
 | `crates/octo-network/src/mon/election.rs` | NEW: `ElectionTally`, `ElectionBallot`, per-governance-model election |
 | `crates/octo-network/src/mon/slashing.rs` | NEW: `SlashProof`, slash verification |
 | `crates/octo-network/src/mon/lifecycle.rs` | EXISTING: integrate `CoordinatorLifecycle` with mission lifecycle |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" / "Slashing Conditions (MON-M2 fix)" |
+| `rfcs/draft/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" |
 
 ## Future Work
 
@@ -915,11 +915,11 @@ stateDiagram-v2
 
 | Code | Offense | Penalty (default) | Source | Evidence schema (E2E IS-7.1) |
 |------|---------|-------------------|--------|-------------------------------|
-| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | This RFC (refines RFC-0855 §17 'Envelope forgery' into a specific code) | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
-| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | This RFC (extends RFC-0855 §17 slashing mechanism) | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
-| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O + 1000-epoch cooldown | This RFC (refines RFC-0855 §17 'Isolation breach' into a specific code) | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
-| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | This RFC (refines RFC-0855 §17 'Free-riding' into a specific code) | `CensorshipProof` envelope with censored envelope's hash + witness signature |
-| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | This RFC (refines RFC-0855 §17 'Coordinator misbehavior' into a specific code) | Free-form `evidence` payload + adjudicator signature |
+| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Envelope forgery' into a specific code) | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
+| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | This RFC (extends RFC-0855 §17 "Token Economics Integration" slashing mechanism) | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
+| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O + 1000-epoch cooldown | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Isolation breach' into a specific code) | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
+| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Free-riding' into a specific code) | `CensorshipProof` envelope with censored envelope's hash + witness signature |
+| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + 2^slash_count-epoch cooldown (D6) | This RFC (refines RFC-0855 §17 "Token Economics Integration" 'Coordinator misbehavior' into a specific code) | Free-form `evidence` payload + adjudicator signature |
 | 0x0006 | Key compromise (coordinator's signing key was compromised) | 50% OCTO-O | This RFC | `KeyRevocation` envelope + evidence revoked key was used |
 | 0x0007 | Banning legitimate member | 25% OCTO-O | This RFC | `MemberBan` envelope + evidence banned member had not violated any rule |
 | 0x0008 | Vote-buying | 100% OCTO-O | This RFC | Transcript of communications offering slash votes for payment |
@@ -940,7 +940,7 @@ This appendix is the canonical source for the genesis-related constants. All oth
 /// Maximum epochs to wait for ≥1 GenesisWitness before rolling back
 /// GenesisSelfAttest → GenesisDesignated.
 /// Rationale: 100 epochs at the default 1-epoch = ~100 epochs of grace;
-/// matches the heartbeat-falsification cool-down period (RFC-0855 §17).
+/// matches the heartbeat-falsification cool-down period (RFC-0855 §17 "Token Economics Integration").
 const GENESIS_WITNESS_TIMEOUT: u64 = 100;
 
 /// Minimum number of GenesisWitnesses required to transition to GenesisActive.

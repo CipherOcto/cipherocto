@@ -221,18 +221,27 @@ struct BindEnvelope {
     /// infeasible (2^128 attempts required). Implementations MUST NOT use
     /// counters, timestamps, or other low-entropy sources for `bind_nonce`.
     bind_nonce: [u8; 16],
+    /// Is-reconnection flag (R3-6 fix — replaces the previous
+    /// `reconnect_epoch: u64` field). `true` = this BIND is a reconnection
+    /// attempt by a former DomainCoordinator; `false` = this is a
+    /// first-time BIND for this (mission_id, domain_id, platform) triple.
+    /// Witnesses MUST reject a BIND if `is_reconnect == true` AND a
+    /// different `coordinator_id` is currently `Active` for the same
+    /// `(mission_id, domain_id, platform)` (split-brain prevention,
+    /// R2-DC-3). The previous `reconnect_epoch: u64` design had an
+    /// ambiguity: epoch 0 is a valid epoch (e.g., right after mission
+    /// genesis), so the value `0` could not be used to mean "no
+    /// reconnection" without colliding with the first epoch. A boolean
+    /// flag is unambiguous.
+    is_reconnect: bool,
     /// BLAKE3-256(group_jid || platform || mission_id || domain_id
     ///              || coordinator_id || coordinator_pubkey
-    ///              || bind_epoch || bind_nonce)
+    ///              || bind_epoch || bind_nonce || is_reconnect)
+    /// R3-1 fix: `is_reconnect` is now included in `bind_hash`. Without
+    /// this, an attacker could mutate `is_reconnect` from `false` to
+    /// `true` after signing, bypassing the split-brain check in §8
+    /// witness rule #10. (Previous R2-DC-3 design had this gap.)
     bind_hash: [u8; 32],
-    /// Reconnect epoch (R2-DC-3 fix — added to support split-brain prevention
-    /// when a former DomainCoordinator reconnects and tries to re-BIND while
-    /// another coordinator is already Active). Witnesses MUST reject a BIND
-    /// if `reconnect_epoch == 0` AND a different `coordinator_id` is currently
-    /// `Active` for the same `(mission_id, domain_id, platform)`. For
-    /// first-time BINDs, `reconnect_epoch == bind_epoch` (or set to 0 to
-    /// indicate "no reconnection").
-    reconnect_epoch: u64,
     /// Ed25519 signature by coordinator over bind_hash
     coordinator_signature: [u8; 64],
 }
@@ -457,33 +466,55 @@ When a `DOT/1/BIND` is received, each member validates:
 7. **Epoch sanity**: `bind_epoch` is within ±1 of local epoch.
 8. **Nonce freshness (R1-TGB-4 fix):** the witness MUST have not seen the same `(bind_nonce, coordinator_id)` pair in the last 1000 epochs. Replays are silently dropped.
 9. **Pubkey binding (R2-TGB-4 fix):** `coordinator_id == BLAKE3(coordinator_pubkey)`. This binds the public key to the peer_id, preventing a malicious coordinator from substituting a different public key in the signed payload. Without this check, the witness would verify the signature against a public key that does not actually correspond to the claimed peer_id.
+10. **Reconnect split-brain check (R3-1, R3-6 fix):** if `is_reconnect == true` AND a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)` in the local registry, the BIND is silently dropped (with optional `tracing::debug!` for diagnostics). This prevents a former DomainCoordinator from clobbering the current one. **First-BIND-wins rule (R3-9 fix):** if two BINDs arrive in the same epoch for the same `(mission_id, domain_id, platform)`, the first to be received AND validated by the witness is the canonical one; subsequent BINDs (including from a different sender) are silently dropped. This rule is implicit in check #5 (no existing binding) but is now explicit to handle the race where two BINDs are in-flight before either updates the registry.
 
-**Nonce-replay table (R2-TGB-1 fix — R2-TGB-1 spec for rule #8):**
+**Nonce-replay table (R2-TGB-1 fix, R3-4 / R3-7 fix — corrected):**
 
 ```rust
-/// Per-witness structure for tracking seen BIND nonces (R2-TGB-1)
+/// Per-witness structure for tracking seen BIND nonces (R2-TGB-1, R3-4)
 struct NonceReplayTable {
     /// (bind_nonce, coordinator_id) -> first-seen epoch
     entries: BTreeMap<([u8; 16], [u8; 32]), u64>,
-    /// Last eviction epoch
+    /// Last eviction epoch (R3-7 fix: updated by both `check` and `record`)
     last_eviction_epoch: u64,
 }
 
 impl NonceReplayTable {
-    /// Returns true if the (nonce, coordinator_id) pair is a replay
-    fn is_replay(&self, nonce: [u8; 16], coord_id: [u8; 32], now_epoch: u64) -> bool {
-        // Evict entries older than 1000 epochs first
-        if now_epoch - self.last_eviction_epoch > 100 {
+    /// R3-4 fix: signature changed from `&self` to `&mut self` because
+    /// `is_replay` evicts old entries as a side effect. The previous
+    /// `&self` signature with `self.entries.retain(...)` would not
+    /// compile (mutation through a shared reference).
+    ///
+    /// R3-12 fix: `now_epoch` is the local epoch at the time of the
+    /// check. Eviction is based on `first_seen_epoch` (local time) — if
+    /// the local clock is skewed, eviction may happen earlier or later
+    /// than intended. Implementations SHOULD use a monotonic epoch
+    /// counter (RFC-0126 epoch-clock) to minimize skew.
+    ///
+    /// Returns true if the (nonce, coordinator_id) pair is a replay.
+    fn check_and_maybe_evict(
+        &mut self,
+        nonce: [u8; 16],
+        coord_id: [u8; 32],
+        now_epoch: u64,
+    ) -> bool {
+        // Evict entries older than 1000 epochs first (R3-7 fix: update
+        // last_eviction_epoch; previous version had it commented out as
+        // "mut self" which would not compile).
+        if now_epoch.saturating_sub(self.last_eviction_epoch) > 100 {
             let cutoff = now_epoch.saturating_sub(1000);
             self.entries.retain(|_, first_seen| *first_seen > cutoff);
-            // last_eviction_epoch = now_epoch; // mut self
+            self.last_eviction_epoch = now_epoch;
         }
         self.entries.contains_key(&(nonce, coord_id))
     }
 
-    /// Records the (nonce, coordinator_id) pair as seen
+    /// Records the (nonce, coordinator_id) pair as seen (R3-7 fix:
+    /// updates `last_eviction_epoch` to track recent activity, so the
+    /// next `check_and_maybe_evict` call can decide whether to evict).
     fn record(&mut self, nonce: [u8; 16], coord_id: [u8; 32], now_epoch: u64) {
         self.entries.entry((nonce, coord_id)).or_insert(now_epoch);
+        self.last_eviction_epoch = now_epoch;
     }
 }
 ```

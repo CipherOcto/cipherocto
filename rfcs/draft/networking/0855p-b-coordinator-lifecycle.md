@@ -313,17 +313,26 @@ When a node receives a `GenesisAttest` envelope, it MUST validate:
 
 If any of these fail, the node silently drops the `GenesisAttest` (with optional `tracing::debug!`). The creator's local `attest_nonce` must be incremented for every new attempt; a duplicate `(attest_nonce, mission_id)` is treated as a stale genesis and rejected by all witnesses.
 
-**R2-CL-3 fix — genesis_witness_timeout constant:**
+**R2-CL-3 fix — genesis_witness_timeout constant (R3-2 fix — moved to top-level §"Constants" appendix):**
+
+The genesis-related constants are now consolidated in §"B. Slash Offense Codes" appendix sibling §"B'. Genesis Constants" (see end of document). This avoids duplicating constants across subsections (R3-2 fix: previous placement was inside the §"Genesis State Machine" subsection, which made them hard to find). The constants are:
 
 ```rust
 /// Maximum epochs to wait for ≥1 GenesisWitness before rolling back
-/// GenesisSelfAttest → GenesisDesignated (R2-CL-3)
+/// GenesisSelfAttest → GenesisDesignated
 const GENESIS_WITNESS_TIMEOUT: u64 = 100;
 
 /// Minimum number of GenesisWitnesses required to transition to GenesisActive
 const MIN_GENESIS_WITNESSES: usize = 1;
 
-/// Maximum acceptable clock skew between attest_epoch and local epoch
+/// Maximum acceptable clock skew between attest_epoch and local epoch.
+/// R3-5 fix: this matches the ±1 epoch tolerance used elsewhere in DOT
+/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm"
+/// ballot timestamp tolerance). Using a different tolerance for genesis
+/// would create inconsistency; e.g., if BIND tolerates ±1 epoch but
+/// GenesisAttest tolerates ±2, an attacker could replay a BIND from
+/// epoch N-2 that is rejected (out of tolerance) but a GenesisAttest
+/// from epoch N-2 that is accepted (in tolerance).
 const GENESIS_EPOCH_TOLERANCE: u64 = 1;
 ```
 

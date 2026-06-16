@@ -199,36 +199,77 @@ struct DomainCoordinatorRecord {
 
 ### 3. Platform-Admin Authority Check
 
-**PlatformEvent enum (R2-DC-4 fix — full definition; was previously referenced in narrative form without a struct definition):**
+**PlatformEvent enum (R2-DC-4 / R3-3 fix — full definition with payloads):**
 
 The adapter emits `PlatformEvent` envelopes when the underlying messaging platform reports a state change relevant to DOT binding. The enum is exhaustive over the events the DomainCoordinator subscribes to.
 
+**R3-3 critical fix — payload support:** a Rust enum annotated with `#[repr(u8)]` is a C-compatible **tag-only** enum (no payload data per variant). The previous R2-DC-4 design attempted to describe payloads in comments, but such payloads are not representable. The fix uses a regular Rust enum with data-carrying variants. The discriminant is still a `u8` for cross-language compatibility, but variants carry their payload data inline:
+
 ```rust
 /// Events emitted by the platform layer that the DomainCoordinator subscribes to
-/// (R2-DC-4 fix: previously referenced without a struct definition)
+/// (R2-DC-4 / R3-3 fix: regular Rust enum with data-carrying variants;
+///  previous R2-DC-4 design used #[repr(u8)] which is tag-only and cannot
+///  carry payload data.)
 #[derive(Clone, Debug)]
 #[repr(u8)]
 enum PlatformEvent {
     /// Group admin transfer (canonical handover path)
-    /// Payload: { old_admin: participant_id, new_admin: participant_id, group_jid, transfer_epoch }
-    AdminTransfer = 0x01,
-    /// Kicked from the physical group (e.g., by group admin or platform moderation)
-    /// Payload: { group_jid, kick_epoch, kicker_participant_id }
-    KickedFromGroup = 0x02,
+    AdminTransfer {
+        old_admin: [u8; 32],      // participant_id
+        new_admin: [u8; 32],      // participant_id
+        group_jid: String,
+        transfer_epoch: u64,
+    } = 0x01,
+    /// Kicked from the physical group
+    KickedFromGroup {
+        group_jid: String,
+        kick_epoch: u64,
+        kicker_participant_id: [u8; 32],
+    } = 0x02,
     /// Banned from the platform entirely (account-level)
-    /// Payload: { ban_epoch, ban_reason }
-    PlatformBan = 0x03,
+    PlatformBan {
+        ban_epoch: u64,
+        ban_reason: String,
+    } = 0x03,
     /// Admin list observed (initial or refresh)
-    /// Payload: { group_jid, admins: Vec<participant_id>, observation_epoch }
-    AdminListObserved = 0x04,
-    /// Group membership change (new member or member left)
-    /// Payload: { group_jid, action: "join"|"leave", participant_id, change_epoch }
-    MembershipChange = 0x05,
+    AdminListObserved {
+        group_jid: String,
+        admins: Vec<[u8; 32]>,  // participant_id list
+        observation_epoch: u64,
+    } = 0x04,
+    /// Group membership change
+    MembershipChange {
+        group_jid: String,
+        action: MembershipAction,  // "join" | "leave"
+        participant_id: [u8; 32],
+        change_epoch: u64,
+    } = 0x05,
     /// Subgroup created (informational; not used for binding decisions)
-    /// Payload: { parent_group_jid, child_group_jid, creator_participant_id }
-    SubgroupCreated = 0x06,
+    SubgroupCreated {
+        parent_group_jid: String,
+        child_group_jid: String,
+        creator_participant_id: [u8; 32],
+    } = 0x06,
+}
+
+/// Membership action for PlatformEvent::MembershipChange (R3-3 fix)
+#[derive(Clone, Debug)]
+#[repr(u8)]
+enum MembershipAction {
+    Join = 0x01,
+    Leave = 0x02,
 }
 ```
+
+**Wire format for cross-language compatibility:**
+
+For over-the-wire serialization (between adapters and the DOT core), each `PlatformEvent` is serialized as:
+- 1 byte: discriminant (`u8`)
+- Variable bytes: payload, canonically serialized per RFC-0850p-c §Appendix A
+  (e.g., for `AdminTransfer`: 32 bytes old_admin || 32 bytes new_admin ||
+   length-prefixed group_jid || 8 bytes transfer_epoch)
+
+The discriminant byte is the same in both Rust (in-memory) and on-the-wire representations. Implementations in other languages (e.g., Go, Python) parse the discriminant byte and dispatch to the variant-specific deserializer.
 
 **R2-DC-5 fix — IA-DC-7 reconciliation:** the implicit-assumption audit row IA-DC-7 says "Platform admin ID can be mapped to PeerId" with mitigation "Each adapter implements the mapping (e.g., WhatsApp: phone → peer_id via mission's pubkey registry)". The platform layer returns admin identifiers in **platform-native** format (e.g., WhatsApp returns phone numbers like `+15551234567`). The adapter is responsible for **translating** platform-native format to the canonical DOT 32-byte `participant_id` (which is then mapped to `peer_id = BLAKE3(participant_id || mission_id)`). The function `is_platform_admin` operates on `participant_id` (post-translation); the platform's native format is only used at the adapter boundary. IA-DC-7 is updated accordingly.
 
@@ -330,13 +371,13 @@ The DomainCoordinator monitors three platform events:
 
 **Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3) — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
 
-**Split-brain prevention on reconnection (R2-DC-3 fix):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
+**Split-brain prevention on reconnection (R2-DC-3 fix, R3-1 / R3-6 follow-up):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
 1. Reconnected node queries the local `GroupRegistry` for the current binding state.
 2. If a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)`, the reconnected node MUST NOT issue a BIND.
 3. The reconnected node MAY challenge the current DomainCoordinator via `CoordinatorChallenge` (per RFC-0855p-b §"Coordinator Challenge") if it has evidence of misbehavior; otherwise, it accepts the new DomainCoordinator and transitions to `MissionParticipant`.
-4. If no DomainCoordinator is `Active` (e.g., the new one was also disconnected), the reconnected node MAY issue a BIND as a fresh designator. The `BindEnvelope` MUST include a `reconnect_epoch` field (R2-DC-3 fix: new field on the envelope; the witness rule #1 validation must reject BINDs with `reconnect_epoch == 0` AND an active binding — this prevents a reconnecting node from clobbering the current DomainCoordinator).
+4. If no DomainCoordinator is `Active` (e.g., the new one was also disconnected), the reconnected node MAY issue a BIND as a fresh designator. The `BindEnvelope` MUST set `is_reconnect: true` (R3-6 fix — replaces the previous `reconnect_epoch: u64` field; the witness rule #10 in RFC-0850p-c §8 enforces the split-brain check).
 
-The `reconnect_epoch` field on `BindEnvelope` is set to the current epoch when the BIND is issued (non-zero for reconnection; same as `bind_epoch` for first-time BINDs; this addition to the `BindEnvelope` is a pre-1.0 spec change tracked in RFC-0850p-c's changelog).
+The `is_reconnect: bool` field on `BindEnvelope` is `false` for first-time BINDs and `true` for reconnection attempts. This addition to `BindEnvelope` is a pre-1.0 spec change tracked in RFC-0850p-c's changelog. The field is part of `bind_hash` (R3-1 fix) so it cannot be mutated post-signing.
 
 ### 5a. PlatformLoss Envelope (R1-DC-3 fix)
 
@@ -444,6 +485,7 @@ DomainCoordinator
 | IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F1). |
 | IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
 | IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
+| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. |
 | IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
 | IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
 | IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |

@@ -191,19 +191,21 @@ struct SeedList {
 }
 ```
 
-**Default seed list at launch:**
+**Default seed list at launch (R3-10 fix — `effective_epoch` and `expires_epoch` added):**
 
-| Operator label | Region | Capabilities | Last seen (launch) | Signed at (epoch) |
-|----------------|--------|--------------|---------------------|---------------------|
-| foundation-1 | us-east | Full (0x0FFF) | 0 | 0 |
-| foundation-2 | eu-west | Full (0x0FFF) | 0 | 0 |
-| foundation-3 | ap-south | Full (0x0FFF) | 0 | 0 |
-| foundation-4 | sa-east | Full (0x0FFF) | 0 | 0 |
-| foundation-5 | ap-east | Full (0x0FFF) | 0 | 0 |
+| Operator label | Region | Capabilities | Last seen (launch) | Signed at (epoch) | Effective epoch | Expires epoch |
+|----------------|--------|--------------|---------------------|---------------------|------------------|----------------|
+| foundation-1 | us-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
+| foundation-2 | eu-west | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
+| foundation-3 | ap-south | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
+| foundation-4 | sa-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
+| foundation-5 | ap-east | Full (0x0FFF) | 0 | 0 | 0 | 7,776,000 |
 
 Five geographically diverse bootstrap nodes. New nodes connect to all 5 in parallel and require ≥3 responses to agree on peer list (Sybil defense, see §6).
 
 **R1-NB-4 fix:** the table now includes the `signed_at_epoch` column (was previously omitted even though the struct has the field). At launch, all entries are signed at epoch 0.
+
+**R3-10 fix:** the table now also includes `effective_epoch` and `expires_epoch` columns. At launch, all entries are effective from epoch 0 and expire at epoch 7,776,000 (~90 days @ 1 epoch/sec, per `SEED_LIST_ROTATION_EPOCHS` in §Appendix D). The seed list is rotatable via governance; the next list takes over at `expires_epoch`.
 
 ### 2. Bootstrap Envelope Types
 

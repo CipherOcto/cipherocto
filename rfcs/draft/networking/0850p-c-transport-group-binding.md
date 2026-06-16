@@ -407,9 +407,9 @@ sequenceDiagram
 - Is a current member of the target group (verified via the adapter's membership API)
 - Has not previously issued a BIND for any other `(mission_id, domain_id, platform)` in the same mission (one-shot per §IA-TGB-8)
 
-If any check fails, witnesses reject the BIND with `slash_reason = 0x0003` (founder squat / unauthorized BIND). The founder is notified via a `BIND_REJECTED` event; the founder can retry with corrected parameters (e.g., join the group first if membership was missing).
+If any of the first three checks fails, witnesses reject the BIND silently (per §8 "Witness Validation Rules", check rules 1-4, 6, 9). The founder is notified via a `BIND_REJECTED` event; the founder can retry with corrected parameters (e.g., join the group first if membership was missing). Slash reason `0x0003` (founder-squat) is NOT applied to a BIND-rejection event — it is applied only to the squat case (line below).
 
-**Founder squat detection (E2E IS-1.5 fix):** "founder squat" is when a founder issues a BIND for a `domain_id` they do not actually intend to govern (e.g., to deny other candidates). Detection: if a founder's BIND is accepted but the founder does not send any `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs, the binding is treated as a squat. All witnesses initiate a slash tally against the founder with `slash_reason = 0x0003` (founder squat) and a 1000-epoch cooldown is applied to the `(mission_id, domain_id)` pair. The founder is removed from the mission's trust set temporarily (1000 epochs).
+**Founder squat detection (E2E IS-1.5 fix):** "founder squat" is when a founder issues a BIND for a `domain_id` they do not actually intend to govern (e.g., to deny other candidates). Detection: if a founder's BIND is accepted but the founder does not send any `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs, the binding is treated as a squat. All witnesses initiate a slash tally against the founder with `slash_reason = 0x0003` (founder squat, per RFC-0855p-b §B) and a 1000-epoch cooldown is applied to the `(mission_id, domain_id)` pair. The founder is removed from the mission's trust set temporarily (1000 epochs).
 
 ### 5. Multi-Platform Binding Rule
 

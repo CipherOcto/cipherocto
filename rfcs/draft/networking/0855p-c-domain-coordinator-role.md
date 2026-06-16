@@ -87,7 +87,7 @@ The `Centralized` governance model path is the same; the others are platform-med
 
 ### 1. DomainCoordinator (the role defined by this RFC)
 
-- **Stable identifier**: `[u8; 32]` `DomainCoordinatorId` (alias for `PeerId` in the mission's namespace; same as RFC-0850p-c §"Roles and Authorities" §1)
+- **Stable identifier**: `[u8; 32]` `DomainCoordinatorId` (alias for `PeerId` in the mission's namespace; same as RFC-0850p-c §"Roles and Authorities" §1 "DomainCoordinator")
 - **Base capabilities**: sign `DOT/1/BIND/UNBIND/REBIND` envelopes; emit binding witnesses; receive `ExecutionTask` results for the bound domain
 - **Authority scope**: `bind_domain` + `coordinate_domain` (extends RFC-0850p-c with mission-level coordination; signs both binding envelopes and mission-level envelopes)
 - **Who can assume**: platform-admin of the bound group (default), OR explicit founder BIND (per RFC-0850p-c §4 "Binding Ceremony — Explicit Founder"), OR election winner (Centralized governance model only)
@@ -109,11 +109,11 @@ The `Centralized` governance model path is the same; the others are platform-med
 
 - **Stable identifier**: platform-specific (e.g., WhatsApp `participant_id`)
 - **Base capabilities**: receive envelopes; sign `DOT/1/BIND_ACK`; participate in slash votes
-- **Authority scope**: `bind_witness` (per RFC-0850p-c §"Roles and Authorities" §3)
+- **Authority scope**: `bind_witness` (per RFC-0850p-c §"Roles and Authorities" §3 "GroupWitness")
 - **Who can assume**: anyone in the physical group
 - **Who can revoke**: group admin (kicked from group)
 
-### 4. Witness (slash-vote role, RFC-0855p-b §3)
+### 4. Witness (slash-vote role; per RFC-0855p-b §3 "Mission Participant (voter)")
 
 - **Stable identifier**: `[u8; 32]` (same as RFC-0855p-b)
 - **Base capabilities**: sign `SlashVote` envelopes; tally 2/3 quorum
@@ -659,7 +659,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 ### RFC-0850p-c Integration
 
 - DomainCoordinator issues `DOT/1/BIND/UNBIND/REBIND` envelopes (per RFC-0850p-c §2 "Binding Envelope Types")
-- DomainCoordinator's `bind_domain` authority scope matches RFC-0850p-c §"Roles and Authorities" §1
+- DomainCoordinator's `bind_domain` authority scope matches RFC-0850p-c §"Roles and Authorities" §1 "DomainCoordinator"
 
 ## Test Vectors
 
@@ -815,7 +815,7 @@ Verify:
 | `crates/octo-adapter-matrix/src/lib.rs` | Same pattern (Matrix power levels) |
 | `crates/octo-adapter-telegram/src/lib.rs` | Same pattern (Telegram admin) |
 | `crates/octo-network/src/dot/binding.rs` | Integrate DomainCoordinator authority with BIND envelope |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 DomainCoordinator |
+| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 "Membership Roles" DomainCoordinator |
 
 ## Integration Order (NEW from 2026-06-16 batch review)
 
@@ -829,7 +829,7 @@ graph LR
     B --> C[Step 3: Binding Ceremony<br/>0850p-c]
     C --> D[Step 4: Coordinator Election<br/>0855p-b v1.1]
     D --> E[Step 5: DomainCoordinator<br/>0855p-c]
-    E --> F[Active Mission<br/>0855 §3.1]
+    E --> F[Active Mission<br/>0855 §3.1 "Lifecycle States"]
 ```
 
 ### Step-by-Step Detail
@@ -905,7 +905,7 @@ The multi-platform rule (one DomainCoordinator per platform per domain_id) is a 
 
 ## Related RFCs
 
-- **RFC-0855** (Networking): Mission Overlay Networks — primary; §4.2 membership roles
+- **RFC-0855** (Networking): Mission Overlay Networks — primary; §4.2 "Membership Roles"
 - **RFC-0855p-b v1.1** (Networking): Mission Coordinator Lifecycle — reuses `CoordinatorLifecycle`, `CoordinatorRecord`, slashing
 - **RFC-0850p-c** (Networking): Transport Group Binding Ceremony — DomainCoordinator's authority comes from binding
 - **RFC-0850p-a v1.15** (Networking): WhatsApp Auth Onboarding — adapter-side integration

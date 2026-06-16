@@ -475,45 +475,6 @@ DomainCoordinator
 | Platform event timestamp | B | Wall-clock acceptable |
 | Adapter connection check | B | Same |
 
-## Performance Targets
-
-| Metric | Target |
-|--------|--------|
-| Platform-admin check | <100ms |
-| Platform event → state transition | <500ms |
-| Platform-loss detection | <2 × heartbeat (default 30s) |
-| Handover via admin transfer | <5s |
-| Slash proof propagation | <2s |
-
-## Implicit Assumptions Audit
-
-> **The "Nothing should be implied" rule (validation layer):** Every assumption MUST be named, classified, and either validated at runtime, mitigated in code, or accepted with deadline + Future Work.
-
-| # | Assumption | Type | Status | Mitigation / Deadline |
-|---|-----------|------|--------|----------------------|
-| IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F1). |
-| IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
-| IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
-| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
-| IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
-| IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
-| IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |
-| IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id || mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
-| IA-DC-8 | Mission-level coordinator and DomainCoordinator are separate roles | PROTOCOL | MITIGATED | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator). |
-| IA-DC-9 | `coordinator_term_id` chain is preserved across handover | PROTOCOL | MITIGATED | Defined in §4 Platform-Mediated Handover. |
-| IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |
-| IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
-| IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
-| IA-DC-13 (E2E IS-6.2) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.5 fix — 90-epoch Suspect window, then slash or recover) |
-| IA-DC-14 (E2E IS-6.3) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.4 fix — Elected → Active latch) |
-| IA-DC-15 (E2E IS-6.4) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss |
-| IA-DC-16 (E2E IS-8.4) | Coordinator term is monotonic and never decreases across re-Active | PROTOCOL | MITIGATED | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 DomainCoordinatorLifecycle. |
-| IA-DC-17 (E2E IS-5.3) | Slash votes are public and auditable post-resolution | GOVERNANCE | MITIGATED | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §"Slash Vote Audit" (E2E IS-5.3 fix) below. |
-| IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §"Cross-Platform Slash" (E2E IS-5.8 fix) below. |
-| IA-DC-19 (E2E IS-6.5) | DomainCoordinator's state transitions are observable to the mission | PROTOCOL | MITIGATED | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §"State Transition Observability" (E2E IS-6.5 fix) below. |
-
-**Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
-
 ### 9a. Slash Vote Audit (E2E IS-5.3 fix)
 
 Every slash vote MUST be written to the audit log **before tally**. The audit log entry contains:
@@ -577,6 +538,47 @@ struct StateTransitionEvent {
 The `StateTransitionEvent` is gossiped to all mission participants. The `trigger_event_id` is a `BLAKE3-256` of the triggering event's canonical bytes (a slash vote, a platform event, etc.). Self-driven transitions (e.g., latch `Elected → Active` after 30 epochs) use `trigger_event_id = [0u8; 32]`.
 
 Verification: mission participants verify the signature against the DomainCoordinator's term public key (looked up via the mission's pubkey registry). Invalid signatures are dropped silently (per the "routine filtering silent" rule, §RFC-0855p-b).
+
+## Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| Platform-admin check | <100ms |
+| Platform event → state transition | <500ms |
+| Platform-loss detection | <2 × heartbeat (default 30s) |
+| Handover via admin transfer | <5s |
+| Slash proof propagation | <2s |
+
+## Implicit Assumptions Audit
+
+> **The "Nothing should be implied" rule (validation layer):** Every assumption MUST be named, classified, and either validated at runtime, mitigated in code, or accepted with deadline + Future Work.
+
+| # | Assumption | Type | Status | Mitigation / Deadline |
+|---|-----------|------|--------|----------------------|
+| IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F1). |
+| IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
+| IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
+| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
+| IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
+| IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
+| IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |
+| IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id || mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
+| IA-DC-8 | Mission-level coordinator and DomainCoordinator are separate roles | PROTOCOL | MITIGATED | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator). |
+| IA-DC-9 | `coordinator_term_id` chain is preserved across handover | PROTOCOL | MITIGATED | Defined in §4 Platform-Mediated Handover. |
+| IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |
+| IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
+| IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
+| IA-DC-13 (E2E IS-6.2) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.5 fix — 90-epoch Suspect window, then slash or recover) |
+| IA-DC-14 (E2E IS-6.3) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.4 fix — Elected → Active latch) |
+| IA-DC-15 (E2E IS-6.4) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss |
+| IA-DC-16 (E2E IS-8.4) | Coordinator term is monotonic and never decreases across re-Active | PROTOCOL | MITIGATED | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 DomainCoordinatorLifecycle. |
+| IA-DC-17 (E2E IS-5.3) | Slash votes are public and auditable post-resolution | GOVERNANCE | MITIGATED | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §9a "Slash Vote Audit" (E2E IS-5.3 fix) above. |
+| IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §9b "Cross-Platform Slash" (E2E IS-5.8 fix) above. |
+| IA-DC-19 (E2E IS-6.5) | DomainCoordinator's state transitions are observable to the mission | PROTOCOL | MITIGATED | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §9c "State Transition Observability" (E2E IS-6.5 fix) above. |
+
+**Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
+
+> **R9-6 fix — section ordering:** the subsections 9a/9b/9c (Slash Vote Audit, Cross-Platform Slash, State Transition Observability) were originally placed AFTER this `## Implicit Assumptions Audit` section, which broke the spec section ordering. They have been moved to immediately after §9 RFC-0008 Execution Class Mapping (in `## Specification`).
 
 ## Security Considerations
 

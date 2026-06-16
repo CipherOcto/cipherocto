@@ -380,7 +380,7 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 | Signed seed list version > local version | Version check | Accept and update local (governance rotation) |
 | Multiple valid seed lists (split) | Authority signature check | Reject both, log error, use cached |
 
-**Mode A → Mode B trigger (E2E IS-2.1 fix):** the fallback fires when fewer than `MIN_BOOTSTRAP_RESPONSES` (3) responses are received within `BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT` (90 epochs). The "All 5 timed out" row above is the degenerate case; the general rule is the 3-of-5 Sybil defense threshold. If exactly 2 of 5 respond, the node falls back to Mode B (DHT) (see IS-2.5 for the 2-of-5 acceptance rule).
+**Mode A → Mode B trigger (E2E IS-2.1 fix):** the fallback fires when fewer than `MIN_BOOTSTRAP_RESPONSES` (3) responses are received within `BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT` (90 epochs). The "All 5 timed out" row above is the degenerate case; the general rule is the 3-of-5 Sybil defense threshold. If exactly 2 of 5 respond, the node accepts the 2-of-5 case as a **low-confidence bootstrap** (per IS-2.5 / §"Sybil Defense" above) and does NOT fall back to Mode B; only 0-of-5 or 1-of-5 triggers the Mode B fallback.
 
 **Mode B → Mode C trigger (E2E IS-2.3 fix):** the fallback fires when fewer than `MIN_DHT_PEERS` (3) DHT lookups succeed within `DHT_DISCOVERY_TIMEOUT` (120 epochs). The invite link is the last-resort fallback because it requires user action (scanning a QR code or clicking a link).
 

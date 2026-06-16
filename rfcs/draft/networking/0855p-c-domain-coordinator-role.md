@@ -437,7 +437,7 @@ Slash proof structure is identical to RFC-0855p-b; the only addition is the `dom
 **Slash reasons:** the DomainCoordinator role uses the slash reason codes from RFC-0855p-b §B verbatim (0x0001-0x0009 are slash-only; 0x000A-0x000B are transport-level per 0850p-c). **R9-5 fix — duplicate table removed:** the previous version of this RFC had a stale "slash reasons (extends RFC-0855p-b)" table that used 0x0006, 0x0007, 0x0008 for DIFFERENT reasons than 0855p-b §B (which has those codes as `key-compromise`, `banning-legitimate-member`, `vote-buying` respectively). The stale table has been removed; refer to RFC-0855p-b §B for the canonical mapping. The DomainCoordinator-specific behavioral notes are:
 - 0x0005 (coordinator misbehavior) is the most common DomainCoordinator slash reason (covers censorship, kick evasion, BIND equivocation).
 - 0x0007 (banning legitimate member) is DomainCoordinator-specific but the reason code is global.
-- 0x000A (platform migration) and 0x000B (is_reconnect_lie) are transport-level (per 0850p-c §B).
+- 0x000A (platform migration) and 0x000B (is_reconnect_lie) are transport-level (per 0850p-c §6 "Unbind Reasons" and 0855p-b §B slash reason codes 0x000A-0x000B).
 
 ### 7. Cross-RFC Integration
 

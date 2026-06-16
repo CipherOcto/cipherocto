@@ -492,7 +492,7 @@ enum BootstrapClientLifecycle {
 | IA-NB-11 | Public addresses in seed list are routable | NETWORK | **MISSING CHECK** | No validation that `public_addrs` are actually reachable until first BOOTSTRAP_REQ. Add health check at seed list load (F3). |
 | IA-NB-12 | At least one node is reachable in any region | NETWORK | **ACCEPTED RISK** | Geographic diversity; documented in §1 default table. |
 | IA-NB-13 | All 3 bootstrap modes failing is recoverable with exponential backoff | ERROR | MITIGATED | Specified in §7 Failure Modes (E2E IS-2.4 fix) |
-| IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence | SECURITY | MITIGATED | Specified in §6 Sybil Defense (E2E IS-2.5 fix) |
+| IA-NB-14 | 2-of-5 bootstrap case is accepted with low confidence | SECURITY | MITIGATED | Specified in §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix) |
 
 **Open assumption:** IA-NB-11 (seed list health check at load) is **MISSING** — flagged for implementation F3.
 
@@ -697,7 +697,7 @@ Verify: bootstrap nodes NOT loaded
 
 The three-mode approach (A: bootstrap nodes, B: DHT, C: invite) is the established pattern across decentralized networks (Bitcoin, Tor, Matrix). Each mode has known weaknesses; combining them creates defense in depth.
 
-The Sybil threshold (3-of-5) is the HIGH-CONFIDENCE minimum that allows the full D-NB-* defense set to work. A higher threshold (e.g., 5-of-5) would create availability problems when even one bootstrap node is offline. A LOWER threshold (2-of-5) is also accepted (E2E IS-2.5 fix; see §6 "Sybil Defense") but with the same 80% intersection requirement and tagged `bootstrap_confidence: Low` — a low-confidence bootstrap is not a trivial eclipse vector because the 80% intersection rule still applies, and the node is required to seek additional peers via GDP before joining a mission. The 2-of-5 case is a graceful-degradation fallback for when 1 bootstrap node is offline; the 1-of-5 and 0-of-5 cases fall through to Mode B.
+The Sybil threshold (3-of-5) is the HIGH-CONFIDENCE minimum that allows the full D-NB-* defense set to work. A higher threshold (e.g., 5-of-5) would create availability problems when even one bootstrap node is offline. A LOWER threshold (2-of-5) is also accepted (E2E IS-2.5 fix; see §6 "Sybil / Eclipse Defense") but with the same 80% intersection requirement and tagged `bootstrap_confidence: Low` — a low-confidence bootstrap is not a trivial eclipse vector because the 80% intersection rule still applies, and the node is required to seek additional peers via GDP before joining a mission. The 2-of-5 case is a graceful-degradation fallback for when 1 bootstrap node is offline; the 1-of-5 and 0-of-5 cases fall through to Mode B.
 
 The 256-peer initial cap is a UX bound: a new node can show 256 peers in its dashboard without overwhelming the human. Subsequent GDP growth removes the cap.
 
@@ -751,7 +751,7 @@ const DEFAULT_SEED_LIST_SIZE: usize = 5;
 
 /// High-confidence minimum responses required for Sybil defense (≥3 of 5).
 /// The 2-of-5 case is also accepted as low-confidence bootstrap per E2E IS-2.5
-/// (see §6 Sybil Defense). 1-of-5 and 0-of-5 trigger Mode B fallback.
+/// (see §6 "Sybil / Eclipse Defense"). 1-of-5 and 0-of-5 trigger Mode B fallback.
 const MIN_BOOTSTRAP_RESPONSES: usize = 3;
 
 /// Intersection threshold for Sybil defense (≥80% of returned peer lists must agree)

@@ -684,14 +684,16 @@ Verify: bootstrap nodes NOT loaded
 
 ## Future Work
 
-| ID | Title | Severity | Deadline |
-|----|-------|----------|----------|
-| F1 | SeedListAuthority decentralization (DAO multi-sig) | HIGH | Pre-public-launch |
-| F2 | Tor-only seed list option | MEDIUM | Post-launch |
-| F3 | Seed list health check at load (IA-NB-11) | MEDIUM | Pre-public-launch |
-| F4 | Trust UX (web-of-trust visualization) | MEDIUM | Post-launch |
-| F5 | Mode D = NIP-05 / Nostr pubkey bootstrap | LOW | Future |
-| F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch |
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
+
+| ID | Title | Severity | Deadline | Spec | Mission |
+|----|-------|----------|----------|------|---------|
+| F1 | SeedListAuthority decentralization (DAO multi-sig) | HIGH | Pre-public-launch | Mission: 3-of-5 foundation multi-sig at launch transitions to DAO multi-sig at F1 deadline (post-launch, after MissionSlashing v1.0 ships). DAO key is the governance key per RFC-0855 §11. | `missions/open/0851p-a-f1-seed-authority-decentralization.md` |
+| F2 | Tor-only seed list option | MEDIUM | Post-launch | Mission: new `bootstrap_mode = TorOnly` config option; the bootstrap adapter connects to a `.onion` seed list service, hides the gateway's IP from the seed list operator. | `missions/open/0851p-a-f2-tor-seed-list.md` |
+| F3 | Seed list health check at load (mitigates IA-NB-11) | MEDIUM | Pre-public-launch | Mission: on `start_node`, verify each seed's `signed_at_epoch` is within the last `MAX_SEED_AGE_EPOCHS = 10`; reject stale seeds; log + alert if > 20% are stale (Sybil/eclipse signal). | `missions/open/0851p-a-f3-seed-health-check.md` |
+| F4 | Trust UX (web-of-trust visualization) | MEDIUM | Post-launch | Mission: a `dot-trust graph` CLI command that renders the web-of-trust graph (signed_by relationships) as ASCII art or DOT format for operator inspection. | `missions/open/0851p-a-f4-trust-ux.md` |
+| F5 | Mode D = NIP-05 / Nostr pubkey bootstrap | LOW | Future | Mission: a new `bootstrap_mode = Nostr` config; the bootstrap adapter resolves a NIP-05 identifier to a Nostr pubkey, fetches the user's contact list, and treats each contact as a potential bootstrap peer (verifying the contact's `DOT capability` claim). | `missions/open/0851p-a-f5-nostr-mode-d.md` |
+| F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch | Mission: extend slash reason codes with `0x000D` = `bootstrap_node_misbehavior` (defined in RFC-0855p-b §B "Slash Offense Codes" range allocation); slashed nodes are removed from the seed list. | `missions/open/0851p-a-f6-bootstrap-slashing.md` |
 
 ## Rationale
 
@@ -708,6 +710,7 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft |
+| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with spec column + mission paths in `missions/open/0851p-a-f{1,2,3,4,5,6}-*.md`. |
 
 ## Related RFCs
 

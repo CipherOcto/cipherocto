@@ -944,7 +944,7 @@ This section supplements the existing Threat model (§Security Considerations) a
 | **D-WA-7**: Lockfile (flock) on `session_path` for multi-process safety | Two concurrent onboard processes on the same DB | 0 (just run two CLIs) | Stoolap DB corruption; partial writes; undefined behavior | Advisory lockfile; second process blocks or errors | LOW. Documented; the CLI is intended to be single-process. |
 | **D-WA-8**: `pair-link` pre-validates phone with E.164 regex | Attacker who can inject a malformed phone | 0 (just type it) | Confusing protocol error from WhatsApp server | Pre-validation: regex `^\+[1-9]\d{6,14}$`, CLI exits 5 before any network call | LOW. UX improvement, not security. |
 | **D-WA-9**: stoolap parent dir created with mode 0700 before adapter starts | Attacker who can write to a parent dir (e.g., `/tmp` is world-writable) | 0 | Pre-creating a world-readable dir; subsequent DB inherits more permissive umask | Mode 0700 set explicitly via `std::fs::DirBuilder::new().recursive(true).mode(0o700)` | LOW. |
-| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config | 0 | Add a malicious group → bridge unwanted traffic | Filesystem ACLs; operator trust; **F1 (`DomainCoordinator` per RFC-0855p-b)** will add `register_domain` with proper authority | MEDIUM. **ACCEPTED RISK**; F1 to fix. |
+| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config | 0 | Add a malicious group → bridge unwanted traffic | Filesystem ACLs; operator trust; **RFC-0855p-b F1 (`DomainCoordinator`)** will add `register_domain` with proper authority | MEDIUM. **ACCEPTED RISK**; RFC-0855p-b F1 to fix. |
 | **D-WA-11**: `validate()` is in-memory only (does not hit the network) | n/a (not a security decision) | n/a | n/a | The CLI does not open WS in `validate()`; the adapter is not constructed | n/a. Performance optimization. |
 | **D-WA-12**: `whoami` re-establishes WS connection to verify (network-bound, 30s) | Attacker who can simulate a connected state without actually connecting | 0 | n/a (the bot is already connected; whoami is the verification) | The WS re-connect is the only way to verify `device.pn` is reachable; the adapter does not expose a "read device.pn without starting" method | LOW. Performance cost, not security cost. |
 
@@ -959,7 +959,7 @@ This section supplements the existing Threat model (§Security Considerations) a
 
 ### Multi-Round Review
 
-This section integrates with BLUEPRINT.md "Adversarial Review Process". The MEDIUM findings (D-WA-5, D-WA-6, D-WA-10) MUST be addressed in the next RFC revision (R15 or R16) via the cited Future Work items. Future Work F1 (`DomainCoordinator`) is the highest-priority follow-up because it fixes the most security-relevant gap (D-WA-10: physical group allowlist management).
+This section integrates with BLUEPRINT.md "Adversarial Review Process". The MEDIUM findings (D-WA-5, D-WA-6, D-WA-10) MUST be addressed in the next RFC revision (R15 or R16) via the cited Future Work items. RFC-0855p-b F1 (`DomainCoordinator`) is the highest-priority follow-up because it fixes the most security-relevant gap (D-WA-10: physical group allowlist management).
 
 ## Economic Analysis
 

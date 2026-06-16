@@ -313,7 +313,7 @@ fn is_platform_admin(
 
 **Performance note:** The admin list is typically small (1-10 entries per group). The O(N) iteration is acceptable. For very large admin lists (rare; usually only in enterprise settings), the implementation MAY precompute a `BTreeMap<peer_id, participant_id>` cache keyed by `(mission_id, group_jid)`, invalidated on every `PlatformEvent::AdminChange` event.
 
-**Trust assumption:** the platform's group-admin list is authoritative. If the platform lies (e.g., compromised WhatsApp server returns a false admin list), the DomainCoordinator can be wrong. This is **ACCEPTED RISK IA-DC-2** (see §Implicit Assumptions Audit).
+**Trust assumption:** the platform's group-admin list is authoritative. If the platform lies (e.g., compromised WhatsApp server returns a false admin list), the DomainCoordinator can be wrong. This is **ACCEPTED RISK IA-DC-2** (see §"Implicit Assumptions Audit").
 
 **For MissionCreator (founder BIND) path:** the founder is the DomainCoordinator without platform-admin check. This is the explicit founder path from RFC-0850p-c §4.
 

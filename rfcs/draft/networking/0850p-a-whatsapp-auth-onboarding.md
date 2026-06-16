@@ -70,7 +70,7 @@ The core insight: `WhatsAppWebAdapter::start_bot()` is **already the auth flow**
 
 ## Roles and Authorities
 
-> **The "Nothing should be implied" rule (specification layer):** Every actor that affects correctness, security, accountability, or consensus MUST be named with a stable identifier, a defined authority scope, and a typed lifecycle. Cross-reference: RFC-0855p-b §Roles and Authorities (the Mission Coordinator machinery that `DomainCoordinator` specializes).
+> **The "Nothing should be implied" rule (specification layer):** Every actor that affects correctness, security, accountability, or consensus MUST be named with a stable identifier, a defined authority scope, and a typed lifecycle. Cross-reference: RFC-0855p-b §"Roles and Authorities" (the Mission Coordinator machinery that `DomainCoordinator` specializes).
 
 This RFC is the WhatsApp-specific instantiation of the broader physical-group onboarding pattern. It interacts with the following roles:
 
@@ -797,7 +797,7 @@ stateDiagram-v2
 
 ## Implicit Assumptions Audit
 
-> **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies on that is not enforced by types, runtime validation, or test coverage MUST be listed here. Cross-reference: RFC-0000-template v1.3 §Implicit Assumptions Audit; RFC-0855p-b §Implicit Assumptions Audit (sister worked example).
+> **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies on that is not enforced by types, runtime validation, or test coverage MUST be listed here. Cross-reference: RFC-0000-template v1.3 §Implicit Assumptions Audit; RFC-0855p-b §"Implicit Assumptions Audit" (sister worked example).
 
 | Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
 |------------|-------------------|----------------------|---------------------|
@@ -927,9 +927,9 @@ pub enum KickReason {
 
 ## Adversary Analysis
 
-> **The 5-Question Adversary Test:** For every design decision with security implications, enumerate: (1) who benefits from breaking it, (2) what it costs them, (3) what they gain if successful, (4) what's our defense and its cost to legitimate operation, (5) what's the residual risk and is it acceptable. Cross-reference: RFC-0000-template v1.3 §Adversary Analysis; RFC-0855p-b §Adversary Analysis (sister worked example).
+> **The 5-Question Adversary Test:** For every design decision with security implications, enumerate: (1) who benefits from breaking it, (2) what it costs them, (3) what they gain if successful, (4) what's our defense and its cost to legitimate operation, (5) what's the residual risk and is it acceptable. Cross-reference: RFC-0000-template v1.3 §Adversary Analysis; RFC-0855p-b §"Adversary Analysis" (sister worked example).
 
-This section supplements the existing Threat model (§Security Considerations) and Adversarial Review tables with the 5-Question Test applied to the major architectural decisions in this RFC.
+This section supplements the existing Threat model (§"Security Considerations") and Adversarial Review tables with the 5-Question Test applied to the major architectural decisions in this RFC.
 
 ### Decision Table
 
@@ -1163,7 +1163,7 @@ After successful `pair-link`:
 - RFC-0850p (Networking): DOT WhatsApp Adapter (Native WhatsApp Web Protocol)
 - RFC-0850h-a (Networking): Matrix Auth Onboarding CLI (architectural reference)
 - RFC-0850ab-a (Networking): Telegram Auth Onboarding CLI (architectural reference)
-- RFC-0855p-b (Networking): Mission Coordinator Lifecycle (sister RFC; provides the `DomainCoordinator` specialization referenced in §Roles and Authorities and §Implicit Assumptions Audit F1)
+- RFC-0855p-b (Networking): Mission Coordinator Lifecycle (sister RFC; provides the `DomainCoordinator` specialization referenced in §"Roles and Authorities" and §"Implicit Assumptions Audit" F1)
 
 ## Related Missions
 

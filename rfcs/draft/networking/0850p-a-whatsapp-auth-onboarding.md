@@ -82,7 +82,7 @@ This RFC is the WhatsApp-specific instantiation of the broader physical-group on
 - **Who can assume**: any human (or CI) with filesystem + terminal access
 - **Who can revoke**: filesystem ACLs, OS-level user management
 - **Lifecycle**: `OperatorLifecycle` (out of scope for this RFC; humans are not protocol actors)
-- **Future mapping**: this role is the placeholder for the future `DomainCoordinator` specialization (RFC-0855p-b F1)
+- **Future mapping**: this role is the temporary stand-in for the future `DomainCoordinator` specialization (now specified in RFC-0855p-c "DomainCoordinator Role", 2026-06-16 draft)
 
 ### R-WA-2: WhatsApp Bot Identity (the phone number)
 
@@ -143,7 +143,7 @@ The following are explicitly out of scope and become named "responsibility trans
 | whatsapp-rust crate | `Cargo.toml` version | `protocol-implementation` | per crate version | This RFC |
 | Stoolap Session DB | `session_path` | `session-storage` | per bot pairing | This RFC |
 | Adapter Consumer | gateway PID | `adapter-runtime` | per process | This RFC |
-| DomainCoordinator | TBD | TBD | TBD | RFC-0855p-b F1 (FUTURE) |
+| DomainCoordinator | `(domain_id, public_key)` (per RFC-0855p-c §"DomainCoordinatorRecord") | `DOT/1/BIND` envelope, slash via governance | `DomainCoordinatorLifecycle` (per RFC-0855p-c) | RFC-0855p-c (DomainCoordinator Role, 2026-06-16 draft) |
 | WhatsApp Group Admin | phone number (in WA group metadata) | `group-membership` (per WA server) | per WA group lifetime | WhatsApp (platform); out of scope |
 
 ## Specification
@@ -802,7 +802,7 @@ stateDiagram-v2
 | Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
 |------------|-------------------|----------------------|---------------------|
 | Operator has a working phone with WhatsApp installed and active network | `qr-link` requires the operator to scan; `pair-link` requires the operator to type the code | Total: cannot pair; CLI times out at `Event::Connected` wait | Operator documentation; CLI prints actionable error on `LoggedOut` |
-| Operator can see the terminal (no headless / no SSH without TTY) | QR is rendered as unicode half-block in terminal | Pairing requires visual access; headless deployments need a different mechanism | Future Work F2: `octo-whatsapp-onboard serve-qr` over HTTP for headless; not in this RFC |
+| Operator can see the terminal (no headless / no SSH without TTY) | QR is rendered as unicode half-block in terminal | Pairing requires visual access; headless deployments need a different mechanism | Future Work F1: `octo-whatsapp-onboard serve-qr` over HTTP for headless; not in this RFC |
 | WhatsApp server is reachable from the gateway host (firewall, no regional block) | WS connection to `wss://web.whatsapp.com/ws` (or `--ws-url` override) | Total: cannot pair or operate | TLS via whatsapp-rust; no override in production; `R5-M2` hardens WS path; **ACCEPTED RISK** for regional blocks (operator must use a relay) |
 | Stoolap session DB can be created at the configured path with mode 0700/0600 | `qr-link` / `pair-link` / `whoami` all require the path | Total: CLI exits with `CoreError::Adapter` or permission error | CLI creates dir with mode 0700 before adapter starts |
 | The phone number entered via `--phone` is the SAME as the phone that will scan the QR or type the pair code | `pair-link` issues a 6-char code bound to that phone | High: pair code expires; operator confused; possible wrong-account link | CLI pre-validates E.164; documents the binding; pair code is short-lived (60s) and phone-bound by WhatsApp |
@@ -811,10 +811,10 @@ stateDiagram-v2
 | The bot phone number is not SIM-swapped, stolen, or factory-reset | `Event::Connected` re-resolves the device identity | Critical: identity theft → attacker controls the bot and all joined groups | Out of protocol scope; **ACCEPTED RISK**; operator's responsibility to secure the SIM and the WhatsApp account |
 | The stoolap database is not corrupted (disk failure, partial write) | `start_bot` opens the DB | Total: must re-pair | `to_disk_json` uses atomic write (tempfile + rename); stoolap's own durability; **ACCEPTED RISK** for hardware failure |
 | The CLI is run with a user that has permission to create files in `~/.local/share/octo/whatsapp/` | `qr-link` writes the sidecar + config | Total: permission denied, CLI exits non-zero | CLI prints actionable error; documents `$XDG_DATA_HOME` override |
-| The session DB path is not a symlink to an unexpected location (symlink attack) | `start_bot` opens the path | High: write to attacker's location, leak Signal keys | **MISSING** — symlink resolution is not checked. Future Work F3: add `std::fs::metadata` + canonicalize + compare to expected canonical path |
-| The `--ws-url` flag is not abused in production (only intended for tests) | Production default is `wss://web.whatsapp.com/ws` | Critical: attacker who controls DNS or `ws_url` config could MitM the noise handshake | Documented in CLI help; not enforced by code. **ACCEPTED RISK**; F4: add `cfg!(not(debug_assertions))` guard to refuse `--ws-url` in release builds unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` is set |
-| The `groups: Vec<String>` config field is the only source of broadcast domain registration | `adapter.rs:400-411` linear scan | High: unconfigured groups silently drop inbound messages | Per RFC-0850p, this is the current design. **ACCEPTED RISK**; RFC-0855p-b F1 (`DomainCoordinator`) will add `register_domain` / `list_domains` |
-| Multi-device pairing does not silently log out the adapter | Adapter runs in a long-lived WS connection | High: operator's phone activity (e.g., pairing a new tablet) could log out the gateway | whatsapp-rust handles reconnection; **ACCEPTED RISK**; F5: add explicit `Replaced` state to the adapter (currently mapped to `LoggedOut`) |
+| The session DB path is not a symlink to an unexpected location (symlink attack) | `start_bot` opens the path | High: write to attacker's location, leak Signal keys | **MISSING** — symlink resolution is not checked. Future Work F2: add `std::fs::metadata` + canonicalize + compare to expected canonical path |
+| The `--ws-url` flag is not abused in production (only intended for tests) | Production default is `wss://web.whatsapp.com/ws` | Critical: attacker who controls DNS or `ws_url` config could MitM the noise handshake | Documented in CLI help; not enforced by code. **ACCEPTED RISK**; F3: add `cfg!(not(debug_assertions))` guard to refuse `--ws-url` in release builds unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` is set |
+| The `groups: Vec<String>` config field is the only source of broadcast domain registration | `adapter.rs:400-411` linear scan | High: unconfigured groups silently drop inbound messages | Per RFC-0850p, this is the current design. **ACCEPTED RISK**; RFC-0855p-c (DomainCoordinator, 2026-06-16 draft) will add `register_domain` / `list_domains` |
+| Multi-device pairing does not silently log out the adapter | Adapter runs in a long-lived WS connection | High: operator's phone activity (e.g., pairing a new tablet) could log out the gateway | whatsapp-rust handles reconnection; **ACCEPTED RISK**; F4: add explicit `Replaced` state to the adapter (currently mapped to `LoggedOut`) |
 | `whoami` re-establishing the WS connection is sufficient verification | `whoami` subcommand re-uses the adapter's start_bot path | Low: false positive if the WS is open but the device identity is wrong | Cross-checked with `self_handle()` returning the canonical phone; sidecar `self_phone` is the source of truth |
 | `group_jid` is shared out-of-band via invite link or mission descriptor | Adapter only joins groups listed in `groups: Vec<String>` | High: node cannot find the group to join without out-of-band coordination | Specified in §"Group Discovery (E2E IS-1.1 fix)" |
 | DOT envelopes are gossiped within the bound group | Adapter relays all DOT envelopes received in a joined group | Medium: routing topology must be defined to avoid loops and ensure delivery | Specified in §"Message Routing Topology (E2E IS-1.4 fix)" |
@@ -939,12 +939,12 @@ This section supplements the existing Threat model (§"Security Considerations")
 | **D-WA-2**: Custom `pair_code` accepted via CLI arg | Local process observer | 0 | Pair code leak (60s TTL; usable for 60s to pair the attacker's device) | Env var `$OCTO_WHATSAPP_PAIR_CODE` preferred; redaction in `--verbose` output | LOW. Pair code is short-lived and phone-bound. |
 | **D-WA-3**: Stoolap DB mode 0600 | Local user on the host | 0 (if they can read other users' files, they have bigger problems) | Signal key leak → full identity theft on the platform | Mode 0600 on `session_path`; parent dir mode 0700; atomic write | LOW. Standard Unix file permissions. |
 | **D-WA-4**: Sidecar JSON written only on `Event::Connected` (atomic) | Process killer / disk-full attacker mid-link | 0 (just kill the process or fill the disk) | Half-paired state: `session list` shows the DB but it's not actually paired | CLI exits 2; sidecar NOT written; atomic write ensures no partial file; **R5-M2** makes sidecar a correctness requirement | LOW. Operator must `session remove` and re-pair. |
-| **D-WA-5**: `--ws-url` flag for test injection | Attacker who controls config | 0 (just edit the config) | MitM the noise handshake; impersonate the WhatsApp server; harvest all future messages | TLS via whatsapp-rust; `--ws-url` is a debug-only escape hatch; **NOT** enforced by code | MEDIUM. **ACCEPTED RISK**; F4 will harden with a release-build guard. |
+| **D-WA-5**: `--ws-url` flag for test injection | Attacker who controls config | 0 (just edit the config) | MitM the noise handshake; impersonate the WhatsApp server; harvest all future messages | TLS via whatsapp-rust; `--ws-url` is a debug-only escape hatch; **NOT** enforced by code | MEDIUM. **ACCEPTED RISK**; F3 will harden with a release-build guard. |
 | **D-WA-6**: `Event::LoggedOut` mid-link → CLI exits 2, no sidecar | Attacker who can trigger a LoggedOut (e.g., by pairing a competing device from the same phone) | Must control the bot's phone | Half-paired state, denial of service for the gateway | Sidecar is the correctness check for `session list`; atomic write ensures consistency | MEDIUM. Recovery is operator-initiated (delete DB, re-pair). |
 | **D-WA-7**: Lockfile (flock) on `session_path` for multi-process safety | Two concurrent onboard processes on the same DB | 0 (just run two CLIs) | Stoolap DB corruption; partial writes; undefined behavior | Advisory lockfile; second process blocks or errors | LOW. Documented; the CLI is intended to be single-process. |
 | **D-WA-8**: `pair-link` pre-validates phone with E.164 regex | Attacker who can inject a malformed phone | 0 (just type it) | Confusing protocol error from WhatsApp server | Pre-validation: regex `^\+[1-9]\d{6,14}$`, CLI exits 5 before any network call | LOW. UX improvement, not security. |
 | **D-WA-9**: stoolap parent dir created with mode 0700 before adapter starts | Attacker who can write to a parent dir (e.g., `/tmp` is world-writable) | 0 | Pre-creating a world-readable dir; subsequent DB inherits more permissive umask | Mode 0700 set explicitly via `std::fs::DirBuilder::new().recursive(true).mode(0o700)` | LOW. |
-| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config | 0 | Add a malicious group → bridge unwanted traffic | Filesystem ACLs; operator trust; **RFC-0855p-b F1 (`DomainCoordinator`)** will add `register_domain` with proper authority | MEDIUM. **ACCEPTED RISK**; RFC-0855p-b F1 to fix. |
+| **D-WA-10**: `groups: Vec<String>` is a manually-curated allowlist in the config file | Anyone with filesystem write to the config | 0 | Add a malicious group → bridge unwanted traffic | Filesystem ACLs; operator trust; **RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)** will add `register_domain` with proper authority | MEDIUM. **ACCEPTED RISK**; RFC-0855p-c to fix. |
 | **D-WA-11**: `validate()` is in-memory only (does not hit the network) | n/a (not a security decision) | n/a | n/a | The CLI does not open WS in `validate()`; the adapter is not constructed | n/a. Performance optimization. |
 | **D-WA-12**: `whoami` re-establishes WS connection to verify (network-bound, 30s) | Attacker who can simulate a connected state without actually connecting | 0 | n/a (the bot is already connected; whoami is the verification) | The WS re-connect is the only way to verify `device.pn` is reachable; the adapter does not expose a "read device.pn without starting" method | LOW. Performance cost, not security cost. |
 
@@ -959,7 +959,7 @@ This section supplements the existing Threat model (§"Security Considerations")
 
 ### Multi-Round Review
 
-This section integrates with BLUEPRINT.md "Adversarial Review Process". The MEDIUM findings (D-WA-5, D-WA-6, D-WA-10) MUST be addressed in the next RFC revision (R15 or R16) via the cited Future Work items. RFC-0855p-b F1 (`DomainCoordinator`) is the highest-priority follow-up because it fixes the most security-relevant gap (D-WA-10: physical group allowlist management).
+This section integrates with BLUEPRINT.md "Adversarial Review Process". The MEDIUM findings (D-WA-5, D-WA-6, D-WA-10) MUST be addressed in the next RFC revision (R15 or R16) via the cited Future Work items. RFC-0855p-c (DomainCoordinator, 2026-06-16 draft) is the highest-priority follow-up because it fixes the most security-relevant gap (D-WA-10: physical group allowlist management).
 
 ## Economic Analysis
 
@@ -1089,13 +1089,6 @@ After successful `pair-link`:
 - [ ] Unit tests: phone validation, config round-trip, sidecar JSON shape, redaction layer
 - [ ] Integration test: real WhatsApp Web test number (feature-gated, requires `--ws-url` and a test fixture)
 
-### Phase 2: Multi-Account (future)
-
-- [ ] Session store (stoolap-backed, per `octo-matrix-onboard` 0850h-d pattern)
-- [ ] `session use` to switch active account
-- [ ] `session import` to register existing session DBs
-- [ ] `whoami --store` flag for multi-account lookup
-
 ## Key Files to Modify
 
 | File | Change |
@@ -1118,11 +1111,21 @@ After successful `pair-link`:
 
 ## Future Work
 
-- F1: Multi-account session store (stoolap-backed)
-- F2: Adapter-side `has_valid_session()` for high-frequency health checks (replaces polling)
-- F3: `Notify`-based `Event::Connected` observation (replaces polling)
-- F4: `session export` to migrate a session DB between hosts (stoolap file is portable)
-- F5: CI-mode non-interactive pair-link via pre-shared session DB
+Per the **deferred vs unspecified rule**, every future-work item MUST have a spec — either inline (small items) or a dedicated mission (items needing a design). All F-items below reference their mission in `missions/open/`. Each mission is the spec; if a mission is missing, the item is removed from this list.
+
+| ID | Title | Severity | Spec | Mission |
+|----|-------|----------|------|---------|
+| F1 | `octo-whatsapp-onboard serve-qr` over HTTP for headless / no-TTY deployments (mitigates D-WA-4) | MEDIUM | Inline: new subcommand `serve-qr` that listens on `127.0.0.1:PORT` (configurable via `--bind`), streams the QR PNG (or unicode half-block) as `image/png` over HTTP, and exits after first successful `Event::Connected` (or 300s timeout). Operator scans via a phone browser pointed at the URL. | `missions/open/0850p-a-f1-serve-qr-http.md` |
+| F2 | Symlink-resolution check on `session_path` before `start_bot` (mitigates D-WA-4 symlink-attack risk) | MEDIUM | Inline: after CLI creates the dir (mode 0700), call `std::fs::metadata(&session_path)` and `std::fs::canonicalize(&session_path)`. If the canonical path's parent != the requested parent, refuse with `CoreError::SessionPathSymlink`. Test: `tempdir/symlink_to_evil` is rejected. | `missions/open/0850p-a-f2-symlink-check.md` |
+| F3 | Release-build guard: refuse `--ws-url` in release unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` (mitigates D-WA-5) | MEDIUM | Inline: in `cli.rs`, after arg parsing, `if cfg!(not(debug_assertions)) && args.ws_url.is_some() && std::env::var("OCTO_WHATSAPP_ALLOW_WS_URL").ok().as_deref() != Some("1") { return Err(CliError::WsUrlReleaseForbidden); }`. The help text documents the override. | `missions/open/0850p-a-f3-ws-url-release-guard.md` |
+| F4 | Explicit `Replaced` state in `BotLifecycle` (currently mapped to `LoggedOut`, per D-WA-7) | LOW | Inline: add `Replaced: BotState` to the state machine; transition `Active → Replaced` on `Event::LoggedOut` where `cause == Replaced` (or whichever field whatsapp-rust exposes). New subcommand `whoami --detect-replacement` returns a distinct exit code. | `missions/open/0850p-a-f4-replaced-state.md` |
+| F5 | Multi-account session store (stoolap-backed; replaces the single-DB-per-host model) | MEDIUM | See mission for design: `session {list,use,import,export}` over a stoolap index, with `whoami --store PATH` for multi-account lookup. Phase 2 of original draft is now a tracked F-item. | `missions/open/0850p-a-f5-multi-account.md` |
+| F6 | Adapter-side `has_valid_session()` for high-frequency health checks (replaces 250ms polling) | LOW | See mission for design: add `pub fn has_valid_session(&self) -> bool` to `WhatsAppWebAdapter`; `whoami` calls it instead of polling `self_handle()`. Purely additive. | `missions/open/0850p-a-f6-has-valid-session.md` |
+| F7 | `Notify`-based `Event::Connected` observation (replaces polling) | LOW | See mission for design: add `tokio::sync::watch` (or `Notify`) to the adapter; `wait_for_connected` awaits the signal. Cross-crate refactor. | `missions/open/0850p-a-f7-notify-event-connected.md` |
+| F8 | `session export` to migrate a session DB between hosts (stoolap file is portable) | LOW | See mission for design: `session export <DB> --out FILE` produces a portable bundle (DB + sidecar + config); `session import` registers a host-local DB. | `missions/open/0850p-a-f8-session-export.md` |
+| F9 | CI-mode non-interactive `pair-link` via pre-shared session DB | LOW | See mission for design: in CI, mount a pre-paired session DB; `pair-link` skips the wait and uses the existing identity. | `missions/open/0850p-a-f9-ci-mode-pair-link.md` |
+
+**Note on F1 renumbering (R10-0850p-a):** In the original v1.15 entry, F1=DomainCoordinator and F2-F5 were the headless/symlink/--ws-url/Replaced items. Since DomainCoordinator is now specified in RFC-0855p-c (2026-06-16), the F1-F5 numbering from v1.15 is collapsed to F1-F4 in the table above, and the former "Phase 2: Multi-Account" draft section is promoted to F5 (now a tracked, mission-stubbed item). All body cross-references (Implicit Assumptions, Adversary Analysis, IA D-WA-*) updated.
 
 ## Rationale
 
@@ -1156,6 +1159,7 @@ After successful `pair-link`:
 | 1.13 | 2026-06-12 | R13 fixes: pair-link sequence diagram now includes the `session_path dir created mode 0700` validation step (was on qr-link line 196 but missing from pair-link after R6-M2 refactor) |
 | 1.14 | 2026-06-12 | R14 fixes: §Auth Flow pair-link "Custom pair code" Key design decision no longer claims redaction in output JSON (R3-L1 already established the custom code is never logged; this contradicts) |
 | 1.15 | 2026-06-15 | Worked-example audit using RFC template v1.3 new sections: added §Roles and Authorities (7 named roles + 3 out-of-scope + DomainCoordinator placeholder), §Lifecycle Requirements (BotLifecycle 8-state machine + transition table + liveness + recovery + time bounds), §Implicit Assumptions Audit (15 entries: 6 ACCEPTED RISK with named Future Work, 1 MISSING-symlink-check, 8 mitigated), §Adversary Analysis (12-decision 5-Question Test; 0 CRITICAL, 0 HIGH, 3 MEDIUM, 8 LOW). Future Work extracted: F1=DomainCoordinator (RFC-0855p-b F1), F2=headless serve-qr, F3=symlink check, F4=--ws-url release guard, F5=Replaced state. Related RFCs: cross-reference added to RFC-0855p-b. RFC template version reference updated to v1.3. |
+| 1.16 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): (1) F1=DomainCoordinator moved to RFC-0855p-c (2026-06-16 draft); v1.15 F2-F5 renumbered to F1-F4. (2) §Future Work table rebuilt: 9 items (F1-F9) all with mission stubs in `missions/open/0850p-a-f{1..9}-*.md`; inline specs for F1-F4 (small), mission-stubs for F5-F9. (3) Phase 2 (Multi-Account) section removed (now F5 in the table; tracked, not abandoned). (4) L146 TBD|TBD|TBD row for DomainCoordinator filled with RFC-0855p-c values. (5) All body cross-references to "RFC-0855p-b F1 (DomainCoordinator)" updated to "RFC-0855p-c (DomainCoordinator, 2026-06-16 draft)". (6) Implicit Assumptions Audit (L815 F4→F3, L817 F5→F4) and Adversary Analysis (L942 F4→F3) renumbered. (7) Related RFCs (L1169) updated: 0855p-b → 0855p-c as the DomainCoordinator sister RFC. |
 
 ## Related RFCs
 
@@ -1163,7 +1167,7 @@ After successful `pair-link`:
 - RFC-0850p (Networking): DOT WhatsApp Adapter (Native WhatsApp Web Protocol)
 - RFC-0850h-a (Networking): Matrix Auth Onboarding CLI (architectural reference)
 - RFC-0850ab-a (Networking): Telegram Auth Onboarding CLI (architectural reference)
-- RFC-0855p-b (Networking): Mission Coordinator Lifecycle (sister RFC; provides the `DomainCoordinator` specialization referenced in §"Roles and Authorities" and §"Implicit Assumptions Audit" F1)
+- RFC-0855p-c (Networking): Domain Coordinator Role (sister RFC; provides the `DomainCoordinator` specialization referenced in §"Roles and Authorities" and §"Implicit Assumptions Audit" D-WA-10)
 
 ## Related Missions
 

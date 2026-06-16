@@ -833,7 +833,7 @@ The `group_jid` (the platform-specific group identifier, e.g., `1203630123456789
 
 1. **Invite link (Mode C bootstrap, RFC-0851p-a):** the `Invite` envelope embeds the `group_jid` as a typed field. The node parses the invite, extracts the `group_jid`, and uses it to join.
 2. **Mission descriptor:** the canonical `(mission_id, domain_id, platform) -> group_jid` mapping is stored in the mission descriptor (RFC-0855p-b §"Data Structures"). The node looks up the mapping when binding.
-3. **BIND envelope validation:** the `BindEnvelope` (RFC-0850p-c §3) carries the `group_jid` as a typed field. The node MUST validate the `group_jid` against a platform-specific regex before attempting to join:
+3. **BIND envelope validation:** the `BindEnvelope` (RFC-0850p-c §2 "Binding Envelope Types") carries the `group_jid` as a typed field. The node MUST validate the `group_jid` against a platform-specific regex before attempting to join:
    - WhatsApp: `^\d+@g\.us$` or `^\d+-[a-z]+@g\.us$`
    - Matrix: `^![A-Za-z0-9]+:[a-z0-9.-]+$`
    - Telegram: `^-100\d+$` (supergroup) or `^-?\d+$` (basic group)

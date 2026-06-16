@@ -1,4 +1,4 @@
-# Mission: 0855p-c F4 — Slash for < 4 member groups
+# Mission: 0855p-c — Slash for < 4 member groups
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F4
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 

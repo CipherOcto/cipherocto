@@ -1,4 +1,4 @@
-# Mission: 0855p-c F5 — Multi-admin groups (sub-admins)
+# Mission: 0855p-c — Multi-admin groups (sub-admins)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F5
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 

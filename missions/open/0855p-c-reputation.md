@@ -1,4 +1,4 @@
-# Mission: 0855p-c F6 — DomainCoordinator reputation
+# Mission: 0855p-c — DomainCoordinator reputation
 
 ## Status
 
@@ -6,11 +6,11 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F6
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 
-Similar to RFC-0855p-b F2 (cross-mission coordinator reputation), but per DomainCoordinator and across the domains it manages. A DC with a poor cross-domain reputation (many slashes across many domains) is deprioritized in future elections.
+Similar to RFC-0855p-b F(cross-mission coordinator reputation), but per DomainCoordinator and across the domains it manages. A DC with a poor cross-domain reputation (many slashes across many domains) is deprioritized in future elections.
 
 ## Design
 
@@ -18,7 +18,7 @@ Similar to RFC-0855p-b F2 (cross-mission coordinator reputation), but per Domain
 - On election, candidates with higher cross-domain slash count are deprioritized: `priority = stake / (1 + cross_domain_slash_count)`.
 - Hard threshold: `cross_domain_slash_count >= 5` → excluded.
 - The store is gossiped across the libp2p mesh under `/dot/reputation/dc/{dc_pubkey}`.
-- Cross-references with RFC-0855p-b F2 (cross-mission reputation): a DC with both bad cross-domain and cross-mission reputation is severely deprioritized.
+- Cross-references with RFC-0855p-b F(cross-mission reputation): a DC with both bad cross-domain and cross-mission reputation is severely deprioritized.
 
 ## Acceptance Criteria
 

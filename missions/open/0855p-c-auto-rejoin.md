@@ -1,4 +1,4 @@
-# Mission: 0855p-c F7 — Platform-loss auto-rejoin
+# Mission: 0855p-c — Platform-loss auto-rejoin
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F7
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 

@@ -1,4 +1,4 @@
-# Mission: 0850p-a F1 — serve-qr over HTTP
+# Mission: 0850p-a — serve-qr over HTTP
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F1
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

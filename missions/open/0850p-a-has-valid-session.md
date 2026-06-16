@@ -1,4 +1,4 @@
-# Mission: 0850p-a F6 — adapter-side has_valid_session() helper
+# Mission: 0850p-a — adapter-side has_valid_session() helper
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F6
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

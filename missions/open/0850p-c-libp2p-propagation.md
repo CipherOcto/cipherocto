@@ -1,4 +1,4 @@
-# Mission: 0850p-c F3 — BIND propagation via libp2p
+# Mission: 0850p-c — BIND propagation via libp2p
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch follow-up
 
 ## RFC
 
-RFC-0850p-c (Networking): Transport Group Binding — §"Future Work" F3
+RFC-0850p-c (Networking): Transport Group Binding — §"Future Work"
 
 ## Summary
 

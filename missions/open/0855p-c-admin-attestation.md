@@ -1,4 +1,4 @@
-# Mission: 0855p-c F2 — Cross-platform admin attestation
+# Mission: 0855p-c — Cross-platform admin attestation
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch (CRITICAL)
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F2 (mitigates D-DC-1)
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" (mitigates D-DC-1)
 
 ## Summary
 

@@ -1,4 +1,4 @@
-# Mission: 0851p-a F2 — Tor-only seed list option
+# Mission: 0851p-a — Tor-only seed list option
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F2
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work"
 
 ## Summary
 

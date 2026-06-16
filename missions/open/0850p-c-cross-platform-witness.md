@@ -1,4 +1,4 @@
-# Mission: 0850p-c F5 — Cross-platform witness aggregation
+# Mission: 0850p-c — Cross-platform witness aggregation
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0850p-c (Networking): Transport Group Binding — §"Future Work" F5
+RFC-0850p-c (Networking): Transport Group Binding — §"Future Work"
 
 ## Summary
 
@@ -14,7 +14,7 @@ RFC-0855p-b §B "Slash Offense Codes" defines slash reason codes per-witness (e.
 
 ## Design
 
-Cross-platform witness aggregation follows the same pattern as 0855p-c F1 (cross-platform DomainCoordinator consensus):
+Cross-platform witness aggregation follows the same pattern as 0855p-c F(cross-platform DomainCoordinator consensus):
 
 - N platforms, each with 1+ witness(es)
 - Slash finalization requires 2/3 majority of TOTAL witnesses (not per-platform)

@@ -1,4 +1,4 @@
-# Mission: 0851p-a F1 — SeedListAuthority decentralization
+# Mission: 0851p-a — SeedListAuthority decentralization
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch follow-up (after MissionSlashing v1.0 ships)
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F1
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work"
 
 ## Summary
 

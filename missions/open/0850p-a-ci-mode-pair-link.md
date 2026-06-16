@@ -1,4 +1,4 @@
-# Mission: 0850p-a F9 — CI-mode non-interactive pair-link
+# Mission: 0850p-a — CI-mode non-interactive pair-link
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F9
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

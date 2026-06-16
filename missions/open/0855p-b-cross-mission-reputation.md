@@ -1,4 +1,4 @@
-# Mission: 0855p-b F2 — Cross-mission coordinator reputation
+# Mission: 0855p-b — Cross-mission coordinator reputation
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work" F2
+RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work"
 
 ## Summary
 

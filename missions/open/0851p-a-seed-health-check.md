@@ -1,4 +1,4 @@
-# Mission: 0851p-a F3 — Seed list health check at load
+# Mission: 0851p-a — Seed list health check at load
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F3 (mitigates IA-NB-11)
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" (mitigates IA-NB-11)
 
 ## Summary
 

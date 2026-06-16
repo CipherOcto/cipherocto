@@ -1,4 +1,4 @@
-# Mission: 0851p-a F4 — Trust UX (web-of-trust visualization)
+# Mission: 0851p-a — Trust UX (web-of-trust visualization)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F4
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work"
 
 ## Summary
 

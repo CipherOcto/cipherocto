@@ -1,4 +1,4 @@
-# Mission: 0855p-b F5 — Governance RFC (governance_id rotation)
+# Mission: 0855p-b — Governance RFC (governance_id rotation)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work" F5
+RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work"
 
 ## Summary
 

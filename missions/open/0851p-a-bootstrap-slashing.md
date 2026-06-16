@@ -1,4 +1,4 @@
-# Mission: 0851p-a F6 — Bootstrap node slashing
+# Mission: 0851p-a — Bootstrap node slashing
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F6
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work"
 
 ## Summary
 

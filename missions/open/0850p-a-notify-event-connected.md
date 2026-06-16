@@ -1,4 +1,4 @@
-# Mission: 0850p-a F7 — Notify-based Event::Connected observation
+# Mission: 0850p-a — Notify-based Event::Connected observation
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F7
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

@@ -1,4 +1,4 @@
-# Mission: 0850p-c F1 — Cross-node REBIND atomicity
+# Mission: 0850p-c — Cross-node REBIND atomicity
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch follow-up
 
 ## RFC
 
-RFC-0850p-c (Networking): Transport Group Binding — §"Future Work" F1
+RFC-0850p-c (Networking): Transport Group Binding — §"Future Work"
 
 ## Summary
 

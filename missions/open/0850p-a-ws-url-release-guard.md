@@ -1,4 +1,4 @@
-# Mission: 0850p-a F3 — --ws-url release-build guard
+# Mission: 0850p-a — --ws-url release-build guard
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F3
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

@@ -1,4 +1,4 @@
-# Mission: 0850p-a F5 — multi-account session store (stoolap-backed)
+# Mission: 0850p-a — multi-account session store (stoolap-backed)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F5
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

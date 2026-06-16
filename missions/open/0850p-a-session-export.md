@@ -1,4 +1,4 @@
-# Mission: 0850p-a F8 — session export to migrate a session DB between hosts
+# Mission: 0850p-a — session export to migrate a session DB between hosts
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F8
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

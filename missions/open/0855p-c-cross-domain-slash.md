@@ -1,4 +1,4 @@
-# Mission: 0855p-c F3 — Cross-domain slash via mission-level coordinator
+# Mission: 0855p-c — Cross-domain slash via mission-level coordinator
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F3 (mitigates D-DC-6)
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" (mitigates D-DC-6)
 
 ## Summary
 

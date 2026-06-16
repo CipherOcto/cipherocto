@@ -1,4 +1,4 @@
-# Mission: 0850p-c F2 — Partial bindings
+# Mission: 0850p-c — Partial bindings
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0850p-c (Networking): Transport Group Binding — §"Future Work" F2
+RFC-0850p-c (Networking): Transport Group Binding — §"Future Work"
 
 ## Summary
 

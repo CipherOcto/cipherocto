@@ -1,4 +1,4 @@
-# Mission: 0850p-a F2 — symlink-resolution check on session_path
+# Mission: 0850p-a — symlink-resolution check on session_path
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F2
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

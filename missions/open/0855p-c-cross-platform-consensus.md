@@ -1,4 +1,4 @@
-# Mission: 0855p-c F1 — Cross-platform DomainCoordinator consensus
+# Mission: 0855p-c — Cross-platform DomainCoordinator consensus
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch (CRITICAL)
 
 ## RFC
 
-RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work" F1
+RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 

@@ -1,4 +1,4 @@
-# Mission: 0855p-b F3 — Election by random beacon (VDF)
+# Mission: 0855p-b — Election by random beacon (VDF)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work" F3
+RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work"
 
 ## Summary
 

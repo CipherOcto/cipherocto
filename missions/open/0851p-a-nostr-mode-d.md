@@ -1,4 +1,4 @@
-# Mission: 0851p-a F5 — Mode D = NIP-05 / Nostr pubkey bootstrap
+# Mission: 0851p-a — Mode D = NIP-05 / Nostr pubkey bootstrap
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — future
 
 ## RFC
 
-RFC-0851p-a (Networking): Network Bootstrap — §"Future Work" F5
+RFC-0851p-a (Networking): Network Bootstrap — §"Future Work"
 
 ## Summary
 

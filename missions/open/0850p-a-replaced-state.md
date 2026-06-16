@@ -1,4 +1,4 @@
-# Mission: 0850p-a F4 — explicit Replaced state in BotLifecycle
+# Mission: 0850p-a — explicit Replaced state in BotLifecycle
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — pre-public-launch follow-up
 
 ## RFC
 
-RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work" F4
+RFC-0850p-a (Networking): WhatsApp Auth Onboarding — §"Future Work"
 
 ## Summary
 

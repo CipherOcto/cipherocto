@@ -1,4 +1,4 @@
-# Mission: 0855p-b F4 — Stake-weighted quadratic-cost voting
+# Mission: 0855p-b — Stake-weighted quadratic-cost voting
 
 ## Status
 
@@ -6,7 +6,7 @@ Open (2026-06-16) — post-launch
 
 ## RFC
 
-RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work" F4
+RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work"
 
 ## Summary
 

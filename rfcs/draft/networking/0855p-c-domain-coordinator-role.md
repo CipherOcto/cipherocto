@@ -162,6 +162,10 @@ enum CoordinatorLifecycle {
 
 The key difference: **platform events trigger state transitions**. The adapter emits a "platform event" envelope (e.g., `PlatformEvent::AdminTransfer`, `PlatformEvent::KickedFromGroup`) which the DomainCoordinator subscribes to and translates into `CoordinatorLifecycle` transitions.
 
+**Latch-on-Active, never directly Suspect (E2E IS-6.4 fix):** a node MUST pass through `Active` before reaching `Suspect`. The first time a node detects it is the platform admin (right after `join_group + BIND + Designated → Elected`), it enters `Elected` (NOT `Active`). Only after the FIRST `HEARTBEAT_INTERVAL` (30 epochs) of successful heartbeat emission does the node transition `Elected → Active`. This latching prevents a freshly-elected node that loses the group within seconds from being slashed on the same transition. Rationale: a 30-epoch warmup window lets the node confirm stable admin status before being held accountable for missing heartbeats.
+
+**Suspect → Inactive slash threshold (E2E IS-6.5 fix):** the DomainCoordinator remains in `Suspect` for `SUSPECT_WINDOW = 3 × HEARTBEAT_INTERVAL` (90 epochs). If the platform loss is confirmed (i.e., the platform event is delivered or `adapter_connected = false` for the full 90 epochs), the DomainCoordinator transitions to `Inactive` AND is slashed with reason 0x0005. If platform events resume before the 90 epochs expire, the DomainCoordinator transitions back to `Active` and no slash occurs. This gives the platform 90 epochs to recover from a transient outage without false-positive slashing.
+
 ### 2. DomainCoordinatorRecord
 
 ```rust
@@ -503,8 +507,79 @@ DomainCoordinator
 | IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F2: cross-domain slash (mission-level coordinator can slash on behalf of a banned member).** |
 | IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 GroupState. |
 | IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5, multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
+| IA-DC-13 (E2E IS-6.2) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.5 fix — 90-epoch Suspect window, then slash or recover) |
+| IA-DC-14 (E2E IS-6.3) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 DomainCoordinatorLifecycle (IS-6.4 fix — Elected → Active latch) |
+| IA-DC-15 (E2E IS-6.4) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss |
+| IA-DC-16 (E2E IS-8.4) | Coordinator term is monotonic and never decreases across re-Active | PROTOCOL | MITIGATED | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 DomainCoordinatorLifecycle. |
+| IA-DC-17 (E2E IS-5.3) | Slash votes are public and auditable post-resolution | GOVERNANCE | MITIGATED | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §"Slash Vote Audit" (E2E IS-5.3 fix) below. |
+| IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §"Cross-Platform Slash" (E2E IS-5.8 fix) below. |
+| IA-DC-19 (E2E IS-6.5) | DomainCoordinator's state transitions are observable to the mission | PROTOCOL | MITIGATED | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §"State Transition Observability" (E2E IS-6.5 fix) below. |
 
-**Open assumptions:** None unaddressed. All 13 (R5-1 fix — was 12; IA-DC-3a added in R3) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
+**Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1, F2).
+
+### 9a. Slash Vote Audit (E2E IS-5.3 fix)
+
+Every slash vote MUST be written to the audit log **before tally**. The audit log entry contains:
+
+```rust
+/// One slash vote, recorded in the audit log before tally
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct SlashVoteAuditEntry {
+    /// Monotonic, assigned by the slash tally initiator
+    vote_id: [u8; 32],
+    /// Who cast the vote
+    voter: NodeId,
+    /// The reason (slash reason code, e.g., 0x0005)
+    reason: u16,
+    /// Epoch the vote was cast
+    cast_epoch: u64,
+    /// The slash tally this vote contributes to
+    tally_id: [u8; 32],
+}
+```
+
+The audit log is replicated via the same mechanism as the slash tally itself (per RFC-0855p-b §"Slash Tally"). After resolution (slash succeeds or fails), the audit log entries remain public forever (they are part of the mission's permanent state). This allows post-hoc review of who voted for what and when, and prevents vote-tampering after the fact.
+
+### 9b. Cross-Platform Slash (E2E IS-5.8 fix)
+
+Each platform's DomainCoordinator is slashed **independently**. If a WhatsApp DomainCoordinator and a Matrix DomainCoordinator both serve the same `domain_id`, and the WhatsApp one is slashed, the Matrix one is NOT slashed by the same evidence. The slash reason code includes a platform tag:
+
+- Bit 0x8000 (high bit) is set: this is a platform-tagged slash
+- Bits 0-14: the slash reason (0x0001-0x0009 from RFC-0855p-b, 0x000A-0x3FFF reserved)
+- Bit 15 is the platform tag indicator
+
+Example: a WhatsApp coordinator slashed for kick evasion is `0x8005` (platform-tagged reason 0x0005). A mission-level coordinator slashed for the same offense is `0x0005` (no platform tag, mission-level).
+
+Cross-platform slash evidence: a slash that is based on behavior visible across multiple platforms (e.g., a coordinator that censors on both WhatsApp and Matrix) is allowed but is split into 2 platform-tagged slashes, each requiring 2/3 of the mission's voters on that platform. This prevents a low-reputation platform from being used to slash a DomainCoordinator on a different platform.
+
+### 9c. State Transition Observability (E2E IS-6.5 fix)
+
+Every `CoordinatorLifecycle` transition emits a `StateTransitionEvent` envelope, signed by the DomainCoordinator's term key:
+
+```rust
+/// Emitted on every CoordinatorLifecycle transition
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct StateTransitionEvent {
+    /// The DomainCoordinator's current coordinator_term_id
+    coordinator_term_id: [u8; 32],
+    /// The state the DomainCoordinator transitioned FROM
+    from_state: u8,  // CoordinatorLifecycle enum value
+    /// The state the DomainCoordinator transitioned TO
+    to_state: u8,    // CoordinatorLifecycle enum value
+    /// The epoch of the transition
+    epoch: u64,
+    /// The event that triggered the transition (or 0x0000 if self-driven)
+    trigger_event_id: [u8; 32],
+    /// DomainCoordinator's signature over (coordinator_term_id || from_state || to_state || epoch || trigger_event_id)
+    signature: [u8; 64],
+}
+```
+
+The `StateTransitionEvent` is gossiped to all mission participants. The `trigger_event_id` is a `BLAKE3-256` of the triggering event's canonical bytes (a slash vote, a platform event, etc.). Self-driven transitions (e.g., latch `Elected → Active` after 30 epochs) use `trigger_event_id = [0; 32]`.
+
+Verification: mission participants verify the signature against the DomainCoordinator's term public key (looked up via the mission's pubkey registry). Invalid signatures are dropped silently (per the "routine filtering silent" rule, §RFC-0855p-b).
 
 ## Security Considerations
 

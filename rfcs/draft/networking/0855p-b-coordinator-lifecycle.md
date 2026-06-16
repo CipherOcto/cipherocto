@@ -269,6 +269,18 @@ pub struct CoordinatorRecord {
 
 For Centralized, the `creator-may-not-replace` rule: the Mission Creator designates the first coordinator at genesis, but cannot replace a sitting coordinator except via the 2/3 vote path. This prevents a creator from indefinitely controlling a mission by repeatedly replacing coordinators.
 
+**Election eligibility filter (E2E IS-4.1 fix):** the election tally function MUST apply an eligibility filter BEFORE counting any ballot. The filter rejects:
+- Voters who are not current mission participants (verified via the mission's pubkey registry)
+- Voters whose trust score is below the governance model's threshold
+- Candidates who do not satisfy the eligibility check (per the table above)
+- Candidates whose `peer_id` is on the slash blacklist (`slash_count >= MAX_SLASHES_BEFORE_BAN = 5`)
+- Ballots whose signature does not verify against the voter's pubkey
+- Ballots whose `ballot_epoch` is not within `[election_epoch, election_epoch + ELECTION_TIMEOUT]`
+
+Rejected ballots are silently dropped (per the "routine filtering silent" rule). The tally only counts eligible ballots for eligible candidates. The running tally is published to all mission participants every 10 epochs (E2E IS-7.2 fix), but no individual ballot is published (only the running sum).
+
+**Election `closed_epoch` rule (E2E IS-4.2 fix):** `closed_epoch = min(quorum_reached_epoch, election_epoch + ELECTION_TIMEOUT)`. `ELECTION_TIMEOUT = 1000` epochs. The election closes at whichever comes first. If `closed_epoch = election_epoch + ELECTION_TIMEOUT` (quorum not reached), the election fails and a new election is initiated with a new `election_id`. Failed elections are not slashed; they simply delay the coordinator appointment.
+
 #### Genesis State Machine (v1.1 addition)
 
 The Mission Creator's `designate-at-genesis` authority triggers a 3-state machine that bootstraps the first coordinator **without** an election, because there are no peers to vote in a 1-participant mission. This fills a gap in the v1.0 RFC where the §Election Algorithm table assumes ≥2 candidates.
@@ -370,6 +382,12 @@ When the first coordinator transitions from `GenesisActive` to the normal `Coord
 2. Coordinator transitions `Active → Handover` immediately.
 3. Successor elected per `Emergency` branch of the governance model.
 
+**Handover observability (E2E IS-4.4 fix):** the predecessor monitors the successor's activation. Specifically:
+- Predecessor sets `handover_started_epoch = current_epoch` when transitioning `Active → Handover`.
+- If `current_epoch - handover_started_epoch > HANDOVER_TIMEOUT = 500` epochs and the successor is NOT yet `Active`, the predecessor logs `tracing::warn!("Handover timeout: successor {successor:?} not active after {elapsed} epochs")` and broadcasts a `HandoverTimeout` envelope to the mission.
+- A `HandoverTimeout` triggers a new election (per the same governance model). The failed successor is not slashed (handovers are not slashable) but is marked as "ineligible-for-immediate-retry" for `HANDOVER_RETRY_COOLDOWN = 100` epochs.
+- The handover is considered "successful" when the predecessor observes the successor's `CoordinatorHeartbeat` (proof of activation). At that point the predecessor transitions `Handover → Inactive` and unlocks its `octo_o_stake_locked`.
+
 #### Slashing Integration
 
 Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a deterministic transition:
@@ -382,6 +400,57 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 6. After penalty applied, coordinator transitions `Demoting → Inactive`.
 7. Cool-down applies: `2^slash_count` epochs before eligible for re-election (exponential backoff prevents rapid re-elevation of repeatedly-misbehaving coordinators).
 
+**Slash proof replay protection (E2E IS-4.5 fix):** the `slash_id` is defined as `BLAKE3(coordinator_term_id || offense || evidence_hash)`. The witness MUST have not seen the same `slash_id` in the last 1000 epochs. Replays are silently dropped. The `evidence_hash` is `BLAKE3(evidence)` so the same slash proof with a different `evidence` field is treated as a different slash (and may proceed in parallel).
+
+**Slash tally base = 2/3 of mission's current eligible voter count (E2E IS-4.6 fix, E2E IS-7.3 fix):** the 2/3 threshold is computed as `floor(2 * eligible_voter_count / 3)`, where `eligible_voter_count` is the number of mission participants whose trust score is ≥ the governance model's voter threshold, AS OF THE ELECTION EPOCH. The threshold is NOT a fixed number; it scales with mission size. For example:
+- 3 eligible voters → threshold is 2 (need 2 of 3 votes)
+- 7 eligible voters → threshold is 4 (need 4 of 7 votes)
+- 9 eligible voters → threshold is 6 (need 6 of 9 votes)
+
+**Slash voting is open to ALL mission participants (E2E IS-4.7 fix):** any mission participant whose trust score is above the voter threshold may cast a ballot on any slash proof. There is no restriction that the voter must be in the same DomainCoordinator's group as the slashed coordinator. The ballot is gossiped to all mission participants (not just the local DomainCoordinator's group).
+
+**Demoting duration is bounded (E2E IS-6.1 fix):** the `Demoting` state has a maximum duration of `DEMOTING_DURATION = 10` epochs. If the slash proof is verified and the penalty applied within this window, the coordinator transitions to `Inactive` immediately. If the proof verification or penalty application takes longer (e.g., due to network partition), the coordinator is force-transitioned to `Inactive` at `demoting_started_epoch + 10` epochs regardless. The stake is unlocked at the force-transition; partial state (e.g., evidence that was being verified) is discarded. This prevents a stuck `Demoting` state from holding the stake forever.
+
+**Slash tally observability (E2E IS-7.2 fix):** the running tally (yes votes / no votes / abstentions) is published to all mission participants every 10 epochs as a `SlashTallyUpdate` envelope. The envelope is signed by the slash tally initiator (the `Slashing Adjudicator`). The tally reaches quorum when `yes_votes >= threshold` (where `threshold` is defined by the 2/3 rule above).
+
+**Slash vote is binary, abstentions not counted (E2E IS-7.4 fix):** voters cast either `YES` or `NO` on the slash proof. There is no "abstain" option. A voter who does not cast a ballot within `SLASH_VOTE_DEADLINE` is considered to have abstained (not counted toward `eligible_voter_count`). However, the slash tally uses the original `eligible_voter_count` (snapshot at `election_epoch`), not the post-deadline `cast_voter_count`. This means abstentions do NOT lower the threshold; they only delay resolution.
+
+**Slash vote deadline (E2E IS-7.5, IS-7.6 fix):** the deadline is `slash_proof.closed_epoch = slash_proof.opened_epoch + SLASH_VOTE_DEADLINE = slash_proof.opened_epoch + 500` epochs. After the deadline, the tally is FINAL: late ballots are silently dropped. The `closed_epoch` is the epoch when the result is computed and gossiped; it is part of the canonical tally record.
+
+**Slash result is gossiped to all mission participants (E2E IS-7.7 fix):** once the tally is closed, the result (slash succeeded or failed) is gossiped as a `SlashTallyResult` envelope to all mission participants. The envelope is signed by the `Slashing Adjudicator` and contains the BLAKE3 hash of the sorted ballots (the canonical tally proof).
+
+**Slash tally cryptographic finality (E2E IS-7.8 fix):** the canonical tally is the BLAKE3 hash of the sorted ballots, where sorting is by `(voter_peer_id, ballot_epoch)`. The hash is included in the `SlashTallyResult` envelope. Any node can recompute the hash from the gossiped ballots and verify that the result matches. If the recomputed hash does not match, the tally is rejected as tampered and the slash is nullified (the coordinator's `Demoting` state is reversed to `Active` if it was already demoted; this is a rare case that requires governance intervention to resolve).
+
+**Slash tally failure (E2E IS-5.5 fix):** if the tally closes without reaching the 2/3 threshold, the slash fails. The coordinator's `Demoting` state is reversed to `Active` (assuming the slash proof was the only reason for `Demoting`). The `slash_count` is NOT incremented. The `evidence` is recorded in the audit log (per RFC-0855p-c §"Slash Vote Audit") as a failed slash attempt. The slashing initiator (the `Slashing Adjudicator` who submitted the proof) is NOT slashed for false positives, but a history of failed slash attempts is public and may inform future trust-score adjustments.
+
+**Slash vote rate-limiting (E2E IS-5.6 fix):** a single voter can cast at most one ballot per `slash_id`. Subsequent ballots for the same `slash_id` from the same voter are silently dropped. This prevents ballot spam. The ballot is bound to `(slash_id, voter_peer_id)` in the local state.
+
+**Slash evidence is publicly auditable (E2E IS-5.7 fix):** the `evidence` payload of a slash proof is part of the mission's permanent state. After a slash tally closes (succeeds or fails), the evidence is gossiped to all mission participants as a `SlashEvidenceArchive` envelope. The envelope is signed by the `Slashing Adjudicator` and contains the full evidence payload (which may be large — e.g., a transcript of coordinator misbehavior). All mission participants MUST store the evidence for at least `EVIDENCE_RETENTION_EPOCHS = 7_776_000` (~90 days) to allow post-hoc review.
+
+**Slash reason 0x0001-0x0009 reserved; 0x0009 = `genesis-compromise` (E2E IS-5.4 fix):** the slash reason codes are:
+- `0x0001` = `double-sign` (coordinator signed two conflicting envelopes for the same slot)
+- `0x0002` = `liveness-failure` (coordinator missed 10+ consecutive heartbeats)
+- `0x0003` = `founder-squat` (BIND issued by founder without intent to govern)
+- `0x0004` = `censorship` (coordinator refused to relay a valid envelope for 100+ epochs)
+- `0x0005` = `coordinator-misbehavior` (umbrella reason for unspecified misbehavior)
+- `0x0006` = `key-compromise` (coordinator's signing key was compromised)
+- `0x0007` = `banning-legitimate-member` (DomainCoordinator banned a member who had not violated any rule)
+- `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes)
+- `0x0009` = `genesis-compromise` (creator's key was compromised after `GenesisActive` but before handoff to `CoordinatorLifecycle`)
+
+Codes `0x000A-0xFFFF` are reserved for transport-level (0850p-c) and platform-coordination-level (0855p-c) slash reasons. Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §"Platform Migration"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8).
+
+**"Evidence of misbehavior" per slash reason (E2E IS-7.1 fix):** the expected evidence schema for each slash reason:
+- `0x0001 double-sign`: two conflicting `CoordinatorHeartbeat` envelopes (or other state-transition envelopes) signed by the same `coordinator_term_id`, with the same `epoch` field but different payloads.
+- `0x0002 liveness-failure`: a sequence of 10+ consecutive missed `CoordinatorHeartbeat` envelopes, with the slashed coordinator's `coordinator_term_id` and `last_heartbeat_epoch`.
+- `0x0003 founder-squat`: a `BindEnvelope` issued by a founder who did not send any `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs.
+- `0x0004 censorship`: a `CensorshipProof` envelope containing the censored envelope's hash, the censored member's `peer_id`, and a witness signature proving the envelope was valid and was not relayed.
+- `0x0005 coordinator-misbehavior`: a free-form `evidence` payload that the `Slashing Adjudicator` judges to be sufficient. The adjudicator's signature is the proof of validity.
+- `0x0006 key-compromise`: a `KeyRevocation` envelope from the coordinator's pubkey registry, plus evidence that the revoked key was used to sign a recent envelope.
+- `0x0007 banning-legitimate-member`: a `MemberBan` envelope issued by the DomainCoordinator, plus evidence that the banned member had not violated any rule.
+- `0x0008 vote-buying`: a transcript of communications (e.g., signed chat messages) in which the coordinator offered to trade slash votes for payment.
+- `0x0009 genesis-compromise`: a `KeyRevocation` envelope from the mission creator's pubkey registry, issued after `GenesisActive` but before the first `CoordinatorHeartbeat` of the new term.
+
 #### Liveness Check
 
 1. Coordinator emits `CoordinatorHeartbeat { coordinator, term_id, epoch }` every `heartbeat_interval` epochs.
@@ -390,6 +459,8 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 4. Grace period: `2 * heartbeat_interval` epochs in `Suspect`.
 5. If heartbeat resumes: `Suspect → Active` (recovery).
 6. If grace period exceeded: `Suspect → Handover` (forced handover begins).
+
+**Heartbeat gossip scope (E2E IS-5.2 fix):** the `CoordinatorHeartbeat` envelope is gossiped to ALL mission participants, not just to the DomainCoordinator of the bound group. This ensures that mission-level coordinators (not just the local DomainCoordinator) can monitor the heartbeat. Each DomainCoordinator's relay duty is to forward the heartbeat envelope to all mission participants via the mission-level gossip layer. The heartbeat envelope's TTL is `MESSAGE_TTL = 100` epochs; expired heartbeats are silently dropped.
 
 #### Recovery from Network Partition
 
@@ -490,6 +561,26 @@ pub enum CoordinatorError {
 | Term limits (`term_end_epoch`) are honored by the coordinator | Term end trigger | Coordinator overstays; mission drifts to single-leader | `Suspect → Handover` trigger on `current_epoch >= term_end_epoch` regardless of heartbeat. **MITIGATED**. |
 | Cool-down after Resignation is enforced | Re-election eligibility | Slashed/resigned coordinator immediately re-elected | Cool-down check in election eligibility filter. **MITIGATED**. |
 | Handover message queue survives process crash | Message preservation | Envelopes lost during handover | Queue is durable (RFC-0857 mempool); crash recovery replays queue. **MITIGATED**. |
+| IA-CL-1 (E2E IS-4.1) | Election eligibility filter runs BEFORE ballot tally | ELECTION | MITIGATED | Specified in §"Election Algorithm" (E2E IS-4.1 fix) — the tally function rejects voters/candidates who fail the eligibility check |
+| IA-CL-2 (E2E IS-4.2) | Election `closed_epoch` is set when quorum is reached OR `ELECTION_TIMEOUT` fires, whichever is first | ELECTION | MITIGATED | Specified in §"Election Algorithm" (E2E IS-4.2 fix) — `ELECTION_TIMEOUT = 1000` epochs |
+| IA-CL-3 (E2E IS-4.4) | Handover success or failure is observable to the mission within `HANDOVER_TIMEOUT = 500` epochs | LIFECYCLE | MITIGATED | Specified in §"Handover Protocol" (E2E IS-4.4 fix) |
+| IA-CL-4 (E2E IS-4.5) | Slash proof's `evidence` is replay-protected | SECURITY | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.5 fix) — slash_id is `BLAKE3(coordinator_term_id || offense || evidence_hash)` |
+| IA-CL-5 (E2E IS-4.6) | Slash tally base is 2/3 of the **mission's current eligible voter count** (not a fixed number) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.6 fix) |
+| IA-CL-6 (E2E IS-4.7) | Slash voting is open to ALL mission participants, not just the slashed coordinator's peers | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-4.7 fix) |
+| IA-CL-7 (E2E IS-5.2) | Heartbeat is gossiped to ALL mission participants, not just to the DomainCoordinator | OBSERVABILITY | MITIGATED | Specified in §"Liveness Check" (E2E IS-5.2 fix) |
+| IA-CL-8 (E2E IS-5.4) | Slash reason 0x0001-0x0009 are reserved; 0x0009 is defined as `genesis-compromise` | GOVERNANCE | MITIGATED | Specified in §"B. Slash Offense Codes" (E2E IS-5.4 fix) |
+| IA-CL-9 (E2E IS-5.5) | Slash tally can fail to reach quorum; the failure outcome is well-defined | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.5 fix) — failed tally logs and releases the slash lock |
+| IA-CL-10 (E2E IS-5.6) | Slash vote casting is rate-limited (no ballot spam) | SECURITY | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.6 fix) — one ballot per voter per slash_id |
+| IA-CL-11 (E2E IS-5.7) | Slash evidence is publicly auditable post-tally | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-5.7 fix) — evidence is part of the permanent mission state |
+| IA-CL-12 (E2E IS-6.1) | Demoting state has a bounded duration (`DEMOTING_DURATION = 10` epochs) | LIFECYCLE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-6.1 fix) |
+| IA-CL-13 (E2E IS-7.1) | "Evidence of misbehavior" is explicitly defined per slash reason code | GOVERNANCE | MITIGATED | Specified in §"B. Slash Offense Codes" (E2E IS-7.1 fix) — evidence schemas enumerated |
+| IA-CL-14 (E2E IS-7.2) | Slash vote tally is observable in real-time (before resolution) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.2 fix) — running tally published every 10 epochs |
+| IA-CL-15 (E2E IS-7.3) | Slash vote tally base is `2/3 of mission's current eligible voter count` (2/3 of what?) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.3 fix) — explicit formula |
+| IA-CL-16 (E2E IS-7.4) | Slash vote is binary (yes/no); abstentions are not counted | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.4 fix) |
+| IA-CL-17 (E2E IS-7.5) | Slash vote has a deadline (`SLASH_VOTE_DEADLINE = 500` epochs) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.5 fix) |
+| IA-CL-18 (E2E IS-7.6) | Slash vote result is final once deadline elapses; no late ballots accepted | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.6 fix) |
+| IA-CL-19 (E2E IS-7.7) | Slash vote result is gossiped to ALL mission participants | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.7 fix) |
+| IA-CL-20 (E2E IS-7.8) | Slash tally requires cryptographic finality (BLAKE3 hash of sorted ballots) | GOVERNANCE | MITIGATED | Specified in §"Slashing Integration" (E2E IS-7.8 fix) |
 
 ## Security Considerations
 
@@ -822,20 +913,24 @@ stateDiagram-v2
 
 ### B. Slash Offense Codes (extends RFC-0855 §17)
 
-| Code | Offense | Penalty (default) | Source |
-|------|---------|-------------------|--------|
-| 0x0001 | Invalid task result | 100% OCTO-O | RFC-0855 §17 |
-| 0x0002 | Envelope forgery | 100% all stakes | RFC-0855 §17 |
-| 0x0003 | Isolation breach | 100% OCTO-B/O | RFC-0855 §17 |
-| 0x0004 | Free-riding | proportional to inactivity | RFC-0855 §17 |
-| 0x0005 | Coordinator misbehavior | 100% OCTO-O + cool-down | RFC-0855 §17 + This RFC |
-| 0x0006 | Heartbeat falsification | 50% OCTO-O | This RFC |
-| 0x0007 | Handover message loss | 25% OCTO-O | This RFC |
-| 0x0008 | Term overstay (post `term_end_epoch`) | 100% OCTO-O | This RFC |
-| 0x0009 | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix) | 100% OCTO-O + immediate Inactive | This RFC (v1.1 patch) |
-| 0x000A-0xFFFF | Reserved | — | — |
+| Code | Offense | Penalty (default) | Source | Evidence schema (E2E IS-7.1) |
+|------|---------|-------------------|--------|-------------------------------|
+| 0x0001 | Double-sign (coordinator signed two conflicting envelopes for the same slot) | 100% OCTO-O | RFC-0855 §17 + This RFC | Two conflicting envelopes with same `coordinator_term_id` and `epoch` but different payloads |
+| 0x0002 | Liveness-failure (10+ consecutive missed heartbeats) | 100% all stakes | RFC-0855 §17 + This RFC | Sequence of 10+ missed `CoordinatorHeartbeat` envelopes |
+| 0x0003 | Founder squat (BIND without intent to govern) | 100% OCTO-B/O | RFC-0855 §17 + This RFC | `BindEnvelope` + 0 `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs |
+| 0x0004 | Censorship (refused to relay valid envelope for 100+ epochs) | proportional to inactivity | RFC-0855 §17 + This RFC | `CensorshipProof` envelope with censored envelope's hash + witness signature |
+| 0x0005 | Coordinator misbehavior (umbrella) | 100% OCTO-O + cool-down | RFC-0855 §17 + This RFC | Free-form `evidence` payload + adjudicator signature |
+| 0x0006 | Key compromise (coordinator's signing key was compromised) | 50% OCTO-O | This RFC | `KeyRevocation` envelope + evidence revoked key was used |
+| 0x0007 | Banning legitimate member | 25% OCTO-O | This RFC | `MemberBan` envelope + evidence banned member had not violated any rule |
+| 0x0008 | Vote-buying | 100% OCTO-O | This RFC | Transcript of communications offering slash votes for payment |
+| 0x0009 | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix) | 100% OCTO-O + immediate Inactive | This RFC (v1.1 patch) | `KeyRevocation` envelope from creator's pubkey registry, issued after `GenesisActive` but before first `CoordinatorHeartbeat` |
+| 0x000A | Platform migration (per RFC-0850p-c §"Platform Migration") | 100% OCTO-O + 1000-epoch cooldown | RFC-0850p-c | Mission-level vote result (2/3 of eligible voters approved migration) |
+| 0x000B | `is_reconnect_lie` (per RFC-0850p-c §8) | 500-epoch cooldown | RFC-0850p-c | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true` |
+| 0x000C-0xFFFF | Reserved | — | — | — |
 
-Codes 0x0006-0x0009 are new in this RFC (0x0006-0x0008 in v1.0, 0x0009 added in v1.1 for genesis-compromise); codes 0x0001-0x0005 extend RFC-0855 §17 with the cool-down requirement. The reserved 0x000A-0xFFFF range is allocated for future slash reasons (e.g., F2 cross-domain slash, F3 small-group slash).
+Codes 0x0001-0x0009 are defined in this RFC; codes 0x000A-0x000B are defined in RFC-0850p-c (transport-level slash reasons); codes 0x000C-0xFFFF are reserved for future slash reasons (e.g., F2 cross-domain slash, F3 small-group slash). The evidence schema column is new in v1.1 (E2E IS-7.1 fix) — previously "evidence" was undefined for most codes.
+
+Refer to §"Slashing Integration" (above) for the full slash tally protocol (open to all mission participants, binary vote, 500-epoch deadline, cryptographic finality, observability, rate-limiting, public auditability).
 
 ### B'. Genesis Constants (R6-1 fix — appendix promised by R3-2, created in Round 6)
 

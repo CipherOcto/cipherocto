@@ -161,7 +161,12 @@ struct GroupBinding {
     renewed_at_epoch: u64,
     /// State
     state: GroupState,
-    /// BLAKE3-256 binding all fields
+    /// BLAKE3-256(group_jid || platform || mission_id || domain_id
+    ///              || domain_coordinator_id || bound_at_epoch
+    ///              || renewed_at_epoch || state)
+    /// R1-TGB-2 fix: explicit field list (was previously "all fields" without
+    /// specifying which; `state` and `renewed_at_epoch` must be included to
+    /// prevent mutable-state-without-hash-change attacks).
     binding_hash: [u8; 32],
 }
 ```
@@ -170,17 +175,20 @@ struct GroupBinding {
 
 **Transitions:**
 
-| From | To | Trigger | Deterministic? |
-|------|----|---------|----------------|
-| (none) | Unbound | Adapter discovers group (config or join event) | Yes |
-| Unbound | Bound | `DOT/1/BIND` accepted by ≥1 witness | Yes (witness count deterministic) |
-| Bound | ReBinding | `DOT/1/REBIND` accepted | Yes |
-| ReBinding | Bound | `DOT/1/REBIND` complete (new group bound) | Yes |
-| ReBinding | Unbound | `DOT/1/REBIND` aborted (timeout) | Yes (timeout is deterministic) |
-| Bound | Unbound | `DOT/1/UNBIND` accepted | Yes |
-| Unbound | UnboundQuarantined | UNBIND was issued; cooldown to prevent rapid rebinding | Yes |
-| UnboundQuarantined | Unbound | Cooldown elapsed (default 100 epochs) | Yes |
-| Bound | UnboundQuarantined | Slash / governance termination | Yes |
+| From | To | Trigger | Affected group | Deterministic? |
+|------|----|---------|----------------|----------------|
+| (none) | Unbound | Adapter discovers group (config or join event) | The discovered group | Yes |
+| Unbound | Bound | `DOT/1/BIND` accepted by ≥1 witness | The bound group | Yes (witness count deterministic) |
+| Bound | ReBinding | `DOT/1/REBIND` accepted (signaled by old group) | **The old group** (transitions to ReBinding) | Yes |
+| ReBinding | UnboundQuarantined | `DOT/1/REBIND` complete (new group bound; old group quarantines) | **The old group** (reaches terminal UnboundQuarantined via ReBinding) | Yes |
+| ReBinding | Unbound | `DOT/1/REBIND` aborted (timeout) | The old group | Yes (timeout is deterministic) |
+| (none) | Bound | `DOT/1/REBIND` accepted (new group is being bound) | **The new group** (enters Bound directly, skipping Unbound) | Yes |
+| Bound | Unbound | `DOT/1/UNBIND` accepted | The bound group | Yes |
+| Unbound | UnboundQuarantined | UNBIND was issued; cooldown to prevent rapid rebinding | The unbound group | Yes |
+| UnboundQuarantined | Unbound | Cooldown elapsed (default 100 epochs) | The unbound-quarantined group | Yes |
+| Bound | UnboundQuarantined | Slash / governance termination | The bound group | Yes |
+
+**R1-TGB-1 fix — per-group clarity:** the state machine is **per-group**, not global. A REBIND operation affects TWO groups: the old group (Bound → ReBinding → UnboundQuarantined) and the new group (Unbound → Bound). The transitions table now specifies "Affected group" to make this explicit. The previous version conflated the two groups' transitions in a single row, which was misleading.
 
 ### 2. Binding Envelope Types
 
@@ -206,9 +214,16 @@ struct BindEnvelope {
     coordinator_pubkey: [u8; 32],
     /// Epoch when bind was issued
     bind_epoch: u64,
-    /// Random nonce (replay defense; 16 bytes)
+    /// Random nonce (replay defense; 16 bytes; MUST be from a CSPRNG with
+    /// ≥128 bits entropy per RFC-0126 §3).
+    /// R1-TGB-4 fix: explicit entropy requirement. The 16-byte nonce provides
+    /// 128 bits of entropy, which is sufficient to make replays computationally
+    /// infeasible (2^128 attempts required). Implementations MUST NOT use
+    /// counters, timestamps, or other low-entropy sources for `bind_nonce`.
     bind_nonce: [u8; 16],
-    /// BLAKE3 binding all fields
+    /// BLAKE3-256(group_jid || platform || mission_id || domain_id
+    ///              || coordinator_id || coordinator_pubkey
+    ///              || bind_epoch || bind_nonce)
     bind_hash: [u8; 32],
     /// Ed25519 signature by coordinator over bind_hash
     coordinator_signature: [u8; 64],
@@ -225,7 +240,10 @@ struct BindAck {
     witness_id: [u8; 32],
     /// Epoch of witness
     witness_epoch: u64,
-    /// BLAKE3 binding all fields
+    /// BLAKE3-256(bind_envelope || witness_id || witness_epoch)
+    /// R1-TGB-3 fix: explicit field list (was "all fields" without specification).
+    /// Includes the full bind_envelope (not just its hash) so the ack is
+    /// self-verifying without requiring the original BIND to be re-fetched.
     ack_hash: [u8; 32],
     /// Ed25519 signature by witness
     witness_signature: [u8; 64],
@@ -253,7 +271,8 @@ struct UnbindEnvelope {
 enum UnbindAuthority {
     /// DomainCoordinator resigns the binding
     CoordinatorResign { coordinator_id: [u8; 32] },
-    /// 2/3 slash vote
+    /// 2/3 slash vote (see RFC-0855p-b §"SlashVote Type" for the SlashVote
+    /// struct definition; R1-TGB-7 fix: cross-reference was previously implicit)
     SlashVote { votes: Vec<SlashVote> },
     /// Mission termination
     MissionTerminated { mission_id: [u8; 32] },
@@ -277,7 +296,7 @@ struct RebindEnvelope {
     new_coordinator_pubkey: [u8; 32],
     /// Epoch
     rebind_epoch: u64,
-    rebind_nonce: [u8; 16],
+    rebind_nonce: [u8; 16],  // CSPRNG with ≥128 bits entropy (same rule as bind_nonce)
     rebind_hash: [u8; 32],
     /// Ed25519 signature
     new_coordinator_signature: [u8; 64],
@@ -401,7 +420,13 @@ REBIND is the operation that changes the physical group for an existing `domain_
 **Constraints:**
 
 - `new_coordinator_id` MAY be the same as the old (no handover) or different (handover).
-- If `new_coordinator_id` is different, the new coordinator must be eligible per RFC-0855p-b §"Election Algorithm".
+- If `new_coordinator_id` is different, the new coordinator MUST satisfy **all** of:
+  - Eligible per RFC-0855p-b §"Election Algorithm" (stake + trust score ≥ threshold)
+  - Has signed and broadcast at least one `DOT/1/HEARTBEAT` in the new group (proves presence)
+  - Has `peer_id` matching the canonical `BLAKE3(participant_id || mission_id)` (verifies key ownership)
+  - Is a current member of the new group (verified via the adapter's membership API)
+  
+  **R1-TGB-6 fix — successor eligibility:** the previous spec said "the new coordinator must be eligible per RFC-0855p-b" but did not specify HOW the witnesses verify eligibility. The 4 checks above are now explicit. Witnesses that find any check fails silently drop the REBIND.
 - Old group cannot be re-bound to the same `domain_id` for at least 100 epochs (prevents ping-pong rebinding).
 
 ### 8. Witness Validation Rules
@@ -410,11 +435,12 @@ When a `DOT/1/BIND` is received, each member validates:
 
 1. **Signature**: `coordinator_signature` is valid for `coordinator_pubkey`.
 2. **Mission exists**: `mission_id` matches a known `MissionDescriptor` (or is accepted as genesis).
-3. **Platform match**: `platform` matches the adapter that received the envelope.
+3. **Platform match**: `platform` matches the adapter that received the envelope. **R1-TGB-5 fix — explicit enforcement:** the adapter MUST reject any `DOT/1/BIND` envelope whose `platform` field does not match the adapter's own platform string (e.g., a `BIND` with `platform = "whatsapp"` arriving via the Matrix adapter is rejected as malformed). This prevents cross-platform spoofing attacks where an attacker on Platform A claims to be binding a Platform B group. The check is per-adapter, not per-node.
 4. **Group match**: `group_jid` matches the group the envelope was received in.
 5. **No conflict**: no existing binding for `(mission_id, domain_id, platform)` in local registry.
 6. **Coordinator eligibility**: `coordinator_id` is eligible per RFC-0855p-b (stake + trust).
 7. **Epoch sanity**: `bind_epoch` is within ±1 of local epoch.
+8. **Nonce freshness (R1-TGB-4 fix):** the witness MUST have not seen the same `(bind_nonce, coordinator_id)` pair in the last 1000 epochs. Replays are silently dropped.
 
 If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1/BIND_ACK`. If any fail, the witness silently drops the BIND (with optional `tracing::debug!` for diagnostics).
 

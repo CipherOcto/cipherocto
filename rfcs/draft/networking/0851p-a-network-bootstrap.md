@@ -156,8 +156,10 @@ struct BootstrapNode {
     last_seen_epoch: u64,
     /// Epoch when this entry was signed by the SeedListAuthority
     signed_at_epoch: u64,
-    /// BLAKE3-256(SeedListAuthorityId || node_id || public_key || public_addrs
+    /// BLAKE3-256(authority_pubkey || node_id || public_key || public_addrs
     ///              || capabilities || signed_at_epoch)
+    /// R1-NB-3 fix: SeedListAuthorityId is the authority's public key (implicit
+    /// in the verification flow; not a field in the struct).
     entry_hash: [u8; 32],
     /// Ed25519 signature by SeedListAuthority over entry_hash
     authority_signature: [u8; 64],
@@ -181,15 +183,17 @@ struct SeedList {
 
 **Default seed list at launch:**
 
-| Operator label | Region | Capabilities | Last seen (launch) |
-|----------------|--------|--------------|---------------------|
-| foundation-1 | us-east | Full (0x0FFF) | 0 |
-| foundation-2 | eu-west | Full (0x0FFF) | 0 |
-| foundation-3 | ap-south | Full (0x0FFF) | 0 |
-| foundation-4 | sa-east | Full (0x0FFF) | 0 |
-| foundation-5 | ap-east | Full (0x0FFF) | 0 |
+| Operator label | Region | Capabilities | Last seen (launch) | Signed at (epoch) |
+|----------------|--------|--------------|---------------------|---------------------|
+| foundation-1 | us-east | Full (0x0FFF) | 0 | 0 |
+| foundation-2 | eu-west | Full (0x0FFF) | 0 | 0 |
+| foundation-3 | ap-south | Full (0x0FFF) | 0 | 0 |
+| foundation-4 | sa-east | Full (0x0FFF) | 0 | 0 |
+| foundation-5 | ap-east | Full (0x0FFF) | 0 | 0 |
 
 Five geographically diverse bootstrap nodes. New nodes connect to all 5 in parallel and require ≥3 responses to agree on peer list (Sybil defense, see §6).
+
+**R1-NB-4 fix:** the table now includes the `signed_at_epoch` column (was previously omitted even though the struct has the field). At launch, all entries are signed at epoch 0.
 
 ### 2. Bootstrap Envelope Types
 
@@ -198,27 +202,30 @@ Five geographically diverse bootstrap nodes. New nodes connect to all 5 in paral
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct BootstrapRequest {
-    /// Sender's PeerId (so bootstrap node can include relevant advertisements)
-    sender_id: [u8; 32],
-    /// Sender's public key (for nonce binding)
-    sender_pubkey: [u8; 32],
-    /// Random nonce (replay defense; 16 bytes)
+    /// Requester's PeerId (so bootstrap node can include relevant advertisements)
+    requester_id: [u8; 32],
+    /// Requester's public key (for nonce binding + signature verification)
+    requester_pubkey: [u8; 32],
+    /// Random nonce (replay defense; 16 bytes; MUST be from a CSPRNG with ≥128 bits entropy)
     nonce: [u8; 16],
     /// Current epoch (for stale-response rejection)
     epoch: u64,
     /// Capabilities the sender is interested in (filter)
     capability_filter: u64,
-    /// Max peer list size requested (bounded by MAX_PEER_LIST = 256)
+    /// Max peer list size requested (bounded by MAX_PEER_LIST = 256; see §Appendix C)
     max_peers: u16,
-    /// Sender's signature over (sender_id || nonce || epoch || capability_filter)
-    sender_signature: [u8; 64],
+    /// Requester's signature over (requester_id || requester_pubkey || nonce || epoch
+    ///                         || capability_filter || max_peers)
+    /// R1-NB-2 fix: max_peers and requester_pubkey are NOW included to prevent
+    /// post-signing mutation of these fields by a MITM or replay attacker.
+    requester_signature: [u8; 64],
 }
 
 /// GDP/1/BOOTSTRAP_RESP — sent by bootstrap node
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct BootstrapResponse {
-    /// Original sender_id from the request (routing)
+    /// Original requester_id from the request (routing; same field name as request)
     requester_id: [u8; 32],
     /// Original nonce from the request (binding)
     request_nonce: [u8; 16],
@@ -233,6 +240,12 @@ struct BootstrapResponse {
     responder_signature: [u8; 64],
 }
 ```
+
+**R1-NB-1 fix — naming consistency:** `BootstrapRequest.sender_id` and `BootstrapResponse.requester_id` are the same field (the bootstrapping node's identity) under different names. Both are now renamed to `requester_id` for consistency.
+
+**R1-NB-2 fix — signature payload:** the requester signature now covers `requester_id || requester_pubkey || nonce || epoch || capability_filter || max_peers`. This prevents an attacker from mutating `max_peers` (e.g., to bypass a server-side rate limit) or substituting `requester_pubkey` (to redirect responses) after the request is signed.
+
+**R1-NB-3 fix — `SeedListAuthorityId` in `entry_hash`:** the authority's identifier is **implicit** in the verification flow — the verifier knows the expected SeedListAuthority from the trust chain (e.g., foundation key at launch, DAO multi-sig post-launch). The `entry_hash` includes `SeedListAuthorityId` to bind the entry to a specific authority's signature, but the `SeedListAuthorityId` itself is NOT a field in the `BootstrapNode` struct — it is the public key used to verify `authority_signature`. The hash formula is `BLAKE3-256(authority_pubkey || node_id || public_key || public_addrs || capabilities || signed_at_epoch)`.
 
 **Canonical Serialization Order (0850p-c-style fix):** All multi-byte fields are big-endian. Vec elements are serialized in declaration order with length-prefixed encoding. Signatures are computed AFTER canonical serialization.
 
@@ -704,3 +717,28 @@ Base64-URL encoding for `pubkey`, `inviter`, `sig` fields. Canonical encoding pe
 - Tor directory authorities: <https://2019.www.torproject.org/projects/tor.html>
 - Matrix federation discovery: <https://spec.matrix.org/v1.10/server-server-api/#server-discovery>
 - Kademlia: Maymounkov et al., 2002
+
+### D. Constants (R1-NB-5 fix)
+
+```rust
+/// Maximum peer list size in a BOOTSTRAP_RESP (R1-NB-5: was referenced but undefined)
+const MAX_PEER_LIST: u16 = 256;
+
+/// Default seed list size at launch (5 geographically diverse bootstrap nodes)
+const DEFAULT_SEED_LIST_SIZE: usize = 5;
+
+/// Minimum responses required for Sybil defense (≥3 of 5)
+const MIN_BOOTSTRAP_RESPONSES: usize = 3;
+
+/// Intersection threshold for Sybil defense (≥80% of returned peer lists must agree)
+const PEER_LIST_INTERSECTION_THRESHOLD: f64 = 0.80;
+
+/// Heartbeat interval for bootstrap node liveness
+const BOOTSTRAP_NODE_HEARTBEAT_INTERVAL: u64 = 30; // epochs
+
+/// Heartbeat timeout (3 missed heartbeats = suspect)
+const BOOTSTRAP_NODE_HEARTBEAT_TIMEOUT: u64 = 90; // epochs (= 3 × interval)
+
+/// DNS seed rotation cadence (governance-rotated)
+const SEED_LIST_ROTATION_EPOCHS: u64 = 7_776_000; // ~90 days @ 1 epoch/sec
+```

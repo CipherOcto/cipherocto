@@ -199,24 +199,39 @@ struct DomainCoordinatorRecord {
 
 ### 3. Platform-Admin Authority Check
 
-When a `DOT/1/BIND` is received, the receiving node verifies that the candidate DomainCoordinator is the platform-admin of the group:
+When a `DOT/1/BIND` is received, the receiving node verifies that the candidate DomainCoordinator is the platform-admin of the group.
+
+**Critical implementation note (R1-DC-1 fix):** The forward mapping `participant_id → peer_id = BLAKE3(participant_id || mission_id)` is one-way (BLAKE3 is a one-way hash). The reverse mapping `peer_id → participant_id` is **impossible** without a precomputed lookup table. Implementations MUST NOT attempt the reverse mapping; they MUST iterate the admin list and compute the expected peer_id for each admin, then check if any matches the candidate.
 
 ```rust
 fn is_platform_admin(
     platform: &str,
+    mission_id: &[u8; 32],
     group_jid: &str,
     candidate_id: &[u8; 32],
 ) -> Result<bool, PlatformError> {
     // 1. Query the adapter for current group admin list
     let admins = platform_admin_list(platform, group_jid)?;
 
-    // 2. Map candidate PeerId to platform admin identifier
-    let candidate_admin_id = peer_id_to_platform_admin(candidate_id)?;
+    // 2. Iterate admin list and compute expected peer_id for each
+    //    (per Appendix A: peer_id = BLAKE3(participant_id || mission_id))
+    //    DO NOT attempt to reverse-map candidate_id to participant_id
+    //    (BLAKE3 is one-way; the reverse is computationally infeasible).
+    for admin_participant_id in admins {
+        let expected_peer_id = blake3_256(
+            &[admin_participant_id.as_bytes(), mission_id].concat()
+        );
+        if &expected_peer_id == candidate_id {
+            return Ok(true);
+        }
+    }
 
-    // 3. Check membership
-    Ok(admins.contains(&candidate_admin_id))
+    // 3. No match — candidate is not a platform admin
+    Ok(false)
 }
 ```
+
+**Performance note:** The admin list is typically small (1-10 entries per group). The O(N) iteration is acceptable. For very large admin lists (rare; usually only in enterprise settings), the implementation MAY precompute a `BTreeMap<peer_id, participant_id>` cache keyed by `(mission_id, group_jid)`, invalidated on every `PlatformEvent::AdminChange` event.
 
 **Trust assumption:** the platform's group-admin list is authoritative. If the platform lies (e.g., compromised WhatsApp server returns a false admin list), the DomainCoordinator can be wrong. This is **ACCEPTED RISK IA-DC-2** (see §Implicit Assumptions Audit).
 
@@ -228,6 +243,10 @@ fn is_platform_admin(
 
 Group admin transfer is the canonical handover path. When the platform's group admin is transferred (e.g., WhatsApp `participant promote`), the DomainCoordinator subscribes to this event:
 
+**Event source (R1-DC-6 clarification):** The `PlatformEvent::AdminTransfer` is emitted by the **platform itself** (e.g., the WhatsApp server). All group members receive it via the adapter's event subscription. The event is authoritative at the platform layer; DOT trusts the platform's report.
+
+**New admin designation (R1-DC-2 fix):** The new group admin becomes the DomainCoordinator automatically on transfer. No separate DOT-level designation event is needed. The new admin transitions `Designated → Elected → Active` upon receiving the `PlatformEvent::AdminTransfer`. If the new admin is not yet a mesh member, they join the mesh via RFC-0851p-a bootstrap first, then transition to `Active` (a 1-epoch grace period applies).
+
 ```mermaid
 sequenceDiagram
     participant OldAdmin as Old Group Admin (old DomainCoordinator)
@@ -235,10 +254,10 @@ sequenceDiagram
     participant Platform as Platform (e.g., WhatsApp)
     participant Group as Group members
 
-    Platform->>OldAdmin: PlatformEvent::AdminTransfer
-    Platform->>NewAdmin: PlatformEvent::AdminTransfer
+    Platform->>OldAdmin: PlatformEvent::AdminTransfer { old, new, group_jid, transfer_epoch }
+    Platform->>NewAdmin: PlatformEvent::AdminTransfer { old, new, group_jid, transfer_epoch }
     OldAdmin->>OldAdmin: state = Active → Handover (auto)
-    NewAdmin->>NewAdmin: state = Designated → Elected → Active (auto)
+    NewAdmin->>NewAdmin: state = Designated → Elected → Active (auto, 1-epoch grace if not yet mesh member)
     OldAdmin->>Group: DOT/1/REBIND (new coordinator)
     NewAdmin->>Group: DOT/1/REBIND_ACK
     Note over OldAdmin,NewAdmin: Same coordinator_term_id chain (continuity)
@@ -256,20 +275,58 @@ The DomainCoordinator monitors three platform events:
 |-------|-----------|----------|
 | Kicked from group | `PlatformEvent::KickedFromGroup` | `Active → Suspect → Inactive` |
 | Banned from platform | `PlatformEvent::PlatformBan` | `Active → Suspect → Inactive` |
-| Adapter disconnected | `adapter_connected = false` for >2 × heartbeat | `Active → Suspect` (grace period) |
+| Adapter disconnected | `adapter_connected = false` for >2 × heartbeat | `Active → Suspect → Handover → Inactive` (forced) |
 
 **Kicked/banned path:**
 1. Adapter receives `KickedFromGroup` event
-2. DomainCoordinator signs `PlatformLoss { coordinator_id, group_jid, loss_epoch, reason }`
-3. State transitions `Active → Suspect → Inactive`
+2. DomainCoordinator signs `PlatformLossEnvelope { coordinator_id, group_jid, loss_epoch, reason }` (see §"PlatformLoss Envelope" below)
+3. State transitions `Active → Suspect → Inactive` (no grace period; kicked is permanent loss)
 4. GroupRegistry updated: state = `Unbound` (or `UnboundQuarantined` if cooldown)
 5. Mission participants run election for new DomainCoordinator (per RFC-0855p-b §"Election Algorithm") OR explicit founder issues `DOT/1/BIND` for a new platform
 
-**Adapter-disconnected path:**
+**Adapter-disconnected path (R1-DC-4 fix — deadlock resolution):**
 1. Adapter connection lost for >2 × heartbeat
 2. DomainCoordinator enters `Suspect` state (does NOT immediately transition to `Inactive`)
 3. If connection restored within 3 × heartbeat: `Suspect → Active` (recovery)
-4. If connection still lost: `Suspect → Handover` (forced handover begins; mission participants may elect a new DomainCoordinator on a different platform)
+4. **If connection still lost at 3 × heartbeat: forced `Suspect → Handover → Inactive`** (no grace period extension)
+5. Mission participants run election for new DomainCoordinator on a different platform (or wait for the same node to reconnect and re-claim the role via BIND)
+
+**Deadlock resolution:** the previous wording "mission participants MAY elect a new DomainCoordinator" was ambiguous — if the old DomainCoordinator is in `Suspect` (not `Inactive`), the election cannot designate a successor (the role is still occupied). The fix: `Suspect` is a grace state, not a permanent state. After `3 × heartbeat` (deterministic timeout), the DomainCoordinator is forced to `Handover → Inactive` regardless of connection state. Mission participants can then run an election or wait for reconnection.
+
+**Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3) — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
+
+### 5a. PlatformLoss Envelope (R1-DC-3 fix)
+
+The `PlatformLoss` envelope is signed by the DomainCoordinator when it detects platform-loss (kicked, banned, or forced Inactive). Type:
+
+```rust
+/// DOT/1/PLOSS — issued by DomainCoordinator on platform-loss
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct PlatformLossEnvelope {
+    envelope_type: [u8; 4],       // b"DOT1"
+    envelope_subtype: [u8; 4],    // b"PLOS"
+    version: u16,                 // 0x0001
+    /// DomainCoordinator that lost platform access
+    coordinator_id: [u8; 32],
+    /// The (mission_id, domain_id) being lost
+    mission_id: [u8; 32],
+    domain_id: [u8; 32],
+    /// The physical group
+    group_jid: String,
+    platform: String,
+    /// Reason code (u8; 0x01 = kicked, 0x02 = banned, 0x03 = forced-inactive)
+    reason: u8,
+    /// Epoch of loss
+    loss_epoch: u64,
+    /// BLAKE3 binding all fields
+    loss_hash: [u8; 32],
+    /// Ed25519 signature by DomainCoordinator over loss_hash
+    coordinator_signature: [u8; 64],
+}
+```
+
+**Canonical serialization (per RFC-0850p-c §Appendix A):** fields in declaration order, big-endian multi-byte, length-prefixed variable fields, signature over `loss_hash` computed AFTER canonical serialization.
 
 ### 6. Slash Integration
 
@@ -651,7 +708,7 @@ Reading any single RFC in isolation, the ordering is implicit. A new implementer
 
 | ID | Title | Severity | Deadline |
 |----|-------|----------|----------|
-| **F1 (NEW from 2026-06-16 batch review)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause fragmentation. | MEDIUM | Pre-public-launch |
+| **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). | **HIGH** (was MEDIUM; bumped in R1-DC-5 because the consequence is mission-level failure) | Pre-public-launch |
 | F1 (original) | Cross-platform admin attestation (mitigates D-DC-1) | CRITICAL | Pre-public-launch |
 | F2 | Cross-domain slash via mission-level coordinator (mitigates D-DC-6) | HIGH | Post-launch |
 | F3 | Slash for < 4 member groups (alternative to UNBIND) | MEDIUM | Post-launch |

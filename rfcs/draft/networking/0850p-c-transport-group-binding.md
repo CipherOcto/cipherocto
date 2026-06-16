@@ -57,9 +57,9 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 
 A "transport group" is the bridge between a physical broadcast domain (WhatsApp group, Matrix room, etc.) and a DOT mission (the logical coordination unit). Yet:
 
-- **RFC-0850** defines the transport layer abstractly. §8.2 (Platform Adapter Contract) is mentioned but does not define how a physical group becomes a transport group.
+- **RFC-0850** defines the transport layer abstractly. §8.2 "Platform Adapter Contract" is mentioned but does not define how a physical group becomes a transport group.
 - **RFC-0850p-a v1.15** covers the operator-side config (`groups: Vec<GroupConfig>` in `WhatsAppConfig`) but does not specify the binding ceremony — how a new group (created by the operator, or discovered by the adapter) is bound to a `domain_id`.
-- **RFC-0855 §3.1** defines the mission lifecycle: `Created → Discovering → Forming → Active`. The `Forming → Active` transition requires `active_participants >= min_participants` but does not specify how participants arrive from the physical group to the mission.
+- **RFC-0855 §3.1 "Lifecycle States"** defines the mission lifecycle: `Created → Discovering → Forming → Active`. The `Forming → Active` transition requires `active_participants >= min_participants` but does not specify how participants arrive from the physical group to the mission.
 - **RFC-0855p-b v1.0** reserved F1 for `DomainCoordinator` but left it unspecified.
 
 This RFC fills the binding ceremony gap with a concrete protocol: a `DOT/1/BIND` envelope, a `GroupState` state machine, and a `DomainCoordinator` authority. It is the prerequisite for the `DomainCoordinator` specialization in RFC-0855p-c.
@@ -171,7 +171,7 @@ struct GroupBinding {
 }
 ```
 
-**Cross-RFC integration (per 2026-06-16 batch review):** The `GroupState::Bound` transition is the **trigger** for RFC-0855 §3.1 mission lifecycle's `Forming → Active` transition. Specifically: when ≥1 group on any platform is in `Bound` state and `active_participants >= min_participants`, the mission can transition to `Active`. This is the bridge between the physical-group layer (this RFC) and the mission-coordination layer (RFC-0855 + RFC-0855p-b + RFC-0855p-c). Implementations MUST treat `GroupState::Bound` as a precondition for the `Forming → Active` transition.
+**Cross-RFC integration (per 2026-06-16 batch review):** The `GroupState::Bound` transition is the **trigger** for RFC-0855 §3.1 "Lifecycle States" mission lifecycle's `Forming → Active` transition. Specifically: when ≥1 group on any platform is in `Bound` state and `active_participants >= min_participants`, the mission can transition to `Active`. This is the bridge between the physical-group layer (this RFC) and the mission-coordination layer (RFC-0855 + RFC-0855p-b + RFC-0855p-c). Implementations MUST treat `GroupState::Bound` as a precondition for the `Forming → Active` transition.
 
 **Transitions:**
 
@@ -625,7 +625,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-1 | The physical group membership is a trustworthy signal of who is in the mission | TRUST | **ACCEPTED RISK** | WhatsApp group admin can add/remove members arbitrarily. Mitigated by per-sender allowlist in 0850p-a v1.15 D-WA-10. Long-term: DomainCoordinator vouches for members (0855p-c). |
 | IA-TGB-2 | First DOT-sender is a reasonable DomainCoordinator | PROTOCOL | **ACCEPTED RISK** | Race condition handled by `bind_hash` ordering. Founder squat mitigated by UNBIND reason 0x0003 with 1000-epoch cooldown. |
 | IA-TGB-3 | The DomainCoordinator's pubkey is in the mission's trust set | CRYPTO | MITIGATED | BIND signature verified by all witnesses; rejection if pubkey is unknown. |
-| IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule §8.7 |
+| IA-TGB-4 | `bind_epoch` is within ±1 of local epoch | TIME | MITIGATED | Witness validation rule #7 (per §8 "Witness Validation Rules") |
 | IA-TGB-5 | Multi-platform rule is enforced consistently | PROTOCOL | MITIGATED | Each node's `GroupRegistry` enforces; conflict rejected on BIND. |
 | IA-TGB-6 | Slash vote tally is correct (2/3) | GOVERNANCE | MITIGATED | Reuses RFC-0855p-b §"Slashing Integration" (slash tally is from 0855p-b; 2/3 governance is from 0855 §11); `SlashVote` envelope signature-verified. |
 | IA-TGB-7 | Cooldown prevents rapid rebinding | TIME | MITIGATED | `UnboundQuarantined` state enforced; 100 / 2^n / 1000 epochs. |
@@ -644,9 +644,9 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-20 (E2E IS-3.4) | BIND with identical `bind_hash` is deterministically handled | DETERMINISM | MITIGATED | First-seen-wins (per-witness) |
 | IA-TGB-21 (E2E IS-3.5) | 3-way BIND race resolves to a single canonical BIND | DETERMINISM | MITIGATED | Lowest `bind_hash` lex, then lowest `peer_id` lex |
 | IA-TGB-22 (E2E IS-4.8) | Platform migration is mission-level, not DomainCoordinator-level | GOVERNANCE | MITIGATED | Specified in §6a "Platform Migration (E2E IS-4.8 fix)" |
-| IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter | SECURITY | MITIGATED | Specified in §8 witness check #3 (R1-TGB-5 fix) |
+| IA-TGB-23 (E2E IS-6.6) | BIND cross-platform spoofing is rejected by adapter | SECURITY | MITIGATED | Specified in §8 "Witness Validation Rules" witness check #3 (R1-TGB-5 fix) |
 | IA-TGB-24 (E2E IS-8.1) | BIND hash comparison is big-endian per RFC-0008 | DETERMINISM | MITIGATED | Raw 32-byte comparison, no endianness conversion |
-| IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!` | PROTOCOL | MITIGATED | Per R3-1 fix; routine filtering is silent per §"routine filtering silent" |
+| IA-TGB-25 (E2E IS-8.3) | Tiebreaker loss is logged at `tracing::debug!` | PROTOCOL | MITIGATED | Per R3-1 fix; routine filtering is silent (project policy: `tracing::warn!` reserved for security-relevant rejections) |
 | IA-TGB-26 (E2E IS-8.5) | BIND envelope serialization is canonical (no trailing bytes) | SERIALIZATION | MITIGATED | Reuses RFC-0008 §"Serialization" with strict length validation |
 | IA-TGB-27 (E2E IS-8.6) | Empty allowlist means "anyone in group" | COMPATIBILITY | MITIGATED | Backwards-compatible: legacy deployments work without changes |
 | IA-TGB-28 (E2E IS-8.7) | Phone-number allowlist comparison normalizes format | COMPATIBILITY | MITIGATED | Adapter normalizes `+15551234567`, `15551234567`, `5551234567` to canonical form |
@@ -724,7 +724,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 ### Forward Compatibility
 
 - New envelope subtypes (e.g., `DOT/1/BIND_PARTIAL` for partial bindings) can be added
-- New unbind reasons are additive (u16 enum; per §6 codes 0x0001-0x000B are mapped, 0x000C-0xFFFF reserved)
+- New unbind reasons are additive (u16 enum; per §6 "Unbind Reasons" codes 0x0001-0x000B are mapped, 0x000C-0xFFFF reserved)
 - New platforms (Nostr, IRC, Slack) can be added by extending the `platform` enum
 
 ### RFC-0855p-b Integration
@@ -873,7 +873,7 @@ Verify:
 | `crates/octo-adapter-matrix/src/lib.rs` | Same as WhatsApp |
 | `crates/octo-adapter-telegram/src/lib.rs` | Same |
 | `crates/octo-network/src/mon/coordinator.rs` | Integrate with `CoordinatorLifecycle` (0855p-b) |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §3.1 mission formation |
+| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §3.1 "Lifecycle States" mission formation |
 
 ## Future Work
 
@@ -940,8 +940,8 @@ struct GroupRegistry {
 
 ### C. References
 
-- RFC-0850 §8.2 (Platform Adapter Contract) — abstract binding, no ceremony
-- RFC-0855 §3 (Mission Lifecycle) — `Forming → Active` transition depends on binding
+- RFC-0850 §8.2 "Platform Adapter Contract" — abstract binding, no ceremony
+- RFC-0855 §3 "Mission Lifecycle" — `Forming → Active` transition depends on binding
 - RFC-0855p-b v1.1 §"Genesis State Machine" — explicit founder BIND path
 - WhatsApp group admin API — for future platform-admin election (0855p-c)
 - Matrix room power levels — same

@@ -438,7 +438,7 @@ Slashing extends RFC-0855 §17 MON-M2 by making `Demoting` a typed state with a 
 - `0x0008` = `vote-buying` (coordinator accepted bribes for slash votes) — penalty: 100% OCTO-O
 - `0x0009` = `genesis-compromise` (creator's key was compromised after `GenesisActive` but before handoff to `CoordinatorLifecycle`) — penalty: 100% OCTO-O + immediate `Inactive`
 
-Codes `0x000A-0x000B` are defined in RFC-0850p-c (transport-level slash reasons); codes `0x000C-0xFFFF` are reserved for future slash reasons (R9-9 fix — was "0x000A-0xFFFF reserved" which contradicted §B; see §B for the canonical mapping). Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §"Platform Migration"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8).
+Codes `0x000A-0x000B` are defined in RFC-0850p-c (transport-level slash reasons); codes `0x000C-0xFFFF` are reserved for future slash reasons (R9-9 fix — was "0x000A-0xFFFF reserved" which contradicted §B; see §B for the canonical mapping). Code `0x000A` is `PlatformMigration` (per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)"). Code `0x000B` is `is_reconnect_lie` (per RFC-0850p-c §8 "Witness Validation Rules").
 
 **"Evidence of misbehavior" per slash reason (E2E IS-7.1 fix):** the expected evidence schema for each slash reason:
 - `0x0001 double-sign`: two conflicting `CoordinatorHeartbeat` envelopes (or other state-transition envelopes) signed by the same `coordinator_term_id`, with the same `epoch` field but different payloads.
@@ -924,8 +924,8 @@ stateDiagram-v2
 | 0x0007 | Banning legitimate member | 25% OCTO-O | This RFC | `MemberBan` envelope + evidence banned member had not violated any rule |
 | 0x0008 | Vote-buying | 100% OCTO-O | This RFC | Transcript of communications offering slash votes for payment |
 | 0x0009 | **Genesis compromise** (creator's key revoked/compromised after GenesisActive; R1-CL-1 / R2-CL-2 fix) | 100% OCTO-O + immediate Inactive | This RFC (v1.1 patch) | `KeyRevocation` envelope from creator's pubkey registry, issued after `GenesisActive` but before first `CoordinatorHeartbeat` |
-| 0x000A | Platform migration (per RFC-0850p-c §"Platform Migration") | 100% OCTO-O + 1000-epoch cooldown | RFC-0850p-c | Mission-level vote result (2/3 of eligible voters approved migration) |
-| 0x000B | `is_reconnect_lie` (per RFC-0850p-c §8) | 500-epoch cooldown | RFC-0850p-c | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true` |
+| 0x000A | Platform migration (per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)") | 100% OCTO-O + 1000-epoch cooldown | RFC-0850p-c | Mission-level vote result (2/3 of eligible voters approved migration) |
+| 0x000B | `is_reconnect_lie` (per RFC-0850p-c §8 "Witness Validation Rules") | 500-epoch cooldown | RFC-0850p-c | Two BINDs with same `(mission_id, domain_id, platform)` but different `coordinator_id`, with one claiming `is_reconnect = true` |
 | 0x000C-0xFFFF | Reserved | — | — | — |
 
 Codes 0x0001-0x0009 are defined in this RFC; codes 0x000A-0x000B are defined in RFC-0850p-c (transport-level slash reasons); codes 0x000C-0xFFFF are reserved for future slash reasons (e.g., RFC-0855p-c F3 cross-domain slash, F4 small-group slash). The evidence schema column is new in v1.1 (E2E IS-7.1 fix) — previously "evidence" was undefined for most codes.
@@ -951,7 +951,7 @@ const MIN_GENESIS_WITNESSES: usize = 1;
 
 /// Maximum acceptable clock skew between attest_epoch and local epoch.
 /// R3-5 fix: this matches the ±1 epoch tolerance used elsewhere in DOT
-/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm (per governance model)"
+/// (RFC-0850p-c §8 "Witness Validation Rules" witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm (per governance model)"
 /// ballot timestamp tolerance). Using a different tolerance for genesis
 /// would create inconsistency; e.g., if BIND tolerates ±1 epoch but
 /// GenesisAttest tolerates ±2, an attacker could replay a BIND from

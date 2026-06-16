@@ -802,7 +802,7 @@ Verify:
 
 ### Phase 5: Slash Integration (Months 5-6)
 
-- Slash reason codes per RFC-0855p-b §B and RFC-0850p-c §6 (no RFC-specific additions)
+- Slash reason codes per RFC-0855p-b §B "Slash Offense Codes" and RFC-0850p-c §6 "Unbind Reasons" (no RFC-specific additions)
 - Slash vote tally for small groups (UNBIND alternative)
 - Cross-domain slash (F3, post-launch [R9-15 renumbering])
 
@@ -846,7 +846,7 @@ graph LR
 
 - **Step 1 (Bootstrap) MUST happen before all other steps.** A node that hasn't bootstrapped is not a mesh member and cannot send/receive any DOT envelope.
 - **Step 2 (Group Join) MUST happen before Step 3 (Binding).** A node that is not in the physical group cannot participate in the binding ceremony.
-- **Step 3 (Binding) MUST happen before Step 4 (Election).** A mission cannot elect a coordinator until at least one group is bound (the `Forming → Active` transition requires `GroupState::Bound` per RFC-0850p-c §1 cross-ref).
+- **Step 3 (Binding) MUST happen before Step 4 (Election).** A mission cannot elect a coordinator until at least one group is bound (the `Forming → Active` transition requires `GroupState::Bound` per RFC-0850p-c §1 "GroupState State Machine" cross-ref).
 - **Step 4 (Election) MUST happen before Step 5 (DomainCoordinator).** A DomainCoordinator is a per-binding role; the mission must exist first.
 - **Steps 1-3 are per-node.** Step 4 is per-mission. Step 5 is per-binding.
 
@@ -875,7 +875,7 @@ Reading any single RFC in isolation, the ordering is implicit. A new implementer
 
 | ID | Title | Severity | Deadline |
 |----|-------|----------|----------|
-| **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). | **HIGH** (was MEDIUM; bumped in R1-DC-5 because the consequence is mission-level failure) | Pre-public-launch |
+| **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5 "Multi-Platform Binding Rule"), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). | **HIGH** (was MEDIUM; bumped in R1-DC-5 because the consequence is mission-level failure) | Pre-public-launch |
 | F2 (was F1 original, R9-15 fix — ID collision with new F1) | Cross-platform admin attestation (mitigates D-DC-1) | CRITICAL | Pre-public-launch |
 | F3 (was F2) | Cross-domain slash via mission-level coordinator (mitigates D-DC-6) | HIGH | Post-launch |
 | F4 (was F3) | Slash for < 4 member groups (alternative to UNBIND) | MEDIUM | Post-launch |
@@ -895,7 +895,7 @@ The platform-admin authority is the natural choice for DomainCoordinator because
 
 The risk is platform-admin key compromise. F2 (cross-platform admin attestation, R9-15 renumbering) is the long-term mitigation. In the meantime, this RFC is **ACCEPTED RISK** with the slash path as defense.
 
-The multi-platform rule (one DomainCoordinator per platform per domain_id) is a natural extension of RFC-0850p-c §5 — if you bind the same `domain_id` to two platforms, each platform has its own DomainCoordinator. This enables carrier migration (RFC-0850 G7) without losing coordination.
+The multi-platform rule (one DomainCoordinator per platform per domain_id) is a natural extension of RFC-0850p-c §5 "Multi-Platform Binding Rule" — if you bind the same `domain_id` to two platforms, each platform has its own DomainCoordinator. This enables carrier migration (RFC-0850 G7) without losing coordination.
 
 ## Version History
 
@@ -931,4 +931,4 @@ The mapping is **deterministic** but **mission-scoped**: the same WhatsApp parti
 - Matrix Power Levels: <https://spec.matrix.org/v1.10/rooms/v9/#power-levels>
 - Telegram Admin API: <https://core.telegram.org/api/admins>
 - RFC-0855p-b §"Slashing Integration" — reused verbatim
-- RFC-0850p-c §3 Binding Ceremony — DomainCoordinator emerges from ceremony
+- RFC-0850p-c §3 "Binding Ceremony — Implicit Designator" — DomainCoordinator emerges from ceremony

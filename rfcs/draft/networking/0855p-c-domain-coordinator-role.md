@@ -135,7 +135,9 @@ The `Centralized` governance model path is the same; the others are platform-med
 Reuses RFC-0855p-b's `CoordinatorLifecycle` 8-state machine:
 
 ```rust
-// Same enum as RFC-0855p-b §"Lifecycle Requirements"
+// Same enum as RFC-0855p-b §"Data Structures" (R6-2 fix — was §"Lifecycle Requirements",
+// which does not exist in 0855p-b; the CoordinatorLifecycle enum is defined in
+// §"Data Structures" and the state machine is described in §"Algorithms")
 enum CoordinatorLifecycle {
     Designated = 0x00,
     Elected = 0x01,

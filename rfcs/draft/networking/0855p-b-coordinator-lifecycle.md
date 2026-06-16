@@ -296,11 +296,11 @@ enum GenesisState {
 | GenesisSelfAttest | GenesisActive | ≥1 peer (other than creator) receives GenesisAttest, validates signature against creator's public key, and broadcasts `GenesisWitness { mission_id, witness_peer_id, attest_hash }` | Yes (deterministic count) |
 | GenesisActive | (terminal — hands off to §CoordinatorLifecycle) | Creator's `CoordinatorRecord.state` transitions `Designated → Elected → Active` per §Election Algorithm (with quorum = 0) | Yes |
 | GenesisSelfAttest | GenesisDesignated (rollback) | GenesisWitness validation fails (invalid signature on GenesisAttest, OR no witness received within `genesis_witness_timeout = 100 epochs`) | Yes (timeout is deterministic) |
-| GenesisActive | Inactive (failure path) | Creator's key is revoked / compromised after GenesisActive but before handoff to CoordinatorLifecycle. Creator signs `CoordinatorSlash { coordinator_id, mission_id, reason: 0x0009 (genesis-compromise) }` (slash reason code 0x0009 from this RFC's reserved 0x0009-0xFFFF range; codes 0x0001-0x0008 are already taken — see §"Slash Reason Codes" table). Forces immediate `Inactive`; next election runs normally. | Yes |
+| GenesisActive | Inactive (failure path) | Creator's key is revoked / compromised after GenesisActive but before handoff to CoordinatorLifecycle. Creator signs `CoordinatorSlash { coordinator_id, mission_id, reason: 0x0009 (genesis-compromise) }` (slash reason code 0x0009 from this RFC's reserved 0x0009-0xFFFF range; codes 0x0001-0x0008 are already taken — see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes"). Forces immediate `Inactive`; next election runs normally. | Yes |
 
-**R1-CL-1 fix — failure transition:** the v1.1 spec previously treated `GenesisActive` as terminal (no failure path). The fix adds an explicit `GenesisActive → Inactive` transition for the case where the creator's key is revoked or compromised after genesis succeeds but before the mission becomes Active. Without this, a compromised creator would persist as coordinator until manual intervention. The slash reason 0x0009 is in the reserved 0x0009-0xFFFF range (codes 0x0001-0x0008 are taken; see §"Slash Reason Codes" table) and is defined here as `genesis-compromise`.
+**R1-CL-1 fix — failure transition:** the v1.1 spec previously treated `GenesisActive` as terminal (no failure path). The fix adds an explicit `GenesisActive → Inactive` transition for the case where the creator's key is revoked or compromised after genesis succeeds but before the mission becomes Active. Without this, a compromised creator would persist as coordinator until manual intervention. The slash reason 0x0009 is in the reserved 0x0009-0xFFFF range (codes 0x0001-0x0008 are taken; see §"B. Slash Offense Codes" table; R6-3 fix — was §"Slash Reason Codes") and is defined here as `genesis-compromise`.
 
-**R1-CL-2 fix — GenesisWitness validation failure:** the transition from `GenesisSelfAttest` to `GenesisActive` requires ≥1 valid witness. The fix adds an explicit timeout-based rollback path: if no valid witness is received within `genesis_witness_timeout = 100 epochs` (R2-CL-3 fix: now defined in §"Constants" below), the creator rolls back to `GenesisDesignated` and can re-attempt by signing a fresh `GenesisAttest` (with a new `attest_nonce` to prevent replay). The creator can also roll back immediately on receipt of a `GenesisAttest` with an invalid signature (e.g., signed by an unauthorized key). Rollback is silent (no broadcast required); the next genesis attempt uses a new `attest_epoch` and `attest_nonce`.
+**R1-CL-2 fix — GenesisWitness validation failure:** the transition from `GenesisSelfAttest` to `GenesisActive` requires ≥1 valid witness. The fix adds an explicit timeout-based rollback path: if no valid witness is received within `genesis_witness_timeout = 100 epochs` (R2-CL-3 fix: now defined in §"B'. Genesis Constants" appendix; R6-4 fix — was §"Constants" below), the creator rolls back to `GenesisDesignated` and can re-attempt by signing a fresh `GenesisAttest` (with a new `attest_nonce` to prevent replay). The creator can also roll back immediately on receipt of a `GenesisAttest` with an invalid signature (e.g., signed by an unauthorized key). Rollback is silent (no broadcast required); the next genesis attempt uses a new `attest_epoch` and `attest_nonce`.
 
 **R2-CL-1 fix — GenesisAttest stale nonce rejection (receiver-side rule):**
 
@@ -313,28 +313,15 @@ When a node receives a `GenesisAttest` envelope, it MUST validate:
 
 If any of these fail, the node silently drops the `GenesisAttest` (with optional `tracing::debug!`). The creator's local `attest_nonce` must be incremented for every new attempt; a duplicate `(attest_nonce, mission_id)` is treated as a stale genesis and rejected by all witnesses.
 
-**R2-CL-3 fix — genesis_witness_timeout constant (R3-2 fix — moved to top-level §"Constants" appendix):**
+**R2-CL-3 fix — genesis_witness_timeout constant (R3-2 fix — moved to top-level §"B'. Genesis Constants" appendix):**
 
-The genesis-related constants are now consolidated in §"B. Slash Offense Codes" appendix sibling §"B'. Genesis Constants" (see end of document). This avoids duplicating constants across subsections (R3-2 fix: previous placement was inside the §"Genesis State Machine" subsection, which made them hard to find). The constants are:
+The genesis-related constants are defined once in §"B'. Genesis Constants" (the appendix sibling of §"B. Slash Offense Codes", at the end of this document). The values are:
 
-```rust
-/// Maximum epochs to wait for ≥1 GenesisWitness before rolling back
-/// GenesisSelfAttest → GenesisDesignated
-const GENESIS_WITNESS_TIMEOUT: u64 = 100;
+- `GENESIS_WITNESS_TIMEOUT = 100` — maximum epochs to wait for ≥1 GenesisWitness before rolling back `GenesisSelfAttest → GenesisDesignated`.
+- `MIN_GENESIS_WITNESSES = 1` — minimum number of GenesisWitnesses required to transition to `GenesisActive`.
+- `GENESIS_EPOCH_TOLERANCE = 1` — maximum acceptable clock skew between `attest_epoch` and local epoch (matches the ±1 tolerance used elsewhere in DOT; see §"B'. Genesis Constants" for the cross-reference rationale).
 
-/// Minimum number of GenesisWitnesses required to transition to GenesisActive
-const MIN_GENESIS_WITNESSES: usize = 1;
-
-/// Maximum acceptable clock skew between attest_epoch and local epoch.
-/// R3-5 fix: this matches the ±1 epoch tolerance used elsewhere in DOT
-/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm"
-/// ballot timestamp tolerance). Using a different tolerance for genesis
-/// would create inconsistency; e.g., if BIND tolerates ±1 epoch but
-/// GenesisAttest tolerates ±2, an attacker could replay a BIND from
-/// epoch N-2 that is rejected (out of tolerance) but a GenesisAttest
-/// from epoch N-2 that is accepted (in tolerance).
-const GENESIS_EPOCH_TOLERANCE: u64 = 1;
-```
+Refer to §"B'. Genesis Constants" for the canonical definitions and full rationale (including R3-5 cross-reference reasoning for why genesis uses the same ±1 tolerance as BIND and ballot timestamps).
 
 **Why a 3-state machine, not just `Designated → Active`?**
 
@@ -849,6 +836,39 @@ stateDiagram-v2
 | 0x000A-0xFFFF | Reserved | — | — |
 
 Codes 0x0006-0x0009 are new in this RFC (0x0006-0x0008 in v1.0, 0x0009 added in v1.1 for genesis-compromise); codes 0x0001-0x0005 extend RFC-0855 §17 with the cool-down requirement. The reserved 0x000A-0xFFFF range is allocated for future slash reasons (e.g., F2 cross-domain slash, F3 small-group slash).
+
+### B'. Genesis Constants (R6-1 fix — appendix promised by R3-2, created in Round 6)
+
+This appendix is the canonical source for the genesis-related constants. All other sections in this RFC MUST reference these values by name rather than restating them.
+
+```rust
+/// Maximum epochs to wait for ≥1 GenesisWitness before rolling back
+/// GenesisSelfAttest → GenesisDesignated.
+/// Rationale: 100 epochs at the default 1-epoch = ~100 epochs of grace;
+/// matches the heartbeat-falsification cool-down period (RFC-0855 §17).
+const GENESIS_WITNESS_TIMEOUT: u64 = 100;
+
+/// Minimum number of GenesisWitnesses required to transition to GenesisActive.
+/// Rationale: 1 witness is sufficient because a 1-participant mission
+/// cannot have a peer witness (the witness IS the second member, and
+/// a single-member mission transitions directly via §"Quorum = 0 election").
+const MIN_GENESIS_WITNESSES: usize = 1;
+
+/// Maximum acceptable clock skew between attest_epoch and local epoch.
+/// R3-5 fix: this matches the ±1 epoch tolerance used elsewhere in DOT
+/// (RFC-0850p-c §8 witness rule #7 for BIND; RFC-0855p-b §"Election Algorithm"
+/// ballot timestamp tolerance). Using a different tolerance for genesis
+/// would create inconsistency; e.g., if BIND tolerates ±1 epoch but
+/// GenesisAttest tolerates ±2, an attacker could replay a BIND from
+/// epoch N-2 that is rejected (out of tolerance) but a GenesisAttest
+/// from epoch N-2 that is accepted (in tolerance).
+const GENESIS_EPOCH_TOLERANCE: u64 = 1;
+```
+
+**Cross-references:** the values are used by:
+- `GENESIS_WITNESS_TIMEOUT` — the timeout check in §"Genesis State Machine" that rolls back `GenesisSelfAttest → GenesisDesignated` when no witness arrives in time.
+- `MIN_GENESIS_WITNESSES` — the witness-count check in §"Genesis State Machine" that gates the `GenesisSelfAttest → GenesisActive` transition.
+- `GENESIS_EPOCH_TOLERANCE` — the clock-skew check in the `GenesisAttest` validation rule (R2-CL-3 fix).
 
 ---
 

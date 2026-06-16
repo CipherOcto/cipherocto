@@ -749,7 +749,9 @@ const MAX_PEER_LIST: u16 = 256;
 /// Default seed list size at launch (5 geographically diverse bootstrap nodes)
 const DEFAULT_SEED_LIST_SIZE: usize = 5;
 
-/// Minimum responses required for Sybil defense (≥3 of 5)
+/// High-confidence minimum responses required for Sybil defense (≥3 of 5).
+/// The 2-of-5 case is also accepted as low-confidence bootstrap per E2E IS-2.5
+/// (see §6 Sybil Defense). 1-of-5 and 0-of-5 trigger Mode B fallback.
 const MIN_BOOTSTRAP_RESPONSES: usize = 3;
 
 /// Intersection threshold for Sybil defense (≥80% of returned peer lists must agree)

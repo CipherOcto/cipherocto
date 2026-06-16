@@ -631,7 +631,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | IA-TGB-9 | Platform identifier is canonical (no spelling variants) | PROTOCOL | MITIGATED | Platform IDs are enum (`"whatsapp"`, `"matrix"`, `"telegram"`, ...); no free-form strings. |
 | IA-TGB-10 | `group_jid` is unique per platform | PROTOCOL | MITIGATED | Platform-specific (e.g., WhatsApp `120363...@g.us` is globally unique). |
 | IA-TGB-11 | Replay of BIND across epochs is rejected | REPLAY | MITIGATED | `bind_nonce` + `bind_epoch` binding. |
-| IA-TGB-12 | REBIND atomicity is preserved | PROTOCOL | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. Documented as MITIGATED with the caveat that a node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
+| IA-TGB-12 | REBIND atomicity is preserved | PROTOCOL | **ACCEPTED RISK** | Single-node atomicity is guaranteed; cross-node atomicity requires ≥1 witness on both old and new group. A node may briefly see `old_group=UnboundQuarantined, new_group=Unbound` during the transition. |
 | IA-TGB-13 (E2E IS-1.2) | `is_reconnect` flag is correctly validated by witnesses | REPLAY | MITIGATED | Specified in §8 Witness Validation (E2E IS-1.2 fix) |
 | IA-TGB-14 (E2E IS-1.3) | Implicit BIND is bounded by a witness timeout | TIMING | MITIGATED | `BIND_WITNESS_TIMEOUT = 100` epochs, 3 retries with exponential backoff |
 | IA-TGB-15 (E2E IS-1.5) | Founder squat is detectable within 30 epochs | AUTHORITY | MITIGATED | `FOUNDER_HEARTBEAT_GRACE = 30` epochs; missing heartbeats trigger slash 0x0003 |

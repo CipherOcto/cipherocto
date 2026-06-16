@@ -484,7 +484,7 @@ enum BootstrapClientLifecycle {
 | IA-NB-3 | DNS resolution is honest | TRUST | **ACCEPTED RISK** | Use Tor onion or I2P addresses for at least 2 of 5 bootstrap nodes. Deadline: F2 (Tor-only seed list). |
 | IA-NB-4 | TCP/TLS to bootstrap node is not censored | TRUST | **ACCEPTED RISK** | Mode C invite works without internet. Mode B DHT works over non-TCP transports (WebSocket, etc.) per RFC-0843. |
 | IA-NB-5 | Ed25519 is collision-resistant | CRYPTO | MITIGATED | Standard assumption; BLAKE3-256 of public key is the node_id. |
-| IA-NB-6 | Epoch is synchronized across nodes | TIME | MITIGATED | RFC-0855 §3.1 already defines epoch; nodes within ±1 epoch are acceptable. |
+| IA-NB-6 | Epoch is synchronized across nodes | TIME | MITIGATED | RFC-0850 §5 "Logical Timestamp Model" defines the epoch as a monotonic `u64` counter; nodes within ±1 epoch are acceptable. |
 | IA-NB-7 | Inviter is trustworthy (Mode C) | TRUST | **ACCEPTED RISK** | Web-of-trust depth 1, max 3 hops. User trusts inviter. Documented in §5. |
 | IA-NB-8 | Kademlia DHT is functional (Mode B) | PROTOCOL | MITIGATED | RFC-0843 is battle-tested; if Kademlia fails, Mode C is the fallback. |
 | IA-NB-9 | 256-peer initial list is enough to grow | SCALE | MITIGATED | Once bootstrapped, GDP §M-GDP-3 DiscoveryLifecycle::Bootstrap → Expansion handles growth. |

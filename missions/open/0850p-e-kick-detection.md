@@ -27,11 +27,11 @@ Implement the kick detection and rejoin flow specified in RFC-0850p-e. **Closes 
 
 ### Phase 1: Envelope types
 
-- [ ] `SelfKickedEnvelope` (subtype 0x20) in `crates/octo-network/src/dot/binding.rs` with `domain_id`, `group_jid`, `platform`, `platform_event: PlatformKickEvent`, `detected_at_epoch`, `nonce`, `signature`
-- [ ] `KickDetectedEnvelope` (subtype 0x21) with `kicked_node_id` and `witness_assertion: WitnessAssertion`
-- [ ] `MemberRemovedEnvelope` (subtype 0x22) for informational use by the DC
-- [ ] `RejoinRequestEnvelope` (subtype 0x23) and `RejoinGrantEnvelope` (subtype 0x24) for the REJOIN flow
-- [ ] `PlatformKickEvent` enum: `YouGotKicked = 0x00`, `YouLeft = 0x01`, `GroupDissolved = 0x02`, `GroupDisappeared = 0x03`, `SessionLost = 0x04`
+- [ ] `SelfKickedEnvelope` (subtype `b"SFCK"` per RFC-0850p-e §"Envelope Types Added"; R16 R2 fix — was subtype 0x20 in v1.0; the canonical format is the 4-byte ASCII tag per RFC-0850p-c §A) in `crates/octo-network/src/dot/binding.rs` with canonical 10-byte header (`envelope_type: [u8; 4] = b"DOT1"`, `envelope_subtype: [u8; 4] = b"SFCK"`, `version: u16 = 0x0001`) plus body fields: `domain_id`, `group_jid`, `platform`, `platform_event: PlatformKickEvent`, `detected_at_epoch`, `nonce`, `signature`
+- [ ] `KickDetectedEnvelope` (subtype `b"KFDT"`; R16 R2 fix — was 0x21) with `kicked_node_id` and `witness_assertion: WitnessAssertion`
+- [ ] `MemberRemovedEnvelope` (subtype `b"MREM"`; R16 R2 fix — was 0x22) for informational use by the DC
+- [ ] `RejoinRequestEnvelope` (subtype `b"RJRQ"`) and `RejoinGrantEnvelope` (subtype `b"RJGT"`; R16 R2 fix — was 0x23/0x24) for the REJOIN flow
+- [ ] `PlatformKickEvent` enum: `YouGotKicked = 0x00`, `YouLeft = 0x01`, `GroupDissolved = 0x02`, `GroupDisappeared = 0x03`, `SessionLost = 0x04` (kick-detection-layer classification; the canonical adapter event is RFC-0855p-c §3 `PlatformEvent::KickedFromGroup { group_jid, kick_epoch, kicker_participant_id }`, which the adapter maps to one of these `PlatformKickEvent` values — see RFC-0850p-e §"Per-Adapter Detection Strategies")
 - [ ] DCS serialization (RFC-0126) for all envelope types; round-trip byte equality test
 - [ ] Unit tests: signature verification, nonce uniqueness, 10-byte canonical header
 

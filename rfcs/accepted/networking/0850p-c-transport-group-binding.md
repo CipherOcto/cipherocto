@@ -457,9 +457,15 @@ Wait — rephrasing. The rule is: **per (platform), at most 1 group bound to a g
 | 0x0009 | **Genesis compromise** (per 0855p-b §B; creator's key revoked after `GenesisActive`) | MissionCreator (slash proof) | immediate `Inactive` |
 | 0x000A | **Platform migration** (E2E IS-3.1 fix, per RFC-0850p-c §6a "Platform Migration (E2E IS-4.8 fix)") | MissionCreator + 2/3 governance vote | 1000 epochs |
 | 0x000B | **`is_reconnect_lie`** (E2E IS-1.6 fix): the reconnect claim was falsified (claimant is not the same peer as the original BIND signer) | Any witness | 500 epochs |
-| 0x000C-0xFFFF | Reserved | — | — |
+| 0x000C-0x000D | Reserved (NOT slash/unbind reasons; sub-DC delegation and governance vote use separate mechanisms; see RFC-0855p-d §"Sub-DC delegation protocol") | — | — |
+| 0x000E | `CreateGroupFailed` (per RFC-0850p-d §"Slash Reason Codes Added") | Witness (slash tally) | 25% OCTO-B + 200-epoch cooldown |
+| 0x000F | `CgGroupSpam` (per RFC-0850p-d §"Slash Reason Codes Added") | Witness (slash tally) | 50% OCTO-B + 1000-epoch cooldown |
+| 0x0010 | `FalseWitness` (per RFC-0850p-d §"Slash Reason Codes Added"; reused by RFC-0850p-e for false `KICK_DETECTED.witness_assertion`) | Witness (slash tally) | 50% OCTO-W |
+| 0x0011 | `SelfKicked` (per RFC-0850p-e §"Slash Reason Codes Used") | Self (slash tally) | 10% OCTO-O |
+| 0x0012 | `CrossPlatformWitnessCollusion` (per RFC-0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in 0855p-c's Adversary Analysis table) | Mission participants (slash tally) | 50% OCTO-W + 1000-epoch cooldown |
+| 0x0013-0xFFFF | Reserved | — | — |
 
-**Note on unbind vs slash:** the unbind reason codes 0x0001-0x000B are a SUPERSET of the slash reason codes from RFC-0855p-b §B. Codes 0x0001-0x0009 are shared with 0855p-b (slash reasons); 0x000A-0x000B are transport-level (0850p-c); 0x000C-0xFFFF are reserved. The cooldown column applies when the unbind is the OUTCOME of a slash (cooldown before re-binding allowed); codes 0x0001-0x0002 are slash-only (not unbind outcomes).
+**Note on unbind vs slash:** the unbind reason codes 0x0001-0x000B are a SUPERSET of the slash reason codes from RFC-0855p-b §B. Codes 0x0001-0x0009 are shared with 0855p-b (slash reasons); 0x000A-0x000B are transport-level (0850p-c); 0x000C-0x000D are reserved (NOT slash/unbind reasons; sub-DC delegation/governance are separate mechanisms); 0x000E-0x0011 are 0850p-family slash reasons (CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked); 0x0012 is 0855p-c slash reason (CrossPlatformWitnessCollusion); 0x0013-0xFFFF are reserved. The cooldown column applies when the unbind is the OUTCOME of a slash (cooldown before re-binding allowed); codes 0x0001-0x0002 are slash-only (not unbind outcomes). See `docs/reviews/r16/r16-r1-adversarial-review.md` §2 for the canonical slash code allocation block.
 
 ### 6a. Platform Migration (E2E IS-4.8 fix)
 
@@ -935,7 +941,7 @@ The 100-epoch / 1000-epoch cooldowns prevent rapid rebinding attacks without bei
 | Replay of old BIND | MEDIUM | BIND envelope includes `signed_at_epoch`; verifier rejects BINDs older than `MAX_BIND_AGE_EPOCHS` |
 | Cross-platform race condition | HIGH (mission fragmentation) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
 | Network partition during 2PC | MEDIUM | `dc-reconcile` manual operator flow after `REBIND_TIMEOUT_EPOCHS` |
-| Cross-platform witness collusion | MEDIUM | Slash reason code 0x000F (0855p-c F3); reputation deprioritization (0855p-b F2) |
+| Cross-platform witness collusion | MEDIUM | Slash reason code 0x0012 (0855p-c §9b "Cross-Platform Slash"; R16 R1 fix — was 0x000F in v1.0, but 0x000F conflicts with 0850p-d's `CgGroupSpam`; canonical mapping is 0x0012); reputation deprioritization (0855p-b F2) |
 | Large group bandwidth waste | LOW (operational) | Partial bindings (F2) with `participant_filter` |
 | BIND delivered before peer is in physical group | LOW (operational) | libp2p BIND gossip (F3) for pre-admission notification |
 ## Related Use Cases
@@ -962,6 +968,7 @@ Missions: 0850p-c-{cross-node-rebind, partial-bindings, libp2p-propagation, cros
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft |
 | 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with mission stubs in `missions/open/0850p-c-f{1,2,3,5}-*.md` for the 4 unspecced items; F4 (DomainCoordinator) marked DONE (RFC-0855p-c, 2026-06-16 draft); F6 (UNBIND reason range) marked DONE (allocation in 0855p-b §B "Slash Offense Codes"). |
+| 0.1.2 | 2026-06-17 | R16 R1 fix: §B "GroupRegistry Local State" extended with `unbound_quarantine` map (R1-M7 fix: NOT a `GroupBinding.unbound_quarantined_at` field — quarantine state lives alongside bindings in GroupRegistry); §6 "Unbind Reasons" table extended with codes 0x000C-0x0012 (R1-C2 fix: 0x000C-0x000D reserved, 0x000E-0x0011 are 0850p-family slash reasons, 0x0012 is 0855p-c `CrossPlatformWitnessCollusion`); §"Adversarial Review" line 944 updated from 0x000F to 0x0012 (R1-C2 follow-up fix — the cross-platform witness collusion mitigation referenced 0x000F which conflicts with 0850p-d's `CgGroupSpam`). |
 
 ## Related RFCs
 

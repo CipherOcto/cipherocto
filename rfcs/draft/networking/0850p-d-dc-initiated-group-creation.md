@@ -122,6 +122,20 @@ pub enum GroupVisibility {
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
+pub struct CreateGroupAckEnvelope {
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"CGAC" (CGROUP_ACK; R16 R2-H1 fix: this struct was missing from the v1.0/v1.1 RFCs; the envelope type was listed in the Envelope Types Added table and referenced multiple times in the State Machine, but no struct definition existed. Added here for completeness.)
+    pub version: u16,                   // 0x0001
+    pub domain_id: [u8; 32],
+    pub cgroup_hash: [u8; 32],          // BLAKE3-256 of the CGROUP envelope being acked
+    pub witness_id: [u8; 32],           // the witness's peer_id
+    pub witness_epoch: u64,             // the witness's current epoch
+    pub ack_hash: [u8; 32],             // BLAKE3-256(cgroup_hash || witness_id || witness_epoch)
+    pub nonce: [u8; 16],
+    pub signature: [u8; 64],            // witness's signature
+}
+
+#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct CreateGroupDoneEnvelope {
     pub envelope_type: [u8; 4],         // b"DOT1"
     pub envelope_subtype: [u8; 4],      // b"CGDA"
@@ -369,7 +383,7 @@ All envelope types in this RFC MUST serialize deterministically per RFC-0126 (DC
 
 ### Slash Reason Codes Added
 
-This RFC allocates three new slash reason codes in the canonical slash reason code space (per RFC-0855p-b §B, codes 0x000C-0xFFFF are reserved for future slash reasons). The allocation is coordinated across the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e) and tracked in `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation". These codes are pending ratification in an amendment to RFC-0850p-c §6 and RFC-0855p-b §B.
+This RFC allocates three new slash reason codes in the canonical slash reason code space (per RFC-0855p-b §B and RFC-0850p-c §6 "Unbind Reasons", codes 0x000C-0x000D are reserved for non-slash mechanisms, 0x000E-0x0011 are allocated by the 0850p-family sister RFCs, 0x0012 is allocated by RFC-0855p-c §9b "Cross-Platform Slash", 0x0013-0xFFFF are reserved for future slash reasons). The allocation is coordinated across the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e) and RFC-0855p-c, and is now RATIFIED in RFC-0855p-b §B v1.2 and RFC-0850p-c §6 v0.1.2 (R16 R1 fix). See `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation" for the canonical mapping.
 
 | Code | Name | Definition | Trigger |
 |------|------|------------|---------|
@@ -545,7 +559,7 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-06-17 | Initial draft |
-| 1.1 | 2026-06-17 | R16 R1 fix: (C1) migrated all 6 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); added `UnbindAllAckEnvelope` struct (was in the Envelope Types Added table but had no struct definition); (C2/M1) added "Slash Reason Codes Added" subsection allocating 0x000E=`CreateGroupFailed`, 0x000F=`CgGroupSpam`, 0x0010=`FalseWitness` (with note that 0x000F resolution: 0855p-c stale text reference is updated to 0x0012 for cross-platform witness collusion); 0x000C-0x000D remain unallocated (the previous "slash 0x000C" / "slash 0x000D" references in §"Roles and Authorities" were removed because they used the slash-code space loosely for delegation and governance-override, which are not slash reasons); (M2) added `GroupVisibility` enum (was previously inlined as a comment); (L1) renamed "Atomic CREATE+REBIND" Design Goal to "Atomic group provisioning" to avoid conflation with the §C migration algorithm. |
+| 1.1 | 2026-06-17 | R16 R1 fix: (C1) migrated all 6 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); added `UnbindAllAckEnvelope` struct (was in the Envelope Types Added table but had no struct definition); (C2/M1) added "Slash Reason Codes Added" subsection allocating 0x000E=`CreateGroupFailed`, 0x000F=`CgGroupSpam`, 0x0010=`FalseWitness` (with note that 0x000F resolution: 0855p-c stale text reference is updated to 0x0012 for cross-platform witness collusion); 0x000C-0x000D remain unallocated (the previous "slash 0x000C" / "slash 0x000D" references in §"Roles and Authorities" were removed because they used the slash-code space loosely for delegation and governance-override, which are not slash reasons); (M2) added `GroupVisibility` enum (was previously inlined as a comment); (L1) renamed "Atomic CREATE+REBIND" Design Goal to "Atomic group provisioning" to avoid conflation with the §C migration algorithm. R16 R2 fix: added `CreateGroupAckEnvelope` struct (subtype `b"CGAC"`) — this struct was listed in the Envelope Types Added table but had no struct definition; the type was referenced multiple times in the State Machine and elsewhere in the RFC. |
 
 ## Related RFCs
 

@@ -674,7 +674,7 @@ Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + rol
 
 ### Forward Compatibility
 
-- New slash reasons are additive (u16 enum; per RFC-0855p-b §B, 0x0001-0x0009 are slash-only; per 0850p-c, 0x000A-0x000B are transport-level; 0x000C-0xFFFF reserved)
+- New slash reasons are additive (u16 enum; per RFC-0855p-b §B, 0x0001-0x0009 are slash-only; per 0850p-c, 0x000A-0x000B are transport-level; 0x000C-0x000D are reserved for non-slash mechanisms [sub-DC delegation/governance]; 0x000E-0x0011 are 0850p-family slash reasons [CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked]; 0x0012 is this RFC's `CrossPlatformWitnessCollusion`; 0x0013-0xFFFF reserved)
 - New platform events (e.g., `PlatformEvent::SubgroupCreated`) can be added
 - New authority checks (e.g., "must also be mission-level coordinator") can be added
 

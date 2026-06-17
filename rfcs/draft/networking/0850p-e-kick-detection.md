@@ -200,11 +200,14 @@ RFC-0850p-c §1 `GroupState` is extended with new transitions:
 
 | From | To | Trigger | Deterministic? | Side Effects | Signing |
 |------|----|---------|----------------|--------------|---------|
-| `Bound` | `UnboundQuarantined` | Local node detects `SELF_KICKED` | Yes (event-driven) | Slash 0x0011 (SelfKicked); emit `SELF_KICKED` | SELF_KICKED |
-| `Bound` | `UnboundQuarantined` | Witness / DC emits `KICK_DETECTED` for this node | Yes (≥ 1 witness with valid assertion) | Slash 0x0011 | KICK_DETECTED |
-| `UnboundQuarantined` | `Bound` | DC re-invites (REJOIN_GRANT) + REBIND completes | Yes | Clear quarantine, emit BIND | REJOIN_GRANT + BIND |
+| `Bound` | `UnboundQuarantined` | Local node detects `SELF_KICKED` | Yes (event-driven) | Emit `SELF_KICKED`; move binding to `GroupRegistry.unbound_quarantine` | SELF_KICKED |
+| `Bound` | `UnboundQuarantined` | Witness / DC emits `KICK_DETECTED` for this node | Yes (≥ 1 witness with valid assertion) | Emit `KICK_DETECTED`; move binding to quarantine | KICK_DETECTED |
+| `UnboundQuarantined` | `Bound` | DC re-invites (REJOIN_GRANT) + REBIND completes (within `recovery_window_epochs = REJOIN_GRANT_TIMEOUT = 50`) | Yes | Clear quarantine entry, emit BIND (re-BIND with same binding context) | REJOIN_GRANT + BIND |
 | `Bound` | `Bound` (no transition) | Non-DC member removed (DC emits `MEMBER_REMOVED` for tracking) | Yes | Update `membership_log`; do NOT trigger REBIND | MEMBER_REMOVED |
-| `Bound` | `UnboundQuarantined` | `KICK_DETECTION_TIMEOUT = 50` epochs with no status | Yes | Slash 0x0011 with `reason_code = 0xF001` | SELF_KICKED |
+| `Bound` | `UnboundQuarantined` | `KICK_DETECTION_TIMEOUT = 50` epochs with no status | Yes | Emit `SELF_KICKED` with `reason_code = 0xF001` (StatusTimeout); move binding to quarantine | SELF_KICKED |
+| `UnboundQuarantined` | `Inactive` (terminal) | Quarantine window expires (no REBIND within `recovery_window_epochs`) | Yes (timeout) | GC sweep purges quarantine entry; member exits the group | — |
+| `UnboundQuarantined` | `Bound` | REBIND attempted AFTER quarantine window expired | — | Reject REBIND with `QuarantineExpired` error; member must go through full CGROUP ceremony as a new member | — |
+| `Bound` (re-BIND attempt) | `Bound` | False SELF_KICKED detected: bot re-BINDS successfully within `REJOIN_GRANT_TIMEOUT = 50` epochs, contradicting the claimed kick | Yes | **Slash 0x0011 (SelfKicked) APPLIED** (R16 R2-C1 fix: was incorrectly stated as "Slash 0x0011 on every SELF_KICKED emission" in v1.0/v1.1; the canonical semantics are per RFC-0850p-e §"Slash Reason Codes Used" — `SelfKicked` is applied ONLY if the `SELF_KICKED` is later determined to be false) | — |
 
 ### Algorithms
 
@@ -261,12 +264,13 @@ All envelope types MUST serialize deterministically per RFC-0126 (DCS). Specific
 | Operation | Class | Rationale |
 |-----------|-------|-----------|
 | SELF_KICKED sign + broadcast | B | Triggers `UnboundQuarantined` transition; must be deterministic |
-| KICK_DETECTED sign + broadcast | B | Triggers slash 0x0011; must be deterministic |
+| KICK_DETECTED sign + broadcast | B | Triggers `UnboundQuarantined` transition (for the kicked node); must be deterministic |
 | MEMBER_REMOVED sign + broadcast | C | Informational only; no state transition |
 | REJOIN_REQUEST sign + send | C | Out-of-band; no consensus |
 | REJOIN_GRANT sign + send | C | DC-unicast; no consensus |
 | `UnboundQuarantined` transition | B | Shared state; must be deterministic |
 | `Bound` transition (rejoin) | B | Shared state; must be deterministic |
+| False SELF_KICKED detection (slash tally aggregation) | B | Aggregates `slash_tally` per RFC-0855p-b §B; slash 0x0011 (`SelfKicked`) applied to a node that falsely self-declared a kick and then re-BINDed within `REJOIN_GRANT_TIMEOUT = 50` epochs |
 
 ### Error Handling
 

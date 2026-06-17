@@ -89,6 +89,40 @@ pub struct HandoverRequestEnvelope {
     pub signature: [u8; 64],
 }
 
+/// Witness ACK of a HANDOVER_REQUEST (DOT/1/HANDOVER_ACK).
+/// (R16 R2 finding: this struct was missing from the v0.2 RFC; only
+///  HandoverRequestEnvelope had a struct. The envelope type was listed in
+///  the Envelope Type Added table with subtype tag `b"HOAK"` but no struct
+///  was defined. Added here for completeness.)
+#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
+pub struct HandoverAckEnvelope {
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"HOAK" (HANDOVER_ACK)
+    pub version: u16,                   // 0x0001
+    pub handover_request_hash: [u8; 32],   // BLAKE3-256 of the HANDOVER_REQUEST envelope being acked
+    pub witness_id: [u8; 32],              // the witness's peer_id
+    pub witness_epoch: u64,                // the witness's current epoch
+    pub ack_hash: [u8; 32],                // BLAKE3-256(handover_request_hash || witness_id || witness_epoch)
+    pub nonce: [u8; 16],
+    pub signature: [u8; 64],               // witness's signature
+}
+
+/// New coordinator's confirmation (DOT/1/HANDOVER_DONE).
+/// (R16 R2 finding: same as HandoverAckEnvelope — this struct was missing from
+///  the v0.2 RFC. Added here.)
+#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
+pub struct HandoverDoneEnvelope {
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"HODN" (HANDOVER_DONE)
+    pub version: u16,                   // 0x0001
+    pub handover_request_hash: [u8; 32],   // BLAKE3-256 of the HANDOVER_REQUEST being confirmed
+    pub new_coordinator_id: [u8; 32],      // the new coordinator's peer_id
+    pub accepted_epoch: u64,               // the epoch at which the new coordinator accepts
+    pub done_hash: [u8; 32],               // BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch)
+    pub nonce: [u8; 16],
+    pub signature: [u8; 64],               // new coordinator's signature
+}
+
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub enum HandoverReason {
     Voluntary         = 0x00,
@@ -154,7 +188,7 @@ This RFC is in early-stage draft. The basic HANDOVER_REQUEST envelope is sketche
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1 | 2026-06-17 | Initial stub; main spec to be elaborated |
-| 0.2 | 2026-06-17 | R16 R1 fix: (C1) migrated `HandoverRequestEnvelope` struct from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (subtype tag `b"HORQ"`, `version: u16 // 0x0001`); (H5) inlined the `SlashTally` and `SlashEvent` structs (the previous version referenced non-existent RFC-0855p-b.1); (L3) inlined the `CoordinatorRole` enum (was referenced but not defined); removed reference to non-existent RFC-0855p-b.1 in Related RFCs. |
+| 0.2 | 2026-06-17 | R16 R1 fix: (C1) migrated `HandoverRequestEnvelope` struct from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (subtype tag `b"HORQ"`, `version: u16 // 0x0001`); (H5) inlined the `SlashTally` and `SlashEvent` structs (the previous version referenced non-existent RFC-0855p-b.1); (L3) inlined the `CoordinatorRole` enum (was referenced but not defined); removed reference to non-existent RFC-0855p-b.1 in Related RFCs. R16 R2 fix: added `HandoverAckEnvelope` and `HandoverDoneEnvelope` struct definitions (subtype tags `b"HOAK"` and `b"HODN"` were allocated in v0.2 Envelope Type Added table but the structs were missing; mission `missions/open/0855p-e-handover-request-envelope.md` Phase 1 references these structs). |
 
 ## Related RFCs
 

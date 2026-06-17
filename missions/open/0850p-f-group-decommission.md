@@ -49,7 +49,7 @@ Implement the transport group decommission flow elaborated in RFC-0850p-f. The b
 
 ### Phase 5: Audit trail (pending RFC elaboration)
 
-- [ ] `DOT/1/UNBIND_ALL_AUDIT` envelope (subtype 0x18) — signed audit entry
+- [ ] `DOT/1/UNBIND_ALL_AUDIT` envelope (subtype `b"UAAU"` per RFC-0850p-f §"Envelope Types Added"; R16 R2 fix — was subtype 0x18 in v1.0; the canonical format is the 4-byte ASCII tag per RFC-0850p-c §A) — signed audit entry
 - [ ] Audit log structure: who initiated, when, why, witness count, `group_jid`
 - [ ] Local audit log per node; rotation policy
 
@@ -72,7 +72,7 @@ Implement the transport group decommission flow elaborated in RFC-0850p-f. The b
 
 ## Location
 
-- `crates/octo-network/src/dot/binding.rs` (additive: `UnbindAllDoneEnvelope` subtype 0x17, `UnbindAllAuditEnvelope` subtype 0x18)
+- `crates/octo-network/src/dot/binding.rs` (additive: `UnbindAllDoneEnvelope` subtype `b"UADN"`, `UnbindAllAuditEnvelope` subtype `b"UAAU"` per RFC-0850p-f §"Envelope Types Added"; canonical 10-byte header per RFC-0850p-c §A; R16 R2 fix — was subtypes 0x17 and 0x18 in v1.0)
 - `crates/octo-network/src/dot/group_registry.rs` (additive: `GroupState::UnboundAllPending`, `GroupState::UnboundAllDone`; transitions)
 - `crates/octo-network/src/dot/dc.rs` (additive: DC rotation handover, re-decommission logic)
 - `crates/octo-network/src/dot/audit_log.rs` (new) — local audit log

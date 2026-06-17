@@ -29,12 +29,13 @@ Implement the DC-initiated group creation, invite issuance, third-party group BI
 
 ### Phase 1: Envelope types
 
-- [ ] `CreateGroupEnvelope` (subtype 0x10) in `crates/octo-network/src/dot/binding.rs` with all 11 fields (domain_id, mission_id, platform, proposed_group_metadata, initial_invite_count, dc_id, nonce, current_epoch, coordinator_term_id, signature) per RFC-0850p-d §Specification
-- [ ] `CreateGroupDoneEnvelope` (subtype 0x12) with the `group_jid` and matching `nonce`
-- [ ] `CreateGroupFailEnvelope` (subtype 0x13) with `reason_code` and `platform_error`
-- [ ] `InviteEnvelope` (subtype 0x14) with `invitee_pubkey` and `invite_token = BLAKE3-256(domain_id || mission_id || invitee_pubkey || nonce)`
-- [ ] `UnbindAllEnvelope` (subtype 0x15) with `domain_id`, `group_jid`, `platform`, `reason: UnbindReason`
-- [ ] `UnbindAllAckEnvelope` (subtype 0x16) with the witness signature
+- [ ] `CreateGroupEnvelope` (subtype `b"CGRO"` per RFC-0850p-d §"Envelope Types Added"; R16 R2 fix — was subtype 0x10 in v1.0; the canonical format is the 4-byte ASCII tag per RFC-0850p-c §A) in `crates/octo-network/src/dot/binding.rs` with canonical 10-byte header (`envelope_type: [u8; 4] = b"DOT1"`, `envelope_subtype: [u8; 4] = b"CGRO"`, `version: u16 = 0x0001`) plus body fields: `domain_id`, `mission_id`, `platform`, `proposed_group_metadata`, `initial_invite_count`, `dc_id`, `nonce`, `current_epoch`, `coordinator_term_id`, `signature`, `group_visibility: GroupVisibility` (R16 R1-M2 fix)
+- [ ] `CreateGroupAckEnvelope` (subtype `b"CGAC"`; R16 R2-H1 fix — this struct was missing from RFC-0850p-d; the envelope type was in the table and referenced multiple times but had no struct; fields: `domain_id`, `cgroup_hash: [u8; 32]`, `witness_id`, `witness_epoch`, `ack_hash`, `nonce`, `signature`) — Witness confirms seeing the CGROUP and reserving the `domain_id`
+- [ ] `CreateGroupDoneEnvelope` (subtype `b"CGDA"`; R16 R2 fix — was 0x12) with the `group_jid` and matching `nonce`
+- [ ] `CreateGroupFailEnvelope` (subtype `b"CGFA"`; R16 R2 fix — was 0x13) with `reason_code` and `platform_error`
+- [ ] `InviteEnvelope` (subtype `b"INVT"`; R16 R2 fix — was 0x14) with `invitee_pubkey` and `invite_token = BLAKE3-256(domain_id || mission_id || invitee_pubkey || nonce)`
+- [ ] `UnbindAllEnvelope` (subtype `b"UALL"`; R16 R2 fix — was 0x15) with `domain_id`, `group_jid`, `platform`, `reason: UnbindReason`
+- [ ] `UnbindAllAckEnvelope` (subtype `b"UAAC"`; R16 R2 fix — was 0x16; added in R16 R1-C1 fix since it was in the table but had no struct) with the witness signature
 - [ ] `WitnessAssertion` struct (per RFC-0850p-d §D) for third-party group BIND
 - [ ] DCS serialization (RFC-0126) for all envelope types; round-trip byte equality test
 - [ ] Unit tests: signature verification, nonce uniqueness, 10-byte canonical header

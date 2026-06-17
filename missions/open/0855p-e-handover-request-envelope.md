@@ -28,12 +28,15 @@ Implement the `DOT/1/HANDOVER_REQUEST` envelope and the coordinator term handove
 
 ### Phase 1: Envelope types
 
-- [ ] `HandoverRequestEnvelope` (subtype 0x30) in `crates/octo-network/src/dot/binding.rs` with `coordinator_id`, `successor_id`, `coordinator_role: CoordinatorRole`, `current_term_id`, `new_term_id`, `slash_tally: SlashTally`, `group_bindings: Vec<GroupBinding>`, `pending_envelopes_hash: [u8; 32]`, `reason: HandoverReason`, `nonce`, `current_epoch`, `signature`
-- [ ] `HandoverAckEnvelope` (subtype 0x31) with the witness signature
-- [ ] `HandoverDoneEnvelope` (subtype 0x32) with the new coordinator's confirmation
+- [ ] `HandoverRequestEnvelope` (subtype `b"HORQ"`) in `crates/octo-network/src/dot/binding.rs` with canonical 10-byte header per RFC-0850p-c §A (`envelope_type: [u8; 4] = b"DOT1"`, `envelope_subtype: [u8; 4] = b"HORQ"`, `version: u16 = 0x0001`) plus body fields: `coordinator_id`, `successor_id`, `coordinator_role: CoordinatorRole`, `current_term_id`, `new_term_id`, `slash_tally: SlashTally`, `group_bindings: Vec<GroupBinding>`, `pending_envelopes_hash: [u8; 32]`, `reason: HandoverReason`, `nonce`, `current_epoch`, `signature`. (R16 R1 fix — the mission v1.0 said "subtype 0x30"; the canonical format is the 4-byte ASCII tag per RFC-0850p-c §A.)
+- [ ] `HandoverAckEnvelope` (subtype `b"HOAK"`) — R16 R2 finding: the struct is referenced by this mission but is NOT defined in RFC-0855p-e §"Data Structure (preliminary)" (only HandoverRequestEnvelope has a struct). Add to the RFC and to this mission: body fields include `handover_request_hash: [u8; 32]`, `witness_id: [u8; 32]`, `witness_epoch: u64`, `ack_hash: [u8; 32]`, `nonce`, `signature`.
+- [ ] `HandoverDoneEnvelope` (subtype `b"HODN"`) — R16 R2 finding: same as ACK, the struct is referenced by this mission but NOT defined in RFC-0855p-e. Add to the RFC and to this mission: body fields include `handover_request_hash: [u8; 32]`, `new_coordinator_id: [u8; 32]`, `accepted_epoch: u64`, `done_hash: [u8; 32]`, `nonce`, `signature`.
 - [ ] `HandoverReason` enum: `Voluntary = 0x00`, `Scheduled = 0x01`, `Suspect = 0x02`, `Demoting = 0x03`, `MissionTerminated = 0x04`
+- [ ] `CoordinatorRole` enum: `MissionCoordinator = 0x00`, `DomainCoordinator = 0x01`, `WitnessCoordinator = 0x02` (per RFC-0855p-e §"Coordinator role", R16 R1-L3 fix — was undefined in v1.0)
+- [ ] `SlashTally` struct: `slash_events: Vec<SlashEvent>`, `last_updated_epoch: u64` (per RFC-0855p-e §"SlashTally struct", R16 R1-H5 fix — was referenced as non-existent RFC-0855p-b.1)
+- [ ] `SlashEvent` struct: `slash_reason_code: u16`, `slashed_peer_id: [u8; 32]`, `witness_count: u16`, `slash_evidence_hash: [u8; 32]`, `epoch: u64`, `signature: [u8; 64]` (per RFC-0855p-e §"SlashTally struct", R16 R1-H5 fix)
 - [ ] DCS serialization for all envelope types; round-trip byte equality test
-- [ ] Unit tests: signature verification, nonce uniqueness
+- [ ] Unit tests: signature verification, nonce uniqueness, 10-byte canonical header
 
 ### Phase 2: CoordinatorLifecycle::Handover transition (pending RFC elaboration)
 

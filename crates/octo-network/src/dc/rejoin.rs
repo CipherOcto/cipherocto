@@ -68,6 +68,8 @@ pub enum RejoinError {
     InvalidKickEvidence,
     /// The peer is unknown to the DC.
     UnknownPeer,
+    /// The peer_id is empty (defends against empty-key DoS).
+    InvalidPeerId,
 }
 
 /// Tracks the cooldown for a peer's rejoin requests.
@@ -89,6 +91,9 @@ impl RejoinCooldown {
         peer_id: &str,
         current_epoch: u64,
     ) -> Result<(), RejoinError> {
+        if peer_id.is_empty() {
+            return Err(RejoinError::InvalidPeerId);
+        }
         if let Some(&last) = self.last_request.get(peer_id) {
             if current_epoch.saturating_sub(last) < REJOIN_COOLDOWN_EPOCHS {
                 return Err(RejoinError::RateLimited {
@@ -164,6 +169,18 @@ mod tests {
         assert!(cd.check_and_record("peer-1", 1999).is_err());
         // 1000 epochs later (exactly at boundary): allowed.
         assert!(cd.check_and_record("peer-1", 2000).is_ok());
+    }
+
+    #[test]
+    fn cooldown_rejects_empty_peer_id() {
+        // An empty peer_id would key the cooldown map on "",
+        // causing all anonymous rejoin attempts to rate-limit
+        // each other. Reject explicitly.
+        let mut cd = RejoinCooldown::new();
+        assert_eq!(
+            cd.check_and_record("", 1000),
+            Err(RejoinError::InvalidPeerId)
+        );
     }
 
     #[test]

@@ -154,6 +154,7 @@ pub fn verify_attest(
 
 /// Derive the libp2p gossip topic for a DC's attest.
 pub fn attest_topic(domain_id: &str, platform: Platform) -> String {
+    assert!(!domain_id.is_empty(), "domain_id must not be empty");
     format!("/dot/admin/{}/{}", domain_id, platform.as_str())
 }
 
@@ -258,6 +259,12 @@ mod tests {
     fn topic_format() {
         let t = attest_topic("d1", Platform::WhatsApp);
         assert_eq!(t, "/dot/admin/d1/whatsapp");
+    }
+
+    #[test]
+    #[should_panic(expected = "domain_id must not be empty")]
+    fn topic_rejects_empty() {
+        let _ = attest_topic("", Platform::WhatsApp);
     }
 
     #[test]

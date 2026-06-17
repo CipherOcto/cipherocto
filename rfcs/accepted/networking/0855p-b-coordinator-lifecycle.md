@@ -848,7 +848,7 @@ Verify:
 | `crates/octo-network/src/mon/election.rs` | NEW: `ElectionTally`, `ElectionBallot`, per-governance-model election |
 | `crates/octo-network/src/mon/slashing.rs` | NEW: `SlashProof`, slash verification |
 | `crates/octo-network/src/mon/lifecycle.rs` | EXISTING: integrate `CoordinatorLifecycle` with mission lifecycle |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" |
+| `rfcs/accepted/networking/0855-mission-overlay-networks.md` | EXISTING: add cite to this RFC for §16.3 "AI Swarm Specification (MON-H6 fix)", §17 "Token Economics Integration" |
 
 ## Future Work
 

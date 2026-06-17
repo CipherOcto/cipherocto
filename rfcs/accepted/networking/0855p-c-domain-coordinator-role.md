@@ -844,7 +844,7 @@ Verify:
 | `crates/octo-adapter-matrix/src/lib.rs` | Same pattern (Matrix power levels) |
 | `crates/octo-adapter-telegram/src/lib.rs` | Same pattern (Telegram admin) |
 | `crates/octo-network/src/dot/binding.rs` | Integrate DomainCoordinator authority with BIND envelope |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 "Membership Roles" DomainCoordinator |
+| `rfcs/accepted/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 "Membership Roles" DomainCoordinator |
 
 ## Integration Order (NEW from 2026-06-16 batch review)
 

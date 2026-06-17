@@ -901,7 +901,7 @@ Verify:
 | `crates/octo-adapter-matrix/src/lib.rs` | Same as WhatsApp |
 | `crates/octo-adapter-telegram/src/lib.rs` | Same |
 | `crates/octo-network/src/mon/coordinator.rs` | Integrate with `CoordinatorLifecycle` (0855p-b) |
-| `rfcs/draft/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §3.1 "Lifecycle States" mission formation |
+| `rfcs/accepted/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §3.1 "Lifecycle States" mission formation |
 
 ## Future Work
 

@@ -476,7 +476,7 @@ Platform migration moves a `domain_id` from one platform to another (e.g., from 
 - **Outcome:** if 2/3 approve, the platform migration is committed. The old group's BIND is replaced by the new group's BIND. The old group transitions `Bound → UnboundQuarantined` (skipping `ReBinding` because migration is not the same as REBIND). The new group transitions `Unbound → Bound` directly.
 - **Cooldown:** after migration, no further migration for the same `(mission_id, domain_id)` is allowed for `MIGRATION_RETRY_COOLDOWN = 500` epochs. This prevents migration thrashing.
 - **Multi-platform rule exception (E2E IS-4.8 fix):** during the migration window (vote period + commit), the new group on the new platform coexists with the old group on the old platform. Both are considered "bound" to the same `domain_id` (temporary exception to §5 "Multi-Platform Binding Rule"). After the migration commit, the old group is `UnboundQuarantined` and the new group is `Bound`.
-- **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is one of two slash reasons (0x000A-0x000B) defined in this RFC; per the canonical mapping in RFC-0855p-b §B, 0x000A-0x000B are transport-level slash reasons (defined here) and 0x000C-0xFFFF are reserved for future slash reasons.
+- **Slash reason 0x000A (PlatformMigration):** used in the audit log and slash vote tally to indicate a platform migration. This is one of two slash reasons (0x000A-0x000B) defined in this RFC; per the canonical mapping in RFC-0855p-b §B, 0x000A-0x000B are transport-level slash reasons (defined here); codes 0x000C-0x000D are reserved (NOT slash reasons; sub-DC delegation/governance); codes 0x000E-0x0011 are 0850p-family sister RFC slash reasons (CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked); code 0x0012 is 0855p-c's `CrossPlatformWitnessCollusion`; codes 0x0013-0xFFFF are reserved for future slash reasons. (R16 R3-H1 fix: was "0x000C-0xFFFF are reserved for future slash reasons" which contradicted RFC-0855p-b §B and the §6 "Unbind Reasons" table.)
 
 ### 7. REBIND Lifecycle
 
@@ -758,7 +758,7 @@ Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + rol
 ### Forward Compatibility
 
 - New envelope subtypes (e.g., `DOT/1/BIND_PARTIAL` for partial bindings) can be added
-- New unbind reasons are additive (u16 enum; per §6 "Unbind Reasons" codes 0x0001-0x000B are mapped, 0x000C-0xFFFF reserved)
+- New unbind reasons are additive (u16 enum; per §6 "Unbind Reasons" codes 0x0001-0x000B are mapped; codes 0x000C-0x000D are reserved for non-slash/unbind mechanisms [sub-DC delegation/governance]; codes 0x000E-0x0012 are 0850p-family + 0855p-c slash/unbind reasons; codes 0x0013-0xFFFF are reserved for future slash/unbind reasons; R16 R3-H1 fix: was "0x000C-0xFFFF reserved" which contradicted the §6 "Unbind Reasons" table after R16 R1+R2 expanded the allocation)
 - New platforms (Nostr, IRC, Slack) can be added by extending the `platform` enum
 
 ### RFC-0855p-b Integration
@@ -920,7 +920,7 @@ Per the **deferred vs unspecified rule**, every future-work item MUST have a spe
 | F3 | BIND propagation via libp2p (not just platform group) | MEDIUM | Post-launch | Mission: the BIND envelope is also gossiped on the libp2p mesh (alongside platform-group delivery), so nodes not yet in the physical group can learn about the binding and request admission. | `missions/open/0850p-c-libp2p-propagation.md` |
 | F4 | DomainCoordinator election via platform-admin authority | MEDIUM | RFC-0855p-c | (DONE — see RFC-0855p-c §"Platform-Admin Authority Check", 2026-06-16 draft) | — |
 | F5 | Cross-platform witness aggregation (e.g., WhatsApp witness + Matrix witness) | MEDIUM | Future | Mission: 0855p-b §B defines slash reason codes per-witness; aggregation is 2/3 majority of N witnesses across platforms, similar to 0855p-c F1 cross-platform consensus. | `missions/open/0850p-c-cross-platform-witness.md` |
-| F6 | UNBIND reason 0x000C-0xFFFF reserved for future governance events | LOW | RFC-0855 §17 "Token Economics Integration" evolution | (DONE — range allocation lives in 0855p-b §B "Slash Offense Codes"; future governance events use this range, no new spec needed) | — |
+| F6 | UNBIND reason 0x000C-0x000D reserved for non-slash mechanisms (sub-DC delegation/governance); 0x000E-0x0012 are 0850p-family + 0855p-c slash/unbind reasons; 0x0013-0xFFFF reserved for future slash/unbind reasons | LOW | RFC-0855 §17 "Token Economics Integration" evolution | (DONE for 0x000E-0x0012 — range allocation lives in RFC-0855p-b §B "Slash Offense Codes" and the §6 "Unbind Reasons" table; 0x000C-0x000D and 0x0013-0xFFFF remain reserved for future allocation; R16 R3-M1 fix: was "UNBIND reason 0x000C-0xFFFF reserved for future governance events" which incorrectly suggested all codes in that range were reserved for future UNBIND use, contradicting the current allocation) | — |
 
 ## Rationale
 

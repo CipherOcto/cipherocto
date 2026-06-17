@@ -319,7 +319,7 @@ Once accepted:
 | RFC-0855 (Networking)       | Mission Overlay Networks                                    | Accepted | Mission lifecycle, `MissionDescriptor`                           |
 | RFC-0855p-b (Networking)    | Mission Coordinator Lifecycle                               | Accepted | `CoordinatorLifecycle` and `CoordinatorRecord`                   |
 | RFC-0855p-c (Networking)    | DomainCoordinator Role                                      | Accepted | DC authority, slash codes, mission-scoped envelopes              |
-| RFC-0855p-d (Networking)    | Sub-Domain / Sub-Group Nesting                              | Draft    | Sub-group CGROUP with `SubGroupExtension`; sub-DC delegation      |
+| RFC-0855p-d (Networking)    | Sub-Domain / Sub-Group Nesting                              | Draft    | New `CreateSubGroupEnvelope` envelope variant (subtype `b"CGSB"`) carrying a `SubGroupExtension` payload; sub-DC delegation      |
 | RFC-0855p-e (Networking)    | HandoverRequest Envelope & Coordinator Term Handover        | Draft    | HANDOVER_REQUEST/ACK/DONE envelopes; slash tally transfer         |
 | RFC-0856 (Networking)       | Deterministic Route Selection                               | Draft    | Route selection algorithm                                        |
 | RFC-0857 (Networking)       | Deterministic Overlay Mempool                               | Draft    | Mempool for overlay envelopes                                    |

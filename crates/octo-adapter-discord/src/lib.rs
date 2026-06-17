@@ -23,18 +23,44 @@
 use base64::Engine;
 use serde::Deserialize;
 
+/// Per-channel webhook configuration (R18).
+///
+/// Discord webhooks are channel-specific (each webhook posts to one
+/// channel). To support multiple "groups" on a single `DiscordAdapter`,
+/// configure one `ChannelWebhook` per channel_id.
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+pub struct ChannelWebhook {
+    /// Discord channel ID (snowflake).
+    pub channel_id: String,
+    /// Webhook URL for this channel.
+    pub webhook_url: String,
+}
+
 /// Discord adapter configuration.
 #[derive(Clone, Deserialize, serde::Serialize)]
 pub struct DiscordConfig {
     /// Discord bot token (for receiving via Gateway)
     #[serde(skip_serializing)]
     pub bot_token: String,
-    /// Webhook URL (for sending)
+    /// Webhook URL for sending (legacy single-channel config).
+    ///
+    /// R18: kept for backward compatibility. If `channel_webhooks` is also
+    /// set, `send_envelope` uses the per-channel lookup. If only
+    /// `webhook_url` is set, every send goes to this one webhook and the
+    /// domain parameter is ignored (legacy behaviour).
     pub webhook_url: String,
     /// Guild (server) ID
     pub guild_id: String,
     /// Channel IDs to monitor
     pub channels: Vec<String>,
+    /// Per-channel webhook configuration (R18).
+    ///
+    /// Keyed by channel_id. When present, `send_envelope` looks up the
+    /// right webhook by domain hash, so a single adapter can serve multiple
+    /// groups. Defaults to empty; legacy configs (only `webhook_url`) keep
+    /// the original single-webhook behaviour.
+    #[serde(default)]
+    pub channel_webhooks: Vec<ChannelWebhook>,
 }
 
 impl std::fmt::Debug for DiscordConfig {
@@ -49,6 +75,10 @@ impl std::fmt::Debug for DiscordConfig {
             .field("webhook_url", &"<redacted>")
             .field("guild_id", &self.guild_id)
             .field("channels", &self.channels)
+            .field(
+                "channel_webhooks",
+                &format!("<{} entries>", self.channel_webhooks.len()),
+            )
             .finish()
     }
 }
@@ -75,13 +105,17 @@ impl DiscordAdapter {
         Ok(Self::new(config))
     }
 
-    /// Send a message via Discord webhook.
-    pub async fn send_webhook_message(&self, content: &str) -> Result<DiscordMessage, String> {
+    /// Send a message via Discord webhook for a specific URL.
+    pub async fn send_webhook_message_to(
+        &self,
+        webhook_url: &str,
+        content: &str,
+    ) -> Result<DiscordMessage, String> {
         let body = serde_json::json!({ "content": content });
 
         let resp = self
             .client
-            .post(&self.config.webhook_url)
+            .post(webhook_url)
             .json(&body)
             .send()
             .await
@@ -98,9 +132,10 @@ impl DiscordAdapter {
             .map_err(|e| format!("JSON parse error: {}", e))
     }
 
-    /// Send a file attachment via Discord webhook.
-    pub async fn send_webhook_file(
+    /// Send a file attachment via Discord webhook for a specific URL.
+    pub async fn send_webhook_file_to(
         &self,
+        webhook_url: &str,
         filename: &str,
         data: &[u8],
     ) -> Result<DiscordMessage, String> {
@@ -113,7 +148,7 @@ impl DiscordAdapter {
 
         let resp = self
             .client
-            .post(&self.config.webhook_url)
+            .post(webhook_url)
             .multipart(form)
             .send()
             .await
@@ -128,6 +163,39 @@ impl DiscordAdapter {
         resp.json()
             .await
             .map_err(|e| format!("JSON parse error: {}", e))
+    }
+
+    /// Look up the webhook URL for a domain. Returns the per-channel
+    /// webhook URL if one is registered for the channel matching the
+    /// domain hash; otherwise falls back to the legacy `webhook_url` if
+    /// no per-channel webhooks are configured.
+    fn webhook_url_for_domain(&self, domain: &BroadcastDomainId) -> Option<String> {
+        for cw in &self.config.channel_webhooks {
+            if Self::domain_hash(&cw.channel_id) == domain.domain_hash {
+                return Some(cw.webhook_url.clone());
+            }
+        }
+        if self.config.channel_webhooks.is_empty() {
+            Some(self.config.webhook_url.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Send a message via Discord webhook.
+    pub async fn send_webhook_message(&self, content: &str) -> Result<DiscordMessage, String> {
+        self.send_webhook_message_to(&self.config.webhook_url, content)
+            .await
+    }
+
+    /// Send a file attachment via Discord webhook.
+    pub async fn send_webhook_file(
+        &self,
+        filename: &str,
+        data: &[u8],
+    ) -> Result<DiscordMessage, String> {
+        self.send_webhook_file_to(&self.config.webhook_url, filename, data)
+            .await
     }
 
     /// Get messages from a Discord channel (requires bot token).
@@ -225,11 +293,22 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 impl PlatformAdapter for DiscordAdapter {
     async fn send_envelope(
         &self,
-        _domain: &BroadcastDomainId,
+        domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
         let encoded = Self::encode_envelope(&wire_bytes);
+
+        // R18 fix: look up the per-channel webhook URL by domain hash. Falls
+        // back to the legacy single-webhook config if `channel_webhooks`
+        // is empty. Previously this method ignored the domain and always
+        // sent to `self.config.webhook_url`.
+        let webhook_url = self.webhook_url_for_domain(domain).ok_or_else(|| {
+            transport_err(format!(
+                "No channel webhook registered for domain {:?}",
+                domain.domain_hash
+            ))
+        })?;
 
         // Retry with exponential backoff (ZeroClaw pattern)
         let retry_cfg = octo_network::dot::adapters::backoff::RetryConfig::default();
@@ -237,9 +316,10 @@ impl PlatformAdapter for DiscordAdapter {
 
         for attempt in 0..=retry_cfg.max_retries {
             let result = if wire_bytes.len() > Self::max_payload_bytes() {
-                self.send_webhook_file("envelope.bin", &wire_bytes).await
+                self.send_webhook_file_to(&webhook_url, "envelope.bin", &wire_bytes)
+                    .await
             } else {
-                self.send_webhook_message(&encoded).await
+                self.send_webhook_message_to(&webhook_url, &encoded).await
             };
 
             match result {
@@ -539,5 +619,92 @@ mod tests {
     fn test_decode_invalid() {
         assert!(DiscordAdapter::decode_envelope("NOTDOT/1/abc").is_err());
         assert!(DiscordAdapter::decode_envelope("DOT/1/!!!invalid!!!").is_err());
+    }
+
+    // R18: per-domain webhook lookup
+    fn test_adapter_with_channel_webhooks(channels: Vec<ChannelWebhook>) -> DiscordAdapter {
+        let config = DiscordConfig {
+            bot_token: "Bot test".into(),
+            webhook_url: "https://discord.com/api/webhooks/legacy/abc".into(),
+            guild_id: "111".into(),
+            channels: channels.iter().map(|c| c.channel_id.clone()).collect(),
+            channel_webhooks: channels,
+        };
+        DiscordAdapter::new(config)
+    }
+
+    #[test]
+    fn test_webhook_url_for_domain_falls_back_to_legacy() {
+        // No per-channel webhooks configured → use legacy `webhook_url`.
+        let adapter = test_adapter_with_channel_webhooks(vec![]);
+        let domain = BroadcastDomainId {
+            platform_type: PlatformType::Discord as u16,
+            domain_hash: DiscordAdapter::domain_hash("222"),
+        };
+        assert_eq!(
+            adapter.webhook_url_for_domain(&domain).as_deref(),
+            Some("https://discord.com/api/webhooks/legacy/abc")
+        );
+    }
+
+    #[test]
+    fn test_webhook_url_for_domain_picks_matching_channel() {
+        // Two per-channel webhooks; the lookup should pick the one whose
+        // channel_id hashes to the requested domain.
+        let adapter = test_adapter_with_channel_webhooks(vec![
+            ChannelWebhook {
+                channel_id: "111".into(),
+                webhook_url: "https://discord.com/api/webhooks/111/aaa".into(),
+            },
+            ChannelWebhook {
+                channel_id: "222".into(),
+                webhook_url: "https://discord.com/api/webhooks/222/bbb".into(),
+            },
+        ]);
+        let domain_222 = BroadcastDomainId {
+            platform_type: PlatformType::Discord as u16,
+            domain_hash: DiscordAdapter::domain_hash("222"),
+        };
+        assert_eq!(
+            adapter.webhook_url_for_domain(&domain_222).as_deref(),
+            Some("https://discord.com/api/webhooks/222/bbb")
+        );
+    }
+
+    #[test]
+    fn test_webhook_url_for_domain_returns_none_when_no_match() {
+        // Per-channel webhooks configured but none match the domain.
+        let adapter = test_adapter_with_channel_webhooks(vec![ChannelWebhook {
+            channel_id: "111".into(),
+            webhook_url: "https://discord.com/api/webhooks/111/aaa".into(),
+        }]);
+        let domain_unknown = BroadcastDomainId {
+            platform_type: PlatformType::Discord as u16,
+            domain_hash: DiscordAdapter::domain_hash("999"),
+        };
+        assert_eq!(adapter.webhook_url_for_domain(&domain_unknown), None);
+    }
+
+    #[test]
+    fn test_config_parses_channel_webhooks() {
+        let config = serde_json::json!({
+            "bot_token": "Bot test",
+            "webhook_url": "https://discord.com/api/webhooks/legacy/abc",
+            "guild_id": "111",
+            "channels": ["222", "333"],
+            "channel_webhooks": [
+                { "channel_id": "222", "webhook_url": "https://discord.com/api/webhooks/222/aaa" },
+                { "channel_id": "333", "webhook_url": "https://discord.com/api/webhooks/333/bbb" }
+            ]
+        });
+        let adapter =
+            DiscordAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
+                .unwrap();
+        assert_eq!(adapter.config.channel_webhooks.len(), 2);
+        assert_eq!(adapter.config.channel_webhooks[0].channel_id, "222");
+        assert_eq!(
+            adapter.config.channel_webhooks[1].webhook_url,
+            "https://discord.com/api/webhooks/333/bbb"
+        );
     }
 }

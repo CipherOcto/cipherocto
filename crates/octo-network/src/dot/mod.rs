@@ -14,6 +14,7 @@ pub mod error;
 pub mod fragment;
 pub mod gateway;
 pub mod group_registry;
+pub mod kick_envelopes;
 pub mod pce;
 pub mod replay;
 pub mod route;
@@ -41,6 +42,10 @@ pub use gateway::{GatewayCapacity, GatewayClass, GatewayIdentity, GatewayRoleFla
 pub use group_registry::{
     GroupRegistry, UnboundQuarantineEntry, UnboundQuarantineKey, DEFAULT_MAX_REJOIN_ATTEMPTS,
     REJOIN_GRANT_TIMEOUT,
+};
+pub use kick_envelopes::{
+    KickDetectedEnvelope, MemberRemovedEnvelope, PlatformKickEvent, RejoinGrantEnvelope,
+    RejoinRequestEnvelope, SelfKickedEnvelope,
 };
 pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;

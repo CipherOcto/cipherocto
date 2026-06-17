@@ -35,7 +35,7 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG — this RFC depends on 0850, 0855, 0855p-b, 0850p-a, 0851p-a; none depend on this RFC. 0855p-c depends on THIS RFC and 0855p-b.
-> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 mission `0850p-c-transport-group-binding.md` will declare 0850, 0855, 0855p-b, 0850p-a, 0851p-a as prerequisites.
+> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0850p-c-base.md` (TBD; not yet created) will declare 0850, 0855, 0855p-b, 0850p-a, 0851p-a as prerequisites.
 > 3. DomainCoordinator specialization (0855p-c) is **downstream** — this RFC specifies the binding ceremony; 0855p-c specifies the DomainCoordinator's election/handover/slashing using that ceremony.
 > 4. **0851p-a is now Requires (was Optional)** per 2026-06-16 batch review MR-2: a node cannot receive or sign a BIND envelope until it is a mesh member.
 

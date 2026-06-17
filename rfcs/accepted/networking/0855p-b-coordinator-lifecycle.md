@@ -36,7 +36,7 @@ Specifies the `CoordinatorLifecycle` state machine, the `CoordinatorRecord` type
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG (no cycles) — this RFC depends on 0855; 0855 is unchanged.
-> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 mission `0855p-b-mission-coordinator-lifecycle.md` will declare `0855-mission-overlay-networks` as prerequisite.
+> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0855p-b-base.md` (TBD; not yet created) will declare `0855-mission-overlay-networks` as prerequisite.
 > 3. Optional dependencies MUST be documented separately from required — RFC-0860 is optional; without it, election eligibility uses raw stake only.
 > 4. Dependencies on "Planned" RFCs MUST note the assumption they will be Accepted — all dependencies are Draft or Final.
 

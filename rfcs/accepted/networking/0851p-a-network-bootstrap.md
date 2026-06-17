@@ -34,7 +34,7 @@ Specifies how a fresh CipherOcto node acquires its first peers and joins the DOT
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG — this RFC depends on 0851, 0850, 0843, 0126, 0009, 0000-template; none depend on this RFC.
-> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 mission `0851p-a-network-bootstrap.md` will declare 0851, 0850, 0843, 0126, 0009 as prerequisites.
+> 2. All "Requires" RFCs MUST be listed as mission prerequisites — Phase 1 base mission `0851p-a-base.md` (TBD; not yet created) will declare 0851, 0850, 0843, 0126, 0009 as prerequisites.
 > 3. RFC-0009 is "Planned" — if not Accepted by implementation, identity types MUST be inlined (see RFC-0850 §"Dependencies" precedent).
 > 4. Optional deps documented separately — RFC-0860 boosts bootstrap quality via trust weighting but is not required for correctness.
 

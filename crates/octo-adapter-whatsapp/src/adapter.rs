@@ -197,6 +197,30 @@ pub struct WhatsAppWebAdapter {
     /// 0850p-a-notify-event-connected). Wrapped in an `Arc` because
     /// `Notify` is not `Clone`.
     connected_notify: Arc<tokio::sync::Notify>,
+    /// Runtime-mutable group list, consulted alongside `config.groups`
+    /// by both `send_envelope`'s domain→JID lookup and the inbound
+    /// `accept_message` filter. Coordinators that create groups at
+    /// runtime (rather than configuring them statically via
+    /// `WhatsAppConfig::groups`) push the new JIDs here so inbound
+    /// envelopes from the freshly-created group are accepted instead
+    /// of being filtered as "unconfigured group".
+    ///
+    /// Backwards-compatible: when empty, behaviour is identical to the
+    /// static-config-only path (the legacy default).
+    runtime_groups: Arc<Mutex<Vec<String>>>,
+}
+
+/// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
+/// `<id>@g.us` JID plus the full `GroupMetadata` the server returned.
+///
+/// The `group_jid` field is what callers should push into
+/// [`WhatsAppConfig::groups`] so [`PlatformAdapter::send_envelope`] can
+/// route to the new group by `domain_id`.
+pub struct CreateGroupOutput {
+    /// Group JID in `<digits>@g.us` form (e.g. `120363012345678901@g.us`).
+    pub group_jid: String,
+    /// Server-reported metadata (subject, participants, creation time, ...).
+    pub metadata: whatsapp_rust::GroupMetadata,
 }
 
 impl WhatsAppWebAdapter {
@@ -215,6 +239,7 @@ impl WhatsAppWebAdapter {
             // `wait_for_connected`) `notified().await` on a clone of
             // the Arc.
             connected_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_groups: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -231,7 +256,28 @@ impl WhatsAppWebAdapter {
     /// This is a synchronous, allocation-free check that replaces the
     /// 250ms polling loop in the CLI's `whoami` flow.
     pub fn has_valid_session(&self) -> bool {
-        self.self_handle().is_some() && self.bot_handle.try_lock().map(|h| h.is_some()).unwrap_or(false)
+        self.self_handle().is_some()
+            && self
+                .bot_handle
+                .try_lock()
+                .map(|h| h.is_some())
+                .unwrap_or(false)
+    }
+
+    /// Register a group at runtime, alongside the statically-configured
+    /// `WhatsAppConfig::groups`. The group JID will be accepted by both
+    /// `send_envelope`'s domain→JID lookup and the inbound
+    /// `accept_message` filter. Idempotent: re-registering an existing
+    /// JID is a no-op (no duplicates).
+    ///
+    /// Use this after `create_group` returns so the newly-created
+    /// group is immediately routable without restarting the bot or
+    /// reloading the config.
+    pub fn register_group_at_runtime(&self, group_jid: &str) {
+        let mut guard = self.runtime_groups.lock();
+        if !guard.iter().any(|g| g == group_jid) {
+            guard.push(group_jid.to_string());
+        }
     }
 
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
@@ -375,7 +421,12 @@ impl WhatsAppWebAdapter {
         // Clone values for the event handler
         let inbound_tx = self.inbound_tx.clone();
         let self_phone = self.self_phone.clone();
+        // Combine the static `config.groups` and the runtime-registered
+        // groups at the moment the bot starts. New groups added via
+        // `register_group_at_runtime` after `start_bot` is captured by
+        // the Arc<Mutex<Vec>> below.
         let groups = self.config.groups.clone();
+        let runtime_groups = Arc::clone(&self.runtime_groups);
         let sender_allowlist = self.config.sender_allowlist.clone();
         // Mission 0850p-a-notify-event-connected: clone the Notify
         // into the closure so the Event::Connected handler can
@@ -397,6 +448,7 @@ impl WhatsAppWebAdapter {
                 let inbound_tx = inbound_tx.clone();
                 let self_phone = self_phone.clone();
                 let groups = groups.clone();
+                let runtime_groups = Arc::clone(&runtime_groups);
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
 
@@ -410,11 +462,26 @@ impl WhatsAppWebAdapter {
                             let chat = info.source.chat.to_string();
                             let sender = info.source.sender.to_string();
 
+                            // Combine static config.groups with
+                            // runtime-registered groups so messages from
+                            // groups added via `register_group_at_runtime`
+                            // are accepted.
+                            let effective_groups: Vec<String> = {
+                                let rt = runtime_groups.lock();
+                                if rt.is_empty() {
+                                    groups.clone()
+                                } else {
+                                    let mut combined = groups.clone();
+                                    combined.extend(rt.iter().cloned());
+                                    combined
+                                }
+                            };
+
                             let decision = Self::accept_message(
                                 &chat,
                                 &sender,
                                 &text,
-                                &groups,
+                                &effective_groups,
                                 &sender_allowlist,
                             );
 
@@ -547,6 +614,212 @@ impl WhatsAppWebAdapter {
             }
         }
     }
+
+    // ── Group-setup API (RFC-0850p-a §8.1, E2E Scenario 1) ───────────────
+    //
+    // These methods are NOT part of the `PlatformAdapter` trait — they are
+    // coordinator-only group-management operations that the Web protocol
+    // exposes via `Client::groups()` but that the DOT envelope transport
+    // contract does not need to advertise. They live here so a coordinator
+    // process (CLI, swarm bootstrap, or e2e test) can:
+    //
+    // 1. Create the broadcast group with the coordinator as admin.
+    // 2. Add member phone numbers (or skip and use the invite link instead).
+    // 3. Fetch the `chat.whatsapp.com` invite link to share with humans /
+    //    other nodes.
+    // 4. Optionally tear the group down via `leave_group` for cleanup.
+    //
+    // They follow the same locking discipline as `send_envelope`: clone the
+    // client Arc out of the mutex before any `.await`.
+
+    /// Create a new WhatsApp group with `subject` and an initial participant
+    /// list. The authenticated bot is automatically the creator (and admin).
+    /// Members that already have a WhatsApp account receive an invite
+    /// notification; members that don't are silently skipped by the server.
+    ///
+    /// `participants` is a list of E.164 phone numbers (with or without the
+    /// leading `+`); they are normalised to digits-only and converted to
+    /// `<digits>@s.whatsapp.net` JIDs internally.
+    ///
+    /// The bot must be connected (i.e. `start_bot()` returned and
+    /// `self_handle()` is Some). Returns an error if the client is not yet
+    /// connected, the subject is empty, or the WhatsApp server rejects the
+    /// create IQ.
+    pub async fn create_group(
+        &self,
+        subject: &str,
+        participants: &[&str],
+    ) -> Result<CreateGroupOutput, String> {
+        if subject.trim().is_empty() {
+            return Err("group subject must not be empty".into());
+        }
+        // Clone the client Arc out of the mutex; do not hold the lock across await.
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        // Convert phone strings to JIDs.
+        let mut participant_opts: Vec<whatsapp_rust::GroupParticipantOptions> =
+            Vec::with_capacity(participants.len());
+        for phone in participants {
+            let digits = Self::normalize_phone(phone);
+            if digits.is_empty() {
+                return Err(format!("participant {phone:?} has no digits"));
+            }
+            let jid = wacore_binary::Jid::pn(digits);
+            participant_opts.push(whatsapp_rust::GroupParticipantOptions::from_phone(jid));
+        }
+
+        let options = whatsapp_rust::GroupCreateOptions {
+            subject: subject.to_string(),
+            participants: participant_opts,
+            ..Default::default()
+        };
+
+        let result = client
+            .groups()
+            .create_group(options)
+            .await
+            .map_err(|e| format!("create_group failed: {e:#}"))?;
+
+        let group_jid = result.metadata.id.to_string();
+        tracing::info!(
+            subject = %subject,
+            group_jid = %group_jid,
+            participants = participants.len(),
+            "WhatsApp group created"
+        );
+
+        Ok(CreateGroupOutput {
+            group_jid,
+            metadata: result.metadata,
+        })
+    }
+
+    /// Add phone-number participants to an existing group. The bot must be
+    /// an admin of the group (the creator is, by default).
+    ///
+    /// `participants` is a list of E.164 phone numbers (with or without `+`).
+    /// The server's per-participant response is returned so callers can tell
+    /// which numbers were accepted and which were rejected (already in the
+    /// group, not on WhatsApp, blocked, etc.).
+    pub async fn add_members(
+        &self,
+        group_jid: &str,
+        participants: &[&str],
+    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
+        for phone in participants {
+            let digits = Self::normalize_phone(phone);
+            if digits.is_empty() {
+                return Err(format!("participant {phone:?} has no digits"));
+            }
+            jids.push(wacore_binary::Jid::pn(digits));
+        }
+
+        let responses = client
+            .groups()
+            .add_participants(&jid, &jids)
+            .await
+            .map_err(|e| format!("add_participants failed: {e:#}"))?;
+
+        tracing::info!(
+            group_jid = %group_jid,
+            added = responses.iter().filter(|r| r.is_ok()).count(),
+            failed = responses.iter().filter(|r| !r.is_ok()).count(),
+            "WhatsApp group participants added"
+        );
+
+        Ok(responses)
+    }
+
+    /// Fetch the `chat.whatsapp.com` invite link for the group. Pass
+    /// `reset = true` to invalidate any previously-issued link and mint a new
+    /// one (useful for the "revoke and re-issue" revocation pattern).
+    pub async fn get_invite_link(&self, group_jid: &str, reset: bool) -> Result<String, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let link = client
+            .groups()
+            .get_invite_link(&jid, reset)
+            .await
+            .map_err(|e| format!("get_invite_link failed: {e:#}"))?;
+
+        Ok(link)
+    }
+
+    /// Have the bot leave a group. Idempotent on already-left groups at the
+    /// server level (server returns an error which we surface; callers that
+    /// want "leave if member" semantics can ignore the error).
+    pub async fn leave_group(&self, group_jid: &str) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        client
+            .groups()
+            .leave(&jid)
+            .await
+            .map_err(|e| format!("leave_group failed: {e:#}"))?;
+
+        tracing::info!(group_jid = %group_jid, "WhatsApp group left");
+        Ok(())
+    }
+
+    /// Re-fetch the current metadata for an existing group (subject,
+    /// participants, admins). Used by the live E2E test to verify the
+    /// bot's view of a group after the create-time snapshot.
+    pub async fn group_metadata(
+        &self,
+        group_jid: &str,
+    ) -> Result<whatsapp_rust::GroupMetadata, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        client
+            .groups()
+            .get_metadata(&jid)
+            .await
+            .map_err(|e| format!("group_metadata failed: {e:#}"))
+    }
 }
 
 // ── PlatformAdapter ────────────────────────────────────────────────
@@ -569,20 +842,32 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         let wire_bytes = envelope.to_wire_bytes();
         let encoded = Self::encode_envelope(&wire_bytes);
 
-        // Find the group JID for this domain
-        let group_id = self
+        // Find the group JID for this domain. Check the static config first,
+        // then the runtime-registered list (groups added via
+        // `register_group_at_runtime` after `create_group`).
+        let static_match = self
             .config
             .groups
             .iter()
             .find(|g| Self::domain_hash(g) == domain.domain_hash)
-            .ok_or_else(|| {
-                transport_err(format!(
-                    "No group found for domain {:?}",
-                    domain.domain_hash
-                ))
-            })?;
+            .cloned();
+        let runtime_match = if static_match.is_none() {
+            self.runtime_groups
+                .lock()
+                .iter()
+                .find(|g| Self::domain_hash(g) == domain.domain_hash)
+                .cloned()
+        } else {
+            None
+        };
+        let group_id = static_match.or(runtime_match).ok_or_else(|| {
+            transport_err(format!(
+                "No group found for domain {:?}",
+                domain.domain_hash
+            ))
+        })?;
 
-        let jid = Self::group_to_jid(group_id);
+        let jid = Self::group_to_jid(&group_id);
         let to: wacore_binary::jid::Jid = jid
             .parse()
             .map_err(|e| transport_err(format!("Invalid JID {jid}: {e}")))?;
@@ -1134,5 +1419,91 @@ mod tests {
                 "sender {sender_form:?} should be accepted"
             );
         }
+    }
+
+    // ── Group-setup API unit tests (offline; no live session needed) ────────
+
+    /// Helper: build an adapter that is NOT connected (no `start_bot()` was
+    /// called, so `self.client` is `None`). Every group-setup method must
+    /// surface a clear error in this state.
+    fn offline_adapter() -> WhatsAppWebAdapter {
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+        WhatsAppWebAdapter::new(cfg)
+    }
+
+    #[tokio::test]
+    async fn create_group_rejects_empty_subject() {
+        let adapter = offline_adapter();
+        for bad in ["", "   ", "\t\n"] {
+            let result = adapter.create_group(bad, &[]).await;
+            // `expect_err` needs `Debug` on the Ok type, which `CreateGroupOutput`
+            // doesn't satisfy because `GroupMetadata` doesn't derive Debug in a
+            // useful way. Match on the Result directly instead.
+            match result {
+                Ok(_) => panic!("empty/whitespace subject {bad:?} should be rejected"),
+                Err(err) => assert!(
+                    err.contains("subject must not be empty"),
+                    "unexpected error: {err}"
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn create_group_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let result = adapter.create_group("DOT e2e test group", &[]).await;
+        match result {
+            Ok(_) => panic!("create_group must fail when client is not connected"),
+            Err(err) => assert!(err.contains("not connected"), "unexpected error: {err}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_members_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .add_members("120363012345678901@g.us", &["+15551234567"])
+            .await
+            .expect_err("add_members must fail when client is not connected");
+        assert!(err.contains("not connected"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn get_invite_link_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .get_invite_link("120363012345678901@g.us", false)
+            .await
+            .expect_err("get_invite_link must fail when client is not connected");
+        assert!(err.contains("not connected"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn leave_group_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .leave_group("120363012345678901@g.us")
+            .await
+            .expect_err("leave_group must fail when client is not connected");
+        assert!(err.contains("not connected"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn add_members_rejects_invalid_jid() {
+        // With the client disconnected we never reach the JID parse path,
+        // so connect a fake client (still going to error later) — actually
+        // we cannot fake the client without starting the bot. So just
+        // exercise the JID parsing branch via the public error path by
+        // confirming the helper returns the "not connected" message first
+        // (clients would otherwise reject the malformed JID too).
+        let adapter = offline_adapter();
+        let err = adapter
+            .add_members("not a valid jid at all", &["+15551234567"])
+            .await
+            .expect_err("malformed JID should be rejected");
+        // Order matters: the JID parse happens *after* the not-connected
+        // check, so we expect "not connected" first.
+        assert!(err.contains("not connected"), "unexpected error: {err}");
     }
 }

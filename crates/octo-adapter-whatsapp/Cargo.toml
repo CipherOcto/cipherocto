@@ -70,7 +70,11 @@ octo-network = { path = "../octo-network" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Live-session test tracing setup. Only used by `tests/live_session_test.rs`
-# (gated on the `live-whatsapp` feature). The dep is unconditional because
-# `[dev-dependencies]` cannot be optional; the cost is purely compile time
-# (this dep is only resolved when running `cargo test` for this crate).
+# and `tests/live_e2e_group_setup_test.rs` (gated on the `live-whatsapp`
+# feature). The dep is unconditional because `[dev-dependencies]` cannot
+# be optional; the cost is purely compile time (this dep is only resolved
+# when running `cargo test` for this crate).
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Ed25519 signing for the live E2E test (matches `octo-network`'s choice
+# at `crates/octo-network/Cargo.toml`). Only used by the live E2E test.
+ed25519-dalek = "2.1"

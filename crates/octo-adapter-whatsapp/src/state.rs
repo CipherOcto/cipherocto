@@ -122,7 +122,10 @@ mod tests {
         // Mission 0850p-a-replaced-state: distinct exit code from
         // LoggedOut (2).
         assert_eq!(BotState::Replaced.exit_code(), 8);
-        assert_ne!(BotState::Replaced.exit_code(), BotState::LoggedOut.exit_code());
+        assert_ne!(
+            BotState::Replaced.exit_code(),
+            BotState::LoggedOut.exit_code()
+        );
     }
 
     #[test]
@@ -142,7 +145,10 @@ mod tests {
 
     #[test]
     fn logged_out_cause_maps_to_logged_out_state() {
-        assert_eq!(LoggedOutCause::LoggedOut.to_bot_state(), BotState::LoggedOut);
+        assert_eq!(
+            LoggedOutCause::LoggedOut.to_bot_state(),
+            BotState::LoggedOut
+        );
     }
 
     #[test]

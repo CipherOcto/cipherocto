@@ -93,6 +93,10 @@ fn live_config() -> WhatsAppConfig {
         // tests; we only assert on the connected identity and the
         // PlatformAdapter contract.
         groups: vec![],
+        // No per-group allowlist for these tests; legacy "anyone in the
+        // group can inject" semantics apply (see RFC-0850p-a v1.15
+        // §Adversary Analysis D-WA-10 and the accept_message contract).
+        sender_allowlist: std::collections::BTreeMap::new(),
     }
 }
 

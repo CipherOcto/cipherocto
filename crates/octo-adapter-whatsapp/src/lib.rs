@@ -17,9 +17,14 @@ pub mod adapter;
 pub mod state;
 pub mod store;
 
-pub use adapter::{WhatsAppConfig, WhatsAppWebAdapter};
+pub use adapter::{CreateGroupOutput, WhatsAppConfig, WhatsAppWebAdapter};
 pub use state::{BotState, LoggedOutCause};
 pub use store::StoolapStore;
+// Re-export the whatsapp-rust types that the e2e group-setup test references
+// directly. Keeping the re-exports centralised here means callers (and the
+// test) don't need a direct `whatsapp-rust` dependency on their dev-deps
+// just to spell out a `CreateGroupOutput.metadata.participants: Vec<GroupParticipant>`.
+pub use whatsapp_rust::{GroupMetadata, GroupParticipant, ParticipantChangeResponse};
 
 // ── Plugin ABI ─────────────────────────────────────────────────────
 

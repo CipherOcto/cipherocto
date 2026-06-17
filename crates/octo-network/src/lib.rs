@@ -27,6 +27,8 @@ pub mod dgp;
 pub mod dps;
 /// Gateway Discovery Protocol — RFC-0851.
 pub mod gdp;
+/// Mission 0850p-c-libp2p-propagation: BIND envelope gossip.
+pub mod gossip;
 /// Overlay Cryptography (OCrypt) module — RFC-0853.
 pub mod ocrypt;
 

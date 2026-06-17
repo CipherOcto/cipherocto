@@ -27,8 +27,8 @@ Implement the transport group decommission flow elaborated in RFC-0850p-f. The b
 
 ### Phase 1: Envelope types (already in RFC-0850p-d §F)
 
-- [x] `UnbindAllEnvelope` (subtype 0x15) — defined in RFC-0850p-d, implemented in mission `0850p-d-dc-initiated-group-creation.md`
-- [x] `UnbindAllAckEnvelope` (subtype 0x16) — defined in RFC-0850p-d, implemented in mission `0850p-d-dc-initiated-group-creation.md`
+- [x] `UnbindAllEnvelope` (subtype `b"UALL"` per RFC-0850p-d §"Envelope Types Added"; R16 R5-M1 fix — was subtype 0x15 in v1.0; the canonical format is the 4-byte ASCII tag per RFC-0850p-c §A) — defined in RFC-0850p-d, implemented in mission `0850p-d-dc-initiated-group-creation.md`
+- [x] `UnbindAllAckEnvelope` (subtype `b"UAAC"` per RFC-0850p-d §"Envelope Types Added"; R16 R5-M1 fix — was subtype 0x16 in v1.0) — defined in RFC-0850p-d, implemented in mission `0850p-d-dc-initiated-group-creation.md`
 
 ### Phase 2: Lifecycle (pending RFC elaboration)
 

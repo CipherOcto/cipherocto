@@ -39,6 +39,11 @@ pub struct BindEnvelope {
     /// (backward-compatible default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub participant_filter: Option<Vec<String>>,
+    /// Mission 0855p-c-slash-small-groups: group size at binding
+    /// time. Used to decide slash vs UNBIND on member misbehavior.
+    /// Groups with < 4 members use slash (preserves small groups).
+    #[serde(default)]
+    pub member_count_at_bind: u16,
 }
 
 impl BindEnvelope {
@@ -54,6 +59,7 @@ impl BindEnvelope {
             group_id: group_id.into(),
             signature: Vec::new(),
             participant_filter: None,
+            member_count_at_bind: 0,
         }
     }
 
@@ -85,6 +91,11 @@ impl BindEnvelope {
                 }
             }
         }
+        // member_count_at_bind is signed as part of the envelope
+        // (mission 0855p-c-slash-small-groups) so a DC cannot
+        // misreport the group size to manipulate the slash vs
+        // UNBIND decision.
+        out.extend_from_slice(&self.member_count_at_bind.to_le_bytes());
         out
     }
 

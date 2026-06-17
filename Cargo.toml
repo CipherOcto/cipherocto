@@ -67,3 +67,5 @@ parking_lot = "0.12"
 rand = "0.9"
 # Gzip compression (mission 0850p-a-session-export)
 flate2 = "1"
+# Bitflags (mission 0855p-c-sub-admins SubAdminAuthority)
+bitflags = "2"

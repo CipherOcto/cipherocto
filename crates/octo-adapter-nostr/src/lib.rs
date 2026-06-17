@@ -92,8 +92,20 @@ pub struct NostrConfig {
     /// Ed25519 private key (hex-encoded, 32 bytes).
     pub private_key: String,
     /// Tag used to filter CipherOcto DOT events. Default: "cipherocto-dot".
+    ///
+    /// This is the **default** channel tag used when a domain has no override
+    /// in `domain_tags`. To run multiple "groups" on a single Nostr identity,
+    /// add per-domain overrides in `domain_tags`; each entry is a
+    /// `domain_hash -> channel_tag` mapping computed by `domain_hash_from_id`.
     #[serde(default = "default_channel_tag")]
     pub channel_tag: String,
+    /// Per-domain channel tag overrides. Keyed by hex-encoded `domain_hash`
+    /// (32-byte BLAKE3 output of `domain_hash_from_id`). R18: lets a single
+    /// `NostrAdapter` serve multiple "groups" by using different `#t` tags
+    /// per domain, instead of forcing the user to instantiate one adapter
+    /// per group.
+    #[serde(default)]
+    pub domain_tags: std::collections::BTreeMap<String, String>,
 }
 
 fn default_channel_tag() -> String {
@@ -204,6 +216,35 @@ impl NostrAdapter {
     pub fn domain_hash(relay_url: &str, channel_tag: &str) -> [u8; 32] {
         let normalized = relay_url.trim().to_lowercase();
         *blake3::hash(format!("nostr:{normalized}:{channel_tag}").as_bytes()).as_bytes()
+    }
+
+    /// Inverse of `domain_hash`: parse a `relay_url:channel_tag` platform_id
+    /// and compute the hash. Used by `PlatformAdapter::domain_id` so that
+    /// callers can construct a `BroadcastDomainId` from a single colon-joined
+    /// string and have it match the canonical `domain_hash`. The relay URL
+    /// is case- and whitespace-normalized; the channel tag is preserved as-is.
+    ///
+    /// We split on the **last** colon (via `rsplit_once`) so that relay URLs
+    /// containing `://` (e.g. `wss://relay.damus.io:tag`) parse correctly:
+    /// the first colon is part of the URL scheme, the last colon is the
+    /// separator between URL and channel tag.
+    pub fn domain_hash_from_id(platform_id: &str) -> [u8; 32] {
+        let (relay, tag) = match platform_id.rsplit_once(':') {
+            Some((r, t)) => (r, t),
+            None => (platform_id, ""),
+        };
+        Self::domain_hash(relay, tag)
+    }
+
+    /// Look up the channel tag for a domain. Falls back to the default
+    /// `channel_tag` in config if the domain has no override.
+    fn channel_tag_for_domain(&self, domain: &BroadcastDomainId) -> String {
+        let key = hex_encode(&domain.domain_hash);
+        self.config
+            .domain_tags
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| self.config.channel_tag.clone())
     }
 
     pub fn public_key_hex(&self) -> String {
@@ -333,7 +374,7 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 impl PlatformAdapter for NostrAdapter {
     async fn send_envelope(
         &self,
-        _domain: &BroadcastDomainId,
+        domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
@@ -346,12 +387,18 @@ impl PlatformAdapter for NostrAdapter {
             )));
         }
 
+        // R18 fix: look up the per-domain channel tag. If the caller has
+        // registered an override in `config.domain_tags`, use it; otherwise
+        // fall back to the default `config.channel_tag`. Previously this
+        // method ignored the domain entirely.
+        let channel_tag = self.channel_tag_for_domain(domain);
+
         // Encode as base64 for Nostr event content
         let content = base64_encode(&wire_bytes);
 
         // Build tags
         let tags = vec![
-            vec!["t".into(), self.config.channel_tag.clone()],
+            vec!["t".into(), channel_tag],
             vec!["network".into(), "cipherocto".into()],
         ];
 
@@ -412,7 +459,16 @@ impl PlatformAdapter for NostrAdapter {
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
-        BroadcastDomainId::new(PlatformType::Nostr, platform_id)
+        // The platform_id MUST be in `relay_url:channel_tag` form to match
+        // the canonical hash used by `send_envelope`'s per-domain lookup.
+        // We parse it here and delegate to `domain_hash` so the two methods
+        // always agree (R18 fix; previously the call to
+        // `BroadcastDomainId::new` would hash just the platform_id, which
+        // mismatched the static `domain_hash` format).
+        BroadcastDomainId {
+            platform_type: PlatformType::Nostr as u16,
+            domain_hash: Self::domain_hash_from_id(platform_id),
+        }
     }
 
     fn platform_type(&self) -> PlatformType {
@@ -606,6 +662,33 @@ mod tests {
         assert_ne!(h1, h2);
     }
 
+    // R18 fix: the trait-method `domain_id(platform_id)` must produce the
+    // same hash as the static `domain_hash(relay_url, channel_tag)` so
+    // that `send_envelope` can look up the per-domain channel tag. The
+    // platform_id is the colon-joined form `relay_url:channel_tag`.
+    #[test]
+    fn test_domain_id_matches_domain_hash() {
+        let from_id = NostrAdapter::domain_hash_from_id("wss://relay.damus.io:cipherocto-dot");
+        let from_args = NostrAdapter::domain_hash("wss://relay.damus.io", "cipherocto-dot");
+        assert_eq!(from_id, from_args);
+    }
+
+    #[test]
+    fn test_domain_id_normalizes_relay_case_and_whitespace() {
+        let h1 = NostrAdapter::domain_hash_from_id("  WSS://Relay.Damus.IO  :tag");
+        let h2 = NostrAdapter::domain_hash("wss://relay.damus.io", "tag");
+        assert_eq!(h1, h2);
+    }
+
+    // R18: relay URLs contain `://` which would confuse a `split_once(':')`
+    // parser; we use `rsplit_once(':')` so the URL is preserved intact.
+    #[test]
+    fn test_domain_id_handles_relay_url_with_scheme_colon() {
+        let h1 = NostrAdapter::domain_hash_from_id("wss://relay.damus.io:cipherocto-dot");
+        let h2 = NostrAdapter::domain_hash("wss://relay.damus.io", "cipherocto-dot");
+        assert_eq!(h1, h2);
+    }
+
     #[test]
     fn test_platform_type() {
         assert_eq!(NostrAdapter::PLATFORM_TYPE, 0x0004);
@@ -637,6 +720,35 @@ mod tests {
         });
         let config: NostrConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.channel_tag, "cipherocto-dot");
+    }
+
+    #[test]
+    fn test_config_default_domain_tags_is_empty() {
+        // R18: domain_tags defaults to an empty map.
+        let json = serde_json::json!({
+            "relays": ["wss://relay.damus.io"],
+            "private_key": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+        });
+        let config: NostrConfig = serde_json::from_value(json).unwrap();
+        assert!(config.domain_tags.is_empty());
+    }
+
+    #[test]
+    fn test_config_parses_domain_tags() {
+        // R18: domain_tags is deserialized from JSON.
+        let json = serde_json::json!({
+            "relays": ["wss://relay.damus.io"],
+            "private_key": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+            "channel_tag": "default-tag",
+            "domain_tags": {
+                "deadbeef": "override-tag"
+            }
+        });
+        let config: NostrConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            config.domain_tags.get("deadbeef"),
+            Some(&"override-tag".to_string())
+        );
     }
 
     #[test]

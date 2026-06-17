@@ -4,26 +4,39 @@
 //! substrates for decentralized consensus.
 
 pub mod adapters;
+pub mod binding;
 pub mod config;
 pub mod domain;
 pub mod envelope;
 pub mod error;
 pub mod fragment;
 pub mod gateway;
+pub mod group_registry;
 pub mod pce;
 pub mod replay;
 pub mod route;
 pub mod sequence;
 pub mod transport;
+pub mod witness;
 
 pub use adapters::{CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage};
+pub use binding::{
+    BindAck, BindEnvelope, BindingError, GroupBinding, GroupState, PlatformLossEnvelope,
+    RebindEnvelope, UnbindAuthority, UnbindEnvelope, ENVELOPE_TYPE as BINDING_ENVELOPE_TYPE,
+    ENVELOPE_VERSION as BINDING_ENVELOPE_VERSION,
+};
 pub use config::DotConfig;
 pub use domain::{BroadcastDomainId, PlatformType};
 pub use envelope::{DeterministicEnvelope, MessageType};
 pub use error::{DotError, PlatformAdapterError};
 pub use gateway::{GatewayCapacity, GatewayClass, GatewayIdentity, GatewayRoleFlags};
+pub use group_registry::{
+    GroupRegistry, UnboundQuarantineEntry, UnboundQuarantineKey, DEFAULT_MAX_REJOIN_ATTEMPTS,
+    REJOIN_GRANT_TIMEOUT,
+};
 pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;
+pub use witness::{BINDHook, NonceReplayTable, ValidationOutcome, WitnessContext};
 
 use tokio::sync::RwLock;
 

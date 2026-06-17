@@ -132,6 +132,12 @@ pub fn elect(
 
 /// Integer square root (floor). Uses Newton's method on u128.
 /// Result fits in u64 for inputs up to 2^126.
+///
+/// Note: callers should only pass values that fit in u64 (e.g.,
+/// a `u64` stake cast to `u128`). The function panics on
+/// `n + 1` overflow when `n == u128::MAX`; this is acceptable
+/// since the public API takes a u64 stake and the maximum
+/// input is therefore `u64::MAX as u128`.
 fn isqrt(n: u128) -> u128 {
     if n == 0 {
         return 0;
@@ -239,5 +245,30 @@ mod tests {
         assert_eq!(isqrt(100), 10);
         assert_eq!(isqrt(99), 9);
         assert_eq!(isqrt(1000000), 1000);
+    }
+
+    #[test]
+    fn isqrt_u64_max_no_overflow() {
+        // isqrt(u64::MAX) must not panic. Property: r*r <= n < (r+1)^2.
+        let n = u64::MAX as u128;
+        let r = isqrt(n);
+        assert!(r * r <= n);
+        // The exact value: sqrt(2^64 - 1) ≈ 2^32.
+        assert_eq!(r, (1u128 << 32) - 1);
+    }
+
+    #[test]
+    fn isqrt_property_square_and_plus_one() {
+        // For any k, isqrt(k*k) = k and isqrt(k*k+1) = k
+        // (or = k+1 if k*k+1 is itself a perfect square,
+        // which only happens for k=0).
+        for k in [0u128, 1, 2, 3, 7, 10, 100, 1000, 1 << 32, 1 << 60] {
+            let sq = k * k;
+            assert_eq!(isqrt(sq), k, "isqrt({sq}) should be {k}");
+            // k*k + 1: not a perfect square for k > 0.
+            if k > 0 {
+                assert_eq!(isqrt(sq + 1), k, "isqrt({}) should be {k}", sq + 1);
+            }
+        }
     }
 }

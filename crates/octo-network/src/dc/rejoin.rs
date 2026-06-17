@@ -143,6 +143,18 @@ mod tests {
     }
 
     #[test]
+    fn cooldown_at_exact_boundary_allowed() {
+        // At exactly REJOIN_COOLDOWN_EPOCHS (1000) after the
+        // last request, a new request is allowed.
+        let mut cd = RejoinCooldown::new();
+        cd.check_and_record("peer-1", 1000).unwrap();
+        // 999 epochs later: still rate-limited (< 1000).
+        assert!(cd.check_and_record("peer-1", 1999).is_err());
+        // 1000 epochs later (exactly at boundary): allowed.
+        assert!(cd.check_and_record("peer-1", 2000).is_ok());
+    }
+
+    #[test]
     fn ticket_validity() {
         let t = RejoinTicket {
             domain_id: "d1".into(),

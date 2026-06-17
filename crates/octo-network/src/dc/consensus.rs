@@ -65,6 +65,10 @@ pub enum ConsensusOutcome {
     Committed,
     Aborted { reason: String },
     TimedOut,
+    /// The consensus is still in progress (Idle, Preparing, or
+    /// Committing). Callers should check the coordinator's
+    /// `state` first to disambiguate.
+    InProgress,
 }
 
 /// A consensus envelope (PREPARE / COMMIT / ABORT).
@@ -157,6 +161,11 @@ impl DcConsensusCoordinator {
         if self.state != ConsensusState::Preparing {
             return self.state;
         }
+        // Guard: 0 participants is a construction error. Refuse
+        // to commit (would be Unilateral + is_met(0,0) = true).
+        if self.participants.is_empty() {
+            return self.abort("no participants configured".to_string());
+        }
         if !self.participants.iter().any(|p| p == dc_pubkey) {
             return self.abort(format!("unknown dc {dc_pubkey}"));
         }
@@ -181,6 +190,11 @@ impl DcConsensusCoordinator {
     pub fn check_deadline(&mut self, current_epoch: u64) -> ConsensusState {
         if self.state != ConsensusState::Preparing {
             return self.state;
+        }
+        // Guard: 0 participants is a construction error. Refuse
+        // to commit. (See record_vote for the parallel guard.)
+        if self.participants.is_empty() {
+            return self.abort("no participants configured".to_string());
         }
         if current_epoch < self.deadline_epoch {
             return self.state;
@@ -230,9 +244,9 @@ impl DcConsensusCoordinator {
                 reason: self.abort_reason.clone().unwrap_or_else(|| "abort".into()),
             },
             ConsensusState::TimedOut => ConsensusOutcome::TimedOut,
-            _ => ConsensusOutcome::Aborted {
-                reason: "in progress".into(),
-            },
+            ConsensusState::Idle
+            | ConsensusState::Preparing
+            | ConsensusState::Committing => ConsensusOutcome::InProgress,
         }
     }
 }
@@ -407,5 +421,50 @@ mod tests {
     #[test]
     fn topic_format() {
         assert_eq!(consensus_topic("d1"), "/dot/dc-consensus/d1");
+    }
+
+    #[test]
+    fn n0_participants_aborts() {
+        // 0 participants is a construction error; coordinator
+        // must abort rather than commit with 0 votes.
+        let mut c = DcConsensusCoordinator::new(
+            "d1",
+            ConsensusAction::Rebind,
+            empty_binds(),
+            vec![],
+        );
+        // record_vote aborts because participants is empty.
+        let state = c.record_vote("dc-1", ConsensusVote::Prepared);
+        assert_eq!(state, ConsensusState::Aborted);
+        match c.outcome() {
+            ConsensusOutcome::Aborted { reason } => {
+                assert!(reason.contains("no participants"));
+            }
+            other => panic!("expected Aborted, got {other:?}"),
+        }
+
+        // check_deadline also aborts (with fresh coordinator).
+        let mut c2 = DcConsensusCoordinator::new(
+            "d1",
+            ConsensusAction::Rebind,
+            empty_binds(),
+            vec![],
+        );
+        let state = c2.check_deadline(c2.deadline_epoch + 1);
+        assert_eq!(state, ConsensusState::Aborted);
+    }
+
+    #[test]
+    fn outcome_in_progress_for_preparing_state() {
+        // outcome() must report InProgress (not Aborted) for
+        // the Preparing state.
+        let c = DcConsensusCoordinator::new(
+            "d1",
+            ConsensusAction::Rebind,
+            empty_binds(),
+            vec!["dc-1".into()],
+        );
+        assert_eq!(c.state, ConsensusState::Preparing);
+        assert_eq!(c.outcome(), ConsensusOutcome::InProgress);
     }
 }

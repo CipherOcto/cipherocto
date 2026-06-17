@@ -35,6 +35,46 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 
+/// Maximum length of an `account_id`. Phone numbers are at most
+/// 15 digits (E.164); we cap at 64 to allow prefixed formats
+/// (e.g., `wa-` + 15 digits).
+pub const MAX_ACCOUNT_ID_LEN: usize = 64;
+
+/// Validate an `account_id` string. Rejects empty strings,
+/// path-traversal sequences (`..`), path separators (`/` and
+/// `\`), NUL bytes, and oversize values.
+///
+/// This guards against malicious input that would let a
+/// caller of `import_bundle` / `use_account` write files
+/// outside the base directory.
+pub fn validate_account_id(account_id: &str) -> Result<()> {
+    if account_id.is_empty() {
+        return Err(CoreError::InvalidSessionPath {
+            path: PathBuf::from(account_id),
+            reason: "account_id is empty".to_string(),
+        });
+    }
+    if account_id.len() > MAX_ACCOUNT_ID_LEN {
+        return Err(CoreError::InvalidSessionPath {
+            path: PathBuf::from(account_id),
+            reason: format!("account_id too long (max {MAX_ACCOUNT_ID_LEN})"),
+        });
+    }
+    if account_id == ".." || account_id == "." {
+        return Err(CoreError::InvalidSessionPath {
+            path: PathBuf::from(account_id),
+            reason: "account_id is a relative-path component".to_string(),
+        });
+    }
+    if account_id.contains('/') || account_id.contains('\\') || account_id.contains('\0') {
+        return Err(CoreError::InvalidSessionPath {
+            path: PathBuf::from(account_id),
+            reason: "account_id contains a path separator or NUL byte".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Per-account entry in the multi-account index.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountEntry {
@@ -129,6 +169,7 @@ impl MultiAccountStore {
         session_path: &Path,
         config_path: &Path,
     ) -> Result<AccountEntry> {
+        validate_account_id(account_id)?;
         if !session_path.exists() {
             return Err(CoreError::InvalidSessionPath {
                 path: session_path.to_path_buf(),
@@ -158,6 +199,7 @@ impl MultiAccountStore {
     /// is read by `whoami` and `adapter start` to pick the
     /// default session.
     pub fn use_account(&mut self, account_id: &str) -> Result<AccountEntry> {
+        validate_account_id(account_id)?;
         let entry = self
             .index
             .accounts
@@ -327,6 +369,7 @@ impl MultiAccountStore {
     /// account in the index. The session DB and config are written
     /// to the index's base directory.
     pub fn import_bundle(&mut self, bundle: &Path, account_id: &str) -> Result<AccountEntry> {
+        validate_account_id(account_id)?;
         let bytes = fs::read(bundle).map_err(|e| CoreError::Read {
             path: bundle.to_path_buf(),
             source: e,
@@ -721,5 +764,48 @@ mod tests {
         assert_eq!(store.list().len(), 1);
         store.remove("1234").unwrap();
         assert_eq!(store.list().len(), 0);
+    }
+
+    #[test]
+    fn validate_account_id_accepts_normal() {
+        assert!(validate_account_id("15551234567").is_ok());
+        assert!(validate_account_id("wa-15551234567").is_ok());
+        assert!(validate_account_id("a").is_ok());
+    }
+
+    #[test]
+    fn validate_account_id_rejects_empty() {
+        assert!(validate_account_id("").is_err());
+    }
+
+    #[test]
+    fn validate_account_id_rejects_path_traversal() {
+        assert!(validate_account_id("..").is_err());
+        assert!(validate_account_id(".").is_err());
+        assert!(validate_account_id("../etc/passwd").is_err());
+        assert!(validate_account_id("foo/bar").is_err());
+        assert!(validate_account_id("foo\\bar").is_err());
+        assert!(validate_account_id("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn validate_account_id_rejects_oversize() {
+        let long = "a".repeat(MAX_ACCOUNT_ID_LEN + 1);
+        assert!(validate_account_id(&long).is_err());
+    }
+
+    #[test]
+    fn import_rejects_path_traversal_account_id() {
+        let dir = tempdir();
+        let index_path = dir.join("index.json");
+        let session_path = dir.join("1234.session.db");
+        let config_path = dir.join("1234.config.json");
+        fs::write(&session_path, b"x").unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+
+        let mut store = MultiAccountStore::open(&index_path).unwrap();
+        assert!(store.import("../evil", &session_path, &config_path).is_err());
+        assert!(store.import("..", &session_path, &config_path).is_err());
+        assert!(store.import("foo/bar", &session_path, &config_path).is_err());
     }
 }

@@ -220,6 +220,18 @@ mod tests {
     }
 
     #[test]
+    fn verify_attest_at_max_age_boundary() {
+        // age = MAX_ATTEST_AGE_EPOCHS (100) is still fresh.
+        // age = MAX + 1 is stale.
+        let a = fresh_attest(100);
+        // age = 100 (exact MAX): fresh.
+        assert!(verify_attest(&a, &[0xAA], 200).is_ok());
+        // age = 101 (one over): stale.
+        let result = verify_attest(&a, &[0xAA], 201);
+        assert!(matches!(result, Err(PlatformAdminAttestError::Stale { .. })));
+    }
+
+    #[test]
     fn challenge_response_deadline() {
         let c = AttestChallenge::new("d1", vec![0xAA], "stale proof", vec![], 1000);
         assert_eq!(c.response_deadline_epoch, 1010);

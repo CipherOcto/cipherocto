@@ -114,6 +114,8 @@ pub enum DcSlashError {
     EmptyDcPubkey,
     /// The slash reason is not 0x000F.
     InvalidSlashReason(u16),
+    /// The slash_reason_data has an unrecognized sub-code.
+    InvalidSlashReasonData(u32),
 }
 
 /// The outcome of a DC slash.
@@ -137,9 +139,11 @@ pub enum DcFinalState {
 }
 
 /// Compute the cool-down for a DC based on its slash count.
-/// `cool_down = 2^slash_count` epochs.
+/// `cool_down = 2^slash_count` epochs. At `slash_count >= 64`
+/// the result would overflow u64, so we return `u64::MAX`
+/// (effectively permanent).
 pub fn cool_down_epochs(slash_count: u32) -> u64 {
-    if slash_count >= 63 {
+    if slash_count >= 64 {
         return u64::MAX; // effectively permanent
     }
     1u64 << slash_count
@@ -156,6 +160,16 @@ pub fn process_dc_slash(
     }
     if envelope.slash_reason != DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR {
         return Err(DcSlashError::InvalidSlashReason(envelope.slash_reason));
+    }
+    // Reject envelopes with an unrecognized sub-code. Without
+    // this check, an attacker who controls a 2/3 witness quorum
+    // could submit slash_reason_data=0x0099 (no matching
+    // DcMisbehavior variant) and the operator would have no
+    // way to know what the slash was for.
+    if envelope.misbehavior().is_none() {
+        return Err(DcSlashError::InvalidSlashReasonData(
+            envelope.slash_reason_data,
+        ));
     }
     // 2/3 of total witnesses required.
     let required = (total_witnesses * 2).div_ceil(3);
@@ -289,6 +303,26 @@ mod tests {
     }
 
     #[test]
+    fn invalid_slash_reason_data_rejected() {
+        // slash_reason is correct (0x000F) but slash_reason_data
+        // has an unrecognized sub-code. Must be rejected, not
+        // silently processed.
+        let env = DcSlashEnvelope {
+            dc_pubkey: vec![0xAA],
+            slash_reason: 0x000F,
+            slash_reason_data: 0x0099, // unknown sub-code
+            domains: vec!["d1".into()],
+            witness_signatures: vec![vec![1], vec![2]], // 2 of 3 witnesses
+            signed_at_epoch: 1000,
+        };
+        let result = process_dc_slash(&env, 3, 0);
+        assert_eq!(
+            result,
+            Err(DcSlashError::InvalidSlashReasonData(0x0099))
+        );
+    }
+
+    #[test]
     fn cool_down_doubles() {
         assert_eq!(cool_down_epochs(0), 1);
         assert_eq!(cool_down_epochs(1), 2);
@@ -299,8 +333,17 @@ mod tests {
     }
 
     #[test]
+    fn cool_down_at_63_is_2_pow_63() {
+        // Largest slash_count that does not overflow.
+        // 1u64 << 63 = 0x8000_0000_0000_0000.
+        assert_eq!(cool_down_epochs(63), 1u64 << 63);
+    }
+
+    #[test]
     fn cool_down_overflow_safe() {
-        assert_eq!(cool_down_epochs(63), u64::MAX);
+        // 1u64 << 64 would overflow; must saturate.
+        assert_eq!(cool_down_epochs(64), u64::MAX);
+        assert_eq!(cool_down_epochs(u32::MAX), u64::MAX);
     }
 
     #[test]

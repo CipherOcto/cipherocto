@@ -53,10 +53,20 @@ impl BindEnvelope {
         platform: impl Into<String>,
         group_id: impl Into<String>,
     ) -> Self {
+        let domain_id = domain_id.into();
+        let platform = platform.into();
+        let group_id = group_id.into();
+        // Reject empty fields. An empty domain_id would
+        // create the degenerate topic `/dot/bind/`; an
+        // empty platform or group_id would produce a BIND
+        // that names nothing.
+        assert!(!domain_id.is_empty(), "domain_id must not be empty");
+        assert!(!platform.is_empty(), "platform must not be empty");
+        assert!(!group_id.is_empty(), "group_id must not be empty");
         Self {
-            domain_id: domain_id.into(),
-            platform: platform.into(),
-            group_id: group_id.into(),
+            domain_id,
+            platform,
+            group_id,
             signature: Vec::new(),
             participant_filter: None,
             member_count_at_bind: 0,
@@ -179,6 +189,24 @@ pub enum RebindAbortReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "domain_id must not be empty")]
+    fn new_rejects_empty_domain_id() {
+        let _ = BindEnvelope::new("", "whatsapp", "g1");
+    }
+
+    #[test]
+    #[should_panic(expected = "platform must not be empty")]
+    fn new_rejects_empty_platform() {
+        let _ = BindEnvelope::new("d1", "", "g1");
+    }
+
+    #[test]
+    #[should_panic(expected = "group_id must not be empty")]
+    fn new_rejects_empty_group_id() {
+        let _ = BindEnvelope::new("d1", "whatsapp", "");
+    }
 
     #[test]
     fn canonical_bytes_includes_filter() {

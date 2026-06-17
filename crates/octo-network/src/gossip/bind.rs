@@ -185,4 +185,50 @@ mod tests {
         state.mark_delivered();
         assert_eq!(state.delivered_count(), 3);
     }
+
+    #[test]
+    fn fifo_eviction_at_max_received_binds() {
+        // After MAX_RECEIVED_BINDS inserts, the oldest must be
+        // evicted to keep the cache bounded.
+        let state = BindGossipState::new();
+        let total = MAX_RECEIVED_BINDS + 10;
+        for i in 0..total {
+            state.record_received(BindEnvelope::new(
+                "d1",
+                "whatsapp",
+                &format!("g{i}"),
+            ));
+        }
+        // received_count must reflect ALL inserts (it's a
+        // monotonic statistic), not the cache size.
+        assert_eq!(state.received_count() as usize, total);
+        // The cache itself is bounded.
+        let all = state.received_for("d1");
+        assert_eq!(all.len(), MAX_RECEIVED_BINDS);
+        // The first 10 entries (g0..g9) must have been evicted.
+        // The most recent (g_total-1) must still be present.
+        let last = &all[MAX_RECEIVED_BINDS - 1];
+        assert_eq!(last.group_id, format!("g{}", total - 1));
+        // No entry from the first 10 remains.
+        let ids: Vec<&str> = all.iter().map(|e| e.group_id.as_str()).collect();
+        for i in 0..10 {
+            assert!(
+                !ids.contains(&format!("g{i}").as_str()),
+                "g{i} should have been evicted",
+            );
+        }
+    }
+
+    #[test]
+    fn eviction_does_not_evict_duplicates() {
+        // Inserting the same envelope MAX_RECEIVED_BINDS+1 times
+        // must not evict anything (the dedup check at line ~90
+        // returns early before the eviction block).
+        let state = BindGossipState::new();
+        let env = BindEnvelope::new("d1", "whatsapp", "g1");
+        for _ in 0..(MAX_RECEIVED_BINDS + 1) {
+            state.record_received(env.clone());
+        }
+        assert_eq!(state.received_for("d1").len(), 1);
+    }
 }

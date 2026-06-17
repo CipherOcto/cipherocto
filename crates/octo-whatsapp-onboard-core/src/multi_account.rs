@@ -250,6 +250,7 @@ impl MultiAccountStore {
     /// session DB or config file (the operator can do that
     /// manually with `session remove`).
     pub fn remove(&mut self, account_id: &str) -> Result<()> {
+        validate_account_id(account_id)?;
         self.index.accounts.remove(account_id);
         self.save()
     }
@@ -267,6 +268,7 @@ impl MultiAccountStore {
     /// compression. The `manifest.json` includes a `sha256` of each
     /// file for integrity verification on import.
     pub fn export(&self, account_id: &str, out: &Path) -> Result<()> {
+        validate_account_id(account_id)?;
         let entry = self
             .index
             .accounts
@@ -807,5 +809,40 @@ mod tests {
         assert!(store.import("../evil", &session_path, &config_path).is_err());
         assert!(store.import("..", &session_path, &config_path).is_err());
         assert!(store.import("foo/bar", &session_path, &config_path).is_err());
+    }
+
+    #[test]
+    fn remove_rejects_path_traversal_account_id() {
+        let dir = tempdir();
+        let index_path = dir.join("index.json");
+        let session_path = dir.join("1234.session.db");
+        let config_path = dir.join("1234.config.json");
+        fs::write(&session_path, b"x").unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+
+        let mut store = MultiAccountStore::open(&index_path).unwrap();
+        store.import("1234", &session_path, &config_path).unwrap();
+        // Path-traversal account_ids must be rejected.
+        assert!(store.remove("../evil").is_err());
+        assert!(store.remove("..").is_err());
+        assert!(store.remove("foo/bar").is_err());
+        // And the index must still contain the original account.
+        assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn export_rejects_path_traversal_account_id() {
+        let dir = tempdir();
+        let index_path = dir.join("index.json");
+        let session_path = dir.join("1234.session.db");
+        let config_path = dir.join("1234.config.json");
+        fs::write(&session_path, b"x").unwrap();
+        fs::write(&config_path, b"{}").unwrap();
+
+        let mut store = MultiAccountStore::open(&index_path).unwrap();
+        store.import("1234", &session_path, &config_path).unwrap();
+        // Path-traversal account_ids must be rejected by export.
+        assert!(store.export("../evil", &dir.join("out.tar.gz")).is_err());
+        assert!(store.export("..", &dir.join("out.tar.gz")).is_err());
     }
 }

@@ -107,6 +107,12 @@ pub enum GroupState {
     /// (RFC-0850p-d) The group is bound; at least one `InviteEnvelope`
     /// has been emitted and is awaiting acknowledgement.
     Inviting = 0x05,
+    /// (RFC-0850p-f) The DC has broadcast an `UnbindAllEnvelope`; the
+    /// group is awaiting ACK from all members.
+    UnboundAllPending = 0x06,
+    /// (RFC-0850p-f) All members have left the platform; the group is
+    /// fully decommissioned.
+    UnboundAllDone = 0x07,
 }
 
 impl GroupState {
@@ -119,6 +125,8 @@ impl GroupState {
             0x03 => Some(Self::UnboundQuarantined),
             0x04 => Some(Self::Creating),
             0x05 => Some(Self::Inviting),
+            0x06 => Some(Self::UnboundAllPending),
+            0x07 => Some(Self::UnboundAllDone),
             _ => None,
         }
     }

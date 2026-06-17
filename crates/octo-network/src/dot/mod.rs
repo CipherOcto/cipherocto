@@ -8,6 +8,7 @@ pub mod binding;
 pub mod config;
 pub mod dc;
 pub mod dc_envelopes;
+pub mod decommission;
 pub mod domain;
 pub mod envelope;
 pub mod error;
@@ -35,6 +36,7 @@ pub use dc_envelopes::{
     CreateGroupAckEnvelope, CreateGroupDoneEnvelope, CreateGroupEnvelope, CreateGroupFailEnvelope,
     InviteEnvelope, UnbindAllAckEnvelope, UnbindAllEnvelope, UnbindReason,
 };
+pub use decommission::{AuditEntry, AuditLog, UnbindAllAuditEnvelope, UnbindAllDoneEnvelope};
 pub use domain::{BroadcastDomainId, PlatformType};
 pub use envelope::{DeterministicEnvelope, MessageType};
 pub use error::{DotError, PlatformAdapterError};

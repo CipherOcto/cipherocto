@@ -180,12 +180,17 @@ impl GroupRegistry {
             | GroupState::UnboundQuarantined
             | GroupState::Bound
             | GroupState::Creating
-            | GroupState::Inviting => {
+            | GroupState::Inviting
+            | GroupState::UnboundAllPending => {
                 binding.state = GroupState::Bound;
                 binding.renewed_at_epoch = renewed_at_epoch;
                 binding.binding_hash = binding_hash;
                 Ok(())
             }
+            GroupState::UnboundAllDone => Err(BindingError::InvalidTransition {
+                from: binding.state,
+                to: GroupState::Bound,
+            }),
         }
     }
 
@@ -204,14 +209,17 @@ impl GroupRegistry {
             GroupState::Bound
             | GroupState::ReBinding
             | GroupState::UnboundQuarantined
-            | GroupState::Inviting => {
+            | GroupState::Inviting
+            | GroupState::UnboundAllPending => {
                 binding.state = GroupState::ReBinding;
                 Ok(())
             }
-            GroupState::Unbound | GroupState::Creating => Err(BindingError::InvalidTransition {
-                from: binding.state,
-                to: GroupState::ReBinding,
-            }),
+            GroupState::Unbound | GroupState::Creating | GroupState::UnboundAllDone => {
+                Err(BindingError::InvalidTransition {
+                    from: binding.state,
+                    to: GroupState::ReBinding,
+                })
+            }
         }
     }
 
@@ -512,6 +520,71 @@ impl GroupRegistry {
             self.pending_invites.remove(&k);
         }
         n
+    }
+
+    // -------------------------------------------------------------------------
+    // Decommission transitions (RFC-0850p-f Phase 2)
+    // -------------------------------------------------------------------------
+
+    /// Transition a binding to `UnboundAllPending` (DC broadcasts
+    /// `UnbindAllEnvelope`; awaiting ACK from all members).
+    pub fn transition_to_unbound_all_pending(
+        &mut self,
+        platform: &str,
+        group_jid: &str,
+    ) -> Result<(), BindingError> {
+        let key = (platform.to_string(), group_jid.to_string());
+        let binding = self.bindings.get_mut(&key).ok_or(BindingError::NotFound {
+            platform: platform.to_string(),
+            group_jid: group_jid.to_string(),
+        })?;
+        match binding.state {
+            GroupState::Bound
+            | GroupState::Inviting
+            | GroupState::ReBinding
+            | GroupState::UnboundAllPending => {
+                binding.state = GroupState::UnboundAllPending;
+                Ok(())
+            }
+            other => Err(BindingError::InvalidTransition {
+                from: other,
+                to: GroupState::UnboundAllPending,
+            }),
+        }
+    }
+
+    /// Transition a binding to `UnboundAllDone` (terminal; all members
+    /// have left the platform). The binding is removed from the
+    /// registry; a synthetic `UnbindEnvelope` is returned for the
+    /// caller to use in constructing the corresponding
+    /// `UnbindAllDoneEnvelope`.
+    pub fn transition_to_unbound_all_done(
+        &mut self,
+        platform: &str,
+        group_jid: &str,
+    ) -> Result<UnbindEnvelope, BindingError> {
+        let key = (platform.to_string(), group_jid.to_string());
+        let binding = self.bindings.remove(&key).ok_or(BindingError::NotFound {
+            platform: platform.to_string(),
+            group_jid: group_jid.to_string(),
+        })?;
+        let domain_key = (
+            binding.mission_id,
+            binding.domain_id,
+            binding.platform.clone(),
+        );
+        self.domain_index.remove(&domain_key);
+        Ok(UnbindEnvelope {
+            domain_id: binding.domain_id,
+            group_jid: binding.group_jid,
+            platform: binding.platform,
+            authority: UnbindAuthority::CoordinatorResign,
+            reason: String::new(),
+            current_epoch: binding.renewed_at_epoch,
+            nonce: [0u8; 32],
+            unbind_hash: [0u8; 32],
+            signature: [0u8; 64],
+        })
     }
 }
 
@@ -815,5 +888,89 @@ mod tests {
         let purged = reg.gc_pending_invites(250);
         assert_eq!(purged, 2);
         assert_eq!(reg.pending_invites_len(), 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Decommission transitions (RFC-0850p-f Phase 2)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn transition_to_unbound_all_pending_from_bound() {
+        let mut reg = GroupRegistry::new();
+        reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
+            .unwrap();
+        reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
+        assert!(reg
+            .transition_to_unbound_all_pending("wa", "g1")
+            .is_ok());
+        assert_eq!(
+            reg.lookup_by_group("wa", "g1").unwrap().state,
+            GroupState::UnboundAllPending,
+        );
+    }
+
+    #[test]
+    fn transition_to_unbound_all_pending_idempotent() {
+        let mut reg = GroupRegistry::new();
+        reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
+            .unwrap();
+        reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
+        reg.transition_to_unbound_all_pending("wa", "g1").unwrap();
+        // Second call should be idempotent (UnboundAllPending in OK arm).
+        assert!(reg
+            .transition_to_unbound_all_pending("wa", "g1")
+            .is_ok());
+    }
+
+    #[test]
+    fn transition_to_unbound_all_pending_rejects_unbound() {
+        let mut reg = GroupRegistry::new();
+        reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
+            .unwrap();
+        reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
+        // transition_to_unbound removes the binding; follow-up returns NotFound.
+        reg.transition_to_unbound("wa", "g1").unwrap();
+        assert!(matches!(
+            reg.transition_to_unbound_all_pending("wa", "g1"),
+            Err(BindingError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_to_unbound_all_pending_not_found() {
+        let mut reg = GroupRegistry::new();
+        assert!(matches!(
+            reg.transition_to_unbound_all_pending("wa", "nope"),
+            Err(BindingError::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_to_unbound_all_done_removes_binding() {
+        let mut reg = GroupRegistry::new();
+        reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
+            .unwrap();
+        reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
+        reg.transition_to_unbound_all_pending("wa", "g1").unwrap();
+        let result = reg.transition_to_unbound_all_done("wa", "g1");
+        assert!(result.is_ok());
+        // Binding is removed; domain_index also cleared.
+        assert!(reg.lookup_by_group("wa", "g1").is_none());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn transition_to_unbound_all_done_rejects_done() {
+        let mut reg = GroupRegistry::new();
+        reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
+            .unwrap();
+        reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
+        reg.transition_to_unbound_all_pending("wa", "g1").unwrap();
+        reg.transition_to_unbound_all_done("wa", "g1").unwrap();
+        // Second call: binding is gone -> NotFound.
+        assert!(matches!(
+            reg.transition_to_unbound_all_done("wa", "g1"),
+            Err(BindingError::NotFound { .. })
+        ));
     }
 }

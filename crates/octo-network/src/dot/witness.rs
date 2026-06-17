@@ -444,7 +444,7 @@ mod tests {
         (env, key)
     }
 
-    fn make_ctx(platform: &str) -> (NonceReplayTable, [u8; 32]) {
+    fn make_ctx() -> (NonceReplayTable, [u8; 32]) {
         let table = NonceReplayTable::new();
         let local_id = [99u8; 32];
         (table, local_id)
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn validate_bind_accepts_valid() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_cross_platform_spoof() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_MATRIX, // wrong platform
             "!room:example.org",
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_zero_domain_id() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (mut env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_reconnect_split_brain() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_clock_skew() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_empty_jid() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "", // empty
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn validate_bind_rejects_malformed_jid() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "not-a-valid-jid", // no '@' for WhatsApp
@@ -667,7 +667,7 @@ mod tests {
     // key must be rejected with rule 1 (signature).
     #[test]
     fn validate_bind_rejects_bad_signature() {
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         // Build an envelope signed by key A, but validate with key B.
         let (env, _key_a) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
@@ -792,7 +792,7 @@ mod tests {
             [20u8; 32],
         );
         env.sign(&key);
-        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        let (mut table, local_id) = make_ctx();
         let mut ctx = WitnessContext {
             local_platform: ADAPTER_PLATFORM_WHATSAPP,
             local_peer_id: local_id,

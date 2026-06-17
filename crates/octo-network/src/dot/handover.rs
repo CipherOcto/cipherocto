@@ -20,9 +20,10 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use thiserror::Error;
 
-use super::binding::{
-    header, write_string, GroupBinding, GroupState, ENVELOPE_TYPE, ENVELOPE_VERSION,
-};
+use super::binding::{header, write_string, GroupBinding, ENVELOPE_TYPE, ENVELOPE_VERSION};
+
+#[cfg(test)]
+use super::binding::GroupState;
 use super::error::DotError;
 
 // -----------------------------------------------------------------------------

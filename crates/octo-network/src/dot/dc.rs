@@ -24,9 +24,12 @@
 use ed25519_dalek::SigningKey;
 
 use super::binding::{
-    BindEnvelope, BindingError, GroupBinding, GroupState, GroupVisibility, ThirdPartyBindResult,
-    UnbindAuthority, UnbindEnvelope, WitnessAssertion,
+    BindEnvelope, BindingError, GroupVisibility, ThirdPartyBindResult, UnbindAuthority,
+    UnbindEnvelope, WitnessAssertion,
 };
+
+#[cfg(test)]
+use super::binding::{GroupBinding, GroupState};
 use super::dc_envelopes::{
     CreateGroupDoneEnvelope, CreateGroupEnvelope, CreateGroupFailEnvelope, InviteEnvelope,
     UnbindAllAckEnvelope, UnbindAllEnvelope, UnbindReason,
@@ -797,7 +800,7 @@ mod tests {
 
     #[test]
     fn complete_cgroup_transitions_to_bound() {
-        let mut orch = test_orchestrator();
+        let orch = test_orchestrator();
         let mut reg = GroupRegistry::new();
         let b = GroupBinding {
             group_jid: "g1@g.us".into(),
@@ -821,7 +824,7 @@ mod tests {
 
     #[test]
     fn quarantine_cgroup_transitions_to_unbound_quarantined() {
-        let mut orch = test_orchestrator();
+        let orch = test_orchestrator();
         let mut reg = GroupRegistry::new();
         let b = GroupBinding {
             group_jid: "g1@g.us".into(),
@@ -847,7 +850,7 @@ mod tests {
         // R17 R1-LOW-6 regression: fail_cgroup used to discard the
         // synthetic UnbindEnvelope. It must return it so the caller
         // can sign and broadcast it on CGROUP_FAIL.
-        let mut orch = test_orchestrator();
+        let orch = test_orchestrator();
         let mut reg = GroupRegistry::new();
         let b = GroupBinding {
             group_jid: "g1@g.us".into(),

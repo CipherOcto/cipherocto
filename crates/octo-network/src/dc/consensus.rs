@@ -293,6 +293,7 @@ impl Quorum {
 
 /// Build the libp2p gossip topic.
 pub fn consensus_topic(domain_id: &str) -> String {
+    assert!(!domain_id.is_empty(), "domain_id must not be empty");
     format!("/dot/dc-consensus/{domain_id}")
 }
 
@@ -318,6 +319,12 @@ mod tests {
         assert!(!q.is_met(0, 0));
         assert!(!Quorum::Unanimous.is_met(0, 0));
         assert!(!Quorum::TwoThirds.is_met(0, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "domain_id must not be empty")]
+    fn consensus_topic_rejects_empty() {
+        let _ = consensus_topic("");
     }
 
     #[test]

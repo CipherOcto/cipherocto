@@ -206,6 +206,9 @@ impl GovernanceProposal {
     /// Cast a vote. Returns false if proposal is not in Voting state
     /// or the weight is 0 (zero-weight votes are rejected to prevent
     /// BTreeMap spam with non-contributing entries).
+    ///
+    /// A voter's previous vote (for or against) is replaced; the
+    /// voter cannot count in both totals simultaneously.
     pub fn cast_vote(&mut self, voter: [u8; 32], weight: u64, in_favor: bool) -> bool {
         if self.state != ProposalState::Voting {
             return false;
@@ -213,6 +216,10 @@ impl GovernanceProposal {
         if weight == 0 {
             return false;
         }
+        // Remove any prior vote from this voter so they count in
+        // exactly one tally.
+        self.votes_for.remove(&voter);
+        self.votes_against.remove(&voter);
         if in_favor {
             self.votes_for.insert(voter, weight);
         } else {
@@ -631,6 +638,25 @@ mod tests {
         prop.cast_vote([0x03; 32], 30, false);
         assert_eq!(prop.total_for(), 150);
         assert_eq!(prop.total_against(), 30);
+    }
+
+    #[test]
+    fn test_proposal_vote_change_replaces_prior_vote() {
+        // A voter who changes their mind (votes for, then against)
+        // must be removed from the for-tally and counted only in
+        // the against-tally. Without this, the voter would inflate
+        // both totals and distort the majority check.
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        prop.cast_vote([0x01; 32], 100, true);
+        prop.cast_vote([0x01; 32], 100, false);
+        assert_eq!(prop.total_for(), 0);
+        assert_eq!(prop.total_against(), 100);
+        // And the reverse direction
+        prop.cast_vote([0x02; 32], 50, false);
+        prop.cast_vote([0x02; 32], 50, true);
+        assert_eq!(prop.total_for(), 50);
+        assert_eq!(prop.total_against(), 100);
     }
 
     #[test]

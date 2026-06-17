@@ -34,10 +34,13 @@ impl Nip05Identifier {
     ///
     /// Rejects identifiers where:
     /// - either part is empty
-    /// - the user contains a path separator (`/`, `\`)
-    /// - the user contains whitespace or control characters
     /// - the user is longer than 64 chars
-    /// - the domain contains a path separator or whitespace
+    /// - the user contains anything other than `[a-zA-Z0-9._-]`
+    ///   (the strict NIP-05 local-part charset; defends against
+    ///   URL-injection into the resolution URL)
+    /// - the domain is longer than 253 chars (DNS host max)
+    /// - the domain contains anything other than `[a-zA-Z0-9.-]`
+    ///   (no scheme/path/whitespace/control chars)
     pub fn parse(s: &str) -> Result<Self, Nip05Error> {
         let mut parts = s.splitn(2, '@');
         let user = parts.next().ok_or(Nip05Error::InvalidIdentifier)?.to_string();
@@ -45,26 +48,22 @@ impl Nip05Identifier {
         if user.is_empty() || domain.is_empty() {
             return Err(Nip05Error::InvalidIdentifier);
         }
-        // user must be a simple local-part: alphanumerics, dots,
-        // hyphens, underscores. No path separators or whitespace.
+        // user must be a simple local-part: strict whitelist
+        // [a-zA-Z0-9._-] only. No path separators, whitespace,
+        // control chars, or URL-special chars.
         if user.len() > 64
-            || user.contains('/')
-            || user.contains('\\')
-            || user.contains(' ')
-            || user.contains('\0')
-            || user.contains('\t')
-            || user.contains('\n')
+            || !user
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
         {
             return Err(Nip05Error::InvalidIdentifier);
         }
-        // domain must be a hostname: alphanumerics, dots, hyphens.
-        // No path separators or whitespace.
-        if domain.contains('/')
-            || domain.contains('\\')
-            || domain.contains(' ')
-            || domain.contains('\0')
-            || domain.contains('\t')
-            || domain.contains('\n')
+        // domain must be a hostname: strict whitelist
+        // [a-zA-Z0-9.-] only. No scheme/path/whitespace.
+        if domain.len() > 253
+            || !domain
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
         {
             return Err(Nip05Error::InvalidIdentifier);
         }
@@ -227,6 +226,30 @@ mod tests {
         // user > 64 chars must be rejected.
         let long = "a".repeat(65);
         assert!(Nip05Identifier::parse(&format!("{long}@example.com")).is_err());
+    }
+
+    #[test]
+    fn nip05_identifier_rejects_url_special_chars() {
+        // The strict whitelist ([a-zA-Z0-9._-] for user,
+        // [a-zA-Z0-9.-] for domain) must reject any URL-special
+        // character that could inject a second query parameter,
+        // fragment, or path component into the resolution URL.
+        assert!(Nip05Identifier::parse("alice?@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice#@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice&@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice=@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice%@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice+@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice,@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice@example.com:80").is_err());
+        assert!(Nip05Identifier::parse("alice@example.com/path").is_err());
+    }
+
+    #[test]
+    fn nip05_identifier_rejects_oversize_domain() {
+        // domain > 253 chars (DNS max) must be rejected.
+        let long_domain = format!("{}.com", "a".repeat(254));
+        assert!(Nip05Identifier::parse(&format!("alice@{long_domain}")).is_err());
     }
 
     #[test]

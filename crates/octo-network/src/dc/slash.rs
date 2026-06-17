@@ -171,8 +171,9 @@ pub fn process_dc_slash(
             envelope.slash_reason_data,
         ));
     }
-    // 2/3 of total witnesses required.
-    let required = (total_witnesses * 2).div_ceil(3);
+    // 2/3 of total witnesses required. Use saturating math to
+    // avoid overflow on adversarial `total_witnesses` values.
+    let required = (total_witnesses.saturating_mul(2)).div_ceil(3);
     if envelope.witness_signatures.len() < required {
         return Err(DcSlashError::InsufficientWitnesses {
             provided: envelope.witness_signatures.len(),
@@ -195,6 +196,10 @@ pub fn process_dc_slash(
 
 /// Build the gossip topic.
 pub fn dc_slash_topic(dc_pubkey_hex: &str) -> String {
+    assert!(
+        !dc_pubkey_hex.is_empty(),
+        "dc_pubkey_hex must not be empty"
+    );
     format!("/dot/slash/dc/{dc_pubkey_hex}")
 }
 
@@ -349,5 +354,11 @@ mod tests {
     #[test]
     fn topic_format() {
         assert_eq!(dc_slash_topic("dc-1"), "/dot/slash/dc/dc-1");
+    }
+
+    #[test]
+    #[should_panic(expected = "dc_pubkey_hex must not be empty")]
+    fn topic_rejects_empty() {
+        let _ = dc_slash_topic("");
     }
 }

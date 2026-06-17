@@ -65,10 +65,11 @@ impl BindEnvelope {
 
     /// Compute the canonical bytes that the signature covers.
     ///
-    /// The signature covers the `(domain_id, platform, group_id,
-    /// participant_filter)` tuple. Any change to the filter
-    /// invalidates the signature — this is the security property
-    /// documented in mission 0850p-c-partial-bindings.
+    /// The signature covers `(domain_id, platform, group_id,
+    /// participant_filter, member_count_at_bind)`. Any change to
+    /// the filter or the group size invalidates the signature —
+    /// this is the security property documented in missions
+    /// 0850p-c-partial-bindings and 0855p-c-slash-small-groups.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         // Use a length-prefixed encoding to avoid ambiguity between
         // domain_id="foo" + group_id="bar" vs domain_id="foob" +
@@ -188,6 +189,23 @@ mod tests {
         env.participant_filter = Some(vec!["peer-a".into(), "peer-b".into()]);
         let filtered_canon = env.canonical_bytes();
         assert_ne!(base_canon, filtered_canon);
+    }
+
+    #[test]
+    fn canonical_bytes_includes_member_count() {
+        // The canonical encoding must include member_count_at_bind,
+        // so a DC cannot lie about group size to manipulate the
+        // slash vs UNBIND decision (mission 0855p-c-slash-small-groups).
+        let mut env = BindEnvelope::new("d1", "whatsapp", "group1");
+        let canon_3 = {
+            env.member_count_at_bind = 3;
+            env.canonical_bytes()
+        };
+        let canon_5 = {
+            env.member_count_at_bind = 5;
+            env.canonical_bytes()
+        };
+        assert_ne!(canon_3, canon_5);
     }
 
     #[test]

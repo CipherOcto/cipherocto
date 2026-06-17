@@ -32,7 +32,7 @@ pub const SLASH_REASON_GOVERNANCE_KEY_COMPROMISE: u16 = 0x000E;
 
 /// A `GOVERNANCE_ROTATION` envelope.
 ///
-/// The 3-of-5 governance multi-sig signs this envelope to
+/// The 5-of-7 recovery multi-sig signs this envelope to
 /// announce a new `governance_id` (typically after a key
 /// compromise). The old `governance_id` remains valid for
 /// historical slashing (immutability) but is invalid for new

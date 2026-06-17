@@ -165,7 +165,7 @@ impl TrustGraph {
     }
 
     /// Returns the "celebrity" peers (top-N by in-degree).
-    pub fn celebrities(&self, n: usize) -> Vec<(String, usize)> {
+    pub fn celebrities(&self, top: usize) -> Vec<(String, usize)> {
         let mut in_deg: HashMap<&str, usize> = HashMap::new();
         for n in &self.nodes {
             in_deg.insert(&n.peer_id, 0);
@@ -178,7 +178,7 @@ impl TrustGraph {
             .map(|(k, v)| (k.to_string(), v))
             .collect();
         v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        v.truncate(n);
+        v.truncate(top);
         v
     }
 }

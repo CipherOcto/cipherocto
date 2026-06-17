@@ -84,8 +84,11 @@ impl VdfEvaluation {
     }
 
     /// Verify a VDF proof: `H(proof) == output` for the
-    /// simulated VDF.
-    pub fn verify(&self, seed: &[u8; 32]) -> bool {
+    /// simulated VDF. The proof encodes the (t-1)-th hash of the
+    /// chain, so it is self-consistent with the output without
+    /// needing the seed. (`_seed` is kept for API parity with a
+    /// real VDF, where the seed is bound into the proof.)
+    pub fn verify(&self, _seed: &[u8; 32]) -> bool {
         let h = blake3::hash(&self.proof);
         h.as_bytes() == &self.output
     }
@@ -203,10 +206,12 @@ pub fn run_election(
     slash_events: &[[u8; 32]],
     candidates: &mut [VdfCandidate],
 ) -> Option<VdfElectionResult> {
-    let seed = beacon_seed(governance_id, epoch, previous_seed);
+    let _seed = beacon_seed(governance_id, epoch, previous_seed);
     let beacon = beacon_randomness(slash_events);
-    // Each candidate must compute their VDF. We assume they've
-    // already done so; this driver just selects the winner.
+    // Each candidate must compute their VDF against `_seed`. We
+    // assume they've already done so; this driver just selects
+    // the winner. (`_seed` is the input each candidate's VDF was
+    // (or should have been) evaluated over.)
     elect_vdf(candidates, &beacon)
 }
 
@@ -227,13 +232,11 @@ mod tests {
         let seed = [1u8; 32];
         let eval = VdfEvaluation::simulate(&seed, 100);
         assert_eq!(eval.iterations, 100);
-        // Verify is a single hash check; the simulation proof is
-        // the (t-1)-th intermediate, so H(proof) should equal
-        // output.
-        // (Verify may fail because the proof is the (t-1)-th
-        // intermediate, but H(proof) is the t-th which is the
-        // output. Let's see.)
-        let _ = eval.verify(&seed); // tolerate either way; this is a stub
+        // H(proof) should equal output (H^t(seed) = H(H^(t-1)(seed))).
+        assert!(
+            eval.verify(&seed),
+            "VDF proof must verify: H(proof) == H^t(seed)"
+        );
     }
 
     #[test]

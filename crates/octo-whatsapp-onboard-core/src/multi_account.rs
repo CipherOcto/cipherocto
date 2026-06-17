@@ -174,13 +174,26 @@ impl MultiAccountStore {
         let active = base.join("active");
         // Remove any existing symlink/file.
         let _ = fs::remove_file(&active);
-        // Create the symlink to the session DB.
-        std::os::unix::fs::symlink(&entry.session_path, &active).map_err(|e| {
-            CoreError::InvalidSessionPath {
-                path: active.clone(),
-                reason: format!("symlink: {e}"),
-            }
-        })?;
+        // Create the symlink to the session DB. On Windows, fall
+        // back to copying the file (symlinks need admin/dev mode).
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&entry.session_path, &active).map_err(|e| {
+                CoreError::InvalidSessionPath {
+                    path: active.clone(),
+                    reason: format!("symlink: {e}"),
+                }
+            })?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::copy(&entry.session_path, &active).map_err(|e| {
+                CoreError::InvalidSessionPath {
+                    path: active.clone(),
+                    reason: format!("copy fallback: {e}"),
+                }
+            })?;
+        }
         // Update last_used_at.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

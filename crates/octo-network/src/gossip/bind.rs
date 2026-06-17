@@ -5,7 +5,7 @@
 //! Protocol"). The gossip topic is derived from the `domain_id`:
 //!
 //! ```text
-//! /dot/bind/{domain_id_base58}
+//! /dot/bind/{domain_id}
 //! ```
 //!
 //! ## Why off by default?
@@ -47,6 +47,9 @@ impl BindGossipConfig {
 
 /// State for the BIND gossip handler. Tracks received BINDs and
 /// their delivery status.
+///
+/// Note: `received` is bounded by `MAX_RECEIVED_BINDS` to prevent
+/// unbounded growth in long-running nodes.
 #[derive(Debug, Default)]
 pub struct BindGossipState {
     /// BIND envelopes received via libp2p, keyed by `domain_id`.
@@ -56,6 +59,10 @@ pub struct BindGossipState {
     /// BIND envelopes delivered to the local mission handler.
     delivered_count: Mutex<u64>,
 }
+
+/// Maximum number of BIND envelopes retained in `received`.
+/// When full, the oldest is evicted (FIFO) to bound memory.
+pub const MAX_RECEIVED_BINDS: usize = 1024;
 
 impl BindGossipState {
     pub fn new() -> Self {
@@ -75,11 +82,17 @@ impl BindGossipState {
 
     /// Record a BIND envelope received via libp2p. Returns true
     /// if the envelope was newly received (not a duplicate).
+    ///
+    /// If the cache is full, the oldest entry is evicted.
     pub fn record_received(&self, envelope: BindEnvelope) -> bool {
         let domain_id = envelope.domain_id.clone();
         let mut received = self.received.lock().unwrap();
         if received.iter().any(|(d, b)| d == &domain_id && b == &envelope) {
             return false;
+        }
+        if received.len() >= MAX_RECEIVED_BINDS {
+            // FIFO eviction to bound memory.
+            received.remove(0);
         }
         received.push((domain_id, envelope));
         *self.received_count.lock().unwrap() += 1;

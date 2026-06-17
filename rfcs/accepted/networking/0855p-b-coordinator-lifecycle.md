@@ -10,11 +10,11 @@ Accepted (2026-06-16)
 
 ## Authors
 
-- Author: @placeholder
+- @mmacedoeu
 
 ## Maintainers
 
-- Maintainer: @placeholder
+- @mmacedoeu
 
 ## Summary
 

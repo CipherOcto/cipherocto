@@ -9,7 +9,7 @@
 
 A new CipherOcto node has no peers. To join the DOT (Deterministic Overlay Transport) mesh, it must discover other peers and verify their identity. The current bootstrap is described at a high level in RFC-0851 §3 "Discovery Modes" but lacks:
 
-1. **Concrete bootstrap mechanisms per platform mode** (Direct IP, Tor-only, Nostr trust-anchored).
+1. **Concrete bootstrap mechanisms per mode** (Mode A = bootstrap nodes, Mode B = DHT fallback, Mode C = invite link).
 2. **Trust-anchor specification** — how does a new node know which seed list to trust?
 3. **Sybil / eclipse resistance** — how does a new node avoid being connected only to a single attacker's nodes?
 4. **Health monitoring** — how does the node know when a seed has gone stale (e.g., the seed list service is down)?
@@ -64,12 +64,12 @@ Once slashing ships, the authority can transition to a DAO multi-sig (per missio
 
 - **Must not:** Trust a seed list without verifying the authority's signature.
 - **Must not:** Allow a single bootstrap mode to be the only option (resilience).
-- **Limited to:** The 3 bootstrap modes defined in RFC-0851p-a (Direct, TorOnly, Nostr).
+- **Limited to:** The 3 bootstrap modes defined in RFC-0851p-a: Mode A (Bootstrap Nodes, default), Mode B (DHT Fallback), Mode C (Invite Link). Mode D (NIP-05 / Nostr) is future work (F5 mission `0851p-a-nostr-mode-d.md`).
 - **Limited to:** The slash reason codes allocated in RFC-0855p-b §B (0x000D = `bootstrap_node_misbehavior`).
 
 ## Non-Goals
 
-- **Not in scope:** A new bootstrap mode beyond Direct, TorOnly, Nostr. (Adding a mode is a new RFC.)
+- **Not in scope:** A new bootstrap mode beyond A, B, C (current RFC). Mode D (NIP-05 / Nostr) is post-launch future work; adding any new mode is a new RFC.
 - **Not in scope:** IP-based geolocation. (Bootstrap is platform-agnostic.)
 - **Not in scope:** Sybil resistance via proof-of-work. (Sybil resistance here is via seed list authority + web-of-trust + cross-referencing.)
 - **Not in scope:** Web-of-trust scoring algorithms. (Mission `0851p-a-trust-ux` provides the UX tool; the scoring is per-mission and out of scope for bootstrap.)
@@ -121,7 +121,7 @@ Under RFC-0851p-a:
 - `missions/open/0851p-a-tor-seed-list.md` — Tor-only bootstrap mode
 - `missions/open/0851p-a-seed-health-check.md` — Stale seed detection
 - `missions/open/0851p-a-trust-ux.md` — Web-of-trust visualization (CLI)
-- `missions/open/0851p-a-nostr-mode-d.md` — Nostr trust-anchored bootstrap
+- `missions/open/0851p-a-nostr-mode-d.md` — Mode D: NIP-05 / Nostr trust-anchored bootstrap (future work, post-launch)
 - `missions/open/0851p-a-bootstrap-slashing.md` — Slash reason code 0x000D for misbehaving bootstrap nodes
 
 ---

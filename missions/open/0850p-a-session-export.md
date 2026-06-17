@@ -35,6 +35,20 @@ The `session import` command decompresses, validates the sidecar (checksum match
 - [ ] Unit test: round-trip export → import → list shows the account
 - [ ] Documentation: security warning about exporting session DBs (they contain Signal keys)
 
+
+### Implementation Guide
+
+Reference: TDLib database format (`sqlite3` file); `tar` crate for the portable bundle.
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `session export <DB> --out <FILE>` CLI subcommand | This mission |
+| `session import <FILE>` CLI subcommand | This mission |
+| Portable bundle format (DB + sidecar + config) | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -70,18 +84,6 @@ A bare TDLib SQLite DB is not portable across hosts without its sidecar (`sessio
 ### Why not just copy the DB file?
 
 Sidecar management is per-host; the bundle includes the sidecar so the import can recreate it on the new host.
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `session export <DB> --out <FILE>` CLI subcommand | This mission |
-| `session import <FILE>` CLI subcommand | This mission |
-| Portable bundle format (DB + sidecar + config) | This mission |
-
-### Implementation Guide
-
-Reference: TDLib database format (`sqlite3` file); `tar` crate for the portable bundle.
 
 ## Mitigates
 

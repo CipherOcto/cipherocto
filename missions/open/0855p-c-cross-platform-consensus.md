@@ -39,6 +39,20 @@ Fallback: 1-epoch timeout on `DC_CONSENSUS_PREPARE` → manual operator reconcil
 - [ ] Integration test: 3 simulated platforms, simultaneous REBIND → one wins (2 of 3)
 - [ ] Documentation: operator guide for `dc-reconcile` manual reconciliation
 
+
+### Implementation Guide
+
+Reference: RFC-0850p-c (similar 2PC pattern); `crates/octo-network/src/dc/consensus.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `DC_CONSENSUS_PREPARE` / `DC_CONSENSUS_COMMIT` / `DC_CONSENSUS_ABORT` envelopes | This mission |
+| `crates/octo-network/src/dc/consensus.rs` | This mission |
+| `DC_CONSENSUS_TIMEOUT_EPOCHS = 1` constant | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -75,18 +89,6 @@ REBIND/UNBIND are mission-critical; they must be decided quickly. 1 minute is en
 ### Why 2/3 majority not unanimous?
 
 Unanimous (N of N) is too strict — a single Byzantine DC could block all decisions. 2/3 majority tolerates up to ⌊N/3⌋ Byzantine DCs, which is the standard Byzantine fault tolerance threshold.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `DC_CONSENSUS_PREPARE` / `DC_CONSENSUS_COMMIT` / `DC_CONSENSUS_ABORT` envelopes | This mission |
-| `crates/octo-network/src/dc/consensus.rs` | This mission |
-| `DC_CONSENSUS_TIMEOUT_EPOCHS = 1` constant | This mission |
-
-### Implementation Guide
-
-Reference: RFC-0850p-c (similar 2PC pattern); `crates/octo-network/src/dc/consensus.rs` (new).
 
 ## Mitigates
 

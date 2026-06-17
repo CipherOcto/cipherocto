@@ -40,6 +40,20 @@ Extend slash reason codes (defined in RFC-0855p-b §B "Slash Offense Codes") wit
 - [ ] Documentation: how bootstrap nodes can avoid being slashed (best practices)
 - [ ] Documentation: operator guide for reviewing slash evidence
 
+
+### Implementation Guide
+
+Reference: RFC-0855p-b §B (slash reason codes); `crates/octo-network/src/mon/slash.rs` (existing slash flow).
+
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `0x000D` slash reason code | This mission |
+| `slash_reason_data: u32` field for sub-codes | This mission |
+| `crates/octo-bootstrap/src/seed_list.rs` rejection of slashed seeds | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -75,18 +89,6 @@ The slash reason code range `0x000C-0xFFFF` is reserved (per RFC-0855p-b §B). `
 ### Why sub-codes?
 
 A single `0x000D` code is too coarse. Sub-codes (`.01` withholds peers, `.02` stale data, etc.) let witnesses specify the exact offense.
-
-### Type Coverage
-
-| RFC-0851p-a Type | Implemented By |
-|-----------------|----------------|
-| `0x000D` slash reason code | This mission |
-| `slash_reason_data: u32` field for sub-codes | This mission |
-| `crates/octo-bootstrap/src/seed_list.rs` rejection of slashed seeds | This mission |
-
-### Implementation Guide
-
-Reference: RFC-0855p-b §B (slash reason codes); `crates/octo-network/src/mon/slash.rs` (existing slash flow).
 
 ## Mitigates
 

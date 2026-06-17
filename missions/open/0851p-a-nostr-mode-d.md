@@ -36,6 +36,19 @@ A new `bootstrap_mode = Nostr` configuration. The bootstrap adapter resolves a N
 - [ ] Integration test: full Nostr bootstrap flow with 5 contacts
 - [ ] Documentation: how to publish a DOT capability claim (NIP-78 or similar)
 
+
+### Implementation Guide
+
+Reference: `nostr-sdk` crate; NIP-05 spec; NIP-78 (kind 30078 events).
+
+
+### Type Coverage
+
+| RFC-0851p-a Type | Implemented By |
+|-----------------|----------------|
+| `bootstrap_mode = Nostr` config option | This mission |
+| `crates/octo-bootstrap/src/mode/nostr.rs` | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -72,17 +85,6 @@ NIP-05 gives a human-readable identifier (`user@domain`); the contact list (kind
 ### Why Future (not post-launch)?
 
 The Nostr ecosystem is still maturing. Until key Nostr libraries are stable and the DOT capability claim (kind 30078) is widely adopted, the NIP-05 bootstrap mode is experimental.
-
-### Type Coverage
-
-| RFC-0851p-a Type | Implemented By |
-|-----------------|----------------|
-| `bootstrap_mode = Nostr` config option | This mission |
-| `crates/octo-bootstrap/src/mode/nostr.rs` | This mission |
-
-### Implementation Guide
-
-Reference: `nostr-sdk` crate; NIP-05 spec; NIP-78 (kind 30078 events).
 
 ## Mitigates
 

@@ -38,6 +38,19 @@ The `participant_filter` is signed as part of the BIND envelope (binding the fil
 - [ ] Documentation: when to use partial bindings (large public groups; small private groups should use full binding)
 - [ ] Backward compatibility: envelopes without `participant_filter` work unchanged
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/mon/bind_envelope.rs` (existing `BindEnvelope` struct); adapter message routing code.
+
+
+### Type Coverage
+
+| RFC-0850p-c Type | Implemented By |
+|-----------------|----------------|
+| `BindEnvelope::participant_filter: Option<Vec<PeerId>>` | This mission |
+| Adapter-side filtering of DOT messages | This mission |
+
 ## Dependencies
 
 Depends on RFC-0850p-c status: Accepted. No prerequisite missions; this is a BIND envelope extension.
@@ -71,17 +84,6 @@ The filter is opt-in; existing BINDs without the filter behave as before (all me
 ### Why signed?
 
 The filter is part of the signed payload. A malicious DC cannot add or remove members from the filter without invalidating the BIND signature.
-
-### Type Coverage
-
-| RFC-0850p-c Type | Implemented By |
-|-----------------|----------------|
-| `BindEnvelope::participant_filter: Option<Vec<PeerId>>` | This mission |
-| Adapter-side filtering of DOT messages | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/mon/bind_envelope.rs` (existing `BindEnvelope` struct); adapter message routing code.
 
 ## Mitigates
 

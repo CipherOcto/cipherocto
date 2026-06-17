@@ -39,6 +39,19 @@ The `Event::LoggedOut` handler checks the `cause` field (whatsapp-rust exposes `
 - [ ] State machine unit tests updated; transition table updated
 - [ ] Integration test: simulating `Event::LoggedOut { cause: Replaced }` exits with code 8
 
+
+### Implementation Guide
+
+Reference: `crates/octo-adapter-whatsapp/src/state.rs` (existing state machine); `whatsapp-rust` documentation for `Event::LoggedOut` fields.
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `BotState::Replaced` variant | This mission |
+| `whoami --detect-replacement` exit code | This mission |
+
 ## Dependencies
 
 Depends on the base 0850p-a RFC being Accepted. No prerequisite missions; this is a state machine addition.
@@ -73,17 +86,6 @@ Currently `Replaced` is silently mapped to `LoggedOut`, which is misleading: a r
 ### Why a distinct exit code?
 
 CI pipelines and monitoring systems can detect "replaced" and trigger a re-pair workflow automatically.
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `BotState::Replaced` variant | This mission |
-| `whoami --detect-replacement` exit code | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-adapter-whatsapp/src/state.rs` (existing state machine); `whatsapp-rust` documentation for `Event::LoggedOut` fields.
 
 ## Mitigates
 

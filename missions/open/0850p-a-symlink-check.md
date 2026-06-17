@@ -41,6 +41,19 @@ fn check_session_path_safe(session_path: &Path) -> Result<(), CoreError> {
 - [ ] Unit test: a normal `tempdir/session.db` is accepted
 - [ ] Integration test: the CLI exits non-zero with the new error when the path is a symlink
 
+
+### Implementation Guide
+
+Reference: `crates/octo-whatsapp-onboard-core/src/session.rs` (where session_path is created); `std::fs::metadata` and `std::fs::canonicalize` from std.
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| Symlink resolution check | This mission |
+| `CoreError::SessionPathSymlink` error variant | This mission |
+
 ## Dependencies
 
 Depends on the base 0850p-a WhatsApp Auth Onboarding RFC being Accepted. No prerequisite missions; this is a security hardening of the existing `octo-whatsapp-onboard` binary.
@@ -74,17 +87,6 @@ Low (~30 lines; one new error variant + one new check).
 ### Why before `start_bot`?
 
 The session DB is opened by TDLib after the symlink check passes. If the check fails, the user gets a clear error before the bot is initialized.
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| Symlink resolution check | This mission |
-| `CoreError::SessionPathSymlink` error variant | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-whatsapp-onboard-core/src/session.rs` (where session_path is created); `std::fs::metadata` and `std::fs::canonicalize` from std.
 
 ## Mitigates
 

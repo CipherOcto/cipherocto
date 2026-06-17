@@ -39,6 +39,20 @@ When a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855
 - [ ] Documentation: how DCs can avoid being slashed (best practices)
 - [ ] Documentation: appeal process
 
+
+### Implementation Guide
+
+Reference: RFC-0855p-b §B (slash reason codes); `crates/octo-network/src/dc/slash.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `0x000F` slash reason code | This mission |
+| `slash_reason_data: u32` sub-codes | This mission |
+| `crates/octo-network/src/dc/slash.rs` | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -75,18 +89,6 @@ Medium (~400 lines; slash flow integration, cross-domain gossip, appeal flow).
 ### Why a separate slash code from mission-level slashing?
 
 Mission-level slash codes (RFC-0855p-b) target mission coordinators. Domain-level slash codes target DomainCoordinators. The blast radius is different: a DC slash affects all `domain_id`s the DC manages.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `0x000F` slash reason code | This mission |
-| `slash_reason_data: u32` sub-codes | This mission |
-| `crates/octo-network/src/dc/slash.rs` | This mission |
-
-### Implementation Guide
-
-Reference: RFC-0855p-b §B (slash reason codes); `crates/octo-network/src/dc/slash.rs` (new).
 
 ## Mitigates
 

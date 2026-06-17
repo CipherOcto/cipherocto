@@ -46,6 +46,21 @@ Each DomainCoordinator periodically publishes a `PLATFORM_ADMIN_ATTEST` envelope
 - [ ] Documentation: platform-API integration per platform (WhatsApp, Telegram, Matrix)
 - [ ] Documentation: how to verify a platform's root key (out-of-band trust anchor)
 
+
+### Implementation Guide
+
+Reference: WhatsApp Business API documentation; Telegram Bot API documentation; Matrix Client-Server API specification.
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `PlatformAdminAttest` envelope type | This mission |
+| `crates/octo-network/src/dc/admin_attest.rs` | This mission |
+| `MAX_ATTEST_AGE_EPOCHS = 100` constant | This mission |
+| `ATTEST_CHALLENGE` envelope type | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -81,19 +96,6 @@ WhatsApp, Telegram, and Matrix all have different admin verification APIs. A uni
 ### Why 100-epoch freshness?
 
 100 minutes is enough time for the slowest platform's API to respond (some have rate limits) but short enough that a compromised admin is detected quickly. The cadence is `ATTEST_PERIOD_EPOCHS = 50` (every 50 minutes), so two consecutive misses would be detected within 100 minutes.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `PlatformAdminAttest` envelope type | This mission |
-| `crates/octo-network/src/dc/admin_attest.rs` | This mission |
-| `MAX_ATTEST_AGE_EPOCHS = 100` constant | This mission |
-| `ATTEST_CHALLENGE` envelope type | This mission |
-
-### Implementation Guide
-
-Reference: WhatsApp Business API documentation; Telegram Bot API documentation; Matrix Client-Server API specification.
 
 ## Mitigates
 

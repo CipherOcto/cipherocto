@@ -30,6 +30,20 @@ Similar to RFC-0855p-b F(cross-mission coordinator reputation), but per DomainCo
 - [ ] Unit tests: count calculation, threshold, election integration
 - [ ] Documentation: how cross-domain reputation is computed and used
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/reputation/slash_store.rs` (existing, from 0855p-b); `crates/octo-network/src/reputation/dc_store.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `DCRootedSlashReputationStore` type | This mission |
+| `/dot/reputation/dc/{dc_pubkey}` gossip topic | This mission |
+| Cross-domain slash count formula | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -65,18 +79,6 @@ Mission-level reputation (0855p-b) tracks a mission coordinator. DC-level reputa
 ### Why hard threshold at 5?
 
 Same as 0855p-b: 5 slashes is a strong signal of repeated misbehavior. The threshold is consistent across both reputation stores.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `DCRootedSlashReputationStore` type | This mission |
-| `/dot/reputation/dc/{dc_pubkey}` gossip topic | This mission |
-| Cross-domain slash count formula | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/reputation/slash_store.rs` (existing, from 0855p-b); `crates/octo-network/src/reputation/dc_store.rs` (new).
 
 ## Mitigates
 

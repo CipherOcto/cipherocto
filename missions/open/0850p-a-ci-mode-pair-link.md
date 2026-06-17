@@ -34,6 +34,19 @@ The mode is opt-in (`--ci`); a normal `pair-link` invocation still requires the 
 - [ ] Unit test: `--ci` with an empty/invalid DB exits 1 with a clear error
 - [ ] Documentation: CI integration guide (Kubernetes Secret, GitHub Actions encrypted secret, etc.)
 
+
+### Implementation Guide
+
+Reference: `crates/octo-whatsapp-onboard/src/pair_link.rs` (existing `pair-link` subcommand).
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `pair-link --no-wait --session-db <PATH>` flag | This mission |
+| CI-friendly error codes | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -69,17 +82,6 @@ CI environments have no human to scan a QR code. The pre-paired DB is created on
 ### Why is this LOW severity?
 
 The CI use case is narrow. Most operators use `octo-whatsapp-onboard` interactively.
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `pair-link --no-wait --session-db <PATH>` flag | This mission |
-| CI-friendly error codes | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-whatsapp-onboard/src/pair_link.rs` (existing `pair-link` subcommand).
 
 ## Mitigates
 

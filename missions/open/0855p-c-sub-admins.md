@@ -37,6 +37,20 @@ DomainCoordinators can designate sub-admins (e.g., a deputy admin in case the pr
 - [ ] Documentation: how to designate a sub-admin (operator guide)
 - [ ] Documentation: security implications (sub-admin compromise → limited blast radius)
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/dc/sub_admin.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `SUB_ADMIN_DESIGNATE` envelope type | This mission |
+| `SubAdminAuthority` bitfield | This mission |
+| `SUB_ADMIN_ACTIVATION_EPOCHS = 10` constant | This mission |
+
 ## Dependencies
 
 Depends on RFC-0855p-c status: Accepted. No prerequisite missions; this is an extension to the `CoordinatorRecord` type.
@@ -70,18 +84,6 @@ Medium (~350 lines; designation flow, authority policy, activation/deactivation,
 ### Why multi-sub-admin with 2/3 vote?
 
 A single sub-admin is a single point of failure. Multiple sub-admins with 2/3 vote provide redundancy.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `SUB_ADMIN_DESIGNATE` envelope type | This mission |
-| `SubAdminAuthority` bitfield | This mission |
-| `SUB_ADMIN_ACTIVATION_EPOCHS = 10` constant | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/dc/sub_admin.rs` (new).
 
 ## Mitigates
 

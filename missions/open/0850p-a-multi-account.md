@@ -55,6 +55,20 @@ CLI subcommands:
 - [ ] Integration test: import → list → use → whoami round-trip
 - [ ] Documentation: migration guide for operators currently using `--session-path`
 
+
+### Implementation Guide
+
+Companion guide needed: `docs/07-developers/whatsapp-multi-account-implementation-guide.md`. Stoolap schema for the account index, store migration plan, and sidecar management.
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `MultiAccountStore` struct | This mission |
+| `session {list,use,import,export}` CLI subcommands | This mission |
+| `whoami --store <PATH>` | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -96,18 +110,6 @@ The `session` subcommands fit naturally in `octo-whatsapp-onboard`; the operator
 ### Why per-host index?
 
 Each host has its own account set; the index is per-host (not global). Cross-host account sharing is a separate concern (out of scope; see mission 0850p-a-session-export).
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `MultiAccountStore` struct | This mission |
-| `session {list,use,import,export}` CLI subcommands | This mission |
-| `whoami --store <PATH>` | This mission |
-
-### Implementation Guide
-
-Companion guide needed: `docs/07-developers/whatsapp-multi-account-implementation-guide.md`. Stoolap schema for the account index, store migration plan, and sidecar management.
 
 ## Mitigates
 

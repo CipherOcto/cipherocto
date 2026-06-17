@@ -35,6 +35,20 @@ For groups with < 4 members, slash (demote+cooldown) the misbehaving member inst
 - [ ] Documentation: operator guide for slash vs UNBIND decision
 - [ ] Documentation: rationale for the threshold (preserving small groups)
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/dc/discipline.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-c Type | Implemented By |
+|-----------------|----------------|
+| `MIN_GROUP_SIZE_FOR_UNBIND = 4` constant | This mission |
+| `BindEnvelope::member_count_at_bind: u16` field | This mission |
+| Re-strike escalation logic | This mission |
+
 ## Dependencies
 
 Depends on RFC-0855p-c status: Accepted. No prerequisite missions; this is a policy change to the existing UNBIND logic.
@@ -68,18 +82,6 @@ A 4-member group is the smallest viable group (3 can vote, 1 can abstain). Small
 ### Why re-strike escalation?
 
 A first-time offender may be a victim (e.g., their account was compromised). Slash and cool-down give them a chance to recover. Repeat offenders are escalating the threat, so the response escalates too.
-
-### Type Coverage
-
-| RFC-0855p-c Type | Implemented By |
-|-----------------|----------------|
-| `MIN_GROUP_SIZE_FOR_UNBIND = 4` constant | This mission |
-| `BindEnvelope::member_count_at_bind: u16` field | This mission |
-| Re-strike escalation logic | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/dc/discipline.rs` (new).
 
 ## Mitigates
 

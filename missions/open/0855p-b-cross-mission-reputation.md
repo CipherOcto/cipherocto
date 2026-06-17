@@ -31,6 +31,20 @@ Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`
 - [ ] Integration test: gossip propagation of slash reputation
 - [ ] Documentation: how slash reputation is computed and used in elections
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/reputation/slash_store.rs` (new); `crates/octo-network/src/gossip/reputation.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `SlashReputationStore` type | This mission |
+| `/dot/reputation/{coordinator_pubkey}` gossip topic | This mission |
+| Priority formula: `stake / (1 + global_slash_count)` | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -67,18 +81,6 @@ A hard disqualification is a one-strike-and-out policy that is too aggressive. A
 ### Why a hard threshold at 5?
 
 5 slashes is a strong signal of repeated misbehavior. Beyond this, the coordinator is excluded.
-
-### Type Coverage
-
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `SlashReputationStore` type | This mission |
-| `/dot/reputation/{coordinator_pubkey}` gossip topic | This mission |
-| Priority formula: `stake / (1 + global_slash_count)` | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/reputation/slash_store.rs` (new); `crates/octo-network/src/gossip/reputation.rs` (new).
 
 ## Mitigates
 

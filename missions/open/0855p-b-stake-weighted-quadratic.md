@@ -31,6 +31,20 @@ Voting weight is `sqrt(stake) * cosigners`, where `cosigners` is the count of cr
 - [ ] Documentation: why quadratic (anti-plutocracy), why cosigners (anti-Sybil)
 - [ ] Documentation: comparison with linear voting and pure quadratic voting
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/election/quadratic.rs` (new).
+
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `voting_weight = sqrt(stake) * cosigners` formula | This mission |
+| `crates/octo-network/src/election/quadratic.rs` | This mission |
+| Per-governance-model weight application | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -66,18 +80,6 @@ Quadratic voting is a well-known anti-plutocracy mechanism. A 4Ã— stake gives 2Ã
 ### Why `* cosigners`?
 
 Cosignatures are a measure of social trust. A candidate endorsed by 10 other coordinators is more trusted than an unendorsed candidate. The multiplier rewards social trust without requiring formal reputation systems.
-
-### Type Coverage
-
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `voting_weight = sqrt(stake) * cosigners` formula | This mission |
-| `crates/octo-network/src/election/quadratic.rs` | This mission |
-| Per-governance-model weight application | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/election/quadratic.rs` (new).
 
 ## Mitigates
 

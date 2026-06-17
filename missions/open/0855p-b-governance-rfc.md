@@ -46,6 +46,21 @@ A new RFC-0855p-d "Governance Lifecycle" specifies: (1) `governance_id` rotation
 - [ ] Documentation: governance key ceremony step-by-step
 - [ ] Documentation: HSM setup for governance key holders
 
+
+### Implementation Guide
+
+Reference: New RFC-0855p-d (created by this mission); DKG literature.
+
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `GOVERNANCE_ROTATION` envelope type | This mission |
+| `GOVERNANCE_MIGRATION_WINDOW = 100` constant | This mission |
+| `0x000E` slash reason code (governance key compromise) | This mission |
+| 5-of-7 recovery multi-sig | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -86,19 +101,6 @@ High (~1200 lines; new RFC, DKG ceremony spec, recovery multi-sig, slash semanti
 ### Why a new RFC?
 
 The governance lifecycle (rotation, compromise, ceremony) is a substantial spec in its own right. It deserves its own RFC for review and maintenance.
-
-### Type Coverage
-
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `GOVERNANCE_ROTATION` envelope type | This mission |
-| `GOVERNANCE_MIGRATION_WINDOW = 100` constant | This mission |
-| `0x000E` slash reason code (governance key compromise) | This mission |
-| 5-of-7 recovery multi-sig | This mission |
-
-### Implementation Guide
-
-Reference: New RFC-0855p-d (created by this mission); DKG literature.
 
 ## Mitigates
 

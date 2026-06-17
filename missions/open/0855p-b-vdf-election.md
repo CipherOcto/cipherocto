@@ -36,6 +36,20 @@ A Verifiable Delay Function (VDF) per RFC-0855p-c §"Random Beacon" (currently b
 - [ ] Documentation: VDF security assumptions (setup ceremony, prime selection)
 - [ ] Documentation: operator guide for VDF computation (CPU cost: ~1 core × 60s per candidate per election)
 
+
+### Implementation Guide
+
+Reference: Wesolowski VDF paper; `class_groups` crate documentation; RFC-0855p-c (Random Beacon section).
+
+
+### Type Coverage
+
+| RFC-0855p-b Type | Implemented By |
+|-----------------|----------------|
+| `crates/octo-network/src/election/vdf.rs` | This mission |
+| `EPOCH_DURATION_SECONDS = 60` constant | This mission |
+| Tie-break: lex `candidate_pubkey` ordering | This mission |
+
 ## Dependencies
 
 Depends on:
@@ -73,18 +87,6 @@ Wesolowski VDFs are well-studied and have a simple, fast verifier. The alternati
 ### Why 60s?
 
 VDF computation is CPU-intensive (1 core × 60s per candidate). 60s is the minimum that produces unpredictable randomness; shorter VDFs are too easy to grind. Longer VDFs slow down the election.
-
-### Type Coverage
-
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `crates/octo-network/src/election/vdf.rs` | This mission |
-| `EPOCH_DURATION_SECONDS = 60` constant | This mission |
-| Tie-break: lex `candidate_pubkey` ordering | This mission |
-
-### Implementation Guide
-
-Reference: Wesolowski VDF paper; `class_groups` crate documentation; RFC-0855p-c (Random Beacon section).
 
 ## Mitigates
 

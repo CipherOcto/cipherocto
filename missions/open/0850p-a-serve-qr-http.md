@@ -35,6 +35,19 @@ Add a `serve-qr` subcommand to `octo-whatsapp-onboard` that exposes the QR code 
 - [ ] Integration test: spin up the CLI, fetch the HTML page, simulate scan via adapter mock
 - [ ] Help text documents the security warning for `--bind 0.0.0.0`
 
+
+### Implementation Guide
+
+Reference: `crates/octo-whatsapp-onboard/src/cli.rs` (existing CLI structure); `crates/octo-whatsapp-onboard-core/src/qr_link.rs` (existing QR generation). No new module tree; this is a new subcommand in the existing binary.
+
+
+### Type Coverage
+
+| RFC-0850p-a Type | Implemented By |
+|-----------------|----------------|
+| `serve-qr` subcommand | This mission |
+| QR-over-HTTP handler | This mission |
+
 ## Dependencies
 
 Depends on the base 0850p-a WhatsApp Auth Onboarding RFC being Accepted (currently Draft). No prerequisite missions; this is a feature addition to the existing `octo-whatsapp-onboard` binary.
@@ -68,17 +81,6 @@ A 1Hz HTTP polling pattern is simpler than WebSocket and works on any browser wi
 ### Why loopback default?
 
 The QR is a session key. Exposing it on `0.0.0.0` (even with auth) is a security risk; loopback is the safest default. Operators needing remote access can use `ssh -L` port forwarding.
-
-### Type Coverage
-
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `serve-qr` subcommand | This mission |
-| QR-over-HTTP handler | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-whatsapp-onboard/src/cli.rs` (existing CLI structure); `crates/octo-whatsapp-onboard-core/src/qr_link.rs` (existing QR generation). No new module tree; this is a new subcommand in the existing binary.
 
 ## Mitigates
 

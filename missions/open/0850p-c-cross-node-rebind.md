@@ -34,6 +34,20 @@ Fallback: 30s timeout on `REBIND_PREPARE` → manual operator reconciliation via
 - [ ] Integration test: 2 simulated platforms, simultaneous REBIND → one wins, one rejects
 - [ ] Documentation: operator guide for manual reconciliation
 
+
+### Implementation Guide
+
+Reference: `crates/octo-network/src/mon/rebind.rs` (existing single-platform REBIND); `crates/octo-network/src/mon/bind_envelope.rs` (existing envelope types).
+
+
+### Type Coverage
+
+| RFC-0850p-c Type | Implemented By |
+|-----------------|----------------|
+| `REBIND_PREPARE` / `REBIND_COMMIT` / `REBIND_ABORT` envelopes | This mission |
+| 2-phase commit coordinator | This mission |
+| Tie-break: lex `domain_id` ordering | This mission |
+
 ## Dependencies
 
 Depends on RFC-0850p-c status: Accepted. No prerequisite missions; this is a coordinator-side addition to the existing REBIND path.
@@ -67,18 +81,6 @@ A single-platform REBIND is atomic by construction (one group, one admin). A cro
 ### Why 30s timeout?
 
 30s is long enough for the slowest platform (typically Telegram supergroup) but short enough that operators don't wait forever. After 30s, manual reconciliation is the fallback.
-
-### Type Coverage
-
-| RFC-0850p-c Type | Implemented By |
-|-----------------|----------------|
-| `REBIND_PREPARE` / `REBIND_COMMIT` / `REBIND_ABORT` envelopes | This mission |
-| 2-phase commit coordinator | This mission |
-| Tie-break: lex `domain_id` ordering | This mission |
-
-### Implementation Guide
-
-Reference: `crates/octo-network/src/mon/rebind.rs` (existing single-platform REBIND); `crates/octo-network/src/mon/bind_envelope.rs` (existing envelope types).
 
 ## Mitigates
 

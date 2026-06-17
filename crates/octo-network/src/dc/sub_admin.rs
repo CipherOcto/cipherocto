@@ -118,14 +118,17 @@ pub fn elect_active_sub_admin(
     if votes.is_empty() || total_sub_admins == 0 {
         return None;
     }
-    // Aggregate weights per sub_admin.
+    // Aggregate weights per sub_admin (saturating to defend against
+    // hostile weight spam from a single voter's repeated entries).
     let mut agg: std::collections::HashMap<Vec<u8>, u64> = std::collections::HashMap::new();
     for (sa, w) in votes {
-        *agg.entry(sa.clone()).or_insert(0) += w;
+        let entry = agg.entry(sa.clone()).or_insert(0);
+        *entry = entry.saturating_add(*w);
     }
-    // 2/3 of total sub-admins must vote.
+    // 2/3 of total sub-admins must vote. Use saturating math to avoid
+    // overflow on adversarial `total_sub_admins` values.
     let distinct: std::collections::HashSet<Vec<u8>> = votes.iter().map(|(k, _)| k.clone()).collect();
-    if distinct.len() * 3 < total_sub_admins * 2 {
+    if distinct.len().saturating_mul(3) < total_sub_admins.saturating_mul(2) {
         return None;
     }
     // Pick the highest-weight sub_admin; tie-break: lower pubkey

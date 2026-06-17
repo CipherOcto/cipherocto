@@ -244,9 +244,19 @@ impl SwarmCoordinator {
         );
     }
 
-    /// Assign a task to an agent. Returns false if agent not registered.
+    /// Assign a task to an agent. Returns false if:
+    /// - the agent is not registered
+    /// - the agent already has a current_task (the previous
+    ///   assignment is not automatically cancelled; the caller
+    ///   must call `complete_task` first)
     pub fn assign_task(&mut self, agent_id: &[u8; 32], task_id: [u8; 32]) -> bool {
         if let Some(agent) = self.agents.get_mut(agent_id) {
+            if agent.current_task.is_some() {
+                // Don't silently overwrite — this would orphan
+                // the previous task in self.assignments and
+                // prevent complete_task from ever resolving it.
+                return false;
+            }
             agent.current_task = Some(task_id);
             self.assignments.insert(task_id, *agent_id);
             return true;
@@ -544,6 +554,24 @@ mod tests {
     fn test_swarm_assign_unknown_agent() {
         let mut swarm = SwarmCoordinator::new(test_mission_id());
         assert!(!swarm.assign_task(&[0xFF; 32], [0xAA; 32]));
+    }
+
+    #[test]
+    fn test_swarm_assign_busy_agent() {
+        // If an agent already has a current_task, a second
+        // assign_task call must not silently overwrite it
+        // (which would orphan the previous task in
+        // self.assignments and leak a pending count).
+        let mut swarm = SwarmCoordinator::new(test_mission_id());
+        swarm.register_agent([0x01; 32]);
+        assert!(swarm.assign_task(&[0x01; 32], [0xAA; 32]));
+        // Second assign must fail.
+        assert!(!swarm.assign_task(&[0x01; 32], [0xBB; 32]));
+        // The first task is still the agent's current_task.
+        assert_eq!(swarm.pending_count(), 1);
+        // And it's still in assignments.
+        assert!(swarm.complete_task(&[0x01; 32], &[0xAA; 32]));
+        assert_eq!(swarm.pending_count(), 0);
     }
 
     // -- FederatedInference tests --

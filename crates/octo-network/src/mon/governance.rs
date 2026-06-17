@@ -101,7 +101,8 @@ impl GovernancePolicy {
         .expect("default_dao parameters are valid")
     }
 
-    /// Check if a vote count meets quorum.
+    /// Check if a vote count meets quorum (count-based; for
+    /// weight-based, use [`Self::is_weighted_quorum_met`]).
     pub fn is_quorum_met(&self, votes_for: u32, total_eligible: u32) -> bool {
         if total_eligible == 0 {
             return false;
@@ -110,6 +111,19 @@ impl GovernancePolicy {
         // Cross-multiply to avoid floating point
         (votes_for as u64) * (self.quorum_denominator as u64)
             >= (self.quorum_numerator as u64) * (total_eligible as u64)
+    }
+
+    /// Check if a vote WEIGHT meets quorum (weight-based;
+    /// appropriate for token-weighted DAO voting).
+    pub fn is_weighted_quorum_met(&self, weight_voted: u64, total_eligible_weight: u64) -> bool {
+        if total_eligible_weight == 0 {
+            return false;
+        }
+        // weight_voted / total_eligible_weight >= quorum_numerator / quorum_denominator
+        // Cross-multiply to avoid floating point and overflow.
+        weight_voted
+            .saturating_mul(self.quorum_denominator as u64)
+            >= (self.quorum_numerator as u64).saturating_mul(total_eligible_weight)
     }
 }
 
@@ -189,9 +203,14 @@ impl GovernanceProposal {
         false
     }
 
-    /// Cast a vote. Returns false if proposal is not in Voting state.
+    /// Cast a vote. Returns false if proposal is not in Voting state
+    /// or the weight is 0 (zero-weight votes are rejected to prevent
+    /// BTreeMap spam with non-contributing entries).
     pub fn cast_vote(&mut self, voter: [u8; 32], weight: u64, in_favor: bool) -> bool {
         if self.state != ProposalState::Voting {
+            return false;
+        }
+        if weight == 0 {
             return false;
         }
         if in_favor {
@@ -213,6 +232,10 @@ impl GovernanceProposal {
     }
 
     /// Resolve the proposal based on governance policy.
+    ///
+    /// Uses count-based quorum (`total_eligible_voters` is the
+    /// number of distinct voters). For weight-based quorum (DAO
+    /// with token-weighted voting), use [`Self::resolve_weighted`].
     ///
     /// Returns the new state (Approved, Rejected, or remains Voting).
     pub fn resolve(
@@ -243,7 +266,23 @@ impl GovernanceProposal {
             return self.state;
         }
 
-        // DAO, Federated, AiAssisted: quorum + majority
+        // Federated, AiAssisted: count-based quorum + majority
+        if policy.model == GovernanceModel::Federated
+            || policy.model == GovernanceModel::AiAssisted
+        {
+            if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
+                if self.total_for() > self.total_against() {
+                    self.state = ProposalState::Approved;
+                } else {
+                    self.state = ProposalState::Rejected;
+                }
+            }
+            return self.state;
+        }
+
+        // Dao: use weight-based quorum (caller should prefer
+        // resolve_weighted; this is a fallback for callers that
+        // only have voter count).
         if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
             if self.total_for() > self.total_against() {
                 self.state = ProposalState::Approved;
@@ -252,6 +291,33 @@ impl GovernanceProposal {
             }
         }
 
+        self.state
+    }
+
+    /// Resolve a DAO proposal with weight-based quorum.
+    ///
+    /// `total_eligible_weight` is the SUM of all eligible voters'
+    /// weights. The proposal is approved if:
+    /// 1. voted weight >= quorum fraction of total weight, AND
+    /// 2. for-weight > against-weight
+    pub fn resolve_weighted(
+        &mut self,
+        policy: &GovernancePolicy,
+        total_eligible_weight: u64,
+    ) -> ProposalState {
+        if self.state != ProposalState::Voting {
+            return self.state;
+        }
+        let voted_weight = self
+            .total_for()
+            .saturating_add(self.total_against());
+        if policy.is_weighted_quorum_met(voted_weight, total_eligible_weight) {
+            if self.total_for() > self.total_against() {
+                self.state = ProposalState::Approved;
+            } else {
+                self.state = ProposalState::Rejected;
+            }
+        }
         self.state
     }
 
@@ -394,6 +460,30 @@ mod tests {
         assert!(!p.is_quorum_met(0, 0));
     }
 
+    #[test]
+    fn test_weighted_quorum_met() {
+        let p = default_policy(); // 2/3 quorum
+        // 70 of 100 weight voted: 70/100 >= 2/3 → met.
+        assert!(p.is_weighted_quorum_met(70, 100));
+        // 50 of 100: 50/100 < 2/3 → not met.
+        assert!(!p.is_weighted_quorum_met(50, 100));
+    }
+
+    #[test]
+    fn test_weighted_quorum_exact() {
+        let p = default_policy();
+        assert!(p.is_weighted_quorum_met(2, 3));
+        assert!(p.is_weighted_quorum_met(66, 99));
+    }
+
+    #[test]
+    fn test_weighted_quorum_zero_total() {
+        let p = default_policy();
+        assert!(!p.is_weighted_quorum_met(0, 0));
+        // 0 voted / 0 total → false (defensive, matches count).
+        assert!(!p.is_weighted_quorum_met(10, 0));
+    }
+
     // -- GovernanceProposal tests --
 
     #[test]
@@ -434,6 +524,33 @@ mod tests {
 
         prop.resolve(&policy, 5);
         assert_eq!(prop.state, ProposalState::Approved);
+    }
+
+    #[test]
+    fn test_proposal_lifecycle_dao_weighted_approved() {
+        // Weight-based DAO: 70 of 100 weight voted (70% >= 2/3),
+        // and 50 for, 20 against (for > against).
+        let policy = default_policy();
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        prop.cast_vote([0x01; 32], 50, true);
+        prop.cast_vote([0x02; 32], 20, false);
+        // Total weight voted = 70; total eligible = 100; 70/100 = 70% >= 2/3.
+        prop.resolve_weighted(&policy, 100);
+        assert_eq!(prop.state, ProposalState::Approved);
+    }
+
+    #[test]
+    fn test_proposal_lifecycle_dao_weighted_quorum_fail() {
+        // Only 50 of 200 weight voted: 25% < 2/3. Proposal stays
+        // in Voting even though all votes are for.
+        let policy = default_policy();
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        prop.cast_vote([0x01; 32], 30, true);
+        prop.cast_vote([0x02; 32], 20, true);
+        prop.resolve_weighted(&policy, 200);
+        assert_eq!(prop.state, ProposalState::Voting);
     }
 
     #[test]

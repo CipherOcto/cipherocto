@@ -45,6 +45,18 @@ pub const ROLE_AGGREGATOR: u64 = 0x0080;
 /// Maximum roles per node.
 pub const MAX_ROLES_PER_NODE: u32 = 4;
 
+/// Bitmask of all defined role flags. Any bits outside this
+/// mask are considered unknown roles and rejected.
+pub const KNOWN_ROLE_MASK: u64 =
+    ROLE_COORDINATOR
+        | ROLE_EXECUTOR
+        | ROLE_RELAY
+        | ROLE_VALIDATOR
+        | ROLE_OBSERVER
+        | ROLE_ARCHIVIST
+        | ROLE_PROVER
+        | ROLE_AGGREGATOR;
+
 /// Minimum trust score for Coordinator role.
 pub const MIN_TRUST_COORDINATOR: u32 = 500;
 /// Minimum trust score for Validator role.
@@ -76,6 +88,12 @@ pub fn validate_role_assignment(
 
 /// Check if role combination is valid (RFC-0855 §4.2 constraints).
 pub fn is_valid_role_combination(role_flags: u64) -> bool {
+    // Reject unknown role bits. Without this, a malicious or
+    // outdated node could submit role_flags with high bits set
+    // that don't correspond to any defined role.
+    if role_flags & !KNOWN_ROLE_MASK != 0 {
+        return false;
+    }
     let role_count = role_flags.count_ones();
     if role_count == 0 {
         return false;
@@ -187,6 +205,22 @@ mod tests {
     #[test]
     fn test_zero_roles_invalid() {
         assert!(!is_valid_role_combination(0));
+    }
+
+    #[test]
+    fn test_unknown_role_bits_rejected() {
+        // High bits beyond KNOWN_ROLE_MASK must be rejected.
+        // Without this guard, a node could submit role_flags
+        // with unknown bits set and be admitted.
+        assert!(!is_valid_role_combination(0x8000_0000_0000_0000));
+        assert!(!is_valid_role_combination(ROLE_COORDINATOR | 0x0100));
+        assert!(!is_valid_role_combination(0xFFFF_FFFF_FFFF_FFFF));
+        // All-known bits are still subject to the max-4-roles
+        // rule, so KNOWN_ROLE_MASK (8 bits) is rejected by
+        // count. Use a known-4-bits combination instead.
+        assert!(is_valid_role_combination(
+            ROLE_EXECUTOR | ROLE_RELAY | ROLE_VALIDATOR | ROLE_ARCHIVIST
+        ));
     }
 
     #[test]

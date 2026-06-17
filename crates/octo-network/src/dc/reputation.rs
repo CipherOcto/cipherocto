@@ -91,6 +91,7 @@ impl DcRootedSlashReputationStore {
 
     /// Build the libp2p gossip topic.
     pub fn gossip_topic(dc_pubkey: &str) -> String {
+        assert!(!dc_pubkey.is_empty(), "dc_pubkey must not be empty");
         format!("/dot/reputation/dc/{dc_pubkey}")
     }
 
@@ -161,6 +162,12 @@ mod tests {
             DcRootedSlashReputationStore::gossip_topic("dc-1"),
             "/dot/reputation/dc/dc-1"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "dc_pubkey must not be empty")]
+    fn gossip_topic_rejects_empty() {
+        let _ = DcRootedSlashReputationStore::gossip_topic("");
     }
 
     #[test]

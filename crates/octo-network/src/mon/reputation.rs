@@ -115,6 +115,7 @@ impl SlashReputationStore {
 
     /// Returns the gossip topic for a coordinator's reputation.
     pub fn gossip_topic(coordinator: &str) -> String {
+        assert!(!coordinator.is_empty(), "coordinator must not be empty");
         format!("/dot/reputation/{coordinator}")
     }
 
@@ -198,6 +199,12 @@ mod tests {
             SlashReputationStore::gossip_topic("coord-1"),
             "/dot/reputation/coord-1"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "coordinator must not be empty")]
+    fn gossip_topic_rejects_empty() {
+        let _ = SlashReputationStore::gossip_topic("");
     }
 
     #[test]

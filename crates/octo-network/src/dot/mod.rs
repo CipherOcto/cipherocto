@@ -15,12 +15,14 @@ pub mod error;
 pub mod fragment;
 pub mod gateway;
 pub mod group_registry;
+pub mod handover;
 pub mod kick_envelopes;
 pub mod pce;
 pub mod replay;
 pub mod route;
 pub mod sequence;
 pub mod slash;
+pub mod sub_group;
 pub mod transport;
 pub mod witness;
 
@@ -37,6 +39,13 @@ pub use dc_envelopes::{
     InviteEnvelope, UnbindAllAckEnvelope, UnbindAllEnvelope, UnbindReason,
 };
 pub use decommission::{AuditEntry, AuditLog, UnbindAllAuditEnvelope, UnbindAllDoneEnvelope};
+pub use handover::{
+    CoordinatorRole, HandoverAckEnvelope, HandoverDoneEnvelope, HandoverError,
+    HandoverReason, HandoverRequestEnvelope, SlashEvent, SlashTally,
+};
+pub use sub_group::{
+    CreateSubGroupEnvelope, SubGroupError, SubGroupExtension, MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+};
 pub use domain::{BroadcastDomainId, PlatformType};
 pub use envelope::{DeterministicEnvelope, MessageType};
 pub use error::{DotError, PlatformAdapterError};

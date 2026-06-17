@@ -588,7 +588,7 @@ pub fn header(subtype: [u8; 4]) -> [u8; 10] {
 }
 
 /// Write a length-prefixed string (u32 BE length, then UTF-8 bytes).
-fn write_string(buf: &mut Vec<u8>, s: &str) {
+pub(crate) fn write_string(buf: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
     buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
     buf.extend_from_slice(bytes);

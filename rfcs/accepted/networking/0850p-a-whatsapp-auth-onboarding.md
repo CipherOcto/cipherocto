@@ -1139,58 +1139,6 @@ Per the **deferred vs unspecified rule**, every future-work item MUST have a spe
 
 **Why one extra exit code (`SessionExpired = 7`)?** WhatsApp's `Event::LoggedOut` is ambiguous: it fires for both "link rejected outright" and "session later expired." A single exit code would conflate two operator-recovery paths. The matrix/telegram tables don't have this ambiguity because their error models are explicit (HTTP 401 vs. SDK state `Closed`).
 
-## Determinism Requirements
-
-All WhatsApp adapter operations are RFC-0008 **Class C** (Probabilistic) by nature, because the underlying WhatsApp Web protocol is non-deterministic (server-side message ordering, rate limits, reconnection backoff).
-
-However, the **adapter's exposed interface** has deterministic properties:
-
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `Event::PairingQrCode` delivery | C | WhatsApp server decides when to send a new QR |
-| `Event::Connected` delivery | C | Network reconnect is non-deterministic |
-| `has_valid_session()` (0850p-a F6) | A | Pure function of adapter's internal state |
-| QR code generation (PNG bytes) | A | Deterministic given the QR string |
-| Session DB file I/O | A | Local file system; deterministic ordering |
-| CLI argument parsing | A | Pure function of `std::env::args()` |
-| `whoami` exit codes | A | Determined by adapter state, not network |
-
-**Consensus impact:** Zero. The WhatsApp adapter is local to a single operator's gateway. The adapter's deterministic properties matter for CI testing and reproducible builds, not for protocol consensus.
-## Error Handling
-
-### Adapter-side errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `WhatsAppError::PairingTimeout` | QR not scanned within 60s | Re-run `octo-whatsapp-onboard pair-link` |
-| `WhatsAppError::ConnectionLost` | Network drop | Auto-reconnect with exponential backoff |
-| `WhatsAppError::SessionReplaced` | Another device paired | Re-pair required (`Event::LoggedOut` with `cause=Replaced`) |
-| `WhatsAppError::RateLimited` | Too many requests | Wait for the rate-limit window |
-| `WhatsAppError::BadCredentials` | Invalid `bot_token` / `api_hash` | Re-run with correct credentials |
-| `WhatsAppError::DbLocked` | TDLib DB in use by another process | Stop the other process; check file permissions |
-
-### CLI-side errors (octo-whatsapp-onboard)
-
-| Exit code | Meaning | Mitigation |
-|-----------|---------|------------|
-| 0 | Success | — |
-| 1 | Generic error | Check stderr for details |
-| 2 | Auth rejected (e.g., bad code, 2FA failure) | Re-run with correct credentials |
-| 3 | TDLib unreachable | Check `tdlib-rs` build, C++ deps |
-| 4 | User-cancelled (interactive prompt aborted) | Re-run |
-| 5 | Bad config (e.g., `TelegramConfig::validate()` failed) | Fix config |
-| 6 | Rate-limited (TDLib flood-wait) | Wait for the rate-limit window |
-
-### Secret-redaction errors
-
-The tracing layer in `octo-whatsapp-onboard` redacts: `bot_token`, `api_hash`, `phone`, `password`, `access_token`, `verifying_key`. A redacted field appearing in logs is logged as `[REDACTED]`. There is no `RedactionError` because redaction is infallible.
-
-### Error handling rules
-
-1. All adapter errors are typed (`thiserror`-derived) and exhaustively matched in the CLI.
-2. CLI exit codes follow the table above; no ad-hoc exit codes.
-3. Errors are logged with full context (session_path, command, env var name) but never with the secret values.
-4. Network errors trigger automatic retry with backoff; user errors do not.
 ## Related Use Cases
 
 - **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The primary use case for the WhatsApp adapter. Defines the broader goal of "DOT transport on social platforms" of which WhatsApp is one instance.

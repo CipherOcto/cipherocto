@@ -539,6 +539,31 @@ The `StateTransitionEvent` is gossiped to all mission participants. The `trigger
 
 Verification: mission participants verify the signature against the DomainCoordinator's term public key (looked up via the mission's pubkey registry). Invalid signatures are dropped silently (per the "routine filtering silent" rule, §RFC-0855p-b).
 
+
+### 10. Error Handling
+
+This section defines typed error and recovery paths for `0855p-c` (DomainCoordinator role) operations. All errors are surfaced to the mission via slash-tally or state-transition events; silent drops are reserved for routine signature/format rejection only.
+
+| Error case | Trigger | Recovery | Reference |
+|-----------|---------|----------|-----------|
+| `DomainCoordinatorError::PlatformAdminLost` | The DomainCoordinator is no longer a platform-level admin (e.g., demoted by another platform admin, group ownership transferred) | Emit `PlatformLoss` envelope; transition `Active → Inactive`; slash reason 0x0005 with reduced penalty (50% OCTO-O, since loss may be platform-driven not coordinator-driven) | §5a "PlatformLoss Envelope (R1-DC-3 fix)" |
+| `DomainCoordinatorError::PlatformKicked` | The DomainCoordinator is explicitly removed by the platform (e.g., ban) | Transition `Active → Inactive`; slash reason 0x0005 with full penalty (100% OCTO-O); operator notified | §5 "Platform-Mediated Handover" |
+| `DomainCoordinatorError::GroupDeleted` | The bound physical group is deleted on the platform | Transition `Active → Inactive`; no slash; the group no longer exists | §5 |
+| `DomainCoordinatorError::StateTransitionSigInvalid` | `StateTransitionEvent` envelope signature does not verify against the DomainCoordinator's term pubkey | Silent drop (routine filtering); emit metric `dc_state_transition_sig_fail_total` | §9c (E2E IS-6.5 fix) |
+| `DomainCoordinatorError::HandoverTimeout` | Successor DomainCoordinator does not become `Active` within `HANDOVER_TIMEOUT = 100` epochs after the previous coordinator entered `Handover` | The handover is aborted; old coordinator re-enters `Active` if still eligible; else triggers fresh election | §4 "Platform-Mediated Handover" |
+| `DomainCoordinatorError::CrossPlatformSlashInsufficient` | Cross-platform slash tally is < 2/3 of mission's voters on the affected platform | Slash tally fails silently (no slash applied); emit `CROSS_PLATFORM_SLASH_FAIL` metric; the slash attempt is logged for audit | §9b "Cross-Platform Slash (E2E IS-5.8 fix)" |
+| `DomainCoordinatorError::SlashVoteAuditFail` | A slash vote envelope's signature does not verify OR the vote is from a non-mission-participant | Reject the vote; emit metric `dc_slash_vote_audit_fail_total`; continue tally with valid votes | §9a "Slash Vote Audit (E2E IS-5.3 fix)" |
+| `DomainCoordinatorError::SubAdminAuthMissing` | A sub-admin action is attempted but the mission is configured `sub_admins = false` OR the actor lacks the required `SubAdminCapability` | Reject the action; emit `SUB_ADMIN_ACTION_REJECTED` event; no slash (this is a permission error, not a slashable offense) | Future work F5 mission `0855p-c-sub-admins.md` |
+| `DomainCoordinatorError::BINDDesync` | The DomainCoordinator's local view of the `GroupRegistry` differs from the consensus `GroupRegistry` (e.g., after a missed heartbeat and replay) | Re-fetch the canonical `GroupRegistry` from mission state; reconcile local view; emit `BIND_DESYNC_RECONCILED` event | §7 "Cross-RFC Integration" |
+
+**Notes:**
+
+- All error variants are typed (`thiserror`-derived `DomainCoordinatorError` enum); no stringly-typed errors.
+- Cross-platform slash reason codes use the platform-tagged format: 0x8000 | base_reason (per §9b).
+- "Silent" in this RFC means "no peer-visible protocol response" — all errors emit at least one metric or audit-log event for operator inspection.
+- Slash reason codes 0x0001-0x0009 are inherited from RFC-0855p-b §B; this RFC does not define new slash reasons.
+
+
 ## Performance Targets
 
 | Metric | Target |
@@ -620,7 +645,7 @@ Verification: mission participants verify the signature against the DomainCoordi
 
 ## Economic Analysis
 
-### Token Integration
+### Token Economics Reference
 
 | Activity | Token | Rationale |
 |----------|-------|-----------|
@@ -628,6 +653,10 @@ Verification: mission participants verify the signature against the DomainCoordi
 | Slash penalty | OCTO-O (slash stake) | Per RFC-0855p-b |
 | Handover via admin transfer | None (platform-level) | Platform handles admin transfer |
 | Platform-loss detection | None (adapter-level) | Same |
+
+
+
+Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For DomainCoordinator, the role-specific stake is `100 OCTO-O` per term.
 
 ### DomainCoordinator Economics
 
@@ -897,61 +926,6 @@ The risk is platform-admin key compromise. F2 (cross-platform admin attestation,
 
 The multi-platform rule (one DomainCoordinator per platform per domain_id) is a natural extension of RFC-0850p-c §5 "Multi-Platform Binding Rule" — if you bind the same `domain_id` to two platforms, each platform has its own DomainCoordinator. This enables carrier migration (RFC-0850 G7) without losing coordination.
 
-## Determinism Requirements
-
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| DC state machine transitions | A | All transitions deterministic; witness set sorted lex |
-| Platform admin verification (F2) | C | Platform API responses are non-deterministic (rate limits, network) |
-| Cross-platform consensus (F1) | B | 2-phase commit with timeout; happy path is deterministic |
-| Cross-domain slash (F3) | A | Slash reason code + 2/3 witness vote is deterministic |
-| Slash for small groups (F4) | A | Policy is deterministic given `member_count_at_bind` |
-| Sub-admin authority check (F5) | A | Pure function of `SubAdminAuthority` bitfield |
-| DC reputation aggregation (F6) | A | Pure function of the `DCRootedSlashReputationStore` |
-| Auto-rejoin ticket (F7) | A | Ticket signature is deterministic; rate limit is deterministic |
-
-**Consensus impact:** DC state transitions and cross-domain slash are consensus-critical (Class A/B). Platform admin verification (F2) is Class C because the platform API is the trust root; the DC trusts the platform's response. Cross-platform consensus (F1) is Class B because of the timeout fallback.
-## Error Handling
-
-### DC state errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `DcError::InvalidTransition` | State machine transition not in allowed set | Reject the trigger |
-| `DcError::PlatformNotAdmin` | DC's `public_key` is not a current admin on the platform | Emit warning; slash if persistent |
-| `DcError::AdminAttestStale` | `PlatformAdminAttest` is older than `MAX_ATTEST_AGE_EPOCHS` (F2) | Emit challenge; slash if no response in `CHALLENGE_RESPONSE_EPOCHS` |
-| `DcError::AdminAttestMissing` | No `PlatformAdminAttest` has been seen | Slash via 0x000F.02 (failed attest) |
-
-### Cross-platform consensus errors (F1)
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `DcConsensusError::QuorumNotMet` | < 2/3 of N DCs voted | Abort REBIND/UNBIND; manual reconciliation |
-| `DcConsensusError::Timeout` | `DC_CONSENSUS_TIMEOUT_EPOCHS` exceeded | Same as `QuorumNotMet` |
-| `DcConsensusError::TieBreakLost` | Concurrent REBIND; this one lost | Retry after winning REBIND completes |
-| `DcConsensusError::InvalidVoteSignature` | A DC vote signature doesn't verify | Reject that vote; recount |
-
-### Cross-domain slash errors (F3)
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `DcSlashError::InsufficientVotes` | < 2/3 of mission-level witnesses | Slash not finalized |
-| `DcSlashError::InvalidReasonCode` | Slash reason code not in 0x000F range | Reject the slash vote |
-| `DcSlashError::AppealPending` | DC has an open appeal | Defer slash until appeal resolves |
-
-### Sub-admin errors (F5)
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `SubAdminError::AuthorityDenied` | Sub-admin attempted an operation outside their policy | Reject the operation; emit warning |
-| `SubAdminError::NotActive` | Sub-admin attempted operation before activation or after deactivation | Reject the operation |
-
-### Error handling rules
-
-1. All DC errors are typed (`thiserror`-derived) and exhaustively matched.
-2. Cross-platform errors (F1) require manual reconciliation via `dc-reconcile`.
-3. Sub-admin authority errors (F5) are auditable: the attempted operation is logged.
-4. Auto-rejoin errors (F7) are rate-limited; `REJOIN_COOLDOWN_EPOCHS = 1000` prevents abuse.
 ## Adversarial Review
 
 | Threat | Impact | Mitigation |

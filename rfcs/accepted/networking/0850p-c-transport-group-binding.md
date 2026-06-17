@@ -602,6 +602,30 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | Cooldown timer | B | Wall-clock acceptable |
 | REBIND timeout (5 min) | B | Same |
 
+### 11. Error Handling
+
+This section defines the typed error and rejection cases for `0850p-c` operations. All recovery is deterministic (no panic, no silent retry that could fork state).
+
+| Error case | Trigger | Recovery | Reference |
+|-----------|---------|----------|-----------|
+| `BindRejected::MultiPlatformViolation` | New BIND for `(mission_id, domain_id, platform)` when another BIND for same `(mission_id, domain_id)` already exists on a different platform without migration proposal | Silent drop; `BIND_REJECTED` event to founder; founder must propose platform migration (slash reason 0x000A) | §5 "Multi-Platform Binding Rule" |
+| `BindRejected::SignatureInvalid` | BIND envelope signature does not verify against the claimed DomainCoordinator pubkey | Silent drop; emit metric `bind_signature_fail_total` | §8 "Witness Validation Rules" check 1 |
+| `BindRejected::WitnessTimeout` | Implicit DomainCoordinator receives <1 `BIND_ACK` within `BIND_WITNESS_TIMEOUT = 100` epochs | Reset `pending_bind`; retry up to 3 times with backoff `50, 200, 800` epochs; on final failure, fall back to Witness role | §3 "Binding Ceremony — Implicit Designator" |
+| `BindRejected::FounderSquat` | Founder's BIND accepted but no `CoordinatorHeartbeat` within `FOUNDER_HEARTBEAT_GRACE = 30` epochs | Slash tally initiated with `slash_reason = 0x0003`; 1000-epoch cooldown on `(mission_id, domain_id)` | E2E IS-1.5 fix |
+| `BindRejected::CrossPlatformSpoof` | `BIND.platform` does not match the receiving adapter's platform (e.g., `platform = "whatsapp"` arriving via Matrix adapter) | Silent drop; emit metric `bind_cross_platform_spoof_total` | §8 check 3 (R1-TGB-5 fix) |
+| `BindRejected::IsReconnectLie` | `is_reconnect = true` but the BIND's `coordinator_id` does not match the previous BIND's `coordinator_id` for this `(mission_id, domain_id)` | Silent drop; slash tally with `slash_reason = 0x000B`; 500-epoch cooldown on claimant | §8 check 4 (E2E IS-1.6 fix) |
+| `UnbindReason::Code(0x000A)` | Platform migration committed; old group's BIND is replaced | Old group → `UnboundQuarantined`; new group → `Bound`; cooldown `MIGRATION_RETRY_COOLDOWN = 500` epochs | §6a "Platform Migration (E2E IS-4.8 fix)" |
+| `RebindFailed::SuccessorIneligible` | REBIND candidate fails the 4 explicit eligibility checks (mission-membership, trust-set, slash-record, key-pair-match) | Silent drop; emit `REBIND_REJECTED`; slash tally if 0x0005 misbehavior suspected | §7 "REBIND Lifecycle" (R1-TGB-6 fix) |
+| `RebindFailed::Cooldown` | REBIND attempted before `BIND_RETRY_COOLDOWN` elapses for `(mission_id, domain_id)` | Silent drop; emit `REBIND_REJECTED_COOLDOWN` | §7 cooldown rule |
+| `BindReplayRejected` | BIND with same `bind_nonce` + `bind_epoch` seen twice | First-seen-wins; second instance silently dropped | IA-TGB-11 |
+
+**Notes:**
+
+- All error variants are typed (`thiserror`-derived `BindRejected` / `UnbindReason` / `RebindFailed` enums); no stringly-typed errors.
+- All silent drops emit at least one metric (`tracing` event with `WARN` level + counter increment) so operators can diagnose; the "silent" refers to no peer-visible protocol response.
+- Slash reason codes 0x0001-0x000B are globally canonical (per RFC-0855p-b §B); 0x000A-0x000B are transport-level and defined here.
+
+
 ## Performance Targets
 
 | Metric | Target |
@@ -697,7 +721,7 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 
 ## Economic Analysis
 
-### Token Integration
+### Token Economics Reference
 
 | Activity | Token | Rationale |
 |----------|-------|-----------|
@@ -707,6 +731,10 @@ If all pass, the witness updates its local `GroupRegistry` and broadcasts `DOT/1
 | REBIND | OCTO-O (orchestration) | Same |
 | Cooldown timer | None | State machine, no on-chain cost |
 | Slash vote | OCTO-O (slash stake) | Per RFC-0855p-b §B (slash reason codes 0x0001-0x000B) and §"Slashing Integration" |
+
+
+
+Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For DomainCoordinator, the role-specific stake is `100 OCTO-O` per term.
 
 ### DomainCoordinator Economics
 
@@ -898,57 +926,6 @@ The multi-platform rule (1 group per platform per domain_id) is a tension resolu
 
 The 100-epoch / 1000-epoch cooldowns prevent rapid rebinding attacks without being so long that legitimate migrations are blocked. The 2^slash_count exponential cooldown (per RFC-0855p-b) is reused for slash-derived unbinds.
 
-## Determinism Requirements
-
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| BIND envelope signing | A | Ed25519 signature is deterministic (RFC-0853 §3) |
-| BIND envelope verification | A | Pure function of signature + payload |
-| REBIND single-platform | A | Local atomic operation; ordering is by `domain_id` |
-| REBIND cross-platform (F1) | B | 2-phase commit with timeout; the timeout introduces non-determinism in pathological cases, but the happy path is deterministic |
-| UNBIND single-platform | A | Local atomic operation |
-| UNBIND cross-platform (F1) | B | Same as cross-platform REBIND |
-| `BindEnvelope::member_count_at_bind` | A | Field is signed; verifier checks it |
-| Adapter-side participant filter (F2) | A | Pure function of `BindEnvelope.participant_filter` |
-| BIND gossip delivery (F3) | C | libp2p gossip is best-effort; not consensus-critical |
-| Cross-platform witness aggregation (F5) | B | 60s vote collection window; finalization is deterministic given the vote set |
-
-**Consensus impact:** BIND/UNBIND operations affect mission membership, which is consensus-relevant. The 2-phase commit (F1) is RFC-0008 Class B because of the timeout fallback. The `dc-reconcile` manual operator flow is Class C (operator decision).
-## Error Handling
-
-### Binding errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `BindError::InvalidSignature` | BIND envelope signature does not verify | Reject BIND; do not add to local store |
-| `BindError::DomainMismatch` | BIND's `domain_id` does not match the expected one | Reject BIND |
-| `BindError::PlatformMismatch` | BIND's `platform` does not match the expected one | Reject BIND |
-| `BindError::DcUntrusted` | DC's `public_key` is not in the trusted set | Reject BIND (or trigger DC verification flow) |
-| `BindError::CrossPlatformConsensusFailed` | 2/3 majority not reached in F1's 2PC | Abort REBIND; manual reconciliation required |
-| `BindError::Timeout` | F1's 2PC exceeded `REBIND_TIMEOUT_EPOCHS` | Manual operator reconciliation via `dc-reconcile` |
-| `BindError::TieBreakLost` | Concurrent REBIND; this one lost the lex `domain_id` tie-break | Retry after the winning REBIND completes |
-
-### UNBIND errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `UnbindError::NotBound` | UNBIND for a `domain_id` that is not currently bound | Reject UNBIND; emit warning |
-| `UnbindError::CrossPlatformConsensusFailed` | 2/3 majority not reached | Same as `BindError::CrossPlatformConsensusFailed` |
-
-### Cross-platform witness errors (F5)
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `SlashError::InsufficientVotes` | < 2/3 of N witnesses voted | Slash not finalized; reject |
-| `SlashError::InvalidVoteSignature` | A witness vote's signature does not verify | Reject that vote; recount |
-| `SlashError::VoteWindowExpired` | 60s window passed | Slash not finalized; reject |
-
-### Error handling rules
-
-1. All BIND/UNBIND errors are typed (`thiserror`-derived) and exhaustively matched.
-2. Cross-platform errors (F1) require manual reconciliation; the CLI emits a structured error report.
-3. Witness errors (F5) are auditable: the vote set is logged for forensic analysis.
-4. No silent failures: every reject path emits a structured log entry with the `domain_id` and reason.
 ## Adversarial Review
 
 | Threat | Impact | Mitigation |

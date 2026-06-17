@@ -405,6 +405,32 @@ A malicious or compromised set of bootstrap nodes could collude to feed the new 
 | Timeout (60s) | B | Same |
 | Mode selection (A → B → C) | A | Deterministic order |
 
+### 10. Error Handling
+
+This section defines typed error and recovery paths for `0851p-a` operations. Bootstrap failures must always surface to the operator (not silently retry forever) and must transition through well-defined state machine states.
+
+| Error case | Trigger | Recovery | Reference |
+|-----------|---------|----------|-----------|
+| `BootstrapError::NoSeeds` | `LocalSeedList` is empty (e.g., fresh install with no Mode C invite) | Operator must add seeds manually or scan invite QR; surface user-facing error | Mode A pre-condition |
+| `BootstrapError::StaleSeed` | Seed's `expires_epoch` is < `current_epoch - MAX_SEED_AGE_EPOCHS` | Drop seed from local list; do not add to `LocalSeedList`; do not propagate | Mode A, F3 mission `0851p-a-seed-health-check` |
+| `BootstrapError::StaleList` | All seeds in `LocalSeedList` are stale | Refuse to start; emit `SEED_LIST_FULLY_STALE` metric; do not enter Mode A | F3 |
+| `BootstrapError::SeedListUnreachable` | Mode A bootstrap node refuses connection / times out after 60s | Fall back to Mode B (DHT) | §4 "Mode B — DHT Fallback" |
+| `BootstrapError::InvalidSignature` | Seed list envelope signature does not verify against the canonical `SeedListAuthority` pubkey | Reject the entire list; do not load; emit `SEED_LIST_SIG_FAIL` | Mode A |
+| `BootstrapError::IntersectionBelowThreshold` | Mode A peer-list intersection check returns <80% | Fall back to Mode B; tag the Mode A result as `bootstrap_confidence: Low` | §6 "Sybil / Eclipse Defense" (E2E IS-2.5 fix) |
+| `BootstrapError::SlashedSeed` | Seed's pubkey is in the local slash blacklist (slash reason 0x000D) | Reject silently; do not add to `LocalSeedList`; emit `SEED_SLASHED` metric | F6 mission `0851p-a-bootstrap-slashing` |
+| `BootstrapError::DhtWalkFailed` | Mode B Kademlia walk finds no peers within 60s | Fall back to Mode C (invite) or surface `BootstrapFailed` | §5 "Mode C — Invite Link" |
+| `BootstrapError::InviteSignatureInvalid` | Mode C invite's signature does not verify | Reject; stay in `Init`; surface user-facing error | Mode C |
+| `BootstrapError::AllModesFailed` | All 3 modes fail (Mode A timeout AND Mode B no-peers AND Mode C no-invite) | Transition to `BootstrapFailed`; surface user-facing error; retry with exponential backoff `60, 120, 240, ...` epochs capped at 3600; **infinite retries** (a node that can't bootstrap is useless) | §7 "Failure Modes" (E2E IS-2.4 fix) |
+| `BootstrapError::SeedHealthAlert` | >20% of seeds are stale | Log `WARN`; emit metric `seed_stale_ratio`; start anyway (configurable) | F3 |
+| `BootstrapError::TorPathUnreachable` | `bootstrap_mode = TorOnly` and Tor circuit cannot be established | Fall back to Mode A (Direct); if `bootstrap_mode = TorWithIpFallback` configured, use IP fallback; otherwise surface `BootstrapFailed` | F2 mission `0851p-a-tor-seed-list` |
+
+**Notes:**
+
+- All error variants are typed (`thiserror`-derived `BootstrapError` enum); no stringly-typed errors.
+- Mode D (NIP-05 / Nostr) error handling is specified in mission `0851p-a-nostr-mode-d.md` (F5, future work, post-launch).
+- Slash reason code `0x000D` (`bootstrap_node_misbehavior`) is allocated in RFC-0855p-b §B; this RFC uses it for F6.
+
+
 ## Lifecycle Requirements
 
 > **The "Nothing should be implied" rule (lifecycle layer):** Every stateful actor MUST have a typed state machine. Cross-reference: BLUEPRINT.md "Lifecycle State Machines" table.
@@ -538,7 +564,7 @@ enum BootstrapClientLifecycle {
 
 ## Economic Analysis
 
-### Token Integration
+### Token Economics Reference
 
 | Activity | Token | Rationale |
 |----------|-------|-----------|
@@ -546,6 +572,10 @@ enum BootstrapClientLifecycle {
 | BOOTSTRAP_REQ/RESP relay | OCTO-B (bandwidth) | Small envelopes, low bandwidth cost |
 | Seed list signing | OCTO-O (orchestration) | SeedListAuthority is governance-level |
 | Inviter vouching | None | Off-chain social trust; no on-chain cost |
+
+
+
+Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For Bootstrap Node Operator, the role-specific stake is `100 OCTO-O` per term.
 
 ### Bootstrap Node Economics
 
@@ -705,49 +735,6 @@ The 256-peer initial cap is a UX bound: a new node can show 256 peers in its das
 
 The 60s timeout is the user-experience budget: longer timeouts cause users to give up; shorter timeouts are unreliable on slow networks.
 
-## Determinism Requirements
-
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| Seed list envelope signature verification | A | Pure function of signature + payload |
-| Seed staleness check (F3) | A | Pure function of `signed_at_epoch` and `current_epoch` |
-| `bootstrap_mode = Direct` IP connection | C | Network non-determinism (TCP, DNS, routing) |
-| `bootstrap_mode = TorOnly` connection (F2) | C | Tor path selection is non-deterministic |
-| `bootstrap_mode = Nostr` resolution (F5) | C | Nostr relay responses are non-deterministic |
-| Web-of-trust graph rendering (F4) | A | Pure function of the local trust store |
-| Slash reason code validation (`0x000D`, F6) | A | Pure function of envelope fields |
-| Slashed seed rejection (F6) | A | Pure function of local blacklist |
-
-**Consensus impact:** The seed list itself is signed by the `SeedListAuthority`; the authority's signature is the consensus root. Once a seed is accepted into the local list, the deterministic operations (staleness check, slash rejection) keep the local view consistent. Network operations (TCP, Tor, Nostr) are Class C because they only fetch the data; the verification of that data is Class A.
-## Error Handling
-
-### Bootstrap errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `BootstrapError::NoSeeds` | Seed list is empty | Operator must add seeds manually |
-| `BootstrapError::StaleSeed` | Seed is older than `MAX_SEED_AGE_EPOCHS` (F3) | Drop the seed; do not add to local list |
-| `BootstrapError::StaleList` | All seeds are stale | Refuse to start; emit `SEED_LIST_FULLY_STALE` |
-| `BootstrapError::SeedListUnreachable` | Cannot reach the seed list service (Tor, Nostr, etc.) | Retry with backoff; switch mode if `bootstrap_mode = TorWithIpFallback` |
-| `BootstrapError::InvalidSignature` | Seed list envelope signature does not verify | Reject; do not load |
-| `BootstrapError::SlashedSeed` | Seed is in the local blacklist (F6) | Reject silently; do not add to local list |
-| `BootstrapError::SeedHealthAlert` | > 20% of seeds are stale (F3) | Log WARN; emit metric `seed_stale_ratio`; start anyway (configurable) |
-
-### Network errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `TorError::ArtiNotBuilt` | `arti` crate not in feature set | Rebuild with `tor` feature |
-| `TorError::OnionUnreachable` | `.onion` service is down | Retry; switch mode |
-| `NostrError::Nip05NotFound` | NIP-05 identifier does not resolve | Reject the bootstrap mode |
-| `NostrError::RelayUnreachable` | All configured Nostr relays are down | Retry; add more relays |
-
-### Error handling rules
-
-1. All bootstrap errors are typed (`thiserror`-derived) and exhaustively matched.
-2. Stale seed errors are non-fatal (drop the seed, continue) unless the entire list is stale.
-3. Network errors (Tor, Nostr) are retried with exponential backoff.
-4. Slashed seed errors (F6) are silent (no log) to avoid revealing the blacklist to attackers.
 ## Adversarial Review
 
 | Threat | Impact | Mitigation |

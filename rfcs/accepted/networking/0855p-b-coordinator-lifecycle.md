@@ -886,59 +886,6 @@ Slashing is integrated as a state (`Demoting`) rather than a one-shot event beca
 
 `2^slash_count` cool-down after slash provides exponential backoff against recurrent misbehavior; this is more aggressive than RFC-0855 §17's "Slash OCTO-O stake + demotion" (which is silent on re-elevation) but consistent with the slashing pattern in other OCTO RFCs (e.g., RFC-0860 §6.4).
 
-## Determinism Requirements
-
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| Coordinator state transitions | A | All 5 transitions are Class A; witness set is sorted lex for canonical ordering |
-| Election tally | A | Per-model algorithm is deterministic; vote set is canonical |
-| Slash reason code validation | A | Pure function of envelope fields + slash reason table (RFC-0855p-b §B) |
-| Slash penalty calculation (`2^slash_count`) | A | Pure arithmetic |
-| `Demoting` cool-down expiry | A | Pure function of `slash_at_epoch` + `2^slash_count` |
-| Handover predecessor queueing | A | Local queue; ordering by `Envelope.epoch` |
-| Heartbeat liveness check | C | Network round-trip is non-deterministic |
-| Cross-mission reputation (F2) | A | Pure function of the `SlashReputationStore` (gossiped deterministically) |
-| VDF election (F3) | A | VDF is deterministic given the seed; tie-break by lex `candidate_pubkey` |
-| Stake-weighted quadratic voting (F4) | A | `sqrt(stake) * cosigners` is deterministic |
-| Governance rotation (F5) | A | Multi-sig threshold signature is deterministic |
-
-**Consensus impact:** All RFC-0855p-b operations affect mission state, which is consensus-critical. Every operation is Class A except the heartbeat liveness check (Class C, network-dependent).
-## Error Handling
-
-### Coordinator state errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `CoordinatorError::InvalidTransition` | State machine transition not in the allowed set | Reject the trigger; emit warning |
-| `CoordinatorError::MissingSignature` | Required envelope signature is absent | Reject the trigger |
-| `CoordinatorError::QuorumNotMet` | Election tally < threshold (2/3 of votes) | Reject the election; trigger another round |
-| `CoordinatorError::StaleElection` | Election envelope is older than `MAX_ELECTION_AGE_EPOCHS` | Reject; trigger a fresh election |
-| `CoordinatorError::NoCandidates` | Election has zero eligible candidates | Mission enters `Suspended` state (per RFC-0855 §3) |
-
-### Slash errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `SlashError::InvalidReasonCode` | Slash reason code not in §B table | Reject the slash vote |
-| `SlashError::InsufficientEvidence` | `evidence` field doesn't match `offense` | Reject the slash vote |
-| `SlashError::QuorumNotMet` | < 2/3 of witnesses voted | Slash not finalized |
-| `SlashError::VoteWindowExpired` | 60s window passed | Slash not finalized |
-| `SlashError::InvalidVoteSignature` | Witness vote signature doesn't verify | Reject that vote; recount |
-| `SlashError::SelfSlash` | Coordinator is voting to slash themselves | Reject (a witness must initiate) |
-
-### Handover errors
-
-| Error variant | Cause | Recovery |
-|---------------|-------|----------|
-| `HandoverError::NoSuccessor` | No candidate for handover | Coordinator enters `Handover` state indefinitely; manual operator intervention |
-| `HandoverError::PredecessorTimeout` | Predecessor missed `HANDOVER_TIMEOUT` | Successor takes over; predecessor is slashed (0x0003) |
-
-### Error handling rules
-
-1. All state errors are typed (`thiserror`-derived) and exhaustively matched in the state machine driver.
-2. Election errors are recoverable (re-trigger); slash errors are not (the slash either finalizes or doesn't).
-3. Handover errors are critical and require operator monitoring.
-4. Witness vote errors are auditable: the vote set is logged for forensic analysis.
 ## Adversarial Review
 
 | Threat | Impact | Mitigation |

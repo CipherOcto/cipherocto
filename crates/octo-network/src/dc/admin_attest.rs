@@ -157,12 +157,26 @@ pub fn attest_topic(domain_id: &str, platform: Platform) -> String {
     format!("/dot/admin/{}/{}", domain_id, platform.as_str())
 }
 
-/// Current epoch seconds (for diagnostics).
-pub fn now_epoch() -> u64 {
+/// Current Unix epoch in seconds (for diagnostics / operator
+/// visibility).
+///
+/// WARNING: this is the Unix time in seconds, not a network
+/// consensus epoch. Use a consensus-epoch clock (e.g.,
+/// derived from a VDF or governance rotation) for any
+/// value stored in a `signed_at_epoch` field that participates
+/// in freshness checks like `MAX_ATTEST_AGE_EPOCHS`.
+pub fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Deprecated alias for [`now_unix_seconds`]. Returns Unix
+/// seconds (not a network epoch).
+#[deprecated(note = "renamed to now_unix_seconds for clarity")]
+pub fn now_epoch() -> u64 {
+    now_unix_seconds()
 }
 
 #[cfg(test)]

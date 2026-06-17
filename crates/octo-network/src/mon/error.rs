@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Mission Overlay Network error enum — 8 variants
 #[derive(Error, Debug)]
 pub enum MonError {
+    #[error("Invalid mission id bytes: expected {expected} bytes, got {actual}")]
+    InvalidMissionIdBytes { expected: usize, actual: usize },
+
     #[error("Invalid mission id: {mission_hash:?}")]
     InvalidMissionId { mission_hash: [u8; 32] },
 

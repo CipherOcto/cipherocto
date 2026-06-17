@@ -63,8 +63,9 @@ impl MissionId {
     /// Deserialize from canonical bytes.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, crate::mon::error::MonError> {
         if bytes.len() != Self::SIZE {
-            return Err(crate::mon::error::MonError::InvalidMissionId {
-                mission_hash: [0u8; 32],
+            return Err(crate::mon::error::MonError::InvalidMissionIdBytes {
+                expected: Self::SIZE,
+                actual: bytes.len(),
             });
         }
         let network_id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -137,6 +138,13 @@ mod tests {
     fn test_mission_id_from_bytes_too_long() {
         let result = MissionId::from_canonical_bytes(&[0u8; 50]);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::mon::error::MonError::InvalidMissionIdBytes { expected, actual } => {
+                assert_eq!(expected, MissionId::SIZE);
+                assert_eq!(actual, 50);
+            }
+            other => panic!("expected InvalidMissionIdBytes, got {other:?}"),
+        }
     }
 
     #[test]

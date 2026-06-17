@@ -274,6 +274,15 @@ impl Quorum {
     /// Returns true if `prepared` votes (out of `n` total)
     /// satisfy the quorum.
     pub fn is_met(&self, prepared: usize, n: usize) -> bool {
+        // Defensive: 0 participants is a construction error.
+        // Without this, Unilateral would return true (0 == 0
+        // is trivially met), allowing an N=0 consensus to
+        // "commit" with no votes. Callers should also guard
+        // against N=0 at a higher level, but defending in depth
+        // here prevents accidental misuse.
+        if n == 0 {
+            return false;
+        }
         match self {
             Quorum::Unilateral => true, // no other DCs to wait for
             Quorum::Unanimous => prepared == n,
@@ -299,6 +308,16 @@ mod tests {
     fn n1_unilateral() {
         let q = Quorum::for_n(1);
         assert!(q.is_met(0, 1));
+    }
+
+    #[test]
+    fn n0_is_never_met() {
+        // Defensive: 0 participants must not claim quorum is met,
+        // even though for_n(0) returns Unilateral.
+        let q = Quorum::Unilateral;
+        assert!(!q.is_met(0, 0));
+        assert!(!Quorum::Unanimous.is_met(0, 0));
+        assert!(!Quorum::TwoThirds.is_met(0, 0));
     }
 
     #[test]

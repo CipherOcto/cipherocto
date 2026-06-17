@@ -132,6 +132,15 @@ impl RebindCoordinator {
         if self.state != CoordinatorState::Preparing {
             return self.state;
         }
+        // Guard: 0 participants means the coordinator was
+        // constructed with no peers to coordinate with. The
+        // 2PC requires at least one participant; without it,
+        // the REBIND is effectively a single-platform change
+        // and should be handled by the caller via direct
+        // REBIND (not 2PC). Aborting here is the safe default.
+        if self.participants.is_empty() {
+            return self.abort(RebindAbortReason::VoteAbort);
+        }
         if !self.participants.iter().any(|p| p == platform) {
             // Unknown platform: treat as implicit ABORT (security:
             // an unknown peer cannot influence the REBIND).
@@ -300,6 +309,18 @@ mod tests {
         assert_eq!(c.abort_reason, Some(RebindAbortReason::VoteAbort));
         let abort = c.abort_envelope(vec![9]).unwrap();
         assert_eq!(abort.dissenters, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn zero_participants_aborts() {
+        // 0 participants is a construction error. The 2PC
+        // requires at least one peer to coordinate with; the
+        // coordinator must not transition to Committing.
+        let mut c = RebindCoordinator::new("d1", make_bind(), vec![]);
+        // A vote from a phantom platform should not be accepted.
+        c.record_vote("phantom", PrepareVote::Prepared);
+        assert_eq!(c.state, CoordinatorState::Aborted);
+        assert_eq!(c.abort_reason, Some(RebindAbortReason::VoteAbort));
     }
 
     #[test]

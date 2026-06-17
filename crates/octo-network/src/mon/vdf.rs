@@ -55,7 +55,19 @@ impl VdfEvaluation {
     /// Compute a simulated VDF: `y = H^t(seed)`. The proof is
     /// `H^(t-1)(seed)`, which is verifiable in O(1) by checking
     /// `H(proof) == output`.
+    ///
+    /// `iterations == 0` is a degenerate case; the resulting
+    /// evaluation has `output == H(seed)` and `proof == seed`,
+    /// which is internally consistent (verify checks
+    /// `H(proof) == output`, i.e., `H(seed) == H(seed)`, true).
     pub fn simulate(seed: &[u8; 32], iterations: u64) -> Self {
+        if iterations == 0 {
+            return Self {
+                output: *blake3::hash(seed).as_bytes(),
+                proof: *seed,
+                iterations: 0,
+            };
+        }
         let mut h = blake3::hash(seed);
         let mut prev: [u8; 32] = *h.as_bytes();
         for i in 1..iterations {
@@ -215,12 +227,22 @@ pub fn run_election(
     elect_vdf(candidates, &beacon)
 }
 
-/// Unix epoch seconds (for diagnostics / operator visibility).
-pub fn now_epoch() -> u64 {
+/// Current Unix epoch in seconds (for diagnostics / operator
+/// visibility).
+///
+/// WARNING: this is the Unix time in seconds, not a network
+/// consensus epoch.
+pub fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Deprecated alias for [`now_unix_seconds`].
+#[deprecated(note = "renamed to now_unix_seconds for clarity")]
+pub fn now_epoch() -> u64 {
+    now_unix_seconds()
 }
 
 #[cfg(test)]
@@ -237,6 +259,19 @@ mod tests {
             eval.verify(&seed),
             "VDF proof must verify: H(proof) == H^t(seed)"
         );
+    }
+
+    #[test]
+    fn vdf_simulate_zero_iterations() {
+        // Degenerate case: 0 iterations. The evaluation must
+        // still be self-consistent (verify succeeds).
+        let seed = [7u8; 32];
+        let eval = VdfEvaluation::simulate(&seed, 0);
+        assert_eq!(eval.iterations, 0);
+        // output = H(seed), proof = seed, H(proof) = H(seed) = output.
+        assert_eq!(eval.output, *blake3::hash(&seed).as_bytes());
+        assert_eq!(eval.proof, seed);
+        assert!(eval.verify(&seed));
     }
 
     #[test]

@@ -101,12 +101,24 @@ impl RejoinCooldown {
     }
 }
 
-/// Now (epoch seconds) helper.
-pub fn now_epoch() -> u64 {
+/// Current Unix epoch in seconds (for diagnostics / operator
+/// visibility).
+///
+/// WARNING: this is the Unix time in seconds, not a network
+/// consensus epoch. For the rejoin cooldown window, callers
+/// should pass a consensus-epoch clock (or convert at the
+/// call site).
+pub fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Deprecated alias for [`now_unix_seconds`].
+#[deprecated(note = "renamed to now_unix_seconds for clarity")]
+pub fn now_epoch() -> u64 {
+    now_unix_seconds()
 }
 
 #[cfg(test)]

@@ -44,8 +44,6 @@ pub enum SuspectState {
     Suspect,
     /// Second-time offender.
     Demoting,
-    /// Third strike: forced UNBIND.
-    ForcedUnbind,
 }
 
 /// Context for the discipline decision.
@@ -72,7 +70,12 @@ pub fn discipline_for(ctx: &DisciplineContext) -> DisciplineAction {
     // Small groups: escalation.
     // 0 prior slashes → 1st slash (Suspect, cool-down = 2^1 = 2)
     // 1 prior slash → 2nd slash (Demoting, cool-down = 2^2 = 4)
-    // 2+ prior slashes → forced UNBIND
+    // 2 prior slashes → forced UNBIND (the small-group grace
+    // period is exhausted; losing this member is now preferable
+    // to retaining an untrustworthy one).
+    // 3+ prior slashes → forced UNBIND (3rd strike semantics
+    // extend; the cool-down for a 3rd strike is undefined so we
+    // escalate to UNBIND to avoid applying a stale cool-down).
     let next_slash_count = slash_count + 1;
     match next_slash_count {
         1 => DisciplineAction::Slash {
@@ -83,10 +86,7 @@ pub fn discipline_for(ctx: &DisciplineContext) -> DisciplineAction {
             cooldown_epochs: 1u64 << 2, // 4
             state: SuspectState::Demoting,
         },
-        _ => DisciplineAction::Slash {
-            cooldown_epochs: 1u64 << 3, // 8 (but we also force UNBIND)
-            state: SuspectState::ForcedUnbind,
-        },
+        _ => DisciplineAction::Unbind,
     }
 }
 
@@ -167,14 +167,23 @@ mod tests {
             current_slash_count: 2,
             current_epoch: 100,
         };
-        let action = discipline_for(&ctx);
-        assert!(matches!(
-            action,
-            DisciplineAction::Slash {
-                state: SuspectState::ForcedUnbind,
-                ..
-            }
-        ));
+        // 3rd strike (slash_count=2) in a small group escalates
+        // to UNBIND, not a slash with a cool-down.
+        assert_eq!(discipline_for(&ctx), DisciplineAction::Unbind);
+    }
+
+    #[test]
+    fn small_group_fourth_offender_also_unbind() {
+        // 4th strike (slash_count=3) — there's no defined 4th
+        // strike cool-down, so the function must still escalate
+        // to UNBIND.
+        let bind = make_bind(2);
+        let ctx = DisciplineContext {
+            bind,
+            current_slash_count: 3,
+            current_epoch: 100,
+        };
+        assert_eq!(discipline_for(&ctx), DisciplineAction::Unbind);
     }
 
     #[test]

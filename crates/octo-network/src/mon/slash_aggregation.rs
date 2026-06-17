@@ -118,8 +118,15 @@ impl SlashAggregator {
 
     /// Add a vote to the aggregator. Returns true if the
     /// aggregator now has a final result (finalized or rejected).
+    ///
+    /// The vote is rejected if:
+    /// - the `domain_id` or `slash_id` doesn't match
+    /// - the `witness` is empty (anonymous votes are not allowed)
     pub fn add_vote(&mut self, vote: SlashVote) -> bool {
         if vote.domain_id != self.domain_id || vote.slash_id != self.slash_id {
+            return false;
+        }
+        if vote.witness.is_empty() {
             return false;
         }
         // Replace any previous vote from the same witness.
@@ -144,6 +151,16 @@ impl SlashAggregator {
     pub fn aggregate(&self) -> AggregationResult {
         let yes = self.votes.iter().filter(|v| v.vote == Vote::Yes).count();
         let no = self.votes.iter().filter(|v| v.vote == Vote::No).count();
+        // Guard: 0 total witnesses means the aggregator was
+        // constructed with no participants. Refuse to finalize.
+        if self.total_witnesses == 0 {
+            return AggregationResult::Rejected {
+                yes,
+                no,
+                total: 0,
+                reason: RejectionReason::NoVotes,
+            };
+        }
         if self.votes.is_empty() {
             return AggregationResult::Rejected {
                 yes,
@@ -294,5 +311,33 @@ mod tests {
     fn gossip_topic_format() {
         let agg = SlashAggregator::new("d1", "s1", 1);
         assert_eq!(agg.gossip_topic(), "/dot/slash/d1/s1");
+    }
+
+    #[test]
+    fn empty_witness_vote_rejected() {
+        // An anonymous (empty-witness) vote must not be
+        // accepted: this prevents an attacker from inflating
+        // the yes count with a single signature-less vote.
+        let mut agg = SlashAggregator::new("d1", "s1", 3);
+        let mut v = vote("w1", Vote::Yes);
+        v.witness = String::new();
+        let result = agg.add_vote(v);
+        assert!(!result);
+        assert_eq!(agg.votes.len(), 0);
+    }
+
+    #[test]
+    fn n0_aggregator_rejects() {
+        // 0 total witnesses must not finalize; the condition
+        // yes*3 >= total*2 would be 0 >= 0 = true otherwise.
+        let agg = SlashAggregator::new("d1", "s1", 0);
+        assert!(!agg.is_finalized());
+        match agg.aggregate() {
+            AggregationResult::Rejected { reason, total, .. } => {
+                assert_eq!(reason, RejectionReason::NoVotes);
+                assert_eq!(total, 0);
+            }
+            other => panic!("expected Rejected(NoVotes), got {other:?}"),
+        }
     }
 }

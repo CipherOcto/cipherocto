@@ -31,11 +31,41 @@ pub struct Nip05Identifier {
 
 impl Nip05Identifier {
     /// Parse a NIP-05 identifier like `user@domain`.
+    ///
+    /// Rejects identifiers where:
+    /// - either part is empty
+    /// - the user contains a path separator (`/`, `\`)
+    /// - the user contains whitespace or control characters
+    /// - the user is longer than 64 chars
+    /// - the domain contains a path separator or whitespace
     pub fn parse(s: &str) -> Result<Self, Nip05Error> {
         let mut parts = s.splitn(2, '@');
         let user = parts.next().ok_or(Nip05Error::InvalidIdentifier)?.to_string();
         let domain = parts.next().ok_or(Nip05Error::InvalidIdentifier)?.to_string();
         if user.is_empty() || domain.is_empty() {
+            return Err(Nip05Error::InvalidIdentifier);
+        }
+        // user must be a simple local-part: alphanumerics, dots,
+        // hyphens, underscores. No path separators or whitespace.
+        if user.len() > 64
+            || user.contains('/')
+            || user.contains('\\')
+            || user.contains(' ')
+            || user.contains('\0')
+            || user.contains('\t')
+            || user.contains('\n')
+        {
+            return Err(Nip05Error::InvalidIdentifier);
+        }
+        // domain must be a hostname: alphanumerics, dots, hyphens.
+        // No path separators or whitespace.
+        if domain.contains('/')
+            || domain.contains('\\')
+            || domain.contains(' ')
+            || domain.contains('\0')
+            || domain.contains('\t')
+            || domain.contains('\n')
+        {
             return Err(Nip05Error::InvalidIdentifier);
         }
         Ok(Self { user, domain })
@@ -176,6 +206,27 @@ mod tests {
         assert!(Nip05Identifier::parse("").is_err());
         assert!(Nip05Identifier::parse("@nodomain.com").is_err());
         assert!(Nip05Identifier::parse("noat.com").is_err());
+    }
+
+    #[test]
+    fn nip05_identifier_rejects_path_traversal() {
+        // Path separators and control characters in either
+        // part must be rejected to prevent URL-injection attacks
+        // against the resolution URL.
+        assert!(Nip05Identifier::parse("alice@../etc/passwd").is_err());
+        assert!(Nip05Identifier::parse("../etc@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice@evil.com/foo").is_err());
+        assert!(Nip05Identifier::parse("alice@evil.com\\foo").is_err());
+        assert!(Nip05Identifier::parse("alice bob@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice\0@example.com").is_err());
+        assert!(Nip05Identifier::parse("alice@example.com\n").is_err());
+    }
+
+    #[test]
+    fn nip05_identifier_rejects_oversize_user() {
+        // user > 64 chars must be rejected.
+        let long = "a".repeat(65);
+        assert!(Nip05Identifier::parse(&format!("{long}@example.com")).is_err());
     }
 
     #[test]

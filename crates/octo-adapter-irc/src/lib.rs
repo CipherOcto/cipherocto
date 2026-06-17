@@ -227,6 +227,18 @@ impl IrcAdapter {
             .as_bytes()
     }
 
+    /// Inverse of `domain_hash`: parse a `server:channel` platform_id and
+    /// compute the hash. Used by the `PlatformAdapter::domain_id` impl so
+    /// that callers can construct a `BroadcastDomainId` from a single
+    /// colon-joined string and have it match the canonical `domain_hash`.
+    pub fn domain_hash_from_id(platform_id: &str) -> [u8; 32] {
+        let (server, channel) = match platform_id.split_once(':') {
+            Some((s, c)) => (s, c),
+            None => ("", platform_id),
+        };
+        Self::domain_hash(server, channel)
+    }
+
     pub const PLATFORM_TYPE: u16 = 0x0006;
     pub fn max_payload_bytes() -> usize {
         MAX_PAYLOAD_PER_MSG
@@ -504,7 +516,16 @@ impl PlatformAdapter for IrcAdapter {
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
-        BroadcastDomainId::new(PlatformType::IRC, platform_id)
+        // The platform_id MUST be in `server:channel` form to match the
+        // canonical hash used by `send_envelope`'s channel lookup. We parse
+        // it here and delegate to `domain_hash` so the two methods always
+        // agree (R18 fix; previously the call to `BroadcastDomainId::new`
+        // would hash just the platform_id without the server prefix, which
+        // silently mismatched the static `domain_hash` lookup).
+        BroadcastDomainId {
+            platform_type: PlatformType::IRC as u16,
+            domain_hash: Self::domain_hash_from_id(platform_id),
+        }
     }
 
     fn platform_type(&self) -> PlatformType {
@@ -681,6 +702,38 @@ mod tests {
         let h1 = IrcAdapter::domain_hash("irc.libera.chat", "#test");
         let h2 = IrcAdapter::domain_hash("irc.oftc.net", "#test");
         assert_ne!(h1, h2);
+    }
+
+    // R18 fix: the trait-method `domain_id(platform_id)` must produce the
+    // same hash as the static `domain_hash(server, channel)` so that
+    // `send_envelope` can find the configured channel by domain. The
+    // platform_id is the colon-joined form `server:channel`.
+    #[test]
+    fn test_domain_id_matches_domain_hash() {
+        let from_id = IrcAdapter::domain_hash_from_id("irc.libera.chat:#cipherocto");
+        let from_args = IrcAdapter::domain_hash("irc.libera.chat", "#cipherocto");
+        assert_eq!(from_id, from_args);
+    }
+
+    #[test]
+    fn test_domain_id_normalizes_server_case_and_whitespace() {
+        // Server is case+whitespace normalized; channel is preserved.
+        let h1 = IrcAdapter::domain_hash_from_id("  IRC.LIBERA.CHAT  :#cipherocto");
+        let h2 = IrcAdapter::domain_hash("irc.libera.chat", "#cipherocto");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_domain_id_no_colon_falls_back_to_channel_only() {
+        // Backward compat: if the caller passes just a channel (no colon),
+        // hash it as if server is empty. This produces a different hash
+        // from the proper `server:channel` form, so users who skip the
+        // colon get a no-match in send_envelope.
+        let no_colon = IrcAdapter::domain_hash_from_id("#cipherocto");
+        let with_colon = IrcAdapter::domain_hash("", "#cipherocto");
+        assert_eq!(no_colon, with_colon);
+        let proper = IrcAdapter::domain_hash("irc.libera.chat", "#cipherocto");
+        assert_ne!(no_colon, proper);
     }
 
     #[test]

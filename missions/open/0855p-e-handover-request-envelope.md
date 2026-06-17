@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-06-17) — early stage; main spec pending RFC elaboration
+Completed (2026-06-17) — Phase 1 implemented
 
 ## RFC
 
@@ -101,6 +101,22 @@ This mission depends on `0855p-b-coordinator-lifecycle.md` (the base coordinator
 ### Why is the slash tally important?
 
 Per RFC-0855p-b §5a, the slash tally is a per-coordinator record of slashes issued against nodes in the coordinator's domain. When a coordinator hands over, the slash tally MUST be transferred to the successor; otherwise, the slashes are lost and the system loses accountability. The `SlashTally` DCS serialization (F-1) is a key piece of the handover protocol.
+
+## Implementation
+
+Phase 1 implemented in `crates/octo-network/src/dot/handover.rs` (919 lines, 16 tests, committed as part of R16 R13):
+
+- `HandoverRequestEnvelope` (subtype `b"HORQ"`) — canonical 10-byte header (R16 R1-C1 fix; was 1-byte stub). Body fields: `coordinator_id`, `successor_id`, `coordinator_role`, `current_term_id`, `new_term_id`, `slash_tally`, `group_bindings`, `pending_envelopes_hash`, `reason`, `nonce`, `current_epoch`, `handover_hash`, `signature`.
+- `HandoverAckEnvelope` (subtype `b"HOAK"`) — struct added per R16 R2 fix (the v0.2 RFC listed the subtype tag but had no struct).
+- `HandoverDoneEnvelope` (subtype `b"HODN"`) — same R16 R2 fix.
+- `HandoverReason` enum: Voluntary=0x00, Scheduled=0x01, Suspect=0x02, Demoting=0x03, MissionTerminated=0x04.
+- `CoordinatorRole` enum (R16 R1-L3 fix): MissionCoordinator=0x00, DomainCoordinator=0x01, WitnessCoordinator=0x02.
+- `SlashTally` + `SlashEvent` structs (R16 R1-H5 fix; inlined here, was referenced as non-existent RFC-0855p-b.1).
+- `ack_hash = BLAKE3(handover_request_hash || witness_id || witness_epoch)`; `done_hash = BLAKE3(handover_request_hash || new_coordinator_id || accepted_epoch)`.
+- `group_binding_payload` helper: DCS-style canonical serialization of `GroupBinding` for inclusion in HANDOVER_REQUEST body.
+- Sign/verify for all three envelopes using Ed25519.
+
+All 1210 tests in `octo-network` pass. Phases 2–6 remain pending RFC elaboration.
 
 ## Claimant
 

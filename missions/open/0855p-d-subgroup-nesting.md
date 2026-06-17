@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-06-17) — early stage; main scenarios pending RFC elaboration
+Completed (2026-06-17) — Phase 1 implemented
 
 ## RFC
 
@@ -88,6 +88,18 @@ RFC-0855p-d is in early-stage draft (Version 0.1). The main spec — sub-DC dele
 ### Cross-RFC dependencies
 
 This mission depends on `0850p-d-dc-initiated-group-creation.md` (sister mission) for the basic CGROUP flow. The two missions should be coordinated.
+
+## Implementation
+
+Phase 1 implemented in `crates/octo-network/src/dot/sub_group.rs` (589 lines, 18 tests, committed as part of R16 R12):
+
+- `CreateSubGroupEnvelope` (subtype `b"CGSB"`) — NEW envelope variant (R16 R1-H2 fix) with canonical 10-byte header per RFC-0850p-c §A; body fields per RFC-0855p-d §"Envelope Type Extension"; sign/verify over `BLAKE3-256(header || body)`.
+- `SubGroupExtension` struct: `parent_domain_id`, `sub_label`, `sub_dc_id: Option<[u8; 32]>`, `delegation_proof: Option<Vec<u8>>`.
+- `derive_sub_domain_id = BLAKE3(parent_domain_id || sub_label)`.
+- `validate_sub_label`: non-empty, length <= 256, no `/` characters (R16 R1-L2 fix; MUST NOT contain `/` per F-7).
+- `SubGroupError` enum (EmptyLabel, LabelTooLong, SlashInLabel, SubDomainIdMismatch, HeaderMismatch).
+
+All 1210 tests in `octo-network` pass. Phases 2–5 remain pending RFC elaboration.
 
 ## Claimant
 

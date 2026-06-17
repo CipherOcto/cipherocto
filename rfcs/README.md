@@ -300,10 +300,32 @@ Once accepted:
 
 ### Networking (RFC-0800-0899)
 
-| RFC                   | Title                        | Status | Description                    |
-| --------------------- | ---------------------------- | ------ | ------------------------------ |
-| RFC-0843 (Networking) | OCTO-Network Protocol        | Draft  | Network protocol specification |
-| RFC-0845 (Networking) | Hardware Capability Registry | Draft  | Hardware capability tracking   |
+| RFC                         | Title                                                       | Status   | Description                                                      |
+| --------------------------- | ----------------------------------------------------------- | -------- | ---------------------------------------------------------------- |
+| RFC-0843 (Networking)       | OCTO-Network Protocol                                       | Draft    | Network protocol specification                                   |
+| RFC-0845 (Networking)       | Hardware Capability Registry                                | Draft    | Hardware capability tracking                                     |
+| RFC-0850 (Networking)       | Deterministic Overlay Transport (DOT)                       | Accepted | DOT envelope format, broadcast domain IDs, native P2P            |
+| RFC-0850ab-a (Networking)   | Telegram Auth Onboarding                                    | Accepted | TDLib-based adapter onboarding (operator side)                   |
+| RFC-0850p-a (Networking)    | WhatsApp Auth Onboarding                                    | Accepted | WhatsApp Web multi-account operator side, `GroupConfig`         |
+| RFC-0850p-c (Networking)    | Transport Group Binding Ceremony                            | Accepted | `GroupBinding`, `GroupState`, BIND/REBIND/UNBIND envelopes       |
+| RFC-0850p-d (Networking)    | DC-Initiated Transport Group Creation & Invite              | Draft    | CGROUP/INVITE/UNBIND_ALL envelopes; DC creates new groups        |
+| RFC-0850p-e (Networking)    | Kick & Platform Membership Change Detection                 | Draft    | SELF_KICKED/KICK_DETECTED/REJOIN envelopes; closes E2E IS-5.1    |
+| RFC-0850p-f (Networking)    | Transport Group Decommission                                | Draft    | UNBIND_ALL_DONE/AUDIT envelopes; DC rotation handover (early)    |
+| RFC-0851 (Networking)       | Gateway Discovery Protocol                                  | Accepted | Gateway peer discovery and capability advertisement               |
+| RFC-0851p-a (Networking)    | Network Bootstrap Protocol                                  | Accepted | Initial node bootstrap and seed authority                        |
+| RFC-0852 (Networking)       | Deterministic Gossip Protocol                               | Draft    | Gossip-based message propagation                                 |
+| RFC-0853 (Networking)       | Overlay Cryptography                                        | Draft    | Signatures, commitments, encrypted payloads                      |
+| RFC-0854 (Networking)       | Deterministic Proof Substrate                               | Draft    | Proof substrate abstraction                                      |
+| RFC-0855 (Networking)       | Mission Overlay Networks                                    | Accepted | Mission lifecycle, `MissionDescriptor`                           |
+| RFC-0855p-b (Networking)    | Mission Coordinator Lifecycle                               | Accepted | `CoordinatorLifecycle` and `CoordinatorRecord`                   |
+| RFC-0855p-c (Networking)    | DomainCoordinator Role                                      | Accepted | DC authority, slash codes, mission-scoped envelopes              |
+| RFC-0855p-d (Networking)    | Sub-Domain / Sub-Group Nesting                              | Draft    | Sub-group CGROUP with `SubGroupExtension`; sub-DC delegation      |
+| RFC-0855p-e (Networking)    | HandoverRequest Envelope & Coordinator Term Handover        | Draft    | HANDOVER_REQUEST/ACK/DONE envelopes; slash tally transfer         |
+| RFC-0856 (Networking)       | Deterministic Route Selection                               | Draft    | Route selection algorithm                                        |
+| RFC-0857 (Networking)       | Deterministic Overlay Mempool                               | Draft    | Mempool for overlay envelopes                                    |
+| RFC-0858 (Networking)       | Onion Relay Routing                                         | Draft    | Privacy-preserving onion routing                                 |
+| RFC-0859 (Networking)       | Proof-Carrying Envelopes                                    | Draft    | Envelopes with attached proofs                                   |
+| RFC-0860 (Networking)       | Proof-of-Relay (PoRelay)                                    | Draft    | Cryptographic proof of relay participation                       |
 
 ### Economics (RFC-0900-0999)
 

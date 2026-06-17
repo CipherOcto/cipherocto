@@ -349,23 +349,20 @@ impl GroupRegistry {
 
     /// Purge quarantine entries whose recovery window has expired.
     /// Returns the number of entries purged.
+    ///
+    /// R17 R1-LOW-2 fix: replaced the Vec-collect + remove-loop with
+    /// `BTreeMap::retain`. The new version is O(n) (one pass) instead
+    /// of O(n log n) (collect + n removes) and avoids allocating a
+    /// throwaway `Vec`.
     pub fn gc_quarantine(&mut self, current_epoch: u64) -> usize {
-        let expired: Vec<UnboundQuarantineKey> = self
-            .unbound_quarantine
-            .iter()
-            .filter(|(_, entry)| {
-                current_epoch
-                    >= entry
-                        .unbound_at_epoch
-                        .saturating_add(entry.recovery_window_epochs)
-            })
-            .map(|(k, _)| k.clone())
-            .collect();
-        let n = expired.len();
-        for k in expired {
-            self.unbound_quarantine.remove(&k);
-        }
-        n
+        let before = self.unbound_quarantine.len();
+        self.unbound_quarantine.retain(|_, entry| {
+            current_epoch
+                < entry
+                    .unbound_at_epoch
+                    .saturating_add(entry.recovery_window_epochs)
+        });
+        before - self.unbound_quarantine.len()
     }
 
     /// Number of quarantined entries.
@@ -378,9 +375,10 @@ impl GroupRegistry {
     // -------------------------------------------------------------------------
 
     /// Increment the rejoin attempt counter for a kicked node and return
-    /// the new value. Returns `Err(NonceReplay)` (re-using the error
-    /// variant, since both are "too many attempts") if the count exceeds
-    /// `max_attempts`.
+    /// the new value. Returns `Err(RejoinBudgetExceeded)` (R17 R1-LOW-1
+    /// fix: was `Err(NonceReplay)` with the node_id stuffed into the
+    /// `nonce` field, which was semantically wrong) if the count
+    /// exceeds `max_attempts`.
     ///
     /// The counter is keyed by the kicked node's peer id (not group_jid)
     /// so a node cannot reset its counter by changing groups.
@@ -392,7 +390,12 @@ impl GroupRegistry {
         let count = self.rejoin_attempts.entry(*node_id).or_insert(0);
         *count = count.saturating_add(1);
         if *count > max_attempts {
-            return Err(BindingError::NonceReplay { nonce: *node_id });
+            // R17 R1-LOW-1 fix: previously this returned
+            // `BindingError::NonceReplay { nonce: *node_id }`, which
+            // is semantically wrong (a `node_id` is not a `nonce`).
+            // The new `RejoinBudgetExceeded` variant carries a
+            // properly-named field.
+            return Err(BindingError::RejoinBudgetExceeded { node_id: *node_id });
         }
         Ok(*count)
     }
@@ -420,7 +423,11 @@ impl GroupRegistry {
             group_jid: group_jid.to_string(),
         })?;
         match binding.state {
-            GroupState::Unbound | GroupState::ReBinding => {
+            // R17 R1-MEDIUM-1 fix: `Creating → Creating` is now a no-op
+            // (idempotent) instead of returning `InvalidTransition`.
+            // The orchestrator sometimes re-emits the CGROUP after a
+            // retry; without idempotence, every retry would fail.
+            GroupState::Unbound | GroupState::ReBinding | GroupState::Creating => {
                 binding.state = GroupState::Creating;
                 Ok(())
             }
@@ -797,6 +804,24 @@ mod tests {
         assert_eq!(reg.try_increment_rejoin(&node_id, 3).unwrap(), 1);
     }
 
+    #[test]
+    fn try_increment_rejoin_returns_rejoin_budget_exceeded() {
+        // R17 R1-LOW-1 regression: the error returned on the
+        // budget-exceeded path must be `RejoinBudgetExceeded` (with
+        // a `node_id` field), NOT `NonceReplay` (with a `nonce`
+        // field, semantically wrong).
+        let mut reg = GroupRegistry::new();
+        let node_id = [2u8; 32];
+        reg.try_increment_rejoin(&node_id, 1).unwrap();
+        let err = reg
+            .try_increment_rejoin(&node_id, 1)
+            .expect_err("second attempt over budget must fail");
+        assert!(
+            matches!(err, BindingError::RejoinBudgetExceeded { node_id: n } if n == node_id),
+            "expected RejoinBudgetExceeded, got {err:?}"
+        );
+    }
+
     // -- DC-initiated transitions (RFC-0850p-d Phase 2) ---------------------
 
     fn make_invite(invitee: [u8; 32], expires: u64) -> InviteEnvelope {
@@ -821,6 +846,21 @@ mod tests {
         let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
         reg.register_binding(b).unwrap();
         reg.transition_to_creating("whatsapp", "g1").unwrap();
+        let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
+        assert_eq!(b.state, GroupState::Creating);
+    }
+
+    #[test]
+    fn transition_to_creating_idempotent() {
+        // R17 R1-MEDIUM-1 regression: a second transition_to_creating
+        // call (e.g., after a CGROUP retry) must succeed, not return
+        // InvalidTransition.
+        let mut reg = GroupRegistry::new();
+        let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
+        reg.register_binding(b).unwrap();
+        reg.transition_to_creating("whatsapp", "g1").unwrap();
+        reg.transition_to_creating("whatsapp", "g1")
+            .expect("second transition_to_creating should be idempotent");
         let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
         assert_eq!(b.state, GroupState::Creating);
     }

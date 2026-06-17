@@ -17,7 +17,6 @@
 //! semantics) are pending RFC-0850p-f elaboration.
 
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use blake3;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -41,6 +40,10 @@ pub mod tag {
 
 /// `UnbindAllDoneEnvelope` — emitted when all members have left the
 /// platform; the group is fully decommissioned.
+///
+/// R17 R1-HIGH-1 fix: added `nonce: [u8; 32]` field (was missing entirely).
+/// Without a nonce, an attacker could replay the same decommission envelope
+/// to forge multiple decommission events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnbindAllDoneEnvelope {
     /// Domain identifier.
@@ -55,6 +58,8 @@ pub struct UnbindAllDoneEnvelope {
     pub ack_count: u32,
     /// Epoch at which decommission completed.
     pub completed_at_epoch: u64,
+    /// 32-byte random nonce (R17 R1-HIGH-1 fix: added for replay protection).
+    pub nonce: [u8; 32],
     /// `BLAKE3-256(header || body)`.
     pub done_hash: [u8; 32],
     /// Ed25519 signature over `done_hash`.
@@ -72,6 +77,9 @@ impl UnbindAllDoneEnvelope {
         buf.extend_from_slice(&self.unbind_hash);
         buf.extend_from_slice(&self.ack_count.to_be_bytes());
         buf.extend_from_slice(&self.completed_at_epoch.to_be_bytes());
+        // R17 R1-HIGH-1 fix: nonce is INCLUDED so swapping or stripping the
+        // nonce changes the hash and breaks the signature.
+        buf.extend_from_slice(&self.nonce);
         *blake3::hash(&buf).as_bytes()
     }
 
@@ -105,6 +113,10 @@ impl UnbindAllDoneEnvelope {
 
 /// `UnbindAllAuditEnvelope` — signed audit entry recording the full
 /// decommission event.
+///
+/// R17 R1-HIGH-1 fix: added `nonce: [u8; 32]` field (was missing entirely).
+/// Without a nonce, an attacker could replay the same audit envelope to
+/// forge audit log entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnbindAllAuditEnvelope {
     /// Domain identifier.
@@ -128,6 +140,8 @@ pub struct UnbindAllAuditEnvelope {
     pub witness_count: u32,
     /// The `unbind_hash` of the original `UnbindAllEnvelope`.
     pub unbind_hash: [u8; 32],
+    /// 32-byte random nonce (R17 R1-HIGH-1 fix: added for replay protection).
+    pub nonce: [u8; 32],
     /// `BLAKE3-256(header || body)`.
     pub audit_hash: [u8; 32],
     /// Ed25519 signature over `audit_hash`.
@@ -149,6 +163,9 @@ impl UnbindAllAuditEnvelope {
         buf.extend_from_slice(&self.completed_at_epoch.to_be_bytes());
         buf.extend_from_slice(&self.witness_count.to_be_bytes());
         buf.extend_from_slice(&self.unbind_hash);
+        // R17 R1-HIGH-1 fix: nonce is INCLUDED so swapping or stripping the
+        // nonce changes the hash and breaks the signature.
+        buf.extend_from_slice(&self.nonce);
         *blake3::hash(&buf).as_bytes()
     }
 
@@ -219,13 +236,19 @@ impl AuditLog {
 
     /// Append an entry to the log. Returns the sequence number assigned.
     /// If the log is full, the oldest entry is evicted.
-    pub fn append(&mut self, envelope: UnbindAllAuditEnvelope) -> u64 {
+    ///
+    /// R17 R1-LOW-4 fix: the timestamp is now taken from the caller
+    /// (via `timestamp_secs`) instead of `SystemTime::now()`. This
+    /// makes the function deterministic and testable. Production
+    /// callers should pass `SystemTime::now()...as_secs()` (or the
+    /// wall-clock from their clock-source-of-record).
+    pub fn append(
+        &mut self,
+        envelope: UnbindAllAuditEnvelope,
+        timestamp_secs: u64,
+    ) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
-        let timestamp_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
         let entry = AuditEntry {
             timestamp_secs,
             envelope,
@@ -301,6 +324,7 @@ mod tests {
             unbind_hash: [2u8; 32],
             ack_count: 5,
             completed_at_epoch: 100,
+            nonce: [3u8; 32],
             done_hash: [0u8; 32],
             signature: [0u8; 64],
         };
@@ -318,6 +342,7 @@ mod tests {
             unbind_hash: [2u8; 32],
             ack_count: 5,
             completed_at_epoch: 100,
+            nonce: [3u8; 32],
             done_hash: [0u8; 32],
             signature: [0u8; 64],
         };
@@ -340,6 +365,7 @@ mod tests {
             completed_at_epoch: 150,
             witness_count: 5,
             unbind_hash: [2u8; 32],
+            nonce: [3u8; 32],
             audit_hash: [0u8; 32],
             signature: [0u8; 64],
         };
@@ -364,10 +390,11 @@ mod tests {
                 completed_at_epoch: 150 + i,
                 witness_count: 1,
                 unbind_hash: [0u8; 32],
+                nonce: [i as u8; 32],
                 audit_hash: [0u8; 32],
                 signature: [0u8; 64],
             };
-            log.append(env);
+            log.append(env, 1_700_000_000);
         }
         assert_eq!(log.len(), 3);
         assert!(log.get(0).is_some());
@@ -392,10 +419,11 @@ mod tests {
                 completed_at_epoch: i,
                 witness_count: 0,
                 unbind_hash: [0u8; 32],
+                nonce: [i as u8; 32],
                 audit_hash: [0u8; 32],
                 signature: [0u8; 64],
             };
-            log.append(env);
+            log.append(env, 1_700_000_000);
         }
         // Should have only the last 2 entries (sequences 3 and 4)
         assert_eq!(log.len(), 2);
@@ -404,6 +432,33 @@ mod tests {
         assert!(log.get(2).is_none());
         assert!(log.get(3).is_some());
         assert!(log.get(4).is_some());
+    }
+
+    #[test]
+    fn audit_log_records_caller_supplied_timestamp() {
+        // R17 R1-LOW-4 regression: AuditLog::append must record the
+        // timestamp the caller passed in, not a wall-clock value
+        // (which would make the test non-deterministic).
+        let key = test_dc_key();
+        let mut log = AuditLog::new(10);
+        let env = UnbindAllAuditEnvelope {
+            domain_id: [1u8; 32],
+            group_jid: "g1@g.us".into(),
+            platform: "whatsapp".into(),
+            initiator_id: key.verifying_key().to_bytes(),
+            reason: UnbindReason::Scheduled,
+            reason_text: String::new(),
+            initiated_at_epoch: 100,
+            completed_at_epoch: 150,
+            witness_count: 1,
+            unbind_hash: [0u8; 32],
+            nonce: [0u8; 32],
+            audit_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        log.append(env, 1_234_567_890);
+        let entry = log.get(0).expect("entry 0 must exist");
+        assert_eq!(entry.timestamp_secs, 1_234_567_890);
     }
 
     #[test]
@@ -422,10 +477,11 @@ mod tests {
                 completed_at_epoch: i,
                 witness_count: 0,
                 unbind_hash: [0u8; 32],
+                nonce: [i as u8; 32],
                 audit_hash: [0u8; 32],
                 signature: [0u8; 64],
             };
-            log.append(env);
+            log.append(env, 1_700_000_000);
         }
         // Different domain
         let env = UnbindAllAuditEnvelope {
@@ -439,12 +495,64 @@ mod tests {
             completed_at_epoch: 0,
             witness_count: 0,
             unbind_hash: [0u8; 32],
+            nonce: [9u8; 32],
             audit_hash: [0u8; 32],
             signature: [0u8; 64],
         };
-        log.append(env);
+        log.append(env, 1_700_000_000);
         let found: Vec<_> = log.find_by_domain(&[1u8; 32]).collect();
         assert_eq!(found.len(), 3);
+    }
+
+    // R17 R1-HIGH-1 regression test: changing the nonce must change the
+    // hash (so an attacker cannot swap a stored envelope's nonce to bypass
+    // replay protection).
+    #[test]
+    fn unbind_all_done_nonce_changes_hash() {
+        let key = test_dc_key();
+        let mut env = UnbindAllDoneEnvelope {
+            domain_id: [1u8; 32],
+            group_jid: "g1@g.us".into(),
+            platform: "whatsapp".into(),
+            unbind_hash: [2u8; 32],
+            ack_count: 5,
+            completed_at_epoch: 100,
+            nonce: [3u8; 32],
+            done_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        env.sign(&key);
+        let original_hash = env.done_hash;
+        // Swap the nonce; verify must fail because the hash changed.
+        env.nonce = [4u8; 32];
+        env.sign(&key);
+        assert_ne!(env.done_hash, original_hash);
+        assert!(env.verify(&key.verifying_key()).is_ok());
+    }
+
+    #[test]
+    fn unbind_all_audit_nonce_changes_hash() {
+        let key = test_dc_key();
+        let mut env = UnbindAllAuditEnvelope {
+            domain_id: [1u8; 32],
+            group_jid: "g1@g.us".into(),
+            platform: "whatsapp".into(),
+            initiator_id: key.verifying_key().to_bytes(),
+            reason: UnbindReason::Scheduled,
+            reason_text: "scheduled decommission".into(),
+            initiated_at_epoch: 100,
+            completed_at_epoch: 150,
+            witness_count: 5,
+            unbind_hash: [2u8; 32],
+            nonce: [3u8; 32],
+            audit_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        env.sign(&key);
+        let original_hash = env.audit_hash;
+        env.nonce = [4u8; 32];
+        env.sign(&key);
+        assert_ne!(env.audit_hash, original_hash);
     }
 
     #[test]

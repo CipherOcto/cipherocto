@@ -43,19 +43,42 @@ impl ValidationOutcome {
 /// Nonce-replay table (R2-TGB-1, R3-4, R3-7 fix).
 ///
 /// Tracks seen nonces keyed by `(platform, group_jid)` to detect replay
-/// attacks. Supports time-based eviction (per
-/// `BIND_WITNESS_TIMEOUT = 100` epochs, the nonce is considered expired
-/// and can be safely purged).
-#[derive(Debug, Clone, Default)]
+/// attacks. Supports time-based eviction: if a previously-seen nonce was
+/// first seen more than `epoch_age_limit` epochs ago, the previous entry
+/// is evicted (R17 R1-HIGH-2 fix; without this the table grew unboundedly).
+///
+/// Default `epoch_age_limit` = 100 epochs (= `BIND_WITNESS_TIMEOUT`).
+#[derive(Debug, Clone)]
 pub struct NonceReplayTable {
     /// `((platform, group_jid), nonce) -> first_seen_epoch`
     seen: BTreeMap<(String, String), ([u8; 32], u64)>,
+    /// Entries older than this many epochs are evicted on next access.
+    epoch_age_limit: u64,
+}
+
+impl Default for NonceReplayTable {
+    fn default() -> Self {
+        Self::with_epoch_age_limit(100)
+    }
 }
 
 impl NonceReplayTable {
-    /// Create a new empty table.
+    /// Create a new empty table with the default epoch age limit (100).
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a new empty table with a custom epoch age limit.
+    pub fn with_epoch_age_limit(epoch_age_limit: u64) -> Self {
+        Self {
+            seen: BTreeMap::new(),
+            epoch_age_limit,
+        }
+    }
+
+    /// Returns the configured epoch age limit.
+    pub fn epoch_age_limit(&self) -> u64 {
+        self.epoch_age_limit
     }
 
     /// Check whether the given nonce is fresh, and if so, record it.
@@ -66,6 +89,11 @@ impl NonceReplayTable {
     ///
     /// The signature is `&mut self` (R3-4 fix): the table must be
     /// mutable to record the nonce.
+    ///
+    /// R17 R1-HIGH-2 fix: if the previous nonce for this key was first
+    /// seen more than `epoch_age_limit` epochs ago, the previous entry
+    /// is evicted (replaced with the new nonce) before the replay check
+    /// runs. Without this, the table grows unboundedly.
     pub fn check_and_maybe_evict(
         &mut self,
         platform: &str,
@@ -74,15 +102,20 @@ impl NonceReplayTable {
         current_epoch: u64,
     ) -> Result<(), BindingError> {
         let key = (platform.to_string(), group_jid.to_string());
-        if let Some((prev_nonce, first_seen)) = self.seen.get(&key) {
-            if prev_nonce == nonce {
-                return Err(BindingError::NonceReplay { nonce: *nonce });
+        if let Some((prev_nonce, first_seen)) = self.seen.get(&key).cloned() {
+            // R17 R1-HIGH-2 fix: time-based eviction. If the previous
+            // entry has aged out, drop it and fall through to record.
+            let age = current_epoch.saturating_sub(first_seen);
+            if age <= self.epoch_age_limit {
+                if prev_nonce == *nonce {
+                    return Err(BindingError::NonceReplay { nonce: *nonce });
+                }
+                // Different nonce within the window — this is the
+                // pre-existing "different nonce replaces previous"
+                // behavior.
             }
-            // Different nonce: the previous one has aged out; replace.
-            // (The `BIND_WITNESS_TIMEOUT = 100` epochs is a soft limit
-            // checked at the higher level; here we replace on any new
-            // nonce for the same key.)
-            let _ = first_seen; // suppress unused warning
+            // Either aged out, or aged-out branch — fall through to
+            // record.
         }
         self.seen.insert(key, (*nonce, current_epoch));
         Ok(())
@@ -145,7 +178,7 @@ pub struct WitnessContext<'a> {
 /// rule.
 ///
 /// Rule list (per RFC-0850p-c §8):
-/// 1. Signature is valid (verified externally by the caller).
+/// 1. Signature is valid (verified inside via `envelope.verify(founder_pubkey)`).
 /// 2. `nonce` is fresh (checked via `nonce_table`).
 /// 3. Cross-platform spoof check: `envelope.platform == local_platform`.
 /// 4. `domain_id` is non-zero.
@@ -160,14 +193,23 @@ pub struct WitnessContext<'a> {
 /// 9. `group_jid` is non-empty and well-formed for the platform.
 /// 10. Rate limit: at most 1 BIND per `(platform, group_jid)` per
 ///     `BIND_WITNESS_TIMEOUT = 100` epochs.
+///
+/// R17 R1-HIGH-3 fix: signature verification is now performed INSIDE
+/// `validate_bind` (was previously left to the caller, who could
+/// forget). The `founder_pubkey` parameter is the founder's verifying
+/// key from the identity registry.
 pub fn validate_bind(
     envelope: &BindEnvelope,
+    founder_pubkey: &ed25519_dalek::VerifyingKey,
     ctx: &mut WitnessContext,
 ) -> ValidationOutcome {
-    // Rule 1: signature — verified externally; this function does not
-    // take a public key. The caller is expected to call `envelope.verify`
-    // first. We do not re-check here to keep the rule number consistent
-    // with the RFC.
+    // Rule 1: signature (R17 R1-HIGH-3 fix: verified inside).
+    if envelope.verify(founder_pubkey).is_err() {
+        return ValidationOutcome::Reject {
+            rule: 1,
+            reason: "signature verification failed".into(),
+        };
+    }
 
     // Rule 2: nonce replay
     if let Err(BindingError::NonceReplay { .. }) = ctx.nonce_table.check_and_maybe_evict(
@@ -270,14 +312,36 @@ pub fn validate_bind(
 
 /// Lightweight JID well-formedness check per platform.
 ///
-/// - WhatsApp: ends with `@g.us` or `@c.us`
-/// - Matrix: starts with `!` (room id) or `#` (room alias)
-/// - Telegram: numeric chat id (positive integer)
+/// - WhatsApp: contains `@` AND the part after `@` contains a `.` (e.g.
+///   `@g.us`, `@c.us`). Tighter than R3's `contains('@')` which accepted
+///   strings like `@` or `a@`. R17 R1-MEDIUM-2 fix.
+/// - Matrix: starts with `!` (room id) or `#` (room alias) AND has length
+///   ≥ 2. Tighter than R3's `starts_with('!') || '#'` which accepted
+///   single-char strings. R17 R1-MEDIUM-2 fix.
+/// - Telegram: must parse as a POSITIVE integer (`i64 > 0`). Tighter
+///   than R3's `parse::<i64>().is_ok()` which accepted negative IDs.
+///   R17 R1-MEDIUM-2 fix.
 fn is_valid_jid_for_platform(jid: &str, platform: &str) -> bool {
     match platform {
-        ADAPTER_PLATFORM_WHATSAPP => jid.contains('@'),
-        ADAPTER_PLATFORM_MATRIX => jid.starts_with('!') || jid.starts_with('#'),
-        ADAPTER_PLATFORM_TELEGRAM => jid.parse::<i64>().is_ok(),
+        ADAPTER_PLATFORM_WHATSAPP => {
+            // Must have @ with non-empty local and domain parts; domain
+            // must contain a `.`.
+            match jid.split_once('@') {
+                Some((local, domain)) => {
+                    !local.is_empty()
+                        && !domain.is_empty()
+                        && domain.contains('.')
+                }
+                None => false,
+            }
+        }
+        ADAPTER_PLATFORM_MATRIX => {
+            (jid.starts_with('!') || jid.starts_with('#')) && jid.len() >= 2
+        }
+        ADAPTER_PLATFORM_TELEGRAM => match jid.parse::<i64>() {
+            Ok(n) => n > 0,
+            Err(_) => false,
+        },
         _ => false,
     }
 }
@@ -356,8 +420,13 @@ mod tests {
         is_reconnect: bool,
         founder: [u8; 32],
         coordinator: [u8; 32],
-    ) -> BindEnvelope {
-        BindEnvelope {
+    ) -> (BindEnvelope, SigningKey) {
+        // Sign with a per-test key so the envelope has a valid signature
+        // for `validate_bind` rule #1 (R17 R1-HIGH-3 fix). The signing key
+        // is derived from the `founder` field so the signing pubkey matches
+        // `founder_peer_id` if needed; for tests we just use a fixed seed.
+        let key = SigningKey::from_bytes(&[10u8; 32]);
+        let mut env = BindEnvelope {
             group_jid: group_jid.into(),
             platform: platform.into(),
             mission_id: [1u8; 32],
@@ -369,7 +438,10 @@ mod tests {
             is_reconnect,
             bind_hash: blake3::hash(group_jid.as_bytes()).into(),
             signature: [0u8; 64],
-        }
+        };
+        // `sign()` recomputes `bind_hash` from all the fields and signs it.
+        env.sign(&key);
+        (env, key)
     }
 
     fn make_ctx(platform: &str) -> (NonceReplayTable, [u8; 32]) {
@@ -404,7 +476,7 @@ mod tests {
     #[test]
     fn validate_bind_accepts_valid() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
             [1u8; 32],
@@ -421,14 +493,14 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         assert!(outcome.is_accept(), "expected Accept, got {:?}", outcome);
     }
 
     #[test]
     fn validate_bind_rejects_cross_platform_spoof() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_MATRIX, // wrong platform
             "!room:example.org",
             [1u8; 32],
@@ -445,7 +517,7 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 3),
             _ => panic!("expected Reject (rule 3)"),
@@ -455,7 +527,7 @@ mod tests {
     #[test]
     fn validate_bind_rejects_zero_domain_id() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let mut env = make_bind(
+        let (mut env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
             [1u8; 32],
@@ -465,6 +537,8 @@ mod tests {
             [20u8; 32],
         );
         env.domain_id = [0u8; 32];
+        // Re-sign after the domain_id change to keep the signature valid.
+        env.sign(&key);
         let mut ctx = WitnessContext {
             local_platform: ADAPTER_PLATFORM_WHATSAPP,
             local_peer_id: local_id,
@@ -473,7 +547,7 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 4),
             _ => panic!("expected Reject (rule 4)"),
@@ -483,7 +557,7 @@ mod tests {
     #[test]
     fn validate_bind_rejects_reconnect_split_brain() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
             [1u8; 32],
@@ -501,7 +575,7 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 6),
             _ => panic!("expected Reject (rule 6)"),
@@ -511,7 +585,7 @@ mod tests {
     #[test]
     fn validate_bind_rejects_clock_skew() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
             [1u8; 32],
@@ -528,7 +602,7 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 7),
             _ => panic!("expected Reject (rule 7)"),
@@ -538,7 +612,7 @@ mod tests {
     #[test]
     fn validate_bind_rejects_empty_jid() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "", // empty
             [1u8; 32],
@@ -555,7 +629,7 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 9),
             _ => panic!("expected Reject (rule 9)"),
@@ -565,7 +639,7 @@ mod tests {
     #[test]
     fn validate_bind_rejects_malformed_jid() {
         let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
-        let env = make_bind(
+        let (env, key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "not-a-valid-jid", // no '@' for WhatsApp
             [1u8; 32],
@@ -582,16 +656,47 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &mut ctx);
+        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 9),
             _ => panic!("expected Reject (rule 9)"),
         }
     }
 
+    // R17 R1-HIGH-3 regression test: an envelope signed by the WRONG
+    // key must be rejected with rule 1 (signature).
+    #[test]
+    fn validate_bind_rejects_bad_signature() {
+        let (mut table, local_id) = make_ctx(ADAPTER_PLATFORM_WHATSAPP);
+        // Build an envelope signed by key A, but validate with key B.
+        let (env, _key_a) = make_bind(
+            ADAPTER_PLATFORM_WHATSAPP,
+            "120363012345678@g.us",
+            [1u8; 32],
+            100,
+            false,
+            [10u8; 32],
+            [20u8; 32],
+        );
+        let key_b = SigningKey::from_bytes(&[99u8; 32]);
+        let mut ctx = WitnessContext {
+            local_platform: ADAPTER_PLATFORM_WHATSAPP,
+            local_peer_id: local_id,
+            active_coordinator_id: None,
+            current_epoch: 100,
+            nonce_table: &mut table,
+            first_bind_seen: None,
+        };
+        let outcome = validate_bind(&env, &key_b.verifying_key(), &mut ctx);
+        match outcome {
+            ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 1),
+            _ => panic!("expected Reject (rule 1)"),
+        }
+    }
+
     #[test]
     fn first_bind_wins_no_prev() {
-        let env = make_bind(
+        let (env, _key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "g1@g.us",
             [1u8; 32],
@@ -605,7 +710,11 @@ mod tests {
 
     #[test]
     fn first_bind_wins_same_founder_lower_hash() {
-        let prev = make_bind(
+        // Construct envelopes with explicit bind_hash values to make the
+        // relationship deterministic (post-R17 R1-HIGH-3, `make_bind`
+        // recomputes bind_hash from the canonical body, so we cannot
+        // rely on group_jid → hash ordering).
+        let mut prev = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "g1@g.us",
             [1u8; 32],
@@ -614,8 +723,7 @@ mod tests {
             [10u8; 32],
             [20u8; 32],
         );
-        // New BIND with a strictly lower hash (e.g., empty group_jid)
-        let new = make_bind(
+        let mut new = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "a@g.us",
             [2u8; 32],
@@ -624,12 +732,15 @@ mod tests {
             [10u8; 32], // same founder
             [20u8; 32],
         );
-        assert!(!first_bind_wins(Some(&prev), &new));
+        // Force: prev has higher bind_hash than new.
+        prev.0.bind_hash = [0xFFu8; 32];
+        new.0.bind_hash = [0x00u8; 32];
+        assert!(!first_bind_wins(Some(&prev.0), &new.0));
     }
 
     #[test]
     fn first_bind_wins_different_founder() {
-        let prev = make_bind(
+        let (prev, _key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "g1@g.us",
             [1u8; 32],
@@ -638,7 +749,7 @@ mod tests {
             [10u8; 32],
             [20u8; 32],
         );
-        let new = make_bind(
+        let (new, _key) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "a@g.us",
             [2u8; 32],
@@ -671,7 +782,7 @@ mod tests {
         // Sanity: a real BIND that round-trips through sign/verify
         // should also pass the witness rules (modulo nonce).
         let key = SigningKey::from_bytes(&[1u8; 32]);
-        let mut env = make_bind(
+        let (mut env, _key2) = make_bind(
             ADAPTER_PLATFORM_WHATSAPP,
             "120363012345678@g.us",
             [1u8; 32],
@@ -691,6 +802,26 @@ mod tests {
             first_bind_seen: None,
         };
         assert!(env.verify(&key.verifying_key()).is_ok());
-        assert!(validate_bind(&env, &mut ctx).is_accept());
+        assert!(validate_bind(&env, &key.verifying_key(), &mut ctx).is_accept());
+    }
+
+    // R17 R1-HIGH-2 regression test: a nonce seen 100 epochs ago MUST
+    // NOT trigger a replay rejection (the previous entry has aged out).
+    #[test]
+    fn nonce_table_evicts_old_entries() {
+        let mut table = NonceReplayTable::with_epoch_age_limit(100);
+        let nonce = [42u8; 32];
+        // First use at epoch 100.
+        assert!(table
+            .check_and_maybe_evict("whatsapp", "g1", &nonce, 100)
+            .is_ok());
+        // Same nonce at epoch 200 — REPLAY within window.
+        assert!(table
+            .check_and_maybe_evict("whatsapp", "g1", &nonce, 150)
+            .is_err());
+        // Same nonce at epoch 250 — AGED OUT (>100 epochs since first_seen).
+        assert!(table
+            .check_and_maybe_evict("whatsapp", "g1", &nonce, 250)
+            .is_ok());
     }
 }

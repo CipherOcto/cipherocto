@@ -241,6 +241,34 @@ pub enum UnbindAuthority {
     MissionTerminated = 0x02,
 }
 
+/// Result of a third-party group BIND.
+///
+/// R17 R1-HIGH-5 fix: the witness assertion is no longer a parameter
+/// that is silently discarded (`let _ = witness_assertion`). It is
+/// cryptographically verified against the witness's public key, and
+/// a derived `witness_seal` is returned alongside the `BindEnvelope`
+/// so that downstream consumers and the registry can audit the link
+/// between the assertion and the bind.
+///
+/// A third-party BIND is one that the DC submits for a group it did
+/// NOT create itself (e.g., a legacy WhatsApp group that needs to be
+/// bound to a `domain_id` because witnesses have confirmed its
+/// existence via `WitnessAssertion`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThirdPartyBindResult {
+    /// The signed `BindEnvelope`.
+    pub envelope: BindEnvelope,
+    /// `BLAKE3-256(bind_hash || assertion.assertion_hash)` — ties the
+    /// bind to the specific witness assertion that authorised it.
+    /// Anyone who holds both the envelope and the assertion can
+    /// recompute the seal; if the assertion is substituted, the seal
+    /// changes.
+    pub witness_seal: [u8; 32],
+    /// The verified `WitnessAssertion`, re-emitted for the caller's
+    /// convenience so it can be included in any audit envelope.
+    pub assertion: WitnessAssertion,
+}
+
 impl UnbindAuthority {
     /// Construct from wire byte.
     pub fn from_byte(byte: u8) -> Option<Self> {
@@ -402,12 +430,19 @@ pub struct BindAck {
 
 impl BindAck {
     /// Compute `ack_hash`.
+    ///
+    /// Per RFC-0850p-c §A, the nonce is INCLUDED in the canonical hash so
+    /// that swapping or stripping the nonce changes the hash and breaks
+    /// the signature. This is the R17 R1-CRITICAL-1 fix (previously the
+    /// nonce was in the struct but not in the hash, allowing replay with
+    /// attacker-chosen nonces).
     pub fn compute_ack_hash(&self) -> [u8; 32] {
-        let mut buf = Vec::with_capacity(10 + 32 + 32 + 8);
+        let mut buf = Vec::with_capacity(10 + 32 + 32 + 8 + 32);
         buf.extend_from_slice(&header(tag::BIND_ACK));
         buf.extend_from_slice(&self.bind_hash);
         buf.extend_from_slice(&self.witness_id);
         buf.extend_from_slice(&self.witness_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.nonce);
         *blake3::hash(&buf).as_bytes()
     }
 
@@ -594,6 +629,16 @@ pub(crate) fn write_string(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(bytes);
 }
 
+/// Write a length-prefixed byte vector (u32 BE length, then bytes).
+///
+/// R17 R1-MEDIUM-3 fix: this helper used to be defined in
+/// `dc_envelopes.rs` (in duplicate). It now lives in `binding.rs` so
+/// all sibling modules can share a single canonical implementation.
+pub(crate) fn write_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+    buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    buf.extend_from_slice(b);
+}
+
 // -----------------------------------------------------------------------------
 // Errors
 // -----------------------------------------------------------------------------
@@ -648,6 +693,15 @@ pub enum BindingError {
         /// The duplicate nonce.
         nonce: [u8; 32],
     },
+    /// R17 R1-LOW-1: a node exceeded its rejoin-attempt budget. This
+    /// used to be returned via `BindingError::NonceReplay` with a
+    /// `node_id` stuffed into the `nonce` field — semantically wrong
+    /// (it's a node_id, not a nonce).
+    #[error("rejoin attempt budget exceeded for node {node_id:x?}")]
+    RejoinBudgetExceeded {
+        /// The node that ran out of rejoin attempts.
+        node_id: [u8; 32],
+    },
     /// The quarantine window has expired and the binding cannot be
     /// restored.
     #[error("quarantine window expired for ({platform}, {group_jid})")]
@@ -656,6 +710,17 @@ pub enum BindingError {
         platform: String,
         /// Group JID.
         group_jid: String,
+    },
+    /// A `WitnessAssertion` failed verification, was stale, or
+    /// referenced a malformed witness public key.
+    ///
+    /// R17 R1-HIGH-5: introduced for `build_third_party_bind`, which
+    /// must now actually use its `witness_assertion` argument (rather
+    /// than silently dropping it with `let _ = ...`).
+    #[error("witness assertion invalid: {reason}")]
+    InvalidAssertion {
+        /// Reason for failure.
+        reason: String,
     },
 }
 
@@ -793,6 +858,29 @@ mod tests {
         };
         ack.sign(&key);
         assert!(ack.verify(&pubkey).is_ok());
+    }
+
+    // R17 R1-CRITICAL-1 regression test: changing the nonce must change
+    // the hash so an attacker cannot swap a stored envelope's nonce to
+    // bypass replay protection.
+    #[test]
+    fn bind_ack_nonce_changes_hash() {
+        let key = test_key(2);
+        let pubkey = key.verifying_key();
+        let mut ack = BindAck {
+            bind_hash: [5u8; 32],
+            witness_id: pubkey.to_bytes(),
+            witness_epoch: 1001,
+            ack_hash: [0u8; 32],
+            nonce: [6u8; 32],
+            signature: [0u8; 64],
+        };
+        ack.sign(&key);
+        let original_hash = ack.ack_hash;
+        // Swap the nonce; the hash MUST change.
+        ack.nonce = [7u8; 32];
+        ack.sign(&key);
+        assert_ne!(ack.ack_hash, original_hash);
     }
 
     #[test]

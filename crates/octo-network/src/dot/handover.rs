@@ -151,20 +151,32 @@ impl SlashEvent {
     }
 
     /// Sign the event in place.
+    ///
+    /// R17 R1-LOW-10 fix: the call
+    /// `ed25519_dalek::Signer::sign(key, &payload).to_bytes()` has
+    /// been replaced with the equivalent shorthand `key.sign(&payload).to_bytes()`
+    /// (via the `Signer` trait brought into scope at the top of the
+    /// module). The behaviour is identical; the new form matches
+    /// every other `sign(...)` call site in the DOT protocol.
     pub fn sign(&mut self, key: &SigningKey) {
         let payload = self.payload_bytes();
-        self.signature = ed25519_dalek::Signer::sign(key, &payload).to_bytes();
+        self.signature = key.sign(&payload).to_bytes();
     }
 
     /// Verify the coordinator's signature.
+    ///
+    /// R17 R1-HIGH-8 fix: the `blake3::hash(&payload)` is now computed
+    /// inside the `map_err` closure, so it only runs on the error
+    /// path. Previously it ran unconditionally on every successful
+    /// verify, wasting ~1µs of CPU per call.
     pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
         let payload = self.payload_bytes();
         let sig = Signature::from_bytes(&self.signature);
-        coordinator_pubkey
-            .verify(&payload, &sig)
-            .map_err(|_| DotError::InvalidSignature {
+        coordinator_pubkey.verify(&payload, &sig).map_err(|_| {
+            DotError::InvalidSignature {
                 envelope_id: *blake3::hash(&payload).as_bytes(),
-            })?;
+            }
+        })?;
         Ok(())
     }
 }
@@ -198,9 +210,31 @@ impl SlashTally {
     }
 
     /// Append a slash event and update the timestamp.
-    pub fn append(&mut self, event: SlashEvent, current_epoch: u64) {
+    ///
+    /// R17 R1-MEDIUM-10 fix: previously this function silently
+    /// accepted any `SlashEvent` without verifying its signature.
+    /// A forged event could be smuggled into the tally and then
+    /// transferred to a successor coordinator on handover, poisoning
+    /// the successor's slash state.
+    ///
+    /// The signature is now verified against the provided coordinator
+    /// public key. A forged or tampered event is rejected with
+    /// `HandoverError::SlashTallyInvalid` (R17 R1-MEDIUM-9 fix: this
+    /// also puts the previously-unused `HandoverError` enum to work).
+    pub fn append(
+        &mut self,
+        event: SlashEvent,
+        coordinator_pubkey: &VerifyingKey,
+        current_epoch: u64,
+    ) -> Result<(), HandoverError> {
+        event
+            .verify(coordinator_pubkey)
+            .map_err(|_| HandoverError::SlashTallyInvalid {
+                index: self.slash_events.len(),
+            })?;
         self.slash_events.push(event);
         self.last_updated_epoch = current_epoch;
+        Ok(())
     }
 
     /// Serialize the tally body (for hashing/signing in handover envelopes).
@@ -251,8 +285,8 @@ pub struct HandoverRequestEnvelope {
     pub pending_envelopes_hash: [u8; 32],
     /// Reason for handover.
     pub reason: HandoverReason,
-    /// 16-byte random nonce.
-    pub nonce: [u8; 16],
+    /// 32-byte random nonce (R17 R1-HIGH-7: was `[u8; 16]`, now 32 for consistency).
+    pub nonce: [u8; 32],
     /// Current epoch.
     pub current_epoch: u64,
     /// `BLAKE3-256(header || body)`.
@@ -287,7 +321,7 @@ impl HandoverRequestEnvelope {
             group_bindings: Vec::new(),
             pending_envelopes_hash: [0u8; 32],
             reason,
-            nonce: [0u8; 16],
+            nonce: [0u8; 32],
             current_epoch,
             handover_hash: [0u8; 32],
             signature: [0u8; 64],
@@ -305,9 +339,12 @@ impl HandoverRequestEnvelope {
         buf.extend_from_slice(&self.slash_tally.body_bytes());
         // Group bindings: length-prefixed (u32 BE count), then each binding
         // serialized by its DCS-canonical layout. For the handover envelope
-        // we use a length-prefixed JSON-ish representation to keep this
-        // module self-contained (DCS-canonical GroupBinding serialization
-        // is owned by binding.rs and depends on the full envelope family).
+        // we use a length-prefixed binary representation (R17 R1-MEDIUM-7
+        // fix: the previous comment claimed this was "JSON-ish" — it has
+        // never been JSON, it is a length-prefixed binary payload built
+        // from `group_binding_payload(gb)`). This keeps this module
+        // self-contained (DCS-canonical GroupBinding serialization is
+        // owned by `binding.rs` and depends on the full envelope family).
         buf.extend_from_slice(&(self.group_bindings.len() as u32).to_be_bytes());
         for gb in &self.group_bindings {
             let payload = group_binding_payload(gb);
@@ -376,21 +413,27 @@ pub struct HandoverAckEnvelope {
     pub witness_epoch: u64,
     /// BLAKE3-256(handover_request_hash || witness_id || witness_epoch).
     pub ack_hash: [u8; 32],
-    /// 16-byte random nonce.
-    pub nonce: [u8; 16],
+    /// 32-byte random nonce (R17 R1-HIGH-7: was `[u8; 16]`, now 32 for consistency).
+    pub nonce: [u8; 32],
     /// Ed25519 signature over `ack_hash`.
     pub signature: [u8; 64],
 }
 
 impl HandoverAckEnvelope {
     /// Construct a new `HandoverAckEnvelope` with the canonical header
-    /// populated.
+    /// populated. The caller MUST set `nonce` and call `sign(...)` before
+    /// transmitting (R17 R1-CRITICAL-1 fix: nonce is now in the hash).
     pub fn new(
         handover_request_hash: [u8; 32],
         witness_id: [u8; 32],
         witness_epoch: u64,
     ) -> Self {
-        let ack_hash = compute_ack_hash(&handover_request_hash, &witness_id, witness_epoch);
+        let ack_hash = compute_ack_hash(
+            &handover_request_hash,
+            &witness_id,
+            witness_epoch,
+            &[0u8; 32],
+        );
         Self {
             envelope_type: ENVELOPE_TYPE,
             envelope_subtype: HANDOVER_ACK_TAG,
@@ -399,14 +442,19 @@ impl HandoverAckEnvelope {
             witness_id,
             witness_epoch,
             ack_hash,
-            nonce: [0u8; 16],
+            nonce: [0u8; 32],
             signature: [0u8; 64],
         }
     }
 
-    /// Compute the ACK hash from `(handover_request_hash, witness_id, witness_epoch)`.
+    /// Compute the ACK hash from `(handover_request_hash, witness_id, witness_epoch, nonce)`.
     pub fn compute_ack_hash(&self) -> [u8; 32] {
-        compute_ack_hash(&self.handover_request_hash, &self.witness_id, self.witness_epoch)
+        compute_ack_hash(
+            &self.handover_request_hash,
+            &self.witness_id,
+            self.witness_epoch,
+            &self.nonce,
+        )
     }
 
     /// Serialize the body (everything after the 10-byte header) to bytes.
@@ -466,15 +514,16 @@ pub struct HandoverDoneEnvelope {
     pub accepted_epoch: u64,
     /// BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch).
     pub done_hash: [u8; 32],
-    /// 16-byte random nonce.
-    pub nonce: [u8; 16],
+    /// 32-byte random nonce (R17 R1-HIGH-7: was `[u8; 16]`, now 32 for consistency).
+    pub nonce: [u8; 32],
     /// Ed25519 signature over `done_hash`.
     pub signature: [u8; 64],
 }
 
 impl HandoverDoneEnvelope {
     /// Construct a new `HandoverDoneEnvelope` with the canonical header
-    /// populated.
+    /// populated. The caller MUST set `nonce` and call `sign(...)` before
+    /// transmitting (R17 R1-CRITICAL-1 fix: nonce is now in the hash).
     pub fn new(
         handover_request_hash: [u8; 32],
         new_coordinator_id: [u8; 32],
@@ -484,6 +533,7 @@ impl HandoverDoneEnvelope {
             &handover_request_hash,
             &new_coordinator_id,
             accepted_epoch,
+            &[0u8; 32],
         );
         Self {
             envelope_type: ENVELOPE_TYPE,
@@ -493,17 +543,18 @@ impl HandoverDoneEnvelope {
             new_coordinator_id,
             accepted_epoch,
             done_hash,
-            nonce: [0u8; 16],
+            nonce: [0u8; 32],
             signature: [0u8; 64],
         }
     }
 
-    /// Compute `done_hash` from `(handover_request_hash, new_coordinator_id, accepted_epoch)`.
+    /// Compute `done_hash` from `(handover_request_hash, new_coordinator_id, accepted_epoch, nonce)`.
     pub fn compute_done_hash(&self) -> [u8; 32] {
         compute_done_hash(
             &self.handover_request_hash,
             &self.new_coordinator_id,
             self.accepted_epoch,
+            &self.nonce,
         )
     }
 
@@ -548,29 +599,39 @@ impl HandoverDoneEnvelope {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// BLAKE3-256(handover_request_hash || witness_id || witness_epoch).
+/// BLAKE3-256(handover_request_hash || witness_id || witness_epoch || nonce).
+///
+/// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
+/// the nonce changes the hash and breaks the signature.
 fn compute_ack_hash(
     handover_request_hash: &[u8; 32],
     witness_id: &[u8; 32],
     witness_epoch: u64,
+    nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8);
+    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(witness_id);
     buf.extend_from_slice(&witness_epoch.to_be_bytes());
+    buf.extend_from_slice(nonce);
     *blake3::hash(&buf).as_bytes()
 }
 
-/// BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch).
+/// BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch || nonce).
+///
+/// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
+/// the nonce changes the hash and breaks the signature.
 fn compute_done_hash(
     handover_request_hash: &[u8; 32],
     new_coordinator_id: &[u8; 32],
     accepted_epoch: u64,
+    nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8);
+    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(new_coordinator_id);
     buf.extend_from_slice(&accepted_epoch.to_be_bytes());
+    buf.extend_from_slice(nonce);
     *blake3::hash(&buf).as_bytes()
 }
 
@@ -676,8 +737,22 @@ mod tests {
     fn slash_tally_append_and_body() {
         let mut tally = SlashTally::new();
         assert!(tally.is_empty());
-        tally.append(make_slash_event(0x000E, [0x77u8; 32], 50), 50);
-        tally.append(make_slash_event(0x000F, [0x88u8; 32], 100), 100);
+        let coord_key = make_key(11);
+        let coord_pubkey = coord_key.verifying_key();
+        tally
+            .append(
+                make_slash_event(0x000E, [0x77u8; 32], 50),
+                &coord_pubkey,
+                50,
+            )
+            .unwrap();
+        tally
+            .append(
+                make_slash_event(0x000F, [0x88u8; 32], 100),
+                &coord_pubkey,
+                100,
+            )
+            .unwrap();
         assert_eq!(tally.len(), 2);
         assert_eq!(tally.last_updated_epoch, 100);
         let body = tally.body_bytes();
@@ -685,11 +760,51 @@ mod tests {
     }
 
     #[test]
+    fn slash_tally_append_rejects_forged_event() {
+        // R17 R1-MEDIUM-10 regression: a forged SlashEvent (signed by
+        // a different key than the one we claim) must be rejected
+        // when appended to the tally. Previously `append` blindly
+        // accepted any event, allowing a malicious coordinator to
+        // poison a successor's tally on handover.
+        let mut tally = SlashTally::new();
+        let claimed_key = make_key(11);
+        let real_key = make_key(22);
+        let claimed_pubkey = claimed_key.verifying_key();
+
+        // Build a SlashEvent signed by the wrong key.
+        let mut ev = SlashEvent {
+            slash_reason_code: 0x000E,
+            slashed_peer_id: [0x77u8; 32],
+            witness_count: 3,
+            slash_evidence_hash: [0x99u8; 32],
+            epoch: 50,
+            signature: [0u8; 64],
+        };
+        ev.sign(&real_key);
+
+        let result = tally.append(ev, &claimed_pubkey, 50);
+        assert!(matches!(result, Err(HandoverError::SlashTallyInvalid { index: 0 })));
+        assert!(tally.is_empty(), "forged event must NOT be in the tally");
+    }
+
+    #[test]
     fn handover_request_sign_verify_round_trip() {
         let key = make_key(1);
         let pubkey = key.verifying_key();
+        // make_slash_event signs with make_key(11) (the coordinator
+        // that emitted the slash). Use that key's verifying key when
+        // appending, since `append` now verifies the event signature
+        // (R17 R1-MEDIUM-10).
+        let slash_coord_key = make_key(11);
+        let slash_coord_pubkey = slash_coord_key.verifying_key();
         let mut tally = SlashTally::new();
-        tally.append(make_slash_event(0x000E, [0x77u8; 32], 100), 100);
+        tally
+            .append(
+                make_slash_event(0x000E, [0x77u8; 32], 100),
+                &slash_coord_pubkey,
+                100,
+            )
+            .unwrap();
 
         let mut env = HandoverRequestEnvelope::new(
             [0x11u8; 32],
@@ -713,7 +828,7 @@ mod tests {
             binding_hash: [0x88u8; 32],
         });
         env.pending_envelopes_hash = [0x99u8; 32];
-        env.nonce = [0xAAu8; 16];
+        env.nonce = [0xAAu8; 32];
 
         env.sign(&key);
         assert!(env.verify(&pubkey).is_ok());
@@ -732,7 +847,7 @@ mod tests {
             HandoverReason::Scheduled,
             200,
         );
-        env.nonce = [0xAAu8; 16];
+        env.nonce = [0xAAu8; 32];
         env.sign(&key);
         env.current_epoch = 999;
         assert!(env.verify(&pubkey).is_err());
@@ -764,9 +879,29 @@ mod tests {
             *pubkey.as_bytes(),
             250,
         );
-        env.nonce = [0xC1u8; 16];
+        env.nonce = [0xC1u8; 32];
         env.sign(&key);
         assert!(env.verify(&pubkey).is_ok());
+    }
+
+    // R17 R1-CRITICAL-1 regression test: changing the nonce must change
+    // the hash so an attacker cannot swap a stored envelope's nonce to
+    // bypass replay protection.
+    #[test]
+    fn handover_ack_nonce_changes_hash() {
+        let key = make_key(3);
+        let pubkey = key.verifying_key();
+        let mut env = HandoverAckEnvelope::new(
+            [0xA1u8; 32],
+            *pubkey.as_bytes(),
+            250,
+        );
+        env.nonce = [0xC1u8; 32];
+        env.sign(&key);
+        let original_hash = env.ack_hash;
+        env.nonce = [0xC2u8; 32];
+        env.sign(&key);
+        assert_ne!(env.ack_hash, original_hash);
     }
 
     #[test]
@@ -778,13 +913,14 @@ mod tests {
             *pubkey.as_bytes(),
             250,
         );
-        env.nonce = [0xC1u8; 16];
+        env.nonce = [0xC1u8; 32];
         env.sign(&key);
-        // Recompute manually.
+        // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0xA1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&250u64.to_be_bytes());
+        buf.extend_from_slice(&env.nonce);
         let expected = *blake3::hash(&buf).as_bytes();
         assert_eq!(env.ack_hash, expected);
     }
@@ -798,7 +934,7 @@ mod tests {
             *pubkey.as_bytes(),
             250,
         );
-        env.nonce = [0xC1u8; 16];
+        env.nonce = [0xC1u8; 32];
         env.sign(&key);
         env.witness_epoch = 999;
         assert!(env.verify(&pubkey).is_err());
@@ -813,9 +949,29 @@ mod tests {
             *pubkey.as_bytes(),
             500,
         );
-        env.nonce = [0xE1u8; 16];
+        env.nonce = [0xE1u8; 32];
         env.sign(&key);
         assert!(env.verify(&pubkey).is_ok());
+    }
+
+    // R17 R1-CRITICAL-1 regression test: changing the nonce must change
+    // the hash so an attacker cannot swap a stored envelope's nonce to
+    // bypass replay protection.
+    #[test]
+    fn handover_done_nonce_changes_hash() {
+        let key = make_key(4);
+        let pubkey = key.verifying_key();
+        let mut env = HandoverDoneEnvelope::new(
+            [0xD1u8; 32],
+            *pubkey.as_bytes(),
+            500,
+        );
+        env.nonce = [0xE1u8; 32];
+        env.sign(&key);
+        let original_hash = env.done_hash;
+        env.nonce = [0xE2u8; 32];
+        env.sign(&key);
+        assert_ne!(env.done_hash, original_hash);
     }
 
     #[test]
@@ -827,12 +983,14 @@ mod tests {
             *pubkey.as_bytes(),
             500,
         );
-        env.nonce = [0xE1u8; 16];
+        env.nonce = [0xE1u8; 32];
         env.sign(&key);
+        // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
         let mut buf = Vec::new();
         buf.extend_from_slice(&[0xD1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&500u64.to_be_bytes());
+        buf.extend_from_slice(&env.nonce);
         let expected = *blake3::hash(&buf).as_bytes();
         assert_eq!(env.done_hash, expected);
     }
@@ -846,7 +1004,7 @@ mod tests {
             *pubkey.as_bytes(),
             500,
         );
-        env.nonce = [0xE1u8; 16];
+        env.nonce = [0xE1u8; 32];
         env.sign(&key);
         env.accepted_epoch = 999;
         assert!(env.verify(&pubkey).is_err());

@@ -24,8 +24,8 @@
 use ed25519_dalek::SigningKey;
 
 use super::binding::{
-    BindEnvelope, BindingError, GroupBinding, GroupState, GroupVisibility, UnbindAuthority,
-    WitnessAssertion,
+    BindEnvelope, BindingError, GroupBinding, GroupState, GroupVisibility, ThirdPartyBindResult,
+    UnbindAuthority, UnbindEnvelope, WitnessAssertion,
 };
 use super::dc_envelopes::{
     CreateGroupDoneEnvelope, CreateGroupEnvelope, CreateGroupFailEnvelope, InviteEnvelope,
@@ -305,8 +305,16 @@ impl DcOrchestrator {
 
     /// Build a `BindEnvelope` for a third-party group (a group that was
     /// NOT created by the DC but is being bound to a `domain_id`).
+    ///
     /// The caller MUST have a valid `WitnessAssertion` from at least one
-    /// witness that has confirmed the group's existence.
+    /// witness that has confirmed the group's existence. The assertion
+    /// is cryptographically verified inside this function — a forged or
+    /// stale assertion is rejected with `BindingError::InvalidAssertion`.
+    ///
+    /// R17 R1-HIGH-5 fix: the assertion is no longer a parameter that
+    /// gets silently discarded with `let _ = ...`. It is verified, and
+    /// a `witness_seal` is returned in `ThirdPartyBindResult` so the
+    /// bind is cryptographically tied to the specific assertion.
     pub fn build_third_party_bind(
         &mut self,
         group_jid: String,
@@ -315,11 +323,35 @@ impl DcOrchestrator {
         domain_id: [u8; 32],
         witness_assertion: &WitnessAssertion,
         current_epoch: u64,
-    ) -> Result<BindEnvelope, BindingError> {
-        // The witness_assertion's subject_hash is the canonical
-        // identity of the group; use it as the bind_hash seed.
-        let _ = witness_assertion; // currently informational; the bind_hash
-                                    // is recomputed by BindEnvelope::sign
+    ) -> Result<ThirdPartyBindResult, BindingError> {
+        // Verify the witness assertion signature. We need the witness's
+        // public key; derive it from `witness_id` if it's stored as the
+        // raw 32-byte form, otherwise reject.
+        let witness_pubkey = ed25519_dalek::VerifyingKey::from_bytes(&witness_assertion.witness_id)
+            .map_err(|e| BindingError::InvalidAssertion {
+                reason: format!("witness_id is not a valid ed25519 public key: {e}"),
+            })?;
+
+        // The assertion must be fresh: the witness_epoch should be
+        // within `witness_assertion_max_age_epochs` of `current_epoch`.
+        const WITNESS_ASSERTION_MAX_AGE_EPOCHS: u64 = 50;
+        if witness_assertion.witness_epoch + WITNESS_ASSERTION_MAX_AGE_EPOCHS < current_epoch
+            || witness_assertion.witness_epoch > current_epoch
+        {
+            return Err(BindingError::InvalidAssertion {
+                reason: format!(
+                    "witness_epoch {} is outside the freshness window around current_epoch {}",
+                    witness_assertion.witness_epoch, current_epoch
+                ),
+            });
+        }
+
+        witness_assertion
+            .verify(&witness_pubkey)
+            .map_err(|e| BindingError::InvalidAssertion {
+                reason: format!("assertion signature did not verify: {e}"),
+            })?;
+
         let mut env = BindEnvelope {
             group_jid,
             platform,
@@ -334,7 +366,18 @@ impl DcOrchestrator {
             signature: [0u8; 64],
         };
         env.sign(&self.dc_key);
-        Ok(env)
+
+        // witness_seal = BLAKE3-256(bind_hash || assertion.assertion_hash)
+        let mut seal_buf = Vec::with_capacity(64);
+        seal_buf.extend_from_slice(&env.bind_hash);
+        seal_buf.extend_from_slice(&witness_assertion.assertion_hash);
+        let witness_seal = *blake3::hash(&seal_buf).as_bytes();
+
+        Ok(ThirdPartyBindResult {
+            envelope: env,
+            witness_seal,
+            assertion: witness_assertion.clone(),
+        })
     }
 
     // -------------------------------------------------------------------------
@@ -407,8 +450,12 @@ impl DcOrchestrator {
     // -------------------------------------------------------------------------
 
     /// Build a `UnbindAllAckEnvelope` acknowledging a DC's UNBIND_ALL.
+    ///
+    /// R17 R1-HIGH-4 fix: previously the nonce was hardcoded to `[0u8; 32]`
+    /// (trivially replayable). The method now takes `&mut self` so the
+    /// orchestrator's nonce generator can produce a fresh nonce.
     pub fn build_unbind_all_ack(
-        &self,
+        &mut self,
         witness_key: &SigningKey,
         unbind_hash: [u8; 32],
         domain_id: [u8; 32],
@@ -420,7 +467,7 @@ impl DcOrchestrator {
             witness_id: witness_key.verifying_key().to_bytes(),
             witness_epoch,
             ack_hash: [0u8; 32],
-            nonce: [0u8; 32], // a real implementation would generate a fresh nonce
+            nonce: self.fresh_nonce(),
             signature: [0u8; 64],
         };
         ack.sign(witness_key);
@@ -446,14 +493,22 @@ impl DcOrchestrator {
 
     /// Apply the `Creating → Unbound` transition after a CGROUP_FAIL
     /// or CGROUP timeout. The binding is removed from the registry.
+    ///
+    /// R17 R1-LOW-6 fix: previously this method discarded the
+    /// synthetic `UnbindEnvelope` returned by
+    /// `GroupRegistry::transition_to_unbound` (via `let _ = ...`).
+    /// The envelope is now returned to the caller so they can sign
+    /// and broadcast it. Without this, a `CGROUP_FAIL` leaves no
+    /// wire-level record of the failure — the registry silently
+    /// deletes the binding and the group keeps existing on the
+    /// platform side.
     pub fn fail_cgroup(
         &self,
         registry: &mut GroupRegistry,
         platform: &str,
         group_jid: &str,
-    ) -> Result<(), BindingError> {
-        let _ = registry.transition_to_unbound(platform, group_jid)?;
-        Ok(())
+    ) -> Result<UnbindEnvelope, BindingError> {
+        registry.transition_to_unbound(platform, group_jid)
     }
 
     /// Apply the `Creating → UnboundQuarantined` transition on
@@ -626,10 +681,118 @@ mod tests {
 
     #[test]
     fn unbind_all_ack_envelope_is_valid() {
-        let orch = test_orchestrator();
+        let mut orch = test_orchestrator();
         let wkey = SigningKey::from_bytes(&[2u8; 32]);
         let ack = orch.build_unbind_all_ack(&wkey, [5u8; 32], [1u8; 32], 101);
         assert!(ack.verify(&wkey.verifying_key()).is_ok());
+    }
+
+    #[test]
+    fn unbind_all_ack_nonce_varies_per_call() {
+        // R17 R1-HIGH-4 regression: ack must carry a fresh nonce each call,
+        // not the same `[0u8; 32]` every time (which would be trivially
+        // replayable).
+        let mut orch = test_orchestrator();
+        let wkey = SigningKey::from_bytes(&[2u8; 32]);
+        let a1 = orch.build_unbind_all_ack(&wkey, [5u8; 32], [1u8; 32], 101);
+        let a2 = orch.build_unbind_all_ack(&wkey, [5u8; 32], [1u8; 32], 101);
+        assert_ne!(a1.nonce, a2.nonce);
+    }
+
+    #[test]
+    fn third_party_bind_uses_witness_assertion() {
+        // R17 R1-HIGH-5 regression: build_third_party_bind must actually
+        // use the witness_assertion parameter (verify it, then tie the
+        // bind to it via witness_seal). Previously the parameter was
+        // silently discarded with `let _ = witness_assertion`.
+        let mut orch = test_orchestrator();
+
+        // Build a valid witness assertion.
+        let wkey = SigningKey::from_bytes(&[7u8; 32]);
+        let mut assertion = WitnessAssertion {
+            subject_hash: [0xABu8; 32],
+            witness_id: wkey.verifying_key().to_bytes(),
+            witness_epoch: 50,
+            assertion_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        assertion.sign(&wkey);
+
+        let result = orch
+            .build_third_party_bind(
+                "legacy@g.us".into(),
+                "whatsapp".into(),
+                [1u8; 32],
+                [2u8; 32],
+                &assertion,
+                60, // current_epoch (assertion is fresh)
+            )
+            .expect("third-party bind should succeed");
+        // Envelope signed by DC.
+        assert!(result
+            .envelope
+            .verify(&orch.dc_key.verifying_key())
+            .is_ok());
+        // witness_seal ties the bind to the assertion.
+        let mut seal_buf = Vec::with_capacity(64);
+        seal_buf.extend_from_slice(&result.envelope.bind_hash);
+        seal_buf.extend_from_slice(&assertion.assertion_hash);
+        let expected_seal = *blake3::hash(&seal_buf).as_bytes();
+        assert_eq!(result.witness_seal, expected_seal);
+    }
+
+    #[test]
+    fn third_party_bind_rejects_forged_assertion() {
+        // R17 R1-HIGH-5 regression: a forged assertion (signed by a
+        // different key than the one claimed in `witness_id`) must be
+        // rejected.
+        let mut orch = test_orchestrator();
+        let wkey = SigningKey::from_bytes(&[7u8; 32]);
+        let mut assertion = WitnessAssertion {
+            subject_hash: [0xABu8; 32],
+            witness_id: wkey.verifying_key().to_bytes(),
+            witness_epoch: 50,
+            assertion_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        // Sign with a DIFFERENT key — signature will not verify.
+        let other_key = SigningKey::from_bytes(&[8u8; 32]);
+        assertion.sign(&other_key);
+
+        let result = orch.build_third_party_bind(
+            "legacy@g.us".into(),
+            "whatsapp".into(),
+            [1u8; 32],
+            [2u8; 32],
+            &assertion,
+            60,
+        );
+        assert!(matches!(result, Err(BindingError::InvalidAssertion { reason: _ })));
+    }
+
+    #[test]
+    fn third_party_bind_rejects_stale_assertion() {
+        // R17 R1-HIGH-5 regression: an assertion whose witness_epoch is
+        // too far in the past must be rejected.
+        let mut orch = test_orchestrator();
+        let wkey = SigningKey::from_bytes(&[7u8; 32]);
+        let mut assertion = WitnessAssertion {
+            subject_hash: [0xABu8; 32],
+            witness_id: wkey.verifying_key().to_bytes(),
+            witness_epoch: 1, // very old
+            assertion_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        assertion.sign(&wkey);
+        let result = orch.build_third_party_bind(
+            "legacy@g.us".into(),
+            "whatsapp".into(),
+            [1u8; 32],
+            [2u8; 32],
+            &assertion,
+            1000, // current_epoch far ahead
+        );
+        assert!(matches!(result, Err(BindingError::InvalidAssertion { reason: _ })));
     }
 
     #[test]
@@ -676,6 +839,36 @@ mod tests {
         orch.quarantine_cgroup(&mut reg, "whatsapp", "g1@g.us", 150)
             .unwrap();
         assert_eq!(reg.quarantine_len(), 1);
+        assert!(reg.lookup_by_group("whatsapp", "g1@g.us").is_none());
+    }
+
+    #[test]
+    fn fail_cgroup_returns_unbind_envelope() {
+        // R17 R1-LOW-6 regression: fail_cgroup used to discard the
+        // synthetic UnbindEnvelope. It must return it so the caller
+        // can sign and broadcast it on CGROUP_FAIL.
+        let mut orch = test_orchestrator();
+        let mut reg = GroupRegistry::new();
+        let b = GroupBinding {
+            group_jid: "g1@g.us".into(),
+            platform: "whatsapp".into(),
+            mission_id: [1u8; 32],
+            domain_id: [2u8; 32],
+            domain_coordinator_id: orch.dc_pubkey(),
+            bound_at_epoch: 100,
+            renewed_at_epoch: 100,
+            state: GroupState::Unbound,
+            binding_hash: [0u8; 32],
+        };
+        reg.register_binding(b).unwrap();
+        reg.transition_to_creating("whatsapp", "g1@g.us").unwrap();
+        let env = orch
+            .fail_cgroup(&mut reg, "whatsapp", "g1@g.us")
+            .expect("fail_cgroup should return the synthetic UnbindEnvelope");
+        // The envelope references the now-deleted binding.
+        assert_eq!(env.group_jid, "g1@g.us");
+        assert_eq!(env.platform, "whatsapp");
+        // Registry no longer has the binding.
         assert!(reg.lookup_by_group("whatsapp", "g1@g.us").is_none());
     }
 }

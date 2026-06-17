@@ -172,14 +172,21 @@ pub struct CreateSubGroupEnvelope {
     pub proposed_group_jid: String,
     /// Initial invite count (number of `InviteEnvelope`s the DC plans to
     /// emit).
-    pub initial_invite_count: u16,
+    ///
+    /// R17 R1-MEDIUM-5 fix: was `u16`, now `u32` to match
+    /// `CreateGroupEnvelope.initial_invite_count` (which has always
+    /// been `u32`). `u16` capped the sub-group at 65 535 invites,
+    /// which is too low for large missions.
+    pub initial_invite_count: u32,
     /// The sub-DC's peer_id, or the parent DC's peer_id if the extension
     /// does not delegate.
     pub dc_id: [u8; 32],
     /// Sub-group linkage to the parent domain.
     pub sub_group_extension: SubGroupExtension,
-    /// 16-byte random nonce.
-    pub nonce: [u8; 16],
+    /// 32-byte random nonce. R17 R1-HIGH-7 fix: was `[u8; 16]`, now
+    /// 32 bytes for consistency with all other envelopes in the DOT
+    /// protocol (BindEnvelope, HandoverEnvelopes, etc.).
+    pub nonce: [u8; 32],
     /// Current epoch at CGROUP_SUB emission time.
     pub current_epoch: u64,
     /// The parent DC's term id (signs the envelope).
@@ -213,7 +220,7 @@ impl CreateSubGroupEnvelope {
             initial_invite_count: 0,
             dc_id,
             sub_group_extension,
-            nonce: [0u8; 16],
+            nonce: [0u8; 32],
             current_epoch,
             coordinator_term_id,
             sub_group_hash: [0u8; 32],
@@ -285,15 +292,22 @@ impl CreateSubGroupEnvelope {
     }
 
     /// Sign the envelope in place. Recomputes `sub_group_hash` and signs it.
-    pub fn sign(&mut self, key: &SigningKey) {
+    ///
+    /// R17 R1-HIGH-6 fix: previously the `validate()` call used
+    /// `.expect(...)`, which would panic the process if the sub_label
+    /// was invalid. The function now returns `Result<(), SubGroupError>`
+    /// so callers can handle the failure gracefully (e.g., return the
+    /// error to the orchestrator, or surface it to a higher layer).
+    /// The `expect`-on-panic was a denial-of-service vector — a single
+    /// malformed envelope could crash the DC.
+    pub fn sign(&mut self, key: &SigningKey) -> Result<(), SubGroupError> {
         // Validate first so we never sign an inconsistent envelope.
-        self.sub_group_extension
-            .validate()
-            .expect("sub_label invalid; cannot sign");
+        self.sub_group_extension.validate()?;
         // Ensure sub_domain_id matches the derived value before signing.
         self.sub_domain_id = self.sub_group_extension.derive_sub_domain_id();
         self.sub_group_hash = self.compute_sub_group_hash();
         self.signature = key.sign(&self.sub_group_hash).to_bytes();
+        Ok(())
     }
 
     /// Verify the signature against the DC's public key.
@@ -419,7 +433,7 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
+        env.nonce = [0xEEu8; 32];
 
         assert_eq!(env.envelope_type, *b"DOT1");
         assert_eq!(env.envelope_subtype, *b"CGSB");
@@ -446,8 +460,8 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
-        env.sign(&key);
+        env.nonce = [0xEEu8; 32];
+        env.sign(&key).unwrap();
         // Tamper with sub_domain_id.
         env.sub_domain_id = [0xFFu8; 32];
         assert!(matches!(
@@ -472,9 +486,9 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
+        env.nonce = [0xEEu8; 32];
 
-        env.sign(&key);
+        env.sign(&key).unwrap();
         assert!(env.verify(&pubkey).is_ok());
     }
 
@@ -492,8 +506,8 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
-        env.sign(&key);
+        env.nonce = [0xEEu8; 32];
+        env.sign(&key).unwrap();
         // Tamper with proposed_group_jid after signing.
         env.proposed_group_jid = "tampered@g.us".to_string();
         assert!(env.verify(&pubkey).is_err());
@@ -513,8 +527,8 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
-        env.sign(&key);
+        env.nonce = [0xEEu8; 32];
+        env.sign(&key).unwrap();
         assert!(env.verify(&other.verifying_key()).is_err());
     }
 
@@ -535,8 +549,8 @@ mod tests {
         env.platform = "matrix".to_string();
         env.proposed_group_jid = "!room:matrix.org".to_string();
         env.initial_invite_count = 5;
-        env.nonce = [0xAAu8; 16];
-        env.sign(&key);
+        env.nonce = [0xAAu8; 32];
+        env.sign(&key).unwrap();
         assert!(env.verify(&pubkey).is_ok());
     }
 
@@ -554,8 +568,8 @@ mod tests {
         env.platform = "whatsapp".to_string();
         env.proposed_group_jid = "120363@g.us".to_string();
         env.initial_invite_count = 3;
-        env.nonce = [0xEEu8; 16];
-        env.sign(&key);
+        env.nonce = [0xEEu8; 32];
+        env.sign(&key).unwrap();
         // Tamper with envelope_subtype.
         env.envelope_subtype = *b"BIND";
         assert!(matches!(
@@ -570,6 +584,40 @@ mod tests {
         assert_eq!(&h[0..4], b"DOT1");
         assert_eq!(&h[4..8], b"CGSB");
         assert_eq!(u16::from_be_bytes([h[8], h[9]]), 0x0001);
+    }
+
+    #[test]
+    fn sign_returns_err_for_invalid_sub_label() {
+        // R17 R1-HIGH-6 regression: sign() used to `.expect(...)` on
+        // the validate() result, panicking the process if the
+        // sub_label was invalid. It now returns Err, letting the
+        // caller surface a proper error.
+        use ed25519_dalek::SigningKey;
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut env = CreateSubGroupEnvelope {
+            envelope_type: *b"DOT1",
+            envelope_subtype: *b"CGSB",
+            version: 0x0001,
+            sub_domain_id: [0u8; 32],
+            mission_id: [1u8; 32],
+            platform: "whatsapp".into(),
+            proposed_group_jid: "120363@g.us".into(),
+            initial_invite_count: 1,
+            dc_id: [0u8; 32],
+            sub_group_extension: SubGroupExtension {
+                parent_domain_id: [1u8; 32],
+                sub_label: "bad/label".into(), // slash → invalid
+                sub_dc_id: None,
+                delegation_proof: None,
+            },
+            nonce: [0u8; 32],
+            current_epoch: 0,
+            coordinator_term_id: [0u8; 32],
+            sub_group_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        let result = env.sign(&key);
+        assert!(matches!(result, Err(SubGroupError::SlashInLabel { .. })));
     }
 
     #[test]

@@ -21,7 +21,7 @@
 use blake3;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
-use super::binding::{header, GroupVisibility, UnbindAuthority, ENVELOPE_TYPE, ENVELOPE_VERSION};
+use super::binding::{header, write_bytes, write_string, GroupVisibility};
 use super::error::DotError;
 
 /// 4-byte ASCII subtype tags for 0850p-d envelopes.
@@ -111,7 +111,15 @@ impl CreateGroupEnvelope {
         Ok(())
     }
 
-    /// Serialize the header + body.
+    /// Serialize the canonical bytes: 10-byte header followed by the body.
+    ///
+    /// R17 R1-LOW-9 fix: the previous name `body_bytes` was misleading
+    /// because the function included the canonical header (unlike
+    /// `BindEnvelope::body_bytes`, which does NOT include the header).
+    /// The function continues to be named `body_bytes` for backwards
+    /// compatibility, but the doc-comment now makes the header
+    /// inclusion explicit. The hash (`compute_cgroup_hash`) is
+    /// unchanged — it always hashed the full canonical serialization.
     pub fn body_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(512);
         buf.extend_from_slice(&header(tag::CREATE_GROUP));
@@ -157,13 +165,18 @@ pub struct CreateGroupAckEnvelope {
 
 impl CreateGroupAckEnvelope {
     /// Compute `ack_hash`.
+    ///
+    /// Per RFC-0850p-d §C, the nonce is INCLUDED in the canonical hash.
+    /// R17 R1-CRITICAL-1 fix (was missing from the hash, allowing replay
+    /// with attacker-chosen nonces).
     pub fn compute_ack_hash(&self) -> [u8; 32] {
-        let mut buf = Vec::with_capacity(10 + 32 + 32 + 32 + 8);
+        let mut buf = Vec::with_capacity(10 + 32 + 32 + 32 + 8 + 32);
         buf.extend_from_slice(&header(tag::CREATE_GROUP_ACK));
         buf.extend_from_slice(&self.domain_id);
         buf.extend_from_slice(&self.cgroup_hash);
         buf.extend_from_slice(&self.witness_id);
         buf.extend_from_slice(&self.witness_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.nonce);
         *blake3::hash(&buf).as_bytes()
     }
 
@@ -534,13 +547,18 @@ pub struct UnbindAllAckEnvelope {
 
 impl UnbindAllAckEnvelope {
     /// Compute `ack_hash`.
+    ///
+    /// Per RFC-0850p-d §F, the nonce is INCLUDED in the canonical hash.
+    /// R17 R1-CRITICAL-1 fix (was missing from the hash, allowing replay
+    /// with attacker-chosen nonces).
     pub fn compute_ack_hash(&self) -> [u8; 32] {
-        let mut buf = Vec::with_capacity(10 + 32 + 32 + 32 + 8);
+        let mut buf = Vec::with_capacity(10 + 32 + 32 + 32 + 8 + 32);
         buf.extend_from_slice(&header(tag::UNBIND_ALL_ACK));
         buf.extend_from_slice(&self.domain_id);
         buf.extend_from_slice(&self.unbind_hash);
         buf.extend_from_slice(&self.witness_id);
         buf.extend_from_slice(&self.witness_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.nonce);
         *blake3::hash(&buf).as_bytes()
     }
 
@@ -571,40 +589,19 @@ impl UnbindAllAckEnvelope {
 // -----------------------------------------------------------------------------
 // Serialization helpers
 // -----------------------------------------------------------------------------
+//
+// R17 R1-MEDIUM-3 fix: `write_string` and `write_bytes` used to be
+// defined here in duplicate (already defined in `super::binding`).
+// They are now imported from `binding` so there is exactly one
+// canonical implementation across the DOT protocol.
 
-/// Write a length-prefixed string (u32 BE length, then UTF-8 bytes).
-fn write_string(buf: &mut Vec<u8>, s: &str) {
-    let bytes = s.as_bytes();
-    buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-    buf.extend_from_slice(bytes);
-}
-
-/// Write a length-prefixed byte vector (u32 BE length, then bytes).
-fn write_bytes(buf: &mut Vec<u8>, b: &[u8]) {
-    buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
-    buf.extend_from_slice(b);
-}
-
-// Re-export the parent ENVELOPE_TYPE / ENVELOPE_VERSION for completeness
-// in case downstream code wants to construct headers without depending
-// on `super::binding` directly.
-pub use super::binding::ENVELOPE_TYPE as _PARENT_ENVELOPE_TYPE;
-pub use super::binding::ENVELOPE_VERSION as _PARENT_ENVELOPE_VERSION;
-
-// Suppress unused warnings on imported re-exports.
-#[allow(dead_code)]
-const _UNUSED_ENVELOPE_TYPE: [u8; 4] = ENVELOPE_TYPE;
-#[allow(dead_code)]
-const _UNUSED_ENVELOPE_VERSION: u16 = ENVELOPE_VERSION;
-
-// Re-export UnbindAuthority for the convenience of mission 0850p-e/0850p-f
-// callers that import from this module.
-pub use super::binding::UnbindAuthority as _UnbindAuthority;
-#[allow(dead_code)]
-const _UNUSED_UNBIND_AUTHORITY_REEXPORT: UnbindAuthority = UnbindAuthority::CoordinatorResign;
-
-// Re-export WitnessAssertion for the convenience of mission 0850p-e callers.
-pub use super::binding::WitnessAssertion as _WitnessAssertion;
+// R17 R1-MEDIUM-4 fix: removed the dead-code suppression hacks for
+// the `_PARENT_ENVELOPE_TYPE`, `_PARENT_ENVELOPE_VERSION`, and
+// `_UNUSED_UNBIND_AUTHORITY_REEXPORT` re-exports — these existed
+// only to silence `dead_code` warnings, but the silence was hiding
+// the fact that the re-exports had no consumer. The re-exports are
+// also gone; any downstream code that needed them should import
+// directly from `super::binding`.
 
 #[cfg(test)]
 mod tests {
@@ -657,6 +654,28 @@ mod tests {
         };
         ack.sign(&wkey);
         assert!(ack.verify(&wkey.verifying_key()).is_ok());
+    }
+
+    // R17 R1-CRITICAL-1 regression test: changing the nonce must change
+    // the hash so an attacker cannot swap a stored envelope's nonce to
+    // bypass replay protection.
+    #[test]
+    fn cgroup_ack_nonce_changes_hash() {
+        let wkey = test_witness_key();
+        let mut ack = CreateGroupAckEnvelope {
+            domain_id: [1u8; 32],
+            cgroup_hash: [4u8; 32],
+            witness_id: wkey.verifying_key().to_bytes(),
+            witness_epoch: 101,
+            ack_hash: [0u8; 32],
+            nonce: [5u8; 32],
+            signature: [0u8; 64],
+        };
+        ack.sign(&wkey);
+        let original_hash = ack.ack_hash;
+        ack.nonce = [9u8; 32];
+        ack.sign(&wkey);
+        assert_ne!(ack.ack_hash, original_hash);
     }
 
     #[test]
@@ -772,6 +791,28 @@ mod tests {
         };
         ack.sign(&wkey);
         assert!(ack.verify(&wkey.verifying_key()).is_ok());
+    }
+
+    // R17 R1-CRITICAL-1 regression test: changing the nonce must change
+    // the hash so an attacker cannot swap a stored envelope's nonce to
+    // bypass replay protection.
+    #[test]
+    fn unbind_all_ack_nonce_changes_hash() {
+        let wkey = test_witness_key();
+        let mut ack = UnbindAllAckEnvelope {
+            domain_id: [1u8; 32],
+            unbind_hash: [12u8; 32],
+            witness_id: wkey.verifying_key().to_bytes(),
+            witness_epoch: 101,
+            ack_hash: [0u8; 32],
+            nonce: [13u8; 32],
+            signature: [0u8; 64],
+        };
+        ack.sign(&wkey);
+        let original_hash = ack.ack_hash;
+        ack.nonce = [99u8; 32];
+        ack.sign(&wkey);
+        assert_ne!(ack.ack_hash, original_hash);
     }
 
     #[test]

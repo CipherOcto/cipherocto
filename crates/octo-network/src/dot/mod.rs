@@ -6,6 +6,8 @@
 pub mod adapters;
 pub mod binding;
 pub mod config;
+pub mod dc;
+pub mod dc_envelopes;
 pub mod domain;
 pub mod envelope;
 pub mod error;
@@ -16,16 +18,22 @@ pub mod pce;
 pub mod replay;
 pub mod route;
 pub mod sequence;
+pub mod slash;
 pub mod transport;
 pub mod witness;
 
 pub use adapters::{CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage};
 pub use binding::{
-    BindAck, BindEnvelope, BindingError, GroupBinding, GroupState, PlatformLossEnvelope,
-    RebindEnvelope, UnbindAuthority, UnbindEnvelope, ENVELOPE_TYPE as BINDING_ENVELOPE_TYPE,
-    ENVELOPE_VERSION as BINDING_ENVELOPE_VERSION,
+    BindAck, BindEnvelope, BindingError, GroupBinding, GroupState, GroupVisibility,
+    PlatformLossEnvelope, RebindEnvelope, UnbindAuthority, UnbindEnvelope, WitnessAssertion,
+    ENVELOPE_TYPE as BINDING_ENVELOPE_TYPE, ENVELOPE_VERSION as BINDING_ENVELOPE_VERSION,
 };
 pub use config::DotConfig;
+pub use dc::{DcConfig, DcOrchestrator, KickDecision, RaceOutcome};
+pub use dc_envelopes::{
+    CreateGroupAckEnvelope, CreateGroupDoneEnvelope, CreateGroupEnvelope, CreateGroupFailEnvelope,
+    InviteEnvelope, UnbindAllAckEnvelope, UnbindAllEnvelope, UnbindReason,
+};
 pub use domain::{BroadcastDomainId, PlatformType};
 pub use envelope::{DeterministicEnvelope, MessageType};
 pub use error::{DotError, PlatformAdapterError};
@@ -36,6 +44,7 @@ pub use group_registry::{
 };
 pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;
+pub use slash::{cross_platform_code, is_cross_platform, reserved as slash_reserved, SlashCode};
 pub use witness::{BINDHook, NonceReplayTable, ValidationOutcome, WitnessContext};
 
 use tokio::sync::RwLock;

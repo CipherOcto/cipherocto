@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use super::binding::{
     BindingError, GroupBinding, GroupState, UnbindAuthority, UnbindEnvelope,
 };
+use super::dc_envelopes::InviteEnvelope;
 
 /// Default recovery window for the `unbound_quarantine` map, in epochs.
 ///
@@ -72,6 +73,11 @@ pub struct GroupRegistry {
     unbound_quarantine: BTreeMap<UnboundQuarantineKey, UnboundQuarantineEntry>,
     /// Rejoin attempt counter per kicked-node id (RFC-0850p-e §"REJOIN flow").
     rejoin_attempts: BTreeMap<[u8; 32], u16>,
+    /// Pending invite envelopes (RFC-0850p-d Phase 2 — `Inviting` state).
+    /// Keyed by the invitee's public key. A binding in `Inviting` state
+    /// has at least one entry in this map; transition to `Bound` happens
+    /// when all invites are acknowledged or expire.
+    pending_invites: BTreeMap<[u8; 32], InviteEnvelope>,
 }
 
 impl GroupRegistry {
@@ -172,7 +178,9 @@ impl GroupRegistry {
             GroupState::Unbound
             | GroupState::ReBinding
             | GroupState::UnboundQuarantined
-            | GroupState::Bound => {
+            | GroupState::Bound
+            | GroupState::Creating
+            | GroupState::Inviting => {
                 binding.state = GroupState::Bound;
                 binding.renewed_at_epoch = renewed_at_epoch;
                 binding.binding_hash = binding_hash;
@@ -193,11 +201,14 @@ impl GroupRegistry {
             group_jid: group_jid.to_string(),
         })?;
         match binding.state {
-            GroupState::Bound | GroupState::ReBinding | GroupState::UnboundQuarantined => {
+            GroupState::Bound
+            | GroupState::ReBinding
+            | GroupState::UnboundQuarantined
+            | GroupState::Inviting => {
                 binding.state = GroupState::ReBinding;
                 Ok(())
             }
-            GroupState::Unbound => Err(BindingError::InvalidTransition {
+            GroupState::Unbound | GroupState::Creating => Err(BindingError::InvalidTransition {
                 from: binding.state,
                 to: GroupState::ReBinding,
             }),
@@ -382,6 +393,125 @@ impl GroupRegistry {
     /// successful re-BIND).
     pub fn reset_rejoin(&mut self, node_id: &[u8; 32]) {
         self.rejoin_attempts.remove(node_id);
+    }
+
+    // -------------------------------------------------------------------------
+    // DC-initiated group state transitions (RFC-0850p-d Phase 2)
+    // -------------------------------------------------------------------------
+
+    /// Transition a binding to `Creating`. The binding must be in
+    /// `Unbound` or `ReBinding` state.
+    pub fn transition_to_creating(
+        &mut self,
+        platform: &str,
+        group_jid: &str,
+    ) -> Result<(), BindingError> {
+        let key = (platform.to_string(), group_jid.to_string());
+        let binding = self.bindings.get_mut(&key).ok_or(BindingError::NotFound {
+            platform: platform.to_string(),
+            group_jid: group_jid.to_string(),
+        })?;
+        match binding.state {
+            GroupState::Unbound | GroupState::ReBinding => {
+                binding.state = GroupState::Creating;
+                Ok(())
+            }
+            other => Err(BindingError::InvalidTransition {
+                from: other,
+                to: GroupState::Creating,
+            }),
+        }
+    }
+
+    /// Transition a binding to `Inviting` (called on first `INVITE`
+    /// emission).
+    pub fn transition_to_inviting(
+        &mut self,
+        platform: &str,
+        group_jid: &str,
+    ) -> Result<(), BindingError> {
+        let key = (platform.to_string(), group_jid.to_string());
+        let binding = self.bindings.get_mut(&key).ok_or(BindingError::NotFound {
+            platform: platform.to_string(),
+            group_jid: group_jid.to_string(),
+        })?;
+        match binding.state {
+            GroupState::Bound | GroupState::Inviting => {
+                binding.state = GroupState::Inviting;
+                Ok(())
+            }
+            other => Err(BindingError::InvalidTransition {
+                from: other,
+                to: GroupState::Inviting,
+            }),
+        }
+    }
+
+    /// Transition a binding from `Inviting` back to `Bound` (all invites
+    /// acknowledged or expired).
+    pub fn transition_inviting_to_bound(
+        &mut self,
+        platform: &str,
+        group_jid: &str,
+    ) -> Result<(), BindingError> {
+        let key = (platform.to_string(), group_jid.to_string());
+        let binding = self.bindings.get_mut(&key).ok_or(BindingError::NotFound {
+            platform: platform.to_string(),
+            group_jid: group_jid.to_string(),
+        })?;
+        match binding.state {
+            GroupState::Inviting | GroupState::Bound => {
+                binding.state = GroupState::Bound;
+                Ok(())
+            }
+            other => Err(BindingError::InvalidTransition {
+                from: other,
+                to: GroupState::Bound,
+            }),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pending invites (RFC-0850p-d Phase 2)
+    // -------------------------------------------------------------------------
+
+    /// Register a pending invite. Returns `true` if the invite was new,
+    /// `false` if it replaced an existing one for the same invitee.
+    pub fn register_pending_invite(&mut self, invite: InviteEnvelope) -> bool {
+        let key = invite.invitee_pubkey;
+        self.pending_invites.insert(key, invite).is_none()
+    }
+
+    /// Remove a pending invite (on acknowledgement or expiry).
+    /// Returns the removed invite if it existed.
+    pub fn remove_pending_invite(&mut self, invitee: &[u8; 32]) -> Option<InviteEnvelope> {
+        self.pending_invites.remove(invitee)
+    }
+
+    /// Look up a pending invite.
+    pub fn lookup_pending_invite(&self, invitee: &[u8; 32]) -> Option<&InviteEnvelope> {
+        self.pending_invites.get(invitee)
+    }
+
+    /// Number of pending invites.
+    pub fn pending_invites_len(&self) -> usize {
+        self.pending_invites.len()
+    }
+
+    /// Remove all expired pending invites (invites whose `expires_at_epoch`
+    /// is <= `current_epoch`). Returns the number of invites removed.
+    pub fn gc_pending_invites(&mut self, current_epoch: u64) -> usize {
+        let expired: Vec<[u8; 32]> = self
+            .pending_invites
+            .iter()
+            .filter(|(_, inv)| inv.expires_at_epoch <= current_epoch)
+            .map(|(k, _)| *k)
+            .collect();
+        let n = expired.len();
+        for k in expired {
+            self.pending_invites.remove(&k);
+        }
+        n
     }
 }
 
@@ -592,5 +722,98 @@ mod tests {
         // Reset clears the counter.
         reg.reset_rejoin(&node_id);
         assert_eq!(reg.try_increment_rejoin(&node_id, 3).unwrap(), 1);
+    }
+
+    // -- DC-initiated transitions (RFC-0850p-d Phase 2) ---------------------
+
+    fn make_invite(invitee: [u8; 32], expires: u64) -> InviteEnvelope {
+        InviteEnvelope {
+            domain_id: [1u8; 32],
+            group_jid: "g1@g.us".into(),
+            platform: "whatsapp".into(),
+            invitee_pubkey: invitee,
+            nonce: [7u8; 32],
+            invite_token: [0u8; 32],
+            mission_id: [2u8; 32],
+            current_epoch: 100,
+            expires_at_epoch: expires,
+            invite_hash: [0u8; 32],
+            signature: [0u8; 64],
+        }
+    }
+
+    #[test]
+    fn transition_to_creating_from_unbound_ok() {
+        let mut reg = GroupRegistry::new();
+        let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
+        reg.register_binding(b).unwrap();
+        reg.transition_to_creating("whatsapp", "g1").unwrap();
+        let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
+        assert_eq!(b.state, GroupState::Creating);
+    }
+
+    #[test]
+    fn transition_to_creating_from_bound_rejected() {
+        let mut reg = GroupRegistry::new();
+        let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
+        reg.register_binding(b).unwrap();
+        reg.transition_to_bound("whatsapp", "g1", 100, [0u8; 32])
+            .unwrap();
+        assert!(matches!(
+            reg.transition_to_creating("whatsapp", "g1"),
+            Err(BindingError::InvalidTransition { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_to_inviting_from_bound_ok() {
+        let mut reg = GroupRegistry::new();
+        let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
+        reg.register_binding(b).unwrap();
+        reg.transition_to_bound("whatsapp", "g1", 100, [0u8; 32])
+            .unwrap();
+        reg.transition_to_inviting("whatsapp", "g1").unwrap();
+        let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
+        assert_eq!(b.state, GroupState::Inviting);
+    }
+
+    #[test]
+    fn transition_inviting_to_bound() {
+        let mut reg = GroupRegistry::new();
+        let b = make_binding("whatsapp", "g1", [1u8; 32], [2u8; 32]);
+        reg.register_binding(b).unwrap();
+        reg.transition_to_bound("whatsapp", "g1", 100, [0u8; 32])
+            .unwrap();
+        reg.transition_to_inviting("whatsapp", "g1").unwrap();
+        reg.transition_inviting_to_bound("whatsapp", "g1")
+            .unwrap();
+        let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
+        assert_eq!(b.state, GroupState::Bound);
+    }
+
+    #[test]
+    fn pending_invite_register_lookup_remove() {
+        let mut reg = GroupRegistry::new();
+        let inv = make_invite([1u8; 32], 200);
+        assert!(reg.register_pending_invite(inv.clone()));
+        // Re-registering the same invitee returns false.
+        assert!(!reg.register_pending_invite(inv));
+        assert_eq!(reg.pending_invites_len(), 1);
+        assert!(reg.lookup_pending_invite(&[1u8; 32]).is_some());
+        let removed = reg.remove_pending_invite(&[1u8; 32]).unwrap();
+        assert_eq!(removed.invitee_pubkey, [1u8; 32]);
+        assert_eq!(reg.pending_invites_len(), 0);
+    }
+
+    #[test]
+    fn gc_pending_invites_purges_expired() {
+        let mut reg = GroupRegistry::new();
+        reg.register_pending_invite(make_invite([1u8; 32], 100));
+        reg.register_pending_invite(make_invite([2u8; 32], 200));
+        reg.register_pending_invite(make_invite([3u8; 32], 300));
+        // At epoch 250, invites 1 and 2 are expired.
+        let purged = reg.gc_pending_invites(250);
+        assert_eq!(purged, 2);
+        assert_eq!(reg.pending_invites_len(), 1);
     }
 }

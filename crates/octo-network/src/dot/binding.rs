@@ -83,9 +83,9 @@ pub mod tag {
 /// State of a transport group binding.
 ///
 /// See RFC-0850p-c §1 "Binding State Machine". The base mission defines
-/// four states; the 0850p-d mission adds `Creating` (0x04) and `Inviting`
-/// (0x05); the 0850p-f mission adds `UnboundAllPending` (0x06) and
-/// `UnboundAllDone` (0x07).
+/// the first four states; the 0850p-d mission adds `Creating` (0x04) and
+/// `Inviting` (0x05); the 0850p-f mission adds `UnboundAllPending`
+/// (0x06) and `UnboundAllDone` (0x07).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum GroupState {
@@ -101,6 +101,12 @@ pub enum GroupState {
     /// The group was unbound (e.g., after a kick) and is quarantined for
     /// `REJOIN_GRANT_TIMEOUT = 50` epochs to allow the node to re-join.
     UnboundQuarantined = 0x03,
+    /// (RFC-0850p-d) The DC has emitted a `CreateGroupEnvelope`; the
+    /// platform group is being created.
+    Creating = 0x04,
+    /// (RFC-0850p-d) The group is bound; at least one `InviteEnvelope`
+    /// has been emitted and is awaiting acknowledgement.
+    Inviting = 0x05,
 }
 
 impl GroupState {
@@ -111,6 +117,8 @@ impl GroupState {
             0x01 => Some(Self::Bound),
             0x02 => Some(Self::ReBinding),
             0x03 => Some(Self::UnboundQuarantined),
+            0x04 => Some(Self::Creating),
+            0x05 => Some(Self::Inviting),
             _ => None,
         }
     }
@@ -118,6 +126,92 @@ impl GroupState {
     /// Returns the wire-representation byte.
     pub fn as_byte(self) -> u8 {
         self as u8
+    }
+}
+
+/// Visibility classification for a DC-initiated group.
+///
+/// Used by `CreateGroupEnvelope.group_visibility` (R16 R1-M2 fix added
+/// this field; the visibility affects whether the group is listed in
+/// the directory service and what member-discovery envelope types are
+/// allowed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GroupVisibility {
+    /// Visible in the directory; members can be discovered.
+    Public = 0x00,
+    /// Not in the directory; members must be invited explicitly.
+    Private = 0x01,
+    /// Unlisted; the group is reachable only via the invite token.
+    Unlisted = 0x02,
+}
+
+impl GroupVisibility {
+    /// Construct from wire byte.
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0x00 => Some(Self::Public),
+            0x01 => Some(Self::Private),
+            0x02 => Some(Self::Unlisted),
+            _ => None,
+        }
+    }
+
+    /// Returns the wire byte.
+    pub fn as_byte(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Witness assertion — a signed claim by a witness that a BIND is valid.
+///
+/// Used by `KickDetectedEnvelope` and the third-party group BIND flow
+/// (per RFC-0850p-d §D).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessAssertion {
+    /// The `binding_hash` (or `cgroup_hash`) being asserted.
+    pub subject_hash: [u8; 32],
+    /// Public key of the witness.
+    pub witness_id: [u8; 32],
+    /// Epoch at which the witness made the assertion.
+    pub witness_epoch: u64,
+    /// `BLAKE3-256(subject_hash || witness_id || witness_epoch)`.
+    pub assertion_hash: [u8; 32],
+    /// Ed25519 signature over `assertion_hash`.
+    pub signature: [u8; 64],
+}
+
+impl WitnessAssertion {
+    /// Compute `assertion_hash`.
+    pub fn compute_assertion_hash(&self) -> [u8; 32] {
+        let mut buf = Vec::with_capacity(32 + 32 + 8);
+        buf.extend_from_slice(&self.subject_hash);
+        buf.extend_from_slice(&self.witness_id);
+        buf.extend_from_slice(&self.witness_epoch.to_be_bytes());
+        *blake3::hash(&buf).as_bytes()
+    }
+
+    /// Sign in place.
+    pub fn sign(&mut self, key: &ed25519_dalek::SigningKey) {
+        self.assertion_hash = self.compute_assertion_hash();
+        self.signature = ed25519_dalek::Signer::sign(key, &self.assertion_hash).to_bytes();
+    }
+
+    /// Verify against the witness's public key.
+    pub fn verify(&self, witness_pubkey: &ed25519_dalek::VerifyingKey) -> Result<(), DotError> {
+        let computed = self.compute_assertion_hash();
+        if computed != self.assertion_hash {
+            return Err(DotError::Serialization(
+                "WitnessAssertion: assertion_hash mismatch".into(),
+            ));
+        }
+        let sig = Signature::from_bytes(&self.signature);
+        witness_pubkey
+            .verify(&self.assertion_hash, &sig)
+            .map_err(|_| DotError::InvalidSignature {
+                envelope_id: self.assertion_hash,
+            })?;
+        Ok(())
     }
 }
 

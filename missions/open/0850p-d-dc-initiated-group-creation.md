@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-06-17)
+Claimed (2026-06-17)
 
 ## RFC
 
@@ -133,7 +133,7 @@ The kick detection RFC-0850p-e is needed to fully test the `Creating → Unbound
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-06-17)
+Claimed (2026-06-17)
 
 ## RFC
 
@@ -146,7 +146,7 @@ The `BindEnvelope.is_reconnect: bool` field is a pre-1.0 spec change tracked in 
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

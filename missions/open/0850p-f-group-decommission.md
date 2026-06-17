@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-06-17) — early stage; main scenarios pending RFC elaboration
+Claimed (2026-06-17) — early stage; main scenarios pending RFC elaboration
 
 ## RFC
 
@@ -99,7 +99,7 @@ This mission depends on `0855p-e-handover-request-envelope.md` (sister mission) 
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

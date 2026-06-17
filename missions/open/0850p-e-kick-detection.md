@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-06-17)
+Claimed (2026-06-17)
 
 ## RFC
 
@@ -155,7 +155,7 @@ A kicked node could spam `REJOIN_REQUEST` to consume DC resources. The default `
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

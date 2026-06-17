@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-06-17) — early stage; main spec pending RFC elaboration
+Claimed (2026-06-17) — early stage; main spec pending RFC elaboration
 
 ## RFC
 
@@ -104,7 +104,7 @@ Per RFC-0855p-b §5a, the slash tally is a per-coordinator record of slashes iss
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

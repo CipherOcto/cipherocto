@@ -110,6 +110,9 @@ impl From<CoreError> for OnboardError {
                     "{requested:?} is a symlink to {resolved:?} outside the requested parent"
                 ))
             }
+            CoreError::InvalidBundle { path, reason } => {
+                OnboardError::BadConfig(format!("invalid bundle {path:?}: {reason}"))
+            }
         }
     }
 }

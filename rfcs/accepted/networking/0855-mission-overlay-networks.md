@@ -18,8 +18,7 @@ related:
 
 ## Status
 
-Draft
-
+Accepted (2026-06-17)
 ## Authors
 
 - Author: @cipherocto

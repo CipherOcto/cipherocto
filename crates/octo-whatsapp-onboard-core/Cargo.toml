@@ -17,6 +17,9 @@ anyhow = "1"
 thiserror = "1"
 parking_lot = "0.12"
 tempfile = "3"
+# Mission 0850p-a-multi-account + 0850p-a-session-export
+flate2 = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

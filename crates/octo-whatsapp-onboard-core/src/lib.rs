@@ -11,6 +11,7 @@
 //! subprocess.
 
 pub mod error;
+pub mod multi_account;
 pub mod output;
 pub mod pair_link;
 pub mod qr_link;
@@ -20,6 +21,7 @@ pub mod time;
 pub mod validate;
 
 pub use error::{CoreError, Result};
+pub use multi_account::{AccountEntry, MultiAccountStore};
 pub use output::{PairLinkArgs, QrLinkArgs, SessionInfo, WhatsAppSession};
 pub use sidecar::SidecarMode;
 

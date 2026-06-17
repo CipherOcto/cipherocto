@@ -56,6 +56,11 @@ pub enum CoreError {
     /// (potential symlink-attack attempt; see D-WA-4).
     #[error("session_path {requested:?} is a symlink pointing to {resolved:?} outside the requested parent (potential symlink-attack)")]
     SessionPathSymlink { requested: String, resolved: String },
+
+    /// Mission 0850p-a-session-export: a session bundle (tar.gz) is
+    /// invalid, truncated, or failed checksum verification.
+    #[error("invalid bundle {path:?}: {reason}")]
+    InvalidBundle { path: PathBuf, reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

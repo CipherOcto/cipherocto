@@ -35,7 +35,7 @@ Specifies the envelope types, state machine extensions, and ceremony flows for a
 
 1. **Deterministic creation.** Two DCs creating the same `domain_id` at the same time MUST resolve to a single winner (no split-brain) using a deterministic tiebreak.
 2. **Platform-neutral.** The protocol semantics MUST be identical across WhatsApp, Matrix, Telegram; only the adapter implementation differs.
-3. **Atomic CREATE+REBIND.** A DC MUST be able to create a new group and bind it to a `domain_id` in a single transaction observable across the mesh.
+3. **Atomic group provisioning.** A DC MUST be able to create a new group and bind it to a `domain_id` in a single transaction observable across the mesh. (R16 R1-L1 fix: the previous wording "Atomic CREATE+REBIND" conflated group creation with rebinding — "CREATE+REBIND" is a specific operation (create new + rebind old, per §C), while the general goal of "create and bind in one transaction" is broader. Renamed to "Atomic group provisioning"; the specific CREATE+REBIND mechanism is in §C "Atomic Migration via CREATE+REBIND".)
 4. **Third-party group BIND.** A DC MUST be able to bind a pre-existing group (not created by this DC) to a `domain_id`, with a witness asserting the platform-side membership claim.
 5. **Replay safety.** All CGROUP / INVITE / UNBIND_ALL envelopes MUST be nonce-protected per RFC-0850p-c §8 to prevent replay attacks.
 6. **Squad continuity.** If the DC is removed from the new group before BIND completes, the binding MUST abort and the group MUST be quarantined per RFC-0850p-c §1 (`UnboundQuarantined` state).
@@ -56,27 +56,29 @@ RFC-0850p-c §1 and RFC-0855p-c §5a define a 4-state `GroupState` machine (`Unb
 |------|----------------------|----------------------|--------------------------|
 | **DomainCoordinator (DC)** | Yes (primary) | Yes (primary) | Yes (primary) |
 | **Witness** | No | No | No (witnesses only ACK UNBIND_ALL) |
-| **MissionCreator** | No (can delegate via slash 0x000C) | No | Yes (supersedes DC) |
+| **MissionCreator** | No (may delegate sub-DC authority to a sub-coordinator for a specific sub-domain via RFC-0855p-d §Sub-DC delegation, out of scope for this RFC) | No | Yes (supersedes DC) |
 | **MissionController** | No | No | Yes (supersedes DC) |
-| **Governance** | No | No | Yes (slash 0x000D) |
+| **Governance** | No | No | Yes (governance vote per RFC-0855p-b §"Slashing Adjudicator") |
 
 The DC is the only role that can sign a CGROUP. INVITE is restricted to the DC of the bound domain. UNBIND_ALL can be initiated by the DC, MissionCreator, MissionController, or a governance vote.
+
+(R16 R1-M1 fix: the previous wording "can delegate via slash 0x000C" and "slash 0x000D" used the slash-code space loosely for delegation and governance-override. The mechanisms are NOT slash reason codes — delegation is a sub-DC authorization envelope (RFC-0855p-d) and governance override is a 2/3 governance vote (RFC-0855p-b). The slash reason codes 0x000C-0x000D are reserved for future allocation and are NOT consumed by these authority checks.)
 
 ## Specification
 
 ### Envelope Types Added
 
-| Envelope Type | Subtype | Direction | Description |
-|---------------|---------|-----------|-------------|
-| `DOT/1/CGROUP` | 0x10 | DC → mesh (broadcast) | Request to create a new physical group and bind to `domain_id` |
-| `DOT/1/CGROUP_ACK` | 0x11 | Witness → DC | Witness confirms seeing the CGROUP and reserving the `domain_id` |
-| `DOT/1/CGROUP_DONE` | 0x12 | DC → mesh (broadcast) | DC confirms the platform-side group was created, includes `group_jid` |
-| `DOT/1/CGROUP_FAIL` | 0x13 | DC → mesh (broadcast) | DC failed to create the group on the platform; includes reason code |
-| `DOT/1/INVITE` | 0x14 | DC → single recipient (out-of-band) | One-shot signed invite to join a specific physical group |
-| `DOT/1/UNBIND_ALL` | 0x15 | Authority → mesh (broadcast) | Decommission a physical group bound to `domain_id` |
-| `DOT/1/UNBIND_ALL_ACK` | 0x16 | Witness → Authority | Witness confirms UNBIND_ALL and tears down local state |
+| Envelope Type | Subtype tag | Direction | Description |
+|---------------|-------------|-----------|-------------|
+| `DOT/1/CGROUP` | `b"CGRO"` | DC → mesh (broadcast) | Request to create a new physical group and bind to `domain_id` |
+| `DOT/1/CGROUP_ACK` | `b"CGAC"` | Witness → DC | Witness confirms seeing the CGROUP and reserving the `domain_id` |
+| `DOT/1/CGROUP_DONE` | `b"CGDA"` | DC → mesh (broadcast) | DC confirms the platform-side group was created, includes `group_jid` |
+| `DOT/1/CGROUP_FAIL` | `b"CGFA"` | DC → mesh (broadcast) | DC failed to create the group on the platform; includes reason code |
+| `DOT/1/INVITE` | `b"INVT"` | DC → single recipient (out-of-band) | One-shot signed invite to join a specific physical group |
+| `DOT/1/UNBIND_ALL` | `b"UALL"` | Authority → mesh (broadcast) | Decommission a physical group bound to `domain_id` |
+| `DOT/1/UNBIND_ALL_ACK` | `b"UAAC"` | Witness → Authority | Witness confirms UNBIND_ALL and tears down local state |
 
-The canonical 10-byte envelope header from RFC-0850p-c (envelope_type || envelope_subtype || version) is reused.
+The canonical 10-byte envelope header from RFC-0850p-c §A "Canonical Envelope Serialization" is reused: `envelope_type (4 bytes, ASCII) || envelope_subtype (4 bytes, ASCII) || version (2 bytes, big-endian)`. All envelopes set `envelope_type = b"DOT1"`, the per-envelope subtype tag from the table above, and `version = 0x0001`. (R16 R1-C1 fix: migrated from the 1-byte subtype + 1-byte version stub in the v0.1 draft; the canonical format is the 4-byte ASCII + `u16` form per RFC-0850p-c.)
 
 ### Data Structures
 
@@ -84,45 +86,61 @@ The canonical 10-byte envelope header from RFC-0850p-c (envelope_type || envelop
 /// DC-initiated group creation request (DOT/1/CGROUP).
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct CreateGroupEnvelope {
-    pub envelope_subtype: u8,        // 0x10
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1" (DeterministicEnvelope type tag)
+    pub envelope_subtype: [u8; 4],      // b"CGRO"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub mission_id: [u8; 32],
-    pub platform: Platform,          // 0x01=WhatsApp, 0x02=Matrix, 0x03=Telegram
+    pub platform: Platform,             // 0x01=WhatsApp, 0x02=Matrix, 0x03=Telegram
     pub proposed_group_metadata: ProposedGroupMetadata,
-    pub initial_invite_count: u16,   // 0..=256
-    pub dc_id: [u8; 32],             // DomainCoordinator's peer_id
+    pub initial_invite_count: u16,      // 0..=256
+    pub dc_id: [u8; 32],                // DomainCoordinator's peer_id
     pub nonce: [u8; 16],
     pub current_epoch: u64,
     pub coordinator_term_id: [u8; 32],
-    pub signature: [u8; 64],         // ed25519 over canonical bytes
+    pub signature: [u8; 64],            // ed25519 over canonical bytes
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct ProposedGroupMetadata {
     pub display_name: String,         // max 256 bytes UTF-8
     pub topic: String,                // max 512 bytes UTF-8
-    pub visibility: GroupVisibility,  // 0x00=private, 0x01=public
+    pub visibility: GroupVisibility,  // see GroupVisibility below
+}
+
+/// Group visibility mode (ProposedGroupMetadata.visibility).
+/// Maps to the platform's visibility model:
+/// - Private: only invited members can join (e.g., WhatsApp invite link, Matrix invite)
+/// - Public: anyone with the `group_jid` / room ID can join (e.g., Matrix public room)
+/// (R16 R1-M2 fix: enum was previously inlined as a comment "0x00=private, 0x01=public"
+///  without a struct/enum definition; the type is now defined here.)
+#[derive(Dcs, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GroupVisibility {
+    Private = 0x00,
+    Public  = 0x01,
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct CreateGroupDoneEnvelope {
-    pub envelope_subtype: u8,        // 0x12
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"CGDA"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
-    pub group_jid: String,            // platform-assigned
-    pub nonce: [u8; 16],              // matches CGROUP.nonce
+    pub group_jid: String,              // platform-assigned
+    pub nonce: [u8; 16],                // matches CGROUP.nonce
     pub current_epoch: u64,
     pub signature: [u8; 64],
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct CreateGroupFailEnvelope {
-    pub envelope_subtype: u8,        // 0x13
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"CGFA"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
-    pub reason_code: u16,             // see Error Handling §6
-    pub platform_error: String,       // max 512 bytes UTF-8
+    pub reason_code: u16,               // see Error Handling §6
+    pub platform_error: String,         // max 512 bytes UTF-8
     pub nonce: [u8; 16],
     pub current_epoch: u64,
     pub signature: [u8; 64],
@@ -130,24 +148,26 @@ pub struct CreateGroupFailEnvelope {
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct InviteEnvelope {
-    pub envelope_subtype: u8,        // 0x14
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"INVT"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub mission_id: [u8; 32],
     pub platform: Platform,
     pub group_jid: String,
-    pub invitee_pubkey: [u8; 32],     // invitee's octo-network peer_id
-    pub invite_token: [u8; 32],       // BLAKE3-256(domain_id || mission_id || invitee_pubkey || nonce)
+    pub invitee_pubkey: [u8; 32],       // invitee's octo-network peer_id
+    pub invite_token: [u8; 32],         // BLAKE3-256(domain_id || mission_id || invitee_pubkey || nonce)
     pub nonce: [u8; 16],
     pub current_epoch: u64,
-    pub expires_at_epoch: u64,        // typically current_epoch + 100
-    pub signature: [u8; 64],          // DC's signature
+    pub expires_at_epoch: u64,          // typically current_epoch + 100
+    pub signature: [u8; 64],            // DC's signature
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct UnbindAllEnvelope {
-    pub envelope_subtype: u8,        // 0x15
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"UALL"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
@@ -155,6 +175,22 @@ pub struct UnbindAllEnvelope {
     pub nonce: [u8; 16],
     pub current_epoch: u64,
     pub signature: [u8; 64],
+}
+
+/// Witness acknowledgement of an UNBIND_ALL (DOT/1/UNBIND_ALL_ACK).
+/// (R16 R1 fix: previously listed in the Envelope Types Added table but
+///  no struct was defined; the type is now defined to match the table.)
+#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
+pub struct UnbindAllAckEnvelope {
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"UAAC"
+    pub version: u16,                   // 0x0001
+    pub domain_id: [u8; 32],
+    pub group_jid: String,
+    pub platform: Platform,
+    pub nonce: [u8; 16],                // matches UNBIND_ALL.nonce
+    pub current_epoch: u64,
+    pub signature: [u8; 64],            // witness's signature
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
@@ -214,7 +250,7 @@ When two DCs CGROUP the same `domain_id` simultaneously (or within `CGROUP_RACE_
 
 This is consistent with the existing RFC-0850p-c founder race resolution (lexicographic comparison on `peer_id`).
 
-#### C. Atomic CREATE+REBIND
+#### C. Atomic Migration via CREATE+REBIND (R16 R1-L1 fix: previous title was "Atomic CREATE+REBIND")
 
 Used when a DC needs to migrate a domain to a new platform (e.g., WhatsApp → Matrix):
 
@@ -331,6 +367,22 @@ All envelope types in this RFC MUST serialize deterministically per RFC-0126 (DC
 | 0x0202 | NotBound | `group_jid` is not in any node's `GroupRegistry` |
 | 0x0203 | PlatformLeaveFailed | Platform rejected the leave; state is now inconsistent (the group may still be active on the platform but unbound in the mesh) |
 
+### Slash Reason Codes Added
+
+This RFC allocates three new slash reason codes in the canonical slash reason code space (per RFC-0855p-b §B, codes 0x000C-0xFFFF are reserved for future slash reasons). The allocation is coordinated across the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e) and tracked in `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation". These codes are pending ratification in an amendment to RFC-0850p-c §6 and RFC-0855p-b §B.
+
+| Code | Name | Definition | Trigger |
+|------|------|------------|---------|
+| 0x000E | `CreateGroupFailed` | The DC failed to create the group on the platform within `CGROUP_TIMEOUT = 50` epochs | `Creating → UnboundQuarantined` transition |
+| 0x000F | `CgGroupSpam` | The DC issued CGROUP at a rate exceeding the per-domain rate limit (1 CGROUP per `domain_id` per 1000 epochs) | Rate-limit violation on CGROUP issuance |
+| 0x0010 | `FalseWitness` | A witness signed a `WitnessAssertion` that is contradicted by the witness's own platform-side query result (or by a quorum of other witnesses) | Third-party BIND with false `WitnessAssertion` |
+
+**Code 0x000F resolution note (R16 R1-C2 fix):** RFC-0855p-c §"Adversary Analysis" decision table (text) mentioned "Slash via 0x000F" for "Cross-platform witness collusion", creating a double-allocation. The 0855p-c reference is a stale text reference (the canonical slash reason code tables in 0855p-b §B and 0850p-c §6 do NOT reserve 0x000F for 0855p-c). The 0855p-c text is updated in the R16 R1 fix to refer to a non-conflicting code (0x0012) for cross-platform witness collusion, and 0x000F is canonically allocated to `CgGroupSpam` by this RFC.
+
+**Code 0x0010 note:** RFC-0850p-e (kick detection) reuses 0x0010 for false `KICK_DETECTED` (a different `WitnessAssertion` failure mode). The two uses are semantically consistent: both are witness signed-statements that turned out to be false. The slash tally aggregates both forms of 0x0010.
+
+**Codes 0x000C and 0x000D** are intentionally left unallocated by this RFC. The 0850p-d §"Roles and Authorities" table previously referenced "slash 0x000C" and "slash 0x000D" loosely for delegation and governance-override; these mechanisms are NOT slash reason codes (R16 R1-M1 fix) and the codes remain reserved for future allocation.
+
 ## Performance Targets
 
 | Metric | Target | Notes |
@@ -355,7 +407,7 @@ All envelope types in this RFC MUST serialize deterministically per RFC-0126 (DC
 
 ### Categories to Audit
 
-- **Operator trust** — Assumes the DC's operator (the human running the DC) is trusted. If the operator is compromised, they can issue CGROUP for arbitrary `domain_id`s. Mitigation: the operator's key is bound to the mission via `MissionCreator`; slash 0x000F on operator compromise.
+- **Operator trust** — Assumes the DC's operator (the human running the DC) is trusted. If the operator is compromised, they can issue CGROUP for arbitrary `domain_id`s. Mitigation: the operator's key is bound to the mission via `MissionCreator`; slash 0x0006 (key-compromise, per RFC-0855p-b §B) on operator compromise. (R16 R1 fix: the previous wording said "slash 0x000F on operator compromise" but 0x000F is canonically allocated to `CgGroupSpam` per this RFC; operator compromise uses the existing 0x0006 key-compromise reason from 0855p-b §B.)
 - **Platform trust** — Assumes the platform returns a valid `group_jid`. If the platform lies (e.g., returns a JID that doesn't exist), the BIND will fail. Mitigation: cross-check via `adapter.lookup_group`.
 - **Network partition** — Assumes DC can reach the platform's API. If partitioned, CGROUP_FAIL with `NetworkError`. The DC can retry.
 - **Identity stability** — Assumes the DC's `peer_id` is stable across the ceremony. If the DC rotates its key mid-ceremony, the CGROUP_DONE may be rejected. Mitigation: `coordinator_term_id` check.
@@ -398,7 +450,7 @@ This RFC has no token-economic implications. The platform-side costs (e.g., What
 ## Compatibility
 
 - **Backward compatibility:** This RFC adds new envelope types; existing BIND / REBIND / UNBIND envelopes are unchanged.
-- **Forward compatibility:** `version: u8` is reserved; future versions may add new fields but MUST NOT change the field order or remove existing fields (per RFC-0008).
+- **Forward compatibility:** `version: u16` is reserved; future versions may add new fields but MUST NOT change the field order or remove existing fields (per RFC-0008). (R16 R1-C1 fix: previous version said `version: u8`; the canonical 10-byte header per RFC-0850p-c §A reserves 2 bytes for `version`.)
 - **Adapter compatibility:** Adapters that do not implement `create_group` MUST return `PlatformError::Unsupported` from CGROUP; nodes MUST then emit CGROUP_FAIL with `reason_code = 0x0003`.
 
 ## Test Vectors
@@ -493,6 +545,7 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-06-17 | Initial draft |
+| 1.1 | 2026-06-17 | R16 R1 fix: (C1) migrated all 6 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); added `UnbindAllAckEnvelope` struct (was in the Envelope Types Added table but had no struct definition); (C2/M1) added "Slash Reason Codes Added" subsection allocating 0x000E=`CreateGroupFailed`, 0x000F=`CgGroupSpam`, 0x0010=`FalseWitness` (with note that 0x000F resolution: 0855p-c stale text reference is updated to 0x0012 for cross-platform witness collusion); 0x000C-0x000D remain unallocated (the previous "slash 0x000C" / "slash 0x000D" references in §"Roles and Authorities" were removed because they used the slash-code space loosely for delegation and governance-override, which are not slash reasons); (M2) added `GroupVisibility` enum (was previously inlined as a comment); (L1) renamed "Atomic CREATE+REBIND" Design Goal to "Atomic group provisioning" to avoid conflation with the §C migration algorithm. |
 
 ## Related RFCs
 

@@ -996,8 +996,33 @@ struct GroupRegistry {
     /// Key: (mission_id, domain_id, platform)
     /// Value: (platform, group_jid) — for reverse lookup
     domain_index: BTreeMap<([u8; 32], [u8; 32], String), (String, String)>,
+    /// Key: (mission_id, domain_id, platform)
+    /// Value: (unbound_at_epoch, recovery_window_epochs, original_binding)
+    ///
+    /// RFC-0850p-d §"State Machine" defines the `UnboundQuarantined` sub-state
+    /// of `Unbound`. When a member enters UnboundQuarantined, the binding is
+    /// NOT immediately removed from `bindings` (it is preserved for potential
+    /// REBIND-with-same-binding-context). Instead, the entry is moved to
+    /// `unbound_quarantine` so that the member has a recovery window before
+    /// the binding is permanently deleted.
+    ///
+    /// (R16 R1-M7 fix: the original RFC-0850p-d text referred to an
+    /// `unbound_quarantined_at: u64` field on `GroupBinding`, but `GroupBinding`
+    /// is in this RFC and modifying it would change a stable struct. The fix:
+    /// add a separate `unbound_quarantine` map here in GroupRegistry, indexed
+    /// by `(mission_id, domain_id, platform)`, so the quarantine state lives
+    /// alongside the binding without modifying the binding itself.)
+    unbound_quarantine: BTreeMap<([u8; 32], [u8; 32], String), UnboundQuarantineEntry>,
+}
+
+struct UnboundQuarantineEntry {
+    pub unbound_at_epoch: u64,
+    pub recovery_window_epochs: u64,    // typically REJOIN_GRANT_TIMEOUT = 50 epochs per RFC-0850p-e
+    pub original_binding: GroupBinding, // preserved for potential REBIND-with-same-context
 }
 ```
+
+The `unbound_quarantine` map is consulted before BIND/REBIND: if a binding is in quarantine, REBIND is accepted (member recovering within the window), but a fresh BIND for a different `(mission_id, domain_id, platform)` is rejected as long as the quarantine entry exists. After `recovery_window_epochs` elapse without a REBIND, the quarantine entry is purged by a periodic GC sweep (recommended cadence: 1 epoch).
 
 ### C. References
 

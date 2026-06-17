@@ -58,7 +58,7 @@ Implement the DC-initiated group creation, invite issuance, third-party group BI
 - [ ] `DcOrchestrator::unbind_all(domain_id, reason) -> Result<UnbindAllEnvelope, UnbindError>`
 - [ ] `DcOrchestrator::bind_third_party_group(group_jid) -> Result<BindEnvelope, BindError>` — third-party BIND with witness assertion
 - [ ] `DcOrchestrator::handle_founder_race(local_cgroup, remote_cgroup) -> RaceOutcome` — lexicographic `dc_id` tiebreak
-- [ ] `DcOrchestrator::handle_kick(kick_event) -> Decision` — DC decision tree per RFC-0850p-d §C
+- [ ] `DcOrchestrator::handle_kick(kick_event) -> Decision` — DC decision tree per RFC-0850p-e §Algorithm C (R16 R1-C3 fix: was RFC-0850p-d §C in v1.0, which is the wrong section — the kick decision tree is in 0850p-e §Algorithm C "DC decision tree", not in 0850p-d §C "Atomic Migration via CREATE+REBIND"; both RFCs have a §C section but they cover different topics)
 - [ ] Unit tests: each high-level API; founder race; kick decision tree
 
 ### Phase 4: WhatsApp adapter integration

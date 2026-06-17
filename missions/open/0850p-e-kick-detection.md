@@ -37,43 +37,47 @@ Implement the kick detection and rejoin flow specified in RFC-0850p-e. **Closes 
 
 ### Phase 2: GroupRegistry extensions
 
-- [ ] Add `unbound_quarantined_at: Option<Epoch>` field to `GroupBinding`
+- [ ] Add `unbound_quarantine: BTreeMap<(MissionId, DomainId, Platform), UnboundQuarantineEntry>` map to `GroupRegistry` (per RFC-0850p-c §B "GroupRegistry Local State", R16 R1-M7 fix — NOT a `GroupBinding.unbound_quarantined_at: Option<Epoch>` field, since `GroupBinding` is in RFC-0850p-c and should not be modified)
 - [ ] Add `rejoin_attempts: BTreeMap<[u8; 32], u16>` to `GroupRegistry`
-- [ ] Implement `Bound → UnboundQuarantined` transition on local `SELF_KICKED` emission
-- [ ] Implement `Bound → UnboundQuarantined` transition on `KICK_DETECTED` from a witness with valid `WitnessAssertion`
-- [ ] Implement `UnboundQuarantined → Bound` transition on `REJOIN_GRANT` + successful re-BIND
-- [ ] Implement `MEMBER_REMOVED` does NOT trigger `REBIND` (informational only)
-- [ ] Implement `KICK_DETECTION_TIMEOUT = 50` epoch fallback: if status cannot be determined, transition to `UnboundQuarantined` with `reason_code = 0x1001` (StatusTimeout)
-- [ ] Unit tests: each transition path; state machine determinism
+- [ ] Implement `Bound → UnboundQuarantined` transition on local `SELF_KICKED` emission (move binding entry from `bindings` to `unbound_quarantine`)
+- [ ] Implement `Bound → UnboundQuarantined` transition on `KICK_DETECTED` from a witness with valid `WitnessAssertion` (same move)
+- [ ] Implement `UnboundQuarantined → Bound` transition on `REJOIN_GRANT` + successful re-BIND (move entry back to `bindings`; if quarantine window expired, fail with `QuarantineExpired` error)
+- [ ] Implement `MEMBER_REMOVED` does NOT trigger `REBIND` (informational only; quarantine state unchanged)
+- [ ] Implement `KICK_DETECTION_TIMEOUT = 50` epoch fallback: if status cannot be determined, transition to `UnboundQuarantined` with `reason_code = 0xF001` (StatusTimeout; per RFC-0850p-e §"Reason Codes for KICK_DETECTED" — was 0x1001 in v1.0, R16 R1-M4 fix: moved to 0xF0xx kick-detection layer code space, out of slash reason code space 0x0001-0xFFFF)
+- [ ] Implement periodic GC: purge `unbound_quarantine` entries where `current_epoch - unbound_at_epoch >= recovery_window_epochs` (recommended cadence: 1 epoch)
+- [ ] Unit tests: each transition path; state machine determinism; GC correctness; rejoin within window vs. after expiry
 
 ### Phase 3: Slash codes
 
-- [ ] Slash 0x0011 (SelfKicked) in `crates/octo-network/src/dot/slash.rs` — emitted on `SELF_KICKED` (legitimate or false-positive)
-- [ ] Slash 0x0010 (FalseWitness) — already defined in RFC-0850p-d §Slash codes; reused here for false `KICK_DETECTED`
-- [ ] Unit tests: slash codes emitted on the correct triggers
+- [ ] Slash 0x0011 (`SelfKicked`) in `crates/octo-network/src/dot/slash.rs` — emitted ONLY on `SELF_KICKED` that is later determined to be FALSE (e.g., bot re-BINDS within `REJOIN_GRANT_TIMEOUT = 50` epochs, contradicting the claimed kick). NOT automatically applied on every `SELF_KICKED`.
+- [ ] Slash 0x0010 (`FalseWitness`) — defined in RFC-0850p-d §"Slash Reason Codes Added"; reused here for false `KICK_DETECTED.witness_assertion` (the slash tally aggregates both forms of 0x0010)
+- [ ] Unit tests: slash codes emitted on the correct triggers; aggregate tally correctness
 
 ### Phase 4: WhatsApp adapter integration
 
-- [ ] Subscribe to WhatsApp `GroupParticipantRemove` WebSocket event in `octo-adapter-whatsapp`
+- [ ] Subscribe to WhatsApp `GroupParticipantRemove` WebSocket event in `octo-adapter-whatsapp` (R16 R1-M3 fix: was "Business API `getGroupParticipants` polling" in v1.0; the WA Web `GroupParticipantRemove` event is the canonical mechanism per `octo-adapter-whatsapp` crate)
 - [ ] Match the removed `phone_number` to the local `GroupConfig.operator_phone`
-- [ ] Cross-check via `get_group_info(group_jid)` within `KICK_DETECTION_GRACE_PERIOD = 2` epochs; suppress the kick if the bot is re-added
+- [ ] Cross-check via `get_group_info(group_jid)` within `KICK_DETECTION_GRACE_PERIOD = 2` epochs from event DELIVERY timestamp (not emission; R16 R1-H4 fix); suppress the kick if the bot is re-added
+- [ ] On transient cross-check error (network glitch, rate limit), retry up to `KICK_DETECTION_GRACE_PERIOD * 5 = 10` epochs with exponential backoff (R16 R1-H4 fix)
 - [ ] Heartbeat fallback: 50-epoch timeout, emit `SELF_KICKED` with `platform_event = GroupDissolved` (per RFC-0850p-e §Per-Adapter WhatsApp)
+- [ ] Map the WA Web event to the canonical `PlatformEvent::KickedFromGroup` (per RFC-0855p-c §3), NOT a separate `PlatformKickEvent` enum (R16 R1-H1 fix)
 - [ ] Integration test (CRITICAL): bot is removed from a WhatsApp group; the bot detects within 5 epochs; emits `SELF_KICKED`; the group transitions to `UnboundQuarantined`; the DC emits `MEMBER_REMOVED` (informational)
 
 ### Phase 5: Matrix and Telegram adapter integration
 
-- [ ] Subscribe to Matrix `/sync` `m.room.member` state events in `octo-adapter-matrix`
+- [ ] Subscribe to Matrix `/sync` `m.room.member` state events in `octo-adapter-matrix` (R16 R1-M3 fix: Matrix `/sync` is the canonical mechanism, not polling)
 - [ ] On `membership: ban` → emit `SELF_KICKED` with `platform_event = YouGotKicked`
 - [ ] On `membership: leave` → cross-check the `event.sender` to determine if it was a kick or voluntary leave
-- [ ] Subscribe to Telegram `ChatMember` updates in `octo-adapter-telegram`
-- [ ] On `status: kicked` → emit `SELF_KICKED` with `platform_event = YouGotKicked`
-- [ ] On `status: left` → treat as voluntary; no envelope emitted
-- [ ] Cross-check via `getChatMember(chat_id, user_id)` within `KICK_DETECTION_GRACE_PERIOD`
+- [ ] Subscribe to Telegram `Update.chat_member` (NOT `getChatMember` which is a request method, not an update subscription) in `octo-adapter-telegram` (R16 R1-M3 fix)
+- [ ] On `Update.chat_member.new_chat_member.status == "kicked"` → emit `SELF_KICKED` with `platform_event = YouGotKicked`
+- [ ] On `Update.chat_member.new_chat_member.status == "left"` → treat as voluntary; no envelope emitted
+- [ ] Cross-check via `getChatMember(chat_id, user_id)` within `KICK_DETECTION_GRACE_PERIOD` (this is OK as a polling request for cross-check, NOT the primary subscription)
+- [ ] Map all 3 adapters' native events to the canonical `PlatformEvent::KickedFromGroup` (per RFC-0855p-c §3)
 - [ ] Integration tests for both adapters
 
 ### Phase 6: DC decision tree
 
-- [ ] `DcOrchestrator::handle_kick(kick_event) -> Decision` per RFC-0850p-e §Algorithm C
+- [ ] `DcOrchestrator::handle_kick(kick_event) -> Decision` per RFC-0850p-e §Algorithm C (R16 R1-C3 fix: was RFC-0850p-d §C in v1.0, which is the wrong section — the kick decision tree is in 0850p-e, not 0850p-d)
 - [ ] Decision: kicked DC → `CoordinatorLifecycle::Active → Suspect → Handover` (per RFC-0855p-b)
 - [ ] Decision: kicked witness → emit `KICK_DETECTED`; quorum drops by 1; check if quorum is still met
 - [ ] Decision: kicked regular member → emit `MEMBER_REMOVED` (informational); do NOT trigger REBIND
@@ -101,13 +105,13 @@ Implement the kick detection and rejoin flow specified in RFC-0850p-e. **Closes 
 
 ## Location
 
-- `crates/octo-network/src/dot/binding.rs` (additive: 5 new envelope types + `PlatformKickEvent` enum)
-- `crates/octo-network/src/dot/group_registry.rs` (additive: `unbound_quarantined_at`, `rejoin_attempts`, transitions)
-- `crates/octo-network/src/dot/slash.rs` (additive: slash code 0x0011)
-- `crates/octo-network/src/dot/dc.rs` (additive: `handle_kick` decision tree; shared with `0850p-d-dc-initiated-group-creation.md` mission)
-- `crates/octo-adapter-whatsapp/src/adapter.rs` (additive: kick event subscription, heartbeat fallback)
-- `crates/octo-adapter-matrix/src/lib.rs` (additive: same)
-- `crates/octo-adapter-telegram/src/lib.rs` (additive: same)
+- `crates/octo-network/src/dot/binding.rs` (additive: 5 new envelope types; canonical 10-byte header per RFC-0850p-c §A)
+- `crates/octo-network/src/dot/group_registry.rs` (additive: `unbound_quarantine` map per RFC-0850p-c §B, `rejoin_attempts`, transitions, GC sweep)
+- `crates/octo-network/src/dot/slash.rs` (additive: slash codes 0x0010 `FalseWitness` and 0x0011 `SelfKicked`; consult RFC-0850p-d §"Slash Reason Codes Added" for 0x0010)
+- `crates/octo-network/src/dot/dc.rs` (additive: `handle_kick` decision tree; shared with `0850p-d-dc-initiated-group-creation.md` mission; note: kick detection is local-node responsibility, NOT a DC instruction)
+- `crates/octo-adapter-whatsapp/src/adapter.rs` (additive: kick event subscription, heartbeat fallback; emits `PlatformEvent::KickedFromGroup` per RFC-0855p-c §3, NOT `PlatformKickEvent` — see RFC-0850p-e §"Per-Adapter Detection Strategies")
+- `crates/octo-adapter-matrix/src/lib.rs` (additive: same; uses `/sync` endpoint with `m.room.member` state events)
+- `crates/octo-adapter-telegram/src/lib.rs` (additive: same; uses `Update.chat_member`)
 
 ## Complexity
 

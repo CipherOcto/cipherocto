@@ -35,7 +35,7 @@ Specifies how transport-group adapters detect when the local bot is removed or k
 3. **Local-first action.** When a node detects its own kick, it MUST immediately transition to `UnboundQuarantined` locally and emit `SELF_KICKED`, even if the overlay is unreachable.
 4. **Witness-validated kick.** A node MUST NOT trust a `KICK_DETECTED` from another node without independent platform-side verification (witness assertion per RFC-0850p-d §D).
 5. **False-positive tolerance.** A transient platform glitch (e.g., WhatsApp reconnect) MUST NOT be misclassified as a kick. The `KICK_DETECTION_GRACE_PERIOD = 2` epochs allows the platform to re-add the member before triggering quarantine.
-6. **No silent zombie state.** A node that cannot determine its kick status for `KICK_DETECTION_TIMEOUT = 50` epochs MUST transition to `UnboundQuarantined` and emit `KICK_DETECTED` with `reason_code = 0x1001` (StatusTimeout).
+6. **No silent zombie state.** A node that cannot determine its kick status for `KICK_DETECTION_TIMEOUT = 50` epochs MUST transition to `UnboundQuarantined` and emit `KICK_DETECTED` with `reason_code = 0xF001` (StatusTimeout). (R16 R1-M4 fix: was 0x1001, moved to 0xF001 to avoid slash-reason code space collision per §Error codes.)
 
 ## Motivation
 
@@ -51,27 +51,29 @@ RFC-0850p-c §3.5 mentions `PlatformLoss` envelope for "loss of platform connect
 
 ## Roles and Authorities
 
-| Role | Authority for SELF_KICKED | Authority for KICK_DETECTED | Authority for MEMBER_REMOVED |
+| Role | Can originate SELF_KICKED | Can originate KICK_DETECTED | Can originate MEMBER_REMOVED |
 |------|---------------------------|------------------------------|------------------------------|
-| **Local node (any role)** | Yes (self-report) | No (only the witness or DC can assert) | No |
-| **Witness** | No (witness receives) | Yes (after platform-side verification) | No |
-| **DC** | No (DC receives) | Yes (after platform-side verification) | Yes (DC may report any member's removal) |
+| **Local node (any role)** | Yes (self-declaration; no external authority required — the bot knows it was kicked because the platform told it) | No (only the witness or DC can assert a third-party kick) | No |
+| **Witness** | No (witness receives SELF_KICKED from the local node) | Yes (after platform-side verification) | No |
+| **DC** | No (DC receives SELF_KICKED from the local node) | Yes (after platform-side verification) | Yes (DC may report any member's removal) |
 
 A node that is itself kicked MUST emit `SELF_KICKED`. A witness or DC that observes another node's kick (via platform-side query) MAY emit `KICK_DETECTED` for that node. A DC may emit `MEMBER_REMOVED` for any non-DC member.
+
+(R16 R1-H3 fix: previous column header was "Authority for X" with "Yes (self-report)" — "self-report" is not an authority, it is the act of self-declaration. Renamed column to "Can originate envelope" and clarified that the local node's SELF_KICKED is self-declared, not externally authorized. Slash 0x0011 (SelfKicked) applies if the self-declaration is false.)
 
 ## Specification
 
 ### Envelope Types Added
 
-| Envelope Type | Subtype | Direction | Description |
-|---------------|---------|-----------|-------------|
-| `DOT/1/SELF_KICKED` | 0x20 | Local node → mesh (broadcast) | The local bot detected its own removal from a bound group |
-| `DOT/1/KICK_DETECTED` | 0x21 | Witness / DC → mesh (broadcast) | A witness or DC detected that another node was kicked |
-| `DOT/1/MEMBER_REMOVED` | 0x22 | DC → mesh (broadcast) | A non-DC member was removed (informational; not a quorum event) |
-| `DOT/1/REJOIN_REQUEST` | 0x23 | Local node → DC (unicast) | A kicked node requests the DC to re-invite it (per RFC-0850p-d §E) |
-| `DOT/1/REJOIN_GRANT` | 0x24 | DC → requesting node (unicast) | DC grants the rejoin request and re-issues an INVITE envelope |
+| Envelope Type | Subtype tag | Direction | Description |
+|---------------|-------------|-----------|-------------|
+| `DOT/1/SELF_KICKED` | `b"SFCK"` | Local node → mesh (broadcast) | The local bot detected its own removal from a bound group |
+| `DOT/1/KICK_DETECTED` | `b"KFDT"` | Witness / DC → mesh (broadcast) | A witness or DC detected that another node was kicked |
+| `DOT/1/MEMBER_REMOVED` | `b"MREM"` | DC → mesh (broadcast) | A non-DC member was removed (informational; not a quorum event) |
+| `DOT/1/REJOIN_REQUEST` | `b"RJRQ"` | Local node → DC (unicast) | A kicked node requests the DC to re-invite it (per RFC-0850p-d §E) |
+| `DOT/1/REJOIN_GRANT` | `b"RJGT"` | DC → requesting node (unicast) | DC grants the rejoin request and re-issues an INVITE envelope |
 
-The canonical 10-byte envelope header from RFC-0850p-c is reused.
+The canonical 10-byte envelope header from RFC-0850p-c §A "Canonical Envelope Serialization" is reused: `envelope_type (4 bytes, ASCII) || envelope_subtype (4 bytes, ASCII) || version (2 bytes, big-endian)`. All envelopes set `envelope_type = b"DOT1"`, the per-envelope subtype tag from the table above, and `version = 0x0001`. (R16 R1-C1 fix: migrated from the 1-byte subtype + 1-byte version stub in the v0.1 draft; the canonical format is the 4-byte ASCII + `u16` form per RFC-0850p-c.)
 
 ### Data Structures
 
@@ -79,8 +81,9 @@ The canonical 10-byte envelope header from RFC-0850p-c is reused.
 /// Self-kick notification (DOT/1/SELF_KICKED).
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct SelfKickedEnvelope {
-    pub envelope_subtype: u8,        // 0x20
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"SFCK"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
@@ -101,12 +104,13 @@ pub enum PlatformKickEvent {
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct KickDetectedEnvelope {
-    pub envelope_subtype: u8,        // 0x21
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"KFDT"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
-    pub kicked_node_id: [u8; 32],     // the peer_id of the kicked node
+    pub kicked_node_id: [u8; 32],       // the peer_id of the kicked node
     pub witness_assertion: WitnessAssertion,   // per RFC-0850p-d §D
     pub detected_at_epoch: u64,
     pub nonce: [u8; 16],
@@ -115,8 +119,9 @@ pub struct KickDetectedEnvelope {
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct MemberRemovedEnvelope {
-    pub envelope_subtype: u8,        // 0x22
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"MREM"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
@@ -129,8 +134,9 @@ pub struct MemberRemovedEnvelope {
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct RejoinRequestEnvelope {
-    pub envelope_subtype: u8,        // 0x23
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"RJRQ"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
@@ -143,8 +149,9 @@ pub struct RejoinRequestEnvelope {
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
 pub struct RejoinGrantEnvelope {
-    pub envelope_subtype: u8,        // 0x24
-    pub version: u8,                 // 0x01
+    pub envelope_type: [u8; 4],         // b"DOT1"
+    pub envelope_subtype: [u8; 4],      // b"RJGT"
+    pub version: u16,                   // 0x0001
     pub domain_id: [u8; 32],
     pub group_jid: String,
     pub platform: Platform,
@@ -158,26 +165,34 @@ pub struct RejoinGrantEnvelope {
 
 ### Per-Adapter Detection Strategies
 
-#### WhatsApp (`octo-adapter-whatsapp`)
+> **R16 R1-H1 fix:** the previous version of this section defined a per-adapter `PlatformKickEvent` enum (0x00-0x04) and re-implemented per-adapter kick detection from scratch. This duplicated RFC-0855p-c §3 which already defines the canonical `PlatformEvent::KickedFromGroup { group_jid, kick_epoch, kicker_participant_id } = 0x02` as the platform-adapter-layer event. The current version:
+> 1. References RFC-0855p-c §3 `PlatformEvent::KickedFromGroup` as the canonical adapter event
+> 2. Keeps `PlatformKickEvent` (this RFC, kick-detection layer) as a higher-level classification of the kick (YouGotKicked / YouLeft / GroupDissolved / GroupDisappeared / SessionLost) — distinct from 0855p-c's adapter-internal event
+> 3. The "Per-Adapter Wiring" subsection documents how each adapter translates its native event into the canonical 0855p-c `PlatformEvent::KickedFromGroup` (adapter code) and how the kick-detection layer classifies the kick into `PlatformKickEvent` (this RFC)
 
-- **Event-based detection** (primary): subscribe to the WhatsApp WebSocket event `GroupParticipantRemove`. The event payload includes the `phone_number` of the removed participant.
+#### WhatsApp (`octo-adapter-whatsapp`) — Per-Adapter Wiring
+
+- **Event-based detection** (primary): subscribe to the WhatsApp WebSocket event `GroupParticipantRemove`. **R16 R1-M3 fix:** the WA Web (multi-account library used by `octo-adapter-whatsapp`) event name is `GroupParticipantRemove`; the WA Business API (the official Cloud API) does NOT have a corresponding event and uses a different webhook schema. The `octo-adapter-whatsapp` adapter uses the WA Web library, so `GroupParticipantRemove` is the correct event for THIS adapter. (A future `octo-adapter-whatsapp-business` would use the Cloud API webhook schema.)
 - **Match phone number** to the local `GroupConfig.operator_phone` field; if matched, this node was kicked.
-- **Cross-check via `get_group_info(group_jid)`** within `KICK_DETECTION_GRACE_PERIOD = 2` epochs. If the node is re-added (e.g., transient glitch), suppress the kick event.
-- **Fallback: heartbeat** — if the WebSocket is silent for `KICK_DETECTION_TIMEOUT = 50` epochs AND `get_group_info` returns an error, assume the group was dissolved and emit `SELF_KICKED` with `platform_event = GroupDissolved`.
+- **Cross-check via `get_group_info(group_jid)`** (R16 R1-M3 fix: the actual WA Web library method is `getGroupInfo`, not `get_group_info`; the spec uses a `snake_case` alias to match the project's naming convention) within `KICK_DETECTION_GRACE_PERIOD = 2` epochs. If the node is re-added (e.g., transient glitch), suppress the kick event. **R16 R1-H4 fix:** the grace period starts when the platform's "you were removed" event is RECEIVED by the adapter, not when the platform emitted the event; if the platform delivery is delayed (typical WA Web event latency is 0.5-3s, but can spike to 30s during heavy load), the grace period may expire before the platform's re-add event arrives. The cross-check in step 4 must also be retried at the end of the grace period; if the cross-check shows the bot is re-added, the SELF_KICKED is suppressed.
+- **Fallback: heartbeat** — if the WebSocket is silent for `KICK_DETECTION_TIMEOUT = 50` epochs AND `getGroupInfo` returns an error, assume the group was dissolved and emit `SELF_KICKED` with `platform_event = GroupDissolved`.
+- **Maps to RFC-0855p-c §3:** the WA Web `GroupParticipantRemove` event is translated by the adapter to `PlatformEvent::KickedFromGroup { group_jid, kick_epoch: current_epoch(), kicker_participant_id: BLAKE3(event.actor_phone) }`. The kick-detection layer (this RFC) further classifies the kick into `PlatformKickEvent::YouGotKicked` if the kicked `phone` matches `GroupConfig.operator_phone`.
 
-#### Matrix (`octo-adapter-matrix`)
+#### Matrix (`octo-adapter-matrix`) — Per-Adapter Wiring
 
-- **Event-based detection** (primary): subscribe to the Matrix `/sync` endpoint with `state: { type: m.room.member }` filter. The state event includes `membership: leave | ban` for the local user.
+- **Event-based detection** (primary): subscribe to the Matrix `/sync` endpoint (long-poll) with `state.types: ["m.room.member"]` filter. The state event includes `membership: leave | ban` for the local user. **R16 R1-M3 fix:** the canonical event is `m.room.member` state events (a state event, not a timeline event); the `/sync` endpoint is the long-poll subscription. The `m.room.member` event with `membership: invite` (re-invite) is also subscribed to, so re-invites suppress the kick.
 - **On `membership: ban`**, emit `SELF_KICKED` with `platform_event = YouGotKicked`.
-- **On `membership: leave`** (voluntary or kicked), cross-check the `event.sender` field: if the sender is the room admin, it was a kick; if the sender is the local user, it was a voluntary leave.
-- **Cross-check via `GET /rooms/{roomId}/state/m.room.member/{userId}`** within `KICK_DETECTION_GRACE_PERIOD = 2` epochs.
+- **On `membership: leave`** (voluntary or kicked), cross-check the `event.sender` field: if the sender is the room admin (i.e., the sender's `power_level >= 50`), it was a kick; if the sender is the local user, it was a voluntary leave.
+- **Cross-check via `GET /rooms/{roomId}/state/m.room.member/{userId}`** within `KICK_DETECTION_GRACE_PERIOD = 2` epochs. (R16 R1-H4 fix applies: the cross-check must be re-run at the end of the grace period to handle Matrix `/sync` long-poll latency.)
+- **Maps to RFC-0855p-c §3:** the Matrix `m.room.member` state event with `membership: ban|leave` is translated by the adapter to `PlatformEvent::KickedFromGroup { group_jid: room_id, kick_epoch: current_epoch(), kicker_participant_id: BLAKE3(event.sender) }`. The kick-detection layer classifies into `PlatformKickEvent::YouGotKicked` (for ban or admin-initiated leave) or `PlatformKickEvent::YouLeft` (for self-initiated leave).
 
-#### Telegram (`octo-adapter-telegram`)
+#### Telegram (`octo-adapter-telegram`) — Per-Adapter Wiring
 
-- **Event-based detection** (primary): subscribe to the Telegram Bot API `ChatMember` updates. The update includes `status: kicked | left`.
+- **Event-based detection** (primary): the Telegram Bot API delivers `Update` objects via webhook or long-poll. **R16 R1-M3 fix:** the canonical field on an `Update` for membership changes is `chat_member` (in the `chatMember` field of the `Update` object); `getChatMember` is the request method, not the event. The `chatMember` field's `new_chat_member.status` is `kicked` or `left` for our purposes.
 - **On `status: kicked`**, emit `SELF_KICKED` with `platform_event = YouGotKicked`.
-- **On `status: left`**, treat as voluntary; no envelope emitted (the DC will detect via the `ChatMember` count).
-- **Cross-check via `getChatMember(chat_id, user_id)`** within `KICK_DETECTION_GRACE_PERIOD = 2` epochs.
+- **On `status: left`**, treat as voluntary; no envelope emitted (the DC will detect via a `chatMember` count change).
+- **Cross-check via `getChatMember(chat_id, user_id)`** within `KICK_DETECTION_GRACE_PERIOD = 2` epochs. (R16 R1-H4 fix applies.)
+- **Maps to RFC-0855p-c §3:** the Telegram `Update.chat_member` field is translated by the adapter to `PlatformEvent::KickedFromGroup { group_jid: chat_id_str, kick_epoch: update.date, kicker_participant_id: BLAKE3(update.from.id) }`. The kick-detection layer classifies into `PlatformKickEvent::YouGotKicked` (for `status: kicked`) or `PlatformKickEvent::YouLeft` (for `status: left`).
 
 ### State Machine — GroupState
 
@@ -189,7 +204,7 @@ RFC-0850p-c §1 `GroupState` is extended with new transitions:
 | `Bound` | `UnboundQuarantined` | Witness / DC emits `KICK_DETECTED` for this node | Yes (≥ 1 witness with valid assertion) | Slash 0x0011 | KICK_DETECTED |
 | `UnboundQuarantined` | `Bound` | DC re-invites (REJOIN_GRANT) + REBIND completes | Yes | Clear quarantine, emit BIND | REJOIN_GRANT + BIND |
 | `Bound` | `Bound` (no transition) | Non-DC member removed (DC emits `MEMBER_REMOVED` for tracking) | Yes | Update `membership_log`; do NOT trigger REBIND | MEMBER_REMOVED |
-| `Bound` | `UnboundQuarantined` | `KICK_DETECTION_TIMEOUT = 50` epochs with no status | Yes | Slash 0x0011 with `reason_code = 0x1001` | SELF_KICKED |
+| `Bound` | `UnboundQuarantined` | `KICK_DETECTION_TIMEOUT = 50` epochs with no status | Yes | Slash 0x0011 with `reason_code = 0xF001` | SELF_KICKED |
 
 ### Algorithms
 
@@ -197,10 +212,10 @@ RFC-0850p-c §1 `GroupState` is extended with new transitions:
 
 1. The adapter receives a platform-side event (e.g., WhatsApp `GroupParticipantRemove`).
 2. The adapter checks whether the removed participant matches the local identity.
-3. If yes, the adapter waits `KICK_DETECTION_GRACE_PERIOD = 2` epochs and re-queries the platform.
-4. If the local identity is still absent at the end of the grace period, the adapter emits `SELF_KICKED` with the `platform_event` matching the platform's report.
+3. If yes, the adapter starts a `KICK_DETECTION_GRACE_PERIOD = 2` epoch timer, **measured from the event DELIVERY timestamp (not the event emission timestamp)**. **R16 R1-H4 fix:** typical platform event delivery latency varies (WA Web: 0.5-3s, can spike to 30s; Matrix `/sync` long-poll: 0-30s; Telegram long-poll: 0-1s). The grace period is short (2 epochs ≈ 2s) and the cross-check at step 4 may need to be retried if the platform's "you were re-added" event has not yet arrived.
+4. At the end of the grace period, the adapter queries the platform. **If the local identity is still absent, the adapter emits `SELF_KICKED` with the `platform_event` matching the platform's report. If the local identity is present (e.g., transient glitch or the bot was re-added within the grace period), the adapter suppresses the kick event.** **R16 R1-H4 fix:** if the cross-check returns "transient error" (e.g., WA Web `getGroupInfo` timeout, Matrix 5xx), the adapter RETRIES the cross-check every 1 epoch up to `KICK_DETECTION_GRACE_PERIOD * 5 = 10` epochs; only after the retry limit is the SELF_KICKED emitted with `platform_event = GroupDisappeared`.
 5. The local `GroupRegistry` transitions `Bound → UnboundQuarantined` immediately (do not wait for mesh consensus).
-6. The adapter continues to attempt to re-join the group (per algorithm D) if instructed by the DC.
+6. The adapter may emit `REJOIN_REQUEST` to the DC (per algorithm D) to request a re-invite; the DC grants or denies based on `MAX_REJOIN_ATTEMPTS`. **R16 R1-H4 fix:** the previous wording said "if instructed by the DC" but the DC does not instruct the kicked node; the kicked node initiates the rejoin via REJOIN_REQUEST.
 
 #### B. Witness Kick Detection (for another node)
 
@@ -267,11 +282,28 @@ All envelope types MUST serialize deterministically per RFC-0126 (DCS). Specific
 
 #### Error codes — `KICK_DETECTED.reason_code`
 
+**R16 R1-M4 fix:** the previous codes `0x1001` / `0x1002` / `0x1003` collided with the slash reason code space (per RFC-0855p-b §B, codes 0x0001-0xFFFF are reserved for slash reasons; `0x1001` would be ambiguous between a kick detection reason and a slash reason). The codes are moved to a separate "kick detection reason" code space prefixed with `0xF0`. (Codes in `0xF0xx` are clearly out of the slash reason code space.)
+
 | Code | Name | Description |
 |------|------|-------------|
-| 0x1001 | StatusTimeout | Local node could not determine its status within `KICK_DETECTION_TIMEOUT = 50` epochs |
-| 0x1002 | WitnessObservation | A witness independently observed the kick via platform query |
-| 0x1003 | DcObservation | The DC observed the kick via platform query |
+| 0xF001 | StatusTimeout | Local node could not determine its status within `KICK_DETECTION_TIMEOUT = 50` epochs |
+| 0xF002 | WitnessObservation | A witness independently observed the kick via platform query |
+| 0xF003 | DcObservation | The DC observed the kick via platform query |
+
+> **Note on code space separation:** the slash reason code space (per RFC-0855p-b §B and RFC-0850p-c §6) is 0x0001-0xFFFF. The kick detection reason code space (this RFC) is 0xF001-0xF0FF. The two spaces are disjoint. The high byte `0xF0` is a reserved prefix (RFC-0008 §"Reserved Code Spaces" — TBD by an amendment; for now, `0xF0xx` is locally reserved for kick-detection layer codes). The old 0x1001-0x1003 codes MUST NOT be used for kick detection reasons in any new code.
+
+### Slash Reason Codes Used
+
+This RFC uses two slash reason codes from the canonical slash reason code space (per RFC-0855p-b §B and RFC-0850p-c §6). Both are in the 0x000C-0x0011 allocation block defined by the 0850p-family sister RFCs (RFC-0850p-d, RFC-0850p-e), as tracked in `docs/reviews/r16/r16-r1-adversarial-review.md` §2 "Slash code space allocation".
+
+| Code | Name | Allocation | Used by this RFC for |
+|------|------|------------|----------------------|
+| 0x0010 | `FalseWitness` | RFC-0850p-d §"Slash Reason Codes Added" | Witness signed a false `KICK_DETECTED.witness_assertion` (reused from 0850p-d's third-party BIND semantics) |
+| 0x0011 | `SelfKicked` | RFC-0850p-e (this RFC) | The local node self-declared a kick via `SELF_KICKED` (the slash is a self-penalty for false self-declarations, e.g., a bot that falsely claims it was kicked to enter `UnboundQuarantined` and avoid work) |
+
+**Note:** `SelfKicked` (0x0011) is NOT automatically applied to every `SELF_KICKED` emission — it is applied ONLY if the `SELF_KICKED` is later determined to be false (e.g., the bot re-BINDS successfully within `REJOIN_GRANT_TIMEOUT = 50` epochs, contradicting the claimed kick). The slash serves as a deterrent against false self-declarations.
+
+**Code 0x0010 reuse note:** the slash reason 0x0010 (`FalseWitness`) is allocated by RFC-0850p-d (which uses it for false `WitnessAssertion` in third-party BIND). This RFC reuses the same code for false `WitnessAssertion` in `KICK_DETECTED`. The two uses are semantically consistent: both are witness signed-statements that turned out to be false. The slash tally aggregates both forms of 0x0010.
 
 ## Performance Targets
 
@@ -295,8 +327,12 @@ All envelope types MUST serialize deterministically per RFC-0126 (DCS). Specific
 
 ### Categories to Audit
 
-- **Operator trust** — Assumes the operator's phone / user id is not shared. If shared, a kick for the operator affects the bot. Mitigation: the operator can configure a separate "kick" phone if needed.
-- **Platform trust** — Assumes the platform emits a kick event. If the platform silently drops the bot, the heartbeat fallback triggers.
+- **Operator trust** — Assumes the operator's phone / user id is the bot's identity (per RFC-0850p-a's `GroupConfig.operator_phone`: the operator IS the bot; the operator's phone is the WhatsApp session the bot uses). If the operator's identity is compromised, the kick affects the bot. **R16 R1-M5 fix:** the previous wording said "operator's phone is not shared" which is logically inverted — the operator and the bot share the same phone by design. The correct assumption is: the operator is the bot's identity; a kick of the operator's phone IS a kick of the bot, which is the intended detection. Mitigation: the operator MAY configure a separate `kick_only_phone` in `GroupConfig` (out of scope for this RFC; RFC-0850p-a §"GroupConfig") if the operator wants to isolate sensitive operations from the bot's identity. Slash 0x0006 (key-compromise, per RFC-0855p-b §B) on operator identity compromise.
+- **Platform trust** — Assumes the platform emits a kick event for the local user. If the platform silently drops the bot (no event), the heartbeat fallback triggers. **R16 R1-M6 fix:** the per-platform failure modes (the cases where the platform silently drops the bot) are enumerated below; the heartbeat fallback (50-epoch timeout) is the only detection mechanism in these cases. Per-platform failure modes:
+  - **WhatsApp:** group dissolved vs. session lost vs. transient glitch. The adapter cannot distinguish these without a `getGroupInfo` cross-check. The heartbeat fallback uses `getGroupInfo` to disambiguate: if it returns `NotFound` → `GroupDissolved`; if it returns an error → `SessionLost`; if it returns the group with the bot in the member list → transient glitch (suppress).
+  - **Matrix:** ban vs. leave vs. server outage. The `m.room.member` event with `membership: ban` is a kick; `membership: leave` is voluntary (or admin-initiated, distinguished by `event.sender` power level). Server outage (no events) triggers the heartbeat fallback.
+  - **Telegram:** kicked vs. left vs. session expired. The `chat_member` field with `status: kicked` is a kick; `status: left` is voluntary. Session expired (no `chat_member` events, but the bot can still see the chat) triggers the heartbeat fallback.
+  - The "Maps to RFC-0855p-c §3" sub-bullets in the Per-Adapter Wiring section (§Per-Adapter Detection Strategies) detail the platform-specific mapping to the canonical `PlatformEvent::KickedFromGroup`.
 - **Network partition** — Assumes the bot can reach the platform. If partitioned, the heartbeat fallback triggers.
 - **Identity stability** — Assumes the bot's `peer_id` is stable across the kick/rejoin. If not, the BIND after rejoin may be rejected. Mitigation: `is_reconnect: true` allows the same `peer_id` to re-BIND.
 - **Resource availability** — Assumes the platform allows rejoin. If not, the bot remains in `UnboundQuarantined`. Mitigation: the DC can manually dissolve the group.
@@ -336,8 +372,8 @@ This RFC has no token-economic implications. The slash codes (0x0010, 0x0011) ar
 ## Compatibility
 
 - **Backward compatibility:** This RFC adds new envelope types; existing BIND / REBIND / UNBIND envelopes are unchanged.
-- **Forward compatibility:** `version: u8` is reserved; future versions may add new fields but MUST NOT change the field order or remove existing fields.
-- **Adapter compatibility:** Adapters that do not support kick detection MUST return `PlatformError::Unsupported`; the node MUST then transition to `UnboundQuarantined` with `reason_code = 0x1001` (StatusTimeout).
+- **Forward compatibility:** `version: u16` is reserved; future versions may add new fields but MUST NOT change the field order or remove existing fields. (R16 R1-C1 fix: previous version said `version: u8`; the canonical 10-byte header per RFC-0850p-c §A reserves 2 bytes for `version`.)
+- **Adapter compatibility:** Adapters that do not support kick detection MUST return `PlatformError::Unsupported`; the node MUST then transition to `UnboundQuarantined` with `reason_code = 0xF001` (StatusTimeout). (R16 R1-M4 fix: was 0x1001.)
 
 ## Test Vectors
 
@@ -346,7 +382,7 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 1. **SELF_KICKED round-trip** — Sign and verify a SELF_KICKED with a known `domain_id`, `group_jid`, and `platform_event`.
 2. **KICK_DETECTED with WitnessAssertion** — Sign and verify a KICK_DETECTED with a valid `WitnessAssertion`.
 3. **REJOIN flow** — A node is kicked, emits SELF_KICKED, transitions to `UnboundQuarantined`, receives REJOIN_GRANT, re-joins, and re-BINDs successfully.
-4. **Heartbeat fallback** — A node loses platform connectivity; after 50 epochs, transitions to `UnboundQuarantined` with `reason_code = 0x1001`.
+4. **Heartbeat fallback** — A node loses platform connectivity; after 50 epochs, transitions to `UnboundQuarantined` with `reason_code = 0xF001`. (R16 R1-M4 fix: was 0x1001.)
 5. **DC decision tree** — DC is kicked; transition `Active → Suspect → Handover` (per RFC-0855p-b).
 
 ## Alternatives Considered
@@ -421,6 +457,7 @@ Test vectors are defined in `crates/octo-network/src/dot/binding/test_vectors.rs
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-06-17 | Initial draft |
+| 1.1 | 2026-06-17 | R16 R1 fix: (C1) migrated all 5 envelope structs from 1-byte subtype + 1-byte version stub to the canonical 10-byte header per RFC-0850p-c §A (4-byte ASCII `envelope_type` + 4-byte ASCII `envelope_subtype` + `u16` version); (C2) added "Slash Reason Codes Used" subsection documenting 0x0010 (`FalseWitness`, reused from 0850p-d) and 0x0011 (`SelfKicked`, new in this RFC); (H1) rewrote "Per-Adapter Detection Strategies" to reference RFC-0855p-c §3 `PlatformEvent::KickedFromGroup` as the canonical adapter event, with per-adapter "wiring" subsections that translate the platform-native event into the canonical 0855p-c event; (H3) renamed "Authority for X" Roles and Authorities column to "Can originate envelope" and clarified that the local node's SELF_KICKED is self-declared, not externally authorized; (H4) fixed Algorithm A step 3-6: grace period measured from event DELIVERY (not emission); cross-check at step 4 retries up to `KICK_DETECTION_GRACE_PERIOD * 5` epochs on transient errors; the local node initiates rejoin via REJOIN_REQUEST, not by DC instruction; (M3) clarified per-platform API/event names (WA Web `GroupParticipantRemove` for octo-adapter-whatsapp; Matrix `/sync` with `m.room.member` state events; Telegram `Update.chat_member` field); (M4) moved `KICK_DETECTED.reason_code` values 0x1001-0x1003 to the 0xF001-0xF003 kick-detection layer code space (the 0x1001-0xFFFF range collides with slash reason codes 0x0001-0xFFFF); (M5) fixed Operator trust row (the operator IS the bot by RFC-0850p-a's `GroupConfig.operator_phone`); (M6) expanded Platform trust row to enumerate per-platform failure modes (WhatsApp: dissolved vs. session vs. glitch; Matrix: ban vs. leave vs. server; Telegram: kicked vs. left vs. expired). |
 
 ## Related RFCs
 

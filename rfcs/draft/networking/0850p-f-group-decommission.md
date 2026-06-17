@@ -60,12 +60,16 @@ This RFC is in early-stage draft. The basic UNBIND_ALL envelope is defined in RF
 
 ### Envelope Types Added
 
-| Envelope Type | Subtype | Direction | Description |
-|---------------|---------|-----------|-------------|
-| `DOT/1/UNBIND_ALL` | 0x15 | Authority → mesh (broadcast) | (Defined in RFC-0850p-d §F) |
-| `DOT/1/UNBIND_ALL_ACK` | 0x16 | Witness → Authority | (Defined in RFC-0850p-d §F) |
-| `DOT/1/UNBIND_ALL_DONE` | 0x17 | Authority → mesh (broadcast) | Final confirmation; all members have left |
-| `DOT/1/UNBIND_ALL_AUDIT` | 0x18 | Authority → audit log (out-of-band) | Signed audit entry |
+| Envelope Type | Subtype tag | Direction | Description |
+|---------------|-------------|-----------|-------------|
+| `DOT/1/UNBIND_ALL` | `b"UALL"` | Authority → mesh (broadcast) | (Defined in RFC-0850p-d §F) |
+| `DOT/1/UNBIND_ALL_ACK` | `b"UAAC"` | Witness → Authority | (Defined in RFC-0850p-d §F) |
+| `DOT/1/UNBIND_ALL_DONE` | `b"UADN"` | Authority → mesh (broadcast) | Final confirmation; all members have left |
+| `DOT/1/UNBIND_ALL_AUDIT` | `b"UAAU"` | Authority → audit log (out-of-band) | Signed audit entry |
+
+All envelopes use the canonical 10-byte header per RFC-0850p-c §A: `envelope_type = b"DOT1"`, the per-envelope subtype tag from the table above, `version = u16 // 0x0001`. (R16 R1-C1 fix: migrated from the 1-byte subtype + 1-byte version stub in the v0.1 draft; the canonical format is the 4-byte ASCII + `u16` form per RFC-0850p-c.)
+
+> **Note on `b"UADN"` and `b"UAAU"`:** these subtype tags are NEW (allocated by this RFC). The full struct definitions (`UnbindAllDoneEnvelope`, `UnbindAllAuditEnvelope`) will be added in the next iteration of this RFC (current Version 0.1 is an early-stage stub). For now, this RFC claims the subtype tags so future iterations do not conflict.
 
 ### State Machine (preliminary)
 
@@ -92,6 +96,7 @@ This RFC is in early-stage draft. The basic UNBIND_ALL flow is captured in RFC-0
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1 | 2026-06-17 | Initial stub; main spec to be elaborated |
+| 0.2 | 2026-06-17 | R16 R1 fix: (C1) migrated Envelope Types Added table to use 4-byte ASCII subtype tags (`b"UALL"`, `b"UAAC"`, `b"UADN"`, `b"UAAU"`) per RFC-0850p-c §A canonical 10-byte header; the new subtype tags `b"UADN"` and `b"UAAU"` are claimed by this RFC to prevent future conflicts. |
 
 ## Related RFCs
 

@@ -35,9 +35,14 @@ pub use session::{
 /// binary's `cli.rs` and integration tests).
 pub use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 
-/// Shared validation for session link args (parent dir creation).
-/// The adapter's `WhatsAppConfig::validate()` handles field-shape
-/// checks (ws_url format, groups non-empty, pair_phone E.164).
+/// Shared validation for session link args (parent dir creation +
+/// symlink-attack check). The adapter's `WhatsAppConfig::validate()`
+/// handles field-shape checks (ws_url format, groups non-empty,
+/// pair_phone E.164).
+///
+/// Mission 0850p-a-symlink-check: also rejects session paths that
+/// resolve to a symlink whose target is outside the user-requested
+/// parent (D-WA-4 mitigation).
 pub fn validate_session_args(session_path: &std::path::Path) -> Result<()> {
     if let Some(parent) = session_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -47,5 +52,9 @@ pub fn validate_session_args(session_path: &std::path::Path) -> Result<()> {
             })?;
         }
     }
+    // Mission 0850p-a-symlink-check: detect symlink-attack attempts
+    // before any session DB is opened. The check is a no-op for
+    // paths that do not exist yet (fresh link).
+    crate::validate::check_session_path_safe(session_path)?;
     Ok(())
 }

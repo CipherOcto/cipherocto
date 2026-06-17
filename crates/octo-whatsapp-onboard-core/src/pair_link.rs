@@ -33,6 +33,7 @@ pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
         pair_code: args.custom_code.clone(),
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
+        sender_allowlist: Default::default(),
     };
     config.validate().map_err(|e| CoreError::InvalidSessionPath {
         path: args.session_path.clone(),

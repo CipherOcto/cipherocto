@@ -14,9 +14,11 @@
 //! ```
 
 pub mod adapter;
+pub mod state;
 pub mod store;
 
 pub use adapter::{WhatsAppConfig, WhatsAppWebAdapter};
+pub use state::{BotState, LoggedOutCause};
 pub use store::StoolapStore;
 
 // ── Plugin ABI ─────────────────────────────────────────────────────

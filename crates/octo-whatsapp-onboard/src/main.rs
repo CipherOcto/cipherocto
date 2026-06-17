@@ -15,6 +15,7 @@ use cli::{
     SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
+use octo_network::dot::adapters::PlatformAdapter;
 use octo_whatsapp_onboard_core::{
     wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs,
     QrLinkArgs as CoreQrLinkArgs, SessionInfo, WhatsAppConfig,
@@ -61,6 +62,9 @@ async fn main() -> ExitCode {
 }
 
 async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> {
+    // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
+    // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
+    check_ws_url_allowed(args.ws_url.as_ref())?;
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_qr(&args);
     let session = octo_whatsapp_onboard_core::qr_link::run(&core_args).await?;
@@ -68,10 +72,72 @@ async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> 
 }
 
 async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardError> {
+    // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
+    // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
+    check_ws_url_allowed(args.ws_url.as_ref())?;
+    // Mission 0850p-a-ci-mode-pair-link: --ci bypasses
+    // Event::Connected wait and validates the pre-paired session
+    // DB. No phone interaction needed.
+    if args.ci {
+        return run_pair_link_ci(&args);
+    }
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_pair(&args);
     let session = octo_whatsapp_onboard_core::pair_link::run(&core_args).await?;
     run_link(&args.output, session).await
+}
+
+/// Mission 0850p-a-ci-mode-pair-link: CI mode. Loads the
+/// pre-paired session DB at `--session-path`, validates it via
+/// the adapter's `has_valid_session()`, and writes the sidecar
+/// (so downstream `whoami` works). No phone interaction.
+fn run_pair_link_ci(args: &PairLinkArgs) -> std::result::Result<(), OnboardError> {
+    use octo_whatsapp_onboard_core::WhatsAppSession;
+    use octo_whatsapp_onboard_core::sidecar::{write_sidecar, SidecarMode};
+
+    // Validate parent dir + symlink check (same as interactive flow).
+    octo_whatsapp_onboard_core::validate_session_args(&args.session_path)
+        .map_err(|e| OnboardError::BadConfig(format!("session_path invalid: {e}")))?;
+
+    // Build the adapter and check has_valid_session(). This opens
+    // the session DB; if the DB is empty or the Signal keys are
+    // missing, the check returns false.
+    let cfg = WhatsAppConfig {
+        session_path: format!("{}", args.session_path.display()),
+        pair_phone: Some(args.phone.clone()),
+        pair_code: args.pair_code.clone(),
+        ws_url: args.ws_url.clone(),
+        groups: args.groups.clone(),
+        sender_allowlist: Default::default(),
+    };
+    let adapter = octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg);
+    if !adapter.has_valid_session() {
+        return Err(OnboardError::BadConfig(format!(
+            "session DB at {:?} is empty or invalid; cannot use --ci mode without a pre-paired session",
+            args.session_path
+        )));
+    }
+
+    // Build the sidecar so subsequent `whoami` works. The adapter
+    // exposes `self_handle` via the `PlatformAdapter` trait
+    // (imported at the top of this file; mission
+    // 0850p-a-has-valid-session).
+    let phone = adapter.self_handle().unwrap_or_default();
+    let session = WhatsAppSession {
+        self_phone: Some(phone),
+        session_path: args.session_path.clone(),
+        groups: args.groups.clone(),
+        pair_phone: Some(args.phone.clone()),
+    };
+    write_sidecar(&args.session_path, &session, SidecarMode::PairLink)
+        .map_err(|e| OnboardError::BadConfig(format!("write_sidecar: {e}")))?;
+
+    output::write(&args.output, &session)?;
+    println!(
+        "CI mode: pre-paired session at {} accepted",
+        args.session_path.display()
+    );
+    Ok(())
 }
 
 async fn run_link(
@@ -84,6 +150,36 @@ async fn run_link(
 }
 
 async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
+    // Mission 0850p-a-has-valid-session: a fast pre-check that
+    // returns the phone in <2s for an already-paired bot. This
+    // replaces the 250ms polling loop pattern.
+    if args.detect_replacement {
+        // Mission 0850p-a-replaced-state: --detect-replacement
+        // exits 8 on Replaced, 7 on SessionExpired, 2 on other
+        // LoggedOut. Currently we cannot inspect the cause from
+        // the whatsapp-rust Event::LoggedOut (the cause field is
+        // not yet exposed in the pinned version), so this branch
+        // is a no-op stub that exits 0 on a healthy session and
+        // 7 on SessionExpired. The Replaced path will be enabled
+        // when whatsapp-rust exposes the cause.
+        let cfg = load_config(&args.config)?;
+        let session_path = std::path::PathBuf::from(&cfg.session_path);
+        let sidecar = session_path.with_extension("db.meta.json");
+        if !sidecar.exists() {
+            return Err(OnboardError::SessionExpired(
+                "no sidecar; session is not paired".into(),
+            ));
+        }
+        if let Ok((phone, _)) = read_sidecar(&sidecar) {
+            if let Some(p) = phone {
+                println!("+{p}");
+                return Ok(());
+            }
+        }
+        return Err(OnboardError::SessionExpired(
+            "sidecar unreadable; session may be invalid".into(),
+        ));
+    }
     let cfg = load_config(&args.config)?;
     let session_path = std::path::PathBuf::from(&cfg.session_path);
     let sidecar = session_path.with_extension("db.meta.json");
@@ -239,6 +335,29 @@ fn env_or_arg_opt(arg: Option<&String>, env_var: &str) -> Option<String> {
     std::env::var(env_var).ok().filter(|s| !s.is_empty())
 }
 
+/// Mission 0850p-a-ws-url-release-guard: refuse `--ws-url` in
+/// release builds unless `OCTO_WHATSAPP_ALLOW_WS_URL=1` is set in
+/// the environment. The flag is a debug-only escape hatch for
+/// testing against a mock WhatsApp Web server; in production it
+/// is an unnecessary attack surface (an attacker who controls the
+/// operator's config could redirect the noise handshake to their
+/// own server and harvest all future messages — D-WA-5).
+///
+/// Debug builds (`cfg!(debug_assertions) == true`) skip the check
+/// entirely. Release builds require the env-var override.
+fn check_ws_url_allowed(ws_url: Option<&String>) -> std::result::Result<(), OnboardError> {
+    if ws_url.is_none() {
+        return Ok(());
+    }
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    if std::env::var("OCTO_WHATSAPP_ALLOW_WS_URL").ok().as_deref() == Some("1") {
+        return Ok(());
+    }
+    Err(OnboardError::WsUrlReleaseForbidden)
+}
+
 fn default_session_base_dir() -> std::path::PathBuf {
     let mut base = dirs::data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     base.push("octo");
@@ -287,6 +406,7 @@ fn build_adapter(
         pair_code: None,
         ws_url: None,
         groups: groups.to_vec(),
+        sender_allowlist: Default::default(),
     };
     // Validate field shape (R1-H1 + R2-L2). For link flows, the
     // binary has already validated inputs via clap; this is

@@ -12,6 +12,9 @@ use octo_whatsapp_onboard_core::CoreError;
 /// error states (e.g., when the adapter exposes more event-driven
 /// failure modes). The mission AC requires all 7 variants to
 /// support the 7 exit codes (0-7), so they're kept but unused.
+///
+/// Mission 0850p-a-symlink-check: `SymlinkAttack` exits 5 (bad config).
+/// Mission 0850p-a-ws-url-release-guard: `WsUrlReleaseForbidden` exits 5.
 #[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum OnboardError {
@@ -29,6 +32,16 @@ pub enum OnboardError {
 
     #[error("session expired")]
     SessionExpired(String),
+
+    /// Mission 0850p-a-symlink-check: session_path is a symlink
+    /// whose target is outside the user-requested parent directory.
+    #[error("symlink attack: {0}")]
+    SymlinkAttack(String),
+
+    /// Mission 0850p-a-ws-url-release-guard: --ws-url is forbidden
+    /// in release builds unless OCTO_WHATSAPP_ALLOW_WS_URL=1.
+    #[error("--ws-url is forbidden in release builds unless OCTO_WHATSAPP_ALLOW_WS_URL=1 is set")]
+    WsUrlReleaseForbidden,
 }
 
 impl OnboardError {
@@ -41,7 +54,9 @@ impl OnboardError {
             OnboardError::Unreachable(s)
             | OnboardError::Cancelled(s)
             | OnboardError::BadConfig(s)
-            | OnboardError::SessionExpired(s) => Some(s.as_str()),
+            | OnboardError::SessionExpired(s)
+            | OnboardError::SymlinkAttack(s) => Some(s.as_str()),
+            OnboardError::WsUrlReleaseForbidden => Some("--ws-url forbidden in release"),
         }
     }
 
@@ -53,6 +68,8 @@ impl OnboardError {
             OnboardError::Cancelled(_) => 4,
             OnboardError::BadConfig(_) => 5,
             OnboardError::SessionExpired(_) => 7,
+            OnboardError::SymlinkAttack(_) => 5,
+            OnboardError::WsUrlReleaseForbidden => 5,
         }
     }
 
@@ -88,6 +105,11 @@ impl From<CoreError> for OnboardError {
             CoreError::Timeout { secs } => OnboardError::Cancelled(format!(
                 "timed out after {secs}s waiting for Event::Connected"
             )),
+            CoreError::SessionPathSymlink { requested, resolved } => {
+                OnboardError::SymlinkAttack(format!(
+                    "{requested:?} is a symlink to {resolved:?} outside the requested parent"
+                ))
+            }
         }
     }
 }

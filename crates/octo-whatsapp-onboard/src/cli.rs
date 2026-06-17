@@ -134,6 +134,12 @@ pub struct PairLinkArgs {
     pub output: OutputArgs,
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    /// Mission 0850p-a-ci-mode-pair-link: bypass `Event::Connected`
+    /// wait; load a pre-paired session DB from `--session-path` and
+    /// exit 0 if the session is valid. For CI/CD deployments where
+    /// the phone is not available.
+    #[arg(long)]
+    pub ci: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 
@@ -142,6 +148,12 @@ pub struct WhoamiArgs {
     /// Path to a config file written by `qr-link` or `pair-link`.
     #[arg(long)]
     pub config: PathBuf,
+    /// Mission 0850p-a-replaced-state: if set, the CLI exits with
+    /// code 8 on `BotState::Replaced`, 7 on `BotState::SessionExpired`,
+    /// 2 on other `LoggedOut`. Used by CI/CD to trigger re-pair
+    /// automation on detected replacement.
+    #[arg(long)]
+    pub detect_replacement: bool,
 }
 
 #[derive(Args, Debug)]

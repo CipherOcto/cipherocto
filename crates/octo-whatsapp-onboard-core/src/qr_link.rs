@@ -31,6 +31,7 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         pair_code: None,
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
+        sender_allowlist: Default::default(),
     };
     config.validate().map_err(|e| CoreError::InvalidSessionPath {
         path: args.session_path.clone(),

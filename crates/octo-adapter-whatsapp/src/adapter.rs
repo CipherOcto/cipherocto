@@ -191,6 +191,12 @@ pub struct WhatsAppWebAdapter {
     inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
     /// Bot's own phone number (resolved on connect)
     self_phone: Arc<Mutex<Option<String>>>,
+    /// Mission 0850p-a-notify-event-connected: a `tokio::sync::Notify` that
+    /// is `notify_waiters()`-ed on `Event::Connected`. Replaces the
+    /// 250 ms polling loop in `wait_for_connected` (mission
+    /// 0850p-a-notify-event-connected). Wrapped in an `Arc` because
+    /// `Notify` is not `Clone`.
+    connected_notify: Arc<tokio::sync::Notify>,
 }
 
 impl WhatsAppWebAdapter {
@@ -203,7 +209,29 @@ impl WhatsAppWebAdapter {
             inbound_rx: Arc::new(Mutex::new(inbound_rx)),
             inbound_tx,
             self_phone: Arc::new(Mutex::new(None)),
+            // Mission 0850p-a-notify-event-connected: a fresh Notify for
+            // each adapter instance. `notify_waiters()` is called by
+            // the Event::Connected handler; consumers (the CLI's
+            // `wait_for_connected`) `notified().await` on a clone of
+            // the Arc.
+            connected_notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Mission 0850p-a-notify-event-connected: returns a clonable
+    /// handle to the `Notify` that fires on `Event::Connected`.
+    /// Cloning the `Arc<Notify>` is cheap and gives a handle to
+    /// the same underlying `Notify`.
+    pub fn connected(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.connected_notify)
+    }
+
+    /// Mission 0850p-a-has-valid-session: returns `true` if a valid
+    /// session exists (bot handle present and `self_handle().is_some()`).
+    /// This is a synchronous, allocation-free check that replaces the
+    /// 250ms polling loop in the CLI's `whoami` flow.
+    pub fn has_valid_session(&self) -> bool {
+        self.self_handle().is_some() && self.bot_handle.try_lock().map(|h| h.is_some()).unwrap_or(false)
     }
 
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
@@ -349,6 +377,10 @@ impl WhatsAppWebAdapter {
         let self_phone = self.self_phone.clone();
         let groups = self.config.groups.clone();
         let sender_allowlist = self.config.sender_allowlist.clone();
+        // Mission 0850p-a-notify-event-connected: clone the Notify
+        // into the closure so the Event::Connected handler can
+        // wake up `wait_for_connected` callers.
+        let connected_notify = Arc::clone(&self.connected_notify);
 
         // Build the bot
         let mut builder = whatsapp_rust::bot::Bot::builder()
@@ -366,6 +398,7 @@ impl WhatsAppWebAdapter {
                 let self_phone = self_phone.clone();
                 let groups = groups.clone();
                 let sender_allowlist = sender_allowlist.clone();
+                let connected_notify = connected_notify.clone();
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
@@ -428,6 +461,10 @@ impl WhatsAppWebAdapter {
                                     tracing::info!("resolved bot identity: +{user_part}");
                                 }
                             }
+                            // Mission 0850p-a-notify-event-connected:
+                            // wake up any `wait_for_connected` consumer
+                            // waiting on `Notify::notified()`.
+                            connected_notify.notify_waiters();
                         }
                         Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
                         Event::PairingQrCode { code, .. } => {
@@ -772,6 +809,58 @@ mod tests {
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.self_handle().is_none());
+    }
+
+    // Mission 0850p-a-has-valid-session
+    #[test]
+    fn test_has_valid_session_false_when_not_connected() {
+        // A freshly-constructed adapter has no bot handle and no
+        // self_handle. has_valid_session() must return false.
+        let config = WhatsAppConfig {
+            session_path: "/tmp/test.db".into(),
+            pair_phone: None,
+            pair_code: None,
+            ws_url: None,
+            groups: vec![],
+            sender_allowlist: BTreeMap::new(),
+        };
+        let adapter = WhatsAppWebAdapter::new(config);
+        assert!(!adapter.has_valid_session());
+    }
+
+    // Mission 0850p-a-notify-event-connected
+    #[tokio::test]
+    async fn test_connected_notify_fires_on_wait() {
+        // Verify that notify_waiters() wakes a notified() waiter.
+        // This validates the cross-crate contract: the adapter's
+        // Event::Connected handler calls notify_waiters(), and the
+        // core's wait_for_connected awaits notified().
+        let config = WhatsAppConfig {
+            session_path: "/tmp/test.db".into(),
+            pair_phone: None,
+            pair_code: None,
+            ws_url: None,
+            groups: vec![],
+            sender_allowlist: BTreeMap::new(),
+        };
+        let adapter = WhatsAppWebAdapter::new(config);
+        let notify = adapter.connected();
+
+        // Spawn a waiter that should return within 1s.
+        let waiter = tokio::spawn(async move {
+            notify.notified().await;
+            true
+        });
+        // Give the waiter a tick to subscribe.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // Trigger the notify.
+        adapter.connected().notify_waiters();
+        // Wait for the waiter to return.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter did not return within 1s")
+            .expect("waiter task panicked");
+        assert!(result);
     }
 
     #[test]

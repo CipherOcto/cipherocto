@@ -50,6 +50,12 @@ pub enum CoreError {
     /// `wait_for_connected` / `wait_for_health` deadline exceeded.
     #[error("timeout after {secs}s")]
     Timeout { secs: u64 },
+
+    /// Mission 0850p-a-symlink-check: `session_path` resolves to a
+    /// symlink whose target is outside the requested parent directory
+    /// (potential symlink-attack attempt; see D-WA-4).
+    #[error("session_path {requested:?} is a symlink pointing to {resolved:?} outside the requested parent (potential symlink-attack)")]
+    SessionPathSymlink { requested: String, resolved: String },
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

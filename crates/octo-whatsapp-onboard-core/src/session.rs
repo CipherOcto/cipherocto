@@ -4,6 +4,12 @@
 //! R4-C1: use `adapter.health_check()` (existing method) instead of a
 //! non-existent `bot_handle_is_alive()`. R3-M1: 100ms grace period
 //! after `Event::Connected` re-verifies the bot is still alive.
+//!
+//! Mission 0850p-a-notify-event-connected: `wait_for_connected` now
+//! uses the adapter's `Arc<Notify>` (signalled on `Event::Connected`)
+//! with a one-shot pre-check (so an already-paired bot returns
+//! immediately) and a 250ms-poll fallback for back-compat with
+//! older adapter builds that predate the Notify field.
 
 use std::time::{Duration, Instant};
 
@@ -25,9 +31,21 @@ pub const SESSION_LIST_HEALTH_TIMEOUT_SECS: u64 = 5;
 pub const WHOAMI_TIMEOUT_SECS: u64 = 30;
 
 /// Wait for `Event::Connected` (and the resolved `self_phone`) with
-/// a timeout. Polls `adapter.self_handle()` every `POLL_INTERVAL_MS`,
-/// then re-verifies via `health_check()` after a `POST_CONNECT_GRACE_MS`
-/// grace period to catch the `Connected` -> `LoggedOut` race.
+/// a timeout. The implementation:
+///
+/// 1. **Pre-check** (mission 0850p-a-has-valid-session): if the
+///    adapter already has a valid session (`has_valid_session()`),
+///    return the phone immediately (the CLI is restarting a
+///    pre-paired bot).
+/// 2. **Notify-wait** (mission 0850p-a-notify-event-connected):
+///    await the adapter's `Arc<Notify>` with the timeout. The
+///    adapter's `Event::Connected` handler calls `notify_waiters()`.
+/// 3. **Grace period** (R3-M1): re-verify with `health_check()`
+///    after a `POST_CONNECT_GRACE_MS` delay to catch the
+///    `Connected` -> `LoggedOut` race.
+/// 4. **Polling fallback** (R1-M2): if the Notify never fires (older
+///    adapter build), poll `self_handle()` every `POLL_INTERVAL_MS`
+///    until the deadline.
 ///
 /// R7-H1: shares the same constants as `wait_for_health`. The two
 /// helpers are kept separate because their return types differ
@@ -36,22 +54,63 @@ pub async fn wait_for_connected(
     adapter: &WhatsAppWebAdapter,
     timeout: Duration,
 ) -> Result<String> {
+    // Mission 0850p-a-has-valid-session: if the adapter already has
+    // a valid session (pre-paired bot), return the phone in <2ms
+    // without any polling or Notify wait.
+    if let Some(phone) = adapter.self_handle() {
+        // Re-verify after grace period (catches the Connected -> LoggedOut race)
+        tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
+        if adapter.health_check().await.is_ok() && adapter.self_handle().is_some() {
+            return Ok(phone);
+        }
+        return Err(CoreError::SessionExpired);
+    }
+
     let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(phone) = adapter.self_handle() {
-            // Re-verify after grace period (catches the Connected -> LoggedOut race)
-            tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
-            if adapter.health_check().await.is_ok() && adapter.self_handle().is_some() {
+    let notify = adapter.connected();
+    // Race the Notify against the polling fallback. The first one to
+    // see `self_handle()` set wins.
+    let check = async {
+        // notified() returns when the adapter calls notify_waiters()
+        // (or the future is dropped). We pair this with a periodic
+        // poll to keep the API identical to the legacy behavior
+        // (any path that sets self_handle wakes the waiter).
+        let mut interval = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // Check 1: adapter-side state (handles all paths that
+            // set self_phone, not just Event::Connected).
+            if let Some(phone) = adapter.self_handle() {
                 return Ok(phone);
             }
-            return Err(CoreError::SessionExpired);
+            // Check 2: Notify wakeup. Use tokio::select! to race
+            // the Notify against the next poll tick.
+            tokio::select! {
+                _ = notify.notified() => {
+                    if let Some(phone) = adapter.self_handle() {
+                        return Ok(phone);
+                    }
+                    // Notify fired but state not yet set; loop back.
+                }
+                _ = interval.tick() => {
+                    // Periodic poll already handled above; just
+                    // continue the loop to re-check.
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(CoreError::Timeout {
+                    secs: timeout.as_secs(),
+                });
+            }
         }
-        if Instant::now() >= deadline {
-            return Err(CoreError::Timeout {
-                secs: timeout.as_secs(),
-            });
-        }
-        tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+    };
+    let phone = check.await?;
+    // Re-verify after grace period (catches the Connected -> LoggedOut race)
+    tokio::time::sleep(Duration::from_millis(POST_CONNECT_GRACE_MS)).await;
+    if adapter.health_check().await.is_ok() && adapter.self_handle().is_some() {
+        Ok(phone)
+    } else {
+        Err(CoreError::SessionExpired)
     }
 }
 

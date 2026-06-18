@@ -98,15 +98,13 @@ to the trait) — but the bit MUST be clear.
 
 | Adapter | Bit | Old | New | Reason |
 |---|---|---|---|---|
-| WhatsApp | `can_join_by_invite` | `true` | `false` (or implement) | H1: bit was true, method was `Unimplemented` |
-| WhatsApp | `can_join_by_invite` | (alternative) implement via `client.groups().join_with_invite_code(...)` | (alternative) | H1: SDK call exists per the existing comment |
+| WhatsApp | `can_join_by_invite` | `true` (impl returns `Unimplemented`) | implement via `client.groups().join_with_invite_code(...)` | H1: SDK call exists per the existing comment; bit is honest only when impl is real (see §3 H1 for the variant mapping) |
 | IRC | `can_join_by_id` | `false` | `true` (and add `join_by_id` method that wraps `join_by_invite`) | M10: `JOIN #chan` IS join-by-id; the bit is conservative-but-wrong |
 
-**Decision policy:** for H1, choose the **alternative** (implement
-`join_by_invite` on WhatsApp) — this is more useful and matches the
-doc's claim. For M10, choose the bit-flip — IRC's `join_by_invite`
-and `join_by_id` would be aliases of the same underlying `JOIN` IRC
-command, and the bit should reflect that.
+**Decision policy:** for H1, implement `join_by_invite` (variant
+mapping in §3 H1 below). For M10, choose the bit-flip — IRC's
+`join_by_invite` and `join_by_id` would be aliases of the same
+underlying `JOIN` IRC command, and the bit should reflect that.
 
 ### 2. Input validation (closes M2, M15, M16)
 
@@ -129,12 +127,37 @@ test builds.
 - **M2:** add `try_new` constructors; the existing `new` methods get
   `debug_assert!(!s.is_empty())`.
 
-### 3. Error and partial-success semantics (closes H2, H6, M1, M4, M5, M13)
+### 3. Error and partial-success semantics (closes H1, H2, H6, M1, M4, M5, M13)
+
+**H1 — WhatsApp `join_by_invite` implementation.** Implement the
+method via `client.groups().join_with_invite_code(invite.0.as_str())`.
+The SDK returns `Result<JoinGroupResult, anyhow::Error>` where
+`JoinGroupResult` is an enum defined in the `wacore` SDK at
+`wacore/src/iq/groups.rs:2318`:
+
+```rust
+pub enum JoinGroupResult {
+    Joined(Jid),
+    PendingApproval(Jid),
+}
+```
+
+Map both variants to
+`Ok(GroupHandle { id: GroupId::new(jid.to_string()), is_admin: false,
+subject: None, invite_url: None, member_count: None, mode_flags: None })`.
+The implementer MAY distinguish `PendingApproval` from `Joined` by
+leaving `subject: None` and returning `Ok(GroupHandle)`; callers that
+need to know "pending vs joined" can call `get_group_metadata` after
+a backoff. Map the `anyhow::Error` to
+`PlatformAdapterError::ApiError` with a clear message. Keep
+`can_join_by_invite: true` in the capability report (now honest
+because the impl is real).
 
 **H2 — WhatsApp `create_group` trait/inherent disambiguation.**
 Rename the inherent `create_group` on `WhatsAppWebAdapter` to
-`create_group_str` (mirroring the `leave_group_str` precedent at
-`crates/octo-adapter-whatsapp/src/adapter.rs:1767-1796`). The trait
+`create_group_str` (mirroring the `leave_group_str` precedent: inherent
+method at `crates/octo-adapter-whatsapp/src/adapter.rs:1769`, comment
+block at lines 1763-1764, trait impl at lines 1467-1479). The trait
 impl calls the unambiguous inherent. This removes the
 infinite-recursion footgun that would silently activate if anyone
 loosens the inherent's signature.
@@ -163,9 +186,10 @@ the explicit error path.
 
 **M4 — WhatsApp `create_group` initial-admin promotion failure is
 silent.** Add an `initial_admins_promoted: bool` field to
-`GroupHandle` (defaulted via `#[serde(default)]` for backward
-compatibility). The WhatsApp impl populates it from the
-`promote_participants` call's result. The trait's
+`GroupHandle` (defaulted via `#[serde(default)]` for wire
+backward-compatibility: pre-RFC-0861 serializations deserialize
+with `initial_admins_promoted: false`). The WhatsApp impl populates
+it from the `promote_participants` call's result. The trait's
 `is_admin: true` claim is documented to mean "the calling bot is
 admin", not "all initial members are admin".
 
@@ -180,8 +204,10 @@ should call `get_group_metadata` separately".
 **M13 — N+1 invite-URL materialization in `list_own_groups`.** Add
 a new method `list_own_groups_with_invites(&self) ->
 Result<Vec<GroupHandle>, PlatformAdapterError>` that materializes
-the invite URLs in parallel using
-`futures::future::join_all` (already a workspace dep). Keep the
+the invite URLs in parallel. The implementer MAY use
+`futures::future::join_all` (will require adding `futures = "0.3"` to
+`crates/octo-adapter-whatsapp/Cargo.toml`; not currently a dep) OR
+`tokio::task::JoinSet` (already available via `tokio`). Keep the
 existing `list_own_groups` for callers that don't need URLs. Document
 the N+1 cost in the trait.
 
@@ -200,8 +226,16 @@ codes).
 
 **M8 — IRC `health_check` doesn't validate the authenticated
 session.** The IRC impl MUST add an `is_authenticated: AtomicBool`
-field on `IrcAdapter`, set it on `RPL_WELCOME` (001), clear it on
-disconnect. `health_check` MUST return
+field on `IrcAdapter`, set it on the first RPL_ENDOFMOTD (376) or
+ERR_NOMOTD (422) received, and clear it on disconnect or session
+restart. Using 376/422 (not 001 / RPL_WELCOME) is intentional: the
+listener's existing 376/422 handler at
+`crates/octo-adapter-irc/src/lib.rs:838-849` triggers the channel
+JOINs, and 376/422 are only sent AFTER the NICK/USER handshake
+completes, so they are the canonical "we are authenticated and the
+session is usable" signal. (The listener has no 001/RPL_WELCOME
+parsing; using 376/422 reuses existing code instead of adding new
+parsing.) `health_check` MUST return
 `ApiError { code: 503, message: "IRC session not authenticated" }`
 when `is_authenticated` is false, even if the TCP path is up.
 
@@ -232,15 +266,22 @@ actions (e.g. `set_locked`, `promote_to_admin`) on this group at
 this moment. `false` means either the adapter is not an admin, or
 the platform doesn't expose admin status for the bot". The IRC
 impl currently always returns `false` for `join_by_invite` (line
-1036) and `list_own_groups` (line 976) — this is correct per the
+1565) and `list_own_groups` (line 1469) — this is correct per the
 new doc, since IRC doesn't track op status at the adapter level.
 
 ### 7. M3 — IRC `health_check` ignores `use_tls`
 
-Once R21's `connect_tls` no-op is fixed (R23d C1), `health_check`
-MUST attempt the TLS handshake (or at least validate the cert
-chain) when `use_tls = true`. This is blocked on C1's fix; tracked
-under the same mission.
+The current `health_check` does a plain `TcpStream::connect` even
+when `use_tls = true`. Once `connect_tls` is real (it is now, at
+`crates/octo-adapter-irc/src/lib.rs:713-723` — uses `tokio-rustls`
+via `TlsConnector::from(tls_client_config())`), `health_check` MUST
+attempt the same TLS handshake when `use_tls = true`. If the
+handshake fails, return `ApiError { code: 525, message: "TLS
+handshake failed" }` so the caller can distinguish "TCP up, TLS
+broken" from "TCP down".
+
+The R23d C1 fix is already in `next` (commit `4b0f5e0`), so this
+is unblocked. Tracked in the same mission, no separate sub-task.
 
 ## Implementation Phases
 
@@ -266,23 +307,19 @@ under the same mission.
 ### Phase 3: IRC-side behavior changes
 
 - Tighten `IrcConfig::validate()` channel-name rules per §2 (M15)
-- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8)
+- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8) — set on 376/422, clear on disconnect
 - Wire `ERR_CHANOPRIVSNEEDED` to `add_member` `ApiError` per §4 (M7)
 - Flip `can_join_by_id: true` and add `join_by_id` wrapper per §1 (M10)
-- Update `health_check` to use TLS per §7 (M3) — blocked on R23d C1's fix
-
-### Phase 4: Update M3 once C1 is fixed
-
-(no separate mission; rolls into the master mission as a sub-task)
+- Update `health_check` to use TLS per §7 (M3) — was previously "Phase 4" but is unblocked since R23d C1 is already fixed
 
 ## Key Files to Modify
 
 | File | Change |
 |---|---|
 | `crates/octo-network/src/dot/adapters/coordinator_admin.rs` | `try_new` ctors (M2), `AddMemberOutput` (H6), `initial_admins_promoted` (M4), `list_own_groups_with_invites` (M13), doc updates (M12, M14) |
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | `create_group_str` rename (H2), `join_by_invite` impl (H1), `set_ephemeral` error (M1), M5 logging, M11 HashSet, M16 JID validation |
-| `crates/octo-adapter-irc/src/lib.rs` | `IrcConfig::validate` channel rules (M15), `is_authenticated` (M8), `add_member` `ERR_CHANOPRIVSNEEDED` (M7), `can_join_by_id` flip + `join_by_id` (M10) |
-| `crates/octo-adapter-irc/src/lib.rs` (listener) | M3 (TLS health check) — blocked on R23d C1 |
+| `crates/octo-adapter-whatsapp/src/adapter.rs` | `create_group_str` rename (H2; inherent `leave_group_str` precedent at line 1769, trait impl at line 1467-1479), `join_by_invite` impl (H1, line 1728-1742), `set_ephemeral` error (M1), M5 logging, M11 HashSet, M16 JID validation |
+| `crates/octo-adapter-irc/src/lib.rs` | `IrcConfig::validate` channel rules (M15, line ~140), `is_authenticated` (M8, in `irc_session` at line ~838), `add_member` `ERR_CHANOPRIVSNEEDED` (M7, `add_member` trait impl at line 1261-1273), `can_join_by_id` flip + `join_by_id` (M10, capability report at line 1190) |
+| `crates/octo-adapter-irc/src/lib.rs` (listener / `irc_session`) | M3 (TLS health check at line 1128) |
 | `docs/research/coordinator-admin-actions.md` | Update M10's claim that IRC doesn't support join-by-id |
 
 ## Future Work
@@ -316,7 +353,8 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 11 R1 findings (H1, H2, H6, M1, M4, M5, M10, M11, M12, M13, M14, M15, M16, M3, M7, M8). |
+| 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 17 R1 findings (H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16). |
+| 1.1     | 2026-06-18 | R24a fixes: H1 detailed with `JoinGroupResult` mapping; M8 trigger changed from 001 (RPL_WELCOME) to 376/422 (RPL_ENDOFMOTD/ERR_NOMOTD) since the listener has no 001 parsing; M3 unblocked (R23d C1 is fixed); stale line numbers corrected; `futures` dep note added for M13; test count corrections. |
 
 ## Related RFCs
 
@@ -344,7 +382,6 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 |---|---|---|---|---|
 | H1 | §1 | HIGH | WhatsApp | 2 |
 | H2 | §3 | HIGH | WhatsApp | 2 |
-| H6 | §3 | HIGH | WhatsApp | 1 |
 | M1 | §3 | MEDIUM | WhatsApp | 2 |
 | M2 | §2 | MEDIUM | trait | 1 |
 | M3 | §7 | MEDIUM | IRC | 4 (blocked on C1) |

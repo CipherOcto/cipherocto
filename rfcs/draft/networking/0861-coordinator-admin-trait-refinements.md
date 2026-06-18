@@ -144,14 +144,16 @@ pub enum JoinGroupResult {
 
 Map both variants to
 `Ok(GroupHandle { id: GroupId::new(jid.to_string()), is_admin: false,
-subject: None, invite_url: None, member_count: None, mode_flags: None })`.
-The implementer MAY distinguish `PendingApproval` from `Joined` by
-leaving `subject: None` and returning `Ok(GroupHandle)`; callers that
-need to know "pending vs joined" can call `get_group_metadata` after
-a backoff. Map the `anyhow::Error` to
-`PlatformAdapterError::ApiError` with a clear message. Keep
-`can_join_by_invite: true` in the capability report (now honest
-because the impl is real).
+subject: None, invite_url: None, member_count: None, mode_flags: None,
+initial_admins_promoted: false })`. (The `initial_admins_promoted:
+false` field is required because `GroupHandle` does NOT derive
+`Default`; see §3 M4 for the field's purpose.) The implementer MAY
+distinguish `PendingApproval` from `Joined` by leaving `subject: None`
+and returning `Ok(GroupHandle)`; callers that need to know "pending
+vs joined" can call `get_group_metadata` after a backoff. Map the
+`anyhow::Error` to `PlatformAdapterError::ApiError` with a clear
+message. Keep `can_join_by_invite: true` in the capability report
+(now honest because the impl is real).
 
 **H2 — WhatsApp `create_group` trait/inherent disambiguation.**
 Rename the inherent `create_group` on `WhatsAppWebAdapter` to
@@ -234,9 +236,14 @@ resolves when the matching numeric reply arrives.
 **M8 — IRC `health_check` doesn't validate the authenticated
 session.** The IRC impl MUST add an `is_authenticated: AtomicBool`
 field on `IrcAdapter`, set it on the first RPL_ENDOFMOTD (376) or
-ERR_NOMOTD (422) received, and clear it on disconnect or session
-restart. Using 376/422 (not 001 / RPL_WELCOME) is intentional: the
-listener's existing 376/422 handler at
+ERR_NOMOTD (422) received, and clear it in BOTH `mark_disconnected`
+(transient drop, at `crates/octo-adapter-irc/src/lib.rs:377`) AND
+`shutdown` (full teardown, at `crates/octo-adapter-irc/src/lib.rs:1086`).
+Without clearing in `mark_disconnected`, a transient connection
+drop leaves `is_authenticated = true` until the next 376/422
+arrives, giving `health_check` a brief window where it lies.
+Using 376/422 (not 001 / RPL_WELCOME) as the SET trigger is
+intentional: the listener's existing 376/422 handler at
 `crates/octo-adapter-irc/src/lib.rs:838-849` triggers the channel
 JOINs, and 376/422 are only sent AFTER the NICK/USER handshake
 completes, so they are the canonical "we are authenticated and the
@@ -370,6 +377,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | 1.4     | 2026-06-18 | R24d fixes: AddMemberOutput.promoted type changed from `Result<(), PlatformAdapterError>` to `Option<Result<(), PlatformAdapterError>>` (doc said "None if X" which was impossible for bare Result); Version History 1.2 row recovered (was overwritten in R24c); Phase 2 M1 "sibling method" phrasing corrected to "TRAIT impl, not the inherent"; Phase 2 H2 line reworded to clarify only M5 actually depends on the rename (not "all other Phase 2 edits"); Mission Phase 1 / Phase 2 / Mission Status Log updated to match. |
 | 1.5     | 2026-06-18 | R24e fixes: Version History 1.4 row added (was claimed in R24d commit message but never written to file); downstream R5 closure summary table updated — M3 phase changed from "4 (blocked on C1)" to "3 (unblocked since R23d C1)"; R5 footnote expanded to point readers to RFC-0861 Appendix A as the canonical mapping; Mission Phase 1 H6 acceptance criterion extended to require a discriminator test for the three `Option<Result<>>` variants. |
 | 1.6     | 2026-06-18 | R24f fixes: Version History 1.3 row recovered (was lost when R24d's edit replaced the 1.2 row with a 1.4 row); Mission Phase 2 plan reordered to put H2 BEFORE M5 (matches the RFC's instruction that M5 lands on the post-H2-renamed function); Mission Phase 2 H1 bullets merged into one coupled acceptance criterion (the capability bit and the impl are not independent). |
+| 1.7     | 2026-06-18 | R24g fixes: §3 H1 struct literal now includes `initial_admins_promoted: false` (would fail to compile after Phase 1 M4 lands, since GroupHandle doesn't derive Default); §4 M8 "clear on disconnect" clarified to clear in BOTH `mark_disconnected` (lib.rs:377) AND `shutdown` (lib.rs:1086) — transient drop otherwise leaves is_authenticated=true until next 376/422; Mission Phase 3 M7 acceptance extended to require a unit test for the new `pending_replies` HashMap. |
 
 ## Related RFCs
 

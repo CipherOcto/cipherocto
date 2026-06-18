@@ -64,7 +64,7 @@ and the implementation work is tracked by **mission
 | H6 | HIGH | WhatsApp | §3 | 1 |
 | M1 | MEDIUM | WhatsApp | §3 | 2 |
 | M2 | MEDIUM | trait | §2 | 1 |
-| M3 | MEDIUM | IRC | §7 | 4 (blocked on C1) |
+| M3 | MEDIUM | IRC | §7 | 3 (unblocked since R23d C1) |
 | M4 | MEDIUM | WhatsApp | §3 | 1 |
 | M5 | MEDIUM | WhatsApp | §3 | 2 |
 | M7 | MEDIUM | IRC | §4 | 3 |
@@ -80,6 +80,15 @@ and the implementation work is tracked by **mission
 (R5 originally listed 16 of these; M2 was missed in the R5
 enumeration and is the same kind of trait-level input-validation
 fix as M15/M16, so it was rolled into the same RFC.)
+
+**Note:** the "RFC §" / "Mission phase" columns above are R5-time
+snapshots. The canonical, current mapping is in
+[RFC-0861 Appendix A](../rfcs/draft/networking/0861-coordinator-admin-trait-refinements.md#a-finding-to-spec-mapping),
+which has been updated through R24a/R24b/R24c/R24d to reflect that
+M3 is unblocked and in Phase 3, H6's `AddMemberOutput.promoted`
+is `Option<Result<(), PlatformAdapterError>>` (not bare `Result`),
+and the IRC `pending_replies` correlation buffer is a new field
+on `IrcAdapter` (not a reuse of `shutdown_tx`).
 
 ## Loop termination
 

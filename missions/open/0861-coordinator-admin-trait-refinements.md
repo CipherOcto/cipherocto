@@ -34,7 +34,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 
 - [ ] `GroupId::try_new`, `PeerId::try_new`, `InviteRef::try_new` exist and reject empty strings (M2)
 - [ ] Existing `new` methods have `debug_assert!(!s.is_empty())` (M2)
-- [ ] `AddMemberOutput { added: bool, promoted: Option<Result<(), PlatformAdapterError>> }` defined and the trait `add_member` returns it (H6)
+- [ ] `AddMemberOutput { added: bool, promoted: Option<Result<(), PlatformAdapterError>> }` defined and the trait `add_member` returns it (H6); unit test in `crates/octo-network/src/dot/adapters/coordinator_admin.rs` test module covers all three `promoted` variants — `None` (no promote attempted), `Some(Ok(()))` (promote succeeded), `Some(Err(_))` (add succeeded, promote failed)
 - [ ] `GroupHandle.initial_admins_promoted: bool` field added with `#[serde(default)]` (M4)
 - [ ] `list_own_groups_with_invites(&self) -> Result<Vec<GroupHandle>, _>` method added (M13)
 - [ ] Doc-comments updated for `GroupModeFlags::set_ephemeral` (M12) and `GroupHandle::is_admin` (M14)
@@ -139,3 +139,4 @@ deleted; M3 folded into Phase 3 in R24a).
 - 2026-06-18 (R24b): Round 2 review found 8 issues (1 HIGH, 2 MEDIUM, 5 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r2.md`.
 - 2026-06-18 (R24c): Round 3 review found 8 LOW accuracy gaps (off-by-one line refs, missing `Ordering`, misleading config.rs reference, Phase 1 title); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r3.md`.
 - 2026-06-18 (R24d): Round 4 review found 5 issues (2 MEDIUM, 3 LOW). MEDIUMs: Version History 1.2 row was overwritten instead of appended (recovered); AddMemberOutput.promoted doc said 'None if X' but the type was Result, not Option<Result> (now Option<Result>). LOWs: M1 'sibling method' phrasing wrong; mission M5 still said 'in create_group'; Phase 2 plan overclaimed 'all other edits'. All fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r4.md`.
+- 2026-06-18 (R24e): Round 5 review found 4 issues (1 MEDIUM, 3 LOW). MEDIUM: downstream R5 closure summary still showed M3 as 'Phase 4 (blocked on C1)' — stale; corrected to '3 (unblocked since R23d C1)' with a footnote pointing to RFC-0861 Appendix A as the canonical mapping. LOWs: Version History 1.4 row was claimed in R24d commit message but never written (added); R5 footnote expanded to clarify the columns are R5-time snapshots; Mission Phase 1 H6 criterion extended to require a discriminator test for the three Option<Result<>> variants. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r5.md`.

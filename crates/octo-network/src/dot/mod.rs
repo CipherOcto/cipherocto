@@ -26,7 +26,13 @@ pub mod sub_group;
 pub mod transport;
 pub mod witness;
 
-pub use adapters::{CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage};
+pub use adapters::{
+    coordinator_admin::{
+        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+        GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+    },
+    CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
+};
 pub use binding::{
     BindAck, BindEnvelope, BindingError, GroupBinding, GroupState, GroupVisibility,
     PlatformLossEnvelope, RebindEnvelope, UnbindAuthority, UnbindEnvelope, WitnessAssertion,
@@ -39,13 +45,6 @@ pub use dc_envelopes::{
     InviteEnvelope, UnbindAllAckEnvelope, UnbindAllEnvelope, UnbindReason,
 };
 pub use decommission::{AuditEntry, AuditLog, UnbindAllAuditEnvelope, UnbindAllDoneEnvelope};
-pub use handover::{
-    CoordinatorRole, HandoverAckEnvelope, HandoverDoneEnvelope, HandoverError,
-    HandoverReason, HandoverRequestEnvelope, SlashEvent, SlashTally,
-};
-pub use sub_group::{
-    CreateSubGroupEnvelope, SubGroupError, SubGroupExtension, MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
-};
 pub use domain::{BroadcastDomainId, PlatformType};
 pub use envelope::{DeterministicEnvelope, MessageType};
 pub use error::{DotError, PlatformAdapterError};
@@ -54,6 +53,10 @@ pub use group_registry::{
     GroupRegistry, UnboundQuarantineEntry, UnboundQuarantineKey, DEFAULT_MAX_REJOIN_ATTEMPTS,
     REJOIN_GRANT_TIMEOUT,
 };
+pub use handover::{
+    CoordinatorRole, HandoverAckEnvelope, HandoverDoneEnvelope, HandoverError, HandoverReason,
+    HandoverRequestEnvelope, SlashEvent, SlashTally,
+};
 pub use kick_envelopes::{
     KickDetectedEnvelope, MemberRemovedEnvelope, PlatformKickEvent, RejoinGrantEnvelope,
     RejoinRequestEnvelope, SelfKickedEnvelope,
@@ -61,6 +64,9 @@ pub use kick_envelopes::{
 pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;
 pub use slash::{cross_platform_code, is_cross_platform, reserved as slash_reserved, SlashCode};
+pub use sub_group::{
+    CreateSubGroupEnvelope, SubGroupError, SubGroupExtension, MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+};
 pub use witness::{BINDHook, NonceReplayTable, ValidationOutcome, WitnessContext};
 
 use tokio::sync::RwLock;

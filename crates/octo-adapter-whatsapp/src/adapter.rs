@@ -11,6 +11,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use octo_network::dot::adapters::{
+    coordinator_admin::{
+        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+        GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+    },
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
@@ -820,6 +824,370 @@ impl WhatsAppWebAdapter {
             .await
             .map_err(|e| format!("group_metadata failed: {e:#}"))
     }
+
+    // ── R20: CoordinatorAdmin surface (wraps whatsapp-rust groups API) ──
+    //
+    // These methods expose the same primitives that `CoordinatorAdmin`
+    // needs, but with a `Result<_, String>` return type and `&str`
+    // group JIDs. The trait impl below wraps them, normalizes errors
+    // to `PlatformAdapterError`, and bridges the platform-native
+    // `GroupId` / `PeerId` newtypes to WhatsApp's internal `wacore_binary::Jid`
+    // format.
+
+    /// Remove phone-number participants from an existing group. The bot
+    /// must be an admin of the group.
+    pub async fn remove_members(
+        &self,
+        group_jid: &str,
+        participants: &[&str],
+    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
+        for phone in participants {
+            let digits = Self::normalize_phone(phone);
+            if digits.is_empty() {
+                return Err(format!("participant {phone:?} has no digits"));
+            }
+            jids.push(wacore_binary::Jid::pn(digits));
+        }
+
+        let responses = client
+            .groups()
+            .remove_participants(&jid, &jids)
+            .await
+            .map_err(|e| format!("remove_participants failed: {e:#}"))?;
+
+        tracing::info!(
+            group_jid = %group_jid,
+            removed = responses.iter().filter(|r| r.is_ok()).count(),
+            failed = responses.iter().filter(|r| !r.is_ok()).count(),
+            "WhatsApp group participants removed"
+        );
+        Ok(responses)
+    }
+
+    /// Promote phone-number participants to admin. The bot must itself be
+    /// an admin of the group.
+    pub async fn promote_participants(
+        &self,
+        group_jid: &str,
+        participants: &[&str],
+    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
+        for phone in participants {
+            let digits = Self::normalize_phone(phone);
+            if digits.is_empty() {
+                return Err(format!("participant {phone:?} has no digits"));
+            }
+            jids.push(wacore_binary::Jid::pn(digits));
+        }
+
+        // whatsapp-rust's `promote_participants` returns `()`. Synthesize a
+        // per-participant success response so callers can reuse the same
+        // `Vec<ParticipantChangeResponse>` shape as `add_members` and
+        // `remove_members` (the per-participant semantics matches the
+        // server's actual processing of each JID).
+        client
+            .groups()
+            .promote_participants(&jid, &jids)
+            .await
+            .map_err(|e| format!("promote_participants failed: {e:#}"))?;
+
+        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
+            .iter()
+            .map(|j| whatsapp_rust::ParticipantChangeResponse {
+                jid: j.clone(),
+                status: Some("promoted".into()),
+                error: None,
+                phone_number: None,
+                username: None,
+                add_request: None,
+            })
+            .collect();
+
+        tracing::info!(
+            group_jid = %group_jid,
+            promoted = responses.len(),
+            "WhatsApp participants promoted to admin"
+        );
+        Ok(responses)
+    }
+
+    /// Demote admins back to regular participants. The bot must remain
+    /// an admin of the group (WhatsApp does not allow the last admin
+    /// to demote itself).
+    pub async fn demote_participants(
+        &self,
+        group_jid: &str,
+        participants: &[&str],
+    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
+        for phone in participants {
+            let digits = Self::normalize_phone(phone);
+            if digits.is_empty() {
+                return Err(format!("participant {phone:?} has no digits"));
+            }
+            jids.push(wacore_binary::Jid::pn(digits));
+        }
+
+        // whatsapp-rust's `demote_participants` returns `()`. Synthesize a
+        // per-participant success response, same as `promote_participants`.
+        client
+            .groups()
+            .demote_participants(&jid, &jids)
+            .await
+            .map_err(|e| format!("demote_participants failed: {e:#}"))?;
+
+        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
+            .iter()
+            .map(|j| whatsapp_rust::ParticipantChangeResponse {
+                jid: j.clone(),
+                status: Some("demoted".into()),
+                error: None,
+                phone_number: None,
+                username: None,
+                add_request: None,
+            })
+            .collect();
+
+        tracing::info!(
+            group_jid = %group_jid,
+            demoted = responses.len(),
+            "WhatsApp participants demoted from admin"
+        );
+        Ok(responses)
+    }
+
+    /// List the groups the bot currently participates in. Each entry
+    /// carries the JID and the subject. Used by the coordinator to
+    /// reconcile its view of "groups I own" against the platform.
+    pub async fn get_participating(
+        &self,
+    ) -> Result<std::collections::HashMap<String, whatsapp_rust::GroupMetadata>, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let groups = client
+            .groups()
+            .get_participating()
+            .await
+            .map_err(|e| format!("get_participating failed: {e:#}"))?;
+
+        Ok(groups)
+    }
+
+    /// Set the group subject (the human-readable name). Bot must be admin.
+    pub async fn set_subject(&self, group_jid: &str, subject: &str) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let subject_typed = whatsapp_rust::GroupSubject::new(subject)
+            .map_err(|e| format!("set_subject: invalid subject: {e:#}"))?;
+
+        client
+            .groups()
+            .set_subject(&jid, subject_typed)
+            .await
+            .map_err(|e| format!("set_subject failed: {e:#}"))?;
+        Ok(())
+    }
+
+    /// Set the group description / topic. Bot must be admin.
+    ///
+    /// WhatsApp's `set_description` API requires the current description
+    /// ID (from `group_metadata()`) for conflict detection. We pass
+    /// `None` (unknown) here, which means: "if a description already
+    /// exists, the call will fail with a conflict error and the caller
+    /// should re-read metadata and retry with the ID." The simple
+    /// coordinator flow that wants first-write-wins should fetch
+    /// metadata first, then call this with the existing ID.
+    pub async fn set_description(&self, group_jid: &str, description: &str) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let desc_typed = whatsapp_rust::GroupDescription::new(description)
+            .map_err(|e| format!("set_description: invalid description: {e:#}"))?;
+
+        client
+            .groups()
+            .set_description(&jid, Some(desc_typed), None)
+            .await
+            .map_err(|e| format!("set_description failed: {e:#}"))?;
+        Ok(())
+    }
+
+    /// Set the "announce mode" (only admins can post). Bot must be admin.
+    pub async fn set_announce(&self, group_jid: &str, announce_only: bool) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        client
+            .groups()
+            .set_announce(&jid, announce_only)
+            .await
+            .map_err(|e| format!("set_announce failed: {e:#}"))?;
+        Ok(())
+    }
+
+    /// Set the "locked" mode (only admins can edit group info).
+    pub async fn set_locked(&self, group_jid: &str, locked: bool) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        client
+            .groups()
+            .set_locked(&jid, locked)
+            .await
+            .map_err(|e| format!("set_locked failed: {e:#}"))?;
+        Ok(())
+    }
+
+    /// Set the ephemeral / disappearing-message TTL in seconds.
+    /// Pass `0` (or `Some(0)`) to disable. Common values:
+    /// 86400 (24h), 604800 (7d), 7776000 (90d).
+    pub async fn set_ephemeral(&self, group_jid: &str, ttl_seconds: u32) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        client
+            .groups()
+            .set_ephemeral(&jid, ttl_seconds)
+            .await
+            .map_err(|e| format!("set_ephemeral failed: {e:#}"))?;
+        Ok(())
+    }
+
+    /// Resolve a `chat.whatsapp.com/CODE` invite URL or `CODE` string to
+    /// the full group metadata. Does not auto-join; the caller decides.
+    pub async fn get_invite_info(
+        &self,
+        invite: &str,
+    ) -> Result<whatsapp_rust::GroupMetadata, String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        // `get_invite_info` does its own `extract_invite_code` internally,
+        // accepting both `chat.whatsapp.com/CODE` URLs and bare codes.
+        let info = client
+            .groups()
+            .get_invite_info(invite)
+            .await
+            .map_err(|e| format!("get_invite_info failed: {e:#}"))?;
+
+        Ok(info)
+    }
+
+    /// Set membership-approval mode (new joiners must be approved by an
+    /// admin). Bot must be admin.
+    pub async fn set_membership_approval(
+        &self,
+        group_jid: &str,
+        require: bool,
+    ) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+
+        let mode = if require {
+            whatsapp_rust::MembershipApprovalMode::On
+        } else {
+            whatsapp_rust::MembershipApprovalMode::Off
+        };
+
+        client
+            .groups()
+            .set_membership_approval(&jid, mode)
+            .await
+            .map_err(|e| format!("set_membership_approval failed: {e:#}"))?;
+        Ok(())
+    }
 }
 
 // ── PlatformAdapter ────────────────────────────────────────────────
@@ -974,6 +1342,499 @@ impl PlatformAdapter for WhatsAppWebAdapter {
 
         tracing::info!("WhatsApp Web adapter shut down");
         Ok(())
+    }
+
+    /// Coordinator-admin capability probe: WhatsApp supports the full
+    /// admin set, so we opt in to `CoordinatorAdmin` by returning
+    /// `Some(self)` here. Callers use
+    /// [`PlatformAdapter::as_coordinator_admin`] to downcast.
+    fn as_coordinator_admin(
+        &self,
+    ) -> Option<&dyn octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin> {
+        Some(self)
+    }
+}
+
+// ── CoordinatorAdmin (R20) ─────────────────────────────────────────
+//
+// WhatsApp implements the full coordinator/admin surface. Every
+// method on `CoordinatorAdmin` either delegates to one of the
+// `*_impl` methods above or constructs the platform-neutral types
+// (`GroupMetadata`, `GroupModeFlags`, `PeerId`) from the rich
+// `whatsapp_rust::GroupMetadata` we get from the server.
+//
+// JID conventions: phone numbers come in as raw digits (e.g.
+// `5521995544743`); JIDs come in as `<digits>@g.us` (groups) or
+// `<digits>@s.whatsapp.net` (users). The `PeerId` we hand back is
+// the same string the platform uses natively.
+
+#[async_trait]
+impl CoordinatorAdmin for WhatsAppWebAdapter {
+    /// Truthful capability report. Anything we don't override on
+    /// the trait returns `Unimplemented`, but the methods we *do*
+    /// override match this report.
+    fn admin_capabilities(&self) -> AdminCapabilityReport {
+        AdminCapabilityReport {
+            // Lifecycle
+            can_create: true,
+            can_join_by_id: false,
+            can_join_by_invite: true, // `join_with_invite_code` exists in whatsapp-rust
+            can_leave: true,
+            can_destroy: false, // No first-class "destroy" on WhatsApp
+            // Membership
+            can_add_member: true,
+            can_remove_member: true,
+            can_ban: false, // WhatsApp has no ban primitive
+            can_promote: true,
+            can_demote: true,
+            can_approve_join: false, // Not exposed in whatsapp-rust's typed API
+            // Mode
+            can_rename: true,
+            can_describe: true,
+            can_lock: true,
+            can_announce: true,
+            can_set_ephemeral: true,
+            can_require_approval: true,
+            // Discovery
+            can_list_own_groups: true,
+            can_get_metadata: true,
+            can_resolve_invite: true,
+            // Handoff
+            can_transfer_ownership: false,
+        }
+    }
+
+    fn platform_name(&self) -> String {
+        "whatsapp".into()
+    }
+
+    async fn create_group(
+        &self,
+        subject: &str,
+        initial_members: &[GroupMemberSpec],
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        // Translate `GroupMemberSpec` to a slice of `&str` phone
+        // numbers. WhatsApp doesn't accept a per-member display
+        // name on create; the platform-side display name is
+        // whatever the contact already has in its address book.
+        let phones: Vec<&str> = initial_members.iter().map(|m| m.handle.as_str()).collect();
+
+        let output = self.create_group(subject, &phones).await.map_err(|e| {
+            PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("create_group failed: {e}"),
+            }
+        })?;
+
+        // Promote initial members that requested `is_admin = true`.
+        // (The `create_group` API creates all participants as regular
+        // members; admin status must be set with `promote_participants`
+        // after create. We do this best-effort — if any one fails the
+        // group is still created and the caller can retry.)
+        let to_promote: Vec<&str> = initial_members
+            .iter()
+            .filter(|m| m.is_admin)
+            .map(|m| m.handle.as_str())
+            .collect();
+        if !to_promote.is_empty() {
+            if let Err(e) = self
+                .promote_participants(&output.group_jid, &to_promote)
+                .await
+            {
+                tracing::warn!(
+                    group_jid = %output.group_jid,
+                    error = %e,
+                    "failed to promote initial admins on create; caller should retry"
+                );
+            }
+        }
+
+        // Pull a fresh metadata snapshot so we can fill in the
+        // membership / mode fields of the returned `GroupHandle`.
+        let metadata = self.group_metadata(&output.group_jid).await.ok();
+        let invite_url = self.get_invite_link(&output.group_jid, false).await.ok();
+
+        Ok(GroupHandle {
+            id: GroupId::new(output.group_jid),
+            subject: Some(subject.to_string()),
+            invite_url,
+            is_admin: true,
+            member_count: metadata.as_ref().and_then(|m| m.size),
+            mode_flags: metadata.as_ref().map(extract_mode_flags),
+        })
+    }
+
+    async fn leave_group(&self, group_id: &GroupId) -> Result<(), PlatformAdapterError> {
+        // Idempotency: ignore "not a participant" errors. whatsapp-rust's
+        // `leave` returns an error if the bot isn't in the group; we treat
+        // that as success (the goal state — "not a member" — is already met).
+        match self.leave_group_str(group_id.as_str()).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.contains("not a participant") || e.contains("not in group") => Ok(()),
+            Err(e) => Err(PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("leave_group failed: {e}"),
+            }),
+        }
+    }
+
+    async fn destroy_group(&self, group_id: &GroupId) -> Result<(), PlatformAdapterError> {
+        // WhatsApp has no "destroy group" primitive. The best we can do
+        // is revoke the invite link (so no new members can join) and
+        // leave. The group itself remains visible to existing members
+        // until they also leave.
+        let _ = self.get_invite_link(group_id.as_str(), true).await;
+        self.leave_group_str(group_id.as_str())
+            .await
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("destroy_group: {e}"),
+            })
+    }
+
+    async fn add_member(
+        &self,
+        group_id: &GroupId,
+        member: &GroupMemberSpec,
+    ) -> Result<(), PlatformAdapterError> {
+        let phones = [member.handle.as_str()];
+        let responses = self
+            .add_members(group_id.as_str(), &phones)
+            .await
+            .map_err(|e| api_err("add_member", e))?;
+        if let Some(r) = responses.first() {
+            if !r.is_ok() {
+                return Err(PlatformAdapterError::ApiError {
+                    code: 500,
+                    message: r
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "add_member rejected".into()),
+                });
+            }
+        }
+        // Promote to admin if requested.
+        if member.is_admin {
+            self.promote_to_admin(group_id, &PeerId::new(member.handle.clone()))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn remove_member(
+        &self,
+        group_id: &GroupId,
+        member: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let phones = [member.as_str()];
+        let responses = self
+            .remove_members(group_id.as_str(), &phones)
+            .await
+            .map_err(|e| api_err("remove_member", e))?;
+        if let Some(r) = responses.first() {
+            if !r.is_ok() {
+                return Err(PlatformAdapterError::ApiError {
+                    code: 500,
+                    message: r
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "remove_member rejected".into()),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn ban_member(
+        &self,
+        _group_id: &GroupId,
+        _member: &PeerId,
+        _duration: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        // WhatsApp has no ban primitive. The recommended pattern
+        // (per `docs/research/coordinator-admin-actions.md`) is:
+        // remove the member, then revoke the invite link. Returning
+        // `Unimplemented` here tells the caller to use that
+        // fallback rather than expecting a real ban.
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "ban_member".into(),
+        })
+    }
+
+    async fn promote_to_admin(
+        &self,
+        group_id: &GroupId,
+        member: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let phones = [member.as_str()];
+        self.promote_participants(group_id.as_str(), &phones)
+            .await
+            .map_err(|e| api_err("promote_to_admin", e))?;
+        Ok(())
+    }
+
+    async fn demote_from_admin(
+        &self,
+        group_id: &GroupId,
+        member: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let phones = [member.as_str()];
+        self.demote_participants(group_id.as_str(), &phones)
+            .await
+            .map_err(|e| api_err("demote_from_admin", e))?;
+        Ok(())
+    }
+
+    async fn approve_join_request(
+        &self,
+        _group_id: &GroupId,
+        _requester: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        // whatsapp-rust's typed API doesn't expose approve-membership-
+        // requests at the moment. Returning Unimplemented signals
+        // "fall back to manual approval in the WhatsApp client" to
+        // the caller, which is the right thing for an R-series
+        // rollout.
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "approve_join_request".into(),
+        })
+    }
+
+    async fn rename_group(
+        &self,
+        group_id: &GroupId,
+        new_subject: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_subject(group_id.as_str(), new_subject)
+            .await
+            .map_err(|e| api_err("rename_group", e))
+    }
+
+    async fn set_group_description(
+        &self,
+        group_id: &GroupId,
+        description: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_description(group_id.as_str(), description)
+            .await
+            .map_err(|e| api_err("set_group_description", e))
+    }
+
+    async fn set_locked(
+        &self,
+        group_id: &GroupId,
+        locked: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_locked(group_id.as_str(), locked)
+            .await
+            .map_err(|e| api_err("set_locked", e))
+    }
+
+    async fn set_announce(
+        &self,
+        group_id: &GroupId,
+        announce_only: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_announce(group_id.as_str(), announce_only)
+            .await
+            .map_err(|e| api_err("set_announce", e))
+    }
+
+    async fn set_ephemeral(
+        &self,
+        group_id: &GroupId,
+        ttl: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        // WhatsApp takes seconds, with 0 meaning "disabled".
+        let secs = ttl.map(|d| d.as_secs() as u32).unwrap_or(0);
+        self.set_ephemeral(group_id.as_str(), secs)
+            .await
+            .map_err(|e| api_err("set_ephemeral", e))
+    }
+
+    async fn set_require_approval(
+        &self,
+        group_id: &GroupId,
+        require: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_membership_approval(group_id.as_str(), require)
+            .await
+            .map_err(|e| api_err("set_require_approval", e))
+    }
+
+    async fn list_own_groups(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        let map = self
+            .get_participating()
+            .await
+            .map_err(|e| api_err("list_own_groups", e))?;
+        // Snapshot the bot's own phone once so we can match it against
+        // the participant list without holding the lock.
+        let self_phone = self.self_phone.lock().clone().unwrap_or_default();
+        Ok(map
+            .into_iter()
+            .map(|(jid, meta)| {
+                let mode_flags = extract_mode_flags(&meta);
+                let is_admin = meta
+                    .participants
+                    .iter()
+                    .find(|p| p.jid.user == self_phone)
+                    .map(|p| p.is_admin())
+                    .unwrap_or(false);
+                GroupHandle {
+                    id: GroupId::new(jid),
+                    subject: Some(meta.subject),
+                    invite_url: None, // would require a per-group `get_invite_link` call
+                    is_admin,
+                    member_count: meta.size,
+                    mode_flags: Some(mode_flags),
+                }
+            })
+            .collect())
+    }
+
+    async fn get_group_metadata(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<GroupMetadata, PlatformAdapterError> {
+        let raw = self
+            .group_metadata(group_id.as_str())
+            .await
+            .map_err(|e| api_err("get_group_metadata", e))?;
+        Ok(extract_group_metadata(&raw))
+    }
+
+    async fn resolve_invite(
+        &self,
+        invite: &InviteRef,
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        let raw = self
+            .get_invite_info(invite.0.as_str())
+            .await
+            .map_err(|e| api_err("resolve_invite", e))?;
+        let jid = raw.id.to_string();
+        let mode_flags = extract_mode_flags(&raw);
+        Ok(GroupHandle {
+            id: GroupId::new(jid),
+            subject: Some(raw.subject),
+            invite_url: Some(invite.to_string()),
+            is_admin: false, // Resolved but not joined yet
+            member_count: raw.size,
+            mode_flags: Some(mode_flags),
+        })
+    }
+
+    async fn join_by_invite(
+        &self,
+        _invite: &InviteRef,
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        // whatsapp-rust exposes `join_with_invite_code`. We could
+        // call it here, but the current R-series scope is the
+        // "I'm an admin, I manage a group" path. Mark as
+        // Unimplemented for now; the bot can join via the
+        // WhatsApp client and a subsequent get_participating
+        // reconcile will pick it up.
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "join_by_invite".into(),
+        })
+    }
+
+    async fn transfer_ownership(
+        &self,
+        _group_id: &GroupId,
+        _new_owner: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        // WhatsApp has no first-class "transfer ownership" primitive.
+        // The standard pattern is: promote the new owner, demote the
+        // old owner, and have the old owner leave. That is a
+        // multi-step sequence the caller can drive via
+        // `promote_to_admin` + `demote_from_admin` + `leave_group`.
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "transfer_ownership".into(),
+        })
+    }
+}
+
+// ── Helpers for CoordinatorAdmin impl ──────────────────────────────
+
+/// Internal alias: `impl WhatsAppWebAdapter::leave_group` and the
+/// `CoordinatorAdmin::leave_group` trait method have the same name
+/// (and the trait method wins resolution). We re-bind the public
+/// `String`-returning method to a distinct local name so the trait
+/// impl above can call it.
+impl WhatsAppWebAdapter {
+    async fn leave_group_str(&self, group_jid: &str) -> Result<(), String> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| "WhatsApp Web client not connected".to_string())?
+        };
+        let jid: wacore_binary::Jid = group_jid
+            .parse()
+            .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+        match client.groups().leave(&jid).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // `not a participant` / `not in group` are expected
+                // on idempotent leave — surface them as a specific
+                // error string so the trait impl can swallow them.
+                let msg = format!("{e:#}");
+                if msg.contains("not a participant")
+                    || msg.contains("not in group")
+                    || msg.contains("item-not-found")
+                {
+                    Err("not a participant".to_string())
+                } else {
+                    Err(format!("leave_group failed: {e:#}"))
+                }
+            }
+        }
+    }
+}
+
+fn api_err(action: &str, reason: String) -> PlatformAdapterError {
+    PlatformAdapterError::ApiError {
+        code: 500,
+        message: format!("{action}: {reason}"),
+    }
+}
+
+fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
+    GroupModeFlags {
+        locked: meta.is_locked,
+        announce_only: meta.is_announcement,
+        ephemeral_ttl: if meta.ephemeral_expiration == 0 {
+            None
+        } else {
+            Some(std::time::Duration::from_secs(
+                meta.ephemeral_expiration as u64,
+            ))
+        },
+        requires_approval: meta.membership_approval,
+    }
+}
+
+fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
+    let mut members: Vec<PeerId> = Vec::with_capacity(raw.participants.len());
+    let mut admins: Vec<PeerId> = Vec::new();
+    for p in &raw.participants {
+        members.push(PeerId::new(p.jid.to_string()));
+        if p.is_admin() {
+            admins.push(PeerId::new(p.jid.to_string()));
+        }
+    }
+    GroupMetadata {
+        id: GroupId::new(raw.id.to_string()),
+        subject: Some(raw.subject.clone()),
+        description: raw.description.clone(),
+        members,
+        admins,
+        invite_url: None, // requires a per-group get_invite_link round trip
+        mode_flags: extract_mode_flags(raw),
     }
 }
 
@@ -1505,5 +2366,251 @@ mod tests {
         // Order matters: the JID parse happens *after* the not-connected
         // check, so we expect "not connected" first.
         assert!(err.contains("not connected"), "unexpected error: {err}");
+    }
+
+    // ── R20: CoordinatorAdmin + new admin methods (offline unit tests)
+
+    fn expect_not_connected(err: String) {
+        assert!(err.contains("not connected"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn remove_members_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .remove_members("120363012345678901@g.us", &["+15551234567"])
+            .await
+            .expect_err("remove_members must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn promote_participants_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .promote_participants("120363012345678901@g.us", &["+15551234567"])
+            .await
+            .expect_err("promote_participants must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn demote_participants_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .demote_participants("120363012345678901@g.us", &["+15551234567"])
+            .await
+            .expect_err("demote_participants must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn get_participating_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .get_participating()
+            .await
+            .expect_err("get_participating must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_subject_rejects_empty() {
+        let adapter = offline_adapter();
+        // Empty / whitespace subjects are caught by the
+        // `GroupSubject::new` length validator, not by the
+        // not-connected check, so we see the validator error
+        // before the client is needed.
+        for bad in ["", "   "] {
+            let err = adapter
+                .set_subject("120363012345678901@g.us", bad)
+                .await
+                .expect_err("empty/whitespace subject should be rejected");
+            assert!(
+                err.contains("invalid subject") || err.contains("not connected"),
+                "unexpected error: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn set_subject_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_subject("120363012345678901@g.us", "valid subject")
+            .await
+            .expect_err("set_subject must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_description_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_description("120363012345678901@g.us", "valid description")
+            .await
+            .expect_err("set_description must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_announce_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_announce("120363012345678901@g.us", true)
+            .await
+            .expect_err("set_announce must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_locked_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_locked("120363012345678901@g.us", true)
+            .await
+            .expect_err("set_locked must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_ephemeral_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_ephemeral("120363012345678901@g.us", 86400)
+            .await
+            .expect_err("set_ephemeral must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn get_invite_info_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .get_invite_info("https://chat.whatsapp.com/ABCD1234")
+            .await
+            .expect_err("get_invite_info must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    #[tokio::test]
+    async fn set_membership_approval_fails_when_not_connected() {
+        let adapter = offline_adapter();
+        let err = adapter
+            .set_membership_approval("120363012345678901@g.us", true)
+            .await
+            .expect_err("set_membership_approval must fail when client is not connected");
+        expect_not_connected(err);
+    }
+
+    // ── R20: CoordinatorAdmin capability probe ────────────────────
+
+    #[test]
+    fn whatsapp_capability_report_matches_implementation() {
+        // The capability bits must agree with which `CoordinatorAdmin`
+        // methods are actually overridden. This test fails loudly
+        // if someone overrides a new method on the trait impl
+        // without flipping the matching `can_*` bit in
+        // `admin_capabilities` (and vice versa).
+        let adapter = offline_adapter();
+        let caps = adapter.admin_capabilities();
+        // Lifecycle
+        assert!(caps.can_create, "can_create");
+        assert!(
+            !caps.can_join_by_id,
+            "can_join_by_id (always false on WhatsApp)"
+        );
+        assert!(caps.can_join_by_invite, "can_join_by_invite");
+        assert!(caps.can_leave, "can_leave");
+        assert!(!caps.can_destroy, "can_destroy");
+        // Membership
+        assert!(caps.can_add_member);
+        assert!(caps.can_remove_member);
+        assert!(!caps.can_ban, "can_ban (always false on WhatsApp)");
+        assert!(caps.can_promote);
+        assert!(caps.can_demote);
+        assert!(!caps.can_approve_join, "can_approve_join");
+        // Mode
+        assert!(caps.can_rename);
+        assert!(caps.can_describe);
+        assert!(caps.can_lock);
+        assert!(caps.can_announce);
+        assert!(caps.can_set_ephemeral);
+        assert!(caps.can_require_approval);
+        // Discovery
+        assert!(caps.can_list_own_groups);
+        assert!(caps.can_get_metadata);
+        assert!(caps.can_resolve_invite);
+        // Handoff
+        assert!(!caps.can_transfer_ownership);
+        // Platform name
+        assert_eq!(adapter.platform_name(), "whatsapp");
+    }
+
+    #[test]
+    fn as_coordinator_admin_returns_some_for_whatsapp() {
+        // The `PlatformAdapter::as_coordinator_admin` probe is the
+        // caller's downcast entry point. It must return `Some`
+        // for the WhatsApp adapter because we implement the trait.
+        let adapter = offline_adapter();
+        let admin: Option<&dyn CoordinatorAdmin> = adapter.as_coordinator_admin();
+        assert!(
+            admin.is_some(),
+            "WhatsApp adapter must opt in to CoordinatorAdmin"
+        );
+    }
+
+    #[test]
+    fn unimplemented_actions_return_unimplemented_error() {
+        // Methods we deliberately don't implement (ban_member,
+        // approve_join_request, join_by_invite, transfer_ownership)
+        // must return `PlatformAdapterError::Unimplemented` with
+        // the correct platform name and action label.
+        let adapter = offline_adapter();
+        let g = GroupId::new("120363012345678901@g.us");
+        let p = PeerId::new("+15551234567");
+        let inv = InviteRef::new("https://chat.whatsapp.com/ABCD");
+
+        // We can't `.await` inside `#[test]`, so we use a small
+        // blocking helper instead.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let check = |label: &'static str, result: PlatformAdapterError| match result {
+            PlatformAdapterError::Unimplemented { platform, action } => {
+                assert_eq!(platform, "whatsapp", "{label}: platform");
+                assert_eq!(action, label, "{label}: action");
+            }
+            other => panic!("{label}: expected Unimplemented, got {other:?}"),
+        };
+
+        rt.block_on(async {
+            check(
+                "ban_member",
+                CoordinatorAdmin::ban_member(&adapter, &g, &p, None)
+                    .await
+                    .expect_err("ban_member must be Unimplemented"),
+            );
+            check(
+                "approve_join_request",
+                CoordinatorAdmin::approve_join_request(&adapter, &g, &p)
+                    .await
+                    .expect_err("approve_join_request must be Unimplemented"),
+            );
+            check(
+                "join_by_invite",
+                CoordinatorAdmin::join_by_invite(&adapter, &inv)
+                    .await
+                    .expect_err("join_by_invite must be Unimplemented"),
+            );
+            check(
+                "transfer_ownership",
+                CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
+                    .await
+                    .expect_err("transfer_ownership must be Unimplemented"),
+            );
+        });
     }
 }

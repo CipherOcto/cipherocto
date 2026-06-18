@@ -72,4 +72,12 @@ pub enum PlatformAdapterError {
 
     #[error("Platform API error: {code} {message}")]
     ApiError { code: u16, message: String },
+
+    /// The adapter does not implement the requested coordinator/admin
+    /// action. Returned by the default-`Unimplemented` methods of
+    /// `CoordinatorAdmin` (and any adapter that opts in to the trait
+    /// but does not support a particular method). Carries the
+    /// platform name and a short action label for diagnostics.
+    #[error("Operation not implemented on platform {platform}: {action}")]
+    Unimplemented { platform: String, action: String },
 }

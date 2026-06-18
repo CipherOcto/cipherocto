@@ -8,6 +8,7 @@ use crate::dot::error::PlatformAdapterError;
 
 pub mod abi;
 pub mod backoff;
+pub mod coordinator_admin;
 pub mod registry;
 #[cfg(feature = "wasm")]
 pub mod wasm_runtime;
@@ -160,5 +161,21 @@ pub trait PlatformAdapter: Send + Sync {
             platform: "unknown".into(),
             reason: "media download not supported by this adapter".into(),
         })
+    }
+
+    /// Coordinator / admin capability probe (RFC-0850 S8 extension).
+    ///
+    /// If this adapter implements [`CoordinatorAdmin`](adapters::coordinator_admin::CoordinatorAdmin),
+    /// return a trait object pointing to the same instance. Default: `None`,
+    /// meaning the adapter does not opt in to admin actions.
+    ///
+    /// Adapters that implement `CoordinatorAdmin` override this to:
+    /// ```ignore
+    /// fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+    ///     Some(self)
+    /// }
+    /// ```
+    fn as_coordinator_admin(&self) -> Option<&dyn coordinator_admin::CoordinatorAdmin> {
+        None
     }
 }

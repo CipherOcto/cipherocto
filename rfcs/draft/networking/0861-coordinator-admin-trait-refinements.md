@@ -313,8 +313,8 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 
 ### Phase 2: WhatsApp-side behavior changes
 
-- Implement `join_by_invite` via `client.groups().join_with_invite_code(...)` per §1 (H1)
 - Rename inherent `create_group` to `create_group_str` per §3 (H2) — **do this FIRST**, since M5's edit (`.ok()` → `tracing::debug!`) lands on the renamed `create_group_str`. M1 (`set_ephemeral`), M11 (`list_own_groups`), M16 (`WhatsAppConfig::validate`), and H1 (`join_by_invite`) are separate methods and don't depend on the H2 rename.
+- Implement `join_by_invite` via `client.groups().join_with_invite_code(...)` per §1+§3 (H1; primary impl spec and `JoinGroupResult` variant mapping in §3 H1)
 - Add `set_ephemeral` overflow error per §3 (M1) — in the `set_ephemeral` TRAIT impl (not the inherent `create_group_str`; they're separate methods).
 - Add `M5` debug logging in `create_group_str` (already documented) — note H2 rename
 - Add `M11` HashSet optimization
@@ -382,6 +382,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | 1.7     | 2026-06-18 | R24g fixes: §3 H1 struct literal now includes `initial_admins_promoted: false` (would fail to compile after Phase 1 M4 lands, since GroupHandle doesn't derive Default); §4 M8 "clear on disconnect" clarified to clear in BOTH `mark_disconnected` (lib.rs:377) AND `shutdown` (lib.rs:1086) — transient drop otherwise leaves is_authenticated=true until next 376/422; Mission Phase 3 M7 acceptance extended to require a unit test for the new `pending_replies` HashMap. |
 | 1.8     | 2026-06-18 | R24h fixes: 3 MEDIUM downstream propagations of the R24g N65 fix. RFC Phase 3 plan line (was 'clear on disconnect', now 'clear in BOTH mark_disconnected and shutdown'); RFC Key Files row (was 'CLEAR it in disconnect next to the existing shutdown_tx clear', now specifies both methods with line numbers); Mission Phase 3 M8 acceptance (was 'cleared on disconnect', now specifies both methods). |
 | 1.9     | 2026-06-18 | R24i fixes: 3 LOW line-number drifts. Key Files row cited `IrcAdapter` struct at '~line 225', actual is line 208; RFC §2 H2 cited leave_group_str 'comment block at lines 1763-1764', actual is 1763-1767 (5-line doc comment — rationale at 1765-1767 is the key part); Mission Phase 2 H2 had the same drift. |
+| 1.10    | 2026-06-18 | R24j fixes: 1 MEDIUM + 1 LOW. MEDIUM: Phase 2 plan listed H1 before H2, contradicting H2's 'do this FIRST' annotation and the Mission (post-R24f N62 fix). Reordered so H2 is first (matches the Mission). LOW: Phase 2 plan H1 cite said `per §1 (H1)` but the primary impl spec and `JoinGroupResult` variant mapping are in §3 H1 — changed to `per §1+§3 (H1; primary impl spec in §3 H1)`. |
 
 ## Related RFCs
 

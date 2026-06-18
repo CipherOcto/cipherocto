@@ -46,32 +46,58 @@ defensible state:
 - MEDIUM: 0 open
 - LOW: 0 open (the lock-ordering code smell is noted but not a real issue)
 
-## Still unaddressed from R1 (deferred to WhatsApp-focused rounds)
+## Still unaddressed from R1 (deferred — see follow-up below)
 
-These are WhatsApp-side or pre-existing design choices that are out of
-scope for the IRC review:
+These are 17 R1 findings that were out of scope for the IRC review but
+are still open. Per the project's "Deferred ≠ Unspecified" rule
+(memory `mem_1781647176929_4539827401334513900`), each deferred item
+must have a full spec. The follow-up spec is **RFC-0861 (Networking):
+CoordinatorAdmin Adapter Contract Refinements**
+(`rfcs/draft/networking/0861-coordinator-admin-trait-refinements.md`),
+and the implementation work is tracked by **mission
+`missions/open/0861-coordinator-admin-trait-refinements.md`**.
 
-- **H1:** WhatsApp `can_join_by_invite=true` but `join_by_invite` is `Unimplemented`
-- **H2:** WhatsApp `create_group` signature disambiguation footgun
-- **H6:** WhatsApp `add_member` partial-success
-- **M1, M4, M5, M10-M16:** WhatsApp-side
-- **M3:** `health_check` ignores `use_tls` (IRC)
-- **M7:** `add_member` doesn't require op (IRC, by design)
-- **M8:** `health_check` doesn't call `ensure_connected` (IRC)
+| Finding | Severity | Adapter / surface | RFC § | Mission phase |
+|---|---|---|---|---|
+| H1 | HIGH | WhatsApp | §1 | 2 |
+| H2 | HIGH | WhatsApp | §3 | 2 |
+| H6 | HIGH | WhatsApp | §3 | 1 |
+| M1 | MEDIUM | WhatsApp | §3 | 2 |
+| M2 | MEDIUM | trait | §2 | 1 |
+| M3 | MEDIUM | IRC | §7 | 4 (blocked on C1) |
+| M4 | MEDIUM | WhatsApp | §3 | 1 |
+| M5 | MEDIUM | WhatsApp | §3 | 2 |
+| M7 | MEDIUM | IRC | §4 | 3 |
+| M8 | MEDIUM | IRC | §4 | 3 |
+| M10 | MEDIUM | IRC | §1 | 3 |
+| M11 | MEDIUM | WhatsApp | §5 | 2 |
+| M12 | MEDIUM | trait | §6 | 1 |
+| M13 | MEDIUM | WhatsApp | §3 | 1 |
+| M14 | MEDIUM | trait | §6 | 1 |
+| M15 | MEDIUM | IRC | §2 | 3 |
+| M16 | MEDIUM | WhatsApp | §2 | 2 |
+
+(R5 originally listed 16 of these; M2 was missed in the R5
+enumeration and is the same kind of trait-level input-validation
+fix as M15/M16, so it was rolled into the same RFC.)
 
 ## Loop termination
 
 Per the user's instruction ("the loop finished when a new round founds
-no issues"), this round terminates the multi-round adversarial review
-loop. The IRC-side `CoordinatorAdmin` implementation has been verified
-across 5 rounds:
+no issues"), the multi-round adversarial review loop terminated at
+**R23f (r4)** which found 0 issues. R23g (r5) is the final
+verification round, which also found 0 new issues on the IRC side and
+documented the cross-reference to the follow-up RFC for the deferred
+R1 items.
 
 | Round | Findings                                | Status |
 |-------|-----------------------------------------|--------|
-| R23c  | 13 (1 CRITICAL, 2 HIGH, 4 MEDIUM, 6 LOW) | Fixed in R23d |
-| R23d  | 7 (1 CRITICAL, 1 HIGH, 3 MEDIUM, 2 LOW) | Fixed in R23e |
-| R23e  | 1 (1 HIGH)                               | Fixed in R23f |
-| R23f  | 0                                        | **Loop terminates** |
+| R23c (r1) | 13 (1 CRITICAL, 2 HIGH, 4 MEDIUM, 6 LOW) | Fixed in R23d |
+| R23d (r2) | 7 (1 CRITICAL, 1 HIGH, 3 MEDIUM, 2 LOW) | Fixed in R23e |
+| R23e (r3) | 1 (1 HIGH)                               | Fixed in R23f |
+| R23f (r4) | 0                                        | **Loop terminates** |
+| R23g (r5) | 0                                        | Final verification; cross-references follow-up RFC-0861 for deferred R1 items |
 
 Net delta from R21 (initial impl): 41 → 50 tests, 0 open findings on
-IRC side.
+IRC side. 17 R1 findings remain deferred but are fully spec'd in
+RFC-0861 with a master mission in `missions/open/`.

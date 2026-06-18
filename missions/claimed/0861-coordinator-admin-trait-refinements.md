@@ -2,7 +2,14 @@
 
 ## Status
 
-Open
+Claimed (2026-06-18, jcode)
+
+**Note:** RFC-0861 is still in `rfcs/draft/`. The mission's Prerequisites
+section originally required RFC-0861 to be Accepted before claim, but the
+user explicitly authorized claim + implementation despite the draft
+status. Implementation proceeds against RFC-0861 v1.10 (the spec
+reached convergence after R24a–R24j adversarial review, with R24k
+declaring loop termination).
 
 ## RFC
 
@@ -127,10 +134,22 @@ deleted; M3 folded into Phase 3 in R24a).
   closure summary; this mission is the actionable follow-up
 - RFC-0850p-c precedent: the `leave_group_str` rename at
   `crates/octo-adapter-whatsapp/src/adapter.rs:1769`
-  (inherent method; comment block at lines 1763-1764, trait impl at
-  lines 1467-1479)
+  (inherent method; comment block at lines 1763-1767 — rationale:
+  re-bind the public `String`-returning method to a distinct local
+  name so the trait impl can call it; trait impl at lines 1467-1479)
+
+## Claimant
+
+jcode (agent, 2026-06-18) — autonomous implementation, will submit
+PR(s) for human review per BLUEPRINT.md §Agent Workflow.
+
+## Pull Request
+
+(none yet — Phase 1 first)
 
 ## Mission Status Log
+
+- 2026-06-18 (Claimed): Mission moved from `missions/open/` to `missions/claimed/` by jcode on direct user instruction. RFC-0861 prerequisite waived (still draft).
 
 - 2026-06-18: Mission created. RFC-0861 in Draft. Awaiting RFC accept
   before claim.

@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use octo_network::dot::adapters::{
     coordinator_admin::{
-        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
-        GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+        AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
+        GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
     },
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
@@ -1461,6 +1461,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             is_admin: true,
             member_count: metadata.as_ref().and_then(|m| m.size),
             mode_flags: metadata.as_ref().map(extract_mode_flags),
+            initial_admins_promoted: true, // Phase 2 H2 path: WhatsApp makes the creator admin at create time
         })
     }
 
@@ -1496,7 +1497,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         &self,
         group_id: &GroupId,
         member: &GroupMemberSpec,
-    ) -> Result<(), PlatformAdapterError> {
+    ) -> Result<AddMemberOutput, PlatformAdapterError> {
         let phones = [member.handle.as_str()];
         let responses = self
             .add_members(group_id.as_str(), &phones)
@@ -1513,12 +1514,21 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
                 });
             }
         }
-        // Promote to admin if requested.
-        if member.is_admin {
-            self.promote_to_admin(group_id, &PeerId::new(member.handle.clone()))
-                .await?;
-        }
-        Ok(())
+        // Promote to admin if requested. Phase 2 M1 / M5 / M11 / M16
+        // will refine the error handling and parallelization; for
+        // Phase 1 we just adapt the signature.
+        let promoted = if member.is_admin {
+            let r = self
+                .promote_to_admin(group_id, &PeerId::new(member.handle.clone()))
+                .await;
+            Some(r)
+        } else {
+            None
+        };
+        Ok(AddMemberOutput {
+            added: true,
+            promoted,
+        })
     }
 
     async fn remove_member(
@@ -1689,6 +1699,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
                     is_admin,
                     member_count: meta.size,
                     mode_flags: Some(mode_flags),
+                    initial_admins_promoted: false,
                 }
             })
             .collect())
@@ -1722,6 +1733,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             is_admin: false, // Resolved but not joined yet
             member_count: raw.size,
             mode_flags: Some(mode_flags),
+            initial_admins_promoted: false,
         })
     }
 

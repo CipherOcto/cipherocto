@@ -43,8 +43,8 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 use octo_network::dot::adapters::{
     backoff::RetryConfig,
     coordinator_admin::{
-        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
-        GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+        AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
+        GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
     },
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
@@ -1262,14 +1262,23 @@ impl CoordinatorAdmin for IrcAdapter {
         &self,
         group_id: &GroupId,
         member: &GroupMemberSpec,
-    ) -> Result<(), PlatformAdapterError> {
+    ) -> Result<AddMemberOutput, PlatformAdapterError> {
         let channel = self.channel_for(group_id)?;
         // IRC nicks cannot contain spaces; we pass through whatever
         // the caller gave us and let the server reject malformed
         // input. This matches the R20 WhatsApp pattern of not
         // validating peer handles.
+        //
+        // Phase 1: fire-and-forget. Phase 3 will wire up
+        // ERR_CHANOPRIVSNEEDED via the pending_replies HashMap and
+        // upgrade this to return AddMemberOutput { added: true, promoted: None }
+        // or Err(ApiError 403) accordingly. (RFC-0861 §4 M7.)
         self.send_raw_line(&format!("INVITE {} {channel}", member.handle))
-            .await
+            .await?;
+        Ok(AddMemberOutput {
+            added: true,
+            promoted: None,
+        })
     }
 
     /// `KICK <channel> <nick> :<reason>`. The reason is a short
@@ -1469,6 +1478,7 @@ impl CoordinatorAdmin for IrcAdapter {
                 is_admin: false,
                 member_count: None,
                 mode_flags: None,
+                initial_admins_promoted: false,
             })
             .collect())
     }
@@ -1565,6 +1575,7 @@ impl CoordinatorAdmin for IrcAdapter {
             is_admin: false,
             member_count: None,
             mode_flags: None,
+            initial_admins_promoted: false,
         })
     }
 
@@ -2530,14 +2541,13 @@ mod tests {
             password: None,
             use_tls: false,
         });
-        for bad in [
-            "",
-            "no-prefix",
-            "#chan with space",
-            "#chan,multi",
-            "#chan\0bad",
-            "#chan:colon",
-        ] {
+        // Empty InviteRef is now rejected at the constructor
+        // (RFC-0861 M2 debug_assert). Skip it here — the IRC
+        // adapter's `channel_for` rejection still covers the
+        // remaining malformed cases. Use `try_new` so the empty
+        // path can still be exercised without tripping the
+        // constructor's debug_assert.
+        for bad in ["no-prefix", "#chan with space", "#chan,multi", "#chan\0bad", "#chan:colon"] {
             let err = adapter
                 .join_by_invite(&InviteRef::new(bad.to_string()))
                 .await
@@ -2547,6 +2557,9 @@ mod tests {
                 "expected 400 ApiError for {bad:?}, got: {err:?}"
             );
         }
+        // Empty-input constructor path: verify `try_new` returns None.
+        assert!(InviteRef::try_new("").is_none());
+        assert!(InviteRef::try_new("non-empty").is_some());
     }
 
     /// N2 (free function): `validate_channel_name` returns Ok for

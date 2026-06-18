@@ -78,7 +78,21 @@ pub struct GroupId(pub String);
 
 impl GroupId {
     pub fn new(native: impl Into<String>) -> Self {
-        Self(native.into())
+        let s: String = native.into();
+        debug_assert!(!s.is_empty(), "GroupId::new called with empty string");
+        Self(s)
+    }
+    /// Strict constructor: returns `None` if the input is empty.
+    /// Use this when the input comes from user input or untrusted
+    /// config and an empty value should fail loud rather than
+    /// silently propagate.
+    pub fn try_new(native: impl Into<String>) -> Option<Self> {
+        let s: String = native.into();
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
     }
     pub fn as_str(&self) -> &str {
         &self.0
@@ -114,7 +128,18 @@ pub struct PeerId(pub String);
 
 impl PeerId {
     pub fn new(handle: impl Into<String>) -> Self {
-        Self(handle.into())
+        let s: String = handle.into();
+        debug_assert!(!s.is_empty(), "PeerId::new called with empty string");
+        Self(s)
+    }
+    /// Strict constructor: returns `None` if the input is empty.
+    pub fn try_new(handle: impl Into<String>) -> Option<Self> {
+        let s: String = handle.into();
+        if s.is_empty() {
+            None
+        } else {
+            Some(Self(s))
+        }
     }
     pub fn as_str(&self) -> &str {
         &self.0
@@ -186,7 +211,18 @@ pub struct InviteRef(pub String);
 
 impl InviteRef {
     pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+        let v: String = s.into();
+        debug_assert!(!v.is_empty(), "InviteRef::new called with empty string");
+        Self(v)
+    }
+    /// Strict constructor: returns `None` if the input is empty.
+    pub fn try_new(s: impl Into<String>) -> Option<Self> {
+        let v: String = s.into();
+        if v.is_empty() {
+            None
+        } else {
+            Some(Self(v))
+        }
     }
 }
 
@@ -226,6 +262,14 @@ pub struct GroupHandle {
     /// Whether the calling adapter is the group admin (true after
     /// `create_group`; depends on the invite-link / join path for
     /// `resolve_invite`).
+    ///
+    /// **Semantics (RFC-0861 §6 M14):** `true` means the calling
+    /// adapter can perform admin actions (e.g. `set_locked`,
+    /// `promote_to_admin`) on this group at this moment. `false`
+    /// means either the adapter is not an admin, or the platform
+    /// doesn't expose admin status for the bot. Adapters that
+    /// don't track admin status (e.g. IRC, which doesn't read
+    /// NAMES/MODE responses) MUST return `false`.
     pub is_admin: bool,
     /// Member count at create time. None if the platform doesn't
     /// surface it synchronously.
@@ -233,6 +277,41 @@ pub struct GroupHandle {
     /// Mode flags at create time. None if the platform doesn't
     /// report them.
     pub mode_flags: Option<GroupModeFlags>,
+    /// Whether the platform-side initial-admin promotion step has
+    /// already completed for this group. `false` means the bot is
+    /// still considered a regular member by the platform, even
+    /// though the SDK returned it as the creator. The
+    /// `create_group` post-create flow uses this to gate the
+    /// optional `promote_to_admin` self-call (see RFC-0861 §3 M4
+    /// and §3 H1).
+    ///
+    /// `#[serde(default)]` so old serialized `GroupHandle`s
+    /// without this field deserialize as `false` (RFC-0861 M4).
+    #[serde(default)]
+    pub initial_admins_promoted: bool,
+}
+
+/// Result of an [`CoordinatorAdmin::add_member`] call.
+///
+/// Surfaces the partial-success semantics required by RFC-0861 §3
+/// H6: the platform may report the add succeeded but the optional
+/// promote-to-admin (only attempted if `GroupMemberSpec::is_admin`
+/// was true at the call site) may have failed independently.
+/// Callers can branch on `promoted` rather than treat the whole
+/// call as a single binary outcome.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddMemberOutput {
+    /// True if the platform confirmed the add. False indicates
+    /// the add itself failed — in that case `promoted` is always
+    /// `None` (no promote was attempted because there was no
+    /// member to promote).
+    pub added: bool,
+    /// The result of the optional promote-to-admin. `None` if
+    /// `is_admin` was false at the call site (no promote was
+    /// attempted). `Some(Ok(()))` if the promote succeeded.
+    /// `Some(Err(_))` if the add succeeded but the promote
+    /// failed (partial-success case).
+    pub promoted: Option<Result<(), PlatformAdapterError>>,
 }
 
 /// Group mode flags (subset of the underlying platform's mode
@@ -405,7 +484,7 @@ pub trait CoordinatorAdmin: Send + Sync {
         &self,
         group_id: &GroupId,
         member: &GroupMemberSpec,
-    ) -> Result<(), PlatformAdapterError> {
+    ) -> Result<AddMemberOutput, PlatformAdapterError> {
         let _ = (group_id, member);
         Err(PlatformAdapterError::Unimplemented {
             platform: self.platform_name(),
@@ -532,7 +611,12 @@ pub trait CoordinatorAdmin: Send + Sync {
         })
     }
 
-    /// `ttl = None` disables ephemeral mode.
+    /// `ttl = None` disables ephemeral mode (equivalent to a TTL
+    /// of 0). Implementations should interpret `None` as "disable".
+    /// Adapters that cannot disable ephemeral mode once enabled
+    /// SHOULD still return `Ok(())` from `set_ephemeral(_, None)` —
+    /// the trait contract treats disable as a soft request, not an
+    /// error. (RFC-0861 §6 M12.)
     async fn set_ephemeral(
         &self,
         group_id: &GroupId,
@@ -564,6 +648,22 @@ pub trait CoordinatorAdmin: Send + Sync {
             platform: self.platform_name(),
             action: "list_own_groups".into(),
         })
+    }
+
+    /// List the bot's groups together with their active invite
+    /// URLs (where available). Returned in the same order as
+    /// `list_own_groups` where the platform's API permits a
+    /// 1:1 pairing; adapters that can't fetch invite URLs in
+    /// parallel fall back to `None` for that field. See
+    /// RFC-0861 §3 M13.
+    async fn list_own_groups_with_invites(
+        &self,
+    ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        // Default: delegate to `list_own_groups` (the simpler
+        // variant) and let the caller call `get_group_metadata`
+        // per-group for the invite URL. Adapters that have a
+        // batch API override this to do the join_all-style fan-out.
+        self.list_own_groups().await
     }
 
     async fn get_group_metadata(
@@ -757,7 +857,10 @@ mod tests {
         expect_unimplemented::<GroupHandle>(admin.create_group("s", &[]).await, "create_group");
         expect_unimplemented::<()>(admin.leave_group(&g).await, "leave_group");
         expect_unimplemented::<()>(admin.destroy_group(&g).await, "destroy_group");
-        expect_unimplemented::<()>(admin.add_member(&g, &m).await, "add_member");
+        expect_unimplemented::<AddMemberOutput>(
+            admin.add_member(&g, &m).await,
+            "add_member",
+        );
         expect_unimplemented::<()>(admin.remove_member(&g, &p).await, "remove_member");
         expect_unimplemented::<()>(admin.ban_member(&g, &p, ttl).await, "ban_member");
         expect_unimplemented::<()>(admin.promote_to_admin(&g, &p).await, "promote_to_admin");
@@ -793,5 +896,155 @@ mod tests {
         let admin = NoopAdmin;
         let r = admin.admin_capabilities();
         assert!(!r.can_create && !r.can_leave && !r.can_add_member);
+    }
+
+    // ── M2: try_new constructors ───────────────────────────────
+
+    #[test]
+    fn group_id_try_new_accepts_non_empty() {
+        let g = GroupId::try_new("120363012345678901@g.us");
+        assert_eq!(g.unwrap().as_str(), "120363012345678901@g.us");
+    }
+
+    #[test]
+    fn group_id_try_new_rejects_empty() {
+        assert!(GroupId::try_new("").is_none());
+        assert!(GroupId::try_new(String::new()).is_none());
+    }
+
+    #[test]
+    fn peer_id_try_new_accepts_non_empty() {
+        let p = PeerId::try_new("+15551234567");
+        assert_eq!(p.unwrap().as_str(), "+15551234567");
+    }
+
+    #[test]
+    fn peer_id_try_new_rejects_empty() {
+        assert!(PeerId::try_new("").is_none());
+    }
+
+    #[test]
+    fn invite_ref_try_new_accepts_non_empty() {
+        let i = InviteRef::try_new("https://chat.whatsapp.com/ABCD");
+        assert_eq!(i.unwrap().0, "https://chat.whatsapp.com/ABCD");
+    }
+
+    #[test]
+    fn invite_ref_try_new_rejects_empty() {
+        assert!(InviteRef::try_new("").is_none());
+    }
+
+    // ── H6: AddMemberOutput discriminator ───────────────────────
+    //
+    // A fake admin that returns the three `promoted` variants
+    // verifies callers can branch on each independently. The
+    // trait's default returns `Unimplemented`, so we test the
+    // variant construction directly (the trait impl detail is
+    // covered by adapter tests in Phase 2/3).
+
+    #[test]
+    fn add_member_output_none_when_no_promote_attempted() {
+        let out = AddMemberOutput {
+            added: true,
+            promoted: None,
+        };
+        assert!(out.added);
+        assert!(out.promoted.is_none());
+    }
+
+    #[test]
+    fn add_member_output_some_ok_when_promote_succeeded() {
+        let out = AddMemberOutput {
+            added: true,
+            promoted: Some(Ok(())),
+        };
+        assert!(out.promoted.as_ref().unwrap().is_ok());
+    }
+
+    #[test]
+    fn add_member_output_some_err_when_promote_failed_after_add_succeeded() {
+        let out = AddMemberOutput {
+            added: true,
+            promoted: Some(Err(PlatformAdapterError::ApiError {
+                code: 500,
+                message: "promote failed".into(),
+            })),
+        };
+        assert!(out.added);
+        let promoted_err = out.promoted.unwrap().unwrap_err();
+        match promoted_err {
+            PlatformAdapterError::ApiError { code, message } => {
+                assert_eq!(code, 500);
+                assert_eq!(message, "promote failed");
+            }
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    // ── M4: initial_admins_promoted default + serde roundtrip ──
+
+    #[test]
+    fn group_handle_initial_admins_promoted_defaults_to_false() {
+        let h = GroupHandle {
+            id: GroupId::new("g"),
+            subject: None,
+            invite_url: None,
+            is_admin: false,
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
+        };
+        assert!(!h.initial_admins_promoted);
+    }
+
+    #[test]
+    fn group_handle_deserializes_without_initial_admins_promoted_field() {
+        // Simulates an old serialized GroupHandle written before
+        // M4 added the field. #[serde(default)] should make the
+        // missing field deserialize as false.
+        let json = r#"{
+            "id": "120363012345678901@g.us",
+            "subject": null,
+            "invite_url": null,
+            "is_admin": false,
+            "member_count": null,
+            "mode_flags": null
+        }"#;
+        let h: GroupHandle = serde_json::from_str(json).unwrap();
+        assert!(!h.initial_admins_promoted);
+        assert_eq!(h.id.as_str(), "120363012345678901@g.us");
+    }
+
+    // ── M13: list_own_groups_with_invites default delegates ────
+
+    /// A noop admin that overrides `list_own_groups` but NOT
+    /// `list_own_groups_with_invites` exercises the trait's
+    /// default delegation behavior.
+    struct GroupsAdmin(Vec<GroupHandle>);
+    #[async_trait]
+    impl CoordinatorAdmin for GroupsAdmin {
+        fn platform_name(&self) -> String {
+            "groups".into()
+        }
+        async fn list_own_groups(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn list_own_groups_with_invites_default_delegates_to_list_own_groups() {
+        let admin = GroupsAdmin(vec![GroupHandle {
+            id: GroupId::new("g1"),
+            subject: None,
+            invite_url: None,
+            is_admin: false,
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
+        }]);
+        let via_default = admin.list_own_groups_with_invites().await.unwrap();
+        let via_primary = admin.list_own_groups().await.unwrap();
+        assert_eq!(via_default.len(), via_primary.len());
+        assert_eq!(via_default.len(), 1);
     }
 }

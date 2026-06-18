@@ -1,5 +1,6 @@
 //! DOT error types (RFC-0850 §4.5)
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Errors specific to the Deterministic Overlay Transport layer
@@ -52,7 +53,7 @@ pub enum DotError {
 }
 
 /// Errors from platform-specific adapters
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
 pub enum PlatformAdapterError {
     #[error("Platform {platform} unreachable: {reason}")]
     Unreachable { platform: String, reason: String },

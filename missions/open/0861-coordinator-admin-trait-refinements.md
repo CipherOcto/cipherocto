@@ -30,7 +30,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 
 ## Acceptance Criteria
 
-### Phase 1: Trait surface (no behavior change)
+### Phase 1: Trait surface (additive; no breakage for existing callers)
 
 - [ ] `GroupId::try_new`, `PeerId::try_new`, `InviteRef::try_new` exist and reject empty strings (M2)
 - [ ] Existing `new` methods have `debug_assert!(!s.is_empty())` (M2)
@@ -44,7 +44,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 
 - [ ] `join_by_invite` impl calls `client.groups().join_with_invite_code(...)` and returns a proper `GroupHandle` (H1)
 - [ ] `capabilities().can_join_by_invite` remains `true` (matches the new impl) (H1)
-- [ ] Inherent `create_group` renamed to `create_group_str`; trait impl calls the renamed inherent; `leave_group` precedent at `adapter.rs:1767-1796` mirrored (H2)
+- [ ] Inherent `create_group` renamed to `create_group_str`; trait impl calls the renamed inherent; `leave_group_str` precedent at `adapter.rs:1769` (inherent; comment block 1763-1764, trait impl 1467-1479) mirrored (H2)
 - [ ] `set_ephemeral` returns `ApiError { code: 400, ... }` when `as_secs() > u32::MAX as u64` (M1)
 - [ ] `get_group_metadata` and `get_invite_link` errors in `create_group` log at `tracing::debug!` and continue (M5)
 - [ ] `list_own_groups` builds a `HashSet<String>` of bot's phone forms once before the iter (M11)
@@ -65,7 +65,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 
 ## Location
 
-- `crates/octo-network/src/dot/adapters/coordinator_admin.rs` — trait surface (Phases 1, 6)
+- `crates/octo-network/src/dot/adapters/coordinator_admin.rs` — trait surface (Phase 1)
 - `crates/octo-adapter-whatsapp/src/adapter.rs` — WhatsApp impl (Phase 2)
 - `crates/octo-adapter-whatsapp/src/config.rs` (if separate) — `WhatsAppConfig::validate` (M16)
 - `crates/octo-adapter-irc/src/lib.rs` — IRC impl (Phase 3) and listener (M7)
@@ -92,12 +92,15 @@ deleted; M3 folded into Phase 3 in R24a).
 - Use the `leave_group_str` rename pattern (RFC-0850p-c precedent: inherent
   method at `octo-adapter-whatsapp/src/adapter.rs:1769`, comment block at
   lines 1763-1764, trait impl at lines 1467-1479) for H2.
-- For M7's `ERR_CHANOPRIVSNEEDED` parsing: extend the IRC listener's
-  existing numeric-parsing path. The `add_member` trait impl is at
-  `crates/octo-adapter-irc/src/lib.rs:1261-1273`. Use the `out_tx` channel
-  already in place (R23d H4 fix) to correlate the command with the response
-  numeric. Consider adding a small `pending_replies: HashMap<u64,
-  oneshot::Sender<NumericResult>>` keyed by a per-command nonce.
+- For M7's `ERR_CHANOPRIVSNEEDED` parsing: add a NEW `pending_replies:
+  Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` on `IrcAdapter`
+  (and the matching state inside the `irc_session` listener task). The
+  `add_member` trait impl is at `crates/octo-adapter-irc/src/lib.rs:1261-1273`.
+  Key the entry by a per-command nonce inserted before sending INVITE; the
+  listener resolves the oneshot when the matching numeric arrives. **Do NOT**
+  reuse `out_tx` (mpsc::Sender<String> for outbound lines,
+  `lib.rs:222`) or `shutdown_tx` (watch::Sender<bool> for shutdown,
+  `lib.rs:232`) — neither can carry reply codes. (R24b N32/N33 fix.)
 - For M8's "authenticated" signal: set `*self.is_authenticated.store(true)`
   inside the existing 376/422 branch in `irc_session` at
   `crates/octo-adapter-irc/src/lib.rs:838-849`. Do NOT add new 001/RPL_WELCOME
@@ -124,10 +127,13 @@ deleted; M3 folded into Phase 3 in R24a).
 - `docs/reviews/coordinator-admin-impl-adversarial-review-r5.md` —
   closure summary; this mission is the actionable follow-up
 - RFC-0850p-c precedent: the `leave_group_str` rename at
-  `crates/octo-adapter-whatsapp/src/adapter.rs:1767-1796`
+  `crates/octo-adapter-whatsapp/src/adapter.rs:1769`
+  (inherent method; comment block at lines 1763-1764, trait impl at
+  lines 1467-1479)
 
 ## Mission Status Log
 
 - 2026-06-18: Mission created. RFC-0861 in Draft. Awaiting RFC accept
   before claim.
-- 2026-06-18 (R24a): Round 1 review found 9 issues (1 CRITICAL, 1 HIGH, 3 MEDIUM, 4 LOW); all fixed in this revision. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r1.md`.
+- 2026-06-18 (R24a): Round 1 review found 9 issues (1 CRITICAL, 1 HIGH, 3 MEDIUM, 4 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r1.md`.
+- 2026-06-18 (R24b): Round 2 review found 8 issues (1 HIGH, 2 MEDIUM, 5 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r2.md`.

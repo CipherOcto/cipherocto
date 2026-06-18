@@ -219,10 +219,16 @@ trait's doc-comment for `add_member` MUST be updated to add
 `ERR_CHANOPRIVSNEEDED` (or equivalent) from the platform MUST return
 `ApiError { code: 403, message: "not a channel operator" }` rather
 than `Ok(())`. The IRC impl must wire `ERR_CHANOPRIVSNEEDED` to this
-return path. This requires a small "pending reply" buffer in the
-listener keyed by the command timestamp (see R1 H5 fix for the
-`shutdown_tx` infrastructure; the same channel can carry reply
-codes).
+return path. This requires a NEW `pending_replies` correlation
+buffer — neither `out_tx` (mpsc::Sender<String> for outbound lines
+to the server, `crates/octo-adapter-irc/src/lib.rs:222`) nor
+`shutdown_tx` (watch::Sender<bool> for shutdown signaling,
+`crates/octo-adapter-irc/src/lib.rs:232`) can carry reply codes.
+The implementer MUST add a `pending_replies: Mutex<HashMap<CommandId,
+oneshot::Sender<NumericResult>>>` on `IrcAdapter` (and the matching
+state inside the `irc_session` listener task), keyed by a per-command
+nonce that `add_member` inserts on send and that the listener
+resolves when the matching numeric reply arrives.
 
 **M8 — IRC `health_check` doesn't validate the authenticated
 session.** The IRC impl MUST add an `is_authenticated: AtomicBool`
@@ -324,9 +330,12 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 
 ## Future Work
 
-- **F1:** Add `CoordinatorAdmin` impl for Telegram TDLib, Matrix,
-  matrix-sdk. Currently WhatsApp and IRC are the only implementations.
-  Will be triggered by the corresponding adapter-mission R-passes.
+- **F1:** Add `CoordinatorAdmin` impl for Telegram TDLib and for
+  Matrix (via the `matrix-sdk` Rust client library). Currently
+  WhatsApp and IRC are the only implementations. Will be triggered
+  by the corresponding adapter-mission R-passes (Telegram TDLib and
+  Matrix adapter RFCs do not yet exist; this RFC will be
+  cross-referenced when they do).
 - **F2:** Add a `list_own_groups_paginated` method for adapters
   (WhatsApp) that have large inventories. WhatsApp's `get_participating`
   returns all groups in one call; for a bot in 1000+ groups this
@@ -346,7 +355,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
   each of which is reviewable in isolation.
 - A single RFC makes the "deferred to future rounds" promise in
   R5 actionable: the user can review one spec, accept it, and
-  implement all 11 fixes in one mission (or in three phase-aligned
+  implement all 17 fixes in one mission (or in three phase-aligned
   PRs per the implementation phases).
 
 ## Version History
@@ -355,6 +364,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | ------- | ---------- | ------- |
 | 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 17 R1 findings (H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16). |
 | 1.1     | 2026-06-18 | R24a fixes: H1 detailed with `JoinGroupResult` mapping; M8 trigger changed from 001 (RPL_WELCOME) to 376/422 (RPL_ENDOFMOTD/ERR_NOMOTD) since the listener has no 001 parsing; M3 unblocked (R23d C1 is fixed); stale line numbers corrected; `futures` dep note added for M13; test count corrections. |
+| 1.2     | 2026-06-18 | R24b fixes: Appendix A gains H6 row; M3 phase column corrected to 3 (was 4 "blocked on C1"); M7 spec rewritten — `shutdown_tx` cannot carry reply codes (it's `watch::Sender<bool>`); implementer must add a new `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` buffer; F1 dedupes Matrix and matrix-sdk; Rationale "11 fixes" corrected to "17 fixes". |
 
 ## Related RFCs
 
@@ -382,9 +392,10 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 |---|---|---|---|---|
 | H1 | §1 | HIGH | WhatsApp | 2 |
 | H2 | §3 | HIGH | WhatsApp | 2 |
+| H6 | §3 | HIGH | WhatsApp | 2 |
 | M1 | §3 | MEDIUM | WhatsApp | 2 |
 | M2 | §2 | MEDIUM | trait | 1 |
-| M3 | §7 | MEDIUM | IRC | 4 (blocked on C1) |
+| M3 | §7 | MEDIUM | IRC | 3 (unblocked since R23d C1) |
 | M4 | §3 | MEDIUM | WhatsApp | 1 |
 | M5 | §3 | MEDIUM | WhatsApp | 2 |
 | M7 | §4 | MEDIUM | IRC | 3 |

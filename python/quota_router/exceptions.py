@@ -23,6 +23,9 @@ try:
         BatchNotCompleteError,
         AllModelsFailedError,
         BatchPartialFailureError,
+        # Drop-in replacement exception aliases
+        AnyLLMError,
+        Timeout,
     )
 except ImportError:
     # Stub classes when native extension not installed
@@ -45,6 +48,8 @@ except ImportError:
     class BatchNotCompleteError(QuotaRouterError): pass
     class AllModelsFailedError(QuotaRouterError): pass
     class BatchPartialFailureError(QuotaRouterError): pass
+    class AnyLLMError(QuotaRouterError): pass
+    class Timeout(QuotaRouterError): pass
 
 # LiteLLM-compatible aliases
 BudgetExceededError = InsufficientFundsError

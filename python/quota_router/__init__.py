@@ -83,6 +83,9 @@ try:
         BatchNotCompleteError,
         AllModelsFailedError,
         BatchPartialFailureError,
+        # Drop-in replacement exception aliases
+        AnyLLMError,
+        Timeout,
     )
 
     def batch_list(provider, limit=20, **kwargs):
@@ -177,6 +180,9 @@ __all__ = [
     "InsufficientFundsError",
     "UpstreamProviderError",
     "GatewayTimeoutError",
+    # Drop-in replacement exception aliases
+    "AnyLLMError",
+    "Timeout",
     # Exceptions (LiteLLM compatible aliases)
     "BudgetExceededError",
     "ServiceUnavailableError",

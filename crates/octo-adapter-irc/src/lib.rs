@@ -28,7 +28,7 @@ use base64::Engine;
 use rustls::ClientConfig;
 use rustls_pki_types::ServerName;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{
     AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf as TokioReadHalf,
@@ -37,7 +37,7 @@ use tokio::io::{
 use tokio::net::{
     tcp::OwnedReadHalf as TcpReadHalf, tcp::OwnedWriteHalf as TcpWriteHalf, TcpStream,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_rustls::{client::TlsStream, TlsConnector};
 
 use octo_network::dot::adapters::{
@@ -170,6 +170,37 @@ pub(crate) fn validate_channel_name(ch: &str) -> std::result::Result<(), String>
     Ok(())
 }
 
+// ── M7 pending-reply correlation types ─────────────────────────────
+
+/// RFC-0861 §4 M7: per-command nonce for correlating an
+/// outbound IRC command (e.g. `INVITE`) with its server reply
+/// (e.g. `341 RPL_INVITING` or `482 ERR_CHANOPRIVSNEEDED`).
+/// Monotonically increasing, allocated from
+/// `IrcAdapter::next_command_id`. The numeric is the *internal*
+/// correlation key; the IRC protocol has no built-in
+/// per-command tag, so matching is FIFO at the listener
+/// (see `pending_invites` in `irc_session`).
+pub type CommandId = u64;
+
+/// RFC-0861 §4 M7: the resolved result of a server reply
+/// correlated with an outbound command. `Ok` covers `RPL_*`
+/// success numerics; `Err` carries the server's error code
+/// (the numeric itself) and the trailing message text, which
+/// `add_member` maps to a `PlatformAdapterError` shape.
+#[derive(Debug)]
+pub enum NumericResult {
+    /// Server returned a success numeric (e.g. 341 RPL_INVITING).
+    Ok { code: u16 },
+    /// Server returned an error numeric (e.g. 482
+    /// ERR_CHANOPRIVSNEEDED). `code` is the numeric itself;
+    /// `message` is the trailing text, often empty.
+    Err { code: u16, message: String },
+    /// The server did not reply within the configured timeout.
+    /// Surfaced as a separate variant so callers can distinguish
+    /// "server said no" from "server is silent".
+    Timeout,
+}
+
 // ── Constants ──────────────────────────────────────────────────────
 
 /// Maximum IRC line length including CRLF.
@@ -225,6 +256,19 @@ pub struct IrcAdapter {
     /// listener task has died; the failing public method resets this
     /// flag to `false` so the next `ensure_connected` call respawns.
     connected: Mutex<bool>,
+    /// RFC-0861 §4 M8: whether the IRC session has completed the
+    /// NICK/USER handshake. Set to `true` in the listener's
+    /// 376 (RPL_ENDOFMOTD) / 422 (ERR_NOMOTD) branch — those
+    /// numerics are only sent *after* authentication completes, so
+    /// they are the canonical "we are authenticated and the
+    /// session is usable" signal. Cleared in BOTH `mark_disconnected`
+    /// (transient drop, at `lib.rs:377`) AND `shutdown` (full
+    /// teardown, at `lib.rs:1086`) so `health_check` never lies
+    /// about a half-up session. Wrapped in `Arc` so the spawned
+    /// listener task can mutate it without a `Mutex`; `health_check`
+    /// and the listener share the same atomic via cheap refcount
+    /// clone, no lock contention.
+    is_authenticated: Arc<AtomicBool>,
     /// Stop-signal channel. `shutdown()` takes the sender (or replaces
     /// it with `None`) and notifies the listener, which exits its
     /// select loop. The receiver is moved into the listener spawn on
@@ -252,6 +296,26 @@ pub struct IrcAdapter {
     /// `.await` inside — the lock is safe to hold in async context
     /// as long as the body doesn't await.
     runtime_channels: StdMutex<Vec<String>>,
+    /// RFC-0861 §4 M7: monotonically increasing per-command
+    /// nonce, allocated by `add_member` (and any future
+    /// request/response pair) so the listener can correlate a
+    /// server reply with the originating outbound command. The
+    /// IRC protocol has no built-in per-command tag, so the
+    /// correlation is FIFO via `pending_invites` below.
+    next_command_id: AtomicU64,
+    /// RFC-0861 §4 M7: pending INVITE requests awaiting a
+    /// `341 RPL_INVITING` / `482 ERR_CHANOPRIVSNEEDED` reply.
+    /// Keyed by the `CommandId` allocated at send time; the
+    /// listener pops the entry with the smallest key on a
+    /// matching reply and resolves the oneshot. `BTreeMap`
+    /// (vs. `HashMap` in the spec text) because the spec's
+    /// matching rule is "the next reply resolves the first
+    /// sent command" — `BTreeMap::pop_first` gives O(log n)
+    /// FIFO; `HashMap` would be O(n) and order-undefined.
+    /// Wrapped in `Arc` so the listener task (which lives in
+    /// `irc_session`) can resolve entries without holding the
+    /// adapter's full state.
+    pending_invites: Arc<Mutex<BTreeMap<CommandId, oneshot::Sender<NumericResult>>>>,
 }
 
 impl IrcAdapter {
@@ -263,10 +327,13 @@ impl IrcAdapter {
             tx,
             out_tx: Mutex::new(None),
             connected: Mutex::new(false),
+            is_authenticated: Arc::new(AtomicBool::new(false)),
             shutdown_tx: Mutex::new(None),
             listener_handle: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
             runtime_channels: StdMutex::new(Vec::new()),
+            next_command_id: AtomicU64::new(1),
+            pending_invites: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -332,6 +399,15 @@ impl IrcAdapter {
         let password = self.config.password.clone();
         let use_tls = self.config.use_tls;
         let tx = self.tx.clone();
+        // RFC-0861 §4 M8: clone the `Arc<AtomicBool>` so the spawned
+        // listener can flip the flag on 376/422 while the field on
+        // `self` stays readable by `health_check` and clearable by
+        // `mark_disconnected` / `shutdown`.
+        let is_authenticated = self.is_authenticated.clone();
+        // RFC-0861 §4 M7: clone the pending_invites Arc so the
+        // listener can resolve entries on 341/482 without
+        // holding the adapter's full state.
+        let pending_invites = self.pending_invites.clone();
 
         // Build the unified outbound channel (admin + send_envelope).
         // The receiver is moved into the listener task; the sender is
@@ -356,7 +432,17 @@ impl IrcAdapter {
 
         let handle = tokio::spawn(async move {
             irc_listener(
-                server, port, nickname, channels, password, use_tls, tx, out_rx, stop_rx,
+                server,
+                port,
+                nickname,
+                channels,
+                password,
+                use_tls,
+                tx,
+                out_rx,
+                stop_rx,
+                is_authenticated,
+                pending_invites,
             )
             .await;
         });
@@ -377,6 +463,13 @@ impl IrcAdapter {
     async fn mark_disconnected(&self) {
         *self.connected.lock().await = false;
         *self.out_tx.lock().await = None;
+        // RFC-0861 §4 M8: clear the authentication flag on every
+        // transient drop so `health_check` can't report Ok(()) for
+        // a half-up session that just lost the socket. The flag
+        // will be re-set on the next 376/422 once the listener
+        // reconnects and re-handshakes.
+        self.is_authenticated
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Internal helper: send a pre-built raw IRC line (without trailing
@@ -646,6 +739,8 @@ async fn irc_listener(
     tx: mpsc::Sender<RawPlatformMessage>,
     mut out_rx: mpsc::Receiver<String>,
     mut stop_rx: tokio::sync::watch::Receiver<bool>,
+    is_authenticated: Arc<AtomicBool>,
+    pending_invites: Arc<Mutex<BTreeMap<CommandId, oneshot::Sender<NumericResult>>>>,
 ) {
     let retry = RetryConfig::default();
     let mut attempt = 0u32;
@@ -674,6 +769,8 @@ async fn irc_listener(
                     &tx,
                     &mut out_rx,
                     &mut stop_rx,
+                    &is_authenticated,
+                    &pending_invites,
                 )
                 .await
                 {
@@ -741,6 +838,8 @@ async fn irc_session(
     tx: &mpsc::Sender<RawPlatformMessage>,
     out_rx: &mut mpsc::Receiver<String>,
     stop_rx: &mut tokio::sync::watch::Receiver<bool>,
+    is_authenticated: &Arc<AtomicBool>,
+    pending_invites: &Arc<Mutex<BTreeMap<CommandId, oneshot::Sender<NumericResult>>>>,
 ) -> Result<(), String> {
     // Split the (possibly TLS) stream into read and write halves.
     let (mut reader, mut writer): (IrcReader, IrcWriter) = match stream {
@@ -837,6 +936,14 @@ async fn irc_session(
 
                 // Join channels after RPL_ENDOFMOTD (376) or ERR_NOMOTD (422)
                 if !joined && (trimmed.contains(" 376 ") || trimmed.contains(" 422 ")) {
+                    // RFC-0861 §4 M8: receiving 376/422 is the
+                    // canonical "we are authenticated and the
+                    // session is usable" signal — these numerics
+                    // are only sent *after* the NICK/USER
+                    // handshake completes. Flip the shared
+                    // atomic so `health_check` (which reads it
+                    // on the public API path) can return Ok(()) .
+                    is_authenticated.store(true, std::sync::atomic::Ordering::SeqCst);
                     for ch in channels {
                         writer
                             .write_line(&format!("JOIN {ch}"))
@@ -846,6 +953,45 @@ async fn irc_session(
                     joined = true;
                     line.clear();
                     continue;
+                }
+
+                // RFC-0861 §4 M7: correlate INVITE replies
+                // (341 RPL_INVITING / 482 ERR_CHANOPRIVSNEEDED)
+                // with the pending sender in `pending_invites`.
+                // We pop the oldest entry (FIFO) — IRC numerics
+                // are FIFO at the protocol level so the next
+                // reply after an INVITE is the reply for that
+                // INVITE. Other error numerics (e.g. 401
+                // ERR_NOSUCHNICK, 442 ERR_NOTONCHANNEL) flow
+                // through the same path; the listener doesn't
+                // filter by code at this point — the caller
+                // (`add_member`) maps the code to a
+                // PlatformAdapterError.
+                if let Some(numeric) = parse_numeric_reply(trimmed) {
+                    if numeric.command == "INVITE" || matches!(numeric.code, 341 | 482 | 401 | 442 | 443) {
+                        let mut pending = pending_invites.lock().await;
+                        if let Some((_id, sender)) = pending.pop_first() {
+                            let result = if (200..400).contains(&numeric.code) {
+                                NumericResult::Ok { code: numeric.code }
+                            } else {
+                                NumericResult::Err {
+                                    code: numeric.code,
+                                    message: numeric.message,
+                                }
+                            };
+                            // Ignore send errors: the receiver
+                            // may have been dropped (timeout
+                            // path, shutdown). The drop is
+                            // benign — the entry is already
+                            // removed from the map.
+                            let _ = sender.send(result);
+                        }
+                        // Continue parsing more of the line
+                        // (a numeric reply line is normally
+                        // a single record; nothing else to do).
+                        line.clear();
+                        continue;
+                    }
                 }
 
                 // Parse PRIVMSG
@@ -910,6 +1056,64 @@ struct IrcPrivmsg {
     channel: String,
     text: String,
     id: String,
+}
+
+/// Parsed IRC numeric reply (e.g. `:server 341 nickname #chan :invited`).
+///
+/// `command` is the command that produced this reply (e.g.
+/// `INVITE` for `:... 341 ... INVITE ...`) or empty if the
+/// server didn't echo the command verb. The IRC protocol puts
+/// the command in the third positional parameter for RPL_*
+/// replies, but servers vary — we extract it best-effort.
+///
+/// `code` is the numeric (e.g. 341 for RPL_INVITING, 482 for
+/// ERR_CHANOPRIVSNEEDED). `message` is the trailing text
+/// after the final ` :`.
+struct NumericReply {
+    code: u16,
+    command: String,
+    message: String,
+}
+
+/// RFC-0861 §4 M7: parse a numeric reply from the server. The
+/// format is `:prefix <code> <me> [args...] [:trailing]`. We
+/// don't strictly need the prefix (the server's hostname); we
+/// just need the code and the trailing message for `add_member`'s
+/// error mapping. The "command" field is best-effort — many
+/// servers echo the originating command verb as a positional
+/// arg (e.g. `:s 341 me #chan nick :already invited`), some
+/// don't.
+fn parse_numeric_reply(line: &str) -> Option<NumericReply> {
+    // Numeric replies always start with `:` (a server prefix).
+    let line = line.strip_prefix(':')?;
+    let (prefix, rest) = line.split_once(' ')?;
+    // `prefix` is unused for our purposes; the server
+    // hostname is logged elsewhere.
+    let _ = prefix;
+    // The next token is the numeric code.
+    let (code_str, rest) = rest.split_once(' ')?;
+    let code: u16 = code_str.parse().ok()?;
+    // The remaining args are positional. Split on spaces, then
+    // handle the trailing ` :message` form. The optional
+    // command verb (e.g. `INVITE`) is the LAST positional arg
+    // before the trailing message in standard `INVITE` echo
+    // numerics.
+    let mut parts = rest.splitn(2, " :");
+    let positional = parts.next().unwrap_or("");
+    let trailing = parts.next().unwrap_or("").to_string();
+    // Heuristic: the command verb (if echoed) is the last
+    // token of the positional string. Most servers don't
+    // echo it for arbitrary error numerics.
+    let command = positional
+        .split_whitespace()
+        .next_back()
+        .unwrap_or("")
+        .to_string();
+    Some(NumericReply {
+        code,
+        command,
+        message: trailing,
+    })
 }
 
 /// Parse a PRIVMSG from an IRC line.
@@ -1122,17 +1326,68 @@ impl PlatformAdapter for IrcAdapter {
             // waiting for a stuck task.)
         }
         *connected = false;
+        // RFC-0861 §4 M8: clear the authentication flag on full
+        // teardown too. After `shutdown()` returns, the adapter
+        // is terminal; a subsequent `health_check` (e.g. on a
+        // revived adapter reference) MUST see `is_authenticated
+        // = false` until a fresh handshake completes.
+        self.is_authenticated
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
-        // Check TCP connectivity to the server
+        // RFC-0861 §4 M8: the TCP path can be up while the IRC
+        // session is still in the NICK/USER handshake (or has
+        // silently half-dropped and not yet seen 376/422). A bare
+        // `TcpStream::connect` would lie in that window. Check
+        // `is_authenticated` first: if the listener hasn't
+        // confirmed the 376/422 numerics, the session is not
+        // usable yet — return 503 so callers can distinguish
+        // "TCP up, auth pending" from "TCP down".
+        if !self
+            .is_authenticated
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(PlatformAdapterError::ApiError {
+                code: 503,
+                message: "IRC session not authenticated".into(),
+            });
+        }
+        // RFC-0861 §7 M3: when `use_tls = true`, `health_check`
+        // must attempt the same TLS handshake the listener does,
+        // not just a plain `TcpStream::connect`. Otherwise the
+        // check would report Ok(()) on a session whose TCP path
+        // is up but whose TLS layer is broken (e.g. expired cert,
+        // MITM strip, cipher mismatch). On TLS handshake failure,
+        // return 525 (a custom code distinct from 503 auth and
+        // from generic transport errors) so callers can
+        // distinguish "TCP up, TLS broken" from "TCP down".
         let timeout = std::time::Duration::from_secs(5);
         let addr = format!("{}:{}", self.config.server, self.config.port);
-        match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => Err(transport_err(format!("Health check: {e}"))),
-            Err(_) => Err(transport_err("Health check timed out")),
+        if self.config.use_tls {
+            let sni = self.config.server.clone();
+            match tokio::time::timeout(timeout, connect_tls(&self.config.server, self.config.port, &sni)).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(reason)) => {
+                    if reason.starts_with("TCP connect") {
+                        Err(transport_err(format!("Health check: {reason}")))
+                    } else {
+                        Err(PlatformAdapterError::ApiError {
+                            code: 525,
+                            message: format!("TLS handshake failed: {reason}"),
+                        })
+                    }
+                }
+                Err(_) => Err(transport_err("Health check timed out")),
+            }
+        } else {
+            // Check TCP connectivity to the server
+            match tokio::time::timeout(timeout, TcpStream::connect(&addr)).await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(e)) => Err(transport_err(format!("Health check: {e}"))),
+                Err(_) => Err(transport_err("Health check timed out")),
+            }
         }
     }
 
@@ -1186,7 +1441,7 @@ impl CoordinatorAdmin for IrcAdapter {
         AdminCapabilityReport {
             // ── A. Lifecycle ──────────────────────────────────
             can_create: false,        // IRC has no group creation
-            can_join_by_id: false,    // bot's channels are pre-configured
+            can_join_by_id: true,     // RFC-0861 §1 M10: JOIN #channel IS join-by-id
             can_join_by_invite: true, // JOIN #channel (best-effort)
             can_leave: true,          // PART
             can_destroy: false,       // no invite-link to revoke
@@ -1258,27 +1513,114 @@ impl CoordinatorAdmin for IrcAdapter {
     /// user can act on. Note that the user must accept the
     /// invite (or be auto-promoted by network policy) — this
     /// method does *not* force-join the peer.
+    ///
+    /// **RFC-0861 §4 M7.** The send is correlated with the
+    /// reply via `pending_invites`. The reply is one of:
+    ///
+    /// - `341 RPL_INVITING` → `Ok(AddMemberOutput { added: true, promoted: None })`
+    /// - `482 ERR_CHANOPRIVSNEEDED` → `Err(ApiError { code: 403, message: "not a channel operator" })`
+    /// - no reply within the timeout → `Err(ApiError { code: 504, message: "no reply from server" })`
+    ///
+    /// The match is FIFO across concurrent `add_member` calls:
+    /// the next reply resolves the oldest pending send. IRC
+    /// numerics are FIFO at the protocol level, so this
+    /// matches the natural order of the conversation.
     async fn add_member(
         &self,
         group_id: &GroupId,
         member: &GroupMemberSpec,
     ) -> Result<AddMemberOutput, PlatformAdapterError> {
         let channel = self.channel_for(group_id)?;
-        // IRC nicks cannot contain spaces; we pass through whatever
-        // the caller gave us and let the server reject malformed
-        // input. This matches the R20 WhatsApp pattern of not
-        // validating peer handles.
-        //
-        // Phase 1: fire-and-forget. Phase 3 will wire up
-        // ERR_CHANOPRIVSNEEDED via the pending_replies HashMap and
-        // upgrade this to return AddMemberOutput { added: true, promoted: None }
-        // or Err(ApiError 403) accordingly. (RFC-0861 §4 M7.)
-        self.send_raw_line(&format!("INVITE {} {channel}", member.handle))
-            .await?;
-        Ok(AddMemberOutput {
-            added: true,
-            promoted: None,
-        })
+        // Allocate a per-call nonce. The reply is correlated
+        // by FIFO, so the nonce is just a unique key.
+        let cmd_id = self.next_command_id.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel::<NumericResult>();
+        {
+            let mut pending = self.pending_invites.lock().await;
+            pending.insert(cmd_id, tx);
+        }
+        // Fire the INVITE. If the send fails, remove our
+        // pending entry so the listener doesn't later resolve
+        // a sender that no one is awaiting (the sender is
+        // dropped, the `await rx` will return `RecvError`).
+        if let Err(e) = self
+            .send_raw_line(&format!("INVITE {} {channel}", member.handle))
+            .await
+        {
+            // Best-effort cleanup. If the listener is already
+            // mid-resolve, this `remove` is a no-op (the entry
+            // is gone) — that's fine, the rx just hangs in
+            // a tokio task that we never created (no future
+            // exists; the `await rx` happens below only if
+            // the send succeeded).
+            let mut pending = self.pending_invites.lock().await;
+            pending.remove(&cmd_id);
+            return Err(e);
+        }
+        // Await the reply with a timeout. The timeout is
+        // generous (5s) because some networks rate-limit
+        // responses; if no reply comes, the caller can retry.
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            rx,
+        )
+        .await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(_recv_err)) => {
+                // Listener dropped the sender without
+                // resolving — this happens on session
+                // shutdown mid-flight.
+                return Err(PlatformAdapterError::ApiError {
+                    code: 504,
+                    message: "add_member: pending invite was dropped (session closed?)"
+                        .into(),
+                });
+            }
+            Err(_elapsed) => {
+                // Timeout: clean up our entry so a stale
+                // pending doesn't accumulate.
+                let mut pending = self.pending_invites.lock().await;
+                pending.remove(&cmd_id);
+                return Err(PlatformAdapterError::ApiError {
+                    code: 504,
+                    message: "add_member: no reply from server within 5s".into(),
+                });
+            }
+        };
+        match result {
+            NumericResult::Ok { code: _ } => Ok(AddMemberOutput {
+                added: true,
+                promoted: None,
+            }),
+            NumericResult::Err { code, message } => {
+                // M7: 482 ERR_CHANOPRIVSNEEDED is the canonical
+                // "you're not a channel operator" reply. Map
+                // it to ApiError 403 per the spec. Other
+                // error numerics (e.g. 401 ERR_NOSUCHNICK,
+                // 442 ERR_NOTONCHANNEL) flow through with
+                // their own codes so the caller can
+                // distinguish.
+                let mapped_code = if code == 482 { 403 } else { code };
+                let mapped_msg = if code == 482 {
+                    "not a channel operator".to_string()
+                } else {
+                    if message.is_empty() {
+                        format!("add_member rejected with numeric {code}")
+                    } else {
+                        format!("add_member: {message} (numeric {code})")
+                    }
+                };
+                Err(PlatformAdapterError::ApiError {
+                    code: mapped_code,
+                    message: mapped_msg,
+                })
+            }
+            NumericResult::Timeout => Err(PlatformAdapterError::ApiError {
+                code: 504,
+                message: "add_member: no reply from server (timed out)".into(),
+            }),
+        }
     }
 
     /// `KICK <channel> <nick> :<reason>`. The reason is a short
@@ -1515,6 +1857,24 @@ impl CoordinatorAdmin for IrcAdapter {
             platform: self.platform_name(),
             action: "resolve_invite".into(),
         })
+    }
+
+    /// RFC-0861 §1 M10: IRC's `JOIN #channel` is exactly
+    /// join-by-id. Wrap `join_by_invite` with a `GroupId` →
+    /// `InviteRef` adapter and forward. The capability report
+    /// has `can_join_by_id: true` (was `false` pre-M10; the bit
+    /// was conservative-but-wrong: the bot has always been able
+    /// to JOIN by channel name, we just didn't expose the
+    /// method). The body is identical to `join_by_invite`'s
+    /// because the IRC protocol is the same — both go through
+    /// `send_raw_line("JOIN ...")` — and the validation in
+    /// `validate_channel_name` is the same for both.
+    async fn join_by_id(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        let invite = InviteRef::new(group_id.as_str().to_string());
+        self.join_by_invite(&invite).await
     }
 
     /// Best-effort: treat the `InviteRef` string as a channel
@@ -2002,9 +2362,12 @@ mod tests {
 
         // Lifecycle
         assert!(!caps.can_create, "IRC has no group creation");
+        // RFC-0861 §1 M10: `can_join_by_id = true` because
+        // `JOIN #channel` is exactly join-by-id (was
+        // conservative-but-wrong `false` pre-M10).
         assert!(
-            !caps.can_join_by_id,
-            "bot's channels are pre-configured, not joined by id"
+            caps.can_join_by_id,
+            "IRC's JOIN #channel is join-by-id (RFC-0861 §1 M10)"
         );
         assert!(caps.can_join_by_invite, "JOIN #channel is supported");
         assert!(caps.can_leave, "PART is supported");
@@ -2799,5 +3162,179 @@ mod tests {
             // idempotent-shutdown path.
             adapter.shutdown().await.unwrap();
         }
+    }
+
+    /// RFC-0861 §4 M8: a freshly-constructed adapter has
+    /// `is_authenticated = false`, and `health_check` returns 503
+    /// until the listener has confirmed 376/422. The contract
+    /// is independent of the TCP path: even if a TCP probe
+    /// would succeed, the adapter is not "healthy" from the
+    /// caller's POV until the IRC handshake is observable.
+    #[tokio::test]
+    async fn health_check_returns_503_when_not_authenticated() {
+        let cfg = IrcConfig {
+            server: "irc.example.org".into(),
+            port: 6697,
+            nickname: "test".into(),
+            channels: vec!["#test".into()],
+            password: None,
+            use_tls: true,
+        };
+        let adapter = IrcAdapter::new(cfg);
+        // No listener has been spawned; is_authenticated is the
+        // initial `false`.
+        let result = adapter.health_check().await;
+        match result {
+            Ok(()) => panic!(
+                "health_check on a fresh adapter must return Err(ApiError 503), not Ok(())"
+            ),
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 503, "code should be 503, got {code}");
+                assert!(
+                    message.contains("not authenticated"),
+                    "message should mention not authenticated, got: {message}"
+                );
+            }
+            Err(other) => panic!("expected ApiError 503, got {other:?}"),
+        }
+    }
+
+    /// RFC-0861 §4 M8: a direct `is_authenticated.store(true, ...)`
+    /// (simulating the listener seeing 376/422) is observable by
+    /// `health_check`, which still must also verify TCP — but in
+    /// this test we only flip the flag and rely on the TCP check
+    /// failing (no IRC server listening at 127.0.0.1:1). The 503
+    /// must NOT fire, since the flag is true; we expect the TCP
+    /// check to fail with a transport error instead.
+    #[tokio::test]
+    async fn health_check_passes_auth_gate_when_is_authenticated_true() {
+        let cfg = IrcConfig {
+            server: "127.0.0.1".into(),
+            port: 1, // nothing listens here
+            nickname: "test".into(),
+            channels: vec!["#test".into()],
+            password: None,
+            use_tls: true,
+        };
+        let adapter = IrcAdapter::new(cfg);
+        adapter
+            .is_authenticated
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = adapter.health_check().await;
+        match result {
+            Ok(()) => panic!(
+                "health_check with port=1 (no listener) must fail, but the failure MUST NOT be the 503 'not authenticated' error"
+            ),
+            Err(PlatformAdapterError::ApiError { code, .. }) => {
+                assert_ne!(
+                    code, 503,
+                    "the 503 'not authenticated' path must NOT fire when is_authenticated = true"
+                );
+            }
+            Err(PlatformAdapterError::Unreachable { .. }) => {
+                // Expected: TCP connect to 127.0.0.1:1 fails.
+            }
+            Err(_) => {
+                // Other error types are fine too.
+            }
+        }
+    }
+
+    // ── M7 parse_numeric_reply tests ─────────────────────────────
+
+    #[test]
+    fn parse_numeric_reply_extracts_code_and_trailing() {
+        // Standard RPL_INVITING (341) with trailing message.
+        let nr = parse_numeric_reply(
+            ":irc.example.org 341 mynick #chan alice :has been invited",
+        )
+        .expect("must parse 341");
+        assert_eq!(nr.code, 341);
+        assert_eq!(nr.command, "alice", "last positional before trailing");
+        assert_eq!(nr.message, "has been invited");
+    }
+
+    #[test]
+    fn parse_numeric_reply_handles_no_trailing() {
+        // Numeric reply with no trailing ` :message` (some
+        // servers do this for 482 ERR_CHANOPRIVSNEEDED).
+        let nr = parse_numeric_reply(":irc.example.org 482 mynick #chan")
+            .expect("must parse 482");
+        assert_eq!(nr.code, 482);
+        assert_eq!(nr.command, "#chan", "last positional token");
+        assert_eq!(nr.message, "");
+    }
+
+    #[test]
+    fn parse_numeric_reply_rejects_non_numeric_lines() {
+        // PRIVMSG-style lines must not parse as numerics.
+        assert!(parse_numeric_reply("PING :irc.example.org").is_none());
+        assert!(parse_numeric_reply(":nick!u@h PRIVMSG #chan :hi").is_none());
+        // Missing leading colon.
+        assert!(parse_numeric_reply("341 mynick #chan alice").is_none());
+        // Non-numeric code.
+        assert!(parse_numeric_reply(":server NOTACODE me :x").is_none());
+    }
+
+    /// RFC-0861 §4 M7: a fresh adapter has an empty
+    /// `pending_invites` map, and `next_command_id` starts at 1
+    /// (so the first allocated nonce is 1, not 0 — a small
+    /// smell-check that the field is wired).
+    #[tokio::test]
+    async fn pending_invites_and_next_command_id_start_clean() {
+        let cfg = IrcConfig {
+            server: "irc.example.org".into(),
+            port: 6697,
+            nickname: "test".into(),
+            channels: vec!["#test".into()],
+            password: None,
+            use_tls: true,
+        };
+        let adapter = IrcAdapter::new(cfg);
+        let pending = adapter.pending_invites.lock().await;
+        assert!(pending.is_empty(), "fresh adapter has no pending invites");
+        drop(pending);
+        let id = adapter.next_command_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(id, 1, "next_command_id should start at 1, got {id}");
+    }
+
+    /// RFC-0861 §4 M7: the FIFO correlation is correct.
+    /// Insert two entries under different IDs, then call
+    /// `pop_first()` and verify the smaller ID is removed
+    /// first. This is the algorithm the listener uses to
+    /// match a reply with the oldest pending send.
+    #[tokio::test]
+    async fn pending_invites_pop_first_is_fifo() {
+        let cfg = IrcConfig {
+            server: "irc.example.org".into(),
+            port: 6697,
+            nickname: "test".into(),
+            channels: vec!["#test".into()],
+            password: None,
+            use_tls: true,
+        };
+        let adapter = IrcAdapter::new(cfg);
+        let (tx_a, _rx_a) = oneshot::channel::<NumericResult>();
+        let (tx_b, _rx_b) = oneshot::channel::<NumericResult>();
+        {
+            let mut pending = adapter.pending_invites.lock().await;
+            // Insert in reverse-numerical order to confirm
+            // BTreeMap orders by key, not insertion.
+            pending.insert(20, tx_b);
+            pending.insert(10, tx_a);
+        }
+        // Pop the first (smallest key = 10). The sender for
+        // key 20 must still be present.
+        let popped = {
+            let mut pending = adapter.pending_invites.lock().await;
+            pending.pop_first()
+        };
+        assert!(popped.is_some(), "expected first pop to succeed");
+        let (popped_id, _popped_sender) = popped.unwrap();
+        assert_eq!(popped_id, 10, "BTreeMap::pop_first must return the smallest key");
+        // The remaining entry (key 20) is still there.
+        let remaining = adapter.pending_invites.lock().await;
+        assert_eq!(remaining.len(), 1, "one entry should remain");
+        assert!(remaining.contains_key(&20), "key 20 should be the remaining entry");
     }
 }

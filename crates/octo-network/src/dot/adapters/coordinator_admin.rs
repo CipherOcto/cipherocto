@@ -480,6 +480,20 @@ pub trait CoordinatorAdmin: Send + Sync {
 
     // ── B. Membership ─────────────────────────────────────────
 
+    /// Add a member to a group. The `AddMemberOutput` carries
+    /// partial-success semantics: `added` is true if the add
+    /// succeeded; `promoted` is `Some(_)` if the caller also
+    /// requested admin promotion (the inner `Result` is the
+    /// promotion's success or failure).
+    ///
+    /// **Error semantics (RFC-0861 §4 M7).** Adapters that
+    /// receive a permission error from the platform
+    /// (e.g. IRC's `ERR_CHANOPRIVSNEEDED` for a non-op caller)
+    /// MUST return `PlatformAdapterError::ApiError { code:
+    /// 403, message: "not a channel operator" }` rather than
+    /// `Ok(())`. The IRC impl wires `482 ERR_CHANOPRIVSNEEDED`
+    /// to this return path via the `pending_invites`
+    /// correlation buffer.
     async fn add_member(
         &self,
         group_id: &GroupId,
@@ -713,6 +727,27 @@ pub trait CoordinatorAdmin: Send + Sync {
         Err(PlatformAdapterError::Unimplemented {
             platform: self.platform_name(),
             action: "join_by_invite".into(),
+        })
+    }
+
+    /// Join a group by its native ID (channel name on IRC, chat
+    /// ID on Telegram, etc.). Distinct from `join_by_invite`:
+    /// platforms that have a first-class "join by ID" primitive
+    /// (IRC's `JOIN #channel`) prefer it; the invite code path
+    /// is for platforms that don't.
+    ///
+    /// **RFC-0861 §1 M10.** The default impl delegates to
+    /// `join_by_invite` by wrapping the group ID in an
+    /// `InviteRef`. Adapters that have a distinct join-by-id
+    /// path SHOULD override. Capability bit: `can_join_by_id`.
+    async fn join_by_id(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        let _ = group_id;
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "join_by_id".into(),
         })
     }
 

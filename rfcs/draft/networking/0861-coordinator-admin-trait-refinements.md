@@ -321,7 +321,7 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 ### Phase 3: IRC-side behavior changes
 
 - Tighten `IrcConfig::validate()` channel-name rules per §2 (M15)
-- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8) — set on 376/422, clear on disconnect
+- Add `is_authenticated: AtomicBool` and `health_check` upgrade per §4 (M8) — set on 376/422, clear in BOTH `mark_disconnected` (transient drop, `lib.rs:377`) AND `shutdown` (full teardown, `lib.rs:1086`) per §4 M8 (R24g N65)
 - Wire `ERR_CHANOPRIVSNEEDED` to `add_member` `ApiError` per §4 (M7)
 - Flip `can_join_by_id: true` and add `join_by_id` wrapper per §1 (M10)
 - Update `health_check` to use TLS per §7 (M3) — was previously "Phase 4" but is unblocked since R23d C1 is already fixed
@@ -332,7 +332,7 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 |---|---|
 | `crates/octo-network/src/dot/adapters/coordinator_admin.rs` | `try_new` ctors (M2), `AddMemberOutput` (H6), `initial_admins_promoted` (M4), `list_own_groups_with_invites` (M13), doc updates (M12, M14) |
 | `crates/octo-adapter-whatsapp/src/adapter.rs` | `create_group_str` rename (H2; inherent `leave_group_str` precedent at line 1769, trait impl at line 1467-1479), `join_by_invite` impl (H1, line 1728-1742), `set_ephemeral` error (M1), M5 logging, M11 HashSet, M16 JID validation |
-| `crates/octo-adapter-irc/src/lib.rs` | `IrcConfig::validate` channel rules (M15, validate at line 95; struct at line 58, impl at line 82), `is_authenticated: AtomicBool` field on `IrcAdapter` (struct ~line 225, next to `out_tx`/`shutdown_tx`); SET it true in the existing 376/422 branch in `irc_session` at line 838, CLEAR it in `disconnect` next to the existing `shutdown_tx` clear (M8), `add_member` `ERR_CHANOPRIVSNEEDED` (M7, `add_member` trait impl at line 1261-1273; requires NEW `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` on `IrcAdapter` per RFC §4 M7), `can_join_by_id` flip + `join_by_id` (M10, capability report at line 1189) |
+| `crates/octo-adapter-irc/src/lib.rs` | `IrcConfig::validate` channel rules (M15, validate at line 95; struct at line 58, impl at line 82), `is_authenticated: AtomicBool` field on `IrcAdapter` (struct ~line 225, next to `out_tx`/`shutdown_tx`); SET it true in the existing 376/422 branch in `irc_session` at line 838, CLEAR it in BOTH `mark_disconnected` (transient drop, at `lib.rs:377`, alongside the `connected = false` / `out_tx = None` lines) AND `shutdown` (full teardown, at `lib.rs:1116`, alongside the existing `out_tx = None` and `shutdown_tx.take()` lines) (M8), `add_member` `ERR_CHANOPRIVSNEEDED` (M7, `add_member` trait impl at line 1261-1273; requires NEW `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` on `IrcAdapter` per RFC §4 M7), `can_join_by_id` flip + `join_by_id` (M10, capability report at line 1189) |
 | `crates/octo-adapter-irc/src/lib.rs` (listener / `irc_session`) | M3 (TLS health check at line 1128) |
 | `docs/research/coordinator-admin-actions.md` | Update M10's claim that IRC doesn't support join-by-id |
 
@@ -378,6 +378,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | 1.5     | 2026-06-18 | R24e fixes: Version History 1.4 row added (was claimed in R24d commit message but never written to file); downstream R5 closure summary table updated — M3 phase changed from "4 (blocked on C1)" to "3 (unblocked since R23d C1)"; R5 footnote expanded to point readers to RFC-0861 Appendix A as the canonical mapping; Mission Phase 1 H6 acceptance criterion extended to require a discriminator test for the three `Option<Result<>>` variants. |
 | 1.6     | 2026-06-18 | R24f fixes: Version History 1.3 row recovered (was lost when R24d's edit replaced the 1.2 row with a 1.4 row); Mission Phase 2 plan reordered to put H2 BEFORE M5 (matches the RFC's instruction that M5 lands on the post-H2-renamed function); Mission Phase 2 H1 bullets merged into one coupled acceptance criterion (the capability bit and the impl are not independent). |
 | 1.7     | 2026-06-18 | R24g fixes: §3 H1 struct literal now includes `initial_admins_promoted: false` (would fail to compile after Phase 1 M4 lands, since GroupHandle doesn't derive Default); §4 M8 "clear on disconnect" clarified to clear in BOTH `mark_disconnected` (lib.rs:377) AND `shutdown` (lib.rs:1086) — transient drop otherwise leaves is_authenticated=true until next 376/422; Mission Phase 3 M7 acceptance extended to require a unit test for the new `pending_replies` HashMap. |
+| 1.8     | 2026-06-18 | R24h fixes: 3 MEDIUM downstream propagations of the R24g N65 fix. RFC Phase 3 plan line (was 'clear on disconnect', now 'clear in BOTH mark_disconnected and shutdown'); RFC Key Files row (was 'CLEAR it in disconnect next to the existing shutdown_tx clear', now specifies both methods with line numbers); Mission Phase 3 M8 acceptance (was 'cleared on disconnect', now specifies both methods). |
 
 ## Related RFCs
 

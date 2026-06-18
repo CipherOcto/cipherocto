@@ -1,6 +1,12 @@
 [workspace]
+# ⚠️ quota-router-pyo3 is excluded: it enables quota-router-core/full which
+# pulls pyo3 into the workspace feature unification graph, breaking link of
+# crates that use the core library with default features (they end up needing
+# libpython symbols). Build it standalone with:
+#   cargo build -p quota-router-pyo3
+#   maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
 members = ["crates/*"]
-exclude = ["determin"]
+exclude = ["determin", "crates/quota-router-pyo3"]
 resolver = "2"
 
 # ⚠️ CRITICAL INVARIANT (RFC-0917):

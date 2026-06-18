@@ -307,7 +307,7 @@ impl PlatformAdapter for BlueskyAdapter {
         mime_type: &str,
     ) -> Result<String, PlatformAdapterError> {
         self.ensure_session().await?;
-        let (access_jwt, did) = {
+        let (access_jwt, _did) = {
             let guard = self.session.lock();
             let session = guard.as_ref().ok_or_else(|| transport_err("No session"))?;
             (session.access_jwt.clone(), session.did.clone())

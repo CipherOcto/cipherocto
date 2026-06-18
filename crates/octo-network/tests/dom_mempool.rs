@@ -87,7 +87,7 @@ fn test_admission_expiration_rejected() {
 
     let result = check_admission(&intent, 100, &replay_cache, &seq_tracker, 0, &config);
     assert!(result.is_err());
-    assert!(format!("{}", result.unwrap_err()).contains("rejected") || true);
+    assert!(format!("{}", result.unwrap_err()).contains("rejected"));
 }
 
 #[test]

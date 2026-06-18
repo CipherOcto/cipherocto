@@ -479,7 +479,6 @@ async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
     // `data_dir` &str) doesn't extend past the later mutation
     // of `config["user_id"]`/`config["username"]` below.
     let data_path: std::path::PathBuf = data_dir.into();
-    let meta_path = data_path.join("session_meta.json");
     // Fallback: if the config doesn't have api_id/api_hash (e.g.,
     // a partial session from qr-link, which only writes
     // data_dir/mode/username), use the --api-id/--api-hash args

@@ -12,9 +12,11 @@
 
 __version__ = "0.1.0"
 
-# Import from native extension (installed by maturin)
+# Import from native extension (installed by maturin as
+# `quota_router_native` per [package.metadata.maturin] in
+# crates/quota-router-pyo3/Cargo.toml).
 try:
-    from .quota_router import (
+    from quota_router_native import (
         # Core completion functions
         completion,
         acompletion,

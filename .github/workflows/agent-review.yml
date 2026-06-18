@@ -7,14 +7,24 @@ on:
   pull_request:
     branches: [main, next, feat/**, agent/**]
 
+# Workflow-level guard: the `on: pull_request` trigger can fire on
+# synthetic push events from the merge queue, which GitHub reports
+# as `event: push` with no `base_ref`. When that happens the
+# job-level `if` is never evaluated — the workflow fails with
+# "0s, 0 jobs, workflow file issue" before any job is created.
+# This workflow-level `if` short-circuits the whole workflow
+# before job evaluation.
+if: github.event_name == 'pull_request'
+
 jobs:
   ai-review:
     runs-on: ubuntu-latest
-    # Only run on actual pull_request events (not push events from the merge
-    # queue or other sources — see "0s failure, 0 jobs, workflow file issue"
-    # which occurs because github.base_ref is empty on push events).
-    # Also skip if OPENAI_API_KEY is not set.
-    if: github.event_name == 'pull_request' && (vars.OPENAI_API_KEY != '' || secrets.OPENAI_API_KEY != '')
+    # Skip if the secret is not set. (We previously also checked
+    # `vars.OPENAI_API_KEY`, but that variable is not defined on
+    # this repository — `vars.X` is empty for unset vars and the
+    # `!=` check then evaluated to `'' != ''` = false, which
+    # incorrectly skipped runs even when the secret was present.)
+    if: secrets.OPENAI_API_KEY != ''
 
     permissions:
       contents: read

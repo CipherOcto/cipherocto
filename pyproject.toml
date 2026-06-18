@@ -12,3 +12,19 @@ dependencies = []
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "quota_router"
+
+# Mypy configuration for the workspace.
+#
+# - `ignore_missing_imports = true`: the native extension
+#   `quota_router_native` (built by maturin from
+#   crates/quota-router-pyo3/) does not ship type stubs or a
+#   `py.typed` marker, so mypy cannot resolve it. Treat the
+#   import as `Any` rather than failing the check.
+# - `disable_error_code = ["no-redef"]`: `python/quota_router/
+#   exceptions.py` uses a `try/except ImportError` fallback to
+#   define stub classes when the native extension is not
+#   installed. This is an intentional redefinition pattern; the
+#   `no-redef` error is a false positive here.
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = ["no-redef"]

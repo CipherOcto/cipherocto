@@ -42,7 +42,7 @@ use pyo3::prelude::*;
 /// print(response["choices"][0]["message"]["content"])
 /// ```
 #[pymodule]
-fn quota_router(m: &PyModule) -> PyResult<()> {
+fn quota_router_native(m: &PyModule) -> PyResult<()> {
     // Initialize Tokio runtime and permanently enter its context on this thread.
     // This ensures the reactor is available when async functions (litellm-mode)
     // use reqwest for HTTP calls. Without this, asyncio.run() has no Tokio context.

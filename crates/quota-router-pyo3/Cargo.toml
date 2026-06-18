@@ -27,7 +27,14 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "_quota_router"
+# Lib name must MATCH the `#[pymodule]` function name in
+# src/lib.rs exactly (`quota_router_native`). This makes pyo3
+# emit the `PyInit_quota_router_native` init symbol, which is
+# what maturin looks for. The Python module is importable as
+# `quota_router_native` (top-level, no `_` prefix). The wheel
+# distribution name is derived from the crate name
+# (`quota-router-pyo3`), not from this lib name.
+name = "quota_router_native"
 
 [features]
 default = ["full"]

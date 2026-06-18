@@ -63,7 +63,7 @@ jobs:
       - name: Run pytest
         run: |
           source .venv/bin/activate
-          pytest
+          pytest tests/
 
   type-check:
     runs-on: ubuntu-latest

@@ -34,7 +34,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 
 - [ ] `GroupId::try_new`, `PeerId::try_new`, `InviteRef::try_new` exist and reject empty strings (M2)
 - [ ] Existing `new` methods have `debug_assert!(!s.is_empty())` (M2)
-- [ ] `AddMemberOutput { added: bool, promoted: Result<(), PlatformAdapterError> }` defined and the trait `add_member` returns it (H6)
+- [ ] `AddMemberOutput { added: bool, promoted: Option<Result<(), PlatformAdapterError>> }` defined and the trait `add_member` returns it (H6)
 - [ ] `GroupHandle.initial_admins_promoted: bool` field added with `#[serde(default)]` (M4)
 - [ ] `list_own_groups_with_invites(&self) -> Result<Vec<GroupHandle>, _>` method added (M13)
 - [ ] Doc-comments updated for `GroupModeFlags::set_ephemeral` (M12) and `GroupHandle::is_admin` (M14)
@@ -46,7 +46,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 - [ ] `capabilities().can_join_by_invite` remains `true` (matches the new impl) (H1)
 - [ ] Inherent `create_group` renamed to `create_group_str`; trait impl calls the renamed inherent; `leave_group_str` precedent at `adapter.rs:1769` (inherent; comment block 1763-1764, trait impl 1467-1479) mirrored (H2)
 - [ ] `set_ephemeral` returns `ApiError { code: 400, ... }` when `as_secs() > u32::MAX as u64` (M1)
-- [ ] `get_group_metadata` and `get_invite_link` errors in `create_group` log at `tracing::debug!` and continue (M5)
+- [ ] `get_group_metadata` and `get_invite_link` errors in `create_group_str` (post-H2 rename; was `create_group` pre-H2) log at `tracing::debug!` and continue (M5)
 - [ ] `list_own_groups` builds a `HashSet<String>` of bot's phone forms once before the iter (M11)
 - [ ] `WhatsAppConfig::validate()` rejects `groups` entries with `@` that don't end with `@g.us`, and entries with `:` (M16)
 - [ ] `group_to_jid` refuses non-numeric inputs without `@g.us` suffix (M16)
@@ -138,3 +138,4 @@ deleted; M3 folded into Phase 3 in R24a).
 - 2026-06-18 (R24a): Round 1 review found 9 issues (1 CRITICAL, 1 HIGH, 3 MEDIUM, 4 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r1.md`.
 - 2026-06-18 (R24b): Round 2 review found 8 issues (1 HIGH, 2 MEDIUM, 5 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r2.md`.
 - 2026-06-18 (R24c): Round 3 review found 8 LOW accuracy gaps (off-by-one line refs, missing `Ordering`, misleading config.rs reference, Phase 1 title); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r3.md`.
+- 2026-06-18 (R24d): Round 4 review found 5 issues (2 MEDIUM, 3 LOW). MEDIUMs: Version History 1.2 row was overwritten instead of appended (recovered); AddMemberOutput.promoted doc said 'None if X' but the type was Result, not Option<Result> (now Option<Result>). LOWs: M1 'sibling method' phrasing wrong; mission M5 still said 'in create_group'; Phase 2 plan overclaimed 'all other edits'. All fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r4.md`.

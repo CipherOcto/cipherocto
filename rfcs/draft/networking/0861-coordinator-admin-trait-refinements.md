@@ -170,10 +170,11 @@ signature MUST change from `Result<(), PlatformAdapterError>` to
 pub struct AddMemberOutput {
     /// True if the platform confirmed the add.
     pub added: bool,
-    /// The result of the optional promote (None if `is_admin`
-    /// was false at the call site). `Err` means the add
-    /// succeeded but the promote failed.
-    pub promoted: Result<(), PlatformAdapterError>,
+    /// The result of the optional promote. `None` if `is_admin`
+    /// was false at the call site (no promote was attempted).
+    /// `Some(Ok(()))` if the promote succeeded.
+    /// `Some(Err(e))` if the add succeeded but the promote failed.
+    pub promoted: Option<Result<(), PlatformAdapterError>>,
 }
 ```
 
@@ -304,8 +305,8 @@ is unblocked. Tracked in the same mission, no separate sub-task.
 ### Phase 2: WhatsApp-side behavior changes
 
 - Implement `join_by_invite` via `client.groups().join_with_invite_code(...)` per §1 (H1)
-- Rename inherent `create_group` to `create_group_str` per §3 (H2) — **do this FIRST**, all other Phase 2 edits land on the renamed function
-- Add `set_ephemeral` overflow error per §3 (M1) — in the renamed `create_group_str`'s sibling method, not in `create_group` itself
+- Rename inherent `create_group` to `create_group_str` per §3 (H2) — **do this FIRST**, since M5's edit (`.ok()` → `tracing::debug!`) lands on the renamed `create_group_str`. M1 (`set_ephemeral`), M11 (`list_own_groups`), M16 (`WhatsAppConfig::validate`), and H1 (`join_by_invite`) are separate methods and don't depend on the H2 rename.
+- Add `set_ephemeral` overflow error per §3 (M1) — in the `set_ephemeral` TRAIT impl (not the inherent `create_group_str`; they're separate methods).
 - Add `M5` debug logging in `create_group_str` (already documented) — note H2 rename
 - Add `M11` HashSet optimization
 - Tighten `WhatsAppConfig::validate()` and `group_to_jid` per §2 (M16)
@@ -364,6 +365,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | ------- | ---------- | ------- |
 | 1.0     | 2026-06-18 | Initial. Fills the "deferred without spec" gap from R5 review; specifies 17 R1 findings (H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16). |
 | 1.1     | 2026-06-18 | R24a fixes: H1 detailed with `JoinGroupResult` mapping; M8 trigger changed from 001 (RPL_WELCOME) to 376/422 (RPL_ENDOFMOTD/ERR_NOMOTD) since the listener has no 001 parsing; M3 unblocked (R23d C1 is fixed); stale line numbers corrected; `futures` dep note added for M13; test count corrections. |
+| 1.2     | 2026-06-18 | R24b fixes: Appendix A gains H6 row; M3 phase column corrected to 3 (was 4 "blocked on C1"); M7 spec rewritten — `shutdown_tx` cannot carry reply codes (it's `watch::Sender<bool>`); implementer must add a new `pending_replies: Mutex<HashMap<CommandId, oneshot::Sender<NumericResult>>>` buffer; F1 dedupes Matrix and matrix-sdk; Rationale "11 fixes" corrected to "17 fixes". |
 | 1.3     | 2026-06-18 | R24c fixes: 8 LOW accuracy gaps. Key Files row for IrcConfig::validate line ~140 → 95 (actual); M8 row extended to name the IrcAdapter field decl (~line 225) and the SET site (irc_session line 838); capability report line 1190 → 1189 (can_join_by_id is at 1189); wacore JoinGroupResult line 2318 → 2319 (verified at the SDK checkout); Phase 1 title "(low risk, no behavior change)" → "(additive; no breakage for existing callers)" matching the mission; Phase 2 plan M5 line cross-references H2's create_group_str rename and reorders H2 first. |
 
 ## Related RFCs

@@ -289,16 +289,6 @@ impl IrcAdapter {
     /// to recover. This makes post-shutdown misuse fail loudly rather
     /// than silently spawning a new listener over a half-torn-down one.
     async fn ensure_connected(&self) -> Result<(), PlatformAdapterError> {
-        // R23e N14: refuse to respawn after shutdown. The flag is set
-        // *before* the validate step so the error is the first thing a
-        // misusing caller sees — there's no temptation to read partial
-        // post-shutdown state.
-        if self.shutting_down.load(Ordering::SeqCst) {
-            return Err(transport_err(
-                "IrcAdapter has been shut down; construct a fresh adapter to reconnect",
-            ));
-        }
-
         // Pre-flight: validate the config so a malformed `IrcConfig`
         // (empty channel, empty server, etc.) is caught here with a
         // clear error before we try to TCP-connect. Note this runs
@@ -306,7 +296,31 @@ impl IrcAdapter {
         // function — the cost is negligible compared to TCP connect.
         self.config.validate().map_err(transport_err)?;
 
+        // The `connected` lock is held throughout the spawn sequence
+        // (build channels, install senders, spawn listener). Shutdown
+        // also acquires this lock as its FIRST step (before touching
+        // shutdown_tx / out_tx / listener_handle), so a concurrent
+        // shutdown blocks here until our spawn is fully visible — or
+        // we block until shutdown is done. The shutting_down check
+        // is inside the lock as well: even if shutdown ran while we
+        // were queued on the lock, when we acquire it we re-check
+        // the flag and bail without spawning.
         let mut connected = self.connected.lock().await;
+
+        // R23e N14 + R23f N21: refuse to respawn after shutdown.
+        // The check is INSIDE the `connected` lock for two reasons:
+        //   1. So shutdown can't sneak in between the check and the
+        //      spawn — its `connected.lock().await` blocks until our
+        //      entire spawn sequence completes.
+        //   2. So that if we acquire the lock AFTER shutdown ran
+        //      (shutdown has set shutting_down=true and released
+        //      connected), we still refuse to spawn.
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(transport_err(
+                "IrcAdapter has been shut down; construct a fresh adapter to reconnect",
+            ));
+        }
+
         if *connected {
             return Ok(());
         }
@@ -1070,29 +1084,32 @@ impl PlatformAdapter for IrcAdapter {
     }
 
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
-        // R23c N3 fix: actually shut down. The previous no-op
-        // leaked the spawned listener task past the adapter's
-        // lifetime in the FFI path. The fix has four steps:
+        // R23c N3 + R23e N14 + R23f N21: actually shut down with
+        // proper serialization against `ensure_connected`. The
+        // sequence is:
         //
-        // 1. Set the `shutting_down` flag so future `ensure_connected`
-        //    calls fail fast with a clear error (R23e N14: the
-        //    contract is *hard* shutdown — no respawn).
-        // 2. Signal the stop-sender. The listener's `select!` arm
-        //    for `stop_rx.changed()` fires, and the listener
-        //    returns `Ok(())`. This is the cooperative path.
-        // 3. Drop the outbound sender. If the listener is
-        //    currently blocked in `out_rx.recv()`, this causes
-        //    `recv()` to return `None`, which the listener
-        //    treats as clean shutdown.
-        // 4. Abort the JoinHandle as a backstop. If the listener
-        //    is stuck in a non-yielding syscall (e.g. a buggy
-        //    read_line that's not seeing EOF), the abort forces
-        //    it to terminate. Any in-flight I/O is dropped.
+        //   1. Set the `shutting_down` flag. This is the gate that
+        //      any racing `ensure_connected` checks; once it's
+        //      set, future ensure_connected calls refuse to spawn.
+        //   2. Acquire the `connected` lock *before* touching any
+        //      of the related state (shutdown_tx, out_tx,
+        //      listener_handle). This is the critical R23f N21
+        //      fix: without it, a racing ensure_connected could
+        //      install shutdown_tx / listener_handle *after*
+        //      shutdown had already taken None for them, leaving
+        //      a zombie listener that no one would ever signal
+        //      or abort. Holding `connected` for the entire
+        //      teardown ensures at most one of {spawn, teardown}
+        //      is in flight at a time.
+        //   3. Take shutdown_tx (signal stop), drop out_tx (None),
+        //      take listener_handle (abort), set connected=false.
         //
-        // Ordering matters: the flag goes up *before* the abort
-        // so a racing `ensure_connected` from another task sees
-        // the closed state, not a half-spawned new listener.
+        // Lock ordering: shutdown → ensure_connected both hold
+        // `connected` for the duration of their state changes.
+        // No deadlock because neither holds any other lock while
+        // waiting for `connected`.
         self.shutting_down.store(true, Ordering::SeqCst);
+        let mut connected = self.connected.lock().await;
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(true);
         }
@@ -1104,7 +1121,7 @@ impl PlatformAdapter for IrcAdapter {
             // gateway's shutdown deadline matters more than
             // waiting for a stuck task.)
         }
-        *self.connected.lock().await = false;
+        *connected = false;
         Ok(())
     }
 
@@ -2696,5 +2713,78 @@ mod tests {
             msg.contains("shut down"),
             "post-shutdown send_raw_line must surface 'shut down' error, got: {msg}"
         );
+    }
+
+    /// R23f N21: `ensure_connected` and `shutdown` can race when
+    /// called from two concurrent tasks. The previous (R23e)
+    /// implementation had the `shutting_down` check *outside* the
+    /// `connected` lock, which left a window where shutdown could
+    /// set the flag and take None from `shutdown_tx` /
+    /// `listener_handle` (because ensure_connected hadn't installed
+    /// them yet), letting ensure_connected install them *after*
+    /// shutdown had already done its work — leaving a zombie
+    /// listener that shutdown couldn't abort and that nothing
+    /// would ever signal (because shutdown_tx was re-installed).
+    ///
+    /// After the fix (check moved inside the lock), at most one of
+    /// {spawn, shutdown} actually completes its work; the other
+    /// observes a coherent state. We exercise this with
+    /// `tokio::join!` so the two futures interleave at every
+    /// `.await` point — exactly the scheduling that maximizes the
+    /// race window. We repeat it many times so any unrecovered
+    /// interleaving would surface as a failure.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ensure_connected_shutdown_race_no_zombie() {
+        for _ in 0..100 {
+            let adapter = std::sync::Arc::new(IrcAdapter::new(IrcConfig {
+                server: "127.0.0.1".into(),
+                port: 1, // refused: the listener never reaches the wire
+                nickname: "testbot".into(),
+                channels: vec!["#alpha".into()],
+                password: None,
+                use_tls: false,
+            }));
+
+            // Fire ensure_connected and shutdown on separate
+            // spawned tasks so they can run truly in parallel
+            // across multiple worker threads. Without the R23f
+            // N21 fix (shutdown acquires connected first AND
+            // ensure_connected re-checks shutting_down inside
+            // the lock), the interleaving can leave a zombie
+            // listener: shutdown takes None for shutdown_tx /
+            // listener_handle because ensure_connected hasn't
+            // installed them yet, then ensure_connected
+            // installs them *after* shutdown has finished.
+            let a1 = adapter.clone();
+            let a2 = adapter.clone();
+            let h1 = tokio::spawn(async move { a1.ensure_connected().await });
+            let h2 = tokio::spawn(async move { a2.shutdown().await });
+            let _ = h1.await.unwrap();
+            let _ = h2.await.unwrap();
+
+            // Final state must be: shutting_down=true, and
+            // listener_handle is None. Critically, the
+            // listener_handle must NEVER be Some after
+            // shutdown — that would mean ensure_connected
+            // installed it *after* shutdown had already done
+            // its work, i.e. the zombie case.
+            assert!(
+                adapter
+                    .shutting_down
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                "shutting_down must be true after shutdown"
+            );
+            let handle_still_present = adapter.listener_handle.lock().await.is_some();
+            assert!(
+                !handle_still_present,
+                "shutdown must have taken the listener_handle (no zombie listener allowed); \
+                 this means ensure_connected installed a handle AFTER shutdown took None"
+            );
+
+            // Tidy up: this is a no-op since the adapter is
+            // already shut down, but it exercises the
+            // idempotent-shutdown path.
+            adapter.shutdown().await.unwrap();
+        }
     }
 }

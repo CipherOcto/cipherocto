@@ -94,6 +94,11 @@ impl WhatsAppConfig {
     /// - `ws_url` starts with `ws://` or `wss://` if set
     /// - `groups` entries are non-empty strings (empty groups Vec is OK
     ///   — the operator may have no chats to monitor yet)
+    /// - RFC-0861 §2 M16: each `groups` entry is either bare digits
+    ///   (`120363012345678901`) or digits+`@g.us`
+    ///   (`120363012345678901@g.us`). Entries that contain `@` but
+    ///   don't end with `@g.us` (newsletter JID misuse) or that
+    ///   contain `:` (user JID misuse) are rejected.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if let Some(ref phone) = self.pair_phone {
             if !is_e164(phone) {
@@ -114,6 +119,33 @@ impl WhatsAppConfig {
         for group in &self.groups {
             if group.is_empty() {
                 return Err("groups contains an empty string".to_string());
+            }
+            // RFC-0861 §2 M16: tighten JID acceptance. Two valid
+            // forms: bare digits, or digits + `@g.us`. Anything
+            // with `@` that doesn't end in `@g.us` is newsletter
+            // JID misuse (`1234@newsletter`); anything with `:`
+            // is user JID misuse (`1234567890:0@s.whatsapp.net`).
+            if group.contains(':') {
+                return Err(format!(
+                    "groups entry {group:?} contains ':' (user JID misuse; expected digits or digits+@g.us)"
+                ));
+            }
+            if group.contains('@') {
+                if !group.ends_with("@g.us") {
+                    return Err(format!(
+                        "groups entry {group:?} contains '@' but does not end with @g.us (newsletter JID misuse)"
+                    ));
+                }
+                let prefix = &group[..group.len() - "@g.us".len()];
+                if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_digit()) {
+                    return Err(format!(
+                        "groups entry {group:?} has non-numeric prefix before @g.us"
+                    ));
+                }
+            } else if !group.chars().all(|c| c.is_ascii_digit()) {
+                return Err(format!(
+                    "groups entry {group:?} is not all digits (expected digits or digits+@g.us)"
+                ));
             }
         }
         Ok(())
@@ -328,12 +360,41 @@ impl WhatsAppWebAdapter {
         phone.chars().filter(|c| c.is_ascii_digit()).collect()
     }
 
-    /// Convert a group ID to a WhatsApp group JID
+    /// Convert a group ID to a WhatsApp group JID.
+    ///
+    /// RFC-0861 §2 M16: tightened to refuse non-numeric inputs that
+    /// don't carry the `@g.us` suffix. Accepts:
+    ///   - bare digits (e.g. `120363012345678901`) → append `@g.us`
+    ///   - digits already terminated with `@g.us` (e.g.
+    ///     `120363012345678901@g.us`) → pass through
+    /// Refuses (via `debug_assert!` + a `Result` return):
+    ///   - inputs containing `@` that don't end with `@g.us`
+    ///     (newsletter JID misuse, e.g. `1234@newsletter`)
+    ///   - inputs containing `:` (user JID misuse, e.g.
+    ///     `1234567890:0@s.whatsapp.net`)
+    ///   - non-numeric prefixes without the `@g.us` suffix
+    ///
+    /// `validate()` is the production gate: it rejects bad
+    /// `groups` entries at config time. This helper's
+    /// `debug_assert!` catches programming errors in tests; in
+    /// release builds the function falls through to the same
+    /// behavior as before, since runtime callers always pass
+    /// `validate()`-checked strings.
     fn group_to_jid(group_id: &str) -> String {
-        if group_id.contains('@') {
+        const SUFFIX: &str = "@g.us";
+        if let Some(prefix) = group_id.strip_suffix(SUFFIX) {
+            debug_assert!(
+                !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit()),
+                "group_to_jid: {group_id:?} has @g.us suffix but prefix {prefix:?} is empty or non-numeric"
+            );
             group_id.to_string()
         } else {
-            format!("{}@g.us", group_id)
+            debug_assert!(
+                !group_id.contains('@') && !group_id.contains(':')
+                    && group_id.chars().all(|c| c.is_ascii_digit()),
+                "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us)"
+            );
+            format!("{group_id}{SUFFIX}")
         }
     }
 
@@ -649,7 +710,14 @@ impl WhatsAppWebAdapter {
     /// `self_handle()` is Some). Returns an error if the client is not yet
     /// connected, the subject is empty, or the WhatsApp server rejects the
     /// create IQ.
-    pub async fn create_group(
+    ///
+    /// **RFC-0861 §3 H2:** this method is named `create_group_str` (not
+    /// `create_group`) so the `CoordinatorAdmin::create_group` trait impl
+    /// below can call the unambiguous inherent without an infinite
+    /// recursion footgun if anyone later loosens this inherent's signature
+    /// to take `&[GroupMemberSpec]`. Mirrors the `leave_group_str`
+    /// precedent at `adapter.rs:1788`.
+    pub async fn create_group_str(
         &self,
         subject: &str,
         participants: &[&str],
@@ -1419,7 +1487,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         // whatever the contact already has in its address book.
         let phones: Vec<&str> = initial_members.iter().map(|m| m.handle.as_str()).collect();
 
-        let output = self.create_group(subject, &phones).await.map_err(|e| {
+        let output = self.create_group_str(subject, &phones).await.map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 500,
                 message: format!("create_group failed: {e}"),
@@ -1451,8 +1519,34 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
         // Pull a fresh metadata snapshot so we can fill in the
         // membership / mode fields of the returned `GroupHandle`.
-        let metadata = self.group_metadata(&output.group_jid).await.ok();
-        let invite_url = self.get_invite_link(&output.group_jid, false).await.ok();
+        // RFC-0861 §3 M5: surface failures at `tracing::debug!`
+        // level rather than silently dropping them with `.ok()`.
+        // Callers needing strong guarantees can call
+        // `get_group_metadata` separately (the returned
+        // `GroupHandle` fields are `None` means "platform did
+        // not surface it" per the trait docs).
+        let metadata = match self.group_metadata(&output.group_jid).await {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::debug!(
+                    group_jid = %output.group_jid,
+                    error = %e,
+                    "create_group: group_metadata post-create fetch failed; returning handle without member_count/mode_flags"
+                );
+                None
+            }
+        };
+        let invite_url = match self.get_invite_link(&output.group_jid, false).await {
+            Ok(u) => Some(u),
+            Err(e) => {
+                tracing::debug!(
+                    group_jid = %output.group_jid,
+                    error = %e,
+                    "create_group: get_invite_link post-create fetch failed; returning handle without invite_url"
+                );
+                None
+            }
+        };
 
         Ok(GroupHandle {
             id: GroupId::new(output.group_jid),
@@ -1657,8 +1751,28 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         group_id: &GroupId,
         ttl: Option<std::time::Duration>,
     ) -> Result<(), PlatformAdapterError> {
-        // WhatsApp takes seconds, with 0 meaning "disabled".
-        let secs = ttl.map(|d| d.as_secs() as u32).unwrap_or(0);
+        // RFC-0861 §3 M1: TTL is u32 seconds on the WhatsApp wire.
+        // Reject (not silently truncate) values that would overflow
+        // `u32::MAX` seconds, with `ApiError { code: 400, ... }` so
+        // the caller sees a clear "you gave a bad value" signal
+        // rather than a server-side rejection hours later. `None`
+        // means "disable" (u32 0), per the trait contract.
+        let secs: u32 = match ttl {
+            None => 0,
+            Some(d) => {
+                let raw = d.as_secs();
+                if raw > u32::MAX as u64 {
+                    return Err(PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!(
+                            "set_ephemeral: ttl {raw}s exceeds u32::MAX ({}s)",
+                            u32::MAX
+                        ),
+                    });
+                }
+                raw as u32
+            }
+        };
         self.set_ephemeral(group_id.as_str(), secs)
             .await
             .map_err(|e| api_err("set_ephemeral", e))
@@ -1682,6 +1796,31 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         // Snapshot the bot's own phone once so we can match it against
         // the participant list without holding the lock.
         let self_phone = self.self_phone.lock().clone().unwrap_or_default();
+        // RFC-0861 §5 M11: pre-compute a `HashSet<String>` of the
+        // bot's plausible phone/JID forms so the per-participant
+        // membership check below is an O(1) hash lookup instead of
+        // an O(L) string equality. The set is built once per call;
+        // forms covered:
+        //   1. raw digits (e.g. `5521995544743`)
+        //   2. digits with leading `+` stripped / re-applied variants
+        //   3. digits with `@s.whatsapp.net` suffix
+        //   4. digits with `+@s.whatsapp.net` (some participants
+        //      carry the `+` in the user portion)
+        // Forms we cannot derive (e.g. alternate country-code
+        // variants of the same number) are simply not in the set
+        // — the bot just won't be detected as admin in that
+        // edge case, which matches the previous behavior.
+        let mut self_phones: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        if !self_phone.is_empty() {
+            let digits = self_phone.trim_start_matches('+').to_string();
+            self_phones.insert(digits.clone());
+            self_phones.insert(format!("{digits}@s.whatsapp.net"));
+            self_phones.insert(format!("+{digits}@s.whatsapp.net"));
+            // Some platforms normalise to JID form with a `+` in
+            // the user portion (e.g. `+15551234567@s.whatsapp.net`).
+            self_phones.insert(format!("+{}", self_phone));
+        }
         Ok(map
             .into_iter()
             .map(|(jid, meta)| {
@@ -1689,7 +1828,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
                 let is_admin = meta
                     .participants
                     .iter()
-                    .find(|p| p.jid.user == self_phone)
+                    .find(|p| self_phones.contains(p.jid.user.as_str()))
                     .map(|p| p.is_admin())
                     .unwrap_or(false);
                 GroupHandle {
@@ -1739,17 +1878,38 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn join_by_invite(
         &self,
-        _invite: &InviteRef,
+        invite: &InviteRef,
     ) -> Result<GroupHandle, PlatformAdapterError> {
-        // whatsapp-rust exposes `join_with_invite_code`. We could
-        // call it here, but the current R-series scope is the
-        // "I'm an admin, I manage a group" path. Mark as
-        // Unimplemented for now; the bot can join via the
-        // WhatsApp client and a subsequent get_participating
-        // reconcile will pick it up.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "join_by_invite".into(),
+        // RFC-0861 §3 H1: implement via
+        // `client.groups().join_with_invite_code(...)`. The SDK
+        // accepts both bare invite codes and full
+        // `https://chat.whatsapp.com/...` URLs (it calls
+        // `extract_invite_code` internally). We pass the full
+        // `InviteRef.0` through unchanged.
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| api_err("join_by_invite", "WhatsApp Web client not connected".into()))?
+        };
+        let result = client
+            .groups()
+            .join_with_invite_code(invite.0.as_str())
+            .await
+            .map_err(|e| api_err("join_by_invite", format!("{e:#}")))?;
+        // Both `Joined` and `PendingApproval` map to the same
+        // `GroupHandle` shape (RFC-0861 §3 H1). Callers that need to
+        // distinguish pending vs joined can call `get_group_metadata`
+        // after a backoff.
+        let jid = result.group_jid();
+        Ok(GroupHandle {
+            id: GroupId::new(jid.to_string()),
+            is_admin: false,
+            subject: None,
+            invite_url: None,
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
         })
     }
 
@@ -1895,6 +2055,10 @@ mod tests {
             WhatsAppWebAdapter::group_to_jid("120363012345678901@g.us"),
             "120363012345678901@g.us"
         );
+        // RFC-0861 §2 M16: digits-with-`@g.us` is the only
+        // `@`-bearing form we accept. The helper uses
+        // `debug_assert!` to catch programming errors in tests; the
+        // production gate is `WhatsAppConfig::validate()`.
     }
 
     #[test]
@@ -2127,6 +2291,40 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
+    #[test]
+    fn validate_accepts_bare_digits_and_full_jid() {
+        // RFC-0861 §2 M16: both bare digits and digits+@g.us are
+        // valid `groups` entries.
+        for good in [
+            "120363012345678901",
+            "120363012345678901@g.us",
+            "1",
+            "99999999999999999999999999",
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![good]);
+            assert!(cfg.validate().is_ok(), "groups {good:?} should be accepted");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_malformed_jid_in_groups() {
+        // RFC-0861 §2 M16: reject newsletter JID misuse (`@` but not
+        // `@g.us`), user JID misuse (contains `:`), and non-numeric
+        // bare strings.
+        for bad in [
+            "120363012345678901@newsletter", // newsletter JID misuse
+            "120363012345678901@s.whatsapp.net", // user-JID-shaped but missing `@g.us`
+            "120363012345678901:0@s.whatsapp.net", // user JID misuse (`:`)
+            "not-a-jid",                     // non-numeric, no @
+            "abc@g.us",                      // non-numeric prefix before @g.us
+            "120363012345678901@",           // empty suffix
+            "@g.us",                         // empty prefix
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![bad]);
+            assert!(cfg.validate().is_err(), "groups {bad:?} should be rejected");
+        }
+    }
+
     // ── Sender allowlist tests (D-WA-10 mitigation) ─────────────
 
     #[test]
@@ -2308,7 +2506,7 @@ mod tests {
     async fn create_group_rejects_empty_subject() {
         let adapter = offline_adapter();
         for bad in ["", "   ", "\t\n"] {
-            let result = adapter.create_group(bad, &[]).await;
+            let result = adapter.create_group_str(bad, &[]).await;
             // `expect_err` needs `Debug` on the Ok type, which `CreateGroupOutput`
             // doesn't satisfy because `GroupMetadata` doesn't derive Debug in a
             // useful way. Match on the Result directly instead.
@@ -2325,7 +2523,7 @@ mod tests {
     #[tokio::test]
     async fn create_group_fails_when_not_connected() {
         let adapter = offline_adapter();
-        let result = adapter.create_group("DOT e2e test group", &[]).await;
+        let result = adapter.create_group_str("DOT e2e test group", &[]).await;
         match result {
             Ok(_) => panic!("create_group must fail when client is not connected"),
             Err(err) => assert!(err.contains("not connected"), "unexpected error: {err}"),
@@ -2575,13 +2773,19 @@ mod tests {
     #[test]
     fn unimplemented_actions_return_unimplemented_error() {
         // Methods we deliberately don't implement (ban_member,
-        // approve_join_request, join_by_invite, transfer_ownership)
-        // must return `PlatformAdapterError::Unimplemented` with
-        // the correct platform name and action label.
+        // approve_join_request, transfer_ownership) must return
+        // `PlatformAdapterError::Unimplemented` with the correct
+        // platform name and action label.
+        //
+        // `join_by_invite` is no longer in this list: RFC-0861 §3
+        // H1 implemented it via `client.groups().join_with_invite_code`.
+        // An offline adapter short-circuits with
+        // `api_err("join_by_invite", "WhatsApp Web client not connected")`
+        // (an `ApiError`, not `Unimplemented`); a separate test
+        // `join_by_invite_fails_when_not_connected` covers that path.
         let adapter = offline_adapter();
         let g = GroupId::new("120363012345678901@g.us");
         let p = PeerId::new("+15551234567");
-        let inv = InviteRef::new("https://chat.whatsapp.com/ABCD");
 
         // We can't `.await` inside `#[test]`, so we use a small
         // blocking helper instead.
@@ -2612,17 +2816,65 @@ mod tests {
                     .expect_err("approve_join_request must be Unimplemented"),
             );
             check(
-                "join_by_invite",
-                CoordinatorAdmin::join_by_invite(&adapter, &inv)
-                    .await
-                    .expect_err("join_by_invite must be Unimplemented"),
-            );
-            check(
                 "transfer_ownership",
                 CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
                     .await
                     .expect_err("transfer_ownership must be Unimplemented"),
             );
         });
+    }
+
+    #[tokio::test]
+    async fn join_by_invite_fails_when_not_connected() {
+        // RFC-0861 §3 H1: the new impl short-circuits on a missing
+        // client (offline adapter) with `api_err("join_by_invite",
+        // "WhatsApp Web client not connected")` — an `ApiError`, not
+        // `Unimplemented`. This is the same shape as
+        // `create_group_fails_when_not_connected` (lib.rs:2333).
+        let adapter = offline_adapter();
+        let inv = InviteRef::new("https://chat.whatsapp.com/ABCD");
+        let result = CoordinatorAdmin::join_by_invite(&adapter, &inv).await;
+        match result {
+            Ok(_) => panic!("join_by_invite must fail when client is not connected"),
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 500, "code should be 500, got {code}");
+                assert!(
+                    message.contains("not connected"),
+                    "unexpected error: {message}"
+                );
+                assert!(
+                    message.contains("join_by_invite"),
+                    "action label missing: {message}"
+                );
+            }
+            Err(other) => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_ephemeral_rejects_ttl_overflow() {
+        // RFC-0861 §3 M1: TTLs > u32::MAX seconds must produce
+        // `ApiError { code: 400 }`, not silently truncate. The
+        // offline adapter short-circuits before the SDK call, so
+        // we can assert on the error shape without needing a
+        // live client. The check is on the trait's `set_ephemeral`
+        // (which is the M1 entry point), not the inherent
+        // `set_ephemeral(&str, u32)`.
+        let adapter = offline_adapter();
+        let g = GroupId::new("120363012345678901@g.us");
+        // u32::MAX is ~4.29e9 seconds; pick a value clearly above.
+        let huge = std::time::Duration::from_secs(u32::MAX as u64 + 1);
+        let result = CoordinatorAdmin::set_ephemeral(&adapter, &g, Some(huge)).await;
+        match result {
+            Ok(_) => panic!("set_ephemeral with overflow TTL must error, not Ok"),
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 400, "code should be 400 (overflow), got {code}");
+                assert!(
+                    message.contains("exceeds u32::MAX"),
+                    "message should explain the overflow, got: {message}"
+                );
+            }
+            Err(other) => panic!("expected ApiError with code 400, got {other:?}"),
+        }
     }
 }

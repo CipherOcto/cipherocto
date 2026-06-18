@@ -611,12 +611,23 @@ pub trait CoordinatorAdmin: Send + Sync {
         })
     }
 
+    /// Set the ephemeral (disappearing-messages) TTL for a group.
+    ///
     /// `ttl = None` disables ephemeral mode (equivalent to a TTL
     /// of 0). Implementations should interpret `None` as "disable".
     /// Adapters that cannot disable ephemeral mode once enabled
     /// SHOULD still return `Ok(())` from `set_ephemeral(_, None)` —
     /// the trait contract treats disable as a soft request, not an
     /// error. (RFC-0861 §6 M12.)
+    ///
+    /// **TTL bounds (RFC-0861 §3 M1).** Implementations MAY clamp
+    /// `ttl` to a platform-specific maximum and SHOULD return
+    /// `PlatformAdapterError::ApiError { code: 400, message: ... }`
+    /// if the caller requests a value that would overflow the
+    /// platform's wire format. WhatsApp, for example, encodes TTL
+    /// as `u32` seconds; the WhatsApp impl rejects
+    /// `ttl > u32::MAX` seconds with `ApiError { code: 400 }`
+    /// rather than silently truncating.
     async fn set_ephemeral(
         &self,
         group_id: &GroupId,

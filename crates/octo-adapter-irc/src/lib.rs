@@ -28,6 +28,7 @@ use base64::Engine;
 use rustls::ClientConfig;
 use rustls_pki_types::ServerName;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{
     AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf as TokioReadHalf,
@@ -118,6 +119,9 @@ impl IrcConfig {
 /// - Non-empty after trim
 /// - No whitespace, no `/` (path separator would corrupt DNS),
 ///   no control characters
+/// - No `..` (RFC-952 forbids empty labels; an IRC hostname made
+///   of only dots is also a clear sign of a config typo like
+///   `"irc.example.com.."` or just `".."`)
 fn validate_server(server: &str) -> std::result::Result<(), String> {
     if server.trim().is_empty() {
         return Err("server must not be empty".into());
@@ -125,6 +129,11 @@ fn validate_server(server: &str) -> std::result::Result<(), String> {
     if server.contains(|c: char| c.is_whitespace() || c == '/' || c.is_control()) {
         return Err(format!(
             "server {server:?} must not contain whitespace, '/', or control characters"
+        ));
+    }
+    if server.contains("..") {
+        return Err(format!(
+            "server {server:?} must not contain empty labels ('..')"
         ));
     }
     Ok(())
@@ -225,14 +234,23 @@ pub struct IrcAdapter {
     /// it as a backstop in case the stop signal is racing with a
     /// blocked `read_line()`.
     listener_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Set to `true` once `shutdown()` has been called. After this,
+    /// `ensure_connected` refuses to spawn a new listener — the
+    /// adapter is terminal and callers must construct a fresh
+    /// `IrcAdapter` to resume. This is the *hard-shutdown* contract:
+    /// soft recovery (respawn) is intentionally not supported, so a
+    /// caller that misuses a shut-down adapter gets a clear error
+    /// instead of a silently-working adapter with zombie state.
+    shutting_down: AtomicBool,
     /// Channels the bot has joined at runtime (via `join_by_invite`).
     /// Merged with `config.channels` by `list_own_groups` and
     /// `channel_for` so the bot can see and administer groups it joined
     /// outside the static config. Backwards-compatible: when empty,
     /// behavior is identical to the static-config-only path. Uses
-    /// `std::sync::Mutex` (not `tokio::sync::Mutex`) because
-    /// `channel_for` is a sync helper called from `&self` methods, and
-    /// the critical sections are tiny string-vec operations.
+    /// `std::sync::Mutex` (not `tokio::sync::Mutex`) because the
+    /// critical sections are short string-vec operations with no
+    /// `.await` inside — the lock is safe to hold in async context
+    /// as long as the body doesn't await.
     runtime_channels: StdMutex<Vec<String>>,
 }
 
@@ -247,6 +265,7 @@ impl IrcAdapter {
             connected: Mutex::new(false),
             shutdown_tx: Mutex::new(None),
             listener_handle: Mutex::new(None),
+            shutting_down: AtomicBool::new(false),
             runtime_channels: StdMutex::new(Vec::new()),
         }
     }
@@ -263,7 +282,23 @@ impl IrcAdapter {
     /// fails to send to / recv from the listener's channel resets
     /// `connected = false` (see `send_raw_line`, `receive_messages`,
     /// `send_envelope`), so the next `ensure_connected` respawns.
+    ///
+    /// **Hard shutdown (R23e N14):** once `shutdown()` has been called,
+    /// `ensure_connected` returns `Err(transport_err("..."))` instead
+    /// of respawning. The caller must construct a fresh `IrcAdapter`
+    /// to recover. This makes post-shutdown misuse fail loudly rather
+    /// than silently spawning a new listener over a half-torn-down one.
     async fn ensure_connected(&self) -> Result<(), PlatformAdapterError> {
+        // R23e N14: refuse to respawn after shutdown. The flag is set
+        // *before* the validate step so the error is the first thing a
+        // misusing caller sees — there's no temptation to read partial
+        // post-shutdown state.
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(transport_err(
+                "IrcAdapter has been shut down; construct a fresh adapter to reconnect",
+            ));
+        }
+
         // Pre-flight: validate the config so a malformed `IrcConfig`
         // (empty channel, empty server, etc.) is caught here with a
         // clear error before we try to TCP-connect. Note this runs
@@ -1037,25 +1072,27 @@ impl PlatformAdapter for IrcAdapter {
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
         // R23c N3 fix: actually shut down. The previous no-op
         // leaked the spawned listener task past the adapter's
-        // lifetime in the FFI path. The fix has three steps:
+        // lifetime in the FFI path. The fix has four steps:
         //
-        // 1. Signal the stop-sender. The listener's `select!` arm
+        // 1. Set the `shutting_down` flag so future `ensure_connected`
+        //    calls fail fast with a clear error (R23e N14: the
+        //    contract is *hard* shutdown — no respawn).
+        // 2. Signal the stop-sender. The listener's `select!` arm
         //    for `stop_rx.changed()` fires, and the listener
         //    returns `Ok(())`. This is the cooperative path.
-        // 2. Drop the outbound sender. If the listener is
+        // 3. Drop the outbound sender. If the listener is
         //    currently blocked in `out_rx.recv()`, this causes
         //    `recv()` to return `None`, which the listener
         //    treats as clean shutdown.
-        // 3. Abort the JoinHandle as a backstop. If the listener
+        // 4. Abort the JoinHandle as a backstop. If the listener
         //    is stuck in a non-yielding syscall (e.g. a buggy
         //    read_line that's not seeing EOF), the abort forces
         //    it to terminate. Any in-flight I/O is dropped.
         //
-        // After this returns, `ensure_connected` is a no-op (the
-        // `connected` flag is false but we don't respawn — the
-        // operator should construct a fresh adapter). We don't
-        // reset `connected` here because callers might still
-        // observe the post-shutdown state.
+        // Ordering matters: the flag goes up *before* the abort
+        // so a racing `ensure_connected` from another task sees
+        // the closed state, not a half-spawned new listener.
+        self.shutting_down.store(true, Ordering::SeqCst);
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(true);
         }
@@ -1481,13 +1518,25 @@ impl CoordinatorAdmin for IrcAdapter {
         // calls see it. Without this, the C4 fix is non-functional:
         // the server joins but the adapter state doesn't reflect it.
         {
-            let mut runtime =
-                self.runtime_channels
-                    .lock()
-                    .map_err(|e| PlatformAdapterError::Unreachable {
-                        platform: "irc".into(),
-                        reason: format!("runtime_channels poisoned: {e}"),
-                    })?;
+            // R23e N20: if the mutex is poisoned, the JOIN has
+            // already been sent to the server (line above), so the
+            // bot *is* in the channel but our state disagrees.
+            // Log loudly so an operator can reconcile manually
+            // (e.g. shutdown + recreate the adapter). Returning
+            // an error alone would leave the operator in the dark.
+            let mut runtime = self.runtime_channels.lock().map_err(|e| {
+                tracing::warn!(
+                    target: "octo.adapter.irc",
+                    channel = %invite.0,
+                    error = %e,
+                    "runtime_channels mutex poisoned AFTER successful JOIN; \
+                     server-side join succeeded but adapter state will not record it"
+                );
+                PlatformAdapterError::Unreachable {
+                    platform: "irc".into(),
+                    reason: format!("runtime_channels poisoned: {e}"),
+                }
+            })?;
             if !runtime.iter().any(|c| c == &invite.0) {
                 runtime.push(invite.0.clone());
             }
@@ -2332,25 +2381,31 @@ mod tests {
     // runtime) and only spin up tokio where the behavior under
     // test is async.
 
-    /// N1: joining a channel via `join_by_invite` should make it
-    /// visible to `list_own_groups`, `channel_for`, and
-    /// `send_envelope`. Without the runtime_channels fix from R23c,
-    /// the join succeeded on the wire but the adapter state didn't
-    /// reflect it. This is a `#[tokio::test]` because the public
-    /// API calls go through async, even though no I/O actually
-    /// happens — `send_raw_line` returns Ok without spawning the
-    /// listener when `join_by_invite` validates the channel first.
+    /// N1 (regression): `join_by_invite` must record the channel in
+    /// `runtime_channels` so `list_own_groups`, `channel_for`, and
+    /// `send_envelope` can find it. Without the R23c fix, the
+    /// `runtime_channels` field was added but never populated.
     ///
-    /// Note: this test uses a *non-existent* server so the listener
-    /// is never spawned; the `send_raw_line` calls succeed because
-    /// the validation passes (which is the part under test). The
-    /// `runtime_channels` mutation happens immediately after the
-    /// validation, before any socket I/O is attempted.
+    /// Flow under test:
+    ///   1. `join_by_invite` validates the channel name first
+    ///      (N2 fix) — no socket I/O attempted for a malformed name.
+    ///   2. `send_raw_line("JOIN #beta")` is called. This *does*
+    ///      spawn the listener via `ensure_connected`; the listener
+    ///      then loops on connect-refused (port 1) but holds the
+    ///      `out_rx` so the mpsc buffer accepts the line (capacity
+    ///      128). `send_raw_line` returns `Ok(())`.
+    ///   3. Only after `send_raw_line` succeeds does the adapter
+    ///      push `#beta` to `runtime_channels`. The ordering means
+    ///      a failed send would *not* pollute the runtime list.
+    ///
+    /// This test exercises that ordering: the listener is alive (so
+    /// send succeeds), the push happens, and `list_own_groups` sees
+    /// both the configured `#alpha` and the runtime-joined `#beta`.
     #[tokio::test]
     async fn test_join_by_invite_records_runtime_channel() {
         let adapter = IrcAdapter::new(IrcConfig {
             server: "127.0.0.1".into(),
-            port: 1, // unused: we don't actually connect
+            port: 1, // refused: listener stays alive but never connects
             nickname: "testbot".into(),
             channels: vec!["#alpha".into()],
             password: None,
@@ -2361,14 +2416,10 @@ mod tests {
         assert_eq!(pre.len(), 1, "expected one configured channel");
         assert_eq!(pre[0].id.as_str(), "127.0.0.1:#alpha");
 
-        // Join a new channel. This sends `JOIN #beta` (which the
-        // local fake server never sees — it doesn't exist) and,
-        // more importantly, updates `runtime_channels`.
-        //
-        // We expect `send_raw_line` to fail (Unreachable: outbound
-        // channel closed because no listener is alive to receive).
-        // That's fine for this test: the channel was already added
-        // to `runtime_channels` before the send attempt.
+        // Join a new channel. `send_raw_line` enqueues `JOIN #beta`
+        // in the mpsc buffer (the listener holds `out_rx` and is
+        // busy in the connect-refused retry loop), returns Ok, and
+        // then we push `#beta` into `runtime_channels`.
         let _ = adapter.join_by_invite(&InviteRef::new("#beta")).await;
 
         // Now `list_own_groups` should see both #alpha (configured)
@@ -2390,6 +2441,9 @@ mod tests {
             .channel_for(&GroupId::new("127.0.0.1:#beta"))
             .unwrap();
         assert_eq!(resolved, "#beta");
+
+        // Tidy up so the listener doesn't outlive the test runtime.
+        adapter.shutdown().await.unwrap();
     }
 
     /// N1: `list_own_groups` deduplicates when a runtime-joined
@@ -2409,6 +2463,9 @@ mod tests {
         let _ = adapter.join_by_invite(&InviteRef::new("#alpha")).await;
         let post = adapter.list_own_groups().await.unwrap();
         assert_eq!(post.len(), 2, "expected dedup; got {} channels", post.len());
+
+        // Tidy up the spawned listener.
+        adapter.shutdown().await.unwrap();
     }
 
     /// N2: `join_by_invite` must reject the IRC "JOIN 0" special
@@ -2497,7 +2554,7 @@ mod tests {
     }
 
     /// N9: `IrcConfig::validate` rejects server names containing
-    /// whitespace, `/`, or control characters.
+    /// whitespace, `/`, control characters, or empty labels.
     #[test]
     fn test_irc_config_validate_rejects_bad_server_names() {
         let mut config = IrcConfig {
@@ -2522,6 +2579,14 @@ mod tests {
         assert!(config.validate().is_err(), "NUL in server must fail");
         config.server = "irc\twith\ttab".into();
         assert!(config.validate().is_err(), "tab in server must fail");
+        // R23e N19: empty labels (..) are forbidden by RFC-952.
+        config.server = "..".into();
+        assert!(config.validate().is_err(), "empty-label server must fail");
+        config.server = "irc.example.com..".into();
+        assert!(
+            config.validate().is_err(),
+            "trailing empty-label server must fail"
+        );
     }
 
     /// N5: `max_payload_for_channel` returns smaller values for
@@ -2553,15 +2618,20 @@ mod tests {
         );
     }
 
-    /// N3: `shutdown` must drop the outbound sender and signal the
-    /// stop channel. We can't easily observe the listener task's
-    /// exit without a tokio runtime probe, so we verify the
-    /// post-shutdown state: `connected` is false and `out_tx` is
-    /// `None`. Then we verify that a subsequent `ensure_connected`
-    /// can still respawn the listener (i.e., shutdown didn't
-    /// permanently break the adapter).
+    /// N3 + N14: `shutdown` must drop the outbound sender, signal the
+    /// stop channel, and (after R23e) make `ensure_connected` a
+    /// *hard* no-op. We verify:
+    ///
+    ///   - the post-shutdown state is clean (`connected` is false,
+    ///     `out_tx` is `None`, `shutdown_tx` is `None`,
+    ///     `listener_handle` is `None`),
+    ///   - a subsequent `ensure_connected` returns `Err` (the
+    ///     `shutting_down` flag is set, so respawn is refused —
+    ///     callers must construct a fresh `IrcAdapter`),
+    ///   - `send_raw_line` after shutdown surfaces the error
+    ///     (not a silent respawn, not a hang).
     #[tokio::test(flavor = "current_thread")]
-    async fn test_shutdown_clears_state_and_listener_can_respawn() {
+    async fn test_shutdown_prevents_respawn() {
         // Point at a non-existent server so the listener
         // task is spawned but immediately loops on connect
         // failure. The shutdown should still kill it.
@@ -2596,5 +2666,35 @@ mod tests {
         // The JoinHandle should be cleared (taken).
         let handle_empty = adapter.listener_handle.lock().await.is_none();
         assert!(handle_empty, "shutdown must take listener_handle");
+
+        // R23e N14: the shutting_down flag must be set, so a
+        // subsequent ensure_connected refuses to respawn.
+        assert!(
+            adapter
+                .shutting_down
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "shutdown must set shutting_down flag"
+        );
+
+        // N14: ensure_connected after shutdown returns Err
+        // (hard shutdown — no soft recovery).
+        let err = adapter.ensure_connected().await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("shut down"),
+            "post-shutdown ensure_connected must return 'shut down' error, got: {msg}"
+        );
+
+        // N14: send_raw_line surfaces the failure (via
+        // ensure_connected's Err) rather than hanging or respawning.
+        let err = adapter
+            .send_raw_line("KICK #alpha alice :removed by coordinator")
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("shut down"),
+            "post-shutdown send_raw_line must surface 'shut down' error, got: {msg}"
+        );
     }
 }

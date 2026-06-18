@@ -66,8 +66,7 @@ Full finding-to-section mapping is in RFC-0861 Appendix A.
 ## Location
 
 - `crates/octo-network/src/dot/adapters/coordinator_admin.rs` — trait surface (Phase 1)
-- `crates/octo-adapter-whatsapp/src/adapter.rs` — WhatsApp impl (Phase 2)
-- `crates/octo-adapter-whatsapp/src/config.rs` (if separate) — `WhatsAppConfig::validate` (M16)
+- `crates/octo-adapter-whatsapp/src/adapter.rs` — WhatsApp impl (Phase 2) AND `WhatsAppConfig::validate` (M16; struct at line 30, impl at line 83, validate at line 97 — there is NO separate `config.rs` file)
 - `crates/octo-adapter-irc/src/lib.rs` — IRC impl (Phase 3) and listener (M7)
 - `docs/research/coordinator-admin-actions.md` — M10 doc update
 
@@ -101,11 +100,12 @@ deleted; M3 folded into Phase 3 in R24a).
   reuse `out_tx` (mpsc::Sender<String> for outbound lines,
   `lib.rs:222`) or `shutdown_tx` (watch::Sender<bool> for shutdown,
   `lib.rs:232`) — neither can carry reply codes. (R24b N32/N33 fix.)
-- For M8's "authenticated" signal: set `*self.is_authenticated.store(true)`
+- For M8's "authenticated" signal: set `*self.is_authenticated.store(true, std::sync::atomic::Ordering::SeqCst)`
   inside the existing 376/422 branch in `irc_session` at
   `crates/octo-adapter-irc/src/lib.rs:838-849`. Do NOT add new 001/RPL_WELCOME
   parsing — the listener has none, and 376/422 is the canonical
-  post-handshake signal. (R24a N22 fix.)
+  post-handshake signal. (R24a N22 fix; R24c N42 added the required
+  `Ordering` argument.)
 - For H1's `JoinGroupResult` mapping: see RFC-0861 §3 H1. Map both
   `Joined(Jid)` and `PendingApproval(Jid)` to
   `Ok(GroupHandle { is_admin: false, subject: None, ... })`; callers
@@ -137,3 +137,4 @@ deleted; M3 folded into Phase 3 in R24a).
   before claim.
 - 2026-06-18 (R24a): Round 1 review found 9 issues (1 CRITICAL, 1 HIGH, 3 MEDIUM, 4 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r1.md`.
 - 2026-06-18 (R24b): Round 2 review found 8 issues (1 HIGH, 2 MEDIUM, 5 LOW); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r2.md`.
+- 2026-06-18 (R24c): Round 3 review found 8 LOW accuracy gaps (off-by-one line refs, missing `Ordering`, misleading config.rs reference, Phase 1 title); all fixed. See `docs/reviews/coordinator-admin-rfc-0861-adversarial-review-r3.md`.

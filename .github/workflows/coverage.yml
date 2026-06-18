@@ -1,5 +1,14 @@
 # Code Coverage
 # Track test coverage over time
+#
+# Note: the Telegram crates (octo-adapter-telegram,
+# octo-telegram-onboard, octo-telegram-onboard-core) are excluded
+# from `--all-features` coverage. They depend on `tdlib-rs 1.4.0`,
+# which has a build.rs bug: enabling `pkg-config` together with
+# `download-tdlib`/`local-tdlib` causes a compile error because
+# `TDLIB_VERSION` is `#[cfg]`-gated out but still referenced on
+# some code paths. Coverage of TDLib C++ binding code is not
+# meaningful from Rust anyway, so excluding is the right call.
 
 name: Coverage
 
@@ -24,7 +33,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Generate coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: |
+          cargo llvm-cov --all-features --workspace \
+            --exclude octo-adapter-telegram \
+            --exclude octo-telegram-onboard \
+            --exclude octo-telegram-onboard-core \
+            --lcov --output-path lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
@@ -37,5 +51,9 @@ jobs:
 
       - name: Generate coverage summary
         run: |
-          cargo llvm-cov --all-features --workspace --json --output-path coverage.json
+          cargo llvm-cov --all-features --workspace \
+            --exclude octo-adapter-telegram \
+            --exclude octo-telegram-onboard \
+            --exclude octo-telegram-onboard-core \
+            --json --output-path coverage.json
           echo "Coverage report generated"

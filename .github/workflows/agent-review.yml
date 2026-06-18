@@ -10,8 +10,15 @@ on:
 jobs:
   ai-review:
     runs-on: ubuntu-latest
-    # Skip if OPENAI_API_KEY is not set
-    if: vars.OPENAI_API_KEY != '' || secrets.OPENAI_API_KEY != ''
+    # Only run on actual pull_request events (not push events from the merge
+    # queue or other sources — see "0s failure, 0 jobs, workflow file issue"
+    # which occurs because github.base_ref is empty on push events).
+    # Also skip if OPENAI_API_KEY is not set.
+    if: github.event_name == 'pull_request' && (vars.OPENAI_API_KEY != '' || secrets.OPENAI_API_KEY != '')
+
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v6

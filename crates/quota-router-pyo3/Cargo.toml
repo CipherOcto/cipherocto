@@ -1,9 +1,19 @@
 [package]
 name = "quota-router-pyo3"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-license.workspace = true
+# NOTE: this crate is EXCLUDED from the workspace (see root Cargo.toml
+# [workspace] section) because enabling `quota-router-core/full` pulls
+# pyo3 into the workspace feature unification graph and breaks linking
+# of other workspace members that use the core library with default
+# features. As a result, this crate cannot use `*.workspace = true`
+# inheritance — cargo errors with "failed to find a workspace root".
+# All workspace-inherited values must be hardcoded here, mirroring the
+# root `[workspace.package]` and `[workspace.dependencies]` tables.
+# If you bump a version in the root workspace, you must also bump it
+# here.
+version = "0.1.0"
+edition = "2021"
+authors = ["CipherOcto"]
+license = "MIT OR Apache-2.0"
 
 # ⚠️ CRITICAL INVARIANT (RFC-0917):
 # This crate provides the Python SDK interface.
@@ -30,18 +40,20 @@ pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"]
 # Core library - full mode enables both litellm (reqwest) and any-llm (PyO3) backends
 quota-router-core = { path = "../quota-router-core", default-features = false, features = ["full"] }
 
-# Serialization
-serde.workspace = true
-serde_json.workspace = true
+# Serialization (hardcoded; see note above)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
-# UUID generation
-uuid.workspace = true
+# UUID generation (hardcoded; see note above)
+uuid = { version = "1.6", features = ["v4", "serde"] }
 
-# Error handling
-thiserror.workspace = true
+# Error handling (hardcoded; see note above)
+thiserror = "2.0"
 
-# Tokio for litellm-mode async runtime
-tokio = { workspace = true, features = ["rt"] }
+# Tokio for litellm-mode async runtime (hardcoded; see note above).
+# "full" enables every tokio feature including "rt"; adding "rt"
+# explicitly for clarity in the workspace-excluded context.
+tokio = { version = "1.35", features = ["full", "rt"] }
 
 # pyo3-asyncio for native async Python SDK calls (Phase 2)
 pyo3-asyncio-0-21 = { version = "0.21", features = ["tokio-runtime"] }

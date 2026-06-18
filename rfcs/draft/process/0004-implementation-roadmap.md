@@ -232,7 +232,7 @@ Objective: Build the compute market and data economy.
 
 | RFC      | Title                 | Priority |
 | -------- | --------------------- | -------- |
-| RFC-0144 | Inference Task Market | Required |
+| RFC-0918 | Inference Task Market | Required |
 | RFC-0133 | Dataset Integrity     | Required |
 | RFC-0100 | AI Quota Marketplace  | Required |
 | RFC-0101 | Quota Router Agent    | Required |
@@ -452,7 +452,7 @@ All RFCs are related to this roadmap. Key dependencies:
 - RFC-0120 (AI Execution): Deterministic AI-VM
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0143 (Networking): OCTO-Network Protocol
-- RFC-0144 (Economics): Inference Task Market
+- RFC-0918 (Economics): Inference Task Market
 - RFC-0416 (Agents): Self-Verifying AI Agents
 
 ## Related Documentation

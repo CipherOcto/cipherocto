@@ -30,7 +30,7 @@ Research confirms feasibility through:
 - Deterministic computation (RFC-0106)
 - STARK-based verification (RFC-0107)
 - Sharded consensus (RFC-0140)
-- Task markets (RFC-0144)
+- Task markets (RFC-0918)
 
 ### WHY? — Why This Matters
 
@@ -120,7 +120,7 @@ CipherOcto consists of **seven architectural layers**:
 │                         NETWORK LAYER                                     │
 │  ┌─────────────────────────────┐  ┌─────────────────────────────────┐       │
 │  │ OCTO-Network Protocol      │  │ Inference Task Market            │       │
-│  │ (RFC-0143)                │  │ (RFC-0144)                      │       │
+│  │ (RFC-0143)                │  │ (RFC-0918)                      │       │
 │  └─────────────────────────────┘  └─────────────────────────────────┘       │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
@@ -171,7 +171,7 @@ graph TD
 
     subgraph Network
         RFC0143[RFC-0143: OCTO-Network]
-        RFC0144[RFC-0144: Task Market]
+        RFC0144[RFC-0918: Task Market]
     end
 
     subgraph Agents
@@ -270,7 +270,7 @@ graph TD
 | RFC-0141 | Parallel Block DAG | Complete |
 | RFC-0142 | Data Availability | Complete |
 | RFC-0143 | OCTO-Network | Complete |
-| RFC-0144 | Inference Task Market | Complete |
+| RFC-0918 | Inference Task Market | Complete |
 
 #### Layer 8: Infrastructure (New)
 
@@ -361,7 +361,7 @@ Required RFCs:
 Goal: Production-ready systems.
 
 Required RFCs:
-- RFC-0144 (Task Market)
+- RFC-0918 (Task Market)
 - RFC-0145 (Hardware Registry)
 - RFC-0146 (Proof Aggregation)
 

@@ -1,7 +1,7 @@
 # Mission: Phase 4 - Deterministic Verification
 
 ## Status
-Open
+Archived
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine

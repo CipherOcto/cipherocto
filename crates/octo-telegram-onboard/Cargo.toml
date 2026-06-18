@@ -1,0 +1,40 @@
+[package]
+name = "octo-telegram-onboard"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Standalone CLI that authenticates against Telegram via TDLib and writes a JSON config for octo-adapter-telegram."
+
+[[bin]]
+name = "octo-telegram-onboard"
+path = "src/main.rs"
+
+[dependencies]
+# Library half — auth flows, session extraction, config output
+octo-telegram-onboard-core = { path = "../octo-telegram-onboard-core" }
+# CLI (env feature for reading env vars in clap args)
+clap = { version = "4.5", features = ["derive", "env"] }
+# Async runtime
+tokio = { workspace = true }
+# Logging with redaction layer
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+# Heap-zeroing wrappers for secret material
+zeroize = "1"
+# Config dir resolution
+dirs = "5"
+# Atomic file writes
+tempfile = "3.10"
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Base64 for verifying_key validation
+base64 = "0.22"
+# TDLib Rust binding (for whoami's direct get_me)
+tdlib-rs = "=1.4.0"
+
+[dev-dependencies]
+tempfile = "3.10"

@@ -8,6 +8,7 @@ pub enum KeyType {
     LlmApi,
     Management,
     ReadOnly,
+    Sso,
 }
 
 impl std::fmt::Display for KeyType {
@@ -16,6 +17,7 @@ impl std::fmt::Display for KeyType {
             KeyType::LlmApi => write!(f, "llm_api"),
             KeyType::Management => write!(f, "management"),
             KeyType::ReadOnly => write!(f, "read_only"),
+            KeyType::Sso => write!(f, "sso"),
             KeyType::Default => write!(f, "default"),
         }
     }
@@ -26,7 +28,7 @@ pub struct ApiKey {
     pub key_id: String,
     pub key_hash: Vec<u8>,
     pub key_prefix: String,
-    pub team_id: Option<String>,
+    pub team_id: Option<uuid::Uuid>,
     pub budget_limit: i64,
     pub rpm_limit: Option<i32>,
     pub tpm_limit: Option<i32>,
@@ -44,7 +46,7 @@ pub struct ApiKey {
     pub metadata: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeyUpdates {
     pub budget_limit: Option<i64>,
     pub rpm_limit: Option<i32>,
@@ -55,6 +57,7 @@ pub struct KeyUpdates {
     pub revocation_reason: Option<String>,
     pub key_type: Option<KeyType>,
     pub description: Option<String>,
+    pub metadata: Option<String>,
 }
 
 /// Team - group of API keys with shared budget
@@ -70,7 +73,155 @@ pub struct Team {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeySpend {
     pub key_id: String,
-    pub total_spend: i64,    // in cents/millicents
-    pub window_start: i64,    // timestamp when window started
+    pub total_spend: i64,  // in cents/millicents
+    pub window_start: i64, // timestamp when window started
     pub last_updated: i64,
+}
+
+/// Token source for spend events — determines how tokens were counted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TokenSource {
+    #[default]
+    ProviderUsage,
+    CanonicalTokenizer,
+}
+
+impl TokenSource {
+    /// String used in event_id hash input (compact, for SHA256)
+    /// DIFFERENT from to_db_str() - hash strings are compact for efficient hashing
+    pub fn to_hash_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider",
+            TokenSource::CanonicalTokenizer => "tokenizer",
+        }
+    }
+
+    /// String used in database storage and CHECK constraint validation
+    pub fn to_db_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider_usage",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
+
+    /// Parse from database string
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "provider_usage" => Some(TokenSource::ProviderUsage),
+            "canonical_tokenizer" => Some(TokenSource::CanonicalTokenizer),
+            _ => None,
+        }
+    }
+}
+
+/// A single spend event recorded in the ledger.
+///
+/// This is the canonical record of a billing event. event_id is deterministic
+/// based on the inputs — the same request on any router produces the same event_id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendEvent {
+    pub event_id: String,
+    pub request_id: String,
+    pub key_id: uuid::Uuid,
+    pub team_id: Option<uuid::Uuid>,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_amount: u64,
+    pub pricing_hash: [u8; 32], // 32 bytes — fixed-size array, stored as BLOB in DB
+    pub token_source: TokenSource,
+    pub tokenizer_version: Option<String>,
+    pub provider_usage_json: Option<String>,
+    pub timestamp: i64,
+}
+
+/// Key generation request (LiteLLM compatible) per RFC-0903 §GenerateKeyRequest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateKeyRequest {
+    /// Optional existing key (for regeneration)
+    pub key: Option<String>,
+    /// Budget limit in deterministic cost units
+    pub budget_limit: u64,
+    /// Rate limits
+    pub rpm_limit: Option<u32>,
+    pub tpm_limit: Option<u32>,
+    /// Key type (default: Default)
+    #[serde(default)]
+    pub key_type: KeyType,
+    /// Auto-rotation
+    pub auto_rotate: Option<bool>,
+    /// Rotation interval in days
+    pub rotation_interval_days: Option<u32>,
+    /// Team ID
+    pub team_id: Option<uuid::Uuid>,
+    /// Metadata
+    pub metadata: Option<serde_json::Value>,
+    pub description: Option<String>,
+}
+
+/// Key generation response per RFC-0903 §GenerateKeyResponse
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateKeyResponse {
+    /// The actual API key (sk-qr-...)
+    pub key: String,
+    /// Public key identifier
+    pub key_id: String,
+    /// Expiration timestamp (epoch seconds)
+    pub expires: Option<i64>,
+    /// Team ID if associated
+    pub team_id: Option<uuid::Uuid>,
+    /// Key type
+    pub key_type: KeyType,
+    /// Created timestamp (epoch seconds)
+    pub created_at: i64,
+}
+
+/// Team creation request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTeamRequest {
+    pub team_id: String,
+    pub name: String,
+    pub budget_limit: i64,
+}
+
+/// Team update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTeamRequest {
+    pub name: Option<String>,
+    pub budget_limit: Option<i64>,
+}
+
+/// Revoke key request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeKeyRequest {
+    pub revoked_by: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// Pricing model for cost computation per RFC-0909 §PricingModel.
+///
+/// Contains per-token micro-unit pricing. TOKEN_SCALE = 1000 (micro-units per token).
+/// Truncation error is bounded at <2 micro-units per event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricingModel {
+    pub model_name: String,
+    /// Prompt cost per 1000 tokens, in micro-units.
+    pub prompt_cost_per_1k: u64,
+    /// Completion cost per 1000 tokens, in micro-units.
+    pub completion_cost_per_1k: u64,
+}
+
+/// A node in a Merkle tree built from SpendEvents.
+///
+/// Leaf nodes contain event data. Internal nodes are hashes of their children.
+/// Used for cryptographic proof generation per RFC-0909 §build_merkle_tree.
+#[derive(Debug, Clone)]
+pub struct MerkleNode {
+    /// The SHA256 hash of this node's content.
+    pub hash: [u8; 32],
+    /// Left child (None for leaf nodes).
+    pub left: Option<Box<MerkleNode>>,
+    /// Right child (None for leaf nodes).
+    pub right: Option<Box<MerkleNode>>,
 }

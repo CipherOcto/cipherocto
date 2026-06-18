@@ -1,7 +1,7 @@
 # Mission: Python SDK - PyO3 Core Bindings
 
 ## Status
-
+Archived
 Completed
 
 ## RFC

@@ -1,17 +1,21 @@
 # Mission: BigInt Consensus Integration
 
 ## Status
+
 Open
 
 ## RFC
+
 RFC-0110 (Numeric): Deterministic BIGINT
 
 ## Summary
+
 Integrate BigInt into stoolap's consensus layer with Merkle state encoding, replay validation, and spec version pinning. This mission enables BigInt operations in the consensus-critical path.
 
 ## Overview
 
 BigInt integration with consensus requires:
+
 1. Canonical serialization for Merkle hashing
 2. Replay validation (deterministic execution verification)
 3. Fork detection for divergent BigInt results
@@ -20,11 +24,13 @@ BigInt integration with consensus requires:
 ## Phase 1: Merkle State Encoding
 
 ### Acceptance Criteria
+
 - [ ] BigIntEncoding in Merkle state trie
 - [ ] Canonical serialization for state hashing
 - [ ] Integration with state trie infrastructure
 
 ### Implementation Pattern
+
 ```rust
 /// BigInt value in state
 enum StateValue {
@@ -48,11 +54,13 @@ fn put_bigint(state: &mut State, key: &[u8], value: &BigInt) {
 ## Phase 2: Replay Validation
 
 ### Acceptance Criteria
+
 - [ ] On replay, re-execute BigInt operations
 - [ ] Compare result hashes with committed state
 - [ ] Detect divergence within 1 epoch
 
 ### Replay Validation Flow
+
 ```
 1. Load block with BigInt operations
 2. For each BigInt operation:
@@ -65,6 +73,7 @@ fn put_bigint(state: &mut State, key: &[u8], value: &BigInt) {
 ```
 
 ### Divergence Detection
+
 ```rust
 /// Check BigInt operation determinism during replay
 fn verify_bigint_operation(
@@ -91,11 +100,13 @@ fn verify_bigint_operation(
 ## Phase 3: Fork Handling
 
 ### Acceptance Criteria
+
 - [ ] Detect divergent BigInt results within 1 epoch
 - [ ] Fork resolution mechanism
 - [ ] Consensus participation
 
 ### Fork Detection
+
 ```rust
 /// Epoch-based BigInt divergence check
 struct BigIntConsensusChecker {
@@ -121,11 +132,13 @@ impl BigIntConsensusChecker {
 ## Phase 4: Spec Version Pinning
 
 ### Acceptance Criteria
+
 - [ ] NUMERIC_SPEC_VERSION = 1 constant defined
 - [ ] Block header numeric_spec_version integration
 - [ ] Version check during replay
 
 ### Spec Version Constants
+
 ```rust
 /// Numeric tower unified specification version (DFP, DQA, BigInt)
 /// RFC-0110: Initial version
@@ -141,6 +154,7 @@ pub struct BlockHeader {
 ```
 
 ### Version Check Rules (RFC-0110 §Replay Rules)
+
 ```
 1. Version Check: If block.numeric_spec_version != current NUMERIC_SPEC_VERSION → reject block
 2. Historical Replay: Load the exact algorithm version declared in block header
@@ -151,11 +165,13 @@ pub struct BlockHeader {
 ## Phase 5: Integration with stoolap
 
 ### Acceptance Criteria
+
 - [ ] BigInt as Value type in stoolap
 - [ ] SQL operators using BigInt
 - [ ] Expression VM opcodes for BigInt
 
 ### Value Integration
+
 ```rust
 /// stoolap Value type with BigInt support
 pub enum Value {
@@ -186,25 +202,30 @@ pub enum BigIntOp {
 ```
 
 ## Implementation Location
+
 - **stoolap**: `stoolap/src/storage/state.rs`
 - **stoolap**: `stoolap/src/consensus/mod.rs`
 - **stoolap**: `stoolap/src/vm/mod.rs` (expression integration)
 
 ## Prerequisites
+
 - Mission 0110-bigint-core-algorithms (complete)
 - Mission 0110-bigint-conversions-serialization (complete)
 - Mission 0110-bigint-testing-fuzzing (complete)
 - Mission 0110-bigint-verification-probe (complete)
 
 ## Dependencies
+
 - stoolap (existing consensus infrastructure)
 - determin crate (BigInt implementation)
 
 ## Reference
+
 - RFC-0110: Deterministic BIGINT (§Consistency)
 - RFC-0110: Deterministic BIGINT (§Spec Version & Replay Pinning)
 - RFC-0110: Deterministic BIGINT (§Replay Rules)
 - missions/claimed/0104-dfp-consensus-integration.md (DFP pattern)
 
 ## Complexity
+
 Medium — Integrates with existing consensus infrastructure, similar pattern to DFP

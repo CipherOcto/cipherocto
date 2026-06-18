@@ -7,22 +7,24 @@ license.workspace = true
 
 [dependencies]
 # Async
-tokio.workspace = true
+tokio = { version = "1.35", features = ["full"], optional = true }
 async-trait.workspace = true
 
-# HTTP server
-hyper.workspace = true
-hyper-util.workspace = true
-http.workspace = true
-http-body-util.workspace = true
-rustls.workspace = true
-rustls-pemfile.workspace = true
-reqwest.workspace = true
+# HTTP server (optional - enabled by litellm-mode/full)
+hyper = { version = "1.3", features = ["full"], optional = true }
+hyper-util = { version = "0.1", features = ["full"], optional = true }
+http = { version = "1", optional = true }
+http-body = { version = "1.0", optional = true }
+http-body-util = { version = "0.1", optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2.1", optional = true }
+reqwest = { version = "0.13", features = ["json", "stream", "form"], optional = true }
 
 # Config
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 
 # Utilities
 uuid.workspace = true
@@ -35,19 +37,111 @@ rand.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# OpenTelemetry tracing (RFC-0905)
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+
 # Errors
 anyhow.workspace = true
 thiserror.workspace = true
 
 # Database
-stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
+# For HMAC (AWS SigV4 signing)
+hmac = "0.12"
+
+# For SHA256 (used in event_id computation)
+sha2.workspace = true
+
+# For BLAKE3 (used in tokenizer_id derivation)
+blake3.workspace = true
+
 # For hex encoding of key hashes
 hex = "0.4"
+
+# For constant-time comparison (master key bypass)
+subtle = "2.6"
+
+# Prometheus metrics (RFC-0937)
+prometheus = "0.13"
+
+# For percent decoding (path normalization security)
+percent-encoding = "2.1"
+
+# For URL encoding (Vault KV v2 path encoding, RFC-0935)
+urlencoding = "2.1"
+
+# For token estimation (pre-call checks, RFC-0936)
+tiktoken-rs = "0.6"
+
+# For async streaming (futures::StreamExt)
+futures-core = "0.3"
+futures = "0.3"
+
+# For timestamp handling (RFC-0905 structured logging)
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+
+# For TokenBucket rate limiter (DashMap for concurrent access)
+dashmap = "5.0"
+
+# For monotonic time in TokenBucket
+instant = "0.1"
+
+# For L1 key cache LRU
+lru = "0.12"
+
+# For Unicode NFC normalization (provider/model normalization per RFC-0909 CONSISTENCY GOAL)
+unicode-normalization = "0.1.25"
+
+# HTTP framework (for litellm-mode)
+axum = { version = "0.7", optional = true }
+
+# Bytes (for streaming bodies)
+bytes = { version = "1", optional = true }
+
+# PyO3 (for any-llm-mode py_bridge module — calls official Python SDKs)
+pyo3 = { version = "0.21", optional = true }
+regex = "1.12.3"
+base64 = "0.22.1"
+quick-xml = { version = "0.40.1", features = ["serialize"] }
+jsonwebtoken = { version = "10.4.0", features = ["rsa", "p256", "p384"] }
+ring = "0.17.14"
+rsa = "0.9.10"
 
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"
+
+[features]
+# Feature gates per RFC-0917 §Rust Feature Gates
+#
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# Mode gate controls PROVIDER STRATEGY (reqwest vs PyO3), NOT interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes (litellm-mode, any-llm-mode, full).
+#
+# - litellm-mode:  reqwest (native Rust HTTP) → provider REST APIs. HTTP proxy ✅ Python SDK ✅
+# - any-llm-mode:  PyO3 → official Python SDKs. HTTP proxy ✅ Python SDK ✅
+# - full:          Both reqwest AND PyO3. HTTP proxy ✅ Python SDK ✅
+#
+# NEVER think "litellm-mode = proxy only" or "any-llm-mode = SDK only".
+# The mode gate controls HOW providers are called, not WHETHER an interface exists.
+#
+# See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
+default = ["litellm-mode"]
+litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "bytes"]
+any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
+full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
+
+[[bench]]
+name = "key_hash_storage_bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3"

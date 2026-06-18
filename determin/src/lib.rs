@@ -1,15 +1,18 @@
-//! Deterministic Arithmetic (DFP/DQA/BigInt) Implementation
+//! Deterministic Arithmetic (DFP/DQA/BigInt/DECIMAL/DVEC) Implementation
 //!
 //! This module implements:
 //! - RFC-0104: Deterministic Floating-Point (DFP)
 //! - RFC-0105: Deterministic Quant Arithmetic (DQA)
 //! - RFC-0110: Deterministic BIGINT
+//! - RFC-0111: Deterministic DECIMAL
+//! - RFC-0112: Deterministic Vectors (DVEC)
 //!
 //! Key design principles:
 //! - Pure integer arithmetic (no floating-point operations)
 //! - DFP: Saturating arithmetic (overflow → MAX, not Infinity)
 //! - DQA: Bounded range (i64 value with 0-18 decimal scale)
 //! - BigInt: Arbitrary precision with TRAP on overflow
+//! - DECIMAL: i128 with 0-36 decimal scale
 //! - Canonical representation for deterministic Merkle hashing
 //! - Round-to-nearest-even (RNE) / RoundHalfEven
 
@@ -22,9 +25,21 @@ pub const DFP_SPEC_VERSION: u32 = 1;
 /// BIGINT specification version
 pub const BIGINT_SPEC_VERSION: u32 = 1;
 
+/// DECIMAL specification version
+pub const DECIMAL_SPEC_VERSION: u32 = 1;
+
 mod arithmetic;
 pub mod bigint;
+pub mod consensus;
+pub mod dact;
+pub mod dact_lut;
+pub mod dcs;
+pub mod decimal;
+#[cfg(feature = "use-internal-bigint")]
+pub mod decimal_internal;
+pub mod dmat;
 pub mod dqa;
+pub mod dvec;
 #[cfg(test)]
 mod fuzz;
 mod probe;
@@ -33,7 +48,28 @@ pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
 pub use bigint::{
     bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
 };
-pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
+pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
+pub use dcs::{
+    dcs_deserialize_bool, dcs_serialize_bool, dcs_serialize_bytes, dcs_serialize_dmat,
+    dcs_serialize_dvec, dcs_serialize_enum, dcs_serialize_i128, dcs_serialize_i64,
+    dcs_serialize_option_none, dcs_serialize_option_some, dcs_serialize_string,
+    dcs_serialize_struct, dcs_serialize_trap, dcs_serialize_u32, dcs_serialize_u64,
+    dcs_serialize_u8, DcsError, DcsSerializable, DCS_MAX_LENGTH,
+};
+pub use decimal::{
+    decimal_add, decimal_cmp, decimal_div, decimal_from_bytes, decimal_mul, decimal_round,
+    decimal_sqrt, decimal_sub, decimal_to_bytes, decimal_to_string, Decimal, DecimalError,
+    MAX_DECIMAL_MANTISSA, MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
+};
+pub use dmat::{DMat, DmatError, NumericScalar};
+pub use dqa::{
+    dqa_abs, dqa_add, dqa_assign_to_column, dqa_cmp, dqa_div, dqa_mul, dqa_negate, dqa_sub,
+    CANONICAL_ZERO, Dqa, DqaEncoding, DqaError,
+};
+pub use dvec::{
+    dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
+    DvecError, DvecScalar,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -156,6 +192,23 @@ impl Dfp {
 
         // Mantissa should now be odd
         debug_assert!(self.mantissa % 2 == 1 || self.mantissa == 0);
+    }
+
+    /// Create DFP from signed mantissa and exponent
+    /// Extracts sign from the mantissa automatically
+    pub fn from_signed(mantissa: i128, exponent: i32) -> Self {
+        if mantissa == 0 {
+            return Dfp::zero();
+        }
+        let sign = mantissa < 0;
+        let mut dfp = Dfp {
+            mantissa: mantissa.unsigned_abs(),
+            exponent,
+            class: DfpClass::Normal,
+            sign,
+        };
+        dfp.normalize();
+        dfp
     }
 
     /// Create DFP from i64 (integer)
@@ -317,6 +370,14 @@ pub const DFP_MIN: Dfp = Dfp {
     sign: true,
     mantissa: DFP_MAX_MANTISSA,
     exponent: DFP_MAX_EXPONENT,
+};
+
+/// Canonical NaN value
+pub const DFP_CANONICAL_NAN: Dfp = Dfp {
+    class: DfpClass::NaN,
+    sign: false,
+    mantissa: 0,
+    exponent: 0,
 };
 
 /// DFP encoding for serialization (24 bytes)

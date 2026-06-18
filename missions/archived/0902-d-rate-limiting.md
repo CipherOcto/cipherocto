@@ -1,7 +1,7 @@
 # Mission: RFC-0902-d: Rate Limiting
 
 ## Status
-
+Archived
 Claimed
 
 ## RFC

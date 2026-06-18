@@ -1,7 +1,7 @@
 # Mission: Python SDK - Router Class Binding
 
 ## Status
-
+Archived
 Completed
 
 ## RFC

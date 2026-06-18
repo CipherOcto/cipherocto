@@ -1,0 +1,32 @@
+[package]
+name = "octo-matrix-session-store"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+# Persistence convention (project-wide, RFC-0914-a / 0914-a-stoolap-persistence):
+# ALL new persistence uses CipherOcto's stoolap fork on
+# `feat/blockchain-sql`, never raw SQLite. The crate API is
+# `Database::open(path)` / `Database::open_in_memory()` + `db.execute(sql, params)`
+# and `db.query(sql, params) -> stoolap::Rows`. See
+# `crates/quota-router-core/src/storage.rs` for the canonical pattern.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Serialization for the row model.
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Errors + logging.
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# Async-trait: the SessionStore interface is async to match the rest of
+# the platform (octo-network's adapters are all `async_trait`).
+async-trait = { workspace = true }
+# Default data dir lookup for the store path (`directories` is in the
+# workspace dep set; using it keeps the per-platform XDG locations
+# consistent with quota-router-cli).
+directories = { workspace = true }
+
+[dev-dependencies]
+# `#[tokio::test]` for the async store tests.
+tokio = { workspace = true }

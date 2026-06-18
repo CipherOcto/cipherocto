@@ -2,7 +2,9 @@
 
 ## Status
 
-Final (v29 - Stoolap compatibility)
+Final (v35 - Stoolap compatibility)
+
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead (<2ms).**
 
 ## Authors
 
@@ -324,6 +326,8 @@ pub enum KeyError {
     RateLimited { retry_after: u64 },
     TeamBudgetExceeded { current: u64, limit: u64 },
     TeamKeyLimitExceeded { team_id: Uuid, current: u32, limit: u32 },
+    /// OCTO-W balance check failed — key not found or insufficient balance (RFC-0904 F3).
+    OctoWNotEnabled,
 }
 
 /// Validate API key middleware
@@ -376,14 +380,14 @@ pub fn check_budget_soft_limit(db: &Database, key_id: &Uuid, estimated_max_cost:
     // Query returns BIGINT (i64); cast to u64 is safe since cost_amount is non-negative
     let current: u64 = db.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get::<_, i64>(0),
     ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
     // budget_limit is BIGINT NOT NULL CHECK (budget_limit >= 0), so always non-negative
     let budget: u64 = db.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get::<_, i64>(0),
     ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
@@ -437,6 +441,10 @@ CREATE TABLE teams (
 -- CRITICAL: Index on key_hash for lookup path (not key_id)
 -- This accelerates the actual lookup: WHERE key_hash = $1 AND revoked = 0
 CREATE INDEX idx_api_keys_hash_active ON api_keys(key_hash) WHERE revoked = 0;
+-- Note: This partial index provides storage savings (~10% of revoked keys excluded)
+-- but does NOT accelerate the superset query WHERE key_hash = $1 AND revoked = 0
+-- in Phase 1 (exact-match only). Phase 2 implication matching would enable index usage.
+-- See RFC-0914 Future Work item F7.
 -- Ensure no duplicate key hashes
 CREATE UNIQUE INDEX idx_api_keys_key_hash_unique ON api_keys(key_hash);
 CREATE INDEX idx_api_keys_team_id ON api_keys(team_id);
@@ -705,10 +713,10 @@ pub fn rotate_key(
             rotated_from
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         params![
-            new_key_id.to_string(),
+            uuid_to_blob_16(&new_key_id),
             new_key_hash,
             new_key_prefix,
-            old_key.team_id.map(|t| t.to_string()),
+            old_key.team_id.map(|t| uuid_to_blob_16(&t)),
             old_key.budget_limit,
             old_key.rpm_limit,
             old_key.tpm_limit,
@@ -720,7 +728,7 @@ pub fn rotate_key(
             old_key.rotation_interval_days,
             old_key.description,
             serde_json::to_string(&old_key.metadata).unwrap_or_default(),
-            key_id.to_string(),  // rotated_from = old key ID
+            uuid_to_blob_16(&key_id),  // rotated_from = old key ID
         ],
     )?;
 
@@ -946,6 +954,31 @@ fn generate_key_string() -> String {
     format!("sk-qr-{}", hex_string)
 }
 
+/// Convert Uuid to BLOB(16) for storage
+#[inline]
+fn uuid_to_blob_16(id: &Uuid) -> Vec<u8> {
+    id.as_bytes().to_vec()
+}
+
+/// Convert event_id from hex String (struct/API layer) to raw [u8; 32] for BLOB(32) storage.
+/// event_id is SHA256 hex (64 chars) in the SpendEvent struct; storage requires raw binary.
+/// Per RFC-0903-B1 §event_id.
+#[inline]
+fn hex_to_blob_32(hex_str: &str) -> Vec<u8> {
+    let bytes = hex::decode(hex_str).expect("valid 64-char hex event_id");
+    bytes
+}
+
+/// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
+/// All inputs are treated as raw text strings (not hex). Always uses SHA256 regardless
+/// of input length — uniform encoding for all gateway request_id formats.
+/// Per RFC-0903-B1 §request_id.
+#[inline]
+fn encode_request_id(request_id: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(request_id.as_bytes()).into()
+}
+
 /// Generate a new API key
 pub fn generate_key(db: &Database, req: GenerateKeyRequest) -> Result<GenerateKeyResponse, Error> {
     // Capture timestamp once for all time-related fields
@@ -970,10 +1003,10 @@ pub fn generate_key(db: &Database, req: GenerateKeyRequest) -> Result<GenerateKe
             rotation_interval_days, description, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         params![
-            key_id.to_string(),
+            uuid_to_blob_16(&key_id),
             key_hash,
             key_prefix,
-            req.team_id.map(|t| t.to_string()),
+            req.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             req.budget_limit,
             req.rpm_limit,
             req.tpm_limit,
@@ -1140,7 +1173,7 @@ pub fn revoke_key(
     // This prevents a crash scenario where cache is cleared but DB still has active key
     db.execute(
         "UPDATE api_keys SET revoked = 1, revoked_at = $1, revoked_by = $2, revocation_reason = $3 WHERE key_id = $4",
-        params![Utc::now().timestamp(), revoked_by, reason, key_id.to_string()],
+        params![Utc::now().timestamp(), revoked_by, reason, uuid_to_blob_16(key_id)],
     )?;
 
     // Invalidate cache AFTER DB update (safe now that source of truth is updated)
@@ -1242,7 +1275,7 @@ CREATE TABLE spend_ledger (
     timestamp INTEGER NOT NULL,
     -- Token source for deterministic accounting
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
-    tokenizer_version TEXT,
+    tokenizer_id BYTEA(16),  -- FK to tokenizers.id; NULL if token_source = ProviderUsage
     provider_usage_json TEXT,  -- Raw provider usage for audit
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     -- Scoped uniqueness: request_id unique per key
@@ -1421,7 +1454,7 @@ pub struct SpendEvent {
     /// API key that made the request
     pub key_id: Uuid,
     /// Team (if key belongs to a team)
-    pub team_id: Option<String>,
+    pub team_id: Option<Uuid>,
     /// Provider name (e.g., "openai", "anthropic")
     pub provider: String,
     /// Model used (e.g., "gpt-4", "claude-3-opus")
@@ -1436,8 +1469,8 @@ pub struct SpendEvent {
     pub pricing_hash: [u8; 32],
     /// Token source for determining token count origin
     pub token_source: TokenSource,
-    /// Version of canonical tokenizer used (if token_source is CanonicalTokenizer)
-    pub tokenizer_version: Option<String>,
+    /// Canonical tokenizer identifier (if token_source is CanonicalTokenizer)
+    pub tokenizer_id: Option<[u8; 16]>,
     /// Raw provider usage JSON for audit (optional)
     pub provider_usage_json: Option<String>,
     /// Event timestamp (epoch seconds)
@@ -1585,7 +1618,7 @@ pub fn record_spend_with_event(
          SET current_spend = current_spend + $1
          WHERE key_id = $2
          AND current_spend + $1 <= budget_limit",
-        params![event.cost_amount as i64, key_id.to_string()],
+        params![event.cost_amount as i64, uuid_to_blob_16(key_id)],
     )?;
 
     // If budget exceeded, rollback immediately (no orphan events)
@@ -1605,13 +1638,13 @@ pub fn record_spend_with_event(
         "INSERT INTO spend_ledger (
             event_id, key_id, request_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash, timestamp,
-            token_source, tokenizer_version
+            token_source, tokenizer_id
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.key_id.to_string(),
-            event.request_id,
+            hex_to_blob_32(&event.event_id),
+            uuid_to_blob_16(&event.key_id),
+            encode_request_id(&event.request_id),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1623,7 +1656,7 @@ pub fn record_spend_with_event(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| id.to_vec()),
         ],
     )?;
 
@@ -1773,7 +1806,7 @@ CREATE TABLE spend_ledger (
     cost_amount BIGINT NOT NULL,
     pricing_hash BYTEA NOT NULL,
     token_source TEXT NOT NULL,
-    tokenizer_version TEXT,
+    tokenizer_id BYTEA(16),
     provider_usage_json TEXT,  -- Raw provider usage for audit
     timestamp INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
@@ -1802,14 +1835,14 @@ pub fn record_spend(
     // FOR UPDATE ensures only one transaction can modify this key at a time
     let budget: i64 = tx.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     // 2. Compute current spend from ledger (not a counter)
     let current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
@@ -1823,14 +1856,14 @@ pub fn record_spend(
         "INSERT INTO spend_ledger (
             event_id, request_id, key_id, team_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash,
-            token_source, tokenizer_version, provider_usage_json, timestamp
+            token_source, tokenizer_id, provider_usage_json, timestamp
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.request_id,
-            event.key_id.to_string(),
-            event.team_id,
+            hex_to_blob_32(&event.event_id),
+            encode_request_id(&event.request_id),
+            uuid_to_blob_16(&event.key_id),
+            event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1841,7 +1874,7 @@ pub fn record_spend(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| id.to_vec()),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -1868,7 +1901,7 @@ pub fn record_spend(
 pub fn record_spend_with_team(
     db: &Database,
     key_id: &Uuid,
-    team_id: &str,
+    team_id: &Uuid,
     event: &SpendEvent,
 ) -> Result<(), KeyError> {
     let tx = db.transaction()?;
@@ -1876,27 +1909,27 @@ pub fn record_spend_with_team(
     // 1. Lock team row FIRST (prevents team overspend)
     let team_budget: i64 = tx.query_row(
         "SELECT budget_limit FROM teams WHERE team_id = $1 FOR UPDATE",
-        params![team_id],
+        params![uuid_to_blob_16(team_id)],
         |row| row.get(0),
     )?;
 
     // 2. Lock key row
     let key_budget: i64 = tx.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     // 3. Compute current spends from ledger
     let key_current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     let team_current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
-        params![team_id],
+        params![uuid_to_blob_16(team_id)],
         |row| row.get(0),
     )?;
 
@@ -1914,14 +1947,14 @@ pub fn record_spend_with_team(
         "INSERT INTO spend_ledger (
             event_id, request_id, key_id, team_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash,
-            token_source, tokenizer_version, provider_usage_json, timestamp
+            token_source, tokenizer_id, provider_usage_json, timestamp
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.request_id,
-            event.key_id.to_string(),
-            event.team_id,
+            hex_to_blob_32(&event.event_id),
+            encode_request_id(&event.request_id),
+            uuid_to_blob_16(&event.key_id),
+            event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1932,7 +1965,7 @@ pub fn record_spend_with_team(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| id.to_vec()),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -2072,6 +2105,7 @@ The following features are documented but NOT yet implemented:
 - F4: Team-based access control (RBAC)
 - F5: Access group management (LiteLLM compatible)
 - F6: Model-level budget controls
+- F7: **RFC-0919 Partial Indexes (Phase 2)** — Implication-based superset matching for partial index to be selected by queries. Deferred until Phase 2 implementation. Phase 1 exact-match partial indexes provide marginal storage savings (~10%) without query speedup for the superset access pattern used here. See RFC-0919 for details.
 
 ## Rationale
 
@@ -2222,7 +2256,7 @@ const MAX_KEYS_PER_TEAM: u32 = 100;
 pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyError> {
     let count: i64 = db.query(
         "SELECT COUNT(*) as cnt FROM api_keys WHERE team_id = $1",
-        params![team_id.to_string()],
+        params![uuid_to_blob_16(team_id)],
     )?.next()?.get("cnt")?;
 
     if count >= MAX_KEYS_PER_TEAM as i64 {
@@ -2244,6 +2278,42 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v35 (2026-04-29):** **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing all heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. Each language binding is thin marshaling only.
+
+- **v34 (2026-04-24):** Fix Critical compilation bug — replace `uuid_to_blob_16(&id)` with `id.to_vec()` for `tokenizer_id` field in all INSERT calls:
+  - `record_spend()` at line 1657 — was `uuid_to_blob_16(&id)` expecting `Uuid`, now `id.to_vec()` for `[u8; 16]`
+  - `record_spend_with_team()` at line 1875 — same fix
+  - `record_spend_with_event()` at line 1966 — same fix (deprecated but still present)
+  - `[u8; 16].to_vec()` copies raw bytes into `Vec<u8>` for `BYTEA(16)` / `BLOB(16)` storage
+
+- **v33 (2026-04-24):** Correct tokenizer_id type — revert from `Option<Uuid>` to `Option<[u8; 16]>` per RFC-0909 and RFC-0903-B1:
+  - Changed `SpendEvent.tokenizer_id: Option<Uuid>` → `Option<[u8; 16]>` (opaque 16-byte binary, not UUID)
+  - UUID is RFC 4122 structured layout; tokenizer_id is a BLAKE3 hash (opaque 16 bytes) — using UUID for a hash is type misuse
+  - Aligns with RFC-0909 v65, RFC-0903-B1 v15, and RFC-0903-C1 v5 which all use `[u8; 16]`
+  - v32 changelog note about `Option<Uuid>` is corrected; struct field and DDL remain consistent with B1/B1/C1
+
+- **v32 (2026-04-24):** Retire `tokenizer_version` field — unify on `tokenizer_id: Option<[u8; 16]>` per RFC-0903-C1/RFC-0909:
+  - Renamed `SpendEvent.tokenizer_version: Option<String>` → `tokenizer_id: Option<[u8; 16]>` in struct definition
+  - Updated DDL in both SQLite (§`spend_ledger` SQLite) and PostgreSQL (§`spend_ledger` PostgreSQL) schemas: `tokenizer_version TEXT` → `tokenizer_id BYTEA(16)`
+  - INSERT statements already use `tokenizer_id` (from v30), but struct field name is now consistent
+  - This resolves Round 3 issue 3.1: field is now `Option<[u8; 16]>` (matches RFC-0909) instead of `Option<String>`
+
+- **v31 (2026-04-24):** Fix encoding bugs in record_spend/record_spend_with_team per RFC-0903-B1 amendment:
+  - `event_id`: changed from `uuid_to_blob_32()` → `hex_to_blob_32()` (event_id is hex String, not Uuid)
+  - `request_id`: changed from `event.request_id.as_ref().map(|r| r.to_vec())` → `encode_request_id()` (SHA256 of raw gateway text)
+  - `encode_request_id()` return type changed from `Vec<u8>` → `[u8; 32]` to match RFC-0903-B1
+  - Added `KeyError::OctoWNotEnabled` variant (referenced in RFC-0904 F3 but missing from enum)
+  - Added `hex_to_blob_32()` and `encode_request_id()` helper functions (RFC-0903-B1 §event_id, §request_id)
+  - Also fixed deprecated `record_spend_with_event()` at line 1642-1645
+
+- **v30 (2026-04-20):** Fix C2 — SpendEvent.team_id type mismatch with RFC-0909
+  - Changed `team_id: Option<String>` → `team_id: Option<Uuid>` in SpendEvent struct
+  - Changed `team_id: &str` → `team_id: &Uuid` in `record_spend_with_team()` function signature
+  - Updated all params![] bindings to use `uuid_to_blob_16()` / `uuid_to_blob_32()` helper functions for BLOB storage
+  - Changed `tokenizer_version` → `tokenizer_id` in INSERT statements (FK to tokenizers table per RFC-0903-B1)
+  - Added `uuid_to_blob_16()` and `uuid_to_blob_32()` helper functions at line 952
+  - This aligns RFC-0903 Final with RFC-0909's `Option<uuid::Uuid>` type, fixing the type mismatch found in adversarial review
 
 - **v29 (2026-03-13):** Stoolap compatibility
   - Removed PostgreSQL trigger (plpgsql) from DDL - not supported in Stoolap

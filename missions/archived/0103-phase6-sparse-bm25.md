@@ -1,7 +1,7 @@
 # Mission: Phase 6 - Sparse Vectors / BM25
 
 ## Status
-Open
+Archived
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine

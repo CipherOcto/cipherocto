@@ -5,9 +5,17 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# Mode gate (litellm-mode/any-llm-mode/full) controls PROVIDER STRATEGY, NOT interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes.
+# See quota-router-core/Cargo.toml for full invariant text.
+
 [dependencies]
 # Core library
 quota-router-core = { path = "../quota-router-core" }
+
+# Database
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
 # CLI
 clap.workspace = true

@@ -1105,17 +1105,31 @@ impl BigInt {
         let mut abs_val = self.clone();
         abs_val.sign = false;
 
-        // Divide by 10 repeatedly to extract digits
-        let mut digits = Vec::new();
+        // Use 10^19 as the chunk base — largest power of 10 fitting in u64
+        // This reduces divmod calls from O(d) to O(d/19), where d = decimal digit count
+        const CHUNK_BASE: u64 = 10_000_000_000_000_000_000; // 10^19
+        let base = BigInt::new(vec![CHUNK_BASE], false);
+
+        let mut chunks: Vec<u64> = Vec::new();
+
         while !abs_val.is_zero() {
-            let ten = BigInt::new(vec![10], false);
-            let (_, rem) = bigint_divmod(abs_val, ten).unwrap();
-            let digit = rem.limbs()[0] as u8;
-            digits.push(char::from(b'0' + digit));
-            abs_val = BigInt::new(rem.limbs().to_vec(), false);
+            let (quot, rem) = bigint_divmod(abs_val, base.clone()).unwrap();
+            // rem is a single-limb value since base fits in u64
+            chunks.push(if rem.is_zero() { 0 } else { rem.limbs()[0] });
+            abs_val = quot;
         }
 
-        digits.iter().rev().collect()
+        // Build string: most-significant chunk first (no leading zeros),
+        // all subsequent chunks zero-padded to 19 digits.
+        let mut s = String::new();
+        for (i, chunk) in chunks.iter().rev().enumerate() {
+            if i == 0 {
+                s.push_str(&chunk.to_string()); // no padding on the leading chunk
+            } else {
+                s.push_str(&format!("{:019}", chunk)); // pad interior chunks
+            }
+        }
+        s
     }
 
     /// Convert to hex string representation (without 0x prefix)
@@ -2489,6 +2503,90 @@ mod regression_tests {
         assert!(result.is_ok(), "4096-bit * 1 must not overflow");
     }
 
+    /// MUL overflow: two 2049-bit numbers → product ≈ 2^4098 bits > MAX_BIGINT_BITS → TRAP
+    /// This verifies the POST-check (line 348) catches overflow even when inputs are valid.
+    #[test]
+    fn bug2_mul_overflow_at_max_boundary() {
+        // 2^2049 - 1 has 33 limbs (ceil(2049/64) = 33)
+        // bit_length = 2049, which is <= MAX_BIGINT_BITS (4096)
+        let limbs_2049 = vec![u64::MAX; 33];
+        let a = BigInt::new(limbs_2049, false);
+        let b = BigInt::new(vec![u64::MAX; 33], false);
+
+        // Both inputs are within MAX_BIGINT_BITS
+        assert!(a.bit_length() <= MAX_BIGINT_BITS);
+        assert!(b.bit_length() <= MAX_BIGINT_BITS);
+
+        // But product requires 66 limbs → bit_length ≈ 4098 > 4096 → TRAP
+        let result = bigint_mul(a, b);
+        assert!(
+            result.is_err(),
+            "2^2049-1 * 2^2049-1 exceeds MAX_BIGINT_BITS=4096, must TRAP"
+        );
+        assert_eq!(result.unwrap_err(), BigIntError::Overflow);
+    }
+
+    /// MUL at exact boundary: two 2048-bit numbers → product = 2^4096 - 2^2049 + 1 = 4096 bits → OK
+    /// This verifies the POST-check does NOT reject valid results at the boundary.
+    #[test]
+    fn bug2_mul_exactly_at_max_boundary() {
+        // 2^2048 - 1 has 32 limbs (2048/64 = 32)
+        // bit_length = 2048 <= MAX_BIGINT_BITS (4096)
+        let limbs_2048 = vec![u64::MAX; 32];
+        let a = BigInt::new(limbs_2048, false);
+        let b = BigInt::new(vec![u64::MAX; 32], false);
+
+        // Both inputs are within MAX_BIGINT_BITS
+        assert!(a.bit_length() <= MAX_BIGINT_BITS);
+        assert!(b.bit_length() <= MAX_BIGINT_BITS);
+
+        // Product: (2^2048-1)^2 = 2^4096 - 2^2049 + 1 fits in 4096 bits → OK
+        let result = bigint_mul(a, b);
+        assert!(
+            result.is_ok(),
+            "2^2048-1 * 2^2048-1 = 4096 bits, must fit in MAX_BIGINT_BITS=4096"
+        );
+
+        let r = result.unwrap();
+        // Product of two 2048-bit numbers needs at most 4096 bits
+        assert!(r.bit_length() <= MAX_BIGINT_BITS);
+    }
+
+    /// DIV single-limb divisor: verify j=0 removal doesn't affect results
+    /// 2^64 / 3 = 0x5555... with remainder 1
+    #[test]
+    fn bug3_div_single_limb_divisor() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![3], false); // 3
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        // 2^64 / 3 = 0x5555_5555_5555_5555 with remainder 1
+        assert_eq!(q.limbs(), &[0x5555_5555_5555_5555], "2^64 / 3 quotient");
+        assert_eq!(r.limbs(), &[1], "2^64 / 3 remainder = 1");
+        assert!(!r.sign, "remainder sign should be positive");
+    }
+
+    /// DIV: large dividend, single-limb divisor (tests iteration count)
+    /// (2^128 - 1) / 2 = 2^127 - 0.5 → quotient = 2^127 - 1, remainder = 1
+    #[test]
+    fn bug3_div_large_dividend_single_divisor() {
+        // 2^128 - 1: two limbs [u64::MAX, u64::MAX]
+        let a = BigInt::new(vec![u64::MAX, u64::MAX], false);
+        let b = BigInt::new(vec![2], false); // divisor = 2
+
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        // (2^128 - 1) / 2 = 2^127 - 1 with remainder 1
+        // 2^127 - 1 in little-endian: [0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF]
+        assert_eq!(q.limbs()[0], u64::MAX, "lower limb of quotient");
+        assert_eq!(
+            q.limbs()[1],
+            0x7FFF_FFFF_FFFF_FFFF,
+            "upper limb of quotient (2^127 - 1)"
+        );
+        assert_eq!(r.limbs(), &[1], "remainder should be 1");
+    }
+
     // =========================================================================
     // Probe entry verification
     // =========================================================================
@@ -2574,7 +2672,6 @@ mod regression_tests {
 
     /// Test decimal Display
     #[test]
-    #[ignore] // Slow for large numbers - decimal conversion is O(n²)
     fn test_display_decimal() {
         let n = BigInt::from(12345i64);
         assert_eq!(format!("{}", n), "12345");
@@ -2638,7 +2735,6 @@ mod regression_tests {
 
     /// Test roundtrip: parse -> display -> parse (small number)
     #[test]
-    #[ignore] // Slow - decimal conversion is O(n²)
     fn test_string_roundtrip() {
         let original = BigInt::from(12345i64);
         let s = format!("{}", original);

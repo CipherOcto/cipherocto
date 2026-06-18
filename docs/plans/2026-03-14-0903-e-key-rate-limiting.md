@@ -4,7 +4,9 @@
 
 **Goal:** Enforce per-key RPM (requests per minute) and TPM (tokens per minute) limits.
 
-**Architecture:** Use existing rate_limiter module but extend it to track per-key usage, checking RPM/TPM limits during request validation.
+**Status:** ✅ IMPLEMENTED (2026-04-14) - RFC-0903 TokenBucket algorithm
+
+**Architecture:** TokenBucket algorithm per RFC-0903 §Rate Limiting Algorithm using DashMap for concurrent access.
 
 ---
 
@@ -154,3 +156,24 @@ impl<S: KeyStorage> KeyMiddleware<S> {
 **Step 2: Test**
 
 **Step 3: Commit**
+
+---
+
+## Implementation Notes (2026-04-14)
+
+**Actual Implementation:** RFC-0903 TokenBucket algorithm supersedes the old HashMap design above.
+
+**Files created/modified:**
+- `crates/quota-router-core/src/key_rate_limiter.rs` - TokenBucket + RateLimiterStore with DashMap
+- `crates/quota-router-core/src/middleware.rs` - check_rate_limits() using RateLimiterStore
+- `crates/quota-router-core/src/lib.rs` - exports RateLimiterStore
+- `crates/quota-router-core/src/keys/errors.rs` - added RateLimited error variant
+- `crates/quota-router-core/Cargo.toml` - added dashmap, instant dependencies
+
+**Key features:**
+- TokenBucket with continuous refill (tokens per second = rate / 60)
+- DashMap for concurrent per-key storage (replaces HashMap + RwLock)
+- Instant for monotonic time (immune to clock adjustments)
+- Per-key (RPM, TPM) token bucket pairs
+- cleanup_stale_buckets() for memory management
+- Determinism disclaimer: rate limiting is NOT deterministic across nodes**

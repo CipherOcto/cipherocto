@@ -1,57 +1,46 @@
-//! CipherOcto Network
+//! CipherOcto Network — Deterministic Overlay Networking Stack
 //!
-//! Peer-to-peer networking for the CipherOcto protocol.
+//! Multi-module deterministic overlay networking for the CipherOcto protocol.
 //!
-//! Responsibilities:
-//! - Peer discovery
-//! - Message routing
-//! - Provider coordination
-//! - Network simulation (MVP)
-//!
-//! In Phase 1: Local simulation with loopback peers
-//! In Phase 2+: libp2p-based decentralized networking
+//! Modules:
+//! - DOT (RFC-0850): Deterministic Overlay Transport
+//! - GDP (RFC-0851): Gateway Discovery Protocol
+//! - DGP (RFC-0852): Deterministic Gossip Protocol
+//! - OCrypt (RFC-0853): Overlay Cryptography
+//! - DPS (RFC-0854): Deterministic Proof Substrate
+//! - MON (RFC-0855): Mission Overlay Networks
+//! - DRS (RFC-0856): Deterministic Route Selection
+//! - DOM (RFC-0857): Deterministic Overlay Mempool
+//! - ORR (RFC-0858): Onion Relay Routing
+//! - PCE (RFC-0859): Proof-Carrying Envelopes (under DOT)
+//! - PoRelay (RFC-0860): Proof-of-Relay
 
-use anyhow::Result;
-use tokio::sync::RwLock;
+/// Common utilities (shared Merkle, etc.).
+pub mod common;
 
-pub struct Network {
-    peers: RwLock<Vec<String>>,
-}
+/// Deterministic Overlay Transport module — RFC-0850.
+pub mod dot;
 
-impl Network {
-    /// Create a new network instance
-    pub fn new() -> Self {
-        Self {
-            peers: RwLock::new(vec![]),
-        }
-    }
+/// Deterministic Gossip Protocol — RFC-0852.
+pub mod dgp;
+/// Deterministic Proof Substrate (DPS) — RFC-0854.
+pub mod dps;
+/// Gateway Discovery Protocol — RFC-0851.
+pub mod gdp;
+/// Mission 0850p-c-libp2p-propagation: BIND envelope gossip.
+pub mod gossip;
+/// Overlay Cryptography (OCrypt) module — RFC-0853.
+pub mod ocrypt;
 
-    /// Add a peer to the network
-    pub async fn add_peer(&self, peer_id: String) -> Result<()> {
-        let mut peers = self.peers.write().await;
-        let peer_count = peers.len() + 1;
-        peers.push(peer_id.clone());
-        println!("🌐 Peer added: {} (total: {} peers)", peer_id, peer_count);
-        Ok(())
-    }
-
-    /// Get network status
-    pub async fn status(&self) -> NetworkStatus {
-        let peers = self.peers.read().await;
-        NetworkStatus {
-            peer_count: peers.len(),
-            is_active: !peers.is_empty(),
-        }
-    }
-}
-
-impl Default for Network {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct NetworkStatus {
-    pub peer_count: usize,
-    pub is_active: bool,
-}
+/// Deterministic Overlay Mempool (DOM) — RFC-0857.
+pub mod dom;
+/// DomainCoordinator role — RFC-0855p-c + missions 0855p-c-*.
+pub mod dc;
+/// Deterministic Route Selection (DRS) — RFC-0856.
+pub mod drs;
+/// Mission Overlay Networks (MON) — RFC-0855.
+pub mod mon;
+/// Onion Relay Routing (ORR) — RFC-0858.
+pub mod orr;
+/// Proof-of-Relay (PoRelay) — RFC-0860.
+pub mod porelay;

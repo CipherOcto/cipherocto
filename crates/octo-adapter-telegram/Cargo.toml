@@ -1,0 +1,68 @@
+[package]
+name = "octo-adapter-telegram"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Default: mock TDLib client, no real TDLib dependency. All unit tests run with this.
+default = []
+# Real TDLib: enables tdlib-rs + rusqlite for auth_key persistence. Adds 150MB TDLib binary + C++ build cost.
+# Downloads prebuilt TDLib binaries automatically. Set LOCAL_TDLIB_PATH for local builds, or use pkg-config for system TDLib.
+real-tdlib = ["dep:tdlib-rs", "dep:rusqlite", "tdlib-rs/download-tdlib", "dep:tempfile"]
+# Download prebuilt TDLib binaries automatically (default for real-tdlib).
+# Requires network access at build time.
+# SEC-C1: This downloads unsigned binaries from GitHub. No SHA pin is enforced.
+# Use `pkg-config` with a system TDLib for production deployments.
+download-tdlib = ["tdlib-rs/download-tdlib"]
+# Use locally built TDLib from $LOCAL_TDLIB_PATH.
+# Set LOCAL_TDLIB_PATH environment variable to your TDLib source tree.
+local-tdlib = ["tdlib-rs/local-tdlib"]
+# Use system TDLib via pkg-config.
+# Requires tdlib and tdjson system packages installed.
+pkg-config = ["tdlib-rs/pkg-config"]
+# Integration tests that require a real Telegram test DC. Off by default
+# because they need a real account and a long timeout. Enable with:
+#   cargo test -p octo-adapter-telegram --features integration-test
+integration-test = []
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Hashing (preserved from 0850f for domain_id)
+blake3 = "1.5"
+# Base64 encoding for envelopes (preserved from 0850f, URL_SAFE_NO_PAD)
+base64 = "0.22"
+# Memory zeroing for sensitive credentials (CRYPTO-H4)
+zeroize = { version = "1", features = ["zeroize_derive"] }
+sha256 = "1.5"
+# Async traits (PlatformAdapter, TelegramClient)
+async-trait = "0.1"
+# Error handling
+thiserror = "2.0"
+# Workspace crate providing PlatformAdapter, CapabilityReport, BroadcastDomainId, DeterministicEnvelope
+octo-network = { path = "../octo-network" }
+# Real TDLib (optional, behind feature flag). Exactly pinned to 1.4.x — a 1.5 bump
+# would break the explicit `None, None, None, ..., content, client_id` arg
+# list in real_client.rs::send_message, ::send_envelope, and ::send_file.
+tdlib-rs = { version = "=1.4.0", optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+# Workspace tracing crate for debug-level auth update logging (M7).
+tracing = "0.1"
+parking_lot = "0.12"
+# RAII temp file cleanup (gated behind real-tdlib; used by TDLib upload paths).
+tempfile = { version = "3.10", optional = true }
+
+[dev-dependencies]
+# Test helpers
+tokio = { version = "1.35", features = ["test-util"] }
+serde_yaml = "0.9"
+ed25519-dalek = "2"
+# tracing setup in live_session_test (env-filter for RUST_LOG control)
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

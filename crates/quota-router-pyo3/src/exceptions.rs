@@ -1,195 +1,303 @@
-// LiteLLM-compatible exceptions for PyO3 bindings
+// QuotaRouter exceptions for PyO3 bindings
+// Exception hierarchy per RFC-0917 Phase 3 and RFC-0920
+//
+// Uses create_exception! macro so exceptions are proper Python exceptions
+// catchable with `except SomeError` in Python.
 
-#![allow(dead_code)]
-
+use pyo3::create_exception;
 use pyo3::prelude::*;
 
-#[pyclass]
-#[derive(Debug)]
-pub struct AuthenticationError {
-    message: String,
-    llm_provider: Option<String>,
-}
+// =============================================================================
+// Base Exception (QuotaRouterError) — per RFC-0917 §Exception Mapping and RFC-0920
+// =============================================================================
 
-#[pymethods]
-impl AuthenticationError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+create_exception!(
+    quota_router_native,
+    QuotaRouterError,
+    pyo3::exceptions::PyException,
+    "Base exception"
+);
 
-    fn __repr__(&self) -> String {
-        format!("AuthenticationError({})", self.message)
-    }
-}
+// =============================================================================
+// AuthenticationError — 401
+// =============================================================================
 
-impl AuthenticationError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: None,
-        }
-    }
+create_exception!(
+    quota_router_native,
+    AuthenticationError,
+    QuotaRouterError,
+    "Auth failed"
+);
 
-    pub fn with_provider(message: impl Into<String>, provider: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: Some(provider.into()),
-        }
-    }
-}
+// =============================================================================
+// RateLimitError — 429
+// =============================================================================
 
-#[pyclass]
-#[derive(Debug)]
-pub struct RateLimitError {
-    message: String,
-    llm_provider: Option<String>,
-}
+create_exception!(
+    quota_router_native,
+    RateLimitError,
+    QuotaRouterError,
+    "Rate limited"
+);
 
-#[pymethods]
-impl RateLimitError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+// =============================================================================
+// InvalidRequestError — 400
+// =============================================================================
 
-    fn __repr__(&self) -> String {
-        format!("RateLimitError({})", self.message)
-    }
-}
+create_exception!(
+    quota_router_native,
+    InvalidRequestError,
+    QuotaRouterError,
+    "Invalid request"
+);
 
-impl RateLimitError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: None,
-        }
-    }
+// =============================================================================
+// ProviderError — 500
+// =============================================================================
 
-    pub fn with_provider(message: impl Into<String>, provider: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: Some(provider.into()),
-        }
-    }
-}
+create_exception!(
+    quota_router_native,
+    ProviderError,
+    QuotaRouterError,
+    "Provider error"
+);
 
-#[pyclass]
-#[derive(Debug)]
-pub struct BudgetExceededError {
-    message: String,
-    budget: f64,
-}
+// =============================================================================
+// ContentFilterError
+// =============================================================================
 
-#[pymethods]
-impl BudgetExceededError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+create_exception!(
+    quota_router_native,
+    ContentFilterError,
+    QuotaRouterError,
+    "Content filter"
+);
 
-    fn __repr__(&self) -> String {
-        format!("BudgetExceededError({})", self.message)
-    }
+// =============================================================================
+// ModelNotFoundError — 404
+// =============================================================================
 
-    #[getter]
-    fn get_budget(&self) -> f64 {
-        self.budget
-    }
-}
+create_exception!(
+    quota_router_native,
+    ModelNotFoundError,
+    QuotaRouterError,
+    "Model not found"
+);
 
-impl BudgetExceededError {
-    pub fn new(message: impl Into<String>, budget: f64) -> Self {
-        Self {
-            message: message.into(),
-            budget,
-        }
-    }
-}
+// =============================================================================
+// ContextLengthExceededError
+// =============================================================================
 
-#[pyclass]
-#[derive(Debug)]
-pub struct ProviderError {
-    message: String,
-    llm_provider: String,
-}
+create_exception!(
+    quota_router_native,
+    ContextLengthExceededError,
+    QuotaRouterError,
+    "Context exceeded"
+);
 
-#[pymethods]
-impl ProviderError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+// =============================================================================
+// MissingApiKeyError
+// =============================================================================
 
-    fn __repr__(&self) -> String {
-        format!("ProviderError({})", self.message)
-    }
-}
+create_exception!(
+    quota_router_native,
+    MissingApiKeyError,
+    QuotaRouterError,
+    "Missing API key"
+);
 
-impl ProviderError {
-    pub fn new(message: impl Into<String>, provider: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: provider.into(),
-        }
-    }
-}
+// =============================================================================
+// UnsupportedProviderError
+// =============================================================================
 
-#[pyclass]
-#[derive(Debug)]
-pub struct TimeoutError {
-    message: String,
-}
+create_exception!(
+    quota_router_native,
+    UnsupportedProviderError,
+    QuotaRouterError,
+    "Unsupported provider"
+);
 
-#[pymethods]
-impl TimeoutError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+// =============================================================================
+// UnsupportedParameterError
+// =============================================================================
 
-    fn __repr__(&self) -> String {
-        format!("TimeoutError({})", self.message)
-    }
-}
+create_exception!(
+    quota_router_native,
+    UnsupportedParameterError,
+    QuotaRouterError,
+    "Unsupported parameter"
+);
 
-impl TimeoutError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
+// =============================================================================
+// InsufficientFundsError (BudgetExceededError in LiteLLM)
+// =============================================================================
 
-#[pyclass]
-#[derive(Debug)]
-pub struct InvalidRequestError {
-    message: String,
-    llm_provider: Option<String>,
-}
+create_exception!(
+    quota_router_native,
+    InsufficientFundsError,
+    QuotaRouterError,
+    "Budget exceeded"
+);
 
-#[pymethods]
-impl InvalidRequestError {
-    fn __str__(&self) -> String {
-        self.message.clone()
-    }
+// =============================================================================
+// UpstreamProviderError (ServiceUnavailableError in LiteLLM)
+// =============================================================================
 
-    fn __repr__(&self) -> String {
-        format!("InvalidRequestError({})", self.message)
-    }
-}
+create_exception!(
+    quota_router_native,
+    UpstreamProviderError,
+    QuotaRouterError,
+    "Upstream error"
+);
 
-impl InvalidRequestError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            llm_provider: None,
-        }
-    }
-}
+// =============================================================================
+// GatewayTimeoutError (Timeout/APIConnectionError in LiteLLM)
+// =============================================================================
 
-/// Register all exceptions in a Python module
+create_exception!(
+    quota_router_native,
+    GatewayTimeoutError,
+    QuotaRouterError,
+    "Gateway timeout"
+);
+
+// =============================================================================
+// LengthFinishReasonError
+// =============================================================================
+
+create_exception!(
+    quota_router_native,
+    LengthFinishReasonError,
+    QuotaRouterError,
+    "Length finish"
+);
+
+// =============================================================================
+// ContentFilterFinishReasonError
+// =============================================================================
+
+create_exception!(
+    quota_router_native,
+    ContentFilterFinishReasonError,
+    QuotaRouterError,
+    "Content filter finish"
+);
+
+// =============================================================================
+// BatchNotCompleteError
+// =============================================================================
+
+create_exception!(
+    quota_router_native,
+    BatchNotCompleteError,
+    QuotaRouterError,
+    "Batch not complete"
+);
+
+// =============================================================================
+// AllModelsFailedError
+// =============================================================================
+
+create_exception!(
+    quota_router_native,
+    AllModelsFailedError,
+    QuotaRouterError,
+    "All models failed"
+);
+
+// =============================================================================
+// BatchPartialFailureError
+// =============================================================================
+
+create_exception!(
+    quota_router_native,
+    BatchPartialFailureError,
+    QuotaRouterError,
+    "Batch partial failure"
+);
+
+// =============================================================================
+// Registration
+// =============================================================================
+
+/// Register all exceptions on the module
 pub fn register_exceptions(m: &PyModule) -> PyResult<()> {
-    m.add_class::<AuthenticationError>()?;
-    m.add_class::<RateLimitError>()?;
-    m.add_class::<BudgetExceededError>()?;
-    m.add_class::<ProviderError>()?;
-    m.add_class::<TimeoutError>()?;
-    m.add_class::<InvalidRequestError>()?;
+    let py = m.py();
+    m.add("QuotaRouterError", py.get_type::<QuotaRouterError>())?;
+
+    // Alias for any-llm compatibility
+    m.add("AnyLLMError", py.get_type::<QuotaRouterError>())?;
+
+    m.add("AuthenticationError", py.get_type::<AuthenticationError>())?;
+    m.add("RateLimitError", py.get_type::<RateLimitError>())?;
+    m.add("InvalidRequestError", py.get_type::<InvalidRequestError>())?;
+    m.add("ProviderError", py.get_type::<ProviderError>())?;
+    m.add("ContentFilterError", py.get_type::<ContentFilterError>())?;
+    m.add("ModelNotFoundError", py.get_type::<ModelNotFoundError>())?;
+    m.add(
+        "ContextLengthExceededError",
+        py.get_type::<ContextLengthExceededError>(),
+    )?;
+    m.add("MissingApiKeyError", py.get_type::<MissingApiKeyError>())?;
+    m.add(
+        "UnsupportedProviderError",
+        py.get_type::<UnsupportedProviderError>(),
+    )?;
+    m.add(
+        "UnsupportedParameterError",
+        py.get_type::<UnsupportedParameterError>(),
+    )?;
+    m.add(
+        "InsufficientFundsError",
+        py.get_type::<InsufficientFundsError>(),
+    )?;
+    m.add(
+        "UpstreamProviderError",
+        py.get_type::<UpstreamProviderError>(),
+    )?;
+    m.add("GatewayTimeoutError", py.get_type::<GatewayTimeoutError>())?;
+    m.add(
+        "LengthFinishReasonError",
+        py.get_type::<LengthFinishReasonError>(),
+    )?;
+    m.add(
+        "ContentFilterFinishReasonError",
+        py.get_type::<ContentFilterFinishReasonError>(),
+    )?;
+    m.add(
+        "BatchNotCompleteError",
+        py.get_type::<BatchNotCompleteError>(),
+    )?;
+    m.add(
+        "AllModelsFailedError",
+        py.get_type::<AllModelsFailedError>(),
+    )?;
+    m.add(
+        "BatchPartialFailureError",
+        py.get_type::<BatchPartialFailureError>(),
+    )?;
+
+    // LiteLLM-compatible aliases
+    m.add(
+        "BudgetExceededError",
+        py.get_type::<InsufficientFundsError>(),
+    )?;
+    m.add(
+        "ServiceUnavailableError",
+        py.get_type::<UpstreamProviderError>(),
+    )?;
+    m.add("APIConnectionError", py.get_type::<GatewayTimeoutError>())?;
+    m.add("APIError", py.get_type::<QuotaRouterError>())?;
+    m.add("NotFoundError", py.get_type::<ModelNotFoundError>())?;
+    m.add(
+        "ContextWindowExceededError",
+        py.get_type::<ContextLengthExceededError>(),
+    )?;
+    m.add(
+        "ContentPolicyViolationError",
+        py.get_type::<ContentFilterError>(),
+    )?;
+    m.add("Timeout", py.get_type::<GatewayTimeoutError>())?;
+
     Ok(())
 }

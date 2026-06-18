@@ -107,6 +107,8 @@ Replace the traditional ML runtime with a deterministic computational substrate 
 
 ## Specification
 
+> ⚠️ **NUMERIC CONTRACT (RFC-0124)**: Any floating-point-like representation (DFP, FLOAT, DOUBLE) MUST be compiled to DQA via RFC-0124's deterministic lowering pass **before** entering the AI-VM execution layer. The AI-VM operates exclusively on DQA types. DFP is a source-level/IR-level type only and MUST NOT exist in the runtime execution path.
+
 ### Layered Architecture
 
 ```mermaid
@@ -124,7 +126,7 @@ graph TB
     end
 
     subgraph "Numeric Layer"
-        NT[RFC-0106 Numeric Tower]
+        NT[RFC-0105 Numeric Types]
         DQA[DQA - Quantized]
         DVEC[DVEC - Vectors]
         DMAT[DMAT - Matrices]

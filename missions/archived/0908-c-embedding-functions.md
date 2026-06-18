@@ -1,7 +1,7 @@
 # Mission: Python SDK - Embedding Functions
 
 ## Status
-
+Archived
 Completed
 
 ## RFC

@@ -64,7 +64,7 @@ The registry defines:
 Integration with existing stack:
 
 ```
-RFC-0144 (Task Market)
+RFC-0918 (Task Market)
        ↓
 RFC-0145 (Hardware Capability Registry) ← NEW
        ↓
@@ -429,7 +429,7 @@ This RFC uses capability bitmaps instead.
 ## Related RFCs
 
 - RFC-0143 (Networking): OCTO-Network Protocol
-- RFC-0144 (Economics): Inference Task Market
+- RFC-0918 (Economics): Inference Task Market
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 
 ## Related Use Cases

@@ -1,7 +1,7 @@
 // Key validation middleware - validates API keys from HTTP requests
 
-use crate::keys::{validate_key, ApiKey, KeyError};
-use crate::key_rate_limiter::KeyRateLimiter;
+use crate::key_rate_limiter::RateLimiterStore;
+use crate::keys::{validate_key, ApiKey, KeyError, SpendEvent, TokenSource};
 use crate::KeyStorage;
 use http;
 use std::sync::Arc;
@@ -9,29 +9,36 @@ use std::sync::Arc;
 /// Middleware state containing key storage
 pub struct KeyMiddleware<S: KeyStorage> {
     storage: Arc<S>,
-    rate_limiter: Arc<KeyRateLimiter>,
+    rate_limiter: Arc<RateLimiterStore>,
 }
 
 impl<S: KeyStorage> KeyMiddleware<S> {
     pub fn new(storage: Arc<S>) -> Self {
         Self {
             storage,
-            rate_limiter: Arc::new(KeyRateLimiter::new()),
+            rate_limiter: Arc::new(RateLimiterStore::new()),
         }
     }
 
-    pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<KeyRateLimiter>) -> Self {
-        Self { storage, rate_limiter }
+    pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<RateLimiterStore>) -> Self {
+        Self {
+            storage,
+            rate_limiter,
+        }
     }
 
     /// Extract API key from request
-    /// Supports: Authorization header (Bearer token), X-API-Key header
-    pub fn extract_key_from_request<B>(&self, request: &http::Request<B>) -> Result<Option<String>, KeyError> {
-        // Check Authorization header
+    /// Supports: Authorization header (Bearer token), X-API-Key header, X-AnyLLM-Key header
+    /// Priority: Authorization > X-API-Key > X-AnyLLM-Key
+    pub fn extract_key_from_request<B>(
+        &self,
+        request: &http::Request<B>,
+    ) -> Result<Option<String>, KeyError> {
+        // Check Authorization header (highest priority)
         if let Some(auth) = request.headers().get("authorization") {
             if let Ok(auth_str) = auth.to_str() {
-                if auth_str.starts_with("Bearer ") {
-                    return Ok(Some(auth_str[7..].to_string()));
+                if let Some(stripped) = auth_str.strip_prefix("Bearer ") {
+                    return Ok(Some(stripped.to_string()));
                 }
             }
         }
@@ -39,6 +46,11 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         // Check X-API-Key header
         if let Some(api_key) = request.headers().get("x-api-key") {
             return Ok(Some(api_key.to_str().unwrap_or("").to_string()));
+        }
+
+        // Check X-AnyLLM-Key header (any-llm compatibility)
+        if let Some(key) = request.headers().get("x-anyllm-key") {
+            return Ok(Some(key.to_str().unwrap_or("").to_string()));
         }
 
         Ok(None)
@@ -51,7 +63,9 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         let key_hash = compute_key_hash(key_string);
         let key_prefix = key_string.chars().take(7).collect::<String>();
 
-        let mut key = self.storage.lookup_by_hash(&key_hash)?
+        let mut key = self
+            .storage
+            .lookup_by_hash(&key_hash)?
             .ok_or(KeyError::NotFound)?;
 
         // Set the key_prefix from the request
@@ -65,10 +79,33 @@ impl<S: KeyStorage> KeyMiddleware<S> {
 
     /// Extract and validate key from request in one step
     pub fn extract_and_validate<B>(&self, request: &http::Request<B>) -> Result<ApiKey, KeyError> {
-        let key_string = self.extract_key_from_request(request)?
+        let key_string = self
+            .extract_key_from_request(request)?
             .ok_or(KeyError::MissingKey)?;
 
         self.validate_request_key(&key_string)
+    }
+
+    /// Validate key AND check route permission in one step.
+    ///
+    /// This combines validate_request_key() with check_route_permission()
+    /// to ensure the key is valid AND has access to the requested route.
+    ///
+    /// Returns Err(KeyError::RouteNotAllowed) if route permission check fails.
+    pub fn validate_request_key_for_route(
+        &self,
+        key_string: &str,
+        route: &str,
+    ) -> Result<ApiKey, KeyError> {
+        use crate::keys::check_route_permission;
+
+        let key = self.validate_request_key(key_string)?;
+
+        if !check_route_permission(&key, route) {
+            return Err(KeyError::RouteNotAllowed(route.to_string()));
+        }
+
+        Ok(key)
     }
 
     /// Check if key has remaining budget
@@ -78,7 +115,10 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         if let Some(s) = spend {
             let remaining = key.budget_limit - s.total_spend;
             if remaining <= 0 {
-                return Err(KeyError::BudgetExceeded);
+                return Err(KeyError::BudgetExceeded {
+                    current: s.total_spend as u64,
+                    limit: key.budget_limit as u64,
+                });
             }
         }
 
@@ -90,21 +130,84 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         self.storage.record_spend(key_id, amount)
     }
 
-    /// Check rate limits for key (RPM and TPM)
-    pub fn check_rate_limits(&self, key: &ApiKey, tokens: Option<u32>) -> Result<(), KeyError> {
-        // Check RPM
-        self.rate_limiter.check_rpm(&key.key_id, key.rpm_limit)?;
+    /// Process an LLM response and record the spend event to the ledger.
+    ///
+    /// Validates request_id, computes the deterministic event_id, and records
+    /// to spend_ledger. This is called after receiving the provider response.
+    ///
+    /// Returns the computed event_id on success.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_response(
+        &self,
+        request_id: &str,
+        key_id: uuid::Uuid,
+        team_id: Option<uuid::Uuid>,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+        cost_amount: u64,
+        pricing_hash: [u8; 32],
+        token_source: TokenSource,
+        tokenizer_version: Option<String>,
+        provider_usage_json: Option<String>,
+    ) -> Result<String, KeyError> {
+        // Validate request_id first — must be 1..=1024 bytes
+        crate::keys::validate_request_id(request_id)?;
 
-        // Check TPM if tokens provided
-        if let Some(t) = tokens {
-            self.rate_limiter.check_tpm(&key.key_id, t, key.tpm_limit)?;
-        }
+        // Normalize provider/model per RFC-0909 CONSISTENCY GOAL — must apply to BOTH:
+        // (1) compute_event_id inputs, and (2) SpendEvent.provider/SpendEvent.model storage
+        let (provider, model) = crate::keys::normalize_provider_model(provider, model);
 
-        Ok(())
+        // (1) Compute deterministic event_id with normalized inputs
+        let event_id = crate::keys::compute_event_id(
+            request_id,
+            &key_id,
+            &provider,
+            &model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
+        );
+
+        // (2) Build SpendEvent with the SAME normalized local variables
+        let event = SpendEvent {
+            event_id: event_id.clone(),
+            request_id: request_id.to_string(),
+            key_id,
+            team_id,
+            provider, // normalized String, directly (no .to_string() needed)
+            model,    // normalized String, directly (no .to_string() needed)
+            input_tokens,
+            output_tokens,
+            cost_amount,
+            pricing_hash,
+            token_source,
+            tokenizer_version,
+            provider_usage_json,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        };
+
+        // Record to the ledger
+        self.storage.record_spend_ledger(&event)?;
+
+        Ok(event_id)
+    }
+
+    /// Check rate limits for key (RPM and TPM) using TokenBucket algorithm.
+    ///
+    /// Uses the new RateLimiterStore with TokenBucket per RFC-0903.
+    /// Tokens are required for TPM check; pass 0 if only RPM matters.
+    pub fn check_rate_limits(&self, key: &ApiKey, tokens: u32) -> Result<(), KeyError> {
+        self.rate_limiter.check_rate_limit(key, tokens)
     }
 
     /// Get rate limiter for external use
-    pub fn rate_limiter(&self) -> &KeyRateLimiter {
+    pub fn rate_limiter(&self) -> &RateLimiterStore {
         &self.rate_limiter
     }
 }
@@ -153,9 +256,7 @@ mod tests {
     fn test_extract_key_no_header() {
         let middleware = create_test_middleware();
 
-        let req = http::Request::builder()
-            .body(())
-            .unwrap();
+        let req = http::Request::builder().body(()).unwrap();
 
         let key = middleware.extract_key_from_request(&req).unwrap();
         assert!(key.is_none());
@@ -179,7 +280,9 @@ mod tests {
     fn test_validate_request_key_not_found() {
         let middleware = create_test_middleware();
 
-        let result = middleware.validate_request_key("sk-qr-nonexistentkey12345678901234567890123456789012345678901234");
+        let result = middleware.validate_request_key(
+            "sk-qr-nonexistentkey12345678901234567890123456789012345678901234",
+        );
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), KeyError::NotFound));
     }
@@ -191,7 +294,7 @@ mod tests {
         // Create an expired key directly in storage
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "expired-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440101".to_string(),
             key_hash: vec![1, 2, 3],
             key_prefix: "sk-qr-tes".to_string(),
             team_id: None,
@@ -225,7 +328,7 @@ mod tests {
         // Create a key with budget
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "budget-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440102".to_string(),
             key_hash: vec![10, 20, 30],
             key_prefix: "sk-qr-bud".to_string(),
             team_id: None,
@@ -259,7 +362,7 @@ mod tests {
         // Create a key with budget
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "budget-key-2".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440103".to_string(),
             key_hash: vec![11, 21, 31],
             key_prefix: "sk-qr-bud".to_string(),
             team_id: None,
@@ -287,7 +390,13 @@ mod tests {
         // Should fail - exceeded budget
         let result = middleware.check_budget(&key);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KeyError::BudgetExceeded));
+        assert!(matches!(
+            result.unwrap_err(),
+            KeyError::BudgetExceeded {
+                current: _,
+                limit: _
+            }
+        ));
     }
 
     #[test]
@@ -297,7 +406,7 @@ mod tests {
         // Create a key
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "spend-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440104".to_string(),
             key_hash: vec![12, 22, 32],
             key_prefix: "sk-qr-spe".to_string(),
             team_id: None,
@@ -334,7 +443,7 @@ mod tests {
 
         // Create a key with RPM limit
         let key = ApiKey {
-            key_id: "rate-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440105".to_string(),
             key_hash: vec![13, 23, 33],
             key_prefix: "sk-qr-rat".to_string(),
             team_id: None,
@@ -355,13 +464,13 @@ mod tests {
             metadata: None,
         };
 
-        // Should allow up to limit
+        // Should allow up to limit (0 tokens for TPM means only RPM check)
         for _ in 0..5 {
-            middleware.check_rate_limits(&key, None).unwrap();
+            middleware.check_rate_limits(&key, 0).unwrap();
         }
 
         // 6th should fail
-        let result = middleware.check_rate_limits(&key, None);
+        let result = middleware.check_rate_limits(&key, 0);
         assert!(result.is_err());
     }
 
@@ -371,7 +480,7 @@ mod tests {
 
         // Create a key with TPM limit
         let key = ApiKey {
-            key_id: "tpm-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440106".to_string(),
             key_hash: vec![14, 24, 34],
             key_prefix: "sk-qr-tpm".to_string(),
             team_id: None,
@@ -392,13 +501,13 @@ mod tests {
             metadata: None,
         };
 
-        // Should allow up to limit
+        // Should allow up to 5 requests with 100 tokens each (500 total)
         for _ in 0..5 {
-            middleware.check_rate_limits(&key, Some(100)).unwrap();
+            middleware.check_rate_limits(&key, 100).unwrap();
         }
 
         // 6th should fail (600 tokens > 500 limit)
-        let result = middleware.check_rate_limits(&key, Some(100));
+        let result = middleware.check_rate_limits(&key, 100);
         assert!(result.is_err());
     }
 }

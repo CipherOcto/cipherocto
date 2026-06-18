@@ -1,0 +1,539 @@
+---
+title: "RFC-0857: Deterministic Overlay Mempool (DOM)"
+status: Draft
+version: 1.0.0
+created: 2026-05-25
+updated: 2026-05-26
+authors:
+  - CipherOcto Core Team
+related:
+  - RFC-0850 (Networking): DOT
+  - RFC-0851 (Networking): GDP
+  - RFC-0852 (Networking): DGP
+  - RFC-0853 (Networking): OCrypt
+  - RFC-0855 (Networking): MON
+  - RFC-0856 (Networking): DRS
+  - RFC-0104 (Numeric): DFP
+  - RFC-0105 (Numeric): DQA
+---
+
+# RFC-0857: Deterministic Overlay Mempool (DOM)
+
+## Status
+
+Draft
+
+## Authors
+
+- Author: @cipherocto
+
+## Maintainers
+
+- Maintainer: @cipherocto
+
+## Summary
+
+The Deterministic Overlay Mempool (DOM) defines the canonical pending-state coordination layer for CipherOcto overlays. DOM generalizes "transactions" into Overlay Intents and provides deterministic pending object ordering, replay-safe propagation, mission-scoped pools, censorship-resistant dissemination, canonical admission rules, deterministic eviction, proof-compatible execution queues, and multi-transport mempool federation.
+
+## Dependencies
+
+**Requires:** RFC-0850 (DOT), RFC-0851 (GDP), RFC-0852 (DGP), RFC-0853 (OCrypt), RFC-0855 (MON), RFC-0856 (DRS), RFC-0104 (DFP), RFC-0105 (DQA)
+
+**Optional:** RFC-0854 (DPS), RFC-0859 (PCE)
+
+## Motivation
+
+### CAN WE? — Feasibility Research
+
+The fundamental question: **Can we build a deterministic pending-state coordination layer for heterogeneous overlay intents?**
+
+Research confirms feasibility through:
+
+- **Ethereum mempool** demonstrates transaction ordering with economic prioritization (EIP-1559)
+- **RFC-0104/0105** provide deterministic numeric primitives for fee computation
+- **RFC-0850/0852** provide deterministic envelope propagation
+- **Database partitioning** proves mission-scoped isolation is feasible
+- **Priority queue algorithms** provide deterministic ordering with canonical tiebreaking
+
+### WHY? — Why This Matters
+
+Without DOM:
+
+- Traditional mempools only handle transactions — CipherOcto must coordinate 8 intent types
+- No mission isolation — all intents compete in a single global pool
+- Non-deterministic ordering breaks consensus — different nodes process intents differently
+- No economic prioritization — time-sensitive intents get no priority guarantee
+- No multi-transport propagation — intents are limited to single-carrier delivery
+
+DOM enables CipherOcto to coordinate heterogeneous overlay activities with deterministic semantics compatible with blockchain consensus.
+
+## Design Goals
+
+| Goal | Target |
+|------|--------|
+| G1: Deterministic Ordering | Identical ordering under shared state |
+| G2: Replay Safety | Canonical mempool reconstruction |
+| G3: Mission Isolation | Scoped pending-state coordination |
+| G4: Byzantine Resilience | Adversarial propagation tolerance |
+| G5: Multi-Transport | Carrier-independent dissemination |
+| G6: Economic Prioritization | Incentive-aware inclusion |
+| G7: Proof Compatibility | zk-ready pending execution |
+
+## Specification
+
+### 1. Overlay Intent Model
+
+```rust
+struct OverlayIntent {
+    intent_id: [u8; 32],
+    intent_type: u16,
+    mission_id: [u8; 32],
+    sender_id: [u8; 32],
+    sequence: u64,
+    logical_timestamp: u64,
+    expiration: u64,
+    payload_root: [u8; 32],
+    economic_weight: u64,
+    execution_class: u16,
+    signature: [u8; 64],
+}
+
+#[repr(u16)]
+enum IntentType {
+    Transaction = 0x0001,        // Economic state transition
+    MissionCommand = 0x0002,     // Overlay coordination
+    AIExecution = 0x0003,        // Inference/execution request
+    ConsensusVote = 0x0004,      // Validator participation
+    ProofSubmission = 0x0005,    // ZK proof delivery
+    ResourceLease = 0x0006,      // Resource market request
+    GovernanceProposal = 0x0007, // Governance coordination
+    RelayCommitment = 0x0008,    // Relay participation
+    // 0x0009-0xFFFF: Reserved for future types
+}
+```
+
+**Intent expiration:** `expiration = logical_timestamp + domain_TTL`. Default TTL per scope (from DGP-0852):
+
+| Scope | Default TTL (logical time units) |
+|-------|----------------------------------|
+| GLOBAL | 20 |
+| CONSENSUS | 10 |
+| MISSION | 5 |
+| PRIVATE | 3 |
+| LOCAL | 3 |
+| REGIONAL | 10 |
+
+**Sequence mandate:** `sequence` MUST be monotonically increasing per `(sender_id, mission_id)`. Reuse of a sequence number is a protocol violation.
+
+**Payload clarification:** The payload itself is transmitted as part of the DGP GossipObject wrapper (see Section 6.1). The OverlayIntent contains only the `payload_root` hash for verification.
+
+### 2. Mission-Scoped Mempools
+
+Each MON MAY maintain its own mempool. DOM supports layered pools:
+
+```text
+GLOBAL → CONSENSUS → REGIONAL → MISSION → PRIVATE → LOCAL
+```
+
+### 3. Deterministic Admission
+
+Admission MUST validate: signature validity, replay window, sequence validity, mission authorization, resource constraints, canonical serialization.
+
+**Mission authorization:** Verified via the mission's AdmissionPolicy (RFC-0855 §4.3). DOM admission checks that the sender's peer_id is in the mission's membership set.
+
+**Forbidden inputs:** local latency, wall-clock timing, CPU load, thread order, local bandwidth, transport origin.
+
+### 4. Canonical Intent Ordering
+
+Pending intents ordered by: `(execution_class ASC, economic_weight DESC, logical_timestamp ASC, sequence ASC, intent_id ASC)`
+
+Sort directions:
+- `execution_class ASC` — lower class number = higher priority (CriticalConsensus=0x0000 first)
+- `economic_weight DESC` — higher weight = higher priority within same class
+- `logical_timestamp ASC` — older intents first within same class+weight
+- `sequence ASC` — lower sequence first within same class+weight+timestamp
+- `intent_id ASC` — lexicographic tiebreaker (lowest hash wins)
+
+Tie-breaking: lowest lexicographic `intent_id` wins.
+
+### 5. Execution Classes
+
+```rust
+#[repr(u16)]
+enum ExecutionClass {
+    CriticalConsensus = 0x0000,
+    Consensus = 0x0001,
+    MissionCritical = 0x0002,
+    Economic = 0x0003,
+    Standard = 0x0004,
+    Bulk = 0x0005,
+    Archive = 0x0006,
+    // 0x0007-0xFFFF: Reserved for future classes
+}
+```
+
+Scheduling: CriticalConsensus → Consensus → MissionCritical → Economic → Standard → Bulk → Archive
+
+### 6. Mempool Propagation (extends RFC-0852)
+
+DOM objects propagate via deterministic gossip. Nodes SHOULD propagate only unseen intents. Anti-entropy reconciliation via Merkle summaries.
+
+#### 6.1 DGP Integration
+
+DOM intents wrap into DGP `GossipObject` as follows:
+
+| Field | Value |
+|-------|-------|
+| `object_type` | `MempoolIntent` (0x0009 from DOT MessageType) |
+| `payload` | DCS-serialized `OverlayIntent` |
+| `domain_id` | `GossipDomainId` derived from `mission_id` + mempool scope |
+| `object_hash` | `BLAKE3-256(dcs_serialize(GossipObject))` |
+
+**IntentType to ExecutionClass mapping:**
+
+| IntentType | Default ExecutionClass | Rationale |
+|-----------|----------------------|-----------|
+| ConsensusVote | Consensus | Validator participation is consensus-critical |
+| GovernanceProposal | Consensus | Governance decisions require consensus |
+| MissionCommand | MissionCritical | Mission coordination is time-sensitive |
+| ProofSubmission | MissionCritical | Proof delivery is time-sensitive |
+| Transaction | Economic | Economic state transitions |
+| ResourceLease | Economic | Resource market operations |
+| AIExecution | Standard | AI inference requests |
+| RelayCommitment | Standard | Relay participation |
+
+**Rate limiting:** Max 100 intents per sender per logical_timestamp window. Violation = intent silently dropped (not rejected with error).
+
+### 7. Mempool Root
+
+```rust
+struct MempoolStateRoot {
+    mission_id: [u8; 32],
+    intent_count: u64,
+    pending_root: [u8; 32],
+    replay_watermark: u64,
+}
+```
+
+Given identical inputs, all compliant nodes MUST derive identical mempool state.
+
+**Merkle tree construction:** Binary tree using BLAKE3-256. Leaves are intents in canonical order (Section 4). Empty mempool root = `BLAKE3-256(empty_input)`. Internal nodes = `BLAKE3-256(left_child || right_child)`.
+
+### 8. Economic Prioritization
+
+Intent ordering MAY incorporate: fees, stake weight, relay rewards, proof rewards, mission incentives. Fee prioritization MUST remain deterministic — no local heuristics.
+
+### 9. Mempool Eviction
+
+Deterministic eviction order: lowest priority → lowest economic weight → oldest pending. Expired intents MUST be removed identically across nodes.
+
+### 10. Error Types
+
+```rust
+enum DomError {
+    InvalidSignature { intent_id: [u8; 32] },
+    ReplayDetected { intent_id: [u8; 32], first_seen: u64 },
+    SequenceInvalid { sender_id: [u8; 32], sequence: u64 },
+    MissionUnauthorized { mission_id: [u8; 32], sender_id: [u8; 32] },
+    CapacityExceeded { scope: u16, max_entries: u32 },
+    InvalidIntentType { intent_type: u16 },
+    InvalidExecutionClass { execution_class: u16 },
+    FeeInsufficient { required: u64, provided: u64 },
+    SerializationError { reason: String },
+    AdmissionRejected { intent_id: [u8; 32], reason: u16 },
+}
+```
+
+### 11. Deterministic Numerics
+
+All mempool-critical arithmetic MUST use deterministic numeric semantics (RFC-0104 DFP, RFC-0105 DQA), especially for fee ordering, stake weighting, reward computation, AI execution pricing.
+
+### 12. Determinism Requirements (RFC-0008 Execution Classes)
+
+All DOM operations MUST be explicitly mapped to RFC-0008 execution classes:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| Intent serialization (DCS) | Class A | Consensus-critical canonical bytes |
+| Signature verification | Class A | Consensus-critical admission |
+| Canonical ordering computation | Class A | All nodes must derive identical order |
+| Admission validation | Class A | Consensus-critical intent acceptance |
+| Mempool state root computation | Class A | Consensus-critical Merkle root |
+| Deterministic eviction | Class A | All nodes must evict identical intents |
+| Fee computation (DQA/DFP) | Class A | Consensus-critical economic ordering |
+| Platform adapter I/O | Class C | Non-deterministic transport delivery |
+| Intent propagation timing | Class C | Non-deterministic network latency |
+| Anti-entropy reconciliation | Class B | Configurable timeouts |
+
+**Violation of Class A boundaries is a consensus-critical bug.** All Class A operations MUST use RFC-0104 DFP and RFC-0105 DQA for numeric computation.
+
+### 13. Mempool Capacity Limits
+
+Each mempool scope has a default capacity limit. Nodes MUST evict deterministically when capacity is reached.
+
+| Scope | Default Capacity | Eviction Trigger |
+|-------|-----------------|------------------|
+| GLOBAL | 100,000 intents | Lowest class → lowest weight → oldest timestamp |
+| CONSENSUS | 50,000 intents | Same rule |
+| REGIONAL | 5,000 intents | Same rule |
+| MISSION | 10,000 intents | Same rule |
+| PRIVATE | 1,000 intents | Same rule |
+| LOCAL | 100 intents | Same rule |
+
+Capacities are network-configurable parameters. All nodes in a network MUST use identical capacity limits for deterministic eviction behavior.
+
+## Performance Targets
+
+| Metric | Target |
+|--------|--------|
+| Intent admission | <1ms |
+| Ordering computation | <1µs |
+| Mempool sync | <5s for 10K intents |
+| Eviction cycle | <10ms |
+
+## Security Considerations
+
+### Consensus Attacks
+
+| Attack | Impact | Mitigation |
+|--------|--------|------------|
+| Intent forgery | High | Ed25519 signature verification |
+| Replay attack | High | Replay cache + logical timestamp validation |
+| Ordering manipulation | High | Canonical ordering by (class, weight, ts, seq, id) |
+| Consensus isolation violation | Critical | Deterministic admission rules — platform metadata never in consensus |
+
+### Economic Exploits
+
+| Attack | Impact | Mitigation |
+|--------|--------|------------|
+| Fee manipulation | Medium | Deterministic fee ordering via RFC-0105 DQA |
+| Priority gaming | Medium | Execution class is intent-type-determined, not sender-chosen |
+| Mempool flooding | Medium | Economic friction via OCTO-B staking |
+| Free-riding | Low | Intent fees required for admission |
+
+## Adversarial Review
+
+| Threat | Impact | Mitigation | Verification |
+|--------|--------|------------|--------------|
+| Intent forgery | High | Ed25519 signature at admission | Signature verification test |
+| Replay attack | High | Replay cache with deterministic eviction | Replay detection test |
+| Ordering manipulation | Critical | Canonical ordering invariant | Ordering consistency test |
+| Mempool flooding | Medium | Economic friction + rate limiting | Flood resistance test |
+| Mission isolation breach | High | Mission-scoped mempool separation | Isolation test |
+| Eviction manipulation | Medium | Deterministic eviction order | Eviction consistency test |
+| Free-riding | Low | OCTO-B intent fees | Fee enforcement test |
+| Priority gaming | Medium | Class determined by intent type | Priority test |
+
+## Economic Analysis
+
+### Token Integration
+
+| Activity | Token | Rationale |
+|----------|-------|-----------|
+| Intent submission fee | OCTO-B | Economic friction to prevent spam |
+| Priority ordering | OCTO-B | Higher fees for higher priority within class |
+| Mempool relay | OCTO-B | Bandwidth for intent propagation |
+| Consensus intents | OCTO-N | Validator participation rewards |
+| Mission intents | OCTO-O | Mission coordination fees |
+
+### Fee Model
+
+```text
+intent_fee = base_fee × intent_type_multiplier × (1 + priority_premium)
+```
+
+Where `base_fee = 1 OCTO unit` and `intent_type_multiplier` scales by execution class:
+
+| ExecutionClass | intent_type_multiplier |
+|----------------|----------------------|
+| CriticalConsensus | 10x |
+| Consensus | 8x |
+| MissionCritical | 6x |
+| Economic | 4x |
+| Standard | 2x |
+| Bulk | 1x |
+| Archive | 0.5x |
+
+`priority_premium` is optional sender-chosen uplift. **Bounds:** max 2.0 (200% uplift). Values > 2.0 are clamped to 2.0.
+
+**Fee Distribution (per whitepaper §10.6):**
+
+Intent fees follow the existing CipherOcto fee distribution model:
+
+| Recipient | Share | Token | Rationale |
+|-----------|-------|-------|-----------|
+| Relay/Prover | 70% | OCTO-B | Direct relay service |
+| Orchestrator | 10% | OCTO-O | Coordination overhead |
+| Treasury | 10% | OCTO | Protocol sustainability |
+| Burn | 5% | OCTO | Deflationary pressure |
+| Governance | 5% | OCTO | Governance rewards |
+
+This ensures intent fees integrate with the existing economic model rather than creating a parallel fee system.
+
+## Compatibility
+
+### RFC-0843 Integration
+
+DOM extends RFC-0843's transaction model with overlay intents:
+
+- RFC-0843 handles blockchain transactions — DOM generalizes to overlay intents
+- DOM intents propagate via DGP (RFC-0852) over DOT carriers (RFC-0850)
+- Consensus intents integrate with RFC-0843 block production
+
+### Forward Compatibility
+
+- Intent types are extensible (values 0x0009-0xFFFF for future types)
+- Execution classes are extensible (values 0x0007-0xFFFF)
+- Mempool hierarchy is configurable per mission
+
+## Test Vectors
+
+### Intent Serialization (DCS Canonical)
+
+```
+OverlayIntent:
+  intent_id       = BLAKE3-256(sender_id || sequence || logical_timestamp)
+  intent_type     = 0x0001 (Transaction)
+  mission_id      = [0x00; 32] (global)
+  sender_id       = [0xAA; 32]
+  sequence        = 42
+  logical_timestamp = 1000000
+  payload_root    = BLAKE3-256(canonical_payload_bytes)
+  economic_weight = 1000
+  execution_class = 4 (Standard)
+  signature       = Ed25519_sign(sender_privkey, canonical_bytes)
+
+Expected canonical bytes: deterministic, identical across all implementations
+```
+
+### Canonical Ordering Verification
+
+```
+Intent A: class=1 (Consensus), weight=500,  ts=100, seq=1, id=[0x01;32]
+Intent B: class=1 (Consensus), weight=1000, ts=200, seq=2, id=[0x02;32]
+Intent C: class=4 (Standard),  weight=500,  ts=50,  seq=1, id=[0x03;32]
+Intent D: class=1 (Consensus), weight=500,  ts=100, seq=1, id=[0x00;32]
+
+Canonical order: D, A, B, C
+
+Rationale:
+  - D and A tie on (class=1, weight=500, ts=100, seq=1), but D.id < A.id
+  - B has same class but higher weight (1000 > 500), so B after A
+  - C has class=4 > class=1, so C is last
+```
+
+### Deterministic Eviction
+
+```
+Mempool full (max_entries = 3). New intent E arrives with class=4, weight=100.
+
+Current mempool:
+  A: class=1, weight=500,  ts=100
+  B: class=4, weight=200,  ts=200
+  C: class=4, weight=100,  ts=150
+
+Eviction candidates (lowest class → lowest weight → oldest ts):
+  B and C are tied on class=4 (lowest in pool)
+  C has lower weight (100 < 200), so C is evicted first
+
+After eviction: [A, B, E]
+```
+
+## Alternatives Considered
+
+| Approach | Pros | Cons | Verdict |
+|----------|------|------|---------|
+| **Blockchain mempool only** | Proven (Ethereum), well-understood | Single-chain scope, no mission isolation, fee-market only | Rejected — too narrow for overlay coordination |
+| **CRDT-based pending state** | Eventually consistent, conflict-free | No canonical ordering, no economic weighting, non-deterministic merge | Rejected — violates determinism boundary |
+| **Centralized queue** | Simple, low latency | Single point of failure, censorship risk, no federation | Rejected — violates decentralization requirement |
+| **Optimistic processing** | Lower latency, speculative execution | Requires rollback logic, non-deterministic under conflict | Rejected — determinism violations propagate to consensus |
+
+**Decision:** DOM uses deterministic canonical ordering with mission-scoped isolation. This is the only approach that satisfies: (1) deterministic ordering at consensus boundary, (2) mission isolation, (3) economic prioritization, (4) multi-transport federation.
+
+## Rationale
+
+### Why overlay intents instead of just transactions?
+
+Traditional blockchains model everything as "transactions" — value transfers between accounts. CipherOcto's overlay network coordinates heterogeneous activities: mission commands, AI execution requests, consensus votes, proof submissions, resource leases, governance proposals, and relay commitments. Each intent type has different execution semantics, economic weight, and priority. A unified `OverlayIntent` abstraction with a discriminated `intent_type` field allows the mempool to handle all coordination primitives through a single deterministic admission and ordering pipeline while preserving type-specific semantics in the execution layer.
+
+### Why mission-scoped mempools?
+
+Without mission scoping, all intents compete in a single global pool. This creates problems: (1) mission-critical intents from Mission A can be starved by high-economic-weight intents from Mission B, (2) private mission intents leak metadata to unrelated participants, (3) replay protection windows must be global instead of per-mission. Hierarchical mempools (GLOBAL → CONSENSUS, MISSION, PRIVATE, LOCAL) isolate intent flows while allowing cross-mission coordination at the GLOBAL level when needed.
+
+### Why execution class ordering?
+
+Not all intents are equal. A consensus vote that determines block finality is more urgent than a background archival request. Execution classes (CriticalConsensus > Consensus > MissionCritical > Economic > Standard > Bulk > Archive) provide a deterministic priority hierarchy that ensures time-sensitive intents are processed first, regardless of economic weight. Economic weight serves as a tiebreaker within the same class.
+
+### Why deterministic eviction?
+
+When the mempool reaches capacity, the evicted intent must be identical across all nodes. Non-deterministic eviction (e.g., LRU with wall-clock timestamps) causes state divergence: Node A evicts intent X while Node B evicts intent Y, leading to different mempool state roots. Deterministic eviction by (lowest class → lowest weight → oldest timestamp) ensures convergence even under capacity pressure.
+
+## Future Work
+
+- F1: Adaptive fee markets with dynamic base fee adjustment
+- F2: Cross-membridge: intent bridging between separate overlay networks
+- F3: Zero-knowledge mempool proofs (prove intent validity without revealing content)
+- F4: AI-driven intent scheduling optimization
+- F5: Hierarchical economic weighting with nested mission budgets
+- F6: Intent batching for throughput optimization
+- F7: Stealth mempools for hidden mission coordination
+- F8: Integration with hardware security modules for intent signing
+
+## Implementation Phases
+
+### Phase 1: Core Intent Structure (Months 1-3)
+- `OverlayIntent` struct with DCS serialization
+- Intent type enum and execution class hierarchy
+- Deterministic admission pipeline
+- Replay cache integration
+
+### Phase 2: Ordering and Eviction (Months 3-6)
+- Canonical ordering by (execution_class, economic_weight, timestamp, sequence, intent_id)
+- Deterministic eviction policy
+- Mempool state root computation (Merkle commitment)
+- Capacity management
+
+### Phase 3: Mission Integration (Months 6-9)
+- Mission-scoped mempool isolation
+- Hierarchical mempool structure (GLOBAL → CONSENSUS, MISSION, PRIVATE, LOCAL)
+- DGP integration for multi-transport propagation
+- Anti-entropy reconciliation via Merkle summaries
+
+### Phase 4: Economics and Optimization (Months 9-12)
+- Economic weight computation with DQA/DFP integration
+- Priority-based scheduling
+- Performance benchmarks
+- Adversarial test suite
+
+## Key Files to Modify
+
+| File | Change |
+|------|--------|
+| `crates/octo-network/src/dom/mod.rs` | DOM module root |
+| `crates/octo-network/src/dom/intent.rs` | OverlayIntent |
+| `crates/octo-network/src/dom/admission.rs` | Admission rules |
+| `crates/octo-network/src/dom/ordering.rs` | Canonical ordering |
+| `crates/octo-network/src/dom/pool.rs` | Mempool storage |
+| `crates/octo-network/src/dom/eviction.rs` | Deterministic eviction |
+| `crates/octo-network/src/dom/propagation.rs` | DGP integration |
+| `crates/octo-network/src/dom/economics.rs` | Economic prioritization |
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | 2026-05-25 | Initial draft |
+| 1.1.0 | 2026-05-26 | Adversarial review fixes: RFC-0008 execution class mapping, fee distribution model, mempool capacity limits |
+| 1.2.0 | 2026-05-27 | Round 1 adversarial review: enum repr, DomError, sort directions, fee params, expiration, rate limiting, mission auth, DGP mapping, REGIONAL scope |
+
+## Related RFCs
+
+- RFC-0850-0856 (Networking): All dependency layers
+- RFC-0858 (Networking): ORR — privacy for intents
+- RFC-0859 (Networking): PCE — proof-carrying intents
+
+## Related Use Cases
+
+- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
+- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)

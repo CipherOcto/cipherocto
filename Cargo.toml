@@ -1,7 +1,27 @@
 [workspace]
+# ⚠️ quota-router-pyo3 is excluded: it enables quota-router-core/full which
+# pulls pyo3 into the workspace feature unification graph, breaking link of
+# crates that use the core library with default features (they end up needing
+# libpython symbols). Build it standalone with:
+#   cargo build -p quota-router-pyo3
+#   maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
 members = ["crates/*"]
-exclude = ["determin"]
+exclude = ["determin", "crates/quota-router-pyo3"]
 resolver = "2"
+
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# Mode gate (litellm-mode/any-llm-mode/full) controls PROVIDER STRATEGY, NOT interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes:
+#   - litellm-mode:  reqwest → provider REST APIs.    HTTP proxy ✅  Python SDK ✅
+#   - any-llm-mode:  PyO3   → official Python SDKs.  HTTP proxy ✅  Python SDK ✅
+#   - full:          Both reqwest AND PyO3.          HTTP proxy ✅  Python SDK ✅
+#
+# NEVER think "litellm-mode = proxy only" or "any-llm-mode = SDK only".
+# See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
+#
+# Feature gates are defined in:
+#   - crates/quota-router-core/Cargo.toml [features] section
+#   - crates/quota-router-pyo3/Cargo.toml [features] section (via workspace inherits)
 
 [workspace.package]
 version = "0.1.0"
@@ -25,6 +45,7 @@ sled = "0.34"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 # Cryptography
 sha2 = "0.10"
+blake3 = "1"
 # Async traits
 async-trait = "0.1"
 # Logging
@@ -50,3 +71,7 @@ directories = "6"
 parking_lot = "0.12"
 # Random number generation
 rand = "0.9"
+# Gzip compression (mission 0850p-a-session-export)
+flate2 = "1"
+# Bitflags (mission 0855p-c-sub-admins SubAdminAuthority)
+bitflags = "2"

@@ -725,7 +725,7 @@ SNARKs require trusted setup ceremonies which create:
 - RFC-0141 (Consensus): Parallel Block DAG Specification
 - RFC-0142 (Consensus): Data Availability & Sampling Protocol
 - RFC-0143 (Networking): OCTO-Network Protocol
-- RFC-0144 (Economics): Inference Task Market
+- RFC-0918 (Economics): Inference Task Market
 
 ## Related Use Cases
 

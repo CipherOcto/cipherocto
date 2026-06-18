@@ -10,8 +10,9 @@
 
 ## Depends on
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
-- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic (DQA)
+- RFC-0109 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE)
+- RFC-0124 (Numeric/Math): Deterministic Numeric Lowering (DFP → DQA)
 - RFC-0151 (AI Execution): Verifiable RAG Execution
 - RFC-0152 (Agents): Verifiable Agent Runtime
 
@@ -42,15 +43,17 @@ These behaviors break consensus in distributed systems. DMEE eliminates these so
 
 ## Specification
 
+> ⚠️ **NUMERIC CONTRACT (RFC-0124)**: Any floating-point-like representation (DFP, FLOAT, DOUBLE) MUST be compiled to DQA via RFC-0124's deterministic lowering pass **before** entering the DMEE execution layer. The engine operates exclusively on DQA types. DFP is a source-level/IR-level type only and MUST NOT exist in the runtime execution path.
+
 ### System Architecture
 
 ```mermaid
 graph TB
-    subgraph "RFC-0106 Numeric"
+    subgraph "RFC-0105 Numeric (DQA only)"
         DQA[DQA Types]
     end
 
-    subgraph "RFC-0148 DLAE"
+    subgraph "RFC-0109 DLAE (DQA-only)"
         MATMUL[Matrix Operations]
         VECTOR[Vector Operations]
     end

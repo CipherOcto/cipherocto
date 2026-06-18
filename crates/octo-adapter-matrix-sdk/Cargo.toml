@@ -1,0 +1,72 @@
+[package]
+name = "octo-adapter-matrix-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Integration test feature — gates the `tests/integration_matrix.rs`
+# test, which requires a running homeserver (started by
+# `scripts/integration-matrix.sh up`). The feature is OFF by default
+# so `cargo test` on a clean tree doesn't try to hit a homeserver.
+integration-matrix = ["dep:octo-matrix-onboard-core"]
+
+[dependencies]
+# Matrix SDK (E2EE + SQLite crypto store, exact pin per 0850h-a SDK Risk note).
+# R1-M18 corrections vs. the mission 0850h-b spec:
+#   - `rustls-tls` is NOT a valid 0.17.0 feature; TLS uses the
+#     embedded reqwest's default backend (native-tls on Linux).
+#   - `sqlite-cryptostore` does not exist on 0.17.0; the SQLite crypto
+#     store is enabled implicitly when both `e2e-encryption` and
+#     `sqlite` are set.
+#   - `indexeddb-cryptostore` does not exist on 0.17.0; the web-only
+#     state/event-cache store is the `indexeddb` feature (not used
+#     here — headless CLI).
+matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
+# Async runtime (embedded for cdylib compatibility). R1-L13:
+# use the workspace dep so the version stays in sync with the
+# rest of the workspace. The workspace's tokio uses `features =
+# ["full"]`, which is a superset of the specific features we
+# actually need (rt-multi-thread, macros, time) — keeping the
+# cdylib self-contained.
+tokio = { workspace = true }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# DOT encoding
+blake3 = "1.5"
+base64 = "0.22"
+uuid = { version = "1.6", features = ["v4"] }
+# Async trait
+async-trait = "0.1"
+# MIME types
+mime = "0.3"
+# DOT types (PlatformAdapter trait, envelope, domain, error)
+octo-network = { path = "../octo-network" }
+# Auth flows (only required for the integration-matrix feature; the
+# production cdylib doesn't link to it).
+octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core", optional = true }
+# File-based refresh-token writeback (mission 0850h-c): flock via fs4,
+# atomic rename via fs::rename on a `<config>.json.tmp` sibling file.
+# `libc` is needed for the `EWOULDBLOCK` / `EAGAIN` checks on Unix
+# `lock_exclusive` errors (fs4 surfaces these via `raw_os_error`).
+fs4 = { version = "0.7", features = ["sync"] }
+libc = "0.2"
+# Error type for the config writer.
+thiserror = { workspace = true }
+# Structured logging (writeback info/warn lines).
+tracing = { workspace = true }
+# Multi-account stoolap-backed session store (mission 0850h-d). The
+# adapter's `MatrixConfig.use_session_store` field (default `true`)
+# controls whether the adapter loads from the store or from the
+# legacy file path. The store is opened via
+# `octo_matrix_session_store::StoolapSessionStore::new(path)` and
+# queried by `(user_id, device_id)`.
+octo-matrix-session-store = { path = "../octo-matrix-session-store" }
+
+[dev-dependencies]
+# Integration test (gated by `integration-matrix` feature) needs a
+# tempdir for the on-disk config writeback fixture.
+tempfile = "3.8"

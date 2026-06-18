@@ -55,9 +55,17 @@ jobs:
         run: |
           if [ -f Cargo.toml ]; then cargo build --verbose; fi
 
-      - name: Run Rust tests
+      - name: Run Rust tests (default features)
         run: |
           if [ -f Cargo.toml ]; then cargo test --verbose; fi
+
+      - name: Check real-tdlib feature compiles
+        run: |
+          if [ -f Cargo.toml ]; then cargo check -p octo-adapter-telegram --features real-tdlib --no-default-features; fi
+
+      - name: Clippy real-tdlib
+        run: |
+          if [ -f Cargo.toml ]; then cargo clippy -p octo-adapter-telegram --all-targets --features real-tdlib -- -D warnings; fi
 
       - name: Run JS tests
         run: |

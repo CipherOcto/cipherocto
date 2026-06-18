@@ -32,3 +32,24 @@ Cargo.lock
 .python-version
 **/__pycache__/
 *.egg-info/
+
+# Claude Code
+.claude/plans/
+
+# Adversarial review artifacts (local scratchpads, not committed per memory rule)
+docs/reviews/
+
+# CocoIndex
+.cocoindex_code/
+coco.toml
+cocoindex_main.py
+
+# JCode
+# .jcode/
+
+# Understand-Anything knowledge graph
+.understand-anything/
+
+# Python lockfile
+uv.lock
+.env

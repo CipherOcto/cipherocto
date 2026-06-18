@@ -1,3 +1,9 @@
+// quota-router CLI
+//
+// ⚠️ CRITICAL INVARIANT (RFC-0917):
+// Mode gate controls PROVIDER STRATEGY (reqwest vs PyO3), NOT interface availability.
+// BOTH HTTP proxy AND Python SDK exist in ALL modes.
+
 use anyhow::Result;
 use clap::Parser;
 use quota_router_cli::cli::{Cli, Commands};
@@ -14,7 +20,10 @@ async fn main() -> Result<()> {
         Commands::AddProvider { name } => cmd::add_provider(&name).await?,
         Commands::Balance => cmd::balance().await?,
         Commands::List { prompts, price } => cmd::list(prompts, price).await?,
-        Commands::Proxy { port } => cmd::proxy(port).await?,
+        Commands::Proxy {
+            proxy_port,
+            admin_port,
+        } => cmd::proxy(proxy_port, admin_port).await?,
         Commands::Route { provider, prompt } => cmd::route(&provider, &prompt).await?,
     }
 

@@ -75,6 +75,23 @@ Trust emerges from:
 
 Every participant stakes both OCTO (global alignment) + Role Token (local specialization) to prevent role tourism.
 
+## RFC Process
+
+RFCs follow the process defined in `docs/BLUEPRINT.md`. Key stages:
+
+| Stage | Location | Purpose |
+|-------|----------|---------|
+| **Planned** | `rfcs/planned/` | Placeholder, defines concept and scope |
+| **Draft** | `rfcs/draft/` | Full specification, working implementation |
+| **Accepted** | `rfcs/accepted/` | Approved, stable specification |
+| **Archived** | `rfcs/archived/` | Rejected, superseded, or deprecated |
+
+**RFC Referencing rule:** When referencing RFCs in prose, cross-references, changelogs, and approval criteria — use only the number. Never include status, version pins, or metadata. Example: `RFC-0909` not `RFC-0903 (Accepted v63)`.
+
+**Why:** Status/version in references causes sync bugs and verbose noise. Only the RFC's own Status header and version history table carry version info.
+
+See `docs/BLUEPRINT.md` §The RFC Process for full lifecycle details.
+
 ## Development Workflow
 
 ### Shell Command Guidelines
@@ -157,7 +174,7 @@ graph TD
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **cipherocto** (1389 symbols, 3120 relationships, 99 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **cipherocto** (5058 symbols, 11443 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

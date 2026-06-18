@@ -5,15 +5,30 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# This crate provides the Python SDK interface.
+# Mode gate (litellm-mode/any-llm-mode/full) controls PROVIDER STRATEGY, not interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes.
+# - litellm-mode:  reqwest (native Rust HTTP) → provider REST APIs. HTTP proxy ✅ Python SDK ✅
+# - any-llm-mode:  PyO3 → official Python SDKs. HTTP proxy ✅ Python SDK ✅
+# - full:          Both reqwest AND PyO3. HTTP proxy ✅ Python SDK ✅
+#
+# See RFC-0917 §Rust Feature Gates.
+
 [lib]
 crate-type = ["cdylib", "rlib"]
+name = "_quota_router"
+
+[features]
+default = ["full"]
+full = ["quota-router-core/full"]
 
 [dependencies]
 # PyO3 for Python bindings - using 0.21 with experimental async
 pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
 
-# Core library
-quota-router-core = { path = "../quota-router-core" }
+# Core library - full mode enables both litellm (reqwest) and any-llm (PyO3) backends
+quota-router-core = { path = "../quota-router-core", default-features = false, features = ["full"] }
 
 # Serialization
 serde.workspace = true
@@ -24,6 +39,15 @@ uuid.workspace = true
 
 # Error handling
 thiserror.workspace = true
+
+# Tokio for litellm-mode async runtime
+tokio = { workspace = true, features = ["rt"] }
+
+# pyo3-asyncio for native async Python SDK calls (Phase 2)
+pyo3-asyncio-0-21 = { version = "0.21", features = ["tokio-runtime"] }
+
+# Lazy initialization for global state
+once_cell = "1.19"
 
 [build-dependencies]
 pyo3-build-config = "0.21"

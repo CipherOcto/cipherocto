@@ -1,7 +1,7 @@
 # Mission: RFC-0902-a: Routing Strategy Core
 
 ## Status
-
+Archived
 Claimed
 
 ## RFC

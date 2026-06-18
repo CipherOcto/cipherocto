@@ -4,6 +4,8 @@
 
 Accepted
 
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. Python SDK is a THIN PY03 BINDING ONLY. All heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. Python adds ONLY marshaling overhead (<2ms).**
+
 ## Authors
 
 - Author: @cipherocto
@@ -43,17 +45,21 @@ The quota-router must provide Python bindings to:
 
 ## Scope
 
+**ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) is in Rust core ONLY. Python SDK is thin binding only.**
+
 ### In Scope
 
-- PyO3 bindings for Rust core
-- Python SDK package (pip installable)
-- CLI wrapper (Python)
+- PyO3 bindings for Rust core (thin binding — ALL heavy processing in Rust)
+- Python SDK package (pip installable) — marshaling layer only
+- CLI wrapper (Python) — thin delegation to Rust core
 - Error handling parity with LiteLLM
 
 ### Out of Scope
 
 - Other language bindings (Go, JS, etc.)
 - Framework-specific integrations (future)
+- **Python-side routing state** — Python SDK uses RustRouterHandle only
+- **Any Python routing, caching, or telemetry implementation** — Rust core only
 
 ## Design Goals
 
@@ -477,9 +483,8 @@ Python SDK is critical for:
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.3     | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing Python SDK as thin PyO3 binding only. Updated Scope to explicitly exclude Python-side routing state. All heavy processing (routing, caching, telemetry, concurrency, batch execution) is Rust-only. |
 | 1.0     | 2026-03-12 | Initial draft |
-| 1.1     | 2026-03-12 | Added LiteLLM compatibility section |
-| 1.2     | 2026-03-13 | Changed to Accepted status |
 
 ## Related RFCs
 

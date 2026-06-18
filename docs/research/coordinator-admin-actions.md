@@ -624,3 +624,35 @@ it, and explicit about the platforms that *can't*.
    `GroupId(platform: PlatformType, native: String)`. This makes
    cross-platform handoff safer (you can't accidentally hand a
    WhatsApp JID to a Telegram adapter).
+
+---
+
+## 7. Implementation status (appended 2026-06-18+)
+
+The research above was the *plan*. This section tracks the
+*execution* — what's been built, what's pending. Updated as each
+R-series lands.
+
+### Done
+
+- **R20 (commit `03315ae`):** `coordinator_admin.rs` trait +
+  type newtypes + WhatsApp adapter impl. 20/22 actions
+  implemented on WhatsApp; honest `Unimplemented` for the rest.
+- **R21 (commit `48056b9`):** `octo-adapter-irc` impl.
+  Truthful capability report (10 supported / 11 unsupported);
+  raw IRC protocol ops (`KICK`, `MODE +o/-o/+i/-i/+m/-m`,
+  `TOPIC`, `INVITE`, `JOIN`, `PART`) wrapped in the trait;
+  admin command channel added to the listener task with
+  `tokio::select!` so commands make forward progress even
+  when the listener is blocked on `read_line`.
+
+### In progress / pending
+
+- **R22:** `octo-adapter-matrix` impl (hand-rolled reqwest
+  HTTP; rich power-level / join-rules / state-event model).
+- **R23:** `octo-adapter-telegram` impl (gated `real-tdlib`).
+- **R-toolchain + R24:** bump rustc 1.92 → 1.93 to unblock
+  `matrix-sdk 0.17`, then `octo-adapter-matrix-sdk` impl.
+- **R25:** wire a `CoordinatorAdmin` consumer in the gateway /
+  coordinator daemon (the "step 4" of the original migration
+  order).

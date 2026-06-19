@@ -2,14 +2,21 @@
 
 ## Status
 
-Claimed (2026-06-18, jcode)
+Claimed (2026-06-18, jcode); RFC-0861 Accepted (2026-06-19) — see
+`rfcs/accepted/networking/0861-coordinator-admin-trait-refinements.md`
+v1.12 Version History entry for the acceptance record. The original
+"draft waiver" note below is preserved as a historical artifact of the
+claim sequence, but no longer reflects the current state of the RFC.
 
-**Note:** RFC-0861 is still in `rfcs/draft/`. The mission's Prerequisites
-section originally required RFC-0861 to be Accepted before claim, but the
-user explicitly authorized claim + implementation despite the draft
-status. Implementation proceeds against RFC-0861 v1.10 (the spec
-reached convergence after R24a–R24j adversarial review, with R24k
-declaring loop termination).
+> **Historical note (2026-06-18):** At claim time, RFC-0861 was still
+> in `rfcs/draft/`. The mission's Prerequisites section originally
+> required RFC-0861 to be Accepted before claim, but the user
+> explicitly authorized claim + implementation despite the draft
+> status. Implementation proceeded against RFC-0861 v1.10 (the spec
+> reached convergence after R24a–R24j adversarial review, with R24k
+> declaring loop termination). The RFC was formally Accepted on
+> 2026-06-19 after all three implementation phases landed and CI was
+> green.
 
 ## RFC
 

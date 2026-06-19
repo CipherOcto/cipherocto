@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-06-18)
+Accepted (2026-06-19)
 
 ## Authors
 
@@ -384,6 +384,7 @@ Why a single RFC for 17 findings rather than 17 separate ones?
 | 1.9     | 2026-06-18 | R24i fixes: 3 LOW line-number drifts. Key Files row cited `IrcAdapter` struct at '~line 225', actual is line 208; RFC §2 H2 cited leave_group_str 'comment block at lines 1763-1764', actual is 1763-1767 (5-line doc comment — rationale at 1765-1767 is the key part); Mission Phase 2 H2 had the same drift. |
 | 1.10    | 2026-06-18 | R24j fixes: 1 MEDIUM + 1 LOW. MEDIUM: Phase 2 plan listed H1 before H2, contradicting H2's 'do this FIRST' annotation and the Mission (post-R24f N62 fix). Reordered so H2 is first (matches the Mission). LOW: Phase 2 plan H1 cite said `per §1 (H1)` but the primary impl spec and `JoinGroupResult` variant mapping are in §3 H1 — changed to `per §1+§3 (H1; primary impl spec in §3 H1)`. |
 | 1.11    | 2026-06-18 | Implementation complete (commits 80528f0, 4afd1eb, 9571694 on `next` against `octo-adapter-irc`). All 17 R1 findings (H1, H2, H6, M1–M5, M7, M8, M10–M16) closed: Phase 1 trait surface (M2, H6, M4, M13, M12, M14); Phase 2 WhatsApp-side (H2 create_group_str rename, H1 join_by_invite impl, M1 set_ephemeral overflow error, M5 tracing::debug! in create_group_str, M11 HashSet<String> in list_own_groups, M16 JID rules); Phase 3 IRC-side (M8 is_authenticated Arc<AtomicBool> + 376/422 SET + clear in BOTH mark_disconnected and shutdown, M7 pending_invites correlation buffer for ERR_CHANOPRIVSNEEDED, M10 can_join_by_id flip + join_by_id wrapper, M3 TLS health check). M15 was already implemented pre-RFC-0861 as part of R23d H7 (`validate_channel_name` at lib.rs:151); verified by inspection. Test counts after implementation: octo-network 1249, octo-adapter-irc 57, octo-adapter-whatsapp 67. |
+| 1.12    | 2026-06-19 | **Accepted.** Implementation (Phase 1/2/3 commits 80528f0, 4afd1eb, 9571694) is on `next` with all CI green; post-implementation adversarial review (R24l, commit a9bf8d2) recorded no further findings. RFC moved from `rfcs/draft/networking/` to `rfcs/accepted/networking/` via `git mv` to preserve rename history. Mission 0861's "draft waiver" note in `missions/claimed/0861-coordinator-admin-trait-refinements.md` is now stale and has been removed. `rfcs/README.md` registry updated from "Draft" to "Accepted". |
 
 ## Related RFCs
 

@@ -1,0 +1,29 @@
+[workspace]
+# Empty workspace table — declares this directory a standalone package
+# (NOT a member of the parent workspace at the repo root). This is what
+# physically keeps `cargo test --workspace` from the root from ever
+# building or running these tests.
+
+[package]
+name = "octo-telegram-live-tests"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Live integration tests for octo-adapter-telegram against a real TDLib session. Intentionally NOT a workspace member — see docs/ and the crate's README below. Run with: cd live-tests/octo-telegram-live-tests && cargo test -- --ignored --nocapture --test-threads=1"
+
+# This crate is NOT in the main workspace on purpose:
+#   1. CI's `cargo test --workspace` from the repo root must never build or
+#      run these tests. A live Telegram session, mounted data dir, and
+#      working TDLib shared library are all required.
+#   2. The main workspace's `octo-adapter-telegram` is built with `real-tdlib`
+#      enabled transitively (via `octo-telegram-onboard-core`'s feature
+#      unification), so any test file inside its `tests/` would be auto-built
+#      by `cargo test --workspace` regardless of feature gates. Moving the
+#      live test here physically separates it from the CI build path.
+# To run:  cd live-tests/octo-telegram-live-tests && cargo test -- --ignored --nocapture --test-threads=1
+
+[dependencies]
+octo-adapter-telegram = { path = "../../crates/octo-adapter-telegram", features = ["real-tdlib"] }
+octo-network = { path = "../../crates/octo-network" }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

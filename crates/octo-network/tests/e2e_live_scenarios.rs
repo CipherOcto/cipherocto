@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::mock_adapter::{FailureMode, MockPlatformAdapter};
+use common::mock_adapter::{AdminCall, AdminScripted, FailureMode, MockPlatformAdapter};
 use common::mock_network::MockNetwork;
 use ed25519_dalek::{Signer, SigningKey};
 use octo_network::dc::admin_attest::{
@@ -38,8 +38,13 @@ use octo_network::dom::admission::{
 };
 use octo_network::dom::error::DomError;
 use octo_network::dom::intent::{intent_type_to_class, IntentType, OverlayIntent};
+use octo_network::dot::adapters::coordinator_admin::{
+    AddMemberOutput, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+};
 use octo_network::dot::adapters::PlatformAdapter;
+use octo_network::dot::domain::PlatformType;
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
+use octo_network::dot::error::PlatformAdapterError;
 use octo_network::dot::pce::aggregate::aggregate_proofs;
 use octo_network::dot::pce::envelope::ProofCarryingEnvelope;
 use octo_network::dot::pce::error::PceError;
@@ -990,3 +995,376 @@ async fn scenario_transport_mode_and_wire_round_trip() {
 // Suppress unused-import warning when running only the test file.
 #[allow(dead_code)]
 fn _ensure_adapters_imported(_: MockPlatformAdapter) {}
+
+// ─────────────────────────────────────────────────────────────────────
+// Scenario 12: CoordinatorAdmin bridge downcast + capability honesty
+// ─────────────────────────────────────────────────────────────────────
+//
+// Closes the e2e test gap for the `CoordinatorAdmin` trait. The mock
+// platform adapter opts in to the admin trait via
+// `PlatformAdapter::as_coordinator_admin()`. This scenario verifies
+// (a) the bridge returns `Some(_)`, (b) `platform_name` matches what
+// the script expected, (c) `admin_capabilities` is truth-honest
+// (RFC-0861 §1), and (d) a method that wasn't scripted returns the
+// trait's default `Unimplemented` with the correct platform label.
+
+#[tokio::test]
+async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
+    // Mock opts in to create_group but NOT add_member — the
+    // capability report must reflect that asymmetry, not advertise
+    // both as `true`.
+    let adapter = MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(
+        AdminScripted {
+            create_group: Some(Ok(GroupHandle {
+                id: GroupId::new("1203630250@g.us"),
+                subject: Some("scripted".into()),
+                invite_url: None,
+                is_admin: true,
+                member_count: Some(0),
+                mode_flags: None,
+                initial_admins_promoted: true,
+            })),
+            add_member: None,
+        },
+    );
+
+    // (a) Bridge returns Some for adapters that opt in.
+    let admin: Option<&dyn CoordinatorAdmin> = adapter.as_coordinator_admin();
+    assert!(admin.is_some(), "mock must opt in to CoordinatorAdmin");
+    let admin = admin.unwrap();
+
+    // (b) platform_name round-trips.
+    let pname = admin.platform_name();
+    assert!(
+        pname.starts_with("mock"),
+        "platform_name should be 'mock-*' for the mock; got {pname:?}",
+    );
+
+    // (c) Capability report is honest: create_group is scripted so
+    // `can_create` is true; add_member is not scripted so
+    // `can_add_member` is false. RFC-0861 §1 rule.
+    let caps = admin.admin_capabilities();
+    assert!(caps.can_create, "can_create must reflect scripted slot");
+    assert!(
+        !caps.can_add_member,
+        "can_add_member must be false when slot is None (RFC-0861 §1 honesty rule)"
+    );
+    assert!(!caps.can_destroy);
+    assert!(!caps.can_transfer_ownership);
+
+    // (d) Scripted method returns the scripted value.
+    let handle = admin
+        .create_group("scripted", &[GroupMemberSpec::new("+15551111111")])
+        .await
+        .expect("create_group should return the scripted handle");
+    assert_eq!(handle.id.as_str(), "1203630250@g.us");
+    assert!(handle.is_admin);
+
+    // (e) Unscripted method returns the trait's default
+    // `Unimplemented` with the correct platform label.
+    let err = admin
+        .add_member(
+            &GroupId::new("1203630250@g.us"),
+            &GroupMemberSpec::new("+15552222222"),
+        )
+        .await
+        .expect_err("add_member should be Unimplemented when slot is None");
+    match err {
+        PlatformAdapterError::Unimplemented { platform, action } => {
+            assert!(platform.starts_with("mock"), "platform label: got {platform:?}");
+            assert_eq!(action, "add_member");
+        }
+        other => panic!("expected Unimplemented, got {other:?}"),
+    }
+
+    // (f) The call log captures the calls that actually happened.
+    let calls = adapter.admin_calls().await;
+    assert_eq!(calls.len(), 2);
+    match &calls[0] {
+        AdminCall::CreateGroup {
+            subject,
+            initial_member_count,
+        } => {
+            assert_eq!(subject, "scripted");
+            assert_eq!(*initial_member_count, 1);
+        }
+        other => panic!("expected CreateGroup, got {other:?}"),
+    }
+    match &calls[1] {
+        AdminCall::AddMember {
+            group_id,
+            member_handle,
+            member_is_admin,
+        } => {
+            assert_eq!(group_id, "1203630250@g.us");
+            assert_eq!(member_handle, "+15552222222");
+            assert!(!member_is_admin);
+        }
+        other => panic!("expected AddMember, got {other:?}"),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Scenario 13: CoordinatorAdmin::create_group → BindEnvelope → wire
+// ─────────────────────────────────────────────────────────────────────
+//
+// The main end-to-end flow. Exercises the full bridge from a trait
+// method through to wire bytes:
+//
+//   1. `&dyn PlatformAdapter` → `as_coordinator_admin` → `&dyn CoordinatorAdmin`
+//   2. `CoordinatorAdmin::create_group` returns a `GroupHandle`
+//   3. `GroupHandle.id` flows into a `BindEnvelope` (consumer side)
+//   4. `BindGossipState::record_received` ingests the bind
+//   5. `DeterministicEnvelope` carries the bind as its payload
+//      (payload_hash = blake3(serialized BindEnvelope))
+//   6. `PlatformAdapter::send_envelope` writes wire bytes
+//   7. Wire bytes round-trip through `from_wire_bytes` and still
+//      carry the bind payload (group_id intact)
+
+#[tokio::test]
+async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
+    let scripted_group_id = "1203630399@g.us";
+    let adapter = MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(
+        AdminScripted {
+            create_group: Some(Ok(GroupHandle {
+                id: GroupId::new(scripted_group_id),
+                subject: Some("DOT swarm A".into()),
+                invite_url: Some(format!("https://chat.whatsapp.com/{scripted_group_id}")),
+                is_admin: true,
+                member_count: Some(3),
+                mode_flags: None,
+                initial_admins_promoted: true,
+            })),
+            add_member: None,
+        },
+    );
+
+    // ── Step 1+2: bridge downcast → create_group ────────────────
+    let admin: &dyn CoordinatorAdmin = adapter
+        .as_coordinator_admin()
+        .expect("mock opts in to CoordinatorAdmin");
+    let members = vec![
+        GroupMemberSpec::new("+15551111111").as_admin(),
+        GroupMemberSpec::new("+15552222222"),
+        GroupMemberSpec::new("+15553333333"),
+    ];
+    let handle = admin
+        .create_group("DOT swarm A", &members)
+        .await
+        .expect("scripted create_group returns Ok");
+    assert_eq!(handle.id.as_str(), scripted_group_id);
+    assert!(handle.is_admin);
+    assert!(handle.initial_admins_promoted);
+
+    // ── Step 3: GroupHandle.id → BindEnvelope.group_id ──────────
+    let mut bind = BindEnvelope::new("domain-A", "whatsapp", handle.id.as_str());
+    bind.member_count_at_bind = handle.member_count.unwrap_or(0) as u16;
+    assert_eq!(bind.group_id, scripted_group_id);
+    assert_eq!(bind.platform, "whatsapp");
+
+    // ── Step 4: BindGossipState ingests the bind ────────────────
+    let gossip = BindGossipState::new();
+    assert!(
+        gossip.record_received(bind.clone()),
+        "first record_received must return true"
+    );
+    assert!(
+        !gossip.record_received(bind.clone()),
+        "duplicate record_received must return false"
+    );
+    let received = gossip.received_for("domain-A");
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].group_id, scripted_group_id);
+
+    // ── Step 5: wrap bind in a DeterministicEnvelope ────────────
+    let bind_bytes = serde_json::to_vec(&bind).expect("BindEnvelope is JSON-serializable");
+    let payload_hash: [u8; 32] = blake3::hash(&bind_bytes).into();
+    let sk = SigningKey::from_bytes(&[0x42; 32]);
+    let env = DeterministicEnvelope {
+        version: 1,
+        network_id: 1,
+        message_type: MessageType::GossipObject as u16,
+        envelope_id: blake3::hash(b"bind-domain-A-v1").into(),
+        mission_id: [0; 32],
+        source_peer: sk.verifying_key().to_bytes(),
+        origin_gateway: [0; 32],
+        logical_timestamp: 1000,
+        ttl_hops: 8,
+        payload_hash,
+        route_trace_root: [0; 32],
+        flags: 0,
+        signature: [0; 64],
+    };
+    let signing_bytes = env.to_signing_bytes();
+    let sig = sk.sign(&signing_bytes);
+    let env = DeterministicEnvelope {
+        signature: sig.to_bytes(),
+        ..env
+    };
+
+    // ── Step 6: send_envelope writes the wire bytes ─────────────
+    let domain = adapter.domain_id("whatsapp:test-group");
+    let receipt = adapter
+        .send_envelope(&domain, &env)
+        .await
+        .expect("send_envelope should succeed");
+    assert!(receipt.platform_message_id.starts_with("mock-"));
+
+    let outbound = adapter.outbound_messages().await;
+    assert_eq!(outbound.len(), 1, "exactly one wire message");
+
+    // ── Step 7: wire bytes round-trip and carry the bind ────────
+    let wire = &outbound[0];
+    let parsed = DeterministicEnvelope::from_wire_bytes(wire)
+        .expect("wire bytes must round-trip through from_wire_bytes");
+    assert_eq!(parsed.envelope_id, env.envelope_id);
+    assert_eq!(parsed.payload_hash, payload_hash);
+    assert_eq!(parsed.source_peer, env.source_peer);
+
+    // The bind payload inside the wire bytes still references the
+    // group_id returned by CoordinatorAdmin::create_group — proving
+    // the trait output flowed end-to-end through the consumer side.
+    let payload_str = std::str::from_utf8(&bind_bytes).expect("bind_bytes is valid utf-8");
+    assert!(
+        payload_str.contains(scripted_group_id),
+        "bind payload must contain the group_id; got {payload_str:?}"
+    );
+
+    // And the recorded call confirms the bridge was used.
+    let calls = adapter.admin_calls().await;
+    assert_eq!(calls.len(), 1);
+    match &calls[0] {
+        AdminCall::CreateGroup {
+            subject,
+            initial_member_count,
+        } => {
+            assert_eq!(subject, "DOT swarm A");
+            assert_eq!(*initial_member_count, 3);
+        }
+        other => panic!("expected CreateGroup, got {other:?}"),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Scenario 14: CoordinatorAdmin::add_member — H6 partial-success
+// ─────────────────────────────────────────────────────────────────────
+//
+// RFC-0861 §3 H6: `AddMemberOutput.promoted` carries the result of the
+// optional promote-to-admin step independently from the add itself.
+// This scenario exercises all three variants through the bridge:
+//
+//   - `promoted: None` — caller didn't request promotion
+//   - `promoted: Some(Ok(()))` — add succeeded AND promote succeeded
+//   - `promoted: Some(Err(_))` — add succeeded but promote failed
+//                          (the H6 partial-success case)
+//
+// Verifies the bridge correctly surfaces each variant without
+// collapsing them into a single binary outcome.
+
+#[tokio::test]
+async fn scenario14_coordinator_admin_add_member_partial_success() {
+    let adapter = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
+        AdminScripted {
+            create_group: None,
+            // The mock scripts `add_member` to mirror the variant the
+            // caller is testing — same return for every call. The
+            // scenario below uses three SEPARATE adapters, each with
+            // its own scripted response, so we exercise all three
+            // variants without collision.
+            add_member: Some(Ok(AddMemberOutput {
+                added: true,
+                promoted: Some(Ok(())),
+            })),
+        },
+    );
+
+    // ── Variant A: `promoted: Some(Ok(()))` ─────────────────────
+    let admin: &dyn CoordinatorAdmin = adapter.as_coordinator_admin().unwrap();
+    let g = GroupId::new("!room:matrix.org");
+    let out_a = admin
+        .add_member(&g, &GroupMemberSpec::new("@alice:matrix.org").as_admin())
+        .await
+        .expect("add_member returns Ok for Some(Ok(()))");
+    assert!(out_a.added);
+    assert_eq!(
+        out_a.promoted,
+        Some(Ok(())),
+        "Some(Ok(())) variant must surface verbatim through the bridge"
+    );
+
+    // ── Variant B: `promoted: None` (no promote attempted) ──────
+    let adapter_b = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
+        AdminScripted {
+            create_group: None,
+            add_member: Some(Ok(AddMemberOutput {
+                added: true,
+                promoted: None,
+            })),
+        },
+    );
+    let admin_b: &dyn CoordinatorAdmin = adapter_b.as_coordinator_admin().unwrap();
+    let out_b = admin_b
+        .add_member(&g, &GroupMemberSpec::new("@bob:matrix.org"))
+        .await
+        .expect("add_member returns Ok for None");
+    assert!(out_b.added);
+    assert!(
+        out_b.promoted.is_none(),
+        "None variant must surface verbatim through the bridge"
+    );
+
+    // ── Variant C: `promoted: Some(Err(ApiError))` (H6 partial) ─
+    let adapter_c = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
+        AdminScripted {
+            create_group: None,
+            add_member: Some(Ok(AddMemberOutput {
+                added: true,
+                promoted: Some(Err(PlatformAdapterError::ApiError {
+                    code: 500,
+                    message: "promote failed after add succeeded".into(),
+                })),
+            })),
+        },
+    );
+    let admin_c: &dyn CoordinatorAdmin = adapter_c.as_coordinator_admin().unwrap();
+    let out_c = admin_c
+        .add_member(&g, &GroupMemberSpec::new("@carol:matrix.org").as_admin())
+        .await
+        .expect("add_member returns Ok even when promote failed (H6)");
+    assert!(
+        out_c.added,
+        "added must remain true (the add itself succeeded)"
+    );
+    match &out_c.promoted {
+        Some(Err(PlatformAdapterError::ApiError { code, message })) => {
+            assert_eq!(*code, 500);
+            assert!(message.contains("promote failed"));
+        }
+        other => panic!(
+            "expected Some(Err(ApiError {{ 500, ... }})) — the H6 partial-success variant; got {other:?}"
+        ),
+    }
+
+    // ── Variant D: `added: false` (add itself failed) ──────────
+    // The trait spec says `promoted` is `None` in this case (no
+    // promote is attempted when there's no member to promote).
+    let adapter_d = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
+        AdminScripted {
+            create_group: None,
+            add_member: Some(Ok(AddMemberOutput {
+                added: false,
+                promoted: None,
+            })),
+        },
+    );
+    let admin_d: &dyn CoordinatorAdmin = adapter_d.as_coordinator_admin().unwrap();
+    let out_d = admin_d
+        .add_member(&g, &GroupMemberSpec::new("@dave:matrix.org"))
+        .await
+        .expect("add_member returns Ok with added=false when the platform rejected the add");
+    assert!(!out_d.added);
+    assert!(
+        out_d.promoted.is_none(),
+        "promoted must be None when added=false (no promote attempted)"
+    );
+}

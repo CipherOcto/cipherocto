@@ -8,12 +8,21 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use octo_network::dot::adapters::coordinator_admin::{
+    AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+};
 use octo_network::dot::adapters::{
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
+// `GroupMetadata`, `InviteRef`, `PeerId` are referenced by the
+// `CoordinatorAdmin` trait surface; importing them is harmless even
+// when the scriptable slots don't reference them, and the trait's
+// future extensions may pull them in.
+#[allow(unused_imports)]
+use octo_network::dot::adapters::coordinator_admin::{GroupMetadata, InviteRef, PeerId};
 
 /// Failure mode for the mock adapter.
 #[derive(Clone, Debug)]
@@ -30,6 +39,40 @@ pub enum FailureMode {
     Reorder,
     /// Delay messages by N logical time units
     Delay(u64),
+}
+
+/// Scripted responses for [`CoordinatorAdmin`] methods on the mock.
+///
+/// Each field is an optional scripted return value. When `Some(_)`, the
+/// corresponding trait method returns that value verbatim (after cloning
+/// out from behind the mutex). When `None`, the trait method falls
+/// through to the default `Unimplemented` error from the trait.
+///
+/// Tests set this via [`MockPlatformAdapter::with_admin_scripted`] to
+/// drive cross-module flows without standing up a real platform.
+#[derive(Clone, Debug, Default)]
+pub struct AdminScripted {
+    /// Scripted return for `create_group(subject, initial_members)`.
+    pub create_group: Option<Result<GroupHandle, PlatformAdapterError>>,
+    /// Scripted return for `add_member(group_id, member)`.
+    pub add_member: Option<Result<AddMemberOutput, PlatformAdapterError>>,
+}
+
+/// Recorded call against a `CoordinatorAdmin` method on the mock.
+///
+/// Tests inspect [`MockPlatformAdapter::admin_calls`] to verify a flow
+/// actually went through the bridge rather than bypassing it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdminCall {
+    CreateGroup {
+        subject: String,
+        initial_member_count: usize,
+    },
+    AddMember {
+        group_id: String,
+        member_handle: String,
+        member_is_admin: bool,
+    },
 }
 
 /// Mock platform adapter for integration testing.
@@ -52,6 +95,11 @@ pub struct MockPlatformAdapter {
     domain_hash: [u8; 32],
     /// Message counter for unique IDs
     counter: Arc<Mutex<u64>>,
+    /// Scripted `CoordinatorAdmin` responses. When `None` for a method,
+    /// that method returns the trait's default `Unimplemented`.
+    admin_scripted: Arc<Mutex<AdminScripted>>,
+    /// Recorded `CoordinatorAdmin` calls (for test assertions).
+    admin_calls: Arc<Mutex<Vec<AdminCall>>>,
 }
 
 impl MockPlatformAdapter {
@@ -66,6 +114,8 @@ impl MockPlatformAdapter {
             self_id: None,
             domain_hash,
             counter: Arc::new(Mutex::new(0)),
+            admin_scripted: Arc::new(Mutex::new(AdminScripted::default())),
+            admin_calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -79,6 +129,28 @@ impl MockPlatformAdapter {
     pub fn with_self_handle(mut self, handle: String) -> Self {
         self.self_id = Some(handle);
         self
+    }
+
+    /// Set the scripted `CoordinatorAdmin` responses.
+    ///
+    /// Tests use this to drive cross-module flows (e.g.
+    /// `CoordinatorAdmin::create_group` → `BindEnvelope` →
+    /// `DeterministicEnvelope` → `PlatformAdapter::send_envelope`)
+    /// without standing up a real WhatsApp/IRC/etc. backend.
+    pub fn with_admin_scripted(mut self, scripted: AdminScripted) -> Self {
+        self.admin_scripted = Arc::new(Mutex::new(scripted));
+        self
+    }
+
+    /// Mutate the scripted `CoordinatorAdmin` responses at test time.
+    /// Useful when the same adapter is reused across multiple flow steps.
+    pub async fn set_admin_scripted(&self, scripted: AdminScripted) {
+        *self.admin_scripted.lock().await = scripted;
+    }
+
+    /// Snapshot the recorded `CoordinatorAdmin` calls so far.
+    pub async fn admin_calls(&self) -> Vec<AdminCall> {
+        self.admin_calls.lock().await.clone()
     }
 
     /// Inject a message into the inbound queue (simulates receiving from platform).
@@ -218,4 +290,93 @@ impl PlatformAdapter for MockPlatformAdapter {
     fn self_handle(&self) -> Option<String> {
         self.self_id.clone()
     }
+
+    /// Bridge: opt in to `CoordinatorAdmin`. The mock advertises admin
+    /// support so cross-module e2e flows can exercise the trait through
+    /// the same `&dyn PlatformAdapter` entry point real callers use.
+    fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+        Some(self)
+    }
+}
+
+// ── CoordinatorAdmin impl ────────────────────────────────────────────
+//
+// The mock opts in to the admin trait so e2e flows can exercise
+// `create_group` / `add_member` through the `as_coordinator_admin`
+// bridge. The scriptable methods (create_group, add_member) honour
+// `self.admin_scripted`; everything else falls through to the trait's
+// default `Unimplemented` so tests see the same "not implemented"
+// signal a real adapter with a partial admin impl would return.
+//
+// `platform_name` and `admin_capabilities` are always overridden so the
+// capability bit-flags truthfully reflect what the mock scripts (RFC-0861
+// §1 capability-report honesty rule).
+
+#[async_trait::async_trait]
+impl CoordinatorAdmin for MockPlatformAdapter {
+    fn platform_name(&self) -> String {
+        format!("mock-{:?}", self.platform)
+            .to_lowercase()
+            .replace('"', "")
+    }
+
+    fn admin_capabilities(&self) -> AdminCapabilityReport {
+        // The capability report truthfully reflects what the mock
+        // currently scripts. Tests that enable create_group and/or
+        // add_member see the corresponding bits set; everything else
+        // stays false (per RFC-0861 §1 honesty rule).
+        let scripted = self
+            .admin_scripted
+            .try_lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        AdminCapabilityReport {
+            can_create: scripted.create_group.is_some(),
+            can_add_member: scripted.add_member.is_some(),
+            ..AdminCapabilityReport::default()
+        }
+    }
+
+    async fn create_group(
+        &self,
+        subject: &str,
+        initial_members: &[GroupMemberSpec],
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        self.admin_calls.lock().await.push(AdminCall::CreateGroup {
+            subject: subject.to_string(),
+            initial_member_count: initial_members.len(),
+        });
+        let scripted = self.admin_scripted.lock().await.clone();
+        match scripted.create_group {
+            Some(result) => result,
+            None => Err(PlatformAdapterError::Unimplemented {
+                platform: self.platform_name(),
+                action: "create_group".into(),
+            }),
+        }
+    }
+
+    async fn add_member(
+        &self,
+        group_id: &GroupId,
+        member: &GroupMemberSpec,
+    ) -> Result<AddMemberOutput, PlatformAdapterError> {
+        self.admin_calls.lock().await.push(AdminCall::AddMember {
+            group_id: group_id.to_string(),
+            member_handle: member.handle.clone(),
+            member_is_admin: member.is_admin,
+        });
+        let scripted = self.admin_scripted.lock().await.clone();
+        match scripted.add_member {
+            Some(result) => result,
+            None => Err(PlatformAdapterError::Unimplemented {
+                platform: self.platform_name(),
+                action: "add_member".into(),
+            }),
+        }
+    }
+
+    // All other methods inherit the trait's default `Unimplemented`
+    // return. Tests that need them can be extended by adding more
+    // fields to `AdminScripted`.
 }

@@ -4,10 +4,10 @@
 use crate::client::{NewMessage, SentMessage, TelegramClient, TelegramUpdate};
 use crate::error::Result;
 use async_trait::async_trait;
-use std::collections::BTreeMap;
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Type alias for the sent-document data map.
 /// Stores the cached base64 encoding so that the inject-once path
@@ -159,7 +159,10 @@ impl MockTelegramClient {
     /// **Deprecated (H1):** docs are now injected exactly once at send time,
     /// not re-injected on every poll. This method is a no-op kept for
     /// backward compatibility with existing tests.
-    #[deprecated(since = "0.2.0", note = "docs are now injected once at send time; this is a no-op")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "docs are now injected once at send time; this is a no-op"
+    )]
     pub fn drain_received_documents(&self) {
         // No-op: H1 makes re-injection unnecessary.
     }
@@ -248,26 +251,27 @@ impl TelegramClient for MockTelegramClient {
         self.sent_messages
             .lock()
             .push((chat_id.to_string(), encoded_envelope.to_string()));
-        self.sent_documents.lock().push((
-            chat_id.to_string(),
-            filename.to_string(),
-            data.len(),
-        ));
+        self.sent_documents
+            .lock()
+            .push((chat_id.to_string(), filename.to_string(), data.len()));
         // Store data for receive-path injection (document envelope round-trip).
         // PERF-M2: pre-encode once; receive_updates reads the cached form.
         // H1: inject the doc-derived NewMessage NOW (exactly-once), not
         // on every receive_updates poll.
         let encoded_cached = crate::envelope::encode_envelope(data);
-        self.sent_doc_data
-            .lock()
-            .insert((chat_id.to_string(), filename.to_string()), encoded_cached.clone());
+        self.sent_doc_data.lock().insert(
+            (chat_id.to_string(), filename.to_string()),
+            encoded_cached.clone(),
+        );
         let (from, from_legacy) = self.build_sender();
-        self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
-            chat_id: chat_id.parse().unwrap_or(0),
-            message: encoded_cached,
-            from,
-            from_legacy,
-        }));
+        self.pending_updates
+            .lock()
+            .push(TelegramUpdate::NewMessage(NewMessage {
+                chat_id: chat_id.parse().unwrap_or(0),
+                message: encoded_cached,
+                from,
+                from_legacy,
+            }));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -291,24 +295,25 @@ impl TelegramClient for MockTelegramClient {
             "mock-file-{}",
             self.next_msg_id.fetch_add(1, Ordering::Relaxed)
         );
-        self.sent_documents.lock().push((
-            chat_id.to_string(),
-            filename.to_string(),
-            data.len(),
-        ));
+        self.sent_documents
+            .lock()
+            .push((chat_id.to_string(), filename.to_string(), data.len()));
         // Store data for receive-path injection (document round-trip).
         // H1: inject the doc-derived NewMessage NOW (exactly-once).
         let encoded_cached = crate::envelope::encode_envelope(data);
-        self.sent_doc_data
-            .lock()
-            .insert((chat_id.to_string(), filename.to_string()), encoded_cached.clone());
+        self.sent_doc_data.lock().insert(
+            (chat_id.to_string(), filename.to_string()),
+            encoded_cached.clone(),
+        );
         let (from, from_legacy) = self.build_sender();
-        self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
-            chat_id: chat_id.parse().unwrap_or(0),
-            message: encoded_cached,
-            from,
-            from_legacy,
-        }));
+        self.pending_updates
+            .lock()
+            .push(TelegramUpdate::NewMessage(NewMessage {
+                chat_id: chat_id.parse().unwrap_or(0),
+                message: encoded_cached,
+                from,
+                from_legacy,
+            }));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -345,24 +350,25 @@ impl TelegramClient for MockTelegramClient {
         let mut queue = self.auth_queue.lock();
         if let Some(state) = queue.pop_front() {
             match state {
-                crate::auth::AuthStateKey::WaitTdlibParameters |
-                crate::auth::AuthStateKey::WaitPhoneNumber |
-                crate::auth::AuthStateKey::WaitCode |
-                crate::auth::AuthStateKey::WaitPassword => {
+                crate::auth::AuthStateKey::WaitTdlibParameters
+                | crate::auth::AuthStateKey::WaitPhoneNumber
+                | crate::auth::AuthStateKey::WaitCode
+                | crate::auth::AuthStateKey::WaitPassword => {
                     // These states require user interaction — return error
-                    return Err(crate::error::TelegramError::Auth(
-                        format!("mock auth requires user input for {:?}", state)
-                    ));
+                    return Err(crate::error::TelegramError::Auth(format!(
+                        "mock auth requires user input for {:?}",
+                        state
+                    )));
                 }
                 crate::auth::AuthStateKey::Ready => {
                     // Auth completed successfully
                     return Ok(());
                 }
-                crate::auth::AuthStateKey::Closed |
-                crate::auth::AuthStateKey::Other => {
-                    return Err(crate::error::TelegramError::Auth(
-                        format!("mock auth failed: {:?}", state)
-                    ));
+                crate::auth::AuthStateKey::Closed | crate::auth::AuthStateKey::Other => {
+                    return Err(crate::error::TelegramError::Auth(format!(
+                        "mock auth failed: {:?}",
+                        state
+                    )));
                 }
             }
         }

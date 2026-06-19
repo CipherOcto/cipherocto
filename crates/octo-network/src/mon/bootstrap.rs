@@ -259,9 +259,9 @@ mod tests {
     #[test]
     fn partially_stale_seeds_log_warning() {
         let env = envelope(vec![
-            entry("a", 100),  // age 5
+            entry("a", 100), // age 5
             entry("b", 100),
-            entry("c", 50),  // age 55, stale
+            entry("c", 50), // age 55, stale
             entry("d", 50),
         ]);
         let health = SeedHealth::check(&env, 105);

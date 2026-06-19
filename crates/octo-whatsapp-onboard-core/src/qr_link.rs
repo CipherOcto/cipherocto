@@ -11,8 +11,8 @@
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 
 use crate::error::{CoreError, Result};
-use crate::output::WhatsAppSession;
 use crate::output::QrLinkArgs;
+use crate::output::WhatsAppSession;
 use crate::sidecar::{write_sidecar, SidecarMode};
 
 /// Run the qr-link flow: build adapter, start bot, wait for
@@ -33,10 +33,12 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
     };
-    config.validate().map_err(|e| CoreError::InvalidSessionPath {
-        path: args.session_path.clone(),
-        reason: e,
-    })?;
+    config
+        .validate()
+        .map_err(|e| CoreError::InvalidSessionPath {
+            path: args.session_path.clone(),
+            reason: e,
+        })?;
 
     let adapter = WhatsAppWebAdapter::new(config);
     adapter

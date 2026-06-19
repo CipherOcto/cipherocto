@@ -1810,8 +1810,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         // variants of the same number) are simply not in the set
         // — the bot just won't be detected as admin in that
         // edge case, which matches the previous behavior.
-        let mut self_phones: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut self_phones: std::collections::HashSet<String> = std::collections::HashSet::new();
         if !self_phone.is_empty() {
             let digits = self_phone.trim_start_matches('+').to_string();
             self_phones.insert(digits.clone());
@@ -1888,9 +1887,9 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         // `InviteRef.0` through unchanged.
         let client = {
             let guard = self.client.lock();
-            guard
-                .clone()
-                .ok_or_else(|| api_err("join_by_invite", "WhatsApp Web client not connected".into()))?
+            guard.clone().ok_or_else(|| {
+                api_err("join_by_invite", "WhatsApp Web client not connected".into())
+            })?
         };
         let result = client
             .groups()
@@ -2312,13 +2311,13 @@ mod tests {
         // `@g.us`), user JID misuse (contains `:`), and non-numeric
         // bare strings.
         for bad in [
-            "120363012345678901@newsletter", // newsletter JID misuse
-            "120363012345678901@s.whatsapp.net", // user-JID-shaped but missing `@g.us`
+            "120363012345678901@newsletter",       // newsletter JID misuse
+            "120363012345678901@s.whatsapp.net",   // user-JID-shaped but missing `@g.us`
             "120363012345678901:0@s.whatsapp.net", // user JID misuse (`:`)
-            "not-a-jid",                     // non-numeric, no @
-            "abc@g.us",                      // non-numeric prefix before @g.us
-            "120363012345678901@",           // empty suffix
-            "@g.us",                         // empty prefix
+            "not-a-jid",                           // non-numeric, no @
+            "abc@g.us",                            // non-numeric prefix before @g.us
+            "120363012345678901@",                 // empty suffix
+            "@g.us",                               // empty prefix
         ] {
             let cfg = cfg_with("/tmp/test.db", None, None, None, vec![bad]);
             assert!(cfg.validate().is_err(), "groups {bad:?} should be rejected");

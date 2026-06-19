@@ -11,15 +11,15 @@ use octo_network::dot::adapters::{
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
-use std::collections::BTreeMap;
 use parking_lot::RwLock;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::client::TelegramClient;
 use crate::config::TelegramConfig;
 use crate::envelope;
 use crate::self_handle::SelfHandle;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 pub struct TelegramAdapter<C: TelegramClient> {
     pub config: TelegramConfig,
@@ -144,7 +144,10 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// **Deprecated:** call `set_identity(user_id, username)` instead, or pair
     /// with `set_self_user_id`. Calling this alone (without `set_self_user_id`)
     /// is a no-op that silently disables self-loop prevention.
-    #[deprecated(since = "0.2.0", note = "use set_identity() or pair with set_self_user_id()")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "use set_identity() or pair with set_self_user_id()"
+    )]
     pub fn set_bot_username(&self, username: String) {
         self.self_handle.set_username(username);
     }
@@ -165,12 +168,10 @@ impl From<crate::error::TelegramError> for PlatformAdapterError {
             // Recoverable — the retry loop handles these, but if they
             // escape (e.g. budget exhausted), surface as ApiError so
             // the gateway does not reconnect.
-            TelegramError::RateLimited { retry_after_secs } => {
-                PlatformAdapterError::RateLimited {
-                    platform: "telegram".into(),
-                    retry_after_ms: retry_after_secs * 1000,
-                }
-            }
+            TelegramError::RateLimited { retry_after_secs } => PlatformAdapterError::RateLimited {
+                platform: "telegram".into(),
+                retry_after_ms: retry_after_secs * 1000,
+            },
             TelegramError::Transient(msg) => PlatformAdapterError::ApiError {
                 code: 500,
                 message: format!("transient: {}", msg),
@@ -180,18 +181,14 @@ impl From<crate::error::TelegramError> for PlatformAdapterError {
             // error ("chat_id must be negative"). The deeper case "chat
             // does not exist or bot is not a member" would be 404, but
             // TDLib does not distinguish these at the error-code level.
-            TelegramError::InvalidChatId(m) => {
-                PlatformAdapterError::ApiError {
-                    code: 400,
-                    message: format!("InvalidChatId: {}", m),
-                }
-            }
-            TelegramError::InvalidFileId(m) => {
-                PlatformAdapterError::ApiError {
-                    code: 400,
-                    message: format!("InvalidFileId: {}", m),
-                }
-            }
+            TelegramError::InvalidChatId(m) => PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("InvalidChatId: {}", m),
+            },
+            TelegramError::InvalidFileId(m) => PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("InvalidFileId: {}", m),
+            },
             TelegramError::Envelope(m) => PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("envelope: {}", m),
@@ -236,7 +233,6 @@ fn chat_id_to_domain_string(chat_id: i64) -> String {
 }
 
 impl<C: TelegramClient> TelegramAdapter<C> {
-
     /// Register a domain → chat_id mapping. This is an explicit escape hatch
     /// when the auto-population in `domain_id` is not what the caller wants.
     ///
@@ -244,16 +240,15 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// `parse_chat_id` before storing, matching `domain_id`'s behaviour
     /// (R4 H2). Returns `Err` with a description if the chat_id is invalid
     /// (empty, non-numeric, or non-negative).
-    pub fn register_domain(
-        &self,
-        domain: &BroadcastDomainId,
-        chat_id: &str,
-    ) -> Result<(), String> {
+    pub fn register_domain(&self, domain: &BroadcastDomainId, chat_id: &str) -> Result<(), String> {
         let normalized = chat_id.trim().to_lowercase();
         // Validate before storing — surface registration errors early rather
         // than deep in send_envelope as an Unreachable error.
         crate::client::parse_chat_id(&normalized).map_err(|e| {
-            format!("invalid chat_id '{}' for domain registration: {}", chat_id, e)
+            format!(
+                "invalid chat_id '{}' for domain registration: {}",
+                chat_id, e
+            )
         })?;
         self.domain_chat_ids
             .write()
@@ -378,8 +373,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                     // R6 WIRE-C2: use the centralised helper so send and receive paths
                     // produce the same domain hash for the same numeric chat_id.
                     let chat_id_str = chat_id_to_domain_string(nm.chat_id);
-                    let msg_domain =
-                        BroadcastDomainId::new(PlatformType::Telegram, &chat_id_str);
+                    let msg_domain = BroadcastDomainId::new(PlatformType::Telegram, &chat_id_str);
                     if msg_domain.domain_hash != domain_hash {
                         return None;
                     }
@@ -581,12 +575,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // we can route deterministically. If multiple are registered, picking
         // any one would be ambiguous from the caller's perspective; require
         // the explicit `upload_media_to_domain` path instead.
-        let domains: Vec<[u8; 32]> = self
-            .domain_chat_ids
-            .read()
-            .keys()
-            .copied()
-            .collect();
+        let domains: Vec<[u8; 32]> = self.domain_chat_ids.read().keys().copied().collect();
         if domains.is_empty() {
             return Err(PlatformAdapterError::Unreachable {
                 platform: "telegram".into(),
@@ -691,7 +680,8 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                         tracing::warn!(
                             attempt,
                             max_retries = self.retry_config.max_retries,
-                            "with_retry: rate-limited budget exhausted after {} attempts", attempt + 1
+                            "with_retry: rate-limited budget exhausted after {} attempts",
+                            attempt + 1
                         );
                         // CR-M3: return RateLimited instead of Unreachable so the
                         // gateway knows to back off rather than reconnect.
@@ -768,7 +758,10 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// Run an async operation with retry on Transient errors ONLY.
     /// CR-C1: RateLimited errors are returned immediately without retry.
     /// Use for non-idempotent operations (file uploads, downloads).
-    pub(crate) async fn with_retry_non_idempotent<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
+    pub(crate) async fn with_retry_non_idempotent<F, Fut, T>(
+        &self,
+        mut op: F,
+    ) -> Result<T, PlatformAdapterError>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T, crate::error::TelegramError>>,
@@ -796,7 +789,8 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                             platform: "telegram".into(),
                             reason: format!(
                                 "transient error after {} attempts: {}",
-                                attempt + 1, msg
+                                attempt + 1,
+                                msg
                             ),
                         });
                     }

@@ -224,7 +224,10 @@ mod tests {
     fn verify_attest_stale() {
         let a = fresh_attest(100);
         let result = verify_attest(&a, &[0xAA], 250);
-        assert!(matches!(result, Err(PlatformAdminAttestError::Stale { .. })));
+        assert!(matches!(
+            result,
+            Err(PlatformAdminAttestError::Stale { .. })
+        ));
     }
 
     #[test]
@@ -243,7 +246,10 @@ mod tests {
         assert!(verify_attest(&a, &[0xAA], 200).is_ok());
         // age = 101 (one over): stale.
         let result = verify_attest(&a, &[0xAA], 201);
-        assert!(matches!(result, Err(PlatformAdminAttestError::Stale { .. })));
+        assert!(matches!(
+            result,
+            Err(PlatformAdminAttestError::Stale { .. })
+        ));
     }
 
     #[test]

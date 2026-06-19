@@ -173,11 +173,11 @@ impl SlashEvent {
     pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
         let payload = self.payload_bytes();
         let sig = Signature::from_bytes(&self.signature);
-        coordinator_pubkey.verify(&payload, &sig).map_err(|_| {
-            DotError::InvalidSignature {
+        coordinator_pubkey
+            .verify(&payload, &sig)
+            .map_err(|_| DotError::InvalidSignature {
                 envelope_id: *blake3::hash(&payload).as_bytes(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 }
@@ -424,11 +424,7 @@ impl HandoverAckEnvelope {
     /// Construct a new `HandoverAckEnvelope` with the canonical header
     /// populated. The caller MUST set `nonce` and call `sign(...)` before
     /// transmitting (R17 R1-CRITICAL-1 fix: nonce is now in the hash).
-    pub fn new(
-        handover_request_hash: [u8; 32],
-        witness_id: [u8; 32],
-        witness_epoch: u64,
-    ) -> Self {
+    pub fn new(handover_request_hash: [u8; 32], witness_id: [u8; 32], witness_epoch: u64) -> Self {
         let ack_hash = compute_ack_hash(
             &handover_request_hash,
             &witness_id,
@@ -784,7 +780,10 @@ mod tests {
         ev.sign(&real_key);
 
         let result = tally.append(ev, &claimed_pubkey, 50);
-        assert!(matches!(result, Err(HandoverError::SlashTallyInvalid { index: 0 })));
+        assert!(matches!(
+            result,
+            Err(HandoverError::SlashTallyInvalid { index: 0 })
+        ));
         assert!(tally.is_empty(), "forged event must NOT be in the tally");
     }
 
@@ -875,11 +874,7 @@ mod tests {
     fn handover_ack_sign_verify_round_trip() {
         let key = make_key(3);
         let pubkey = key.verifying_key();
-        let mut env = HandoverAckEnvelope::new(
-            [0xA1u8; 32],
-            *pubkey.as_bytes(),
-            250,
-        );
+        let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         assert!(env.verify(&pubkey).is_ok());
@@ -892,11 +887,7 @@ mod tests {
     fn handover_ack_nonce_changes_hash() {
         let key = make_key(3);
         let pubkey = key.verifying_key();
-        let mut env = HandoverAckEnvelope::new(
-            [0xA1u8; 32],
-            *pubkey.as_bytes(),
-            250,
-        );
+        let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         let original_hash = env.ack_hash;
@@ -909,11 +900,7 @@ mod tests {
     fn handover_ack_compute_matches_manual_blake3() {
         let key = make_key(3);
         let pubkey = key.verifying_key();
-        let mut env = HandoverAckEnvelope::new(
-            [0xA1u8; 32],
-            *pubkey.as_bytes(),
-            250,
-        );
+        let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
@@ -930,11 +917,7 @@ mod tests {
     fn handover_ack_tamper_fails() {
         let key = make_key(3);
         let pubkey = key.verifying_key();
-        let mut env = HandoverAckEnvelope::new(
-            [0xA1u8; 32],
-            *pubkey.as_bytes(),
-            250,
-        );
+        let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         env.witness_epoch = 999;
@@ -945,11 +928,7 @@ mod tests {
     fn handover_done_sign_verify_round_trip() {
         let key = make_key(4);
         let pubkey = key.verifying_key();
-        let mut env = HandoverDoneEnvelope::new(
-            [0xD1u8; 32],
-            *pubkey.as_bytes(),
-            500,
-        );
+        let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         assert!(env.verify(&pubkey).is_ok());
@@ -962,11 +941,7 @@ mod tests {
     fn handover_done_nonce_changes_hash() {
         let key = make_key(4);
         let pubkey = key.verifying_key();
-        let mut env = HandoverDoneEnvelope::new(
-            [0xD1u8; 32],
-            *pubkey.as_bytes(),
-            500,
-        );
+        let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         let original_hash = env.done_hash;
@@ -979,11 +954,7 @@ mod tests {
     fn handover_done_compute_matches_manual_blake3() {
         let key = make_key(4);
         let pubkey = key.verifying_key();
-        let mut env = HandoverDoneEnvelope::new(
-            [0xD1u8; 32],
-            *pubkey.as_bytes(),
-            500,
-        );
+        let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
@@ -1000,11 +971,7 @@ mod tests {
     fn handover_done_tamper_fails() {
         let key = make_key(4);
         let pubkey = key.verifying_key();
-        let mut env = HandoverDoneEnvelope::new(
-            [0xD1u8; 32],
-            *pubkey.as_bytes(),
-            500,
-        );
+        let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         env.accepted_epoch = 999;

@@ -126,10 +126,7 @@ impl SlashReputationStore {
 
     /// Returns the number of tracked slash events.
     pub fn total_slash_events(&self) -> usize {
-        self.by_coordinator
-            .values()
-            .map(|r| r.slashes.len())
-            .sum()
+        self.by_coordinator.values().map(|r| r.slashes.len()).sum()
     }
 }
 

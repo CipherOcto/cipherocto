@@ -82,7 +82,8 @@ impl DcSlashEnvelope {
         Self {
             dc_pubkey,
             slash_reason: DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR,
-            slash_reason_data: ((DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR as u32) << 16) | sub,
+            slash_reason_data: ((DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR as u32) << 16)
+                | sub,
             domains,
             witness_signatures,
             signed_at_epoch,
@@ -196,10 +197,7 @@ pub fn process_dc_slash(
 
 /// Build the gossip topic.
 pub fn dc_slash_topic(dc_pubkey_hex: &str) -> String {
-    assert!(
-        !dc_pubkey_hex.is_empty(),
-        "dc_pubkey_hex must not be empty"
-    );
+    assert!(!dc_pubkey_hex.is_empty(), "dc_pubkey_hex must not be empty");
     format!("/dot/slash/dc/{dc_pubkey_hex}")
 }
 
@@ -321,10 +319,7 @@ mod tests {
             signed_at_epoch: 1000,
         };
         let result = process_dc_slash(&env, 3, 0);
-        assert_eq!(
-            result,
-            Err(DcSlashError::InvalidSlashReasonData(0x0099))
-        );
+        assert_eq!(result, Err(DcSlashError::InvalidSlashReasonData(0x0099)));
     }
 
     #[test]

@@ -17,9 +17,8 @@ use cli::{
 use error::OnboardError;
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_whatsapp_onboard_core::{
-    wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs,
-    QrLinkArgs as CoreQrLinkArgs, SessionInfo, WhatsAppConfig,
-    WHOAMI_TIMEOUT_SECS,
+    wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs, QrLinkArgs as CoreQrLinkArgs,
+    SessionInfo, WhatsAppConfig, WHOAMI_TIMEOUT_SECS,
 };
 use std::process::ExitCode;
 
@@ -92,8 +91,8 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
 /// the adapter's `has_valid_session()`, and writes the sidecar
 /// (so downstream `whoami` works). No phone interaction.
 fn run_pair_link_ci(args: &PairLinkArgs) -> std::result::Result<(), OnboardError> {
-    use octo_whatsapp_onboard_core::WhatsAppSession;
     use octo_whatsapp_onboard_core::sidecar::{write_sidecar, SidecarMode};
+    use octo_whatsapp_onboard_core::WhatsAppSession;
 
     // Validate parent dir + symlink check (same as interactive flow).
     octo_whatsapp_onboard_core::validate_session_args(&args.session_path)
@@ -145,7 +144,11 @@ async fn run_link(
     session: octo_whatsapp_onboard_core::WhatsAppSession,
 ) -> std::result::Result<(), OnboardError> {
     output::write(output, &session)?;
-    println!("Authenticated as +{} (session: {})", session.self_phone.as_deref().unwrap_or("?"), session.session_path.display());
+    println!(
+        "Authenticated as +{} (session: {})",
+        session.self_phone.as_deref().unwrap_or("?"),
+        session.session_path.display()
+    );
     Ok(())
 }
 
@@ -193,12 +196,7 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
     }
     let adapter = build_adapter(&session_path, &[])?;
     start_bot(&adapter).await?; // R1-C2
-    match wait_for_connected(
-        &adapter,
-        Duration::from_secs(WHOAMI_TIMEOUT_SECS),
-    )
-    .await
-    {
+    match wait_for_connected(&adapter, Duration::from_secs(WHOAMI_TIMEOUT_SECS)).await {
         Ok(phone) => {
             println!("+{phone}");
             Ok(())
@@ -206,9 +204,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
         Err(CoreError::SessionExpired) => Err(OnboardError::SessionExpired(
             "Session expired or invalid".into(),
         )),
-        Err(CoreError::Timeout { secs }) => Err(OnboardError::Cancelled(format!(
-            "Timeout after {secs}s"
-        ))),
+        Err(CoreError::Timeout { secs }) => {
+            Err(OnboardError::Cancelled(format!("Timeout after {secs}s")))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -235,12 +233,7 @@ async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), Onbo
 async fn run_session_verify(args: SessionVerifyArgs) -> std::result::Result<(), OnboardError> {
     let adapter = build_adapter(&args.db_path, &[])?;
     start_bot(&adapter).await?; // R1-H2
-    match wait_for_connected(
-        &adapter,
-        Duration::from_secs(WHOAMI_TIMEOUT_SECS),
-    )
-    .await
-    {
+    match wait_for_connected(&adapter, Duration::from_secs(WHOAMI_TIMEOUT_SECS)).await {
         Ok(_) => {
             println!("valid");
             Ok(())
@@ -264,7 +257,10 @@ async fn run_session_remove(args: SessionRemoveArgs) -> std::result::Result<(), 
             .with_prompt(prompt)
             .default(false)
             .interact()
-            .map_err(|e| not_tty_to_bad_config(&e).unwrap_or_else(|| OnboardError::BadConfig(format!("prompt failed: {e}"))))?;
+            .map_err(|e| {
+                not_tty_to_bad_config(&e)
+                    .unwrap_or_else(|| OnboardError::BadConfig(format!("prompt failed: {e}")))
+            })?;
         if !confirmed {
             println!("aborted");
             return Ok(());
@@ -366,8 +362,8 @@ fn default_session_base_dir() -> std::path::PathBuf {
 }
 
 fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, OnboardError> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| OnboardError::BadConfig(format!("read {path:?}: {e}")))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| OnboardError::BadConfig(format!("read {path:?}: {e}")))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| OnboardError::BadConfig(format!("parse {path:?}: {e}")))
 }
@@ -383,8 +379,7 @@ fn not_tty_to_bad_config(e: &dialoguer::Error) -> Option<OnboardError> {
     let dialoguer::Error::IO(io_err) = e;
     if io_err.kind() == std::io::ErrorKind::NotConnected {
         Some(OnboardError::BadConfig(
-            "session remove requires a TTY (pass --yes to skip the interactive prompt)"
-                .into(),
+            "session remove requires a TTY (pass --yes to skip the interactive prompt)".into(),
         ))
     } else {
         None
@@ -422,10 +417,13 @@ fn build_adapter(
 // self_handle() is always None (the bot's on_event handler
 // populates it after Event::Connected) and the call always
 // times out.
-async fn start_bot(adapter: &octo_whatsapp_onboard_core::WhatsAppWebAdapter) -> std::result::Result<(), OnboardError> {
-    adapter.start_bot().await.map_err(|e| {
-        OnboardError::Generic(anyhow::anyhow!("start_bot: {e}"))
-    })
+async fn start_bot(
+    adapter: &octo_whatsapp_onboard_core::WhatsAppWebAdapter,
+) -> std::result::Result<(), OnboardError> {
+    adapter
+        .start_bot()
+        .await
+        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("start_bot: {e}")))
 }
 
 /// List sessions under `base_dir`. Reads `*.meta.json` sidecar if
@@ -436,13 +434,14 @@ async fn start_bot(adapter: &octo_whatsapp_onboard_core::WhatsAppWebAdapter) -> 
 /// presence IS a validity signal). This avoids a 5s bot-startup
 /// per DB in the common case. The fallback is documented as a
 /// hint, not a live health check.
-async fn list_sessions(base_dir: &std::path::Path) -> std::result::Result<Vec<SessionInfo>, OnboardError> {
+async fn list_sessions(
+    base_dir: &std::path::Path,
+) -> std::result::Result<Vec<SessionInfo>, OnboardError> {
     if !base_dir.exists() {
         return Ok(vec![]);
     }
-    let entries = std::fs::read_dir(base_dir).map_err(|e| {
-        OnboardError::BadConfig(format!("read_dir {base_dir:?}: {e}"))
-    })?;
+    let entries = std::fs::read_dir(base_dir)
+        .map_err(|e| OnboardError::BadConfig(format!("read_dir {base_dir:?}: {e}")))?;
     let db_paths: Vec<_> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -470,7 +469,9 @@ async fn list_sessions(base_dir: &std::path::Path) -> std::result::Result<Vec<Se
     Ok(out)
 }
 
-fn read_sidecar(path: &std::path::Path) -> std::result::Result<(Option<String>, Option<String>), OnboardError> {
+fn read_sidecar(
+    path: &std::path::Path,
+) -> std::result::Result<(Option<String>, Option<String>), OnboardError> {
     let bytes = std::fs::read(path)
         .map_err(|e| OnboardError::BadConfig(format!("read sidecar {path:?}: {e}")))?;
     let v: serde_json::Value = serde_json::from_slice(&bytes)

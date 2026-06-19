@@ -121,8 +121,7 @@ impl GovernancePolicy {
         }
         // weight_voted / total_eligible_weight >= quorum_numerator / quorum_denominator
         // Cross-multiply to avoid floating point and overflow.
-        weight_voted
-            .saturating_mul(self.quorum_denominator as u64)
+        weight_voted.saturating_mul(self.quorum_denominator as u64)
             >= (self.quorum_numerator as u64).saturating_mul(total_eligible_weight)
     }
 }
@@ -274,8 +273,7 @@ impl GovernanceProposal {
         }
 
         // Federated, AiAssisted: count-based quorum + majority
-        if policy.model == GovernanceModel::Federated
-            || policy.model == GovernanceModel::AiAssisted
+        if policy.model == GovernanceModel::Federated || policy.model == GovernanceModel::AiAssisted
         {
             if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
                 if self.total_for() > self.total_against() {
@@ -315,9 +313,7 @@ impl GovernanceProposal {
         if self.state != ProposalState::Voting {
             return self.state;
         }
-        let voted_weight = self
-            .total_for()
-            .saturating_add(self.total_against());
+        let voted_weight = self.total_for().saturating_add(self.total_against());
         if policy.is_weighted_quorum_met(voted_weight, total_eligible_weight) {
             if self.total_for() > self.total_against() {
                 self.state = ProposalState::Approved;
@@ -470,7 +466,7 @@ mod tests {
     #[test]
     fn test_weighted_quorum_met() {
         let p = default_policy(); // 2/3 quorum
-        // 70 of 100 weight voted: 70/100 >= 2/3 → met.
+                                  // 70 of 100 weight voted: 70/100 >= 2/3 → met.
         assert!(p.is_weighted_quorum_met(70, 100));
         // 50 of 100: 50/100 < 2/3 → not met.
         assert!(!p.is_weighted_quorum_met(50, 100));

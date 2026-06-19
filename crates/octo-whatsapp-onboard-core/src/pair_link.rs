@@ -13,8 +13,8 @@
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 
 use crate::error::{CoreError, Result};
-use crate::output::WhatsAppSession;
 use crate::output::PairLinkArgs;
+use crate::output::WhatsAppSession;
 use crate::sidecar::{write_sidecar, SidecarMode};
 
 /// Run the pair-link flow: validate phone, build adapter with
@@ -35,10 +35,12 @@ pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
     };
-    config.validate().map_err(|e| CoreError::InvalidSessionPath {
-        path: args.session_path.clone(),
-        reason: e,
-    })?;
+    config
+        .validate()
+        .map_err(|e| CoreError::InvalidSessionPath {
+            path: args.session_path.clone(),
+            reason: e,
+        })?;
 
     let adapter = WhatsAppWebAdapter::new(config);
     adapter
@@ -114,13 +116,16 @@ mod tests {
     #[test]
     fn validate_phone_rejects_malformed() {
         for bad in [
-            "5551234",       // no +
-            "+0123456789",   // leading 0
+            "5551234",        // no +
+            "+0123456789",    // leading 0
             "+1-555-1234567", // non-digit
-            "+",             // no digits
-            "+abcdefg",      // non-digit
+            "+",              // no digits
+            "+abcdefg",       // non-digit
         ] {
-            assert!(validate_phone(bad).is_err(), "phone {bad:?} should be rejected");
+            assert!(
+                validate_phone(bad).is_err(),
+                "phone {bad:?} should be rejected"
+            );
         }
     }
 }

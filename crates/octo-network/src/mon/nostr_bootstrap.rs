@@ -43,8 +43,14 @@ impl Nip05Identifier {
     ///   (no scheme/path/whitespace/control chars)
     pub fn parse(s: &str) -> Result<Self, Nip05Error> {
         let mut parts = s.splitn(2, '@');
-        let user = parts.next().ok_or(Nip05Error::InvalidIdentifier)?.to_string();
-        let domain = parts.next().ok_or(Nip05Error::InvalidIdentifier)?.to_string();
+        let user = parts
+            .next()
+            .ok_or(Nip05Error::InvalidIdentifier)?
+            .to_string();
+        let domain = parts
+            .next()
+            .ok_or(Nip05Error::InvalidIdentifier)?
+            .to_string();
         if user.is_empty() || domain.is_empty() {
             return Err(Nip05Error::InvalidIdentifier);
         }
@@ -313,7 +319,7 @@ mod tests {
     #[test]
     fn valid_capability_accepted() {
         let claim = DotCapabilityClaim {
-            pubkey: "0123456789abcdef".repeat(4),  // 64 hex
+            pubkey: "0123456789abcdef".repeat(4), // 64 hex
             d_tag: "dot-capability".into(),
             peer_id: "12D3KooP...".into(),
             bootstrap_list_url: Some("https://seeds.example.com/list.json".into()),
@@ -322,7 +328,10 @@ mod tests {
         };
         let mut adapter = NostrBootstrapAdapter::new();
         adapter.add_capability(claim.clone()).unwrap();
-        assert_eq!(adapter.bootstrap_peer_ids(), vec!["12D3KooP...".to_string()]);
+        assert_eq!(
+            adapter.bootstrap_peer_ids(),
+            vec!["12D3KooP...".to_string()]
+        );
     }
 
     #[test]

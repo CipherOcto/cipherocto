@@ -172,7 +172,10 @@ async fn test_send_file_has_no_caption() {
         .send_file("-1001234567890", "raw.bin", b"hello world")
         .await
         .unwrap();
-    assert!(!sent.id.is_empty(), "send_file should return a non-empty message id");
+    assert!(
+        !sent.id.is_empty(),
+        "send_file should return a non-empty message id"
+    );
     assert!(
         sent.timestamp > 0,
         "send_file should return a positive timestamp, got {}",

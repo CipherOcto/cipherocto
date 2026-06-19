@@ -242,11 +242,7 @@ impl AuditLog {
     /// makes the function deterministic and testable. Production
     /// callers should pass `SystemTime::now()...as_secs()` (or the
     /// wall-clock from their clock-source-of-record).
-    pub fn append(
-        &mut self,
-        envelope: UnbindAllAuditEnvelope,
-        timestamp_secs: u64,
-    ) -> u64 {
+    pub fn append(&mut self, envelope: UnbindAllAuditEnvelope, timestamp_secs: u64) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
         let entry = AuditEntry {

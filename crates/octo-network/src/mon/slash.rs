@@ -126,7 +126,10 @@ mod tests {
             1700000000,
         );
         assert_eq!(env.slash_reason, 0x000D);
-        assert_eq!(env.bootstrap_sub_code(), Some(BootstrapMisbehavior::StaleData));
+        assert_eq!(
+            env.bootstrap_sub_code(),
+            Some(BootstrapMisbehavior::StaleData)
+        );
     }
 
     #[test]

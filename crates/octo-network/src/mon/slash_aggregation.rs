@@ -62,11 +62,7 @@ pub enum Vote {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AggregationResult {
     /// The slash is finalized (yes votes ≥ 2/3 of N).
-    FinalizedYes {
-        yes: usize,
-        no: usize,
-        total: usize,
-    },
+    FinalizedYes { yes: usize, no: usize, total: usize },
     /// The slash is rejected (yes votes < 2/3 of N).
     Rejected {
         yes: usize,
@@ -101,7 +97,11 @@ pub struct SlashAggregator {
 impl SlashAggregator {
     /// Create a new aggregator with the current epoch as the
     /// window start.
-    pub fn new(domain_id: impl Into<String>, slash_id: impl Into<String>, total_witnesses: usize) -> Self {
+    pub fn new(
+        domain_id: impl Into<String>,
+        slash_id: impl Into<String>,
+        total_witnesses: usize,
+    ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())

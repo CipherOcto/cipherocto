@@ -71,12 +71,11 @@ pub fn check_session_path_safe(session_path: &Path) -> Result<(), CoreError> {
     // is canonicalizable. Run the check on the parent so a symlink
     // at the requested path is detected on subsequent use.
     let (target, parent) = if session_path.exists() {
-        let canon = std::fs::canonicalize(session_path).map_err(|e| {
-            CoreError::InvalidSessionPath {
+        let canon =
+            std::fs::canonicalize(session_path).map_err(|e| CoreError::InvalidSessionPath {
                 path: session_path.to_path_buf(),
                 reason: format!("canonicalize: {e}"),
-            }
-        })?;
+            })?;
         let parent = session_path
             .parent()
             .ok_or_else(|| CoreError::InvalidSessionPath {
@@ -138,12 +137,12 @@ mod tests {
     #[test]
     fn reject_malformed() {
         for bad in [
-            "5551234",       // no +
-            "+0123456789",   // leading 0
-            "+1-555-1234567", // non-digit
-            "+",             // no digits
-            "+abcdefg",      // non-digit
-            "+123456",       // too short (6 digits)
+            "5551234",           // no +
+            "+0123456789",       // leading 0
+            "+1-555-1234567",    // non-digit
+            "+",                 // no digits
+            "+abcdefg",          // non-digit
+            "+123456",           // too short (6 digits)
             "+1234567890123456", // too long (16 digits)
         ] {
             assert!(!is_e164(bad), "{bad:?} should be rejected");
@@ -172,12 +171,19 @@ mod tests {
 
         let err = check_session_path_safe(&link).unwrap_err();
         match err {
-            CoreError::SessionPathSymlink { requested, resolved } => {
+            CoreError::SessionPathSymlink {
+                requested,
+                resolved,
+            } => {
                 assert!(requested.contains("session.db"));
                 assert!(resolved.contains("session.db"));
                 // Resolved path is in the attacker dir, not the victim dir.
-                assert!(resolved.starts_with(attacker.to_string_lossy().as_ref())
-                    || resolved.starts_with(attacker.canonicalize().unwrap().to_string_lossy().as_ref()));
+                assert!(
+                    resolved.starts_with(attacker.to_string_lossy().as_ref())
+                        || resolved.starts_with(
+                            attacker.canonicalize().unwrap().to_string_lossy().as_ref()
+                        )
+                );
             }
             other => panic!("expected SessionPathSymlink, got {other:?}"),
         }

@@ -120,8 +120,9 @@ async fn shutdown_and_wait(adapter: TelegramAdapter<RealTelegramClient>) {
 async fn live_session_health_check() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,octo_adapter_telegram=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,octo_adapter_telegram=debug")
+            }),
         )
         .try_init();
 
@@ -151,8 +152,9 @@ async fn live_session_health_check() {
 async fn live_session_get_me_returns_real_identity() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,octo_adapter_telegram=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,octo_adapter_telegram=debug")
+            }),
         )
         .try_init();
 
@@ -214,7 +216,10 @@ async fn live_session_domain_id_round_trip() {
     // platform_type is a u16 discriminant; we don't pin it here —
     // the important property is that the domain hash is
     // deterministic per chat_id and bijective across chat_ids.
-    assert_ne!(a, b, "different chat_ids must produce different domain hashes");
+    assert_ne!(
+        a, b,
+        "different chat_ids must produce different domain hashes"
+    );
 
     // Same chat ID must produce the same hash (deterministic).
     let a2 = adapter.domain_id("-1001234567890");

@@ -166,25 +166,21 @@ async fn tdlib_get_me_with_timeout(
             // forever. We give it the remaining time from the
             // overall budget; for a healthy session this is
             // plenty.
-            let me_enum = match tokio::time::timeout(
-                timeout,
-                tdlib_rs::functions::get_me(client_id),
-            )
-            .await
-            {
-                Ok(Ok(u)) => u,
-                Ok(Err(e)) => {
-                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
-                    return Err(classify_tdlib_error(e.message));
-                }
-                Err(_elapsed) => {
-                    close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
-                    return Err(OnboardError::Cancelled(format!(
-                        "get_me timed out after {}s",
-                        timeout.as_secs()
-                    )));
-                }
-            };
+            let me_enum =
+                match tokio::time::timeout(timeout, tdlib_rs::functions::get_me(client_id)).await {
+                    Ok(Ok(u)) => u,
+                    Ok(Err(e)) => {
+                        close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
+                        return Err(classify_tdlib_error(e.message));
+                    }
+                    Err(_elapsed) => {
+                        close_tdlib_client_with_timeout(client_id, IDLE_CLOSE_TIMEOUT).await;
+                        return Err(OnboardError::Cancelled(format!(
+                            "get_me timed out after {}s",
+                            timeout.as_secs()
+                        )));
+                    }
+                };
             #[allow(unreachable_patterns)]
             match me_enum {
                 tdlib_rs::enums::User::User(u) => {
@@ -491,10 +487,7 @@ async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
             )
         })?,
     };
-    let api_hash = match config["api_hash"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-    {
+    let api_hash = match config["api_hash"].as_str().filter(|s| !s.is_empty()) {
         Some(h) => h.to_string(),
         None => args.api_hash.clone().ok_or_else(|| {
             OnboardError::BadConfig(
@@ -529,36 +522,32 @@ async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
     if let Some(ref u) = username {
         config["username"] = serde_json::Value::String(u.clone());
     }
-    let json_str = serde_json::to_string_pretty(&config).map_err(|e| {
-        OnboardError::Generic(anyhow::anyhow!("serialize config: {}", e))
-    })?;
+    let json_str = serde_json::to_string_pretty(&config)
+        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("serialize config: {}", e)))?;
     write_atomic(&config_path, json_str.as_bytes())?;
 
     // Patch session_meta.json — same fields. If the file doesn't
     // exist (e.g., user deleted it), just skip with a warning.
     let meta_path = data_path.join("session_meta.json");
     match std::fs::read(&meta_path) {
-        Ok(meta_bytes) => {
-            match serde_json::from_slice::<serde_json::Value>(&meta_bytes) {
-                Ok(mut meta) => {
-                    meta["user_id"] = serde_json::Value::Number(user_id.into());
-                    if let Some(ref u) = username {
-                        meta["username"] = serde_json::Value::String(u.clone());
-                    }
-                    let meta_str = serde_json::to_string_pretty(&meta).map_err(|e| {
-                        OnboardError::Generic(anyhow::anyhow!("serialize meta: {}", e))
-                    })?;
-                    write_atomic(&meta_path, meta_str.as_bytes())?;
+        Ok(meta_bytes) => match serde_json::from_slice::<serde_json::Value>(&meta_bytes) {
+            Ok(mut meta) => {
+                meta["user_id"] = serde_json::Value::Number(user_id.into());
+                if let Some(ref u) = username {
+                    meta["username"] = serde_json::Value::String(u.clone());
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        path = %meta_path.display(),
-                        error = %e,
-                        "session_meta.json is corrupted; not patching"
-                    );
-                }
+                let meta_str = serde_json::to_string_pretty(&meta)
+                    .map_err(|e| OnboardError::Generic(anyhow::anyhow!("serialize meta: {}", e)))?;
+                write_atomic(&meta_path, meta_str.as_bytes())?;
             }
-        }
+            Err(e) => {
+                tracing::warn!(
+                    path = %meta_path.display(),
+                    error = %e,
+                    "session_meta.json is corrupted; not patching"
+                );
+            }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             tracing::warn!(
                 path = %meta_path.display(),
@@ -598,13 +587,13 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| std::path::Path::new("."));
-    let mut tmp = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|e| OnboardError::BadConfig(format!("create tmp in {}: {}", parent.display(), e)))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+        OnboardError::BadConfig(format!("create tmp in {}: {}", parent.display(), e))
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) =
-            std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))
+        if let Err(e) = std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))
         {
             tracing::warn!(
                 path = %tmp.path().display(),

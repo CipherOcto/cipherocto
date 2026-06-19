@@ -732,10 +732,7 @@ mod tests {
             )
             .expect("third-party bind should succeed");
         // Envelope signed by DC.
-        assert!(result
-            .envelope
-            .verify(&orch.dc_key.verifying_key())
-            .is_ok());
+        assert!(result.envelope.verify(&orch.dc_key.verifying_key()).is_ok());
         // witness_seal ties the bind to the assertion.
         let mut seal_buf = Vec::with_capacity(64);
         seal_buf.extend_from_slice(&result.envelope.bind_hash);
@@ -770,7 +767,10 @@ mod tests {
             &assertion,
             60,
         );
-        assert!(matches!(result, Err(BindingError::InvalidAssertion { reason: _ })));
+        assert!(matches!(
+            result,
+            Err(BindingError::InvalidAssertion { reason: _ })
+        ));
     }
 
     #[test]
@@ -795,7 +795,10 @@ mod tests {
             &assertion,
             1000, // current_epoch far ahead
         );
-        assert!(matches!(result, Err(BindingError::InvalidAssertion { reason: _ })));
+        assert!(matches!(
+            result,
+            Err(BindingError::InvalidAssertion { reason: _ })
+        ));
     }
 
     #[test]

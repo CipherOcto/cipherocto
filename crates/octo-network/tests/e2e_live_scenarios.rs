@@ -33,9 +33,11 @@ use octo_network::dc::reputation::{
 };
 use octo_network::dc::slash::{process_dc_slash, DcMisbehavior, DcSlashEnvelope, DcSlashError};
 use octo_network::dgp::dedup::GossipReplayCache;
-use octo_network::dom::admission::{check_admission, AdmissionConfig, ReplayCache, SequenceTracker};
-use octo_network::dom::intent::{intent_type_to_class, IntentType, OverlayIntent};
+use octo_network::dom::admission::{
+    check_admission, AdmissionConfig, ReplayCache, SequenceTracker,
+};
 use octo_network::dom::error::DomError;
+use octo_network::dom::intent::{intent_type_to_class, IntentType, OverlayIntent};
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
 use octo_network::dot::pce::aggregate::aggregate_proofs;
@@ -44,7 +46,9 @@ use octo_network::dot::pce::error::PceError;
 use octo_network::dot::pce::proof_type::{ProofSystemId, VerificationResult};
 use octo_network::dot::pce::verify::{compute_merkle_root, verify_pce};
 use octo_network::dot::replay::ReplayCache as DotReplayCache;
-use octo_network::dot::transport::{decode_native_ref, encode_native_ref, select_mode, TransportMode};
+use octo_network::dot::transport::{
+    decode_native_ref, encode_native_ref, select_mode, TransportMode,
+};
 use octo_network::gossip::bind::{bind_gossip_topic, BindGossipState};
 use octo_network::mon::bind_envelope::BindEnvelope;
 use octo_network::mon::bootstrap::{
@@ -142,7 +146,10 @@ async fn scenario1_bootstrap_seed_health_and_authority_fork() {
     let health = SeedHealth::check(&env, 1000);
     assert!(matches!(
         health,
-        SeedHealth::PartialStale { ratio_percent: 50, .. }
+        SeedHealth::PartialStale {
+            ratio_percent: 50,
+            ..
+        }
     ));
     assert!(!health.refuses_start());
 
@@ -324,12 +331,8 @@ async fn scenario3_multi_dc_consensus_n3_n2_n1() {
     ));
 
     // N=1: unilateral — no votes needed.
-    let mut coord_n1 = DcConsensusCoordinator::new(
-        "d3",
-        ConsensusAction::Rebind,
-        None,
-        vec!["dc-solo".into()],
-    );
+    let mut coord_n1 =
+        DcConsensusCoordinator::new("d3", ConsensusAction::Rebind, None, vec!["dc-solo".into()]);
     assert!(matches!(coord_n1.quorum(), Quorum::Unilateral));
     let s = coord_n1.check_deadline(coord_n1.deadline_epoch + 1);
     assert!(matches!(s, ConsensusState::Committing));
@@ -366,8 +369,7 @@ async fn scenario3_multi_dc_consensus_n3_n2_n1() {
     assert_eq!(consensus_topic("d1"), "/dot/dc-consensus/d1");
 
     // N=0 in coordinator aborts (defense in depth).
-    let mut coord_n0 =
-        DcConsensusCoordinator::new("d6", ConsensusAction::Rebind, None, vec![]);
+    let mut coord_n0 = DcConsensusCoordinator::new("d6", ConsensusAction::Rebind, None, vec![]);
     let s = coord_n0.record_vote("dc-1", ConsensusVote::Prepared);
     assert!(matches!(s, ConsensusState::Aborted));
 }
@@ -491,7 +493,9 @@ async fn scenario5_slash_cooldown_exclusion_rejoin() {
         })
     );
     // Past window: allowed.
-    assert!(cd.check_and_record("peer-1", 1000 + REJOIN_COOLDOWN_EPOCHS).is_ok());
+    assert!(cd
+        .check_and_record("peer-1", 1000 + REJOIN_COOLDOWN_EPOCHS)
+        .is_ok());
 
     // Empty peer_id rejected.
     assert_eq!(
@@ -534,9 +538,7 @@ async fn scenario6_replay_protection_across_wire() {
     windowed.check_and_insert([0x02; 32], 105).unwrap();
     // Inserting many more entries does not exceed capacity.
     for i in 10..120u8 {
-        windowed
-            .check_and_insert([i; 32], 200 + i as u64)
-            .unwrap();
+        windowed.check_and_insert([i; 32], 200 + i as u64).unwrap();
     }
     assert!(windowed.len() <= 100);
 }
@@ -573,10 +575,7 @@ async fn scenario7_mempool_admission_gossip_propagation() {
 
     // Replay: same intent again is rejected.
     let result = check_admission(&intent, 500, &replay, &seq, 1, &cfg);
-    assert!(matches!(
-        result,
-        Err(DomError::ReplayDetected { .. })
-    ));
+    assert!(matches!(result, Err(DomError::ReplayDetected { .. })));
 
     // Capacity overflow: pending_count >= max_pending_intents → rejected.
     // Use a fresh intent (not in replay cache) so the capacity check is reached.
@@ -595,18 +594,12 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     };
     // pending_count=0, max=0 → 0 >= 0 → capacity exceeded.
     let result = check_admission(&fresh_intent, 500, &replay, &seq, 0, &cfg_tight);
-    assert!(matches!(
-        result,
-        Err(DomError::CapacityExceeded { .. })
-    ));
+    assert!(matches!(result, Err(DomError::CapacityExceeded { .. })));
 
     // Sequence: re-using sequence=1 from same sender is rejected.
     let replay2: ReplayCache = Default::default();
     let result = check_admission(&intent, 500, &replay2, &seq, 0, &cfg);
-    assert!(matches!(
-        result,
-        Err(DomError::SequenceInvalid { .. })
-    ));
+    assert!(matches!(result, Err(DomError::SequenceInvalid { .. })));
 
     // Ed25519: bad signature is rejected.
     let mut bad_sig = intent.clone();
@@ -614,10 +607,7 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     let replay3: ReplayCache = Default::default();
     let seq2: SequenceTracker = Default::default();
     let result = check_admission(&bad_sig, 500, &replay3, &seq2, 0, &cfg);
-    assert!(matches!(
-        result,
-        Err(DomError::InvalidSignature { .. })
-    ));
+    assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
 
     // Cross-gateway delivery: intent flows through MockNetwork as bytes.
     let net = MockNetwork::new(2);
@@ -741,13 +731,8 @@ async fn scenario9_governance_federated_and_dao() {
         EmergencyAuthority::Coordinator,
     )
     .unwrap();
-    let mut prop = GovernanceProposal::new(
-        [0xAA; 32],
-        DecisionType::Admission,
-        [0x01; 32],
-        100,
-        200,
-    );
+    let mut prop =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x01; 32], 100, 200);
     prop.open_voting();
     // 4 of 10 voters cast for.
     for i in 0..4u8 {
@@ -768,13 +753,8 @@ async fn scenario9_governance_federated_and_dao() {
     assert_eq!(state, ProposalState::Approved);
 
     // Voter change of mind: replace, don't duplicate.
-    let mut prop2 = GovernanceProposal::new(
-        [0xBB; 32],
-        DecisionType::Admission,
-        [0x02; 32],
-        100,
-        200,
-    );
+    let mut prop2 =
+        GovernanceProposal::new([0xBB; 32], DecisionType::Admission, [0x02; 32], 100, 200);
     prop2.open_voting();
     prop2.cast_vote([0x11; 32], 100, true);
     prop2.cast_vote([0x11; 32], 100, false); // changes mind
@@ -790,13 +770,8 @@ async fn scenario9_governance_federated_and_dao() {
         EmergencyAuthority::Coordinator,
     )
     .unwrap();
-    let mut prop3 = GovernanceProposal::new(
-        [0xCC; 32],
-        DecisionType::Admission,
-        [0x03; 32],
-        100,
-        200,
-    );
+    let mut prop3 =
+        GovernanceProposal::new([0xCC; 32], DecisionType::Admission, [0x03; 32], 100, 200);
     prop3.open_voting();
     prop3.cast_vote([0x21; 32], 100, true);
     prop3.cast_vote([0x22; 32], 80, true);
@@ -805,13 +780,8 @@ async fn scenario9_governance_federated_and_dao() {
     assert_eq!(state, ProposalState::Approved);
 
     // Zero weight rejected.
-    let mut prop4 = GovernanceProposal::new(
-        [0xDD; 32],
-        DecisionType::Admission,
-        [0x04; 32],
-        100,
-        200,
-    );
+    let mut prop4 =
+        GovernanceProposal::new([0xDD; 32], DecisionType::Admission, [0x04; 32], 100, 200);
     prop4.open_voting();
     assert!(!prop4.cast_vote([0x33; 32], 0, true));
 
@@ -824,13 +794,8 @@ async fn scenario9_governance_federated_and_dao() {
         EmergencyAuthority::Coordinator,
     )
     .unwrap();
-    let mut prop5 = GovernanceProposal::new(
-        [0xEE; 32],
-        DecisionType::Admission,
-        [0x05; 32],
-        100,
-        200,
-    );
+    let mut prop5 =
+        GovernanceProposal::new([0xEE; 32], DecisionType::Admission, [0x05; 32], 100, 200);
     prop5.open_voting();
     let state = prop5.resolve(&central, 1);
     assert_eq!(state, ProposalState::Approved);

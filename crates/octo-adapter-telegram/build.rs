@@ -26,9 +26,7 @@ fn main() {
         if let Ok(expected_sha) = std::env::var("TDLIB_SHA256") {
             // Find the TDLib binary in the build output directory.
             let out_dir = std::env::var("OUT_DIR").ok();
-            let search_paths = vec![
-                std::path::PathBuf::from("target"),
-            ];
+            let search_paths = vec![std::path::PathBuf::from("target")];
             let mut found = false;
             for base in &search_paths {
                 if let Ok(entries) = std::fs::read_dir(base) {

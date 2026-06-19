@@ -8,8 +8,8 @@
 //! `tdlib_rs::functions::get_me()` once at startup; mock returns a cached
 //! value set by test code.
 
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// Identity cached for self-loop prevention.
 ///

@@ -98,10 +98,7 @@ pub enum SubAdminState {
 ///
 /// Returns `true` (activate) if the primary has been silent for
 /// >= SUB_ADMIN_ACTIVATION_EPOCHS.
-pub fn should_activate_sub_admin(
-    last_primary_heartbeat_epoch: u64,
-    current_epoch: u64,
-) -> bool {
+pub fn should_activate_sub_admin(last_primary_heartbeat_epoch: u64, current_epoch: u64) -> bool {
     current_epoch.saturating_sub(last_primary_heartbeat_epoch) >= SUB_ADMIN_ACTIVATION_EPOCHS
 }
 
@@ -127,7 +124,8 @@ pub fn elect_active_sub_admin(
     }
     // 2/3 of total sub-admins must vote. Use saturating math to avoid
     // overflow on adversarial `total_sub_admins` values.
-    let distinct: std::collections::HashSet<Vec<u8>> = votes.iter().map(|(k, _)| k.clone()).collect();
+    let distinct: std::collections::HashSet<Vec<u8>> =
+        votes.iter().map(|(k, _)| k.clone()).collect();
     if distinct.len().saturating_mul(3) < total_sub_admins.saturating_mul(2) {
         return None;
     }
@@ -188,11 +186,7 @@ mod tests {
 
     #[test]
     fn elect_active_sub_admin_2_of_3() {
-        let votes = vec![
-            (vec![0xAA], 1),
-            (vec![0xBB], 1),
-            (vec![0xCC], 1),
-        ];
+        let votes = vec![(vec![0xAA], 1), (vec![0xBB], 1), (vec![0xCC], 1)];
         let sa = elect_active_sub_admin(&votes, 3).unwrap();
         // All have weight 1; tie-break: lower pubkey.
         assert_eq!(sa, vec![0xAA]);
@@ -207,11 +201,7 @@ mod tests {
 
     #[test]
     fn elect_active_sub_admin_weighted() {
-        let votes = vec![
-            (vec![0xAA], 1),
-            (vec![0xBB], 5),
-            (vec![0xCC], 1),
-        ];
+        let votes = vec![(vec![0xAA], 1), (vec![0xBB], 5), (vec![0xCC], 1)];
         let sa = elect_active_sub_admin(&votes, 3).unwrap();
         assert_eq!(sa, vec![0xBB]);
     }

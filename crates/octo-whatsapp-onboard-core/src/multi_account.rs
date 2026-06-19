@@ -209,10 +209,13 @@ impl MultiAccountStore {
                 path: PathBuf::from(account_id),
                 reason: "account not in index".to_string(),
             })?;
-        let base = self.path.parent().ok_or_else(|| CoreError::InvalidSessionPath {
-            path: self.path.clone(),
-            reason: "no parent dir".to_string(),
-        })?;
+        let base = self
+            .path
+            .parent()
+            .ok_or_else(|| CoreError::InvalidSessionPath {
+                path: self.path.clone(),
+                reason: "no parent dir".to_string(),
+            })?;
         let active = base.join("active");
         // Remove any existing symlink/file.
         let _ = fs::remove_file(&active);
@@ -229,11 +232,9 @@ impl MultiAccountStore {
         }
         #[cfg(not(unix))]
         {
-            fs::copy(&entry.session_path, &active).map_err(|e| {
-                CoreError::InvalidSessionPath {
-                    path: active.clone(),
-                    reason: format!("copy fallback: {e}"),
-                }
+            fs::copy(&entry.session_path, &active).map_err(|e| CoreError::InvalidSessionPath {
+                path: active.clone(),
+                reason: format!("copy fallback: {e}"),
             })?;
         }
         // Update last_used_at.
@@ -241,7 +242,11 @@ impl MultiAccountStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        self.index.accounts.get_mut(account_id).unwrap().last_used_at = now;
+        self.index
+            .accounts
+            .get_mut(account_id)
+            .unwrap()
+            .last_used_at = now;
         self.save()?;
         Ok(entry)
     }
@@ -269,14 +274,14 @@ impl MultiAccountStore {
     /// file for integrity verification on import.
     pub fn export(&self, account_id: &str, out: &Path) -> Result<()> {
         validate_account_id(account_id)?;
-        let entry = self
-            .index
-            .accounts
-            .get(account_id)
-            .ok_or_else(|| CoreError::InvalidSessionPath {
-                path: PathBuf::from(account_id),
-                reason: "account not in index".to_string(),
-            })?;
+        let entry =
+            self.index
+                .accounts
+                .get(account_id)
+                .ok_or_else(|| CoreError::InvalidSessionPath {
+                    path: PathBuf::from(account_id),
+                    reason: "account not in index".to_string(),
+                })?;
 
         // Build a small in-memory tar archive. We use the
         // `tar` crate (not currently a workspace dep), so
@@ -299,11 +304,10 @@ impl MultiAccountStore {
         // 2. session_meta.json (sidecar; optional)
         let sidecar = entry.session_path.with_extension("db.meta.json");
         if sidecar.exists() {
-            let sidecar_bytes =
-                fs::read(&sidecar).map_err(|e| CoreError::Read {
-                    path: sidecar.clone(),
-                    source: e,
-                })?;
+            let sidecar_bytes = fs::read(&sidecar).map_err(|e| CoreError::Read {
+                path: sidecar.clone(),
+                source: e,
+            })?;
             let sidecar_sha = sha256_hex(&sidecar_bytes);
             sha256_map.insert("session_meta.json".to_string(), sidecar_sha);
             append_tar_file(&mut archive_bytes, "session_meta.json", &sidecar_bytes);
@@ -311,11 +315,10 @@ impl MultiAccountStore {
 
         // 3. config.json
         if entry.config_path.exists() {
-            let config_bytes =
-                fs::read(&entry.config_path).map_err(|e| CoreError::Read {
-                    path: entry.config_path.clone(),
-                    source: e,
-                })?;
+            let config_bytes = fs::read(&entry.config_path).map_err(|e| CoreError::Read {
+                path: entry.config_path.clone(),
+                source: e,
+            })?;
             let config_sha = sha256_hex(&config_bytes);
             sha256_map.insert("config.json".to_string(), config_sha);
             append_tar_file(&mut archive_bytes, "config.json", &config_bytes);
@@ -413,26 +416,33 @@ impl MultiAccountStore {
         }
 
         // Verify manifest sha256s.
-        let manifest_bytes = files.get("manifest.json").ok_or_else(|| CoreError::InvalidBundle {
-            path: bundle.to_path_buf(),
-            reason: "manifest.json missing from bundle".to_string(),
-        })?;
-        let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
-            .map_err(|e| CoreError::Parse {
+        let manifest_bytes =
+            files
+                .get("manifest.json")
+                .ok_or_else(|| CoreError::InvalidBundle {
+                    path: bundle.to_path_buf(),
+                    reason: "manifest.json missing from bundle".to_string(),
+                })?;
+        let manifest: serde_json::Value =
+            serde_json::from_slice(manifest_bytes).map_err(|e| CoreError::Parse {
                 path: bundle.to_path_buf(),
                 source: e,
             })?;
-        let manifest_sha = manifest.get("sha256").and_then(|s| s.as_object()).ok_or_else(|| {
-            CoreError::InvalidBundle {
+        let manifest_sha = manifest
+            .get("sha256")
+            .and_then(|s| s.as_object())
+            .ok_or_else(|| CoreError::InvalidBundle {
                 path: bundle.to_path_buf(),
                 reason: "manifest.json missing sha256 object".to_string(),
-            }
-        })?;
-        for (fname, expected_sha_val) in manifest_sha {
-            let expected_sha = expected_sha_val.as_str().ok_or_else(|| CoreError::InvalidBundle {
-                path: bundle.to_path_buf(),
-                reason: "sha256 not a string".to_string(),
             })?;
+        for (fname, expected_sha_val) in manifest_sha {
+            let expected_sha =
+                expected_sha_val
+                    .as_str()
+                    .ok_or_else(|| CoreError::InvalidBundle {
+                        path: bundle.to_path_buf(),
+                        reason: "sha256 not a string".to_string(),
+                    })?;
             let file_bytes = files.get(fname).ok_or_else(|| CoreError::InvalidBundle {
                 path: bundle.to_path_buf(),
                 reason: format!("{fname} referenced in manifest but missing from archive"),
@@ -449,10 +459,13 @@ impl MultiAccountStore {
         }
 
         // Write the files to the base directory.
-        let base = self.path.parent().ok_or_else(|| CoreError::InvalidSessionPath {
-            path: self.path.clone(),
-            reason: "no parent dir".to_string(),
-        })?;
+        let base = self
+            .path
+            .parent()
+            .ok_or_else(|| CoreError::InvalidSessionPath {
+                path: self.path.clone(),
+                reason: "no parent dir".to_string(),
+            })?;
         let session_path = base.join(format!("{account_id}.session.db"));
         let config_path = base.join(format!("{account_id}.config.json"));
 
@@ -583,8 +596,7 @@ fn parse_tar_name(header: &[u8]) -> &str {
 /// format that round-trips.
 fn gzip_encode(data: &[u8]) -> std::io::Result<Vec<u8>> {
     use std::io::Write as _;
-    let mut encoder =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(data)?;
     encoder.finish()
 }
@@ -649,9 +661,7 @@ mod tests {
         fs::write(&config_path, b"{}").unwrap();
 
         let mut store = MultiAccountStore::open(&index_path).unwrap();
-        let entry = store
-            .import("1234", &session_path, &config_path)
-            .unwrap();
+        let entry = store.import("1234", &session_path, &config_path).unwrap();
         assert_eq!(entry.account_id, "1234");
         assert_eq!(store.list().len(), 1);
 
@@ -806,9 +816,13 @@ mod tests {
         fs::write(&config_path, b"{}").unwrap();
 
         let mut store = MultiAccountStore::open(&index_path).unwrap();
-        assert!(store.import("../evil", &session_path, &config_path).is_err());
+        assert!(store
+            .import("../evil", &session_path, &config_path)
+            .is_err());
         assert!(store.import("..", &session_path, &config_path).is_err());
-        assert!(store.import("foo/bar", &session_path, &config_path).is_err());
+        assert!(store
+            .import("foo/bar", &session_path, &config_path)
+            .is_err());
     }
 
     #[test]

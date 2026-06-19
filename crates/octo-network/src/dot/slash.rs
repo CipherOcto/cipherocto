@@ -93,7 +93,10 @@ pub mod reserved {
 /// `0x8000 | base_reason`. The platform tag is at the call site (the
 /// cross-platform slash is issued by a multi-platform coordinator).
 pub fn cross_platform_code(base: u16) -> u16 {
-    debug_assert!(base & 0x8000 == 0, "base reason must not have the platform bit set");
+    debug_assert!(
+        base & 0x8000 == 0,
+        "base reason must not have the platform bit set"
+    );
     0x8000 | base
 }
 
@@ -145,7 +148,11 @@ mod tests {
         let mut names: Vec<&str> = codes.iter().map(|c| c.name()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), codes.len(), "slash code names must be distinct");
+        assert_eq!(
+            names.len(),
+            codes.len(),
+            "slash code names must be distinct"
+        );
     }
 
     #[test]

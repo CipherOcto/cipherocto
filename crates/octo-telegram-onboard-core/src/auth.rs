@@ -327,23 +327,23 @@ fn spawn_receive_loop() -> std::result::Result<
                 if shutdown_clone.load(Ordering::Relaxed) {
                     break;
                 }
-            if let Some((update, _cid)) = tdlib_rs::receive() {
-                if matches!(update, tdlib_rs::enums::Update::AuthorizationState(_)) {
-                    // R16.1 fix: use try_send instead of blocking_send.
-                    // The auth handle is the primary consumer; after
-                    // it's done (`Ready`/`Closed`), no one is reading
-                    // the channel. `blocking_send` would stall this
-                    // thread waiting for space, which means we stop
-                    // calling `tdlib_rs::receive()` — and since
-                    // `receive()` is what routes RPC responses to
-                    // their futures via `OBSERVER.notify`, every
-                    // subsequent RPC (`get_me`, `close`, …) hangs
-                    // until its timeout fires. `try_send` drops the
-                    // update if the channel is full/closed; the
-                    // thread keeps looping and keeps routing.
-                    let _ = tx.try_send(update);
+                if let Some((update, _cid)) = tdlib_rs::receive() {
+                    if matches!(update, tdlib_rs::enums::Update::AuthorizationState(_)) {
+                        // R16.1 fix: use try_send instead of blocking_send.
+                        // The auth handle is the primary consumer; after
+                        // it's done (`Ready`/`Closed`), no one is reading
+                        // the channel. `blocking_send` would stall this
+                        // thread waiting for space, which means we stop
+                        // calling `tdlib_rs::receive()` — and since
+                        // `receive()` is what routes RPC responses to
+                        // their futures via `OBSERVER.notify`, every
+                        // subsequent RPC (`get_me`, `close`, …) hangs
+                        // until its timeout fires. `try_send` drops the
+                        // update if the channel is full/closed; the
+                        // thread keeps looping and keeps routing.
+                        let _ = tx.try_send(update);
+                    }
                 }
-            }
             }
         }) {
         Ok(_) => {}

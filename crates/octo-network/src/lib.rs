@@ -32,10 +32,10 @@ pub mod gossip;
 /// Overlay Cryptography (OCrypt) module — RFC-0853.
 pub mod ocrypt;
 
-/// Deterministic Overlay Mempool (DOM) — RFC-0857.
-pub mod dom;
 /// DomainCoordinator role — RFC-0855p-c + missions 0855p-c-*.
 pub mod dc;
+/// Deterministic Overlay Mempool (DOM) — RFC-0857.
+pub mod dom;
 /// Deterministic Route Selection (DRS) — RFC-0856.
 pub mod drs;
 /// Mission Overlay Networks (MON) — RFC-0855.

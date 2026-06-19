@@ -220,7 +220,10 @@ pub fn validate_bind(
     ) {
         return ValidationOutcome::Reject {
             rule: 2,
-            reason: format!("nonce replay for ({}, {})", envelope.platform, envelope.group_jid),
+            reason: format!(
+                "nonce replay for ({}, {})",
+                envelope.platform, envelope.group_jid
+            ),
         };
     }
 
@@ -245,8 +248,7 @@ pub fn validate_bind(
 
     // Rule 5: first-BIND-wins
     if let Some(prev) = &ctx.first_bind_seen {
-        if prev.bind_hash > envelope.bind_hash && prev.founder_peer_id == envelope.founder_peer_id
-        {
+        if prev.bind_hash > envelope.bind_hash && prev.founder_peer_id == envelope.founder_peer_id {
             return ValidationOutcome::Reject {
                 rule: 5,
                 reason: "first-BIND-wins: previous bind_hash is greater".into(),
@@ -271,7 +273,10 @@ pub fn validate_bind(
     if skew > 5 {
         return ValidationOutcome::Reject {
             rule: 7,
-            reason: format!("clock skew too large: envelope={}, local={}", envelope.current_epoch, ctx.current_epoch),
+            reason: format!(
+                "clock skew too large: envelope={}, local={}",
+                envelope.current_epoch, ctx.current_epoch
+            ),
         };
     }
 
@@ -328,16 +333,12 @@ fn is_valid_jid_for_platform(jid: &str, platform: &str) -> bool {
             // must contain a `.`.
             match jid.split_once('@') {
                 Some((local, domain)) => {
-                    !local.is_empty()
-                        && !domain.is_empty()
-                        && domain.contains('.')
+                    !local.is_empty() && !domain.is_empty() && domain.contains('.')
                 }
                 None => false,
             }
         }
-        ADAPTER_PLATFORM_MATRIX => {
-            (jid.starts_with('!') || jid.starts_with('#')) && jid.len() >= 2
-        }
+        ADAPTER_PLATFORM_MATRIX => (jid.starts_with('!') || jid.starts_with('#')) && jid.len() >= 2,
         ADAPTER_PLATFORM_TELEGRAM => match jid.parse::<i64>() {
             Ok(n) => n > 0,
             Err(_) => false,
@@ -400,11 +401,8 @@ pub trait BINDHook: Send + Sync {
     /// Called by the adapter on first DOT to a group. Returns
     /// `Ok(BindEnvelope)` if the binding is accepted, or
     /// `Err(reason)` if rejected.
-    fn on_first_dot(
-        &self,
-        envelope: &BindEnvelope,
-        registry: &GroupRegistry,
-    ) -> Result<(), String>;
+    fn on_first_dot(&self, envelope: &BindEnvelope, registry: &GroupRegistry)
+        -> Result<(), String>;
 }
 
 #[cfg(test)]

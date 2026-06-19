@@ -32,23 +32,22 @@ pub use admin_attest::{
     ATTEST_PERIOD_EPOCHS, CHALLENGE_RESPONSE_EPOCHS, MAX_ATTEST_AGE_EPOCHS,
 };
 pub use consensus::{
-    consensus_topic, ConsensusEnvelope, ConsensusOutcome, ConsensusState,
-    ConsensusVote, DcConsensusCoordinator, DC_CONSENSUS_TIMEOUT_EPOCHS,
+    consensus_topic, ConsensusEnvelope, ConsensusOutcome, ConsensusState, ConsensusVote,
+    DcConsensusCoordinator, DC_CONSENSUS_TIMEOUT_EPOCHS,
 };
 pub use discipline::{
-    discipline_for, DisciplineAction, DisciplineContext, SuspectState,
-    MIN_GROUP_SIZE_FOR_UNBIND,
+    discipline_for, DisciplineAction, DisciplineContext, SuspectState, MIN_GROUP_SIZE_FOR_UNBIND,
 };
 pub use rejoin::{
-    RejoinRequest, RejoinTicket, RejoinError, RejoinCooldown, REJOIN_COOLDOWN_EPOCHS,
+    RejoinCooldown, RejoinError, RejoinRequest, RejoinTicket, REJOIN_COOLDOWN_EPOCHS,
     REJOIN_TICKET_VALID_EPOCHS,
 };
 pub use reputation::{
     DcReputationEntry, DcRootedSlashReputationStore, DcSlashEventRef, DC_REPUTATION_HARD_THRESHOLD,
 };
 pub use slash::{
-    dc_slash_topic, DcMisbehavior, DcSlashEnvelope, DcSlashError, DcSlashOutcome, DcSlashSubCode,
-    DcFinalState, DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR,
+    dc_slash_topic, DcFinalState, DcMisbehavior, DcSlashEnvelope, DcSlashError, DcSlashOutcome,
+    DcSlashSubCode, DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR,
 };
 pub use sub_admin::{
     elect_active_sub_admin, should_activate_sub_admin, SubAdminAuthority, SubAdminDesignation,

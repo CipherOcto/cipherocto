@@ -681,9 +681,7 @@ pub trait CoordinatorAdmin: Send + Sync {
     /// 1:1 pairing; adapters that can't fetch invite URLs in
     /// parallel fall back to `None` for that field. See
     /// RFC-0861 §3 M13.
-    async fn list_own_groups_with_invites(
-        &self,
-    ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+    async fn list_own_groups_with_invites(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
         // Default: delegate to `list_own_groups` (the simpler
         // variant) and let the caller call `get_group_metadata`
         // per-group for the invite URL. Adapters that have a
@@ -740,10 +738,7 @@ pub trait CoordinatorAdmin: Send + Sync {
     /// `join_by_invite` by wrapping the group ID in an
     /// `InviteRef`. Adapters that have a distinct join-by-id
     /// path SHOULD override. Capability bit: `can_join_by_id`.
-    async fn join_by_id(
-        &self,
-        group_id: &GroupId,
-    ) -> Result<GroupHandle, PlatformAdapterError> {
+    async fn join_by_id(&self, group_id: &GroupId) -> Result<GroupHandle, PlatformAdapterError> {
         let _ = group_id;
         Err(PlatformAdapterError::Unimplemented {
             platform: self.platform_name(),
@@ -903,10 +898,7 @@ mod tests {
         expect_unimplemented::<GroupHandle>(admin.create_group("s", &[]).await, "create_group");
         expect_unimplemented::<()>(admin.leave_group(&g).await, "leave_group");
         expect_unimplemented::<()>(admin.destroy_group(&g).await, "destroy_group");
-        expect_unimplemented::<AddMemberOutput>(
-            admin.add_member(&g, &m).await,
-            "add_member",
-        );
+        expect_unimplemented::<AddMemberOutput>(admin.add_member(&g, &m).await, "add_member");
         expect_unimplemented::<()>(admin.remove_member(&g, &p).await, "remove_member");
         expect_unimplemented::<()>(admin.ban_member(&g, &p, ttl).await, "ban_member");
         expect_unimplemented::<()>(admin.promote_to_admin(&g, &p).await, "promote_to_admin");

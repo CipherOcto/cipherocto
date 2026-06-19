@@ -26,9 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use super::binding::{
-    BindingError, GroupBinding, GroupState, UnbindAuthority, UnbindEnvelope,
-};
+use super::binding::{BindingError, GroupBinding, GroupState, UnbindAuthority, UnbindEnvelope};
 use super::dc_envelopes::InviteEnvelope;
 
 /// Default recovery window for the `unbound_quarantine` map, in epochs.
@@ -115,15 +113,15 @@ impl GroupRegistry {
             });
         }
 
-        self.domain_index
-            .insert(domain_key, key.clone());
+        self.domain_index.insert(domain_key, key.clone());
         self.bindings.insert(key, binding);
         Ok(())
     }
 
     /// Look up a binding by `(platform, group_jid)`.
     pub fn lookup_by_group(&self, platform: &str, group_jid: &str) -> Option<&GroupBinding> {
-        self.bindings.get(&(platform.to_string(), group_jid.to_string()))
+        self.bindings
+            .get(&(platform.to_string(), group_jid.to_string()))
     }
 
     /// Look up a binding by `(mission_id, domain_id, platform)` reverse
@@ -332,7 +330,9 @@ impl GroupRegistry {
             })?;
 
         if current_epoch
-            >= entry.unbound_at_epoch.saturating_add(entry.recovery_window_epochs)
+            >= entry
+                .unbound_at_epoch
+                .saturating_add(entry.recovery_window_epochs)
         {
             return Err(BindingError::QuarantineExpired {
                 platform: platform.to_string(),
@@ -625,7 +625,9 @@ mod tests {
         reg.register_binding(b).unwrap();
         assert_eq!(reg.len(), 1);
         assert!(reg.lookup_by_group("whatsapp", "g1").is_some());
-        assert!(reg.lookup_by_domain(&[1u8; 32], &[2u8; 32], "whatsapp").is_some());
+        assert!(reg
+            .lookup_by_domain(&[1u8; 32], &[2u8; 32], "whatsapp")
+            .is_some());
     }
 
     #[test]
@@ -898,8 +900,7 @@ mod tests {
         reg.transition_to_bound("whatsapp", "g1", 100, [0u8; 32])
             .unwrap();
         reg.transition_to_inviting("whatsapp", "g1").unwrap();
-        reg.transition_inviting_to_bound("whatsapp", "g1")
-            .unwrap();
+        reg.transition_inviting_to_bound("whatsapp", "g1").unwrap();
         let b = reg.lookup_by_group("whatsapp", "g1").unwrap();
         assert_eq!(b.state, GroupState::Bound);
     }
@@ -940,9 +941,7 @@ mod tests {
         reg.register_binding(make_binding("wa", "g1", [1u8; 32], [2u8; 32]))
             .unwrap();
         reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
-        assert!(reg
-            .transition_to_unbound_all_pending("wa", "g1")
-            .is_ok());
+        assert!(reg.transition_to_unbound_all_pending("wa", "g1").is_ok());
         assert_eq!(
             reg.lookup_by_group("wa", "g1").unwrap().state,
             GroupState::UnboundAllPending,
@@ -957,9 +956,7 @@ mod tests {
         reg.transition_to_bound("wa", "g1", 0, [0u8; 32]).unwrap();
         reg.transition_to_unbound_all_pending("wa", "g1").unwrap();
         // Second call should be idempotent (UnboundAllPending in OK arm).
-        assert!(reg
-            .transition_to_unbound_all_pending("wa", "g1")
-            .is_ok());
+        assert!(reg.transition_to_unbound_all_pending("wa", "g1").is_ok());
     }
 
     #[test]

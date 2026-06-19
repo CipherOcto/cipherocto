@@ -84,12 +84,10 @@ impl From<CoreError> for OnboardError {
     fn from(e: CoreError) -> Self {
         match e {
             CoreError::Adapter(source) => OnboardError::Generic(source),
-            CoreError::ClientBuild => {
-                OnboardError::Unreachable("client build failed".into())
+            CoreError::ClientBuild => OnboardError::Unreachable("client build failed".into()),
+            CoreError::InvalidPhone { value, reason } => {
+                OnboardError::BadConfig(format!("invalid phone {value:?}: {reason}"))
             }
-            CoreError::InvalidPhone { value, reason } => OnboardError::BadConfig(format!(
-                "invalid phone {value:?}: {reason}"
-            )),
             CoreError::InvalidSessionPath { path, reason } => {
                 OnboardError::BadConfig(format!("invalid session_path {path:?}: {reason}"))
             }
@@ -105,11 +103,12 @@ impl From<CoreError> for OnboardError {
             CoreError::Timeout { secs } => OnboardError::Cancelled(format!(
                 "timed out after {secs}s waiting for Event::Connected"
             )),
-            CoreError::SessionPathSymlink { requested, resolved } => {
-                OnboardError::SymlinkAttack(format!(
-                    "{requested:?} is a symlink to {resolved:?} outside the requested parent"
-                ))
-            }
+            CoreError::SessionPathSymlink {
+                requested,
+                resolved,
+            } => OnboardError::SymlinkAttack(format!(
+                "{requested:?} is a symlink to {resolved:?} outside the requested parent"
+            )),
             CoreError::InvalidBundle { path, reason } => {
                 OnboardError::BadConfig(format!("invalid bundle {path:?}: {reason}"))
             }

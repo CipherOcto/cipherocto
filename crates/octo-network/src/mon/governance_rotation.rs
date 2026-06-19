@@ -71,8 +71,7 @@ impl GovernanceRotation {
     /// Returns true if the rotation is still in the migration
     /// window (matters for slashing validations).
     pub fn in_migration_window(&self, current_epoch: u64) -> bool {
-        current_epoch >= self.effective_epoch
-            && current_epoch <= self.migration_deadline()
+        current_epoch >= self.effective_epoch && current_epoch <= self.migration_deadline()
     }
 }
 

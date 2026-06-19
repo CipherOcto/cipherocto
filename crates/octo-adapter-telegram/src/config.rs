@@ -78,7 +78,10 @@ impl std::fmt::Debug for TelegramConfig {
             .field("groups", &self.groups)
             .field("webhook_port", &self.webhook_port)
             .field("features", &self.features)
-            .field("verifying_key", &self.verifying_key.as_ref().map(|_| "<redacted>"))
+            .field(
+                "verifying_key",
+                &self.verifying_key.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -95,7 +98,8 @@ impl TelegramConfig {
         // Feature gates: e2e_chats and voice_video are user-mode only
         // API-L1: validate verifying_key is valid base64 if set
         if let Some(ref key) = self.verifying_key {
-            if key.len() != 44 { // base64 of 32 bytes = Ceil(32*4/3) = 44
+            if key.len() != 44 {
+                // base64 of 32 bytes = Ceil(32*4/3) = 44
                 return Err("verifying_key must be 44-char base64 string (32 bytes)".into());
             }
             // M2: also validate that the string is actually valid base64
@@ -179,12 +183,15 @@ impl TelegramConfig {
         Self {
             mode: std::env::var("TELEGRAM_MODE").ok(),
             bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
-            api_id: std::env::var("TELEGRAM_API_ID").ok()
+            api_id: std::env::var("TELEGRAM_API_ID")
+                .ok()
                 .and_then(|s| s.parse::<i32>().ok()),
             api_hash: std::env::var("TELEGRAM_API_HASH").ok(),
             phone: std::env::var("TELEGRAM_PHONE").ok(),
             password: std::env::var("TELEGRAM_PASSWORD").ok(),
-            data_dir: std::env::var("TELEGRAM_DATA_DIR").ok().map(std::path::PathBuf::from),
+            data_dir: std::env::var("TELEGRAM_DATA_DIR")
+                .ok()
+                .map(std::path::PathBuf::from),
             groups: vec![],
             webhook_port: None,
             features: TelegramFeatures::default(),
@@ -198,10 +205,8 @@ impl TelegramConfig {
     /// tools that read the config the auth flow wrote). For fresh
     /// env-only construction, use `from_env()`.
     pub fn from_file(path: &std::path::Path) -> std::result::Result<Self, String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| format!("read {}: {}", path.display(), e))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| format!("parse {}: {}", path.display(), e))
+        let bytes = std::fs::read(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse {}: {}", path.display(), e))
     }
 
     /// Load from file; fall back to env vars if the file is missing.
@@ -212,9 +217,7 @@ impl TelegramConfig {
     pub fn from_file_or_env(path: &std::path::Path) -> std::result::Result<Self, String> {
         match Self::from_file(path) {
             Ok(c) => Ok(c),
-            Err(e) if e.contains("No such file") || e.contains("not found") => {
-                Ok(Self::from_env())
-            }
+            Err(e) if e.contains("No such file") || e.contains("not found") => Ok(Self::from_env()),
             Err(e) => Err(e),
         }
     }

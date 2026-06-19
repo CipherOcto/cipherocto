@@ -296,7 +296,8 @@ impl UserAuth {
             AuthorizationState::WaitPassword(_) => {
                 if let Some(ref password) = self.password {
                     let response =
-                        functions::check_authentication_password(password.to_string(), client_id).await;
+                        functions::check_authentication_password(password.to_string(), client_id)
+                            .await;
 
                     if let Err(e) = response {
                         return Err(AuthError::AuthenticationFailed(e.message));

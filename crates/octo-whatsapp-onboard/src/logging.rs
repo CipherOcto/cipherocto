@@ -45,10 +45,11 @@ const REDACT_KEYS: &[&str] = &[
 fn is_redact_key(key: &str) -> bool {
     REDACT_KEYS.iter().any(|k| {
         key.len() >= k.len()
-            && key
-                .as_bytes()
-                .windows(k.len())
-                .any(|w| w.iter().zip(k.as_bytes()).all(|(a, b)| a.eq_ignore_ascii_case(b)))
+            && key.as_bytes().windows(k.len()).any(|w| {
+                w.iter()
+                    .zip(k.as_bytes())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b))
+            })
     })
 }
 
@@ -258,12 +259,11 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
         let writer = CaptureWriter(buf.clone());
-        let subscriber = tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .event_format(RedactingFormat::new())
-                    .with_writer(writer),
-            );
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .event_format(RedactingFormat::new())
+                .with_writer(writer),
+        );
 
         with_default(subscriber, || {
             // Emit a message via the standard `info!` macro.
@@ -336,12 +336,11 @@ mod tests {
 
         let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
         let writer = CaptureWriter(buf.clone());
-        let subscriber = tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .event_format(RedactingFormat::new())
-                    .with_writer(writer),
-            );
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .event_format(RedactingFormat::new())
+                .with_writer(writer),
+        );
 
         with_default(subscriber, || {
             // Emit a message WITH a structured field.
@@ -357,7 +356,9 @@ mod tests {
         // The expected structure is: `target INFO path:line
         //  "user logged in" user="alice"` (single space
         // between the message and the field).
-        let msg_idx = captured.find("user logged in").expect("message should be in output");
+        let msg_idx = captured
+            .find("user logged in")
+            .expect("message should be in output");
         // Look at the substring after the message: the field
         // should be immediately after (with one space).
         let after_msg = &captured[msg_idx + "user logged in".len()..];

@@ -89,8 +89,8 @@ pub(crate) async fn upload_bytes(
     use std::io::Write;
 
     // R5 resource-C1: use tempfile::NamedTempFile for RAII temp file cleanup.
-    let mut tmp = tempfile::NamedTempFile::new()
-        .map_err(|e| FileError::WriteError(e.to_string()))?;
+    let mut tmp =
+        tempfile::NamedTempFile::new().map_err(|e| FileError::WriteError(e.to_string()))?;
     tmp.write_all(data)
         .map_err(|e| FileError::WriteError(e.to_string()))?;
     let path_str = tmp.path().to_string_lossy().into_owned();
@@ -176,4 +176,3 @@ pub fn parse_file_progress(update: &tdlib_rs::enums::Update) -> Option<FileProgr
         _ => None,
     }
 }
-

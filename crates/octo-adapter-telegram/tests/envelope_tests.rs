@@ -84,13 +84,16 @@ fn test_envelope_uses_url_safe_no_pad() {
 /// Payload too short (not 282 bytes) should be rejected with Envelope error.
 #[test]
 fn test_decode_envelope_too_short() {
-    let short_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(b"too short");
+    let short_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"too short");
     let result = decode_envelope(&short_payload);
     assert!(result.is_err(), "should reject short payload");
     let err = result.unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("length mismatch"), "error should mention length mismatch: {}", msg);
+    assert!(
+        msg.contains("length mismatch"),
+        "error should mention length mismatch: {}",
+        msg
+    );
 }
 
 /// Payload too long (more than 282 bytes) should be rejected with Envelope error.
@@ -102,7 +105,11 @@ fn test_decode_envelope_too_long() {
     assert!(result.is_err(), "should reject long payload");
     let err = result.unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("length mismatch"), "error should mention length mismatch: {}", msg);
+    assert!(
+        msg.contains("length mismatch"),
+        "error should mention length mismatch: {}",
+        msg
+    );
 }
 
 /// Invalid base64 input should be rejected with Envelope error.
@@ -112,7 +119,11 @@ fn test_decode_envelope_invalid_base64() {
     assert!(result.is_err(), "should reject invalid base64");
     let err = result.unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("base64"), "error should mention base64: {}", msg);
+    assert!(
+        msg.contains("base64"),
+        "error should mention base64: {}",
+        msg
+    );
 }
 
 /// Empty string should be rejected.
@@ -129,9 +140,14 @@ fn test_decode_envelope_empty() {
 /// validation (that's `from_wire_bytes`'s job).
 #[test]
 fn test_decode_envelope_exact_length_random_bytes() {
-    let random_data: Vec<u8> = (0..ENVELOPE_WIRE_LENGTH).map(|i| (i ^ 0xAB) as u8).collect();
+    let random_data: Vec<u8> = (0..ENVELOPE_WIRE_LENGTH)
+        .map(|i| (i ^ 0xAB) as u8)
+        .collect();
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&random_data);
     let result = decode_envelope(&encoded);
-    assert!(result.is_ok(), "exact-length random bytes should decode successfully");
+    assert!(
+        result.is_ok(),
+        "exact-length random bytes should decode successfully"
+    );
     assert_eq!(result.unwrap(), random_data);
 }

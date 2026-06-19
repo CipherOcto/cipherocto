@@ -539,13 +539,8 @@ mod tests {
         let mut ext = make_ext();
         ext.sub_dc_id = Some([0x42u8; 32]);
         ext.delegation_proof = Some(vec![0x01, 0x02, 0x03, 0x04]);
-        let mut env = CreateSubGroupEnvelope::new(
-            [0xCCu8; 32],
-            ext,
-            *pubkey.as_bytes(),
-            100,
-            [0xDDu8; 32],
-        );
+        let mut env =
+            CreateSubGroupEnvelope::new([0xCCu8; 32], ext, *pubkey.as_bytes(), 100, [0xDDu8; 32]);
         env.platform = "matrix".to_string();
         env.proposed_group_jid = "!room:matrix.org".to_string();
         env.initial_invite_count = 5;

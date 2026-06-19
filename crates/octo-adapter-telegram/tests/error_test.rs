@@ -101,7 +101,11 @@ fn test_redact_too_long_token() {
     let input = "long: 12345678:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let result = redact_credentials(input);
     // 41 chars after colon is above the 40-char max
-    assert!(!result.contains("<redacted>"), "41-char token should not be redacted, got: {}", result);
+    assert!(
+        !result.contains("<redacted>"),
+        "41-char token should not be redacted, got: {}",
+        result
+    );
 }
 
 /// UTF-8 multi-byte characters should pass through unmodified.
@@ -111,11 +115,25 @@ fn test_redact_utf8_preserved() {
     let result = redact_credentials(input);
     assert!(result.contains("<redacted>"), "should redact the token");
     // UTF-8 text should be preserved around the redacted token
-    assert!(result.starts_with("café résumé "), "UTF-8 before token should be preserved");
-    assert!(result.ends_with(" 中文"), "UTF-8 after token should be preserved");
+    assert!(
+        result.starts_with("café résumé "),
+        "UTF-8 before token should be preserved"
+    );
+    assert!(
+        result.ends_with(" 中文"),
+        "UTF-8 after token should be preserved"
+    );
     // The original chars should still be valid
-    assert_eq!(result.chars().filter(|&c| c == 'é').count(), 3, "é should appear three times (café + résumé)");
-    assert_eq!(result.chars().filter(|&c| c == '中').count(), 1, "中 should appear once");
+    assert_eq!(
+        result.chars().filter(|&c| c == 'é').count(),
+        3,
+        "é should appear three times (café + résumé)"
+    );
+    assert_eq!(
+        result.chars().filter(|&c| c == '中').count(),
+        1,
+        "中 should appear once"
+    );
 }
 
 /// Token with alphanumeric prefix should not be redacted (word boundary check).
@@ -125,7 +143,11 @@ fn test_redact_word_boundary_prefix() {
     let input = "abc1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE";
     let result = redact_credentials(input);
     // "c" before the digits means no word boundary — not a standalone token
-    assert!(!result.contains("<redacted>"), "prefix 'c' prevents word boundary, got: {}", result);
+    assert!(
+        !result.contains("<redacted>"),
+        "prefix 'c' prevents word boundary, got: {}",
+        result
+    );
 }
 
 /// 'extra' makes the greedy token 40 chars (35 + 5), which IS in the 30..=40 range.
@@ -135,7 +157,10 @@ fn test_redact_word_boundary_suffix() {
     let input = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDEextra";
     let result = redact_credentials(input);
     // Greedy consumption includes 'extra' (40 chars total), so it is redacted
-    assert!(result.contains("<redacted>"), "should redact when token+extra fits 30-40 range");
+    assert!(
+        result.contains("<redacted>"),
+        "should redact when token+extra fits 30-40 range"
+    );
     assert_eq!(result, "<redacted>");
 }
 
@@ -164,7 +189,10 @@ fn test_redact_short_token_segment_not_redacted() {
 fn test_redact_very_short_after_colon() {
     let input = "error code 12345678:abc occurred";
     let result = redact_credentials(input);
-    assert_eq!(result, input, "3-char after-colon segment should not be redacted");
+    assert_eq!(
+        result, input,
+        "3-char after-colon segment should not be redacted"
+    );
 }
 
 /// API-M7: A digit-colon with 11-digit prefix (above the 8-10 range)

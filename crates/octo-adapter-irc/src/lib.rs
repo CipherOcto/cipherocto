@@ -1367,7 +1367,12 @@ impl PlatformAdapter for IrcAdapter {
         let addr = format!("{}:{}", self.config.server, self.config.port);
         if self.config.use_tls {
             let sni = self.config.server.clone();
-            match tokio::time::timeout(timeout, connect_tls(&self.config.server, self.config.port, &sni)).await {
+            match tokio::time::timeout(
+                timeout,
+                connect_tls(&self.config.server, self.config.port, &sni),
+            )
+            .await
+            {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(reason)) => {
                     if reason.starts_with("TCP connect") {
@@ -1560,12 +1565,7 @@ impl CoordinatorAdmin for IrcAdapter {
         // Await the reply with a timeout. The timeout is
         // generous (5s) because some networks rate-limit
         // responses; if no reply comes, the caller can retry.
-        let result = match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            rx,
-        )
-        .await
-        {
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
             Ok(Ok(r)) => r,
             Ok(Err(_recv_err)) => {
                 // Listener dropped the sender without
@@ -1573,8 +1573,7 @@ impl CoordinatorAdmin for IrcAdapter {
                 // shutdown mid-flight.
                 return Err(PlatformAdapterError::ApiError {
                     code: 504,
-                    message: "add_member: pending invite was dropped (session closed?)"
-                        .into(),
+                    message: "add_member: pending invite was dropped (session closed?)".into(),
                 });
             }
             Err(_elapsed) => {
@@ -1869,10 +1868,7 @@ impl CoordinatorAdmin for IrcAdapter {
     /// because the IRC protocol is the same — both go through
     /// `send_raw_line("JOIN ...")` — and the validation in
     /// `validate_channel_name` is the same for both.
-    async fn join_by_id(
-        &self,
-        group_id: &GroupId,
-    ) -> Result<GroupHandle, PlatformAdapterError> {
+    async fn join_by_id(&self, group_id: &GroupId) -> Result<GroupHandle, PlatformAdapterError> {
         let invite = InviteRef::new(group_id.as_str().to_string());
         self.join_by_invite(&invite).await
     }
@@ -2910,7 +2906,13 @@ mod tests {
         // remaining malformed cases. Use `try_new` so the empty
         // path can still be exercised without tripping the
         // constructor's debug_assert.
-        for bad in ["no-prefix", "#chan with space", "#chan,multi", "#chan\0bad", "#chan:colon"] {
+        for bad in [
+            "no-prefix",
+            "#chan with space",
+            "#chan,multi",
+            "#chan\0bad",
+            "#chan:colon",
+        ] {
             let err = adapter
                 .join_by_invite(&InviteRef::new(bad.to_string()))
                 .await
@@ -3185,9 +3187,9 @@ mod tests {
         // initial `false`.
         let result = adapter.health_check().await;
         match result {
-            Ok(()) => panic!(
-                "health_check on a fresh adapter must return Err(ApiError 503), not Ok(())"
-            ),
+            Ok(()) => {
+                panic!("health_check on a fresh adapter must return Err(ApiError 503), not Ok(())")
+            }
             Err(PlatformAdapterError::ApiError { code, message }) => {
                 assert_eq!(code, 503, "code should be 503, got {code}");
                 assert!(
@@ -3245,10 +3247,8 @@ mod tests {
     #[test]
     fn parse_numeric_reply_extracts_code_and_trailing() {
         // Standard RPL_INVITING (341) with trailing message.
-        let nr = parse_numeric_reply(
-            ":irc.example.org 341 mynick #chan alice :has been invited",
-        )
-        .expect("must parse 341");
+        let nr = parse_numeric_reply(":irc.example.org 341 mynick #chan alice :has been invited")
+            .expect("must parse 341");
         assert_eq!(nr.code, 341);
         assert_eq!(nr.command, "alice", "last positional before trailing");
         assert_eq!(nr.message, "has been invited");
@@ -3258,8 +3258,7 @@ mod tests {
     fn parse_numeric_reply_handles_no_trailing() {
         // Numeric reply with no trailing ` :message` (some
         // servers do this for 482 ERR_CHANOPRIVSNEEDED).
-        let nr = parse_numeric_reply(":irc.example.org 482 mynick #chan")
-            .expect("must parse 482");
+        let nr = parse_numeric_reply(":irc.example.org 482 mynick #chan").expect("must parse 482");
         assert_eq!(nr.code, 482);
         assert_eq!(nr.command, "#chan", "last positional token");
         assert_eq!(nr.message, "");
@@ -3294,7 +3293,9 @@ mod tests {
         let pending = adapter.pending_invites.lock().await;
         assert!(pending.is_empty(), "fresh adapter has no pending invites");
         drop(pending);
-        let id = adapter.next_command_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = adapter
+            .next_command_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(id, 1, "next_command_id should start at 1, got {id}");
     }
 
@@ -3331,10 +3332,16 @@ mod tests {
         };
         assert!(popped.is_some(), "expected first pop to succeed");
         let (popped_id, _popped_sender) = popped.unwrap();
-        assert_eq!(popped_id, 10, "BTreeMap::pop_first must return the smallest key");
+        assert_eq!(
+            popped_id, 10,
+            "BTreeMap::pop_first must return the smallest key"
+        );
         // The remaining entry (key 20) is still there.
         let remaining = adapter.pending_invites.lock().await;
         assert_eq!(remaining.len(), 1, "one entry should remain");
-        assert!(remaining.contains_key(&20), "key 20 should be the remaining entry");
+        assert!(
+            remaining.contains_key(&20),
+            "key 20 should be the remaining entry"
+        );
     }
 }

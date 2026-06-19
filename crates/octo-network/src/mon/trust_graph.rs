@@ -118,7 +118,11 @@ impl TrustGraph {
                 .then(a.peer_id.cmp(&b.peer_id))
         });
         let mut out = String::new();
-        out.push_str(&format!("Trust graph ({} nodes, {} edges)\n", self.nodes.len(), self.edges.len()));
+        out.push_str(&format!(
+            "Trust graph ({} nodes, {} edges)\n",
+            self.nodes.len(),
+            self.edges.len()
+        ));
         out.push_str("--------------------------------------------\n");
         out.push_str("peer_id                                    in  out\n");
         for n in nodes {
@@ -137,7 +141,11 @@ impl TrustGraph {
         if !self.edges.is_empty() {
             out.push_str("\nEdges (from -> to):\n");
             for e in &self.edges {
-                out.push_str(&format!("  {} -> {}\n", truncate(&e.from, 30), truncate(&e.to, 30)));
+                out.push_str(&format!(
+                    "  {} -> {}\n",
+                    truncate(&e.from, 30),
+                    truncate(&e.to, 30)
+                ));
             }
         }
         out
@@ -209,9 +217,18 @@ mod tests {
     #[test]
     fn ascii_renders_node_list() {
         let mut g = TrustGraph::new();
-        g.add_node(TrustNode { peer_id: "a".into(), label: None });
-        g.add_node(TrustNode { peer_id: "b".into(), label: Some("Alice".into()) });
-        g.add_edge(TrustEdge { from: "a".into(), to: "b".into() });
+        g.add_node(TrustNode {
+            peer_id: "a".into(),
+            label: None,
+        });
+        g.add_node(TrustNode {
+            peer_id: "b".into(),
+            label: Some("Alice".into()),
+        });
+        g.add_edge(TrustEdge {
+            from: "a".into(),
+            to: "b".into(),
+        });
         let out = g.render(GraphFormat::Ascii);
         assert!(out.contains("Trust graph (2 nodes, 1 edges)"));
         assert!(out.contains("Alice"));
@@ -220,9 +237,18 @@ mod tests {
     #[test]
     fn dot_renders_digraph() {
         let mut g = TrustGraph::new();
-        g.add_node(TrustNode { peer_id: "a".into(), label: None });
-        g.add_node(TrustNode { peer_id: "b".into(), label: None });
-        g.add_edge(TrustEdge { from: "a".into(), to: "b".into() });
+        g.add_node(TrustNode {
+            peer_id: "a".into(),
+            label: None,
+        });
+        g.add_node(TrustNode {
+            peer_id: "b".into(),
+            label: None,
+        });
+        g.add_edge(TrustEdge {
+            from: "a".into(),
+            to: "b".into(),
+        });
         let out = g.render(GraphFormat::Dot);
         assert!(out.starts_with("digraph trust"));
         assert!(out.contains("\"a\" -> \"b\""));
@@ -231,13 +257,31 @@ mod tests {
     #[test]
     fn celebrities_sorted_by_in_degree() {
         let mut g = TrustGraph::new();
-        g.add_node(TrustNode { peer_id: "a".into(), label: None });
-        g.add_node(TrustNode { peer_id: "b".into(), label: None });
-        g.add_node(TrustNode { peer_id: "c".into(), label: None });
+        g.add_node(TrustNode {
+            peer_id: "a".into(),
+            label: None,
+        });
+        g.add_node(TrustNode {
+            peer_id: "b".into(),
+            label: None,
+        });
+        g.add_node(TrustNode {
+            peer_id: "c".into(),
+            label: None,
+        });
         // a trusts c, b trusts c, b trusts a → c has in-degree 2
-        g.add_edge(TrustEdge { from: "a".into(), to: "c".into() });
-        g.add_edge(TrustEdge { from: "b".into(), to: "c".into() });
-        g.add_edge(TrustEdge { from: "b".into(), to: "a".into() });
+        g.add_edge(TrustEdge {
+            from: "a".into(),
+            to: "c".into(),
+        });
+        g.add_edge(TrustEdge {
+            from: "b".into(),
+            to: "c".into(),
+        });
+        g.add_edge(TrustEdge {
+            from: "b".into(),
+            to: "a".into(),
+        });
         let celebs = g.celebrities(3);
         assert_eq!(celebs[0].0, "c");
         assert_eq!(celebs[0].1, 2);
@@ -245,7 +289,10 @@ mod tests {
 
     #[test]
     fn from_signed_by_builds_correctly() {
-        let rels = vec![("a".to_string(), "b".to_string()), ("c".to_string(), "b".to_string())];
+        let rels = vec![
+            ("a".to_string(), "b".to_string()),
+            ("c".to_string(), "b".to_string()),
+        ];
         let g = TrustGraph::from_signed_by(&rels);
         assert_eq!(g.nodes.len(), 3);
         assert_eq!(g.edges.len(), 2);
@@ -254,8 +301,14 @@ mod tests {
     #[test]
     fn add_node_dedupes() {
         let mut g = TrustGraph::new();
-        g.add_node(TrustNode { peer_id: "a".into(), label: None });
-        g.add_node(TrustNode { peer_id: "a".into(), label: Some("x".into()) });
+        g.add_node(TrustNode {
+            peer_id: "a".into(),
+            label: None,
+        });
+        g.add_node(TrustNode {
+            peer_id: "a".into(),
+            label: Some("x".into()),
+        });
         assert_eq!(g.nodes.len(), 1);
     }
 }

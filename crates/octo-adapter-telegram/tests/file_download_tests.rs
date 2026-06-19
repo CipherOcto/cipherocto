@@ -19,7 +19,10 @@ async fn test_mock_download_returns_empty() {
     let mock = MockTelegramClient::new();
     // API-L2: mock download_file returns Err by default
     let result = mock.download_file("mock_message_id_123").await;
-    assert!(result.is_err(), "mock should return Err for uninjected download");
+    assert!(
+        result.is_err(),
+        "mock should return Err for uninjected download"
+    );
 }
 
 /// Test that inject_update + receive_updates works for file updates.

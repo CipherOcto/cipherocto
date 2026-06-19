@@ -63,7 +63,9 @@ pub enum ConsensusState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConsensusOutcome {
     Committed,
-    Aborted { reason: String },
+    Aborted {
+        reason: String,
+    },
     TimedOut,
     /// The consensus is still in progress (Idle, Preparing, or
     /// Committing). Callers should check the coordinator's
@@ -227,7 +229,10 @@ impl DcConsensusCoordinator {
     fn abort(&mut self, reason: String) -> ConsensusState {
         if matches!(
             self.state,
-            ConsensusState::Idle | ConsensusState::Committed | ConsensusState::Aborted | ConsensusState::TimedOut
+            ConsensusState::Idle
+                | ConsensusState::Committed
+                | ConsensusState::Aborted
+                | ConsensusState::TimedOut
         ) {
             return self.state;
         }
@@ -244,9 +249,9 @@ impl DcConsensusCoordinator {
                 reason: self.abort_reason.clone().unwrap_or_else(|| "abort".into()),
             },
             ConsensusState::TimedOut => ConsensusOutcome::TimedOut,
-            ConsensusState::Idle
-            | ConsensusState::Preparing
-            | ConsensusState::Committing => ConsensusOutcome::InProgress,
+            ConsensusState::Idle | ConsensusState::Preparing | ConsensusState::Committing => {
+                ConsensusOutcome::InProgress
+            }
         }
     }
 }
@@ -453,12 +458,8 @@ mod tests {
     fn n0_participants_aborts() {
         // 0 participants is a construction error; coordinator
         // must abort rather than commit with 0 votes.
-        let mut c = DcConsensusCoordinator::new(
-            "d1",
-            ConsensusAction::Rebind,
-            empty_binds(),
-            vec![],
-        );
+        let mut c =
+            DcConsensusCoordinator::new("d1", ConsensusAction::Rebind, empty_binds(), vec![]);
         // record_vote aborts because participants is empty.
         let state = c.record_vote("dc-1", ConsensusVote::Prepared);
         assert_eq!(state, ConsensusState::Aborted);
@@ -470,12 +471,8 @@ mod tests {
         }
 
         // check_deadline also aborts (with fresh coordinator).
-        let mut c2 = DcConsensusCoordinator::new(
-            "d1",
-            ConsensusAction::Rebind,
-            empty_binds(),
-            vec![],
-        );
+        let mut c2 =
+            DcConsensusCoordinator::new("d1", ConsensusAction::Rebind, empty_binds(), vec![]);
         let state = c2.check_deadline(c2.deadline_epoch + 1);
         assert_eq!(state, ConsensusState::Aborted);
     }

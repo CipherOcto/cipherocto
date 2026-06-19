@@ -50,10 +50,7 @@ pub const WHOAMI_TIMEOUT_SECS: u64 = 30;
 /// R7-H1: shares the same constants as `wait_for_health`. The two
 /// helpers are kept separate because their return types differ
 /// (`String` for phone resolution, `()` for health probe).
-pub async fn wait_for_connected(
-    adapter: &WhatsAppWebAdapter,
-    timeout: Duration,
-) -> Result<String> {
+pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<String> {
     // Mission 0850p-a-has-valid-session: if the adapter already has
     // a valid session (pre-paired bot), return the phone in <2ms
     // without any polling or Notify wait.

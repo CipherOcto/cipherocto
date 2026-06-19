@@ -87,7 +87,10 @@ impl BindGossipState {
     pub fn record_received(&self, envelope: BindEnvelope) -> bool {
         let domain_id = envelope.domain_id.clone();
         let mut received = self.received.lock().unwrap();
-        if received.iter().any(|(d, b)| d == &domain_id && b == &envelope) {
+        if received
+            .iter()
+            .any(|(d, b)| d == &domain_id && b == &envelope)
+        {
             return false;
         }
         if received.len() >= MAX_RECEIVED_BINDS {
@@ -193,11 +196,7 @@ mod tests {
         let state = BindGossipState::new();
         let total = MAX_RECEIVED_BINDS + 10;
         for i in 0..total {
-            state.record_received(BindEnvelope::new(
-                "d1",
-                "whatsapp",
-                &format!("g{i}"),
-            ));
+            state.record_received(BindEnvelope::new("d1", "whatsapp", &format!("g{i}")));
         }
         // received_count must reflect ALL inserts (it's a
         // monotonic statistic), not the cache size.

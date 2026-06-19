@@ -36,7 +36,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::bind_envelope::{BindEnvelope, RebindAbort, RebindAbortReason, RebindCommit, RebindPrepare};
+use super::bind_envelope::{
+    BindEnvelope, RebindAbort, RebindAbortReason, RebindCommit, RebindPrepare,
+};
 
 /// The default REBIND timeout in seconds (RFC-0850p-c §5
 /// "Multi-Platform Binding Rule" → 30s).
@@ -279,11 +281,8 @@ mod tests {
 
     #[test]
     fn happy_path_two_participants_both_prepared() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into(), "telegram".into()],
-        );
+        let mut c =
+            RebindCoordinator::new("d1", make_bind(), vec!["matrix".into(), "telegram".into()]);
         assert_eq!(c.state, CoordinatorState::Preparing);
         c.record_vote("matrix", PrepareVote::Prepared);
         assert_eq!(c.state, CoordinatorState::Preparing);
@@ -298,11 +297,8 @@ mod tests {
 
     #[test]
     fn abort_on_participant_vote() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into(), "telegram".into()],
-        );
+        let mut c =
+            RebindCoordinator::new("d1", make_bind(), vec!["matrix".into(), "telegram".into()]);
         c.record_vote("matrix", PrepareVote::Prepared);
         c.record_vote("telegram", PrepareVote::Abort);
         assert_eq!(c.state, CoordinatorState::Aborted);
@@ -325,22 +321,15 @@ mod tests {
 
     #[test]
     fn abort_on_unknown_platform() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let mut c = RebindCoordinator::new("d1", make_bind(), vec!["matrix".into()]);
         c.record_vote("attacker", PrepareVote::Prepared);
         assert_eq!(c.state, CoordinatorState::Aborted);
     }
 
     #[test]
     fn timeout_when_quorum_not_reached() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into(), "telegram".into()],
-        );
+        let mut c =
+            RebindCoordinator::new("d1", make_bind(), vec!["matrix".into(), "telegram".into()]);
         // Only matrix votes prepared.
         c.record_vote("matrix", PrepareVote::Prepared);
         // Time advances past the deadline.
@@ -352,11 +341,7 @@ mod tests {
 
     #[test]
     fn check_deadline_with_quorum_commits() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let mut c = RebindCoordinator::new("d1", make_bind(), vec!["matrix".into()]);
         c.record_vote("matrix", PrepareVote::Prepared);
         // Even if deadline passes, with quorum we commit.
         let future = c.deadline_epoch + 1;
@@ -366,11 +351,7 @@ mod tests {
 
     #[test]
     fn tie_break_lower_domain_id_wins() {
-        let c = RebindCoordinator::new(
-            "a-domain",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let c = RebindCoordinator::new("a-domain", make_bind(), vec!["matrix".into()]);
         // "a-domain" < "b-domain" → c wins.
         assert!(c.wins_tie_break("b-domain"));
         // "a-domain" > "a-aardvark" → c loses.
@@ -380,16 +361,8 @@ mod tests {
     #[test]
     fn simultaneous_rebind_one_wins() {
         // Two coordinators try to REBIND the same domain.
-        let c1 = RebindCoordinator::new(
-            "alpha",
-            make_bind(),
-            vec!["matrix".into()],
-        );
-        let c2 = RebindCoordinator::new(
-            "beta",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let c1 = RebindCoordinator::new("alpha", make_bind(), vec!["matrix".into()]);
+        let c2 = RebindCoordinator::new("beta", make_bind(), vec!["matrix".into()]);
         // "alpha" < "beta" → c1 wins.
         assert!(c1.wins_tie_break(&c2.domain_id));
         assert!(!c2.wins_tie_break(&c1.domain_id));
@@ -397,21 +370,13 @@ mod tests {
 
     #[test]
     fn cannot_commit_envelope_in_preparing_state() {
-        let c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let c = RebindCoordinator::new("d1", make_bind(), vec!["matrix".into()]);
         assert!(c.commit_envelope(vec![]).is_none());
     }
 
     #[test]
     fn cannot_abort_envelope_in_committed_state() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let mut c = RebindCoordinator::new("d1", make_bind(), vec!["matrix".into()]);
         c.record_vote("matrix", PrepareVote::Prepared);
         c.mark_committed();
         assert!(c.abort_envelope(vec![]).is_none());
@@ -424,16 +389,15 @@ mod tests {
             make_bind(),
             vec!["telegram".into(), "matrix".into(), "matrix".into()],
         );
-        assert_eq!(c.participants, vec!["matrix".to_string(), "telegram".to_string()]);
+        assert_eq!(
+            c.participants,
+            vec!["matrix".to_string(), "telegram".to_string()]
+        );
     }
 
     #[test]
     fn double_vote_replaces_previous() {
-        let mut c = RebindCoordinator::new(
-            "d1",
-            make_bind(),
-            vec!["matrix".into()],
-        );
+        let mut c = RebindCoordinator::new("d1", make_bind(), vec!["matrix".into()]);
         c.record_vote("matrix", PrepareVote::Abort);
         assert_eq!(c.state, CoordinatorState::Aborted);
     }

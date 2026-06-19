@@ -150,9 +150,10 @@ impl ChatResolver {
             // re-resolves.
             // (Cache invalidation is handled by the caller; this check ensures
             //  we don't return a stale id.)
-            return Err(GroupError::AccessDenied(
-                format!("{} (chat_id={}, not accessible)", link, info.chat_id),
-            ));
+            return Err(GroupError::AccessDenied(format!(
+                "{} (chat_id={}, not accessible)",
+                link, info.chat_id
+            )));
         }
         Ok(info.chat_id)
     }

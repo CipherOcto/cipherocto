@@ -38,9 +38,9 @@ pub fn redact_credentials(s: &str) -> String {
             if (8..=10).contains(&digit_len) && i < bytes.len() && bytes[i] == b':' {
                 let colon_pos = i;
                 i += 1; // skip `:`
-                // Consume base64url-safe chars (alphanumeric, `-`, `_`).
-                // We consume greedily then check bounds so the length range
-                // check correctly rejects tokens > 40 chars.
+                        // Consume base64url-safe chars (alphanumeric, `-`, `_`).
+                        // We consume greedily then check bounds so the length range
+                        // check correctly rejects tokens > 40 chars.
                 let token_start = i;
                 while i < bytes.len()
                     && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')

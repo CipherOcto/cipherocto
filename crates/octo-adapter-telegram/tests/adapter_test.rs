@@ -143,7 +143,11 @@ fn test_upload_media_errors_with_zero_domains() {
     match result {
         Err(octo_network::dot::error::PlatformAdapterError::Unreachable { platform, reason }) => {
             assert_eq!(platform, "telegram");
-            assert!(reason.contains("no registered domain"), "expected 'no registered domain' error, got: {}", reason);
+            assert!(
+                reason.contains("no registered domain"),
+                "expected 'no registered domain' error, got: {}",
+                reason
+            );
         }
         other => panic!("expected Unreachable for zero domains, got: {:?}", other),
     }
@@ -367,7 +371,6 @@ async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
     );
 }
 
-
 // =============================================================================
 // API-H2: Ed25519 signature verification tests
 // =============================================================================
@@ -376,10 +379,10 @@ async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
 /// canonicalize when the adapter has the matching verifying_key.
 #[test]
 fn test_canonicalize_accepts_valid_signature() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
     use octo_network::dot::adapters::PlatformAdapter;
     use octo_network::dot::envelope::DeterministicEnvelope;
-    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     // Use a fixed known key pair (ed25519-dalek 2.x SigningKey::from_keypair_bytes)
     let seed = [42u8; 32];
@@ -428,16 +431,20 @@ fn test_canonicalize_accepts_valid_signature() {
     };
 
     let result = adapter.canonicalize(&raw);
-    assert!(result.is_ok(), "valid signature should be accepted: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "valid signature should be accepted: {:?}",
+        result.err()
+    );
 }
 
 /// An envelope with a wrong signature must be rejected with ApiError(401).
 #[test]
 fn test_canonicalize_rejects_invalid_signature_returns_401() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use ed25519_dalek::{Signer, SigningKey};
     use octo_network::dot::adapters::PlatformAdapter;
     use octo_network::dot::envelope::DeterministicEnvelope;
-    use ed25519_dalek::{Signer, SigningKey};
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     // Use two different fixed keys.
     let seed1 = [1u8; 32];
@@ -488,7 +495,11 @@ fn test_canonicalize_rejects_invalid_signature_returns_401() {
     match result {
         Err(octo_network::dot::error::PlatformAdapterError::ApiError { code, message }) => {
             assert_eq!(code, 401, "wrong key should give 401, got code={}", code);
-            assert!(message.contains("signature verification failed"), "message: {}", message);
+            assert!(
+                message.contains("signature verification failed"),
+                "message: {}",
+                message
+            );
         }
         other => panic!("expected ApiError(401), got: {:?}", other),
     }
@@ -498,15 +509,18 @@ fn test_canonicalize_rejects_invalid_signature_returns_401() {
 /// and return Ok.
 #[test]
 fn test_canonicalize_no_verifying_key_skips_verify() {
+    use ed25519_dalek::{Signer, SigningKey};
     use octo_network::dot::adapters::PlatformAdapter;
     use octo_network::dot::envelope::DeterministicEnvelope;
-    use ed25519_dalek::{Signer, SigningKey};
 
     let seed = [42u8; 32];
     let signing_key = SigningKey::from_bytes(&seed);
 
     let config = TelegramConfig::default();
-    assert!(config.verifying_key.is_none(), "default config should have no verifying_key");
+    assert!(
+        config.verifying_key.is_none(),
+        "default config should have no verifying_key"
+    );
 
     let mut envelope = DeterministicEnvelope {
         version: 1,
@@ -541,7 +555,11 @@ fn test_canonicalize_no_verifying_key_skips_verify() {
     };
 
     let result = adapter.canonicalize(&raw);
-    assert!(result.is_ok(), "without verifying_key, canonicalize should pass: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "without verifying_key, canonicalize should pass: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -557,7 +575,11 @@ fn test_canonicalize_no_verifying_key_skips_verify() {
 fn test_parse_chat_id_rejects_zero() {
     use octo_adapter_telegram::client::parse_chat_id;
     let result = parse_chat_id("0");
-    assert!(result.is_err(), "parse_chat_id('0') must reject zero: got Ok({:?})", result.ok());
+    assert!(
+        result.is_err(),
+        "parse_chat_id('0') must reject zero: got Ok({:?})",
+        result.ok()
+    );
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("negative"),
@@ -581,7 +603,7 @@ fn test_auth_error_redacts_credentials_in_conversion() {
 
     // Simulate a TDLib auth error that echoes the bot token
     let err = TelegramError::Auth(
-        "unauthorized: token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE rejected".into()
+        "unauthorized: token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE rejected".into(),
     );
     let platform_err: PlatformAdapterError = err.into();
     match platform_err {
@@ -616,7 +638,7 @@ fn test_catch_all_error_redacts_credentials() {
 
     // SendFailed is a catch-all variant
     let err = TelegramError::SendFailed(
-        "send failed for token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE".into()
+        "send failed for token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE".into(),
     );
     let platform_err: PlatformAdapterError = err.into();
     match platform_err {

@@ -62,27 +62,42 @@ impl SessionMeta {
 /// still PII).
 ///
 /// R5-M2: if the write fails, the link fails with `CoreError::Adapter`.
-pub fn write_sidecar(session_path: &Path, session: &WhatsAppSession, mode: SidecarMode) -> Result<()> {
+pub fn write_sidecar(
+    session_path: &Path,
+    session: &WhatsAppSession,
+    mode: SidecarMode,
+) -> Result<()> {
     let sidecar = match mode {
         SidecarMode::QrLink => SessionMeta::for_qr_link(session),
         SidecarMode::PairLink => SessionMeta::for_pair_link(session),
     };
 
-    let parent = session_path.parent().ok_or_else(|| CoreError::InvalidSessionPath {
-        path: session_path.to_path_buf(),
-        reason: "session_path has no parent directory".to_string(),
-    })?;
+    let parent = session_path
+        .parent()
+        .ok_or_else(|| CoreError::InvalidSessionPath {
+            path: session_path.to_path_buf(),
+            reason: "session_path has no parent directory".to_string(),
+        })?;
 
     std::fs::create_dir_all(parent).map_err(|e| {
-        CoreError::Adapter(anyhow::anyhow!("create_dir_all({}): {}", parent.display(), e))
+        CoreError::Adapter(anyhow::anyhow!(
+            "create_dir_all({}): {}",
+            parent.display(),
+            e
+        ))
     })?;
 
     let sidecar_path = sidecar_path_for(session_path);
     let json = serde_json::to_string_pretty(&sidecar)
         .map_err(|e| CoreError::Adapter(anyhow::anyhow!("serialize sidecar: {e}")))?;
 
-    write_atomic(&sidecar_path, json.as_bytes())
-        .map_err(|e| CoreError::Adapter(anyhow::anyhow!("write sidecar {}: {}", sidecar_path.display(), e)))?;
+    write_atomic(&sidecar_path, json.as_bytes()).map_err(|e| {
+        CoreError::Adapter(anyhow::anyhow!(
+            "write sidecar {}: {}",
+            sidecar_path.display(),
+            e
+        ))
+    })?;
 
     Ok(())
 }
@@ -117,9 +132,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp.write_all(bytes)?;
     tmp.write_all(b"\n")?;
     tmp.as_file().sync_all()?;
-    tmp.persist(path).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("persist: {e}"))
-    })?;
+    tmp.persist(path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("persist: {e}")))?;
     Ok(())
 }
 
@@ -156,7 +170,10 @@ mod tests {
         // The sidecar path is "<session_path>.meta.json", e.g.,
         // "test.session.db.meta.json"
         let sidecar_path = tmp.path().join("test.session.db.meta.json");
-        assert!(sidecar_path.exists(), "sidecar should exist at {sidecar_path:?}");
+        assert!(
+            sidecar_path.exists(),
+            "sidecar should exist at {sidecar_path:?}"
+        );
 
         let bytes = std::fs::read(&sidecar_path).unwrap();
         let text = std::fs::read_to_string(&sidecar_path).unwrap();

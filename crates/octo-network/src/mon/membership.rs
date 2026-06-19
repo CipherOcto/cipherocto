@@ -47,15 +47,14 @@ pub const MAX_ROLES_PER_NODE: u32 = 4;
 
 /// Bitmask of all defined role flags. Any bits outside this
 /// mask are considered unknown roles and rejected.
-pub const KNOWN_ROLE_MASK: u64 =
-    ROLE_COORDINATOR
-        | ROLE_EXECUTOR
-        | ROLE_RELAY
-        | ROLE_VALIDATOR
-        | ROLE_OBSERVER
-        | ROLE_ARCHIVIST
-        | ROLE_PROVER
-        | ROLE_AGGREGATOR;
+pub const KNOWN_ROLE_MASK: u64 = ROLE_COORDINATOR
+    | ROLE_EXECUTOR
+    | ROLE_RELAY
+    | ROLE_VALIDATOR
+    | ROLE_OBSERVER
+    | ROLE_ARCHIVIST
+    | ROLE_PROVER
+    | ROLE_AGGREGATOR;
 
 /// Minimum trust score for Coordinator role.
 pub const MIN_TRUST_COORDINATOR: u32 = 500;

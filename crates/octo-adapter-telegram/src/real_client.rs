@@ -21,8 +21,8 @@ use crate::config::TelegramConfig;
 use crate::error::{Result, TelegramError};
 use crate::self_handle::SelfHandle;
 use async_trait::async_trait;
-use std::path::PathBuf;
 use parking_lot::Mutex as PlMutex;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -181,7 +181,14 @@ impl RealTelegramClient {
     pub async fn new_user(user_auth: UserAuth, data_dir: Option<PathBuf>) -> Result<Self> {
         let api_id = user_auth.api_id;
         let api_hash = user_auth.api_hash.clone();
-        Self::new_internal(Some(user_auth), None, data_dir, api_id, api_hash.to_string()).await
+        Self::new_internal(
+            Some(user_auth),
+            None,
+            data_dir,
+            api_id,
+            api_hash.to_string(),
+        )
+        .await
     }
 
     /// Internal constructor. `user_auth = None` for bot mode, `Some(...)` for user mode.
@@ -231,9 +238,12 @@ impl RealTelegramClient {
         // `Instrument::instrument()` on the future (rather than a `!Send`
         // `Entered` guard inside the async fn) keeps the spawned future `Send`.
         let span = tracing::info_span!("receive_loop", client_id = state_clone.client_id);
-        tokio::spawn(async move {
-            Self::receive_loop(state_clone, shutdown_rx).await;
-        }.instrument(span));
+        tokio::spawn(
+            async move {
+                Self::receive_loop(state_clone, shutdown_rx).await;
+            }
+            .instrument(span),
+        );
 
         // Wait for Ready state (or Closed / auth error on failure), with 30 s timeout.
         let notified = state.auth_ready.notified();
@@ -247,7 +257,10 @@ impl RealTelegramClient {
                 .lock()
                 .clone()
                 .unwrap_or_else(|| "auth timeout".into());
-            return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
+            return Err(TelegramError::TdlibClient {
+                code: 408,
+                message: err_msg,
+            });
         }
 
         if !state.auth_done.load(Ordering::Acquire) {
@@ -256,7 +269,10 @@ impl RealTelegramClient {
                 .lock()
                 .clone()
                 .unwrap_or_else(|| "auth failed".into());
-            return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
+            return Err(TelegramError::TdlibClient {
+                code: 408,
+                message: err_msg,
+            });
         }
 
         Ok(Self { state })
@@ -279,12 +295,17 @@ impl RealTelegramClient {
             Err(tokio::sync::mpsc::error::TrySendError::Full(code)) => {
                 // Drain the stale code from the receive side, then retry.
                 Self::drain_latest_code(&self.state);
-                self.state.code_tx.try_send(code).map_err(|_| TelegramError::Auth(
-                    "code channel still full after drain — receive loop not draining".into()
-                ))
+                self.state.code_tx.try_send(code).map_err(|_| {
+                    TelegramError::Auth(
+                        "code channel still full after drain — receive loop not draining".into(),
+                    )
+                })
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                Err(TelegramError::TdlibClient { code: 500, message: "code channel closed".into() })
+                Err(TelegramError::TdlibClient {
+                    code: 500,
+                    message: "code channel closed".into(),
+                })
             }
         }
     }
@@ -307,7 +328,9 @@ impl RealTelegramClient {
     /// next poll will pick up any missed increments. `SeqCst` would add
     /// fence overhead on every update for no correctness benefit.
     pub fn dropped_updates_count(&self) -> u64 {
-        self.state.dropped_updates.swap(0, std::sync::atomic::Ordering::Relaxed)
+        self.state
+            .dropped_updates
+            .swap(0, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The receive loop that processes TDLib updates.
@@ -336,21 +359,24 @@ impl RealTelegramClient {
                             break;
                         }
                     }
-                    None => // CR-L2: bounded by TDLib 2s internal timeout.
-                        // PERF-H4 (blocking thread): this 10ms sleep is a CPU
-                        // yield, NOT a latency bottleneck. When tdlib_rs::receive()
-                        // returns None, the thread has no work to do. Without the
-                        // sleep, it would spin-wait at 100% CPU. The 10ms value is
-                        // a balance between CPU efficiency and responsiveness:
-                        // - 1ms would waste CPU on unnecessary wakeups
-                        // - 100ms would add perceptible latency to the first
-                        //   update after an idle period
-                        // - 10ms adds negligible latency (<1 update interval)
-                        //   while keeping CPU usage near-zero during idle.
-                        // The async receive_loop (tokio::select! on update_rx)
-                        // is NOT affected by this sleep — it wakes immediately
-                        // when the blocking thread sends through the channel.
-                        std::thread::sleep(std::time::Duration::from_millis(10)),
+                    None =>
+                    // CR-L2: bounded by TDLib 2s internal timeout.
+                    // PERF-H4 (blocking thread): this 10ms sleep is a CPU
+                    // yield, NOT a latency bottleneck. When tdlib_rs::receive()
+                    // returns None, the thread has no work to do. Without the
+                    // sleep, it would spin-wait at 100% CPU. The 10ms value is
+                    // a balance between CPU efficiency and responsiveness:
+                    // - 1ms would waste CPU on unnecessary wakeups
+                    // - 100ms would add perceptible latency to the first
+                    //   update after an idle period
+                    // - 10ms adds negligible latency (<1 update interval)
+                    //   while keeping CPU usage near-zero during idle.
+                    // The async receive_loop (tokio::select! on update_rx)
+                    // is NOT affected by this sleep — it wakes immediately
+                    // when the blocking thread sends through the channel.
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10))
+                    }
                 }
             }
         });
@@ -412,9 +438,15 @@ impl RealTelegramClient {
             // CONC-C1: unbounded mpsc send; if full, drop oldest
             if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
                 // CR-H2: increment counter so receive_updates can report the loss
-                let total = state.dropped_updates.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                let total = state
+                    .dropped_updates
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
                 // L3: structured event with running total for metric aggregation
-                tracing::warn!(dropped_total = total, "pending_updates channel full, dropping update");
+                tracing::warn!(
+                    dropped_total = total,
+                    "pending_updates channel full, dropping update"
+                );
                 let _ = e;
             }
         }
@@ -450,7 +482,12 @@ impl RealTelegramClient {
                             match tdlib_rs::functions::get_me(state.client_id).await {
                                 Ok(me) => {
                                     let tdlib_rs::enums::User::User(u) = me;
-                                    state.self_handle.set_identity(u.id, u.usernames.map_or(String::new(), |un| un.active_usernames.first().cloned().unwrap_or_default()));
+                                    state.self_handle.set_identity(
+                                        u.id,
+                                        u.usernames.map_or(String::new(), |un| {
+                                            un.active_usernames.first().cloned().unwrap_or_default()
+                                        }),
+                                    );
                                 }
                                 Err(e2) => {
                                     tracing::error!(error = %crate::error::redact_credentials(&e2.message), "get_me: retry also failed");
@@ -938,9 +975,16 @@ impl TelegramClient for RealTelegramClient {
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>> {
         // CONC-C1: drain all available updates from mpsc channel
         // CR-H2: report dropped updates since last drain
-        let dropped = self.state.dropped_updates.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let dropped = self
+            .state
+            .dropped_updates
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
         if dropped > 0 {
-            tracing::warn!(dropped, "receive_updates: {} updates were dropped since last poll", dropped);
+            tracing::warn!(
+                dropped,
+                "receive_updates: {} updates were dropped since last poll",
+                dropped
+            );
         }
         // PERF-L1: pre-allocate for typical poll size
         let mut updates = Vec::with_capacity(8);
@@ -1029,7 +1073,10 @@ impl RealTelegramClient {
         {
             return TelegramError::Transient(e.message);
         }
-        TelegramError::TdlibClient { code: e.code as u16, message: e.message }
+        TelegramError::TdlibClient {
+            code: e.code as u16,
+            message: e.message,
+        }
     }
 }
 
@@ -1040,9 +1087,7 @@ fn parse_flood_wait_secs(message: &str) -> Option<u64> {
 }
 
 /// Drain the latest verification code from a code_rx mutex.
-pub fn drain_code_receiver(
-    code_rx: &std::sync::Arc<PlMutex<Option<String>>>,
-) -> Option<String> {
+pub fn drain_code_receiver(code_rx: &std::sync::Arc<PlMutex<Option<String>>>) -> Option<String> {
     code_rx.lock().take()
 }
 
@@ -1076,7 +1121,12 @@ impl Drop for RealTelegramClient {
         // tdlib_rs::receive() call and will exit once it sees false.
         let mut shutdown_sent = false;
         for _ in 0..3 {
-            if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
+            if self
+                .state
+                .shutdown_tx
+                .try_send(self.state.client_id)
+                .is_ok()
+            {
                 shutdown_sent = true;
                 break;
             }
@@ -1106,7 +1156,9 @@ impl Drop for RealTelegramClient {
             // should set process-level timeouts (e.g. systemd TimeoutStopSec).
             let join_timeout = std::time::Duration::from_secs(10);
             let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || { let _ = tx.send(handle.join()); });
+            std::thread::spawn(move || {
+                let _ = tx.send(handle.join());
+            });
             match rx.recv_timeout(join_timeout) {
                 Ok(Ok(())) => {
                     tracing::debug!("receive thread joined cleanly");
@@ -1128,4 +1180,3 @@ impl Drop for RealTelegramClient {
         }
     }
 }
-

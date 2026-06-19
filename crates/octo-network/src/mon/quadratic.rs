@@ -65,10 +65,7 @@ pub struct ElectionResult {
 ///   is irrelevant).
 /// - `Dao` / `Federated` / `AiAssisted` / `Autonomous`: returns
 ///   the raw `sqrt(stake) * cosigners` value.
-pub fn voting_weight(
-    candidate: &CoordinatorCandidate,
-    model: GovernanceModel,
-) -> Option<u64> {
+pub fn voting_weight(candidate: &CoordinatorCandidate, model: GovernanceModel) -> Option<u64> {
     match model {
         GovernanceModel::Centralized => None,
         _ => Some(candidate.raw_voting_weight()),
@@ -173,8 +170,8 @@ mod tests {
     #[test]
     fn raw_voting_weight_quadratic_dampening() {
         // 4x stake gives 2x weight, not 4x.
-        let c1 = cand("a", 100, 1);  // sqrt(100) = 10
-        let c2 = cand("b", 400, 1);  // sqrt(400) = 20
+        let c1 = cand("a", 100, 1); // sqrt(100) = 10
+        let c2 = cand("b", 400, 1); // sqrt(400) = 20
         assert_eq!(c1.raw_voting_weight(), 10);
         assert_eq!(c2.raw_voting_weight(), 20);
     }

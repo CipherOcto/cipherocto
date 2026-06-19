@@ -305,7 +305,10 @@ async fn test_wait_code_submits_code() {
 
     // Second drain must return None (code was consumed).
     let empty = octo_adapter_telegram::drain_code_receiver(&code_rx);
-    assert_eq!(empty, None, "second drain must return None (code was consumed)");
+    assert_eq!(
+        empty, None,
+        "second drain must return None (code was consumed)"
+    );
 }
 
 /// Test auth key metadata stored alongside TDLib's internal storage.

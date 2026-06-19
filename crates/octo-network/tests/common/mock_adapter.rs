@@ -3,6 +3,10 @@
 //! An in-memory implementation of `PlatformAdapter` that simulates
 //! platform transport without network dependencies. Supports configurable
 //! failure modes for testing adversarial scenarios.
+//!
+//! Shared test helper: each test binary links only the subset of
+//! helpers it exercises, so disable `dead_code` warnings file-wide.
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -202,7 +206,7 @@ impl PlatformAdapter for MockPlatformAdapter {
             FailureMode::DropRandom(pct) => {
                 let hash = blake3::hash(&wire_bytes);
                 let byte = hash.as_bytes()[0];
-                if byte < (*pct * 255 / 100) as u8 {
+                if byte < (*pct * 255 / 100) {
                     return Err(PlatformAdapterError::Unreachable {
                         platform: format!("{:?}", self.platform),
                         reason: "random drop".into(),

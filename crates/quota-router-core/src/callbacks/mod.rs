@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_callback_type_variants() {
-        let types = vec![
+        let types = [
             CallbackType::Input,
             CallbackType::Success,
             CallbackType::Failure,

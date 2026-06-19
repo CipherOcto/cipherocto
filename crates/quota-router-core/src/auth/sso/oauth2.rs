@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn test_oauth2_flow_handler_initiate() {
         let handler = OAuth2FlowHandler::new();
-        let provider = IdentityProvider {
+        let _provider = IdentityProvider {
             id: "okta".into(),
             name: "Okta".into(),
             provider_type: super::super::ProviderType::Okta,

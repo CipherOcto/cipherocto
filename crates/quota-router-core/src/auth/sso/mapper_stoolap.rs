@@ -116,7 +116,6 @@ mod tests {
     use super::*;
     use crate::auth::sso::*;
     use crate::schema::init_database;
-    use crate::storage::KeyStorage;
 
     fn create_test_storage() -> StoolapKeyStorage {
         let db = stoolap::Database::open_in_memory().unwrap();

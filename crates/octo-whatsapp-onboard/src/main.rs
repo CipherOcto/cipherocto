@@ -173,11 +173,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
                 "no sidecar; session is not paired".into(),
             ));
         }
-        if let Ok((phone, _)) = read_sidecar(&sidecar) {
-            if let Some(p) = phone {
-                println!("+{p}");
-                return Ok(());
-            }
+        if let Ok((Some(p), _)) = read_sidecar(&sidecar) {
+            println!("+{p}");
+            return Ok(());
         }
         return Err(OnboardError::SessionExpired(
             "sidecar unreadable; session may be invalid".into(),
@@ -187,11 +185,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
     let session_path = std::path::PathBuf::from(&cfg.session_path);
     let sidecar = session_path.with_extension("db.meta.json");
     if sidecar.exists() {
-        if let Ok((phone, _)) = read_sidecar(&sidecar) {
-            if let Some(p) = phone {
-                println!("+{p}");
-                return Ok(());
-            }
+        if let Ok((Some(p), _)) = read_sidecar(&sidecar) {
+            println!("+{p}");
+            return Ok(());
         }
     }
     let adapter = build_adapter(&session_path, &[])?;
@@ -451,7 +447,7 @@ async fn list_sessions(
     for path in db_paths {
         let sidecar = path.with_extension("db.meta.json");
         let (self_phone, last_linked_at) = if sidecar.exists() {
-            read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
+            read_sidecar(&sidecar).unwrap_or((None, None))
         } else {
             (None, None)
         };

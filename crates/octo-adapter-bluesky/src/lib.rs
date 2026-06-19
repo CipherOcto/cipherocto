@@ -302,7 +302,7 @@ impl PlatformAdapter for BlueskyAdapter {
 
     async fn upload_media(
         &self,
-        filename: &str,
+        _filename: &str,
         data: &[u8],
         mime_type: &str,
     ) -> Result<String, PlatformAdapterError> {

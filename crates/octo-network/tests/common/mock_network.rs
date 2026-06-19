@@ -3,12 +3,15 @@
 //! Simulates N interconnected gateways with configurable topology.
 //! Each gateway has a MockPlatformAdapter and can exchange envelopes
 //! through a shared message bus.
+//!
+//! Shared test helper: each test binary links only the subset of
+//! helpers it exercises, so disable `dead_code` warnings file-wide.
+#![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::domain::PlatformType;
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
 
@@ -32,8 +35,11 @@ pub struct MockNetwork {
     /// Gateways in the network
     pub gateways: Vec<MockGateway>,
     /// Message bus: gateway_id -> messages destined for it
-    bus: Arc<Mutex<BTreeMap<[u8; 32], Vec<Vec<u8>>>>>,
+    bus: MockMessageBus,
 }
+
+/// Shared mock message bus type alias.
+type MockMessageBus = Arc<Mutex<BTreeMap<[u8; 32], Vec<Vec<u8>>>>>;
 
 impl MockNetwork {
     /// Create a new mock network with N gateways.

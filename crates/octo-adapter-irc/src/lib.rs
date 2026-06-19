@@ -707,6 +707,7 @@ fn tls_client_config() -> Arc<ClientConfig> {
 
 /// The fully-connected (TCP, optionally with TLS) IRC stream, just
 /// before we split it into read/write halves.
+#[allow(clippy::large_enum_variant)] // TLS handshake is in-memory; size gap is intentional.
 enum IrcStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
@@ -830,6 +831,7 @@ async fn connect_tls(server: &str, port: u16, sni: &str) -> Result<IrcStream, St
 /// The `stop_rx` watch is the cooperative-shutdown signal. The
 /// session loop selects on `stop_rx.changed()` alongside the other
 /// arms so a shutdown request is observed promptly. (R23c N3.)
+#[allow(clippy::too_many_arguments)] // Session loop requires all of these handles.
 async fn irc_session(
     stream: IrcStream,
     nickname: &str,
@@ -2096,7 +2098,7 @@ mod tests {
     fn test_split_utf8_boundary() {
         // 3-byte UTF-8 characters: ñ = 2 bytes, 中 = 3 bytes
         let msg = "ññññññññññ"; // 10 * 2 = 20 bytes
-        let chunks = IrcAdapter::split_message(&msg, 5);
+        let chunks = IrcAdapter::split_message(msg, 5);
         // Should split at UTF-8 boundaries
         for chunk in &chunks {
             assert!(chunk.len() <= 5);
@@ -2107,7 +2109,7 @@ mod tests {
     #[test]
     fn test_split_chinese_chars() {
         let msg = "中中中中中"; // 5 * 3 = 15 bytes
-        let chunks = IrcAdapter::split_message(&msg, 5);
+        let chunks = IrcAdapter::split_message(msg, 5);
         // Each Chinese char is 3 bytes, so 1 per chunk (5 > 3, but 2*3=6 > 5)
         for chunk in &chunks {
             assert!(chunk.len() <= 5);

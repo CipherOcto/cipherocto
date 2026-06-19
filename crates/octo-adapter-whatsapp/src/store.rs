@@ -1136,7 +1136,7 @@ impl DeviceStore for StoolapStore {
                     app_version_primary: row.get::<i64>(12).map_err(to_store_err)? as u32,
                     app_version_secondary: row.get::<i64>(13).map_err(to_store_err)? as u32,
                     app_version_tertiary: row.get::<i64>(14).map_err(to_store_err)? as u32,
-                    app_version_last_fetched_ms: row.get::<i64>(15).map_err(to_store_err)? as i64,
+                    app_version_last_fetched_ms: row.get::<i64>(15).map_err(to_store_err)?,
                     edge_routing_info: {
                         let v: String = row.get(16).map_err(to_store_err)?;
                         if v.is_empty() {

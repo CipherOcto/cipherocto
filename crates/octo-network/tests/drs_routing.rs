@@ -6,7 +6,7 @@
 use octo_network::drs::cache::RouteCache;
 use octo_network::drs::domain::{RouteDomain, RouteScopeFlag};
 use octo_network::drs::mission_routing::{derive_hop_key, OnionHopKey, OnionRoute};
-use octo_network::drs::route::{compare_routes, DeterministicRoute, TransportVector};
+use octo_network::drs::route::{compare_routes, DeterministicRoute};
 use octo_network::drs::scoring::{compute_route_score, ScoringWeights};
 use octo_network::drs::trust::{compute_trust_score, TrustScore};
 use octo_network::mon::routing::{

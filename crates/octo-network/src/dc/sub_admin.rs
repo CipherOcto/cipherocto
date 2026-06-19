@@ -135,7 +135,7 @@ pub fn elect_active_sub_admin(
     for (sa, w) in agg {
         best = match best {
             None => Some((sa, w)),
-            Some((b_sa, b_w)) if w > b_w => Some((sa, w)),
+            Some((_b_sa, b_w)) if w > b_w => Some((sa, w)),
             Some((b_sa, b_w)) if w == b_w && sa < b_sa => Some((sa, w)),
             Some(other) => Some(other),
         };

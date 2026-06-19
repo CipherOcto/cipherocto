@@ -133,7 +133,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp.write_all(b"\n")?;
     tmp.as_file().sync_all()?;
     tmp.persist(path)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("persist: {e}")))?;
+        .map_err(|e| std::io::Error::other(format!("persist: {e}")))?;
     Ok(())
 }
 

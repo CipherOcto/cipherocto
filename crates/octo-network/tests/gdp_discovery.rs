@@ -10,9 +10,7 @@ use octo_network::gdp::discovery::{
 };
 use octo_network::gdp::heartbeat::GatewayHeartbeat;
 use octo_network::gdp::identity::GdpGatewayIdentity;
-use octo_network::gdp::types::{
-    DiscoveryLifecycle, DiscoveryScope, GatewayCapability, StakeRequirement,
-};
+use octo_network::gdp::types::{DiscoveryLifecycle, DiscoveryScope, GatewayCapability};
 
 use octo_network::dot::gateway::{GatewayClass, GatewayIdentity};
 

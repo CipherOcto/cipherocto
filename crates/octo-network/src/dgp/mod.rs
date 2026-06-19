@@ -58,8 +58,8 @@ mod tests {
     #[test]
     fn test_dgp_constants() {
         assert_eq!(DGP_PROTOCOL_VERSION, 1);
-        assert!(DEFAULT_REPLAY_CACHE_SIZE > 0);
-        assert!(DEFAULT_REPLAY_WINDOW > 0);
+        const { assert!(DEFAULT_REPLAY_CACHE_SIZE > 0) };
+        const { assert!(DEFAULT_REPLAY_WINDOW > 0) };
     }
 
     #[test]

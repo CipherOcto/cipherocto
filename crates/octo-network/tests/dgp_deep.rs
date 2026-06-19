@@ -1,9 +1,7 @@
 //! Deep coverage tests for DGP — retention manager, compression payloads,
 //! anti-entropy edge cases, first_valid_hash_wins, more scope/ordering coverage.
 
-use octo_network::dgp::anti_entropy::{
-    AntiEntropyReconciler, GossipStateSummary, ReconciliationConfig,
-};
+use octo_network::dgp::anti_entropy::{GossipStateSummary, ReconciliationConfig};
 use octo_network::dgp::compression::{
     BitmapSummary, BloomSummary, RetentionClass, RetentionManager,
 };

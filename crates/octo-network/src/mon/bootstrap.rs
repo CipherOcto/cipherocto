@@ -171,20 +171,16 @@ pub fn verify_authority(
 /// Bootstrap transport mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum BootstrapMode {
     /// Direct IP connection (current default).
+    #[default]
     Direct,
     /// Tor-only (`.onion` seed list service over `arti`). No IP
     /// fallback. Fails if Tor is down.
     TorOnly,
     /// Tor with direct-IP fallback. Logs a warning on fallback.
     TorWithIpFallback,
-}
-
-impl Default for BootstrapMode {
-    fn default() -> Self {
-        BootstrapMode::Direct
-    }
 }
 
 // ── Mission 0851p-a-bootstrap-slashing ───────────────────────────

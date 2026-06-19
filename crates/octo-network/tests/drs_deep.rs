@@ -7,7 +7,7 @@ use octo_network::drs::mission_routing::{
     relay_satisfies_constraints, BandwidthClass, GeoRegion, MissionRouteConstraints,
     PartitionMetrics, PartitionState, StealthConfig,
 };
-use octo_network::drs::route::{compare_routes, DeterministicRoute, TransportVector};
+use octo_network::drs::route::{compare_routes, DeterministicRoute};
 use octo_network::drs::scoring::{compute_route_score, ScoringWeights};
 use octo_network::drs::trust::{compute_trust_score, TrustScore};
 

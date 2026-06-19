@@ -367,6 +367,7 @@ impl WhatsAppWebAdapter {
     ///   - bare digits (e.g. `120363012345678901`) → append `@g.us`
     ///   - digits already terminated with `@g.us` (e.g.
     ///     `120363012345678901@g.us`) → pass through
+    ///
     /// Refuses (via `debug_assert!` + a `Result` return):
     ///   - inputs containing `@` that don't end with `@g.us`
     ///     (newsletter JID misuse, e.g. `1234@newsletter`)

@@ -9,7 +9,7 @@ use octo_network::dgp::domain::{GossipDomainId, GossipScope};
 use octo_network::dgp::flood::FloodMode;
 use octo_network::dgp::object::{
     validate_flags, GossipObject, GossipObjectType, GossipPriority, FLAG_ANTI_ENTROPY,
-    FLAG_COMPRESSED, FLAG_DIRECTED, FLAG_FLOOD, FLAG_INCREMENTAL, FLAG_RELIABLE,
+    FLAG_COMPRESSED, FLAG_DIRECTED, FLAG_FLOOD, FLAG_RELIABLE,
 };
 use octo_network::dgp::ordering::sort_canonical;
 
@@ -264,7 +264,7 @@ fn test_anti_entropy_matching_summaries() {
     let domain = GossipDomainId::new(1, [0xAA; 32], GossipScope::GLOBAL);
     let obj = make_obj(0x01, FLAG_FLOOD, 1000, 10);
 
-    let s1 = GossipStateSummary::compute(&domain, &[obj.clone()]);
+    let s1 = GossipStateSummary::compute(&domain, std::slice::from_ref(&obj));
     let s2 = GossipStateSummary::compute(&domain, &[obj]);
 
     assert!(s1.matches(&s2));
@@ -287,7 +287,7 @@ fn test_anti_entropy_reconcile_matching() {
     let domain = GossipDomainId::new(1, [0xAA; 32], GossipScope::GLOBAL);
     let obj = make_obj(0x01, FLAG_FLOOD, 1000, 10);
 
-    let summary = GossipStateSummary::compute(&domain, &[obj.clone()]);
+    let summary = GossipStateSummary::compute(&domain, std::slice::from_ref(&obj));
 
     let result =
         AntiEntropyReconciler::reconcile(&summary, &summary, &[obj], &[[0x01; 32]]).unwrap();
@@ -302,7 +302,7 @@ fn test_anti_entropy_reconcile_divergent() {
     let obj_local = make_domain_obj(0x01, FLAG_FLOOD, &domain, 1000, 10);
     let obj_remote = make_domain_obj(0x02, FLAG_FLOOD, &domain, 1000, 10);
 
-    let local_summary = GossipStateSummary::compute(&domain, &[obj_local.clone()]);
+    let local_summary = GossipStateSummary::compute(&domain, std::slice::from_ref(&obj_local));
     let remote_summary = GossipStateSummary::compute(&domain, &[obj_remote]);
 
     let result = AntiEntropyReconciler::reconcile(

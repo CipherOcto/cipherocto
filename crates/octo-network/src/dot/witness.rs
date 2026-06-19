@@ -106,14 +106,12 @@ impl NonceReplayTable {
             // R17 R1-HIGH-2 fix: time-based eviction. If the previous
             // entry has aged out, drop it and fall through to record.
             let age = current_epoch.saturating_sub(first_seen);
-            if age <= self.epoch_age_limit {
-                if prev_nonce == *nonce {
-                    return Err(BindingError::NonceReplay { nonce: *nonce });
-                }
-                // Different nonce within the window — this is the
-                // pre-existing "different nonce replaces previous"
-                // behavior.
+            if age <= self.epoch_age_limit && prev_nonce == *nonce {
+                return Err(BindingError::NonceReplay { nonce: *nonce });
             }
+            // Different nonce within the window — this is the
+            // pre-existing "different nonce replaces previous"
+            // behavior.
             // Either aged out, or aged-out branch — fall through to
             // record.
         }

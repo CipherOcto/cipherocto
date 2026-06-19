@@ -50,7 +50,9 @@ use octo_network::gdp::types::DiscoveryScope;
 
 const FRAME_TYPE_ENVELOPE: u16 = 0x0001;
 const FRAME_TYPE_FRAGMENT: u16 = 0x0002;
+#[allow(dead_code)] // Reserved for future onion-routing feature.
 const FRAME_TYPE_ONION: u16 = 0x0003;
+#[allow(dead_code)] // Reserved for future capability-negotiation feature.
 const FRAME_TYPE_CAPABILITIES: u16 = 0x0004;
 const FRAME_TYPE_PING: u16 = 0x0005;
 const FRAME_TYPE_PONG: u16 = 0x0006;
@@ -161,8 +163,10 @@ struct PeerState {
     /// Peer's SocketAddr (resolved from GDP or config)
     addr: SocketAddr,
     /// Liveness tracking: consecutive missed pongs
+    #[allow(dead_code)] // Tracked for future liveness-based eviction.
     missed_pongs: u32,
     /// Last successful pong nonce
+    #[allow(dead_code)] // Tracked for future nonce-replay defense.
     last_pong_nonce: u64,
     /// GDP registration (if peer is registered)
     registration: Option<PeerRegistration>,

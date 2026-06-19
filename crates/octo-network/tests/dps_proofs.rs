@@ -171,7 +171,7 @@ fn test_verifier_registry_full_lifecycle() {
     let suite_id = ProofSuiteId::new(ProofSystemId::STWO.as_u16(), 0x0001, 0x0001, 0x0001);
 
     let entry = VerifierEntry {
-        suite_id: suite_id.clone(),
+        suite_id,
         proof_suite: ProofSuite::new(
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,

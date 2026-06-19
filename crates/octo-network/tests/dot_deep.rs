@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use octo_network::dot::adapters::{CapabilityReport, MediaCapabilities};
+use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::{
     DeterministicEnvelope, MessageType, ObfuscatedEnvelope, PrivacyConfig, SealedEnvelope,
@@ -16,13 +16,12 @@ use octo_network::dot::gateway::{
     FederationPeer, FederationState, GatewayCapacity, GatewayClass, GatewayIdentity,
 };
 use octo_network::dot::route::{
-    compute_gateway_sequence_hash, compute_route_score, handle_partition, select_best_route,
-    GatewayRoute, PartitionEvent, RouteCommitment, RouteWeights,
+    compute_gateway_sequence_hash, handle_partition, select_best_route, GatewayRoute,
+    PartitionEvent, RouteCommitment, RouteWeights,
 };
 use octo_network::dot::transport::{
-    b64url_decode, b64url_encode, decode_fragment_ref, decode_native_ref, decode_text_ref,
-    detect_mode, encode_fragment_ref, encode_native_ref, encode_text_ref, select_mode,
-    select_mode_with_max_text, TransportMode,
+    b64url_decode, b64url_encode, decode_text_ref, detect_mode, encode_text_ref, select_mode,
+    TransportMode,
 };
 
 fn make_envelope(id_byte: u8) -> DeterministicEnvelope {

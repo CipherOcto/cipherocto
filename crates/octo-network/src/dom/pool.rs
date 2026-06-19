@@ -135,7 +135,7 @@ impl MempoolStateRoot {
 
         // Sort by intent_id for deterministic ordering
         let mut sorted: Vec<&OverlayIntent> = intents.iter().collect();
-        sorted.sort_by(|a, b| a.intent_id.cmp(&b.intent_id));
+        sorted.sort_by_key(|a| a.intent_id);
 
         // Compute leaf hashes
         let leaves: Vec<[u8; 32]> = sorted

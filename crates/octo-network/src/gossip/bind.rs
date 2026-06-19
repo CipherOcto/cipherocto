@@ -196,7 +196,7 @@ mod tests {
         let state = BindGossipState::new();
         let total = MAX_RECEIVED_BINDS + 10;
         for i in 0..total {
-            state.record_received(BindEnvelope::new("d1", "whatsapp", &format!("g{i}")));
+            state.record_received(BindEnvelope::new("d1", "whatsapp", format!("g{i}")));
         }
         // received_count must reflect ALL inserts (it's a
         // monotonic statistic), not the cache size.

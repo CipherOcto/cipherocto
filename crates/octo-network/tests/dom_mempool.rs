@@ -16,6 +16,7 @@ use octo_network::dom::{ExecutionClass, IntentType, OverlayIntent};
 
 // Intentionally unused imports kept for test readability
 
+#[allow(clippy::too_many_arguments)] // Test helper mirrors OverlayIntent field-for-field.
 fn make_intent(
     id_byte: u8,
     sender_byte: u8,

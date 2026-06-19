@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_verify_via_dps_stwo() {
         let result = verify_via_dps(ProofSystemId::STWO as u16, &[1, 2, 3], &[4, 5, 6]);
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -299,12 +299,7 @@ mod tests {
         ];
         for id in &ids {
             let result = verify_via_dps(*id as u16, &[1, 2, 3], &[4, 5, 6]);
-            assert_eq!(
-                result.unwrap(),
-                true,
-                "failed for system id {:#x}",
-                *id as u16
-            );
+            assert!(result.unwrap(), "failed for system id {:#x}", *id as u16);
         }
     }
 

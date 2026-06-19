@@ -1,5 +1,6 @@
 //! Differential fuzzing against Berkeley SoftFloat reference
 
+#[cfg(target_os = "linux")]
 use crate::Dfp;
 
 #[cfg(all(test, target_os = "linux"))]
@@ -114,7 +115,9 @@ pub fn compare_div(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use super::*;
+    #[cfg(target_os = "linux")]
     use crate::Dfp;
     use rand::rngs::StdRng;
     use rand::Rng;

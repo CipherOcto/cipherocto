@@ -75,6 +75,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Install Rust explicitly. Without this, `maturin develop` below
+      # tries to bootstrap its own rustc via rustup and fails on fresh
+      # runners with:
+      #   error: failed to install component: 'clippy-preview-x86_64-unknown-linux-gnu',
+      #          detected conflict: 'bin/cargo-clippy'
+      # The `test` job above has the same step and works; this job was
+      # missing it. Pinning `dtolnay/rust-toolchain@stable` matches
+      # the `test` job exactly and gives maturin a clean rustup to use.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       # See note above on explicit venv creation.
       - name: Create venv and install mypy
         run: |

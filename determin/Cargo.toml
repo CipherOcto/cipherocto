@@ -48,9 +48,20 @@ use-internal-bigint = []
 
 [dev-dependencies]
 proptest = "1.4"
-softfloat-rs = "0.1"
 rand = "0.8"
 criterion = "0.5"
+
+# softfloat-rs v0.1.0 build.rs is missing a SPECIALIZED_PATH constant for
+# target_arch values other than those it explicitly supports (arm-vfpv2, riscv,
+# 8086-SSE, x86-SSE, etc.). It fails to compile on macOS (aarch64-apple-darwin)
+# and on Windows MSVC (which additionally rejects the `__int128` extension used
+# by the underlying berkeley-softfloat-3 C sources). softfloat-rs is only used
+# for differential fuzzing against the Berkeley SoftFloat reference, so we
+# restrict it to linux; the in-tree DFP float implementation in `octo-determin`
+# does not depend on it and is exercised by the rest of the test suite on all
+# platforms.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+softfloat-rs = "0.1"
 
 [[bench]]
 name = "decimal_benchmark"

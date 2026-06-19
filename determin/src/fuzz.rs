@@ -1,19 +1,24 @@
 //! Differential fuzzing against Berkeley SoftFloat reference
 
 use crate::Dfp;
+
+#[cfg(all(test, target_os = "linux"))]
 use softfloat_rs::float64_t;
 
 /// Convert f64 to SoftFloat's float64_t
+#[cfg(all(test, target_os = "linux"))]
 fn to_float64(val: f64) -> float64_t {
     float64_t { v: val.to_bits() }
 }
 
 /// Convert SoftFloat's float64_t back to f64
+#[cfg(all(test, target_os = "linux"))]
 fn from_float64(val: float64_t) -> f64 {
     f64::from_bits(val.v)
 }
 
 /// Compare two f64 values for "match" with tolerance for rounding differences
+#[cfg(all(test, target_os = "linux"))]
 fn compare_f64(a: f64, b: f64) -> bool {
     // NaN matches NaN
     if a.is_nan() && b.is_nan() {
@@ -41,9 +46,11 @@ fn compare_f64(a: f64, b: f64) -> bool {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
 use softfloat_rs::{f64_add, f64_div, f64_mul, f64_sub};
 
 /// Compare DFP add against SoftFloat reference
+#[cfg(all(test, target_os = "linux"))]
 pub fn compare_add(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
     // Our DFP result
     let dfp_result = crate::dfp_add(a, b);
@@ -61,6 +68,7 @@ pub fn compare_add(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
 }
 
 /// Compare DFP sub against SoftFloat reference
+#[cfg(all(test, target_os = "linux"))]
 pub fn compare_sub(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
     let dfp_result = crate::dfp_sub(a, b);
 
@@ -75,6 +83,7 @@ pub fn compare_sub(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
 }
 
 /// Compare DFP mul against SoftFloat reference
+#[cfg(all(test, target_os = "linux"))]
 pub fn compare_mul(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
     let dfp_result = crate::dfp_mul(a, b);
 
@@ -89,6 +98,7 @@ pub fn compare_mul(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
 }
 
 /// Compare DFP div against SoftFloat reference
+#[cfg(all(test, target_os = "linux"))]
 pub fn compare_div(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
     let dfp_result = crate::dfp_div(a, b);
 
@@ -111,6 +121,7 @@ mod tests {
     use rand::SeedableRng;
 
     /// Fuzz test for add with 10,000 random inputs
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_fuzz_add_10k() {
         let mut rng = StdRng::seed_from_u64(42);
@@ -146,6 +157,7 @@ mod tests {
     }
 
     /// Fuzz test for sub with 10,000 random inputs
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_fuzz_sub_10k() {
         let mut rng = StdRng::seed_from_u64(42);
@@ -179,6 +191,7 @@ mod tests {
     }
 
     /// Fuzz test for mul with 10,000 random inputs
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_fuzz_mul_10k() {
         let mut rng = StdRng::seed_from_u64(42);
@@ -212,6 +225,7 @@ mod tests {
     }
 
     /// Fuzz test for div with 10,000 random inputs
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_fuzz_div_10k() {
         let mut rng = StdRng::seed_from_u64(42);

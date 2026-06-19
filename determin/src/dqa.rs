@@ -771,25 +771,40 @@ mod tests {
         // 2.0/3 at scale 6 = 0.666667 → rounds up
         assert_eq!(dqa_div(dqa(2000000, 6), dqa(3, 0)).unwrap(), dqa(666667, 6));
         // -2.0/3 at scale 6 = -0.666667 → rounds toward zero
-        assert_eq!(dqa_div(dqa(-2000000, 6), dqa(3, 0)).unwrap(), dqa(-666667, 6));
+        assert_eq!(
+            dqa_div(dqa(-2000000, 6), dqa(3, 0)).unwrap(),
+            dqa(-666667, 6)
+        );
     }
 
     /// RFC-0105 additional division test vectors
     #[test]
     fn test_div_additional_vectors() {
         // i64::MAX / 1 = i64::MAX
-        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(1, 0)).unwrap(), dqa(i64::MAX, 0));
+        assert_eq!(
+            dqa_div(dqa(i64::MAX, 0), dqa(1, 0)).unwrap(),
+            dqa(i64::MAX, 0)
+        );
         // i64::MAX / 2: quotient=4611686018427387903, rem=1, tie → quotient odd → round up
-        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(2, 0)).unwrap(), dqa(4611686018427387904, 0));
+        assert_eq!(
+            dqa_div(dqa(i64::MAX, 0), dqa(2, 0)).unwrap(),
+            dqa(4611686018427387904, 0)
+        );
         // 1 / i64::MAX (very small → rounds to 0)
         assert_eq!(dqa_div(dqa(1, 0), dqa(i64::MAX, 0)).unwrap(), dqa(0, 0));
         // i64::MAX / 3
-        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(3, 0)).unwrap(), dqa(3074457345618258602, 0));
+        assert_eq!(
+            dqa_div(dqa(i64::MAX, 0), dqa(3, 0)).unwrap(),
+            dqa(3074457345618258602, 0)
+        );
         // 1e-18 / 2: TARGET_SCALE=18, scaled=1*10^0=1, 1/2=0 rem 1 → tie rounds to 0
         // (10^-18 / 2 = 5×10^-19 is below precision at scale 18)
         assert_eq!(dqa_div(dqa(1, 18), dqa(2, 0)).unwrap(), dqa(0, 0));
         // i64::MAX scale 18 / 1 = i64::MAX
-        assert_eq!(dqa_div(dqa(i64::MAX, 18), dqa(1, 0)).unwrap(), dqa(i64::MAX, 18));
+        assert_eq!(
+            dqa_div(dqa(i64::MAX, 18), dqa(1, 0)).unwrap(),
+            dqa(i64::MAX, 18)
+        );
         // 1/3 at scale 3 = 0.333
         assert_eq!(dqa_div(dqa(1000, 3), dqa(3, 0)).unwrap(), dqa(333, 3));
         // 0.2000 / 3 at scale 4 = 0.0667 → dqa(667, 4)
@@ -812,9 +827,15 @@ mod tests {
     #[test]
     fn test_div_brutal_edge_cases() {
         // i64::MIN / 1 = i64::MIN
-        assert_eq!(dqa_div(dqa(i64::MIN, 0), dqa(1, 0)).unwrap(), dqa(i64::MIN, 0));
+        assert_eq!(
+            dqa_div(dqa(i64::MIN, 0), dqa(1, 0)).unwrap(),
+            dqa(i64::MIN, 0)
+        );
         // i64::MIN / -1 = overflow
-        assert_eq!(dqa_div(dqa(i64::MIN, 0), dqa(-1, 0)).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_div(dqa(i64::MIN, 0), dqa(-1, 0)).unwrap_err(),
+            DqaError::Overflow
+        );
         // DIV result canonicalization: 1000/1=1000, scale=3 → canonicalize to 1,0
         assert_eq!(dqa_div(dqa(1000, 3), dqa(1, 0)).unwrap(), dqa(1, 0));
         // 0.25 / 2 = 0.125, tie to even at scale 2
@@ -827,15 +848,30 @@ mod tests {
     #[test]
     fn test_overflow_vectors() {
         // 10^18 × 10 = overflow
-        assert_eq!(dqa_mul(dqa(1_000_000_000_000_000_000, 0), dqa(10, 0)).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_mul(dqa(1_000_000_000_000_000_000, 0), dqa(10, 0)).unwrap_err(),
+            DqaError::Overflow
+        );
         // i64::MAX + 1 = overflow
-        assert_eq!(dqa_add(dqa(i64::MAX, 0), dqa(1, 0)).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_add(dqa(i64::MAX, 0), dqa(1, 0)).unwrap_err(),
+            DqaError::Overflow
+        );
         // i64::MIN - 1 = overflow
-        assert_eq!(dqa_sub(dqa(i64::MIN, 0), dqa(1, 0)).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_sub(dqa(i64::MIN, 0), dqa(1, 0)).unwrap_err(),
+            DqaError::Overflow
+        );
         // Near overflow multiplication: i64::MAX/2 * 2
-        assert_eq!(dqa_mul(dqa(4611686018427387903, 0), dqa(2, 0)).unwrap(), dqa(9223372036854775806, 0));
+        assert_eq!(
+            dqa_mul(dqa(4611686018427387903, 0), dqa(2, 0)).unwrap(),
+            dqa(9223372036854775806, 0)
+        );
         // i64::MAX * 2 = overflow
-        assert_eq!(dqa_mul(dqa(i64::MAX, 0), dqa(2, 0)).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_mul(dqa(i64::MAX, 0), dqa(2, 0)).unwrap_err(),
+            DqaError::Overflow
+        );
     }
 
     /// RFC-0105 comparison test vectors
@@ -856,7 +892,10 @@ mod tests {
         // 1e-18 vs i64::MAX
         assert_eq!(dqa_cmp(dqa(1, 18), dqa(i64::MAX, 0)), -1);
         // near max comparison: 10^18 < i64::MAX-1
-        assert_eq!(dqa_cmp(dqa(1000000000000000000, 0), dqa(9223372036854775806, 0)), -1);
+        assert_eq!(
+            dqa_cmp(dqa(1000000000000000000, 0), dqa(9223372036854775806, 0)),
+            -1
+        );
         // i64::MIN comparison
         assert_eq!(dqa_cmp(dqa(i64::MIN, 0), dqa(-1, 0)), -1);
         // -0.5 == -0.50 (canonicalization)

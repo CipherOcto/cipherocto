@@ -1,4 +1,4 @@
-use octo_determin::{Dfp, DfpClass, dfp_add, dfp_sub, dfp_mul, dfp_div, dfp_sqrt};
+use octo_determin::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub, Dfp, DfpClass};
 use std::env;
 
 fn parse_signed_mantissa(s: &str) -> Option<(u128, bool)> {
@@ -99,9 +99,7 @@ fn main() {
             let b = b.expect("div requires two operands");
             dfp_div(a, b)
         }
-        "sqrt" => {
-            dfp_sqrt(a)
-        }
+        "sqrt" => dfp_sqrt(a),
         _ => {
             eprintln!("Error: Unknown operation: {}", op);
             std::process::exit(1);

@@ -406,18 +406,30 @@ mod tests {
         assert_eq!(dcs_serialize_u64(1), vec![0, 0, 0, 0, 0, 0, 0, 1]);
         assert_eq!(dcs_serialize_u64(256), vec![0, 0, 0, 0, 0, 0, 1, 0]);
         assert_eq!(dcs_serialize_u64(30000), vec![0, 0, 0, 0, 0, 0, 0x75, 0x30]);
-        assert_eq!(dcs_serialize_u64(u64::MAX), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            dcs_serialize_u64(u64::MAX),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
     }
 
     #[test]
     fn test_serialize_i64() {
         assert_eq!(dcs_serialize_i64(0), vec![0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(dcs_serialize_i64(1), vec![0, 0, 0, 0, 0, 0, 0, 1]);
-        assert_eq!(dcs_serialize_i64(-1), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            dcs_serialize_i64(-1),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
         assert_eq!(dcs_serialize_i64(30000), vec![0, 0, 0, 0, 0, 0, 0x75, 0x30]);
-        assert_eq!(dcs_serialize_i64(-30000), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x8A, 0xD0]);
+        assert_eq!(
+            dcs_serialize_i64(-30000),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x8A, 0xD0]
+        );
         // Verify 1704067200 (2024-01-01 Unix timestamp)
-        assert_eq!(dcs_serialize_i64(1704067200), vec![0x00, 0x00, 0x00, 0x00, 0x65, 0x92, 0x00, 0x80]);
+        assert_eq!(
+            dcs_serialize_i64(1704067200),
+            vec![0x00, 0x00, 0x00, 0x00, 0x65, 0x92, 0x00, 0x80]
+        );
     }
 
     #[test]

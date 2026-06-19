@@ -109,6 +109,7 @@ async fn login_and_join() -> (octo_matrix_onboard_core::Session, Client) {
 }
 
 #[tokio::test]
+#[ignore = "requires live Matrix homeserver; run with: scripts/integration-matrix.sh up && cargo test -p octo-adapter-matrix-sdk --features integration-matrix -- --ignored"]
 async fn integration_login_and_whoami() {
     let sess = login_and_save_config().await;
     assert_eq!(sess.homeserver_url, homeserver());
@@ -150,6 +151,7 @@ async fn integration_login_and_whoami() {
 }
 
 #[tokio::test]
+#[ignore = "requires live Matrix homeserver; run with: scripts/integration-matrix.sh up && cargo test -p octo-adapter-matrix-sdk --features integration-matrix -- --ignored"]
 async fn integration_envelope_round_trip() {
     // R1-H6: the test now actually round-trips an envelope through
     // the homeserver (send_envelope → server → receive_messages).
@@ -313,6 +315,7 @@ fn make_envelope_bytes() -> Vec<u8> {
 }
 
 #[tokio::test]
+#[ignore = "requires live Matrix homeserver; run with: scripts/integration-matrix.sh up && cargo test -p octo-adapter-matrix-sdk --features integration-matrix -- --ignored"]
 async fn integration_persist_session_to_disk_writes_rotated_pair() {
     // R1-H1: end-to-end check that the adapter's
     // `persist_session_to_disk` writes the rotated pair to the
@@ -422,6 +425,7 @@ async fn integration_persist_session_to_disk_writes_rotated_pair() {
 /// both users with the same password; the test only needs distinct
 /// MXIDs, not distinct credentials.
 #[tokio::test]
+#[ignore = "requires live Matrix homeserver; run with: scripts/integration-matrix.sh up && cargo test -p octo-adapter-matrix-sdk --features integration-matrix -- --ignored"]
 async fn integration_encrypted_room_round_trip() {
     use matrix_sdk::ruma::events::room::encryption::RoomEncryptionEventContent;
     use matrix_sdk::ruma::EventEncryptionAlgorithm;

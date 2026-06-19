@@ -85,6 +85,7 @@
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 use octo_network::dot::adapters::{PlatformAdapter, RawPlatformMessage};
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
+use octo_network::dot::CoordinatorAdmin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

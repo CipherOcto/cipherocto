@@ -128,6 +128,7 @@ async fn chat_completion(
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_chat_completion_basic() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::new();
@@ -165,6 +166,7 @@ async fn test_chat_completion_basic() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_chat_completion_with_system() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::new();
@@ -253,6 +255,7 @@ async fn test_chat_completion_streaming() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_chat_completion_usage() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::new();
@@ -446,6 +449,7 @@ async fn test_chat_completion_empty_messages() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_multiple_sequential_requests() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::builder().pool_max_idle_per_host(5).build().unwrap();
@@ -466,6 +470,7 @@ async fn test_multiple_sequential_requests() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_concurrent_requests() {
     let (base_url, _port) = start_proxy().await;
     let client = Arc::new(Client::new());
@@ -499,6 +504,7 @@ async fn test_concurrent_requests() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_chat_completion_large_prompt() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::new();
@@ -632,6 +638,7 @@ async fn test_health_endpoint() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "requires live upstream API key; run with: cargo test -p quota-router-core --features full -- --ignored"]
 async fn test_chat_completion_metadata() {
     let (base_url, _port) = start_proxy().await;
     let client = Client::new();

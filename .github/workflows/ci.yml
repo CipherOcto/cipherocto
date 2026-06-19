@@ -59,13 +59,17 @@ jobs:
         run: |
           if [ -f Cargo.toml ]; then cargo test --verbose; fi
 
-      - name: Check real-tdlib feature compiles
+      - name: Check telegram-cli builds with real-tdlib
+        # The Telegram CLI (octo-telegram-onboard) is excluded from the main
+        # workspace (see root Cargo.toml) to prevent TDLib's libc++ runtime
+        # from leaking into every workspace test binary. We verify it still
+        # compiles via the octo-cli-meta meta-crate's telegram-cli feature.
         run: |
-          if [ -f Cargo.toml ]; then cargo check -p octo-adapter-telegram --features real-tdlib --no-default-features; fi
+          if [ -f Cargo.toml ]; then cargo check -p octo-cli-meta --features telegram-cli; fi
 
-      - name: Clippy real-tdlib
+      - name: Clippy telegram-cli
         run: |
-          if [ -f Cargo.toml ]; then cargo clippy -p octo-adapter-telegram --all-targets --features real-tdlib -- -D warnings; fi
+          if [ -f Cargo.toml ]; then cargo clippy -p octo-cli-meta --features telegram-cli --all-targets -- -D warnings; fi
 
       - name: Run JS tests
         run: |

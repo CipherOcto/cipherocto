@@ -5,12 +5,25 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Library half of octo-telegram-onboard: TDLib auth flows, session extraction, config output."
 
+[features]
+# TDLib C++ library + rusqlite for real auth flows. Default ON because this
+# crate is exclusively used by the `octo-telegram-onboard` CLI (which is
+# EXCLUDED from the main workspace — see root Cargo.toml), so the workspace
+# build never activates `real-tdlib` via feature unification.
+#
+# Excluded by `members = ["crates/*"]` exclude list at the root. To opt
+# back in to building the CLI from the root workspace, use the meta-crate:
+#   cargo build -p octo-cli-meta --features telegram-cli
+default = ["tdlib"]
+tdlib = ["dep:tdlib-rs", "octo-adapter-telegram/real-tdlib"]
+
 [dependencies]
 # Adapter auth module (UserAuth, AuthStateKey, AuthAction, AuthError).
-# real-tdlib feature required for handle_authorization_state and decide.
-octo-adapter-telegram = { path = "../octo-adapter-telegram", features = ["real-tdlib"] }
-# TDLib Rust binding (direct calls for bot mode + get_me)
-tdlib-rs = "=1.4.0"
+# `real-tdlib` feature is now gated behind the `tdlib` feature above.
+octo-adapter-telegram = { path = "../octo-adapter-telegram", default-features = false }
+# TDLib Rust binding (direct calls for bot mode + get_me). Optional —
+# activated by the `tdlib` feature above.
+tdlib-rs = { version = "=1.4.0", optional = true }
 # Async runtime
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "sync"] }
 # Serialization
@@ -19,8 +32,10 @@ serde_json = "1.0"
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
-# Logging
-tracing = { workspace = true }
+# Logging (explicit version because this crate is EXCLUDED from the
+# workspace — see root Cargo.toml exclude list — so workspace
+# inheritance via `workspace = true` does not apply)
+tracing = "0.1"
 # Memory zeroing for sensitive credentials
 zeroize = { version = "1", features = ["zeroize_derive"] }
 # Config dir resolution

@@ -5,8 +5,23 @@
 # libpython symbols). Build it standalone with:
 #   cargo build -p quota-router-pyo3
 #   maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+#
+# ⚠️ octo-telegram-onboard and octo-telegram-onboard-core are excluded:
+# they activate the `real-tdlib` feature on `octo-adapter-telegram` (which
+# pulls in TDLib, a ~150 MB C++ library, plus its `libc++` runtime at
+# runtime). With feature unification, this would leak into every test
+# binary in the workspace, breaking CI (no libc++ in ubuntu-latest).
+# Build them via the `octo-cli-meta` meta-crate's feature flag:
+#   cargo build -p octo-cli-meta --features telegram-cli
+# Or directly:
+#   cargo build --manifest-path crates/octo-telegram-onboard/Cargo.toml
 members = ["crates/*"]
-exclude = ["determin", "crates/quota-router-pyo3"]
+exclude = [
+    "determin",
+    "crates/quota-router-pyo3",
+    "crates/octo-telegram-onboard",
+    "crates/octo-telegram-onboard-core",
+]
 resolver = "2"
 
 # ⚠️ CRITICAL INVARIANT (RFC-0917):

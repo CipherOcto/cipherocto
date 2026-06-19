@@ -1013,8 +1013,8 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
     // Mock opts in to create_group but NOT add_member — the
     // capability report must reflect that asymmetry, not advertise
     // both as `true`.
-    let adapter = MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(
-        AdminScripted {
+    let adapter =
+        MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(AdminScripted {
             create_group: Some(Ok(GroupHandle {
                 id: GroupId::new("1203630250@g.us"),
                 subject: Some("scripted".into()),
@@ -1025,8 +1025,7 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
                 initial_admins_promoted: true,
             })),
             add_member: None,
-        },
-    );
+        });
 
     // (a) Bridge returns Some for adapters that opt in.
     let admin: Option<&dyn CoordinatorAdmin> = adapter.as_coordinator_admin();
@@ -1071,7 +1070,10 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
         .expect_err("add_member should be Unimplemented when slot is None");
     match err {
         PlatformAdapterError::Unimplemented { platform, action } => {
-            assert!(platform.starts_with("mock"), "platform label: got {platform:?}");
+            assert!(
+                platform.starts_with("mock"),
+                "platform label: got {platform:?}"
+            );
             assert_eq!(action, "add_member");
         }
         other => panic!("expected Unimplemented, got {other:?}"),
@@ -1124,8 +1126,8 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
 #[tokio::test]
 async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
     let scripted_group_id = "1203630399@g.us";
-    let adapter = MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(
-        AdminScripted {
+    let adapter =
+        MockPlatformAdapter::new(PlatformType::WhatsApp).with_admin_scripted(AdminScripted {
             create_group: Some(Ok(GroupHandle {
                 id: GroupId::new(scripted_group_id),
                 subject: Some("DOT swarm A".into()),
@@ -1136,8 +1138,7 @@ async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
                 initial_admins_promoted: true,
             })),
             add_member: None,
-        },
-    );
+        });
 
     // ── Step 1+2: bridge downcast → create_group ────────────────
     let admin: &dyn CoordinatorAdmin = adapter
@@ -1263,8 +1264,8 @@ async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
 
 #[tokio::test]
 async fn scenario14_coordinator_admin_add_member_partial_success() {
-    let adapter = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
-        AdminScripted {
+    let adapter =
+        MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(AdminScripted {
             create_group: None,
             // The mock scripts `add_member` to mirror the variant the
             // caller is testing — same return for every call. The
@@ -1275,8 +1276,7 @@ async fn scenario14_coordinator_admin_add_member_partial_success() {
                 added: true,
                 promoted: Some(Ok(())),
             })),
-        },
-    );
+        });
 
     // ── Variant A: `promoted: Some(Ok(()))` ─────────────────────
     let admin: &dyn CoordinatorAdmin = adapter.as_coordinator_admin().unwrap();
@@ -1293,15 +1293,14 @@ async fn scenario14_coordinator_admin_add_member_partial_success() {
     );
 
     // ── Variant B: `promoted: None` (no promote attempted) ──────
-    let adapter_b = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
-        AdminScripted {
+    let adapter_b =
+        MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(AdminScripted {
             create_group: None,
             add_member: Some(Ok(AddMemberOutput {
                 added: true,
                 promoted: None,
             })),
-        },
-    );
+        });
     let admin_b: &dyn CoordinatorAdmin = adapter_b.as_coordinator_admin().unwrap();
     let out_b = admin_b
         .add_member(&g, &GroupMemberSpec::new("@bob:matrix.org"))
@@ -1314,8 +1313,8 @@ async fn scenario14_coordinator_admin_add_member_partial_success() {
     );
 
     // ── Variant C: `promoted: Some(Err(ApiError))` (H6 partial) ─
-    let adapter_c = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
-        AdminScripted {
+    let adapter_c =
+        MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(AdminScripted {
             create_group: None,
             add_member: Some(Ok(AddMemberOutput {
                 added: true,
@@ -1324,8 +1323,7 @@ async fn scenario14_coordinator_admin_add_member_partial_success() {
                     message: "promote failed after add succeeded".into(),
                 })),
             })),
-        },
-    );
+        });
     let admin_c: &dyn CoordinatorAdmin = adapter_c.as_coordinator_admin().unwrap();
     let out_c = admin_c
         .add_member(&g, &GroupMemberSpec::new("@carol:matrix.org").as_admin())
@@ -1348,15 +1346,14 @@ async fn scenario14_coordinator_admin_add_member_partial_success() {
     // ── Variant D: `added: false` (add itself failed) ──────────
     // The trait spec says `promoted` is `None` in this case (no
     // promote is attempted when there's no member to promote).
-    let adapter_d = MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(
-        AdminScripted {
+    let adapter_d =
+        MockPlatformAdapter::new(PlatformType::Matrix).with_admin_scripted(AdminScripted {
             create_group: None,
             add_member: Some(Ok(AddMemberOutput {
                 added: false,
                 promoted: None,
             })),
-        },
-    );
+        });
     let admin_d: &dyn CoordinatorAdmin = adapter_d.as_coordinator_admin().unwrap();
     let out_d = admin_d
         .add_member(&g, &GroupMemberSpec::new("@dave:matrix.org"))

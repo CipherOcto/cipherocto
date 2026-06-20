@@ -15,13 +15,23 @@ use octo_network::dot::adapters::{
         AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
         GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
     },
-    CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
+    CapabilityReport, DeliveryReceipt, MediaCapabilities, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
+use octo_network::dot::transport::{
+    b64url_encode, decode_native_ref, encode_native_ref, select_mode_with_max_text, TransportMode,
+};
+
+use crate::media_ref::{decode_base64url, encode_base64url, MediaRef, MediaRefError};
 
 use super::store::StoolapStore;
+// wacore re-exports `MediaType` and `Downloadable` via
+// `whatsapp_rust::download`; `UploadOptions`/`UploadResponse` live in
+// `whatsapp_rust::upload`. Mission 0850 (RFC-0850 §8.6/§9.4) uses both.
+use whatsapp_rust::download::MediaType;
+use whatsapp_rust::upload::{UploadOptions, UploadResponse};
 
 // ── Configuration ──────────────────────────────────────────────────
 
@@ -244,6 +254,21 @@ pub struct WhatsAppWebAdapter {
     /// Backwards-compatible: when empty, behaviour is identical to the
     /// static-config-only path (the legacy default).
     runtime_groups: Arc<Mutex<Vec<String>>>,
+    /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
+    /// `DOT/2/{token}` download requests from the sync on_event closure
+    /// (which does NOT capture `&self`) to the async download_rx
+    /// consumer task spawned by `start_bot`. The on_event closure
+    /// clones this `Arc` and `try_send`s a `DownloadRequest`; the
+    /// consumer task pops, calls `Client::download`, and pushes the
+    /// decrypted wire bytes to `inbound_tx`.
+    ///
+    /// `Arc<tokio::sync::Mutex<Option<...>>>` mirrors the existing
+    /// `client` field shape (line 224) — `start_bot` populates the
+    /// `Some(_)` variant without `&mut self`, and the closure holds an
+    /// `Arc` clone without owning `self`. Initialized to `None` in
+    /// `new`; populated in `start_bot` (so the receiver has an
+    /// immediate owner — the consumer task).
+    download_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DownloadRequest>>>>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
@@ -257,6 +282,35 @@ pub struct CreateGroupOutput {
     pub group_jid: String,
     /// Server-reported metadata (subject, participants, creation time, ...).
     pub metadata: whatsapp_rust::GroupMetadata,
+}
+
+/// Mission 0850 (RFC-0850 §8.6/§9.4): a `DOT/2/{token}` envelope that the
+/// on-event closure (which does NOT capture `&self`) has dispatched for
+/// pre-download. The download_rx consumer task pops these, calls
+/// `Client::download` via the wacore API, and pushes the resulting wire
+/// bytes to `inbound_tx` with `metadata["dot_mode"] = "native"`.
+///
+/// `msg_id` is the base64url-encoded JSON `MediaRef` token from the
+/// `DOT/2/{token}` payload (NOT a WhatsApp `message_id`).
+pub(crate) struct DownloadRequest {
+    pub(crate) msg_id: String,
+    pub(crate) chat: String,
+    pub(crate) sender: String,
+}
+
+/// Mission 0850 (RFC-0850 §8.6/§9.4): type-level least-privilege handle
+/// for background tasks spawned by `start_bot`. Cloning the
+/// [`WhatsAppWebAdapter`] would expose every field (config, bot_handle,
+/// inbound_rx, self_phone, runtime_groups) to the consumer task; this
+/// handle gives it exactly the two fields it needs.
+///
+/// Clone is `#[derive(Clone)]` because every field is `Arc`/`Sender`
+/// (both inherently `Clone`). Cheap to clone.
+#[derive(Clone)]
+#[allow(dead_code)] // inbound_tx reserved for future use; tests use clone_for_handler's return value
+pub(crate) struct WhatsAppHandlerHandle {
+    pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    pub(crate) inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
 }
 
 impl WhatsAppWebAdapter {
@@ -276,6 +330,10 @@ impl WhatsAppWebAdapter {
             // the Arc.
             connected_notify: Arc::new(tokio::sync::Notify::new()),
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
+            // Mission 0850: download_tx is None until start_bot populates
+            // it. The channel is created INSIDE start_bot (not here) so
+            // the receiver has an immediate owner — the consumer task.
+            download_tx: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -285,6 +343,24 @@ impl WhatsAppWebAdapter {
     /// the same underlying `Notify`.
     pub fn connected(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.connected_notify)
+    }
+
+    /// Mission 0850 (RFC-0850 §8.6/§9.4): clone the fields needed by
+    /// background tasks spawned in `start_bot` (the download_rx consumer
+    /// task). Does NOT clone `inbound_rx` because the consumer pushes
+    /// via `inbound_tx`, not drains `inbound_rx`. `receive_messages()`
+    /// still holds the original `inbound_rx`.
+    ///
+    /// Type-level least-privilege: the handle exposes only `client` and
+    /// `inbound_tx`, NOT `config` (session path, groups, sender
+    /// allowlist), `bot_handle` (shutdown control), `inbound_rx` (could
+    /// drain messages), `self_phone` / `runtime_groups` (state that
+    /// should not be touched by download tasks).
+    pub(crate) fn clone_for_handler(&self) -> WhatsAppHandlerHandle {
+        WhatsAppHandlerHandle {
+            client: Arc::clone(&self.client),
+            inbound_tx: self.inbound_tx.clone(),
+        }
     }
 
     /// Mission 0850p-a-has-valid-session: returns `true` if a valid
@@ -444,7 +520,12 @@ impl WhatsAppWebAdapter {
             }
         };
 
-        if !text_trimmed.starts_with("DOT/1/") {
+        // Mission 0850 (RFC-0850 §8.6): accept both `DOT/1/{base64}`
+        // (text mode) and `DOT/2/{token}` (native mode) envelopes. The
+        // downstream `on_event` closure dispatches on the prefix to
+        // either push the text bytes directly to `inbound_tx` or push
+        // a `DownloadRequest` to `download_tx` for pre-download.
+        if !text_trimmed.starts_with("DOT/1/") && !text_trimmed.starts_with("DOT/2/") {
             return AcceptDecision::Reject {
                 reason: "not a DOT envelope",
             };
@@ -498,6 +579,63 @@ impl WhatsAppWebAdapter {
         // into the closure so the Event::Connected handler can
         // wake up `wait_for_connected` callers.
         let connected_notify = Arc::clone(&self.connected_notify);
+        // Mission 0850 (RFC-0850 §8.6/§9.4): clone the `download_tx`
+        // Arc BEFORE the `on_event(move ...)` closure so the closure
+        // doesn't have to capture `&self` (the closure must be
+        // `'static`-bound because wacore stores it on the bot).
+        let download_tx = Arc::clone(&self.download_tx);
+
+        // Mission 0850 (RFC-0850 §8.6/§9.4): create the download
+        // request channel HERE (not in `new` — so the receiver has an
+        // immediate owner: the consumer task spawned below). Populate
+        // `self.download_tx` with the sender; the on_event closure
+        // captures an `Arc` clone and pushes `DownloadRequest`s for
+        // any `DOT/2/{token}` envelope it sees.
+        let (download_tx_sender, mut download_rx_receiver) =
+            tokio::sync::mpsc::channel::<DownloadRequest>(64);
+        *self.download_tx.lock().await = Some(download_tx_sender);
+
+        // Spawn the download_rx consumer task. It captures a
+        // least-privilege `WhatsAppHandlerHandle` (client + inbound_tx
+        // only — not config, not bot_handle, not inbound_rx) and exits
+        // cleanly when the channel closes (i.e., when the
+        // `Option<Sender>` in `self.download_tx` is dropped, which
+        // happens when the adapter is shut down).
+        let download_handle = self.clone_for_handler();
+        let inbound_tx_for_consumer = self.inbound_tx.clone();
+        tokio::spawn(async move {
+            while let Some(req) = download_rx_receiver.recv().await {
+                match download_via_media_ref(&download_handle.client, &req.msg_id).await {
+                    Ok(wire_bytes) => {
+                        // R2-M5: tag with `dot_mode = "native"` so
+                        // `canonicalize` knows to skip the text decode
+                        // and pass `wire_bytes` directly to
+                        // `DeterministicEnvelope::from_wire_bytes`.
+                        let raw = RawPlatformMessage {
+                            platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
+                            payload: wire_bytes,
+                            metadata: [
+                                ("chat".to_string(), req.chat),
+                                ("sender".to_string(), req.sender),
+                                ("dot_mode".to_string(), "native".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        };
+                        if let Err(e) = inbound_tx_for_consumer.try_send(raw) {
+                            tracing::warn!("inbound channel full or closed: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        // R1-H4: error message is redacted — no
+                        // `media_key` or `direct_path` from `req.msg_id`
+                        // propagates to the log.
+                        tracing::warn!("DOT/2/ download failed: {e}");
+                    }
+                }
+            }
+            tracing::debug!("download_rx consumer task exiting (channel closed)");
+        });
 
         // Build the bot
         let mut builder = whatsapp_rust::bot::Bot::builder()
@@ -517,6 +655,14 @@ impl WhatsAppWebAdapter {
                 let runtime_groups = Arc::clone(&runtime_groups);
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
+                // `download_tx` is cloned in the outer scope (above
+                // the `on_event(move |...| { ... })` closure) so the
+                // closure doesn't need to capture `&self` and can
+                // satisfy the `'static` bound required by wacore.
+                // Clone it once more here (cheap: `Arc::clone`) so
+                // the inner `async move` can take ownership of its
+                // own copy without moving out of the outer closure.
+                let download_tx = Arc::clone(&download_tx);
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
@@ -569,12 +715,59 @@ impl WhatsAppWebAdapter {
                                 return;
                             }
 
+                            // Mission 0850: dispatch on the wire-format
+                            // prefix. `DOT/1/{base64}` is the existing
+                            // text path — push the raw bytes to
+                            // `inbound_tx` with `dot_mode = "text"`.
+                            // `DOT/2/{token}` is the new native path —
+                            // decode the token, push a `DownloadRequest`
+                            // to `download_tx` (the consumer task does
+                            // the actual `Client::download` async call
+                            // and pushes the decrypted wire bytes back
+                            // to `inbound_tx` with `dot_mode =
+                            // "native"`).
+                            if let Some(token) = decode_native_ref(&text) {
+                                let req = DownloadRequest {
+                                    msg_id: token.to_string(),
+                                    chat: chat.clone(),
+                                    sender: sender.clone(),
+                                };
+                                // Lock briefly, `try_send`, drop the
+                                // guard. If `download_tx` is `None`
+                                // (consumer task not yet spawned),
+                                // `try_send` returns `Closed(_)` and we
+                                // silently drop the request — better
+                                // than panicking in the on-event
+                                // closure.
+                                let tx_guard = download_tx.lock().await;
+                                if let Some(tx) = tx_guard.as_ref() {
+                                    if let Err(e) = tx.try_send(req) {
+                                        tracing::warn!(
+                                            "download_tx channel full or closed: {e}"
+                                        );
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "DOT/2/ received before download_rx consumer started; dropping"
+                                    );
+                                }
+                                return;
+                            }
+
+                            // DOT/1/{base64} text path — push raw bytes.
+                            // R4-L2: tag with `dot_mode = "text"` for
+                            // the `canonicalize` discriminator (also
+                            // serves as an explicit contract — missing
+                            // key defaults to text, but the explicit
+                            // tag pins the contract for future
+                            // readers).
                             let raw = RawPlatformMessage {
                                 platform_id: format!("{}:{}", chat, uuid::Uuid::new_v4()),
                                 payload: text.into_bytes(),
                                 metadata: [
                                     ("chat".to_string(), chat),
                                     ("sender".to_string(), sender),
+                                    ("dot_mode".to_string(), "text".to_string()),
                                 ]
                                 .into_iter()
                                 .collect(),
@@ -1259,6 +1452,85 @@ impl WhatsAppWebAdapter {
     }
 }
 
+// ── Media helpers (Mission 0850) ───────────────────────────────────
+
+/// Mission 0850 (RFC-0850 §8.6/§9.4): shared `download_via_media_ref`
+/// helper called by BOTH [`WhatsAppWebAdapter::download_media`] (the
+/// trait method) and the `download_rx` consumer task spawned in
+/// `start_bot`. Decodes the `MediaRef` wire token from a
+/// `DOT/2/{token}` envelope and calls the wacore `Client::download`
+/// API directly.
+///
+/// R1-H4 fix: all error paths return `PlatformAdapterError` variants
+/// whose `Display` impls do NOT include the `media_key`, `direct_path`,
+/// or any other `MediaRef` field. The mapping is:
+/// - `MediaRefError::Base64` / `MediaRefError::Json(_)`
+///   → `ApiError { code: 400, message: "invalid media ref format" }`
+///   (4xx-shaped — malformed wire format; gateway refuses the envelope
+///   rather than retrying indefinitely)
+/// - `wacore::Error::HashMismatch` (raised by `Client::download` when
+///   `file_enc_sha256` fails verification) → `Unreachable` (transient
+///   CDN/auth failure; gateway may retry)
+/// - `Client::download` not-connected → `Unreachable { reason: "client
+///   not connected" }` (matches `upload_media`'s precondition)
+pub(crate) async fn download_via_media_ref(
+    client: &Arc<parking_lot::Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    media_ref_token: &str,
+) -> Result<Vec<u8>, PlatformAdapterError> {
+    let media_ref = decode_base64url(media_ref_token).map_err(|_| PlatformAdapterError::ApiError {
+        code: 400,
+        message: MediaRefError::to_string(&MediaRefError::Base64),
+    })?;
+    let doc = media_ref.to_document_message();
+    // Clone the `Arc<Client>` out of the parking_lot guard before
+    // awaiting — `whatsapp_rust::Client` is `!Send` (it contains FFI
+    // pointers via `*mut ()`), so holding the guard across the await
+    // would break the `async_trait` `Send` bound on the trait method.
+    let client = {
+        let guard = client.lock();
+        guard.as_ref().cloned().ok_or_else(|| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        })?
+    };
+    // The blanket `impl_downloadable!` at `wacore/src/download.rs`
+    // provides `&DocumentMessage: &dyn Downloadable` (MediaType::Document).
+    client
+        .download(&doc)
+        .await
+        .map_err(|e| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: format!("download failed: {e}"),
+        })
+}
+
+/// Mission 0850: shared `upload_to_cdn` helper used by both
+/// `WhatsAppWebAdapter::upload_media` and `send_envelope`'s native
+/// branch. Returns the `UploadResponse` on success. Caller is
+/// responsible for the `MediaRef::encode_base64url(&response)` step.
+async fn upload_to_cdn(
+    client: &Arc<parking_lot::Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    data: Vec<u8>,
+    media_type: MediaType,
+    options: UploadOptions,
+) -> Result<UploadResponse, PlatformAdapterError> {
+    // Clone the `Arc<Client>` out of the parking_lot guard before
+    // awaiting (see `download_via_media_ref` for the `!Send` reason).
+    let client = {
+        let guard = client.lock();
+        guard.as_ref().cloned().ok_or_else(|| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        })?
+    };
+    client.upload(data, media_type, options).await.map_err(|e| {
+        PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: format!("upload failed: {e}"),
+        }
+    })
+}
+
 // ── PlatformAdapter ────────────────────────────────────────────────
 
 #[async_trait]
@@ -1309,19 +1581,53 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             .parse()
             .map_err(|e| transport_err(format!("Invalid JID {jid}: {e}")))?;
 
-        let outgoing = waproto::whatsapp::Message {
-            conversation: Some(encoded),
-            ..Default::default()
-        };
+        // Mission 0850 (RFC-0850 §8.6): mode-dispatch via
+        // `select_mode_with_max_text`. The adapter owns mode
+        // selection (no production caller of `select_mode*` exists
+        // outside this crate as of `next`). WhatsApp's text-message
+        // ceiling is 65 KB (RFC-0850 line 202 + line 785); using the
+        // RFC default 4 KB would route envelopes >4 KB to native mode
+        // unnecessarily.
+        let caps = self.capabilities();
+        let mode = select_mode_with_max_text(encoded.len(), &caps, 65_536)
+            .map_err(|e| PlatformAdapterError::PayloadTooLarge {
+                size: encoded.len(),
+                max: e.max_payload,
+                platform: "whatsapp".into(),
+            })?;
 
-        let send_result = Box::pin(client.send_message(to, outgoing))
-            .await
-            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
-
-        Ok(DeliveryReceipt {
-            platform_message_id: send_result.message_id,
-            delivered_at: epoch_millis(),
-        })
+        match mode {
+            TransportMode::Text => self.send_envelope_text(&client, &to, &encoded).await,
+            TransportMode::Native => {
+                // Try native upload + send a text message carrying
+                // the `DOT/2/{token}` wire reference. Per RFC-0850
+                // §8.6 + §9.4 MUST-fallback: if the native upload
+                // fails AND the payload still fits in a text message
+                // (<= 65 KB), fall back to text mode and log a
+                // warning. If the payload doesn't fit in text mode,
+                // propagate the error (no fallback possible).
+                let encoded_len = encoded.len();
+                match self.send_envelope_native(&client, &to, &encoded).await {
+                    Ok(receipt) => Ok(receipt),
+                    Err(e) if encoded_len <= 65_536 && matches!(e, PlatformAdapterError::Unreachable { .. }) => {
+                        tracing::warn!(
+                            "native upload failed, falling back to DOT/1/ text mode (RFC-0850 §8.6/§9.4): {e:?}"
+                        );
+                        self.send_envelope_text(&client, &to, &encoded).await
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            // `supports_raw_binary: false` and
+            // `supports_fragmentation: false` in `capabilities()`
+            // make Raw/Fragment unreachable. If the capabilities ever
+            // change, surface that as an explicit error rather than
+            // silently sending the wrong shape.
+            TransportMode::Raw | TransportMode::Fragment => Err(PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("{mode:?} mode is not supported by this adapter"),
+            }),
+        }
     }
 
     async fn receive_messages(
@@ -1347,15 +1653,26 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             return Err(transport_err("Empty payload"));
         }
 
-        // Extract text from payload bytes
-        let text = String::from_utf8_lossy(&raw.payload);
-
-        // Decode DOT/1/ envelope
-        let wire_bytes =
-            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {e}"),
-            })?;
+        // R2-M5 fix: dispatch on `metadata["dot_mode"]` (NOT payload
+        // sniffing, which is fragile to future wire-format changes).
+        // - `dot_mode == "native"` → payload is already wire bytes
+        //   (decrypted by the download_rx consumer task); pass
+        //   through `DeterministicEnvelope::from_wire_bytes` directly.
+        // - `dot_mode == "text"` OR missing → legacy DOT/1/ text path;
+        //   `decode_envelope` strips the `DOT/1/{base64}` prefix and
+        //   base64-decodes to wire bytes.
+        let dot_mode = raw.metadata.get("dot_mode").map(String::as_str);
+        let wire_bytes = match dot_mode {
+            Some("native") => raw.payload.clone(),
+            _ => {
+                // Legacy text path: extract text + decode envelope.
+                let text = String::from_utf8_lossy(&raw.payload);
+                Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {e}"),
+                })?
+            }
+        };
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -1372,8 +1689,55 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             supports_encryption: true, // Signal Protocol via whatsapp-rust
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
-            media_capabilities: None,
+            // Mission 0850 (RFC-0850 §8.6): declare native media
+            // transport. `max_upload_bytes` is the WhatsApp server-side
+            // `Document` ceiling (100 MiB) per public WhatsApp
+            // documentation as of 2026-06. The single supported MIME
+            // is `application/octet-stream` because `MediaType::Document`
+            // is the only `wacore::download::MediaType` that stores
+            // arbitrary opaque blobs (Image/Video/Audio re-encode;
+            // AppState/History/StickerPack/... have app-specific shapes).
+            media_capabilities: Some(MediaCapabilities {
+                max_upload_bytes: 100 * 1024 * 1024,
+                supported_mime_types: vec!["application/octet-stream".to_string()],
+            }),
         }
+    }
+
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        _mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        // Pre-flight size check (the adapter's only local enforcement
+        // point — `Client::upload` would let WhatsApp's CDN reject with
+        // a less-actionable server-side error).
+        const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+        if data.len() > MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: data.len(),
+                max: MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+        // R5: `_mime_type` is intentionally ignored. WhatsApp's
+        // `Document` channel hardcodes `application/octet-stream`
+        // regardless of the upload MIME. The argument is preserved in
+        // the signature for future extension.
+        let response = upload_to_cdn(&self.client, data.to_vec(), MediaType::Document, UploadOptions::new()).await?;
+        let media_ref = MediaRef::from_upload_response(&response, filename);
+        // The returned `String` is the wire-format token for
+        // `DOT/2/{token}`. Callers that go through `send_envelope`
+        // never see this — the adapter's native-mode branch wraps it
+        // automatically. External callers (other adapters, tests)
+        // receive the raw token and can construct their own
+        // `DocumentMessage` from it.
+        Ok(encode_base64url(&media_ref))
+    }
+
+    async fn download_media(&self, media_ref_token: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        download_via_media_ref(&self.client, media_ref_token).await
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
@@ -1421,6 +1785,85 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         &self,
     ) -> Option<&dyn octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin> {
         Some(self)
+    }
+}
+
+// ── Inherent send_envelope helpers (Mission 0850) ──────────────────
+
+impl WhatsAppWebAdapter {
+    /// Text-mode send path used by [`PlatformAdapter::send_envelope`]
+    /// after `select_mode_with_max_text` returns `TransportMode::Text`.
+    /// Encodes the envelope as `DOT/1/{base64}` and sends via the
+    /// `conversation` field of a `waproto::whatsapp::Message`.
+    async fn send_envelope_text(
+        &self,
+        client: &Arc<whatsapp_rust::Client>,
+        to: &wacore_binary::jid::Jid,
+        encoded: &str,
+    ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+        let outgoing = waproto::whatsapp::Message {
+            conversation: Some(encoded.to_string()),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(to.clone(), outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+        Ok(DeliveryReceipt {
+            platform_message_id: send_result.message_id,
+            delivered_at: epoch_millis(),
+        })
+    }
+
+    /// Mission 0850 (RFC-0850 §8.6): native-mode send path.
+    /// 1. Upload the encoded envelope bytes to WhatsApp's CDN.
+    /// 2. Build a `MediaRef` from the `UploadResponse`.
+    /// 3. Encode the `MediaRef` as base64url-JSON.
+    /// 4. Send a text message with `conversation = "DOT/2/{token}"`.
+    ///
+    /// The receiver reads the `DOT/2/{token}` text, decodes the
+    /// `MediaRef`, and calls `Client::download` to retrieve the
+    /// envelope bytes. We intentionally do NOT send a separate
+    /// `DocumentMessage` — the `DOT/2/{token}` reference IS the
+    /// message on the wire.
+    async fn send_envelope_native(
+        &self,
+        client: &Arc<whatsapp_rust::Client>,
+        to: &wacore_binary::jid::Jid,
+        encoded: &str,
+    ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+        // Pre-flight size check (matches `upload_media`'s contract).
+        const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+        if encoded.len() > MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: encoded.len(),
+                max: MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+
+        // Step 1+2: upload to CDN + build MediaRef.
+        let upload_response = upload_to_cdn(
+            &self.client,
+            encoded.as_bytes().to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
+        let media_ref = MediaRef::from_upload_response(&upload_response, "envelope.bin");
+        // Step 3: encode the wire-format reference.
+        let token = encode_base64url(&media_ref);
+        // Step 4: send the DOT/2/ text message.
+        let outgoing = waproto::whatsapp::Message {
+            conversation: Some(encode_native_ref(&token)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(to.clone(), outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+        Ok(DeliveryReceipt {
+            platform_message_id: send_result.message_id,
+            delivered_at: epoch_millis(),
+        })
     }
 }
 

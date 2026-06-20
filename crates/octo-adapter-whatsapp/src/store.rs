@@ -637,107 +637,65 @@ impl AppSyncStore for StoolapStore {
         // propagates as "database operation error" and aborts the
         // entire critical-sync flow.
         //
-        // R14-H1 audit: the DELETE+INSERT pair is per-iteration
-        // atomic (a crash mid-DELETE+INSERT doesn't leave the row in
-        // a half-deleted state — that's the R13 fix), but is NOT
-        // batch-atomic (a crash mid-batch on iteration 5 of 10
-        // leaves mutations 1-4 in their new state and 5-10 in their
-        // old state, corrupting the ltHash). Two fix attempts were
-        // tried and REVERTED (full rationale is on the loop body
-        // below):
+        // R15 fix (single-statement UPSERT + batch-atomic tx):
+        // replaced the per-iteration DELETE+INSERT with a single
+        // `INSERT ... ON DUPLICATE KEY UPDATE` statement. This is
+        // possible because the two underlying Stoolap bugs that
+        // blocked this approach in R14 are now fixed (commit
+        // `1fc5bc2` on `feat/blockchain-sql`):
         //
-        // 1. Wrapping the whole loop in a single transaction broke
-        //    the R13 idempotency test: the in-memory backend's
-        //    transaction snapshot does not see rows committed by a
-        //    prior transaction when the current transaction does a
-        //    DELETE+INSERT in the same tx (the DELETE doesn't see
-        //    the prior tx's row, the INSERT then raises
-        //    `UniqueConstraint`).
+        // 1. UPSERT on COMPOSITE unique indexes (R14 carve-out).
+        //    Stoolap's `apply_on_duplicate_update` previously
+        //    called `find_row_by_unique_index` with the composite
+        //    column name `"name, index_mac, device_id"` as a single
+        //    column, which didn't exist in the column map, causing
+        //    `Error::UniqueConstraint { value: "unknown" }`. Fixed
+        //    in Stoolap by refactoring `apply_on_duplicate_update`
+        //    to take a pre-built WHERE expression from the unique
+        //    columns + values (no PK dependency). The
+        //    `tests/mission_0850_r14_regression_test.rs` test file
+        //    pins this.
         //
-        // 2. `INSERT ... ON DUPLICATE KEY UPDATE` is broken in
-        //    Stoolap for COMPOSITE unique indexes: the
-        //    `find_row_by_unique_index` lookup
-        //    (`stoolap/src/executor/dml.rs:2328-2373`) uses the
-        //    composite column name `"name, index_mac, device_id"`
-        //    as a single column name, which doesn't exist in
-        //    `schema.column_index_map()`, so it returns `None` and
-        //    the executor falls through to
-        //    `Error::UniqueConstraint { value: "unknown" }`.
+        // 2. Transaction-local DELETE visibility for unique-index
+        //    INSERTs. The in-memory backend's `check_unique_constraints`
+        //    previously queried the committed-state index, which
+        //    didn't see rows locally deleted by the current
+        //    transaction. So wrapping the loop in a single
+        //    transaction caused the DELETE+INSERT pattern to raise
+        //    `UniqueConstraint` on the INSERT (the DELETE's effect
+        //    was invisible to the constraint check). Fixed in
+        //    Stoolap by filtering index entries against
+        //    `txn_versions.get_local_version()` and skipping
+        //    locally-deleted entries.
         //
-        // R14-H1 resolution: CARVE OUT. The partial-batch risk
-        // remains. The crash-mid-batch scenario is rare (the patch
-        // flow is fast and the file is small), and the failure is
-        // recoverable: the next patch will re-set the missing
-        // mutations, and the ltHash will eventually converge. A
-        // true fix requires either (a) a single-statement UPSERT
-        // (broken in Stoolap for composite unique indexes) or (b)
-        // a working cross-iteration transaction (broken in
-        // Stoolap's in-memory backend). Track in R15.
+        // With both fixes, we can:
+        // - Replace DELETE-then-INSERT with a single UPSERT (one
+        //   statement, no per-iteration tx overhead).
+        // - Wrap the whole batch in a single transaction so a crash
+        //   mid-batch doesn't leave mutations 1-4 in their new
+        //   state and 5-10 in their old state (the R14-H1 carve-out
+        //   is now closed). This matches the in-memory reference
+        //   (`wacore/src/store/in_memory.rs:315` — wraps in
+        //   `state.lock().await`) and the SQLite reference
+        //   (`storages/sqlite-storage/src/sqlite_store.rs:1127-1142`
+        //   — `with_retry` + `on_conflict do update`).
         //
-        // The in-memory reference wraps the whole loop in a single
-        // `state.lock().await` (`wacore/src/store/in_memory.rs:315`)
-        // and the SQLite reference uses `with_retry` (a single
-        // transaction) with `on_conflict do update` for idempotency
-        // (`storages/sqlite-storage/src/sqlite_store.rs:1127-1142`).
+        // The single-statement UPSERT is now both per-iteration
+        // atomic (one statement) AND batch-atomic (one
+        // transaction), restoring parity with the in-memory and
+        // SQLite reference implementations.
         if mutations.is_empty() {
             return Ok(());
         }
-        // R13-M1 fix: DELETE+INSERT pair per mutation keeps each
-        // iteration atomic (a crash mid-DELETE+INSERT doesn't leave
-        // the row in a half-deleted state).
-        //
-        // R14-H1 audit: this loop is NOT batch-atomic — a crash
-        // mid-batch (e.g., on iteration 5 of 10) leaves mutations
-        // 1-4 in their new state and 5-10 in their old state,
-        // corrupting the ltHash. This is the SAME issue that the
-        // R13 fix had (per-iteration atomicity, not batch
-        // atomicity). The R14 audit flagged it as a separate
-        // finding.
-        //
-        // R14-H1 fix attempt: wrapping the whole loop in a single
-        // transaction (via `self.db.begin()`) was tried and
-        // REVERTED. The in-memory backend's transaction snapshot
-        // does not see rows committed by a prior transaction when
-        // the current transaction does a DELETE+INSERT in the same
-        // tx (the DELETE doesn't see the prior tx's row, the INSERT
-        // then raises `UniqueConstraint`). This was pinned by the
-        // R13 idempotency test `put_mutation_macs_is_idempotent_on_overwrite`,
-        // which started failing on the tx-wrapped version.
-        //
-        // R14-H1 fix attempt 2: `INSERT ... ON DUPLICATE KEY UPDATE`
-        // was tried and REVERTED. Stoolap's `apply_on_duplicate_update`
-        // path (dml.rs:2210-2280) calls `find_row_by_unique_index`
-        // (dml.rs:2328) to look up the conflicting row by the unique
-        // index columns. For a COMPOSITE unique index like
-        // `UNIQUE (name, index_mac, device_id)`, the lookup uses
-        // the composite column name `"name, index_mac, device_id"`
-        // as a single column name, which doesn't exist in
-        // `schema.column_index_map()`, so it returns `None` and the
-        // executor falls through to `Error::UniqueConstraint { value: "unknown" }`.
-        // This is a stoolap bug; the adapter cannot work around it.
-        //
-        // R14-H1 resolution: CARVE OUT. The partial-batch risk
-        // remains. The crash-mid-batch scenario is rare (the patch
-        // flow is fast and the file is small), and the failure is
-        // recoverable: the next patch will re-set the missing
-        // mutations, and the ltHash will eventually converge. A
-        // true fix requires either (a) a single-statement UPSERT
-        // (broken in stoolap for composite unique indexes) or (b)
-        // a working cross-iteration transaction (broken in
-        // stoolap's in-memory backend). Track in R15.
+        let mut tx = self.db.begin().map_err(to_store_err)?;
         for m in mutations {
-            exec(
-                &self.db,
-                "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                vec![
-                    name.to_string().into(),
-                    stoolap::core::Value::blob(m.index_mac.clone()),
-                    (self.device_id as i64).into(),
-                ],
-            )?;
-            exec(
-                &self.db,
-                "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id) VALUES ($1, $2, $3, $4, $5)",
+            exec_tx(
+                &mut tx,
+                "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON DUPLICATE KEY UPDATE
+                     version = $2,
+                     value_mac = $4",
                 vec![
                     name.to_string().into(),
                     (version as i64).into(),
@@ -747,7 +705,7 @@ impl AppSyncStore for StoolapStore {
                 ],
             )?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_mutation_mac(
@@ -1645,7 +1603,16 @@ mod tests {
         // index_mac is a real case). The UNIQUE(name, index_mac,
         // device_id) constraint would reject a plain INSERT, aborting
         // the whole critical-sync with a "database operation error".
-        // The fix is DELETE-then-INSERT; pin it.
+        //
+        // R15 update: the fix is now a single-statement UPSERT
+        // (`INSERT ... ON DUPLICATE KEY UPDATE`) instead of
+        // DELETE-then-INSERT. This requires two underlying Stoolap
+        // bugs to be fixed (composite-unique UPSERT support and
+        // tx-local delete visibility), both of which landed in
+        // stoolap commit `1fc5bc2`. The functional behavior is the
+        // same — overwriting an existing row is allowed and updates
+        // the value_mac — but it's now one statement and one tx
+        // instead of two statements per iteration.
         let store = StoolapStore::new_in_memory().unwrap();
         let index_mac: Vec<u8> = (0u8..32).collect();
         let first = wacore::appstate::processor::AppStateMutationMAC {
@@ -1664,7 +1631,7 @@ mod tests {
             .put_mutation_macs("critical_block", 2, &[second])
             .await
             .expect(
-                "second put_mutation_macs with same index_mac must succeed (DELETE-then-INSERT)",
+                "second put_mutation_macs with same index_mac must succeed (UPSERT)",
             );
         let got = store
             .get_mutation_mac("critical_block", &index_mac)
@@ -1723,17 +1690,22 @@ mod tests {
     #[tokio::test]
     async fn put_mutation_macs_batch_inserts_all_and_overwrites() {
         // R14-H1 audit test: the DELETE+INSERT loop in
-        // `put_mutation_macs` is per-iteration atomic (R13 fix) but
+        // `put_mutation_macs` was per-iteration atomic (R13 fix) but
         // NOT batch-atomic. This test pins the per-iteration
         // atomicity for a 10-entry batch: every entry must be
         // present after the call returns (no partial-batch loss),
         // and a second call with the same index_macs but different
         // value_macs must overwrite (not duplicate) every entry.
-        // The batch-atomicity guarantee is CARVED OUT (see the
-        // function's R14-H1 doc-comment): a crash mid-batch can
-        // still leave mutations 1-4 in their new state and 5-10 in
-        // their old state, but no in-process failure path (the only
-        // thing the test exercises) can leave a partial-batch state.
+        // The batch-atomicity guarantee was CARVED OUT in R14 (see
+        // the function's R14-H1 doc-comment at that revision).
+        //
+        // R15 update: the carve-out is now CLOSED. `put_mutation_macs`
+        // is now a single-statement UPSERT (`INSERT ... ON DUPLICATE
+        // KEY UPDATE`) wrapped in a single transaction. Both
+        // per-iteration atomicity AND batch-atomicity are guaranteed.
+        // This test still pins per-iteration atomicity (10 entries
+        // must all be present after a single call), so it remains
+        // useful as a regression test for the R13 idempotency fix.
         use wacore::store::traits::AppSyncStore;
         let store = StoolapStore::new_in_memory().unwrap();
         let batch: Vec<wacore::appstate::processor::AppStateMutationMAC> = (0u8..10)

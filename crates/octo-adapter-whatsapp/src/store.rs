@@ -1630,9 +1630,7 @@ mod tests {
         store
             .put_mutation_macs("critical_block", 2, &[second])
             .await
-            .expect(
-                "second put_mutation_macs with same index_mac must succeed (UPSERT)",
-            );
+            .expect("second put_mutation_macs with same index_mac must succeed (UPSERT)");
         let got = store
             .get_mutation_mac("critical_block", &index_mac)
             .await

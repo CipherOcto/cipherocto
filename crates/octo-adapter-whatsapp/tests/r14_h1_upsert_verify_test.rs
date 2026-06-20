@@ -88,7 +88,11 @@ fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {
             ],
         )
         .expect("query should succeed");
-    assert_eq!(value_mac, vec![0x22; 32], "value_mac should be updated to 0x22");
+    assert_eq!(
+        value_mac,
+        vec![0x22; 32],
+        "value_mac should be updated to 0x22"
+    );
 }
 
 #[test]

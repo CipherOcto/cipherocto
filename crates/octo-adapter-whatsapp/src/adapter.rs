@@ -906,6 +906,32 @@ impl WhatsAppWebAdapter {
             *self.client.lock() = None;
             *self.bot_handle.lock() = None;
 
+            // R11-M1 fix: drain the inbound channel of any messages
+            // buffered from the OLD (logged-out) connection. Without
+            // this, the next `receive_messages()` call would return
+            // a mix of OLD-session messages (which may reference
+            // CDN-side resources from a logged-out device) and
+            // NEW-session messages from the reconnected device. The
+            // gateway would have no way to tell them apart (they
+            // share the same `RawPlatformMessage` shape). Draining
+            // is a hard cut at the channel boundary; a future
+            // enhancement could tag each `RawPlatformMessage` with
+            // a connection epoch in `metadata` and filter on the
+            // consumer side for finer control.
+            let drained = {
+                let mut rx = self.inbound_rx.lock();
+                let mut count = 0;
+                while rx.try_recv().is_ok() {
+                    count += 1;
+                }
+                count
+            };
+            if drained > 0 {
+                tracing::info!(
+                    "reconnect: drained {drained} stale inbound messages from previous connection"
+                );
+            }
+
             // Attempt restart
             match self.start_bot().await {
                 Ok(()) => {
@@ -1914,6 +1940,20 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             h.abort();
             let _ = h.await;
         }
+
+        // R11-H2 fix: drop the `download_tx` Sender so the
+        // `download_rx_consumer` task spawned in `start_bot` (line 651)
+        // sees its `recv()` return `None` and exits cleanly. Without
+        // this, the Sender is held in the field even after the bot
+        // is aborted, the channel never closes, and the consumer
+        // task is leaked (it lives forever, blocked on `recv().await`).
+        // The reconnect path doesn't have this problem because
+        // `start_bot` replaces the Sender (line 633) — the old Sender
+        // is dropped, the old channel closes, the old consumer
+        // task exits. But the FIRST `shutdown` has no follow-up
+        // `start_bot` to trigger the replacement, so we must drop
+        // the Sender explicitly here.
+        *self.download_tx.lock().await = None;
 
         // Clear client
         *self.client.lock() = None;

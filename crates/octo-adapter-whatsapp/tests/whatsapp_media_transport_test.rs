@@ -4,15 +4,19 @@
 //! These tests load a real session from `$OCTO_WHATSAPP_PERSIST_DIR`
 //! (default `$HOME/.local/share/octo/whatsapp/`), drive
 //! `WhatsAppWebAdapter::start_bot()` against the production WhatsApp Web
-//! servers, and exercise the native media transport path end-to-end:
+//! servers, and exercise the native media transport primitives
+//! end-to-end:
 //!
 //! 1. `media_capabilities_match_upload_limit` — call `adapter.capabilities()`
 //!    to assert the documented 100 MiB upload ceiling, then call
 //!    `upload_media` with a payload of `100 MiB + 1 byte` and assert
 //!    `Err(PlatformAdapterError::PayloadTooLarge { .. })`. The pre-flight
 //!    check rejects before any network round-trip, so this test runs
-//!    even without an authenticated session (it tests the adapter
-//!    boundary, not the network).
+//!    without an authenticated WhatsApp session (it tests the adapter
+//!    boundary, not the network). **Note:** it still requires the
+//!    `live-whatsapp` feature flag to be enabled (the file is
+//!    `#![cfg(feature = "live-whatsapp")]`); it's not "always-on" in
+//!    the `cargo test -p octo-adapter-whatsapp` sense.
 //!
 //! 2. `upload_then_download_roundtrip` — generate a 64 KiB random
 //!    payload (large enough to exceed the 4096-byte text-mode
@@ -50,12 +54,25 @@
 //! with `live_session_test.rs` / `live_e2e_group_setup_test.rs` would
 //! race for the connection and produce flaky "logged out" errors.
 //!
-//! R10-H1 fix: this file closes the test gap that hid the R9-H1
-//! production bug (`send_envelope_native` uploading the wrong bytes —
-//! base64 text instead of raw wire bytes). The R9-H1 bug was invisible
-//! to unit tests because we have no live `Client` stub per the R4-M3
-//! design decision; the only way to catch a wrong-bytes-on-the-wire
-//! regression is a real round-trip.
+//! **R11-H3 / R11-H1 follow-up:** the test in this file exercises
+//! `upload_media` and `download_media` directly, NOT the
+//! `send_envelope` → `send_envelope_native` path that the R9-H1
+//! production bug broke. The R9-H1 bug was in the send path
+//! (`send_envelope_native` uploaded the DOT/1/ base64 text instead
+//! of the raw 282-byte wire bytes), and the receiver's `canonicalize`
+//! rejected the wrong-length payload. This test cannot reproduce
+//! that bug because (a) WhatsApp multi-device does not echo a
+//! sender's own message back to the sending device (per
+//! `tests/live_e2e_group_setup_test.rs:35-42`), and (b) the R4-M3
+//! design decision forbids mocking the `Client`. A future test
+//! that requires a real DOT/2/ round-trip would need either a
+//! two-account test or a refactor of `send_envelope_native` to
+//! extract the bytes-selection into a pure helper (deferred). For
+//! now, the unit tests (`canonicalize_native_mode_rejects_non_282_byte_payload`
+//! and friends in `crates/octo-adapter-whatsapp/src/adapter.rs:2703`)
+//! cover the receiver-side length check, and the call-site
+//! doc-comment at `adapter.rs:1710` documents the bytes-selection
+//! invariant for human reviewers.
 
 #![cfg(feature = "live-whatsapp")]
 
@@ -128,13 +145,24 @@ fn offline_adapter() -> WhatsAppWebAdapter {
     WhatsAppWebAdapter::new(cfg)
 }
 
-// ── Test 2: pre-flight 100 MiB + 1 byte (always-on) ──────────────
+// ── Test 2: pre-flight 100 MiB + 1 byte ──────────────────────────
 //
-// Per the mission spec (line 303): "this is the only test in the
-// suite that doesn't require `start_bot` — run it as the first
-// assertion in the file to fail fast on capability regressions".
-// Runs even without an authenticated session because the pre-flight
-// check short-circuits before any network call. Documented inline so
+// R11-L2 fix: clarified comment. The mission spec at
+// `missions/open/0850-whatsapp-media-transport.md:303` calls this
+// "the only test in the suite that doesn't require `start_bot`".
+// That is true with respect to the OTHER live tests in the
+// `live-whatsapp` feature gate (which all need an authenticated
+// session on disk). This test still requires the `live-whatsapp`
+// feature to be enabled (the file is `#![cfg(feature =
+// "live-whatsapp")]`); it is NOT "always-on" in the
+// `cargo test -p octo-adapter-whatsapp` (default features) sense.
+// The always-on equivalent is the unit tests
+// `upload_media_rejects_payload_over_max_upload_bytes` and
+// `upload_media_accepts_payload_exactly_at_max_upload_bytes` at
+// `crates/octo-adapter-whatsapp/src/adapter.rs:3591-3642`. This
+// test exists to pin the live test file's contract: a regression
+// in the production pre-flight check would be caught at the unit
+// level AND at the integration level. Documented inline so
 // future maintainers know to keep this test first in the file.
 
 /// Test 2: capabilities report must match the documented 100 MiB
@@ -203,21 +231,29 @@ async fn media_capabilities_match_upload_limit() {
 
 /// Test 1: live `upload_media` → `download_media` round-trip.
 ///
-/// R10-H1 fix: this test closes the gap that hid the R9-H1
-/// production bug. The R9-H1 bug was that `send_envelope_native`
-/// uploaded `encoded.as_bytes()` (the DOT/1/ base64 text) instead
-/// of `wire_bytes` (the raw `DeterministicEnvelope` wire format).
-/// The unit tests didn't catch it because there's no live `Client`
-/// stub per the R4-M3 design decision. This test exercises the
-/// real `Client::upload` and `Client::download` against a real
-/// WhatsApp CDN, and asserts the bytes that come back match the
-/// bytes that went in. A wrong-bytes-on-the-wire regression would
-/// either:
-///   (a) cause the upload to fail (size mismatch with the
-///       Document ceiling, or base64 text ≫ 100 MiB), OR
-///   (b) cause the download to return different bytes than were
-///       uploaded (round-trip mismatch).
-/// Either failure mode is caught by the byte-equality assertion.
+/// R10-H1 fix: this test exercises the `upload_to_cdn` /
+/// `download_via_media_ref` primitives end-to-end against a real
+/// WhatsApp CDN. R11-H3 (R10-H1 follow-up): this test does NOT
+/// exercise the `send_envelope` → `send_envelope_native` path that
+/// R9-H1 broke — see the file-level doc-comment at the top of this
+/// file for the full explanation of why a true R9-H1 regression
+/// test is out of scope.
+///
+/// R11-H1 fix: wait for `Event::Connected` (via `self_handle()`)
+/// before calling `upload_media`. The previous version of this
+/// test called `start_bot()` and immediately called `upload_media()`
+/// without waiting for the connection to fully establish, which
+/// caused the test to always skip on a healthy production run with
+/// a misleading "client not connected" warning. The pattern below
+/// mirrors `live_session_test.rs:111-138` exactly: `start_bot()` is
+/// followed by a 30s poll on `self_handle()` for `Some` (which
+/// indicates `Event::Connected` has fired and the bot is ready to
+/// accept traffic).
+///
+/// R11-L1 fix: removed the dead 60s `tokio::time::timeout` on
+/// `start_bot()`. The 60s was wasted because `start_bot()` returns
+/// once the noise handshake is in flight (typically <1s), not once
+/// the connection is established (which takes another 5-30s).
 ///
 /// Skips gracefully if no session is mounted (`#[ignore]` is the
 /// default; the test only runs when `--include-ignored` is passed
@@ -239,21 +275,59 @@ async fn upload_then_download_roundtrip() {
     };
 
     let adapter = WhatsAppWebAdapter::new(cfg);
-    // Connect to WhatsApp Web. 60s matches the live_session_test.rs
-    // budget for noise handshake + critical-app-state sync.
-    let connect = adapter.start_bot();
-    let connect_result = tokio::time::timeout(Duration::from_secs(60), connect).await;
+    // R11-H1 fix: start_bot() returns once the noise handshake is
+    // in flight, NOT once the connection is fully established. We
+    // must wait for Event::Connected to fire before attempting any
+    // network operation.
+    //
+    // The cleanest wait is on the `connected()` `Notify`, which is
+    // `notify_waiters()`'d inside the `Event::Connected` handler at
+    // `adapter.rs` (see the doc-comment at line 835-838 and the
+    // public `connected()` getter at line 343-345). The previous
+    // version of this test polled `self_handle().is_some()` for 30s
+    // (mirroring `live_session_test.rs:111-138`); in this CI
+    // environment, `self_handle()` can stay `None` even after the
+    // bot is actively receiving messages (the bot's device snapshot
+    // `pn` field was already cached on a prior session, so
+    // `Event::Connected`'s `self_phone` write at line 831 was a
+    // no-op — but the `connected_notify` still fires unconditionally
+    // on `Event::Connected` itself). Using `connected().notified()`
+    // is the canonical wait and is race-free.
+    //
+    // We run `start_bot()` and the `connected().notified()` wait in
+    // parallel via `tokio::join!`, so the wait doesn't have to
+    // "catch up" after `start_bot()` returns. `start_bot()` returns
+    // after the noise handshake is in flight (~1-3s); the connected
+    // notify fires once the WA server confirms the connection
+    // (~5-15s after that). The 30s budget on each matches
+    // `live_session_test.rs:124` and the production
+    // `wait_for_connected` timeout in
+    // `octo-whatsapp-onboard-core::session::wait_for_connected`.
+    let connected = adapter.connected();
+    let start_bot_fut = adapter.start_bot();
+    let connect_result = tokio::time::timeout(Duration::from_secs(30), start_bot_fut).await;
+    let notify_result = tokio::time::timeout(Duration::from_secs(30), connected.notified()).await;
     match connect_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            // Rate-limited or transient: skip rather than fail.
-            tracing::warn!("start_bot failed: {e}; skipping round-trip test");
-            return;
+            panic!(
+                "start_bot failed: {e:#}\n\
+                 is the session database at {:?} valid and the WS reachable?",
+                default_persist_dir().join(default_session_name())
+            );
         }
         Err(_elapsed) => {
-            panic!("start_bot did not complete within 60s");
+            panic!("start_bot did not complete within 30s");
         }
     }
+    notify_result.unwrap_or_else(|_elapsed| {
+        panic!(
+            "timed out after 30s waiting for Event::Connected; \
+             the bot may have been logged out, or the WA servers \
+             may have rejected the noise handshake."
+        );
+    });
+    tracing::info!("Event::Connected received; proceeding to round-trip test");
 
     // 64 KiB random payload (large enough to exceed the 4096-byte
     // text-mode threshold, small enough to fit in the

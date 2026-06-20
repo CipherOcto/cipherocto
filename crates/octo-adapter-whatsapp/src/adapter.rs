@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use octo_network::dot::adapters::{
@@ -180,12 +181,26 @@ fn is_e164(phone: &str) -> bool {
     true
 }
 
-// ── Reconnect constants ────────────────────────────────────────────
+// ── Reconnect constants (R12-H1 follow-up) ────────────────────────
+//
+// R12-H1 fix: the reconnect logic in `run_reconnect_loop` was removed
+// because the wacore library handles reconnection internally (see
+// `wacore/src/client.rs:1102` — `Client::run` is a `while
+// self.is_running` loop that retries forever). The retry-related
+// constants and `compute_retry_delay` helper are no longer referenced
+// from production code; kept here for now in case a future round
+// reintroduces a reconnect path that doesn't rely on wacore's
+// internal loop. If no such round materializes, these can be removed
+// in a follow-up cleanup.
 
+#[allow(dead_code)]
 const MAX_RETRIES: u32 = 10;
+#[allow(dead_code)]
 const BASE_DELAY_SECS: u64 = 3;
+#[allow(dead_code)]
 const MAX_DELAY_SECS: u64 = 300;
 
+#[allow(dead_code)]
 fn compute_retry_delay(attempt: u32) -> u64 {
     std::cmp::min(
         BASE_DELAY_SECS.saturating_mul(2u64.saturating_pow(attempt.saturating_sub(1))),
@@ -269,6 +284,17 @@ pub struct WhatsAppWebAdapter {
     /// `new`; populated in `start_bot` (so the receiver has an
     /// immediate owner — the consumer task).
     download_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DownloadRequest>>>>,
+    /// R12-M1 fix: monotonic counter of inbound messages that were
+    /// accepted by `accept_message` (and thus passed the security
+    /// filter) but then dropped because the inbound channel was full
+    /// (`try_send` returned `Err(TrySendError::Full(_))`). Previously
+    /// these drops were silent — only a `tracing::warn!` log
+    /// signaled them, with no operator-visible counter. A burst of
+    /// messages could exhaust the channel and silently lose envelopes
+    /// with no way for the gateway to know. The counter is exposed via
+    /// [`WhatsAppWebAdapter::dropped_inbound_messages`] for
+    /// observability. Resetting it requires recreating the adapter.
+    dropped_inbound_count: Arc<AtomicU64>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
@@ -310,6 +336,14 @@ pub(crate) struct DownloadRequest {
 pub(crate) struct WhatsAppHandlerHandle {
     pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
     pub(crate) inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
+    /// R12-M1 fix: shared dropped-message counter. The
+    /// download_rx_consumer task captures a clone of this `Arc` and
+    /// increments the counter when its `try_send` to `inbound_tx`
+    /// fails (channel full or closed). The on_event closure captures
+    /// the SAME `Arc` and increments the same counter on its
+    /// `try_send` failure. The counter is exposed via
+    /// [`WhatsAppWebAdapter::dropped_inbound_messages`].
+    pub(crate) dropped_inbound_count: Arc<AtomicU64>,
 }
 
 impl WhatsAppWebAdapter {
@@ -333,6 +367,10 @@ impl WhatsAppWebAdapter {
             // it. The channel is created INSIDE start_bot (not here) so
             // the receiver has an immediate owner — the consumer task.
             download_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            // R12-M1 fix: dropped-message counter starts at 0. The
+            // counter is incremented inside the on_event closure and
+            // the download_rx_consumer task on `try_send` failure.
+            dropped_inbound_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -342,6 +380,26 @@ impl WhatsAppWebAdapter {
     /// the same underlying `Notify`.
     pub fn connected(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.connected_notify)
+    }
+
+    /// R12-M1 fix: returns the cumulative number of inbound
+    /// messages that passed `accept_message` (and thus the security
+    /// filter) but were then dropped because the inbound channel was
+    /// full (`try_send` returned `Err(TrySendError::Full(_))`).
+    ///
+    /// Operators should monitor this counter alongside
+    /// `receive_messages()` throughput. A monotonically increasing
+    /// value indicates the gateway is consuming inbound messages
+    /// slower than WhatsApp is delivering them — the 1024-deep
+    /// inbound channel is the backpressure boundary.
+    ///
+    /// The counter is monotonic; it never decreases. To reset it,
+    /// recreate the adapter. The counter is incremented from both
+    /// the on_event closure (DOT/1/ text path) and the
+    /// download_rx_consumer task (DOT/2/ native path), so it covers
+    /// all inbound delivery channels.
+    pub fn dropped_inbound_messages(&self) -> u64 {
+        self.dropped_inbound_count.load(Ordering::Relaxed)
     }
 
     /// Mission 0850 (RFC-0850 §8.6/§9.4): clone the fields needed by
@@ -359,6 +417,10 @@ impl WhatsAppWebAdapter {
         WhatsAppHandlerHandle {
             client: Arc::clone(&self.client),
             inbound_tx: self.inbound_tx.clone(),
+            // R12-M1 fix: share the dropped-message counter with the
+            // handler handle so the download_rx_consumer task and the
+            // on_event closure can both increment it.
+            dropped_inbound_count: Arc::clone(&self.dropped_inbound_count),
         }
     }
 
@@ -587,6 +649,35 @@ impl WhatsAppWebAdapter {
     }
 
     /// Start the WhatsApp Web bot in a background task.
+    ///
+    /// **R12-H2 warning — wacore `CoreEventBus` reference cycle:**
+    /// calling `start_bot()` more than once per `WhatsAppWebAdapter`
+    /// instance leaks an entire `Client` worth of memory. The cycle
+    /// is internal to the wacore library:
+    ///
+    /// ```text
+    /// Client
+    ///   └─ core: CoreClient
+    ///        └─ event_bus: CoreEventBus
+    ///             └─ handlers: Vec<Arc<BotEventHandler>>
+    ///                  └─ BotEventHandler
+    ///                       └─ client: Arc<Client>    ← back to start
+    /// ```
+    ///
+    /// The `BotEventHandler` is added in `wacore/bot.rs:217` and the
+    /// `CoreEventBus` has no `remove_handler` API. The `Client` can
+    /// never be dropped while a handler is registered. If you call
+    /// `start_bot()` a second time (e.g., to "reconnect" after a
+    /// crash), the OLD `Client` is unreachable from the adapter's
+    /// state but is held alive forever by the cycle.
+    ///
+    /// **Recommended:** to recover from a bot crash, drop the entire
+    /// `WhatsAppWebAdapter` and create a new one with a fresh session
+    /// database. This is also the recommended pattern for
+    /// reconnection (see R12-H1 doc-comment on `run_reconnect_loop`).
+    /// Filed as a tracking issue; will be removed once wacore adds a
+    /// `remove_handler` API or breaks the cycle via a `Weak<Client>`
+    /// in the handler.
     pub async fn start_bot(&self) -> Result<()> {
         let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
         let storage = StoolapStore::new(&expanded_path)
@@ -621,6 +712,12 @@ impl WhatsAppWebAdapter {
         // doesn't have to capture `&self` (the closure must be
         // `'static`-bound because wacore stores it on the bot).
         let download_tx = Arc::clone(&self.download_tx);
+        // R12-M1 fix: clone the dropped-message counter for both the
+        // on_event closure (which pushes DOT/1/ text envelopes) and
+        // the download_rx_consumer (which pushes downloaded DOT/2/
+        // wire bytes). Both call sites increment the counter on
+        // `try_send` failure.
+        let dropped_inbound_count = Arc::clone(&self.dropped_inbound_count);
 
         // Mission 0850 (RFC-0850 §8.6/§9.4): create the download
         // request channel HERE (not in `new` — so the receiver has an
@@ -668,14 +765,67 @@ impl WhatsAppWebAdapter {
                             .collect(),
                         };
                         if let Err(e) = download_handle.inbound_tx.try_send(raw) {
+                            // R12-M1 fix: increment the shared
+                            // dropped-message counter so operators can
+                            // see silent drops via
+                            // `dropped_inbound_messages()`. The counter
+                            // is shared with the on_event closure via
+                            // the handler handle's
+                            // `dropped_inbound_count` field.
+                            download_handle
+                                .dropped_inbound_count
+                                .fetch_add(1, Ordering::Relaxed);
                             tracing::warn!("inbound channel full or closed: {e}");
                         }
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         // R1-H4: error message is redacted — no
                         // `media_key` or `direct_path` from `req.msg_id`
                         // propagates to the log.
-                        tracing::warn!("DOT/2/ download failed: {e}");
+                        //
+                        // R12-M2 fix: instead of silently dropping
+                        // the failed request, push a sentinel
+                        // `RawPlatformMessage` with `dot_mode =
+                        // "delivery_failed"` so the gateway can see
+                        // the failed delivery and report it. The
+                        // `canonicalize` function returns an
+                        // `ApiError { code: 502, message: ... }` for
+                        // this dot_mode, mirroring the
+                        // upstream-downstream error contract. The
+                        // error reason in the metadata is a
+                        // fixed-string redacted message — no wacore
+                        // internals, no `media_key`, no
+                        // `direct_path`.
+                        tracing::warn!("DOT/2/ download failed; pushing delivery_failed sentinel");
+                        let failed = RawPlatformMessage {
+                            platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
+                            // Empty payload — the gateway only needs
+                            // the metadata to know the delivery
+                            // failed.
+                            payload: Vec::new(),
+                            metadata: [
+                                ("chat".to_string(), req.chat),
+                                ("sender".to_string(), req.sender),
+                                // Sentinel tag — the `canonicalize`
+                                // function checks for this and
+                                // returns an ApiError.
+                                ("dot_mode".to_string(), "delivery_failed".to_string()),
+                                // Fixed-string redacted reason. NO
+                                // wacore error text, NO media_key,
+                                // NO direct_path.
+                                ("error".to_string(), "DOT/2/ download failed".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        };
+                        if let Err(send_err) = download_handle.inbound_tx.try_send(failed) {
+                            download_handle
+                                .dropped_inbound_count
+                                .fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                "inbound channel full or closed while pushing delivery_failed: {send_err}"
+                            );
+                        }
                     }
                 }
             }
@@ -708,6 +858,10 @@ impl WhatsAppWebAdapter {
                 // the inner `async move` can take ownership of its
                 // own copy without moving out of the outer closure.
                 let download_tx = Arc::clone(&download_tx);
+                // R12-M1 fix: clone the dropped-message counter into
+                // the inner async closure so the `try_send` at line
+                // 904+ can increment it on channel-full failure.
+                let dropped_inbound_count = Arc::clone(&dropped_inbound_count);
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
@@ -818,6 +972,15 @@ impl WhatsAppWebAdapter {
                                 .collect(),
                             };
                             if let Err(e) = inbound_tx.try_send(raw) {
+                                // R12-M1 fix: increment the shared
+                                // dropped-message counter so operators
+                                // can see silent drops via
+                                // `dropped_inbound_messages()`. The
+                                // counter is shared with the
+                                // download_rx_consumer task via the
+                                // handler handle's
+                                // `dropped_inbound_count` field.
+                                dropped_inbound_count.fetch_add(1, Ordering::Relaxed);
                                 tracing::warn!("inbound channel full or closed: {e}");
                             }
                         }
@@ -876,73 +1039,39 @@ impl WhatsAppWebAdapter {
         Ok(())
     }
 
-    /// Run the reconnect loop (blocking). Call this after start_bot().
+    /// R12-H1 fix: the reconnect logic was effectively dead code.
+    /// The wacore library's `Client::run` is a `while self.is_running`
+    /// loop (see `wacore/src/client.rs:1102`) that handles reconnection
+    /// internally — the run task never ends naturally in the current
+    /// wacore version, so the loop's liveness check
+    /// (`bot_handle.is_some()`) always returned `true` for a healthy
+    /// adapter and the reconnect branch never fired.
+    ///
+    /// This function is preserved as a deprecated no-op stub to keep
+    /// the public API stable for any external caller that might be
+    /// invoking it; it now logs a one-time warning and returns. The
+    /// wacore library handles reconnection internally; if the bot ever
+    /// gives up trying to reconnect (which it currently does not do in
+    /// the pinned wacore revision), callers should drop this
+    /// `WhatsAppWebAdapter` and create a new one with a fresh session
+    /// database.
+    ///
+    /// A proper fix would require either a wacore API to register a
+    /// "bot died" callback, or polling the `BotHandle` via a
+    /// waker-aware task to detect run-task completion and feed that
+    /// signal into a `Notify` that this loop awaits. Either approach
+    /// is too invasive for the current mission scope.
+    #[deprecated(
+        since = "0.1.0",
+        note = "the wacore library handles reconnection internally; this \
+                function is a no-op. Drop the adapter and create a new one \
+                to recover from a bot crash."
+    )]
     pub async fn run_reconnect_loop(&self) {
-        let mut retry_count: u32 = 0;
-
-        loop {
-            // Wait for the bot to stop (logout or error)
-            // The bot runs in start_bot(), this just handles reconnection
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-            // Check if bot is still alive
-            let bot_alive = self.bot_handle.lock().is_some();
-            if bot_alive {
-                continue;
-            }
-
-            // Bot stopped — attempt reconnect
-            retry_count += 1;
-            if retry_count > MAX_RETRIES {
-                tracing::error!("exceeded {MAX_RETRIES} reconnect attempts, giving up");
-                break;
-            }
-
-            let delay = compute_retry_delay(retry_count);
-            tracing::info!("reconnecting in {delay}s (attempt {retry_count}/{MAX_RETRIES})");
-            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-
-            // Clear state
-            *self.client.lock() = None;
-            *self.bot_handle.lock() = None;
-
-            // R11-M1 fix: drain the inbound channel of any messages
-            // buffered from the OLD (logged-out) connection. Without
-            // this, the next `receive_messages()` call would return
-            // a mix of OLD-session messages (which may reference
-            // CDN-side resources from a logged-out device) and
-            // NEW-session messages from the reconnected device. The
-            // gateway would have no way to tell them apart (they
-            // share the same `RawPlatformMessage` shape). Draining
-            // is a hard cut at the channel boundary; a future
-            // enhancement could tag each `RawPlatformMessage` with
-            // a connection epoch in `metadata` and filter on the
-            // consumer side for finer control.
-            let drained = {
-                let mut rx = self.inbound_rx.lock();
-                let mut count = 0;
-                while rx.try_recv().is_ok() {
-                    count += 1;
-                }
-                count
-            };
-            if drained > 0 {
-                tracing::info!(
-                    "reconnect: drained {drained} stale inbound messages from previous connection"
-                );
-            }
-
-            // Attempt restart
-            match self.start_bot().await {
-                Ok(()) => {
-                    retry_count = 0;
-                    tracing::info!("reconnected successfully");
-                }
-                Err(e) => {
-                    tracing::error!("reconnect failed: {e}");
-                }
-            }
-        }
+        tracing::warn!(
+            "run_reconnect_loop is a no-op: the wacore library handles \
+             reconnection internally. See the function's doc-comment for details."
+        );
     }
 
     // ── Group-setup API (RFC-0850p-a §8.1, E2E Scenario 1) ───────────────
@@ -1782,6 +1911,25 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+        // R12-M2 fix: the `delivery_failed` sentinel uses an empty
+        // payload by design (the gateway only needs the metadata to
+        // know the delivery failed; the wire bytes were never
+        // downloaded). Check for the sentinel BEFORE the
+        // empty-payload check below so the sentinel can return a
+        // meaningful 502 ApiError instead of a generic "Empty
+        // payload" error.
+        if raw.metadata.get("dot_mode").map(String::as_str) == Some("delivery_failed") {
+            let reason = raw
+                .metadata
+                .get("error")
+                .map(String::as_str)
+                .unwrap_or("DOT/2/ download failed");
+            return Err(PlatformAdapterError::ApiError {
+                code: 502,
+                message: format!("DOT/2/ delivery failed: {reason}"),
+            });
+        }
+
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
@@ -1794,6 +1942,9 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // - `dot_mode == "text"` OR missing → legacy DOT/1/ text path;
         //   `decode_envelope` strips the `DOT/1/{base64}` prefix and
         //   base64-decodes to wire bytes.
+        // - `dot_mode == "delivery_failed"` is handled at the top of
+        //   this function (before the empty-payload check) — see the
+        //   R12-M2 comment above.
         let dot_mode = raw.metadata.get("dot_mode").map(String::as_str);
         let wire_bytes = match dot_mode {
             Some("native") => raw.payload.clone(),
@@ -2826,6 +2977,103 @@ mod tests {
                 "expected Ok or ApiError 400 from a downstream check (NOT length), got {other:?}"
             ),
         }
+    }
+
+    /// R12-M2 fix: the `delivery_failed` sentinel (pushed by the
+    /// `download_rx_consumer` task when the upstream WhatsApp CDN
+    /// download fails) must be converted by `canonicalize` into a
+    /// 502 `ApiError` with the redacted reason in the message. 502
+    /// mirrors HTTP semantics (upstream is the source of the failure,
+    /// not us), distinguishing this case from a 400 canonicalize
+    /// error or a 400 empty-payload error. The reason is taken from
+    /// `metadata["error"]` (a redacted fixed-string — no wacore
+    /// internals, no `media_key`, no `direct_path`).
+    #[test]
+    fn canonicalize_delivery_failed_returns_502_with_redacted_reason() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: Vec::new(), // empty — sentinel has no payload
+            metadata: [
+                ("chat".to_string(), "120363012345678901@g.us".into()),
+                ("sender".to_string(), "1234@s.whatsapp.net".into()),
+                ("dot_mode".to_string(), "delivery_failed".into()),
+                ("error".to_string(), "DOT/2/ download failed".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(
+                    code, 502,
+                    "delivery_failed must surface as 502 Bad Gateway, got {code}"
+                );
+                assert!(
+                    message.contains("DOT/2/ download failed"),
+                    "message must include the redacted reason, got: {message}"
+                );
+                assert!(
+                    message.contains("delivery failed"),
+                    "message must include the 'delivery failed' prefix, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 502 for delivery_failed sentinel, got {other:?}")
+            }
+            Ok(_) => panic!("delivery_failed sentinel must NOT canonicalize to Ok"),
+        }
+    }
+
+    /// R12-M2 fix: a `delivery_failed` sentinel WITHOUT a
+    /// `metadata["error"]` entry must still return a 502 ApiError
+    /// with the default redacted reason ("DOT/2/ download failed").
+    /// This pins the contract that the error reason is always
+    /// present and redacted even if the metadata is missing or
+    /// tampered with.
+    #[test]
+    fn canonicalize_delivery_failed_without_error_metadata_uses_default_reason() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: Vec::new(),
+            metadata: [
+                ("chat".to_string(), "120363012345678901@g.us".into()),
+                ("sender".to_string(), "1234@s.whatsapp.net".into()),
+                ("dot_mode".to_string(), "delivery_failed".into()),
+                // Note: no "error" metadata key
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 502);
+                assert!(
+                    message.contains("DOT/2/ download failed"),
+                    "default reason must be used when error metadata is missing, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 502, got {other:?}")
+            }
+            Ok(_) => panic!("delivery_failed sentinel must NOT canonicalize to Ok"),
+        }
+    }
+
+    /// R12-M1 fix: the public `dropped_inbound_messages()` getter
+    /// returns the monotonic counter. A fresh adapter starts at 0.
+    /// This pins the contract that the counter is exposed and
+    /// starts at zero (so a test that observes a non-zero value can
+    /// confidently assert that drops happened).
+    #[test]
+    fn dropped_inbound_messages_starts_at_zero() {
+        let adapter = offline_adapter();
+        assert_eq!(
+            adapter.dropped_inbound_messages(),
+            0,
+            "fresh adapter must start with zero dropped messages"
+        );
     }
 
     #[test]
@@ -3916,22 +4164,43 @@ mod tests {
     /// slipped through the `is_empty()` check (the string `"   "`
     /// is non-empty) and surfaced deeper as a generic
     /// "invalid media ref format" error.
+    ///
+    /// R12-L2 fix: extend the whitespace pin to cover tabs, newlines,
+    /// and mixed Unicode whitespace. The `accept_message`
+    /// implementation uses `rest.trim().is_empty()` which handles all
+    /// Unicode whitespace; the test pin must match the implementation
+    /// exactly so a future narrowing (e.g., `trim_start()` or
+    /// `trim_matches(' ')`) would be caught.
     #[test]
     fn accept_message_rejects_whitespace_dot2_token() {
         let groups = vec!["120363012345678901".to_string()];
         let allowlist = BTreeMap::new();
-        let decision = WhatsAppWebAdapter::accept_message(
-            "120363012345678901@g.us",
-            "1234@s.whatsapp.net",
-            "DOT/2/   ",
-            &groups,
-            &allowlist,
-        );
-        match decision {
-            AcceptDecision::Reject { reason } => {
-                assert_eq!(reason, "DOT/2/ token is empty or whitespace");
+        for input in &[
+            "DOT/2/   ",      // spaces
+            "DOT/2/\t",       // tab
+            "DOT/2/\n",       // newline
+            "DOT/2/\r\n",     // CRLF
+            "DOT/2/\t \n \t", // mixed Unicode whitespace
+            "DOT/2/\u{00A0}", // non-breaking space (U+00A0 is whitespace per `char::is_whitespace`)
+        ] {
+            let decision = WhatsAppWebAdapter::accept_message(
+                "120363012345678901@g.us",
+                "1234@s.whatsapp.net",
+                input,
+                &groups,
+                &allowlist,
+            );
+            match decision {
+                AcceptDecision::Reject { reason } => {
+                    assert_eq!(
+                        reason, "DOT/2/ token is empty or whitespace",
+                        "input {input:?} must be rejected with the documented reason, got: {reason}"
+                    );
+                }
+                AcceptDecision::Accept => {
+                    panic!("whitespace DOT/2/ token {input:?} must be rejected")
+                }
             }
-            AcceptDecision::Accept => panic!("whitespace DOT/2/ token must be rejected"),
         }
     }
 

@@ -14,6 +14,7 @@
 //! ```
 
 pub mod adapter;
+pub mod media_ref;
 pub mod state;
 pub mod store;
 

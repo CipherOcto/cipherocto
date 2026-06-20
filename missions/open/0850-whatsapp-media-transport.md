@@ -20,7 +20,7 @@ RFC-0850 (Networking): Deterministic Overlay Transport — **§8.6 (Payload Enco
 
 ## Claimant
 
-@unclaimed (target: @mmacedoeu, agent-assisted)
+@mmacedoeu (agent-assisted)
 
 ## Pull Request
 

@@ -110,12 +110,25 @@ impl MediaRef {
 
 /// Encode a `MediaRef` as the base64url-JSON token used inside
 /// `DOT/2/{token}`.
-pub(crate) fn encode_base64url(media_ref: &MediaRef) -> String {
+///
+/// R9-L5 fix: returns `Result` instead of panicking. The mission
+/// spec mandates "No panic on any input" for `decode_base64url`
+/// (R1-H4); the symmetric guarantee for the encode path was
+/// missing. The current `MediaRef` field set is
+/// `String`/`[u8; 32]`/`u64`/`i64` — all unconditionally
+/// serializable — so the `Err` arm is unreachable today. But a
+/// future wacore upgrade that introduces a `NonZeroU32` (or any
+/// other `Option`-less, non-serializable field) would surface a
+/// production panic via this call site. Returning `Result` lets the
+/// caller propagate the error and keeps the adapter panic-free.
+pub(crate) fn encode_base64url(
+    media_ref: &MediaRef,
+) -> Result<String, MediaRefError> {
     // SAFETY: `MediaRef` contains `media_key` in plaintext in the JSON.
     // Callers MUST NOT log the result except inside the `DOT/2/{token}`
     // wire envelope itself.
-    let json = serde_json::to_vec(media_ref).expect("MediaRef is always serializable");
-    b64url_encode(&json)
+    let json = serde_json::to_vec(media_ref).map_err(MediaRefError::Json)?;
+    Ok(b64url_encode(&json))
 }
 
 /// Decode a `DOT/2/{token}` payload back into a `MediaRef`.
@@ -210,7 +223,7 @@ mod tests {
     fn media_ref_roundtrip() {
         let upload = synthetic_upload_response();
         let media_ref = MediaRef::from_upload_response(&upload, "envelope.bin");
-        let token = encode_base64url(&media_ref);
+        let token = encode_base64url(&media_ref).expect("encode must succeed");
         let decoded = decode_base64url(&token).expect("decode must succeed");
 
         assert_eq!(decoded.url, upload.url);
@@ -254,7 +267,7 @@ mod tests {
     fn encode_base64url_no_special_chars() {
         let upload = synthetic_upload_response();
         let media_ref = MediaRef::from_upload_response(&upload, "envelope.bin");
-        let token = encode_base64url(&media_ref);
+        let token = encode_base64url(&media_ref).expect("encode must succeed");
 
         // Standard base64 alphabet is `[A-Za-z0-9+/=]`. Base64url is
         // `[A-Za-z0-9_-]` (no padding). `+` and `/` would break the
@@ -302,7 +315,7 @@ mod tests {
         // The error Display string MUST NOT include any field value.
         let upload = synthetic_upload_response();
         let media_ref = MediaRef::from_upload_response(&upload, "test.bin");
-        let valid_token = encode_base64url(&media_ref);
+        let valid_token = encode_base64url(&media_ref).expect("encode must succeed");
         // Truncate the token mid-byte to break JSON parse (the last
         // base64url char loses significance, so the decoded bytes will
         // have a truncated JSON suffix → `Json` error).

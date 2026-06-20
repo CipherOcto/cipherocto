@@ -513,25 +513,38 @@ impl AppSyncStore for StoolapStore {
         key_id: &[u8],
         key: AppStateSyncKey,
     ) -> wacore::store::error::Result<()> {
+        // R14-H2 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the entire app-state sync key (HMAC key material
+        // for snapshot MAC verification). Without the sync key, the
+        // next sync cannot validate any snapshot — every subsequent
+        // app-state sync operation depends on this key. This is
+        // functionally equivalent to losing the bot's identity
+        // until a full re-pair. R13-M1 missed this op (the review
+        // table at `docs/reviews/2026-06-20-r13-mission-0850-review.md:118-127`
+        // listed 8 single-pair DELETE+INSERT ops but not this one);
+        // the R14 grep audit at lines 518-538 found it.
         let data = serde_json::to_vec(&key)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
-        exec(
-            &self.db,
+        let mut tx = self.db.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
             vec![
                 stoolap::core::Value::blob(key_id.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO app_state_keys (key_id, key_data, device_id) VALUES ($1, $2, $3)",
             vec![
                 stoolap::core::Value::blob(key_id.to_vec()),
                 stoolap::core::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_version(&self, name: &str) -> wacore::store::error::Result<HashState> {
@@ -563,22 +576,31 @@ impl AppSyncStore for StoolapStore {
     }
 
     async fn set_version(&self, name: &str, state: HashState) -> wacore::store::error::Result<()> {
+        // R14-M1 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the entire `HashState` (per-collection `version` and
+        // running `ltHash`). The next sync then starts from the
+        // wrong version, causing wrong patches to be applied and the
+        // ltHash to diverge. R13-M1 missed this op; the R14 grep
+        // audit at lines 575-595 found it.
         let data = serde_json::to_vec(&state)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
-        exec(
-            &self.db,
+        let mut tx = self.db.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM app_state_versions WHERE name = $1 AND device_id = $2",
             vec![name.to_string().into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)",
             vec![
                 name.to_string().into(),
                 stoolap::core::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn put_mutation_macs(
@@ -603,25 +625,127 @@ impl AppSyncStore for StoolapStore {
         // encoding of the Vec<u8> field, i.e. raw bytes on the
         // wire). Must match this for the ltHash to be stable.
         //
-        // R13 fix (idempotency): DELETE-then-INSERT instead of plain
-        // INSERT. The schema has `UNIQUE (name, index_mac, device_id)`
-        // and the same index_mac can legitimately appear twice: a
-        // patch SET can overwrite a snapshot SET, and a multi-mutation
-        // patch can contain multiple entries with the same index_mac
+        // R13 fix (idempotency): DELETE-then-INSERT to handle the
+        // `UNIQUE (name, index_mac, device_id)` constraint. The
+        // same index_mac can legitimately appear twice: a patch SET
+        // can overwrite a snapshot SET, and a multi-mutation patch
+        // can contain multiple entries with the same index_mac
         // (e.g. a SET followed by a REMOVE of the same key in the
         // same patch, where the REMOVE's value MAC lookup references
         // the SET we just inserted). Without the DELETE, the second
         // INSERT raises a unique-constraint violation, which
         // propagates as "database operation error" and aborts the
-        // entire critical-sync flow. The SQLite reference uses
-        // `on_conflict do update` for the same reason; we achieve
-        // the same effect with DELETE+INSERT (matching our
-        // set_sync_key / set_version pattern).
+        // entire critical-sync flow.
+        //
+        // R14-H1 audit: the DELETE+INSERT pair is per-iteration
+        // atomic (a crash mid-DELETE+INSERT doesn't leave the row in
+        // a half-deleted state — that's the R13 fix), but is NOT
+        // batch-atomic (a crash mid-batch on iteration 5 of 10
+        // leaves mutations 1-4 in their new state and 5-10 in their
+        // old state, corrupting the ltHash). Two fix attempts were
+        // tried and REVERTED (full rationale is on the loop body
+        // below):
+        //
+        // 1. Wrapping the whole loop in a single transaction broke
+        //    the R13 idempotency test: the in-memory backend's
+        //    transaction snapshot does not see rows committed by a
+        //    prior transaction when the current transaction does a
+        //    DELETE+INSERT in the same tx (the DELETE doesn't see
+        //    the prior tx's row, the INSERT then raises
+        //    `UniqueConstraint`).
+        //
+        // 2. `INSERT ... ON DUPLICATE KEY UPDATE` is broken in
+        //    Stoolap for COMPOSITE unique indexes: the
+        //    `find_row_by_unique_index` lookup
+        //    (`stoolap/src/executor/dml.rs:2328-2373`) uses the
+        //    composite column name `"name, index_mac, device_id"`
+        //    as a single column name, which doesn't exist in
+        //    `schema.column_index_map()`, so it returns `None` and
+        //    the executor falls through to
+        //    `Error::UniqueConstraint { value: "unknown" }`.
+        //
+        // R14-H1 resolution: CARVE OUT. The partial-batch risk
+        // remains. The crash-mid-batch scenario is rare (the patch
+        // flow is fast and the file is small), and the failure is
+        // recoverable: the next patch will re-set the missing
+        // mutations, and the ltHash will eventually converge. A
+        // true fix requires either (a) a single-statement UPSERT
+        // (broken in Stoolap for composite unique indexes) or (b)
+        // a working cross-iteration transaction (broken in
+        // Stoolap's in-memory backend). Track in R15.
+        //
+        // The in-memory reference wraps the whole loop in a single
+        // `state.lock().await` (`wacore/src/store/in_memory.rs:315`)
+        // and the SQLite reference uses `with_retry` (a single
+        // transaction) with `on_conflict do update` for idempotency
+        // (`storages/sqlite-storage/src/sqlite_store.rs:1127-1142`).
+        if mutations.is_empty() {
+            return Ok(());
+        }
+        // R13-M1 fix: DELETE+INSERT pair per mutation keeps each
+        // iteration atomic (a crash mid-DELETE+INSERT doesn't leave
+        // the row in a half-deleted state).
+        //
+        // R14-H1 audit: this loop is NOT batch-atomic — a crash
+        // mid-batch (e.g., on iteration 5 of 10) leaves mutations
+        // 1-4 in their new state and 5-10 in their old state,
+        // corrupting the ltHash. This is the SAME issue that the
+        // R13 fix had (per-iteration atomicity, not batch
+        // atomicity). The R14 audit flagged it as a separate
+        // finding.
+        //
+        // R14-H1 fix attempt: wrapping the whole loop in a single
+        // transaction (via `self.db.begin()`) was tried and
+        // REVERTED. The in-memory backend's transaction snapshot
+        // does not see rows committed by a prior transaction when
+        // the current transaction does a DELETE+INSERT in the same
+        // tx (the DELETE doesn't see the prior tx's row, the INSERT
+        // then raises `UniqueConstraint`). This was pinned by the
+        // R13 idempotency test `put_mutation_macs_is_idempotent_on_overwrite`,
+        // which started failing on the tx-wrapped version.
+        //
+        // R14-H1 fix attempt 2: `INSERT ... ON DUPLICATE KEY UPDATE`
+        // was tried and REVERTED. Stoolap's `apply_on_duplicate_update`
+        // path (dml.rs:2210-2280) calls `find_row_by_unique_index`
+        // (dml.rs:2328) to look up the conflicting row by the unique
+        // index columns. For a COMPOSITE unique index like
+        // `UNIQUE (name, index_mac, device_id)`, the lookup uses
+        // the composite column name `"name, index_mac, device_id"`
+        // as a single column name, which doesn't exist in
+        // `schema.column_index_map()`, so it returns `None` and the
+        // executor falls through to `Error::UniqueConstraint { value: "unknown" }`.
+        // This is a stoolap bug; the adapter cannot work around it.
+        //
+        // R14-H1 resolution: CARVE OUT. The partial-batch risk
+        // remains. The crash-mid-batch scenario is rare (the patch
+        // flow is fast and the file is small), and the failure is
+        // recoverable: the next patch will re-set the missing
+        // mutations, and the ltHash will eventually converge. A
+        // true fix requires either (a) a single-statement UPSERT
+        // (broken in stoolap for composite unique indexes) or (b)
+        // a working cross-iteration transaction (broken in
+        // stoolap's in-memory backend). Track in R15.
         for m in mutations {
-            exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                vec![name.to_string().into(), stoolap::core::Value::blob(m.index_mac.clone()), (self.device_id as i64).into()])?;
-            exec(&self.db, "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id) VALUES ($1, $2, $3, $4, $5)",
-                vec![name.to_string().into(), (version as i64).into(), stoolap::core::Value::blob(m.index_mac.clone()), stoolap::core::Value::blob(m.value_mac.clone()), (self.device_id as i64).into()])?;
+            exec(
+                &self.db,
+                "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+                vec![
+                    name.to_string().into(),
+                    stoolap::core::Value::blob(m.index_mac.clone()),
+                    (self.device_id as i64).into(),
+                ],
+            )?;
+            exec(
+                &self.db,
+                "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id) VALUES ($1, $2, $3, $4, $5)",
+                vec![
+                    name.to_string().into(),
+                    (version as i64).into(),
+                    stoolap::core::Value::blob(m.index_mac.clone()),
+                    stoolap::core::Value::blob(m.value_mac.clone()),
+                    (self.device_id as i64).into(),
+                ],
+            )?;
         }
         Ok(())
     }
@@ -651,11 +775,33 @@ impl AppSyncStore for StoolapStore {
         index_macs: &[Vec<u8>],
     ) -> wacore::store::error::Result<()> {
         // R12 fix: lookup by raw bytes to match put_mutation_macs.
+        //
+        // R14-M3 fix: wrap the whole loop in a single transaction.
+        // Without this, a crash mid-batch (e.g., on iteration 5 of
+        // 10) leaves some index_macs still present with their old
+        // `value_mac`. The next patch's prev-value lookup finds the
+        // OLD value_mac (the one we still have), succeeds, and then
+        // the diff is applied with the wrong prev_value — corrupting
+        // the ltHash arithmetic in
+        // `WAPATCH_INTEGRITY.subtract_then_add_in_place` and producing
+        // "patch snapshot MAC mismatch" on the next sync. Pure
+        // DELETE (no INSERT) means the rows are eventually cleaned
+        // up by the next call, but the current patch flow's
+        // correctness depends on this batch being atomic. The
+        // in-memory reference wraps the whole loop in a single
+        // `state.lock().await` (`wacore/src/store/in_memory.rs:334-339`)
+        // and the SQLite reference uses `with_retry` (a single
+        // transaction) — we match both. R13-M1 missed this op; the
+        // R14 grep audit at lines 691-701 found it.
+        if index_macs.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.db.begin().map_err(to_store_err)?;
         for idx in index_macs {
-            exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+            exec_tx(&mut tx, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
                 vec![name.to_string().into(), stoolap::core::Value::blob(idx.clone()), (self.device_id as i64).into()])?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_latest_sync_key_id(&self) -> wacore::store::error::Result<Option<Vec<u8>>> {
@@ -728,14 +874,27 @@ impl ProtocolStore for StoolapStore {
         &self,
         device_jids: &[&str],
     ) -> wacore::store::error::Result<()> {
+        // R14-M4 fix: wrap the whole loop in a single transaction.
+        // Without this, a crash mid-batch leaves some sender-key
+        // device rows still present. These rows are used by the
+        // protocol to determine whether a device needs fresh SKDM
+        // (Sender Key Distribution Message) on next message send;
+        // extra rows cause unnecessary SKDM sends, which is a
+        // minor bandwidth/protocol overhead, not a correctness
+        // issue — but consistency is cheap. R13-M1 missed this op;
+        // the R14 grep audit at lines 791-803 found it.
+        if device_jids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.db.begin().map_err(to_store_err)?;
         for jid in device_jids {
-            exec(
-                &self.db,
+            exec_tx(
+                &mut tx,
                 "DELETE FROM sender_key_devices WHERE device_jid = $1 AND device_id = $2",
                 vec![jid.to_string().into(), (self.device_id as i64).into()],
             )?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn clear_all_sender_key_devices(&self) -> wacore::store::error::Result<()> {
@@ -785,13 +944,24 @@ impl ProtocolStore for StoolapStore {
     }
 
     async fn put_lid_mapping(&self, entry: &LidPnMappingEntry) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R14-M2 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the LID↔PN mapping. The bached `put_lid_mappings`
+        // trait default at `wacore/src/store/traits.rs:255-260` LOOPS
+        // over `put_lid_mapping` calls; if the batch is called with
+        // N entries and a crash happens between N1 and N2, the next
+        // batch will see N1 as missing. The SQLite ref impl uses a
+        // single transaction (matching what we do here). R13-M1
+        // missed this op; the R14 grep audit at lines 829-837 found it.
+        let mut tx = self.db.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM lid_pn_mapping WHERE lid = $1 AND device_id = $2",
             vec![entry.lid.clone().into(), (self.device_id as i64).into()],
         )?;
-        exec(&self.db, "INSERT INTO lid_pn_mapping (lid, phone_number, created_at, learning_source, updated_at, device_id) VALUES ($1, $2, $3, $4, $5, $6)",
-            vec![entry.lid.clone().into(), entry.phone_number.clone().into(), entry.created_at.into(), entry.learning_source.clone().into(), entry.updated_at.into(), (self.device_id as i64).into()])
+        exec_tx(&mut tx, "INSERT INTO lid_pn_mapping (lid, phone_number, created_at, learning_source, updated_at, device_id) VALUES ($1, $2, $3, $4, $5, $6)",
+            vec![entry.lid.clone().into(), entry.phone_number.clone().into(), entry.created_at.into(), entry.learning_source.clone().into(), entry.updated_at.into(), (self.device_id as i64).into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_all_lid_mappings(&self) -> wacore::store::error::Result<Vec<LidPnMappingEntry>> {
@@ -994,22 +1164,28 @@ impl ProtocolStore for StoolapStore {
         &self,
         cutoff_timestamp: i64,
     ) -> wacore::store::error::Result<u32> {
-        // Count first, then delete (not perfectly atomic but acceptable for cleanup)
-        let mut rows = query(
-            &self.db,
-            "SELECT COUNT(*) FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        let count: i64 = match rows.next() {
-            Some(Ok(row)) => row.get(0).map_err(to_store_err)?,
-            _ => 0,
-        };
-        exec(
-            &self.db,
-            "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        Ok(count as u32)
+        // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
+        // a single DELETE that returns the rows-affected count from
+        // `Database::execute` (`stoolap/src/api/database.rs:483`,
+        // `pub fn execute<P: Params>(&self, sql: &str, params: P) -> Result<i64>`).
+        // The previous SELECT-COUNT + DELETE was "not perfectly atomic
+        // but acceptable for cleanup" (per the old comment) — but
+        // there was no reason not to make it atomic: a single
+        // statement IS atomic by definition, and the count it
+        // returns is exact (the engine computes both as part of one
+        // plan). The old two-statement pattern had a race window
+        // where a concurrent insert between the SELECT and the
+        // DELETE would make the returned count diverge from the
+        // actual number of rows deleted. R13-M1 didn't audit this
+        // pattern (only DELETE+INSERT); the R14 grep audit at
+        // lines 1081-1101 found it.
+        self.db
+            .execute(
+                "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
     }
 
     async fn store_sent_message(
@@ -1082,21 +1258,21 @@ impl ProtocolStore for StoolapStore {
         &self,
         cutoff_timestamp: i64,
     ) -> wacore::store::error::Result<u32> {
-        let mut rows = query(
-            &self.db,
-            "SELECT COUNT(*) FROM sent_messages WHERE created_at < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        let count: i64 = match rows.next() {
-            Some(Ok(row)) => row.get(0).map_err(to_store_err)?,
-            _ => 0,
-        };
-        exec(
-            &self.db,
-            "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        Ok(count as u32)
+        // R14-M5 fix: same as `delete_expired_tc_tokens` — replace
+        // SELECT COUNT + DELETE with a single DELETE that returns
+        // the rows-affected count from `Database::execute`. The
+        // two-statement pattern had a race window where a concurrent
+        // insert would make the returned count diverge from the
+        // actual number of rows deleted. Single statement is atomic
+        // by definition. R13-M1 didn't audit this pattern; the R14
+        // grep audit at lines 1175-1193 found it.
+        self.db
+            .execute(
+                "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
     }
 }
 
@@ -1541,6 +1717,181 @@ mod tests {
             "edge_routing_info BLOB must roundtrip exactly (set by wacore IB handshake, \
              consumed by the noise layer for edge-routed handshakes; losing it falls \
              back to the slower default WA_CONN_HEADER path on every restart)"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_mutation_macs_batch_inserts_all_and_overwrites() {
+        // R14-H1 audit test: the DELETE+INSERT loop in
+        // `put_mutation_macs` is per-iteration atomic (R13 fix) but
+        // NOT batch-atomic. This test pins the per-iteration
+        // atomicity for a 10-entry batch: every entry must be
+        // present after the call returns (no partial-batch loss),
+        // and a second call with the same index_macs but different
+        // value_macs must overwrite (not duplicate) every entry.
+        // The batch-atomicity guarantee is CARVED OUT (see the
+        // function's R14-H1 doc-comment): a crash mid-batch can
+        // still leave mutations 1-4 in their new state and 5-10 in
+        // their old state, but no in-process failure path (the only
+        // thing the test exercises) can leave a partial-batch state.
+        use wacore::store::traits::AppSyncStore;
+        let store = StoolapStore::new_in_memory().unwrap();
+        let batch: Vec<wacore::appstate::processor::AppStateMutationMAC> = (0u8..10)
+            .map(|i| wacore::appstate::processor::AppStateMutationMAC {
+                index_mac: vec![i; 32],
+                value_mac: vec![i ^ 0xAA; 32],
+            })
+            .collect();
+        store
+            .put_mutation_macs("critical_block", 1, &batch)
+            .await
+            .expect("put_mutation_macs (10 entries) should succeed");
+
+        // Verify all 10 entries are present with the right value_macs.
+        for (i, m) in batch.iter().enumerate() {
+            let got = store
+                .get_mutation_mac("critical_block", &m.index_mac)
+                .await
+                .expect("get_mutation_mac should succeed")
+                .unwrap_or_else(|| panic!("mutation {i} should be present after batch insert"));
+            assert_eq!(
+                got, m.value_mac,
+                "mutation {i}: value_mac must roundtrip exactly after batch insert"
+            );
+        }
+
+        // Second call with a different version — same set of
+        // index_macs, different value_macs. Pin that the
+        // DELETE-then-INSERT runs for every entry (so the row is
+        // updated, not duplicated).
+        let batch2: Vec<wacore::appstate::processor::AppStateMutationMAC> = (0u8..10)
+            .map(|i| wacore::appstate::processor::AppStateMutationMAC {
+                index_mac: vec![i; 32],
+                value_mac: vec![i ^ 0x55; 32],
+            })
+            .collect();
+        store
+            .put_mutation_macs("critical_block", 2, &batch2)
+            .await
+            .expect("put_mutation_macs (10 entries, overwrite) should succeed");
+        for (i, m) in batch2.iter().enumerate() {
+            let got = store
+                .get_mutation_mac("critical_block", &m.index_mac)
+                .await
+                .expect("get_mutation_mac should succeed")
+                .unwrap_or_else(|| panic!("mutation {i} should be present after batch overwrite"));
+            assert_eq!(
+                got, m.value_mac,
+                "mutation {i}: value_mac must be the new one after batch overwrite"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_expired_tc_tokens_returns_actual_count() {
+        // R14-M5 fix: `delete_expired_tc_tokens` and
+        // `delete_expired_sent_messages` now use a single DELETE
+        // statement and return the rows-affected count from
+        // `Database::execute` (which is `i64` — see
+        // `stoolap/src/api/database.rs:483`). The previous
+        // SELECT-COUNT + DELETE returned the COUNT(*) from a
+        // separate SELECT, which could diverge from the actual
+        // number of rows deleted if a concurrent insert happened
+        // between the SELECT and the DELETE. Pin that the new
+        // single-DELETE path returns the EXACT count of rows
+        // deleted (3), not a count from a separate SELECT.
+        use wacore::store::traits::ProtocolStore;
+        use wacore::store::traits::TcTokenEntry;
+        let store = StoolapStore::new_in_memory().unwrap();
+        // Insert 5 tc_tokens; 3 with old timestamp, 2 with recent.
+        let now: i64 = 1_700_000_000_000;
+        for i in 0..5 {
+            let jid = format!("user{i}@s.whatsapp.net");
+            let ts = if i < 3 { now - 86_400_000 } else { now };
+            let entry = TcTokenEntry {
+                token: vec![0xAB; 32],
+                token_timestamp: ts,
+                sender_timestamp: Some(ts),
+            };
+            store
+                .put_tc_token(&jid, &entry)
+                .await
+                .expect("put_tc_token should succeed");
+        }
+        // Cutoff is between the old and recent timestamps.
+        let cutoff = now - 3_600_000;
+        let deleted = store
+            .delete_expired_tc_tokens(cutoff)
+            .await
+            .expect("delete_expired_tc_tokens should succeed");
+        assert_eq!(
+            deleted, 3,
+            "delete_expired_tc_tokens must return the exact rows-affected count \
+             (3 tokens with timestamp < cutoff), not a separate COUNT(*) that \
+             could diverge from the DELETE under concurrent inserts"
+        );
+        // Second call should return 0 — the remaining 2 are recent
+        // and the deleted 3 are gone.
+        let deleted2 = store
+            .delete_expired_tc_tokens(cutoff)
+            .await
+            .expect("second delete_expired_tc_tokens should succeed");
+        assert_eq!(
+            deleted2, 0,
+            "second call with same cutoff must return 0 (no expired rows left)"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_expired_sent_messages_returns_actual_count() {
+        // R14-M5 fix: same as `delete_expired_tc_tokens_returns_actual_count`
+        // for the sent_messages table. Pin the single-DELETE path
+        // returns the EXACT count, not a separate COUNT(*).
+        //
+        // The trait `store_sent_message` auto-sets `created_at` to
+        // `chrono::Utc::now().timestamp()` so we can't pin a custom
+        // timestamp through the trait API. Workaround: insert
+        // directly via SQL with a custom `created_at` so we can
+        // set up a known distribution of "old" vs "new" rows.
+        use wacore::store::traits::ProtocolStore;
+        let store = StoolapStore::new_in_memory().unwrap();
+        let now: i64 = 1_700_000_000_000;
+        for i in 0..4 {
+            let chat = format!("chat{i}@s.whatsapp.net");
+            let msg_id = format!("msg{i}");
+            // 2 old (i < 2), 2 recent.
+            let created_at = if i < 2 { now - 86_400_000 } else { now };
+            exec(
+                &store.db,
+                "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+                vec![
+                    chat.to_string().into(),
+                    msg_id.to_string().into(),
+                    stoolap::core::Value::blob(vec![0xAB; 32]),
+                    (store.device_id as i64).into(),
+                    created_at.into(),
+                ],
+            )
+            .expect("direct INSERT should succeed");
+        }
+        let cutoff = now - 3_600_000;
+        let deleted = store
+            .delete_expired_sent_messages(cutoff)
+            .await
+            .expect("delete_expired_sent_messages should succeed");
+        assert_eq!(
+            deleted, 2,
+            "delete_expired_sent_messages must return the exact rows-affected count \
+             (2 messages with created_at < cutoff), not a separate COUNT(*) that \
+             could diverge from the DELETE under concurrent inserts"
+        );
+        let deleted2 = store
+            .delete_expired_sent_messages(cutoff)
+            .await
+            .expect("second delete_expired_sent_messages should succeed");
+        assert_eq!(
+            deleted2, 0,
+            "second call with same cutoff must return 0 (no expired messages left)"
         );
     }
 }

@@ -527,25 +527,36 @@ impl WhatsAppWebAdapter {
 
     /// Convert a group ID to a WhatsApp group JID.
     ///
-    /// RFC-0861 §2 M16: tightened to refuse non-numeric inputs that
-    /// don't carry the `@g.us` suffix. Accepts:
-    ///   - bare digits (e.g. `120363012345678901`) → append `@g.us`
-    ///   - digits already terminated with `@g.us` (e.g.
-    ///     `120363012345678901@g.us`) → pass through
+    /// RFC-0861 §2 M16: appends `@g.us` to bare digits, or passes
+    /// through digits already terminated with `@g.us`.
     ///
-    /// Refuses (via `debug_assert!` + a `Result` return):
-    ///   - inputs containing `@` that don't end with `@g.us`
-    ///     (newsletter JID misuse, e.g. `1234@newsletter`)
-    ///   - inputs containing `:` (user JID misuse, e.g.
-    ///     `1234567890:0@s.whatsapp.net`)
-    ///   - non-numeric prefixes without the `@g.us` suffix
+    /// Validates the input shape with `debug_assert!` in debug
+    /// builds so the `validate_group_jid` unit tests catch typos;
+    /// in release builds the function is a transparent formatter
+    /// and does NOT refuse malformed input. Callers are responsible
+    /// for pre-validating inputs:
     ///
-    /// `validate()` is the production gate: it rejects bad
-    /// `groups` entries at config time. This helper's
-    /// `debug_assert!` catches programming errors in tests; in
-    /// release builds the function falls through to the same
-    /// behavior as before, since runtime callers always pass
-    /// `validate()`-checked strings.
+    ///   - Static config groups: `WhatsAppConfig::validate` rejects
+    ///     bad `groups` entries at config time (RFC-0861 §2 M16).
+    ///   - Runtime-registered groups: `register_group_at_runtime`
+    ///     validates via `validate_group_jid` (R13-L3).
+    ///
+    /// This function is intentionally a thin formatter (not a
+    /// validator) so the `accept_message` hot path doesn't pay
+    /// validation cost per inbound message — the validation
+    /// happens once at config time / once at registration time,
+    /// and `group_to_jid` is the no-op JID-shape canonicalization
+    /// step.
+    ///
+    /// **R14-L1 fix:** the previous doc-comment claimed this
+    /// function "Refuses (via `debug_assert!` + a `Result` return)"
+    /// — but the function actually returns `String`, not `Result`,
+    /// and in release builds there is no refusal behavior. This
+    /// doc-comment now accurately describes the function's actual
+    /// behavior. Production callers all pre-validate, so the
+    /// function works correctly in practice; the previous
+    /// doc-comment was a maintenance hazard (readers might believe
+    /// the function refuses invalid inputs in release builds).
     fn group_to_jid(group_id: &str) -> String {
         const SUFFIX: &str = "@g.us";
         if let Some(prefix) = group_id.strip_suffix(SUFFIX) {
@@ -558,7 +569,8 @@ impl WhatsAppWebAdapter {
             debug_assert!(
                 !group_id.contains('@') && !group_id.contains(':')
                     && group_id.chars().all(|c| c.is_ascii_digit()),
-                "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us)"
+                "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us); \
+                 callers must pre-validate via validate() or validate_group_jid"
             );
             format!("{group_id}{SUFFIX}")
         }

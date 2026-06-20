@@ -150,6 +150,21 @@ pub(crate) enum MediaRefError {
     Json(serde_json::Error),
 }
 
+impl MediaRefError {
+    /// R8-M1 fix: short identifier for the variant, used in
+    /// `tracing::debug!` calls to distinguish `Base64` from `Json`
+    /// failures without leaking the original input bytes. The
+    /// `Display` impl returns the same redacted string for both
+    /// variants, so the `variant_name` is the only way for an
+    /// operator to know which decode stage failed.
+    pub(crate) fn variant_name(&self) -> &'static str {
+        match self {
+            MediaRefError::Base64 => "Base64",
+            MediaRefError::Json(_) => "Json",
+        }
+    }
+}
+
 impl std::fmt::Display for MediaRefError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

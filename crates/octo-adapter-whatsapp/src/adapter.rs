@@ -24,7 +24,7 @@ use octo_network::dot::transport::{
     decode_native_ref, encode_native_ref, select_mode_with_max_text, TransportMode,
 };
 
-use crate::media_ref::{decode_base64url, encode_base64url, MediaRef, MediaRefError};
+use crate::media_ref::{decode_base64url, encode_base64url, MediaRef};
 
 use super::store::StoolapStore;
 // wacore re-exports `MediaType` and `Downloadable` via
@@ -1477,9 +1477,21 @@ pub(crate) async fn download_via_media_ref(
     client: &Arc<parking_lot::Mutex<Option<Arc<whatsapp_rust::Client>>>>,
     media_ref_token: &str,
 ) -> Result<Vec<u8>, PlatformAdapterError> {
-    let media_ref = decode_base64url(media_ref_token).map_err(|_| PlatformAdapterError::ApiError {
-        code: 400,
-        message: MediaRefError::to_string(&MediaRefError::Base64),
+    // R8-M1 fix: use the explicit `INVALID_MEDIA_REF_FORMAT` const
+    // instead of round-tripping through `MediaRefError::to_string`.
+    // The original `MediaRefError` variant is logged at debug level
+    // for operator visibility (the `Display` impl is the same
+    // redacted string for both variants, so no info is lost for the
+    // user-facing `ApiError { message }`).
+    let media_ref = decode_base64url(media_ref_token).map_err(|e| {
+        tracing::debug!(
+            "decode_base64url failed (variant={}); returning redacted ApiError",
+            e.variant_name()
+        );
+        PlatformAdapterError::ApiError {
+            code: 400,
+            message: INVALID_MEDIA_REF_FORMAT.into(),
+        }
     })?;
     let doc = media_ref.to_document_message();
     // Clone the `Arc<Client>` out of the parking_lot guard before
@@ -1588,8 +1600,21 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // ceiling is 65 KB (RFC-0850 line 202 + line 785); using the
         // RFC default 4 KB would route envelopes >4 KB to native mode
         // unnecessarily.
+        //
+        // **R8-H1 fix:** the threshold argument is `encoded.len()`
+        // (the on-wire text-message body, ~33% larger than the wire
+        // bytes after base64 expansion), NOT `wire_bytes.len()`. The
+        // actual constraint is on the bytes that would be transmitted
+        // in text mode — if `wire_bytes.len()` <= 65 KB but
+        // `encoded.len()` > 65 KB, the envelope would be routed into
+        // text mode and fail to fit in a single WhatsApp text message.
+        // Using `encoded.len()` keeps the dispatch and the
+        // PayloadTooLarge error consistent (same value reported in
+        // both places — see the PayloadTooLarge arm below). RFC-0850
+        // §8.6 line 805's `payload.len()` is read here as "bytes that
+        // would be transmitted on the wire in text mode".
         let caps = self.capabilities();
-        let mode = select_mode_with_max_text(encoded.len(), &caps, 65_536)
+        let mode = select_mode_with_max_text(encoded.len(), &caps, WHATSAPP_MAX_TEXT_BYTES)
             .map_err(|e| PlatformAdapterError::PayloadTooLarge {
                 size: encoded.len(),
                 max: e.max_payload,
@@ -1606,16 +1631,29 @@ impl PlatformAdapter for WhatsAppWebAdapter {
                 // (<= 65 KB), fall back to text mode and log a
                 // warning. If the payload doesn't fit in text mode,
                 // propagate the error (no fallback possible).
+                //
+                // R8-H3 fix: extracted the fallback decision into the
+                // pure `should_fallback_to_text` helper so the
+                // MUST-fallback contract is unit-testable without a
+                // real wacore Client (which is a concrete type, not a
+                // trait, so a stub cannot be injected in a normal
+                // #[tokio::test]). See
+                // `should_fallback_to_text_*` tests in `mod tests`.
                 let encoded_len = encoded.len();
-                match self.send_envelope_native(&client, &to, &encoded).await {
-                    Ok(receipt) => Ok(receipt),
-                    Err(e) if encoded_len <= 65_536 && matches!(e, PlatformAdapterError::Unreachable { .. }) => {
-                        tracing::warn!(
-                            "native upload failed, falling back to DOT/1/ text mode (RFC-0850 §8.6/§9.4): {e:?}"
-                        );
-                        self.send_envelope_text(&client, &to, &encoded).await
-                    }
-                    Err(e) => Err(e),
+                let primary = self.send_envelope_native(&client, &to, &encoded);
+                let fallback = self.send_envelope_text(&client, &to, &encoded);
+                let primary_result = primary.await;
+                if let Ok(receipt) = primary_result {
+                    return Ok(receipt);
+                }
+                let err = primary_result.unwrap_err();
+                if should_fallback_to_text(&err, encoded_len, WHATSAPP_MAX_TEXT_BYTES) {
+                    tracing::warn!(
+                        "native upload failed, falling back to DOT/1/ text mode (RFC-0850 §8.6/§9.4): {err:?}"
+                    );
+                    fallback.await
+                } else {
+                    Err(err)
                 }
             }
             // `supports_raw_binary: false` and
@@ -2416,6 +2454,45 @@ fn api_err(action: &str, reason: String) -> PlatformAdapterError {
         code: 500,
         message: format!("{action}: {reason}"),
     }
+}
+
+/// Mission 0850 (RFC-0850 §8.6 + §9.4): WhatsApp's text-message ceiling.
+///
+/// `encoded` (a `DOT/1/{base64url}` string) is the actual on-the-wire text
+/// payload; if its length exceeds this constant, it cannot fit in a single
+/// WhatsApp text message and the adapter must use the native upload path.
+pub(crate) const WHATSAPP_MAX_TEXT_BYTES: usize = 65_536;
+
+/// R1-H4 fix: the redacted error message returned in
+/// `PlatformAdapterError::ApiError { message }` for any
+/// `MediaRef` decode failure. MUST NOT include the input bytes
+/// (which would leak `media_key`). The string is identical to
+/// `MediaRefError`'s `Display` impl for both variants — kept as a
+/// const here so the call site doesn't have to round-trip through
+/// `MediaRefError::to_string(&MediaRefError::Base64)` (R8-M1 fix:
+/// the round-trip was opaque and lost the original error variant).
+pub(crate) const INVALID_MEDIA_REF_FORMAT: &str = "invalid media ref format";
+
+/// Mission 0850 (RFC-0850 §8.6 + §9.4): the MUST-fallback decision.
+///
+/// R8-H3 fix: extracted from `send_envelope` so the fallback contract is
+/// unit-testable without a real wacore `Client` (which is a concrete type,
+/// not a trait — see the spec's "R1-H1 fallback test stub-ability" note at
+/// `missions/open/0850-whatsapp-media-transport.md` line 494).
+///
+/// The contract (RFC-0850 §8.6 + §9.4): when the native (`DOT/2/`) send
+/// fails, the adapter MUST fall back to the text (`DOT/1/`) path IF AND
+/// ONLY IF the text path would actually succeed — i.e., the encoded
+/// payload fits in a single text message AND the error is a transient
+/// transport error (`Unreachable`), not a permanent wire-format error
+/// (e.g., `ApiError { code: 4xx }`).
+pub(crate) fn should_fallback_to_text(
+    err: &PlatformAdapterError,
+    encoded_len: usize,
+    max_text_bytes: usize,
+) -> bool {
+    encoded_len <= max_text_bytes
+        && matches!(err, PlatformAdapterError::Unreachable { .. })
 }
 
 fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
@@ -3340,6 +3417,13 @@ mod tests {
             .media_capabilities
             .expect("media_capabilities must be populated for DOT/2 transport");
         assert_eq!(media.max_upload_bytes, 100 * 1024 * 1024);
+        // R8-L2: only `application/octet-stream` is in the list because
+        // WhatsApp's `MediaType::Document` channel uploads as
+        // application/octet-stream regardless of the requested MIME
+        // (see R5 in `missions/open/0850-whatsapp-media-transport.md`).
+        // The list is the truth for what the adapter CAN advertise —
+        // adding other MIMEs here would be lying about transport
+        // capabilities.
         assert_eq!(
             media.supported_mime_types,
             vec!["application/octet-stream".to_string()]
@@ -3400,6 +3484,12 @@ mod tests {
     /// `DOT/1/{base64}` (existing behavior pinned).
     #[test]
     fn accept_message_accepts_dot1() {
+        // R8-L1: JID format reference.
+        // - `120363012345678901@g.us` is a group JID (suffix `@g.us`
+        //   marks the group domain in WhatsApp). The 18-digit prefix
+        //   is the group ID.
+        // - `1234@s.whatsapp.net` is a user JID (suffix
+        //   `@s.whatsapp.net` marks the user domain).
         let groups = vec!["120363012345678901".to_string()];
         let allowlist = BTreeMap::new();
         let decision = WhatsAppWebAdapter::accept_message(
@@ -3416,6 +3506,7 @@ mod tests {
     /// `DOT/2/{token}` (new behavior pinned).
     #[test]
     fn accept_message_accepts_dot2() {
+        // See R8-L1 JID reference in `accept_message_accepts_dot1`.
         let groups = vec!["120363012345678901".to_string()];
         let allowlist = BTreeMap::new();
         let decision = WhatsAppWebAdapter::accept_message(
@@ -3454,6 +3545,11 @@ mod tests {
     /// task exits cleanly when the channel sender is dropped. This
     /// pins the lifecycle — a regression that blocks the task on a
     /// closed channel would hang this test until the timeout.
+    ///
+    /// R8-H2 fix: previously the test had no real assertion (just a
+    /// 100ms `sleep` loop). Now we capture the spawned task's
+    /// `JoinHandle` and bound the wait with `tokio::time::timeout`,
+    /// so a hang fails the test loudly.
     #[tokio::test]
     async fn download_rx_consumer_exits_on_channel_close() {
         use std::time::Duration;
@@ -3462,32 +3558,19 @@ mod tests {
 
         // Use the test-only constructor that bypasses `start_bot`
         // (which requires an authenticated wacore session).
-        let tx = adapter.spawn_download_consumer_for_test();
+        let (tx, handle) = adapter.spawn_download_consumer_for_test();
 
         // Dropping the sender closes the channel. The consumer task
         // should observe `recv() → None` and exit the `while let`
-        // loop. We can't observe the task directly (no JoinHandle
-        // exposed), but we CAN observe that the field is updated to
-        // `None` after the sender is dropped — wait, that's the wrong
-        // observation. The field stays as `Some(tx)` (we set it to
-        // the *original* tx, not the one we returned to the caller).
-        //
-        // What we CAN observe: the receiver-side `recv()` returns
-        // `None`, and the task's `tracing::debug!` line is emitted.
-        // tokio's `timeout` + `tokio::task::yield_now` gives the
-        // spawned task a chance to run.
+        // loop. The `JoinHandle` completes when the spawned future
+        // returns; we bound the wait with a 500ms timeout to fail
+        // loudly if the task doesn't exit.
         drop(tx);
-        // Yield a few times to let the spawned task observe the
-        // close and exit. Then assert that a subsequent
-        // `adapter.inbound_rx.lock().try_recv()` returns
-        // `Err(Disconnected)` (no items pushed, but the channel
-        // itself is fine — the receiver half is owned by the spawned
-        // task, NOT by the test).
-        for _ in 0..10 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        match tokio::time::timeout(Duration::from_millis(500), handle).await {
+            Ok(Ok(())) => {} // task exited cleanly
+            Ok(Err(join_err)) => panic!("download_rx consumer task panicked: {join_err}"),
+            Err(_elapsed) => panic!("download_rx consumer task did not exit within 500ms"),
         }
-        // No assertion needed beyond "we did not panic and did not
-        // hang" — the test passing is the success signal.
     }
 
     /// Mission 0850 AC (R4-M2 happy path): the consumer task pushes a
@@ -3500,10 +3583,17 @@ mod tests {
         use std::time::Duration;
 
         let adapter = offline_adapter();
-        let tx = adapter.spawn_download_consumer_for_test();
+        let (tx, _handle) = adapter.spawn_download_consumer_for_test();
 
         // Push a DownloadRequest. The test stub immediately pushes a
-        // RawPlatformMessage to `inbound_tx`.
+        // RawPlatformMessage to `inbound_tx`. The stub's synthetic
+        // payload + metadata shape MUST match `STUB_NATIVE_PAYLOAD`
+        // and `STUB_DOT_MODE` (defined in the test-only impl block
+        // below). R8-M3 fix: the test and the stub previously shared
+        // the values implicitly (the test asserted `b"native"` and
+        // the stub produced `b"native"`); a future maintainer
+        // changing one without the other would silently break the
+        // test. The shared const makes the contract explicit.
         tx.try_send(DownloadRequest {
             msg_id: "test-token".into(),
             chat: "120363012345678901@g.us".into(),
@@ -3526,25 +3616,32 @@ mod tests {
             tokio::task::yield_now().await;
         };
 
-        // The test stub pushes `payload: b"native"` and tags it with
-        // `dot_mode = "native"`. The canonicalize dispatcher will
-        // pass `b"native"` through `DeterministicEnvelope::from_wire_bytes`
-        // (which will fail to parse — `b"native"` is not a valid
-        // envelope — but that's irrelevant to this test, which only
-        // pins the wire-format side).
-        assert_eq!(raw.payload, b"native");
-        assert_eq!(raw.metadata.get("dot_mode").map(String::as_str), Some("native"));
-        assert_eq!(raw.metadata.get("chat").map(String::as_str), Some("120363012345678901@g.us"));
-        assert_eq!(raw.metadata.get("sender").map(String::as_str), Some("1234@s.whatsapp.net"));
+        // R8-M3 fix: assertions reference the shared consts (defined
+        // in the test-only impl block below) instead of literal
+        // `b"native"` / `"native"`. The stub and the test are now
+        // linked at the source level.
+        assert_eq!(raw.payload, WhatsAppWebAdapter::STUB_NATIVE_PAYLOAD);
+        assert_eq!(
+            raw.metadata.get("dot_mode").map(String::as_str),
+            Some(WhatsAppWebAdapter::STUB_DOT_MODE)
+        );
+        assert_eq!(
+            raw.metadata.get("chat").map(String::as_str),
+            Some("120363012345678901@g.us")
+        );
+        assert_eq!(
+            raw.metadata.get("sender").map(String::as_str),
+            Some("1234@s.whatsapp.net")
+        );
     }
 
     /// Mission 0850 AC (R4-M2): `download_tx.try_send` returns `Full`
     /// when the channel's capacity is exceeded. Push 65 (size + 1)
-    /// messages; the 65th MUST be rejected.
+    /// messages; the (capacity+1)th MUST be rejected.
     #[tokio::test]
     async fn download_tx_try_send_returns_full_when_capacity_exceeded() {
         let adapter = offline_adapter();
-        let tx = adapter.spawn_download_consumer_for_test();
+        let (tx, _handle) = adapter.spawn_download_consumer_for_test();
 
         // The consumer task drains the channel concurrently, but its
         // test stub doesn't actually `await` anything (it just pushes
@@ -3552,14 +3649,21 @@ mod tests {
         // running both tasks, we can fill the buffer deterministically
         // by pushing faster than the consumer drains.
         //
-        // To make this deterministic, we push all 65 messages in a
-        // tight loop and check that at least one returned `Full`. The
-        // exact count of `Ok` vs `Full` depends on scheduling, but
-        // 65 push attempts into a 64-slot buffer MUST produce at
-        // least one `Full` (the consumer might drain a few in
-        // between, but it can't drain 65 of them).
+        // To make this deterministic, we push all (capacity+1)
+        // messages in a tight loop and check that at least one
+        // returned `Full`. The exact count of `Ok` vs `Full` depends
+        // on scheduling, but (capacity+1) push attempts into a
+        // `capacity`-slot buffer MUST produce at least one `Full`
+        // (the consumer might drain a few in between, but it can't
+        // drain all of them before we're done pushing).
+        //
+        // R8-L4 fix: the capacity comes from the shared const
+        // `WhatsAppWebAdapter::DOWNLOAD_CHANNEL_CAPACITY` (defined in
+        // the test-only impl block below). The test loop's upper bound
+        // is `capacity + 1` so it stays correct if the const changes.
+        let cap = WhatsAppWebAdapter::DOWNLOAD_CHANNEL_CAPACITY;
         let mut full_count = 0;
-        for i in 0..65 {
+        for i in 0..(cap + 1) {
             let res = tx.try_send(DownloadRequest {
                 msg_id: format!("msg-{i}"),
                 chat: "test@g.us".into(),
@@ -3571,22 +3675,29 @@ mod tests {
         }
         assert!(
             full_count > 0,
-            "expected at least one Full error when pushing 65 messages into a 64-slot channel, got {full_count}"
+            "expected at least one Full error when pushing {} messages into a {}-slot channel, got {full_count}",
+            cap + 1,
+            cap,
         );
     }
 
-    /// Mission 0850 AC: `send_envelope` with a non-existent domain
-    /// MUST return a `transport_err`-shaped error (not panic). This
-    /// pins the precondition check at the top of `send_envelope` —
-    /// the domain→JID lookup runs BEFORE mode dispatch, so the test
-    /// doesn't need a connected client to exercise it.
+    /// Defensive test (R8-M2): the mission spec doesn't explicitly
+    /// request this, but the precondition check at the top of
+    /// `send_envelope` (domain→JID lookup) is a security-relevant
+    /// gate — a regression that returns `Ok(_)` for an unknown
+    /// domain could allow cross-domain envelope injection. Pins the
+    /// `Unreachable` error so the contract can't silently change.
+    ///
+    /// The 282-byte zero buffer is structurally valid
+    /// `DeterministicEnvelope` wire format (218 signing bytes + 64
+    /// signature bytes; see
+    /// `octo_network::dot::envelope::DeterministicEnvelope::from_wire_bytes`).
+    /// The exact content doesn't matter — the lookup fails before
+    /// the bytes are touched.
     #[tokio::test]
     async fn send_envelope_unknown_domain_returns_error() {
         let adapter = offline_adapter();
-        // Build a domain ID that won't match any configured group.
         let domain = BroadcastDomainId::new(PlatformType::WhatsApp, "999999999");
-        // Build a minimal envelope (the exact bytes don't matter —
-        // the lookup fails before they're touched).
         let envelope = DeterministicEnvelope::from_wire_bytes(&[0u8; 282])
             .expect("zeroed 282-byte buffer is structurally valid");
         let result = adapter.send_envelope(&domain, &envelope).await;
@@ -3596,48 +3707,168 @@ mod tests {
         );
     }
 
+    // ── Mission 0850 (R8-H3 fix): MUST-fallback decision unit tests ─
+
+    /// R8-H3 fix: pins RFC-0850 §8.6/§9.4 fallback semantics. When the
+    /// native send fails with `Unreachable` AND the encoded payload
+    /// fits in a text message, fall back. The pure helper exists
+    /// because `Client` is a concrete type — a stub cannot be injected
+    /// in a normal `#[tokio::test]`, so the dispatch is verified via
+    /// the decision function instead of the full send path.
+    #[test]
+    fn should_fallback_to_text_unreachable_within_text_limit() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        };
+        assert!(should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES));
+    }
+
+    /// R8-H3 fix: encoded payload that fits exactly at the boundary
+    /// (65_536 bytes) MUST still trigger fallback — `<=` is inclusive.
+    #[test]
+    fn should_fallback_to_text_at_text_limit_boundary() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "transient".into(),
+        };
+        assert!(
+            should_fallback_to_text(&err, WHATSAPP_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_BYTES),
+            "encoded_len == max_text_bytes MUST trigger fallback (boundary inclusive)"
+        );
+    }
+
+    /// R8-H3 fix: encoded payload that exceeds the text limit MUST
+    /// NOT trigger fallback — the text path would also fail, and the
+    /// caller should see the original `Unreachable` error.
+    #[test]
+    fn should_not_fallback_when_payload_exceeds_text_limit() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, WHATSAPP_MAX_TEXT_BYTES + 1, WHATSAPP_MAX_TEXT_BYTES),
+            "encoded_len > max_text_bytes MUST NOT trigger fallback"
+        );
+    }
+
+    /// R8-H3 fix: `ApiError` (4xx-shaped) is a permanent wire-format
+    /// failure, NOT a transient transport error. The fallback to
+    /// `DOT/1/` text mode would fail with the same error, so the
+    /// adapter MUST propagate the error rather than masking it with a
+    /// retry.
+    #[test]
+    fn should_not_fallback_on_api_error() {
+        let err = PlatformAdapterError::ApiError {
+            code: 400,
+            message: "invalid media ref format".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "ApiError MUST NOT trigger fallback (4xx is permanent)"
+        );
+    }
+
+    /// R8-H3 fix: `PayloadTooLarge` is a permanent shape failure
+    /// (the payload exceeds even native mode's 100 MiB ceiling). No
+    /// fallback can rescue it; the adapter MUST propagate the error.
+    #[test]
+    fn should_not_fallback_on_payload_too_large() {
+        let err = PlatformAdapterError::PayloadTooLarge {
+            size: 200 * 1024 * 1024,
+            max: 100 * 1024 * 1024,
+            platform: "whatsapp".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "PayloadTooLarge MUST NOT trigger fallback"
+        );
+    }
+
+    /// R8-H3 fix: `RateLimited` is transient (the gateway will retry
+    /// per the retry policy) but NOT `Unreachable` — the spec says
+    /// fallback is gated on `Unreachable` specifically. A
+    /// `RateLimited` native error is propagated to the gateway's
+    /// retry layer rather than masked by a text-mode attempt.
+    #[test]
+    fn should_not_fallback_on_rate_limited() {
+        let err = PlatformAdapterError::RateLimited {
+            platform: "whatsapp".into(),
+            retry_after_ms: 1000,
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "RateLimited is not Unreachable; fallback gate is `Unreachable`-only"
+        );
+    }
+
     /// Mission 0850 (RFC-0850 §8.6/§9.4): test-only constructor for
     /// the `download_rx` consumer task. Mirrors the channel creation
-    /// + spawn logic in `start_bot` but bypasses the wacore `Bot`
+    /// and spawn logic in `start_bot` but bypasses the wacore `Bot`
     /// setup so unit tests don't need an authenticated session.
     ///
-    /// Returns the `Sender` so tests can push `DownloadRequest`s
-    /// directly. The receiver is owned by the spawned task, which
-    /// exits cleanly when the sender (and any clones stored in
-    /// `self.download_tx`) are dropped.
+    /// Returns `(Sender, JoinHandle)`. The `Sender` lets tests push
+    /// `DownloadRequest`s directly. The `JoinHandle` lets lifecycle
+    /// tests assert that the spawned task exits cleanly when the
+    /// sender is dropped. Without the handle, the test had no way to
+    /// verify the consumer actually shut down, and a regression that
+    /// blocks the task on a closed channel would silently pass (the
+    /// R8-H2 finding).
     impl WhatsAppWebAdapter {
+        // R8-M3 fix: shared consts for the test stub's synthetic
+        // output. The test `download_rx_consumer_processes_valid_request`
+        // asserts the consumer pushed exactly this payload + metadata
+        // — keeping the values in one place ensures the test and the
+        // stub can't drift.
+        const STUB_NATIVE_PAYLOAD: &'static [u8] = b"native";
+        const STUB_DOT_MODE: &'static str = "native";
+
+        // R8-L4 fix: the test stub's download channel capacity is a
+        // shared const so the constructor and the
+        // `download_tx_try_send_returns_full_when_capacity_exceeded`
+        // test can't drift apart. Changing the capacity in one place
+        // without updating the test's "fill-the-buffer" loop would
+        // silently break the test (it would push 65 messages into a
+        // larger buffer and get no `Full` errors). The production
+        // channel at `start_bot` (line 595) uses the same value
+        // independently — this const is for test-only channels.
+        const DOWNLOAD_CHANNEL_CAPACITY: usize = 64;
+
         fn spawn_download_consumer_for_test(
             &self,
-        ) -> tokio::sync::mpsc::Sender<DownloadRequest> {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<DownloadRequest>(64);
-            // Populate `self.download_tx` so any code path that goes
-            // through the closure (not exercised by these tests
-            // directly, but available for future tests) sees the
-            // populated sender. We can't `.await` on a Mutex in a
-            // sync fn; use `try_lock` and spin. Acceptable because
-            // the test runtime is single-threaded for this
-            // constructor's duration.
-            if let Ok(mut guard) = self.download_tx.try_lock() {
-                *guard = Some(tx.clone());
-            }
+        ) -> (
+            tokio::sync::mpsc::Sender<DownloadRequest>,
+            tokio::task::JoinHandle<()>,
+        ) {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<DownloadRequest>(
+                Self::DOWNLOAD_CHANNEL_CAPACITY,
+            );
+            // R8-H2 fix: do NOT clone `tx` into `self.download_tx`.
+            // The field is for the production `on_event` closure,
+            // which the test stub's tests don't exercise (they push
+            // directly to the channel). If we clone the sender into
+            // the field, dropping the test's `tx` does NOT close the
+            // channel — the cloned sender in `self.download_tx` keeps
+            // the receiver alive and the consumer task's `recv()`
+            // never returns `None`. Tests that need to verify the
+            // channel-close lifecycle must own the only sender.
             let _handle = self.clone_for_handler();
             let inbound_tx = self.inbound_tx.clone();
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 while let Some(req) = rx.recv().await {
                     // Test stub: pretend the download always succeeds,
-                    // pushing a synthetic `wire_bytes = b"native"`
-                    // payload with `dot_mode = "native"` (matches the
-                    // production consumer task's contract). This pins
-                    // the round-trip shape (DownloadRequest →
-                    // RawPlatformMessage) without needing a live
-                    // wacore Client.
+                    // pushing a synthetic payload with `dot_mode = "native"`
+                    // (matches the production consumer task's contract).
+                    // The shared consts above link this output to the
+                    // assertions in `download_rx_consumer_processes_valid_request`.
                     let raw = RawPlatformMessage {
                         platform_id: format!("test:{}", req.chat),
-                        payload: b"native".to_vec(),
+                        payload: Self::STUB_NATIVE_PAYLOAD.to_vec(),
                         metadata: [
                             ("chat".to_string(), req.chat),
                             ("sender".to_string(), req.sender),
-                            ("dot_mode".to_string(), "native".to_string()),
+                            ("dot_mode".to_string(), Self::STUB_DOT_MODE.to_string()),
                         ]
                         .into_iter()
                         .collect(),
@@ -3645,7 +3876,7 @@ mod tests {
                     let _ = inbound_tx.try_send(raw);
                 }
             });
-            tx
+            (tx, handle)
         }
     }
 }

@@ -15,11 +15,11 @@
 
 pub mod adapter;
 mod media_ref; // R9-M1 fix: was `pub mod media_ref;`; the spec at
-                // `missions/open/0850-whatsapp-media-transport.md:224`
-                // explicitly requires the module be private (it's an
-                // implementation detail of the adapter's wire format,
-                // not part of the public API). All `MediaRef` fields are
-                // `pub(crate)` so this change doesn't break the adapter.
+               // `missions/open/0850-whatsapp-media-transport.md:224`
+               // explicitly requires the module be private (it's an
+               // implementation detail of the adapter's wire format,
+               // not part of the public API). All `MediaRef` fields are
+               // `pub(crate)` so this change doesn't break the adapter.
 pub mod state;
 pub mod store;
 

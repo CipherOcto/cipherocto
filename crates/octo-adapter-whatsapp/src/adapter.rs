@@ -410,9 +410,18 @@ impl WhatsAppWebAdapter {
     /// Maximum upload size in bytes (Mission 0850 / RFC-0850 §8.6).
     /// Single source of truth for both `capabilities()` (advertised
     /// via `media_capabilities.max_upload_bytes`) and the `upload_media`
-    /// pre-flight check (R9-L4 fix). Update both together or the
-    /// `debug_assert_eq!` in `upload_media` will fire at startup.
+    /// pre-flight check (R9-L4 fix). R10-M1 fix: the runtime
+    /// `debug_assert_eq!` in `capabilities()` enforces that the const
+    /// value matches the documented 100 MiB limit. If a future change
+    /// updates this const (e.g., to support a higher WhatsApp Document
+    /// ceiling), update both the const and the literal in the
+    /// assertion, otherwise `capabilities()` will panic in debug
+    /// builds at the first call.
     pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+    /// Documented WhatsApp Document upload ceiling, per public WhatsApp
+    /// documentation as of 2026-06. Must match `MAX_UPLOAD_BYTES`.
+    /// Used by the `debug_assert_eq!` in `capabilities()` (R10-M1 fix).
+    const WHATSAPP_DOCUMENT_CEILING_BYTES: usize = 100 * 1024 * 1024;
     pub fn rate_limit_per_second() -> u32 {
         20
     }
@@ -540,10 +549,17 @@ impl WhatsAppWebAdapter {
         // rejecting at the `accept_message` boundary gives a single,
         // clear rejection reason for the gateway's close-the-loop
         // logging.
+        //
+        // R10-L2 fix: also reject whitespace-only or whitespace-padded
+        // tokens. `"DOT/2/   token"` previously slipped through the
+        // `is_empty()` check (the rest is non-empty even if all
+        // whitespace) and failed deeper in the pipeline as a generic
+        // "invalid media ref format" — clearer to reject at the
+        // boundary with a token-specific reason.
         if let Some(rest) = text_trimmed.strip_prefix("DOT/2/") {
-            if rest.is_empty() {
+            if rest.trim().is_empty() {
                 return AcceptDecision::Reject {
-                    reason: "DOT/2/ token is empty",
+                    reason: "DOT/2/ token is empty or whitespace",
                 };
             }
         } else if !text_trimmed.starts_with("DOT/1/") {
@@ -1536,10 +1552,13 @@ pub(crate) async fn download_via_media_ref(
     // would break the `async_trait` `Send` bound on the trait method.
     let client = {
         let guard = client.lock();
-        guard.as_ref().cloned().ok_or_else(|| PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "client not connected".into(),
-        })?
+        guard
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
     };
     // The blanket `impl_downloadable!` at `wacore/src/download.rs`
     // provides `&DocumentMessage: &dyn Downloadable` (MediaType::Document).
@@ -1566,17 +1585,21 @@ async fn upload_to_cdn(
     // awaiting (see `download_via_media_ref` for the `!Send` reason).
     let client = {
         let guard = client.lock();
-        guard.as_ref().cloned().ok_or_else(|| PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "client not connected".into(),
-        })?
+        guard
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
     };
-    client.upload(data, media_type, options).await.map_err(|e| {
-        PlatformAdapterError::Unreachable {
+    client
+        .upload(data, media_type, options)
+        .await
+        .map_err(|e| PlatformAdapterError::Unreachable {
             platform: "whatsapp".into(),
             reason: format!("upload failed: {e}"),
-        }
-    })
+        })
 }
 
 // ── PlatformAdapter ────────────────────────────────────────────────
@@ -1705,10 +1728,12 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             // make Raw/Fragment unreachable. If the capabilities ever
             // change, surface that as an explicit error rather than
             // silently sending the wrong shape.
-            TransportMode::Raw | TransportMode::Fragment => Err(PlatformAdapterError::Unreachable {
-                platform: "whatsapp".into(),
-                reason: format!("{mode:?} mode is not supported by this adapter"),
-            }),
+            TransportMode::Raw | TransportMode::Fragment => {
+                Err(PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("{mode:?} mode is not supported by this adapter"),
+                })
+            }
         }
     }
 
@@ -1765,6 +1790,18 @@ impl PlatformAdapter for WhatsAppWebAdapter {
     }
 
     fn capabilities(&self) -> CapabilityReport {
+        // R10-M1 fix: enforce the `MAX_UPLOAD_BYTES` const value
+        // matches the documented 100 MiB WhatsApp Document ceiling.
+        // Fires at the first `capabilities()` call in debug builds.
+        // If you intentionally change the ceiling, update BOTH the
+        // const (`MAX_UPLOAD_BYTES`) and the literal here.
+        debug_assert_eq!(
+            Self::MAX_UPLOAD_BYTES,
+            Self::WHATSAPP_DOCUMENT_CEILING_BYTES,
+            "MAX_UPLOAD_BYTES drifted from the documented 100 MiB WhatsApp \
+             Document ceiling; update both the const and the literal in \
+             this assertion if the change is intentional"
+        );
         CapabilityReport {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
@@ -1782,11 +1819,9 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             //
             // R9-L4 fix: read from `Self::MAX_UPLOAD_BYTES` (the shared
             // const) instead of the literal `100 * 1024 * 1024`. The
-            // const is the single source of truth used by both this
-            // capability declaration and the `upload_media` pre-flight
-            // check; updating one without the other now fails a
-            // `debug_assert_eq!` at startup instead of silently
-            // disagreeing.
+            // `debug_assert_eq!` at the top of this method (R10-M1)
+            // verifies the const matches the documented WhatsApp
+            // ceiling.
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: Self::MAX_UPLOAD_BYTES,
                 supported_mime_types: vec!["application/octet-stream".to_string()],
@@ -1805,10 +1840,11 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // a less-actionable server-side error).
         //
         // R9-L4 fix: use `Self::MAX_UPLOAD_BYTES` (the shared const)
-        // instead of a local literal. The `debug_assert_eq!` ensures
-        // this stays in sync with the value advertised in
-        // `capabilities()`. If a future change moves the two apart,
-        // the assertion fires at startup with a clear message.
+        // instead of a local literal. R10-M1: the `debug_assert_eq!`
+        // is at the top of `capabilities()` (one place, not here);
+        // it fires at the first `capabilities()` call if a future
+        // change updates the const without updating the documented
+        // WhatsApp ceiling literal.
         if data.len() > Self::MAX_UPLOAD_BYTES {
             return Err(PlatformAdapterError::PayloadTooLarge {
                 size: data.len(),
@@ -1820,7 +1856,13 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // `Document` channel hardcodes `application/octet-stream`
         // regardless of the upload MIME. The argument is preserved in
         // the signature for future extension.
-        let response = upload_to_cdn(&self.client, data.to_vec(), MediaType::Document, UploadOptions::new()).await?;
+        let response = upload_to_cdn(
+            &self.client,
+            data.to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
         let media_ref = MediaRef::from_upload_response(&response, filename);
         // The returned `String` is the wire-format token for
         // `DOT/2/{token}`. Callers that go through `send_envelope`
@@ -1983,9 +2025,8 @@ impl WhatsAppWebAdapter {
         // unreachable for the current field set but future-proofs
         // against wacore upgrades that introduce non-serializable
         // fields.
-        let token = encode_base64url(&media_ref).map_err(|e| transport_err(format!(
-            "encode MediaRef failed: {e}"
-        )))?;
+        let token = encode_base64url(&media_ref)
+            .map_err(|e| transport_err(format!("encode MediaRef failed: {e}")))?;
         // Step 4: send the DOT/2/ text message.
         let outgoing = waproto::whatsapp::Message {
             conversation: Some(encode_native_ref(&token)),
@@ -2587,8 +2628,7 @@ pub(crate) fn should_fallback_to_text(
     encoded_len: usize,
     max_text_bytes: usize,
 ) -> bool {
-    encoded_len <= max_text_bytes
-        && matches!(err, PlatformAdapterError::Unreachable { .. })
+    encoded_len <= max_text_bytes && matches!(err, PlatformAdapterError::Unreachable { .. })
 }
 
 fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
@@ -2654,6 +2694,98 @@ mod tests {
         assert!(encoded.starts_with("DOT/1/"));
         let decoded = WhatsAppWebAdapter::decode_envelope(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    /// R10-M2 fix: pin the `canonicalize` behavior for the
+    /// native-mode non-282-byte payload path. When the download
+    /// returns a payload of any length other than the wire-format
+    /// 282 bytes, `DeterministicEnvelope::from_wire_bytes` rejects
+    /// it with `"Invalid wire envelope length: expected 282, got N"`.
+    /// The error MUST be a 400 `ApiError` with a message that
+    /// includes both the expected and actual lengths, so the
+    /// gateway operator can diagnose a CDN-side mismatch without
+    /// leaking the `media_key`. The behavior was verified manually
+    /// in R10 but was not pinned by any test — a regression that
+    /// (a) silently switches dot_mode to the text path, (b) maps
+    /// `DotError::Serialization` to a different code, or (c) accepts
+    /// a truncated payload (`len() < 282` rather than `!=`) would
+    /// not be caught. Runs without a live session because
+    /// `canonicalize` is local — it only inspects `raw` and reads
+    /// `metadata["dot_mode"]`.
+    #[test]
+    fn canonicalize_native_mode_rejects_non_282_byte_payload() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![0u8; 100], // not 282 bytes
+            metadata: [
+                ("chat".to_string(), "x".into()),
+                ("sender".to_string(), "y".into()),
+                ("dot_mode".to_string(), "native".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 400, "must surface as a 400 ApiError, got {code}");
+                assert!(
+                    message.contains("Invalid wire envelope length"),
+                    "message must include the from_wire_bytes error, got: {message}"
+                );
+                assert!(
+                    message.contains("expected 282, got 100"),
+                    "message must include the expected and actual lengths, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 400 with length-mismatch message, got {other:?}")
+            }
+            Ok(_) => panic!("non-282-byte native payload must be rejected"),
+        }
+    }
+
+    /// R10-M2 fix (complement): a 282-byte payload of arbitrary
+    /// bytes MUST NOT be rejected by `from_wire_bytes`'s length
+    /// check. This pins the boundary: 282 bytes is the ONLY
+    /// payload length that passes the length check. The actual
+    /// downstream behavior (signature verification, etc.) is a
+    /// separate concern — we don't care whether it succeeds or
+    /// fails; we only care that the failure is NOT the length
+    /// check. This test would fail if a future change made the
+    /// length check `< 282` instead of `!= 282` (which would
+    /// accept 283+ byte payloads).
+    #[test]
+    fn canonicalize_native_mode_passes_length_check_at_282_bytes() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![0u8; 282], // exact wire length
+            metadata: [
+                ("chat".to_string(), "x".into()),
+                ("sender".to_string(), "y".into()),
+                ("dot_mode".to_string(), "native".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        // The length check must pass. The downstream behavior is
+        // opaque (could be Ok for a well-formed envelope, or an
+        // ApiError from signature verification for an all-zeros
+        // payload) — neither outcome is this test's concern.
+        match adapter.canonicalize(&raw) {
+            Ok(_) => { /* length check passed, downstream succeeded */ }
+            Err(PlatformAdapterError::ApiError { code: 400, message }) => {
+                assert!(
+                    !message.contains("Invalid wire envelope length"),
+                    "282-byte payload must pass the length check; \
+                     downstream signature failure is acceptable. got: {message}"
+                );
+            }
+            Err(other) => panic!(
+                "expected Ok or ApiError 400 from a downstream check (NOT length), got {other:?}"
+            ),
+        }
     }
 
     #[test]
@@ -3549,6 +3681,77 @@ mod tests {
         }
     }
 
+    /// R10-L1 fix: pin the pre-flight 100 MiB + 1 byte boundary.
+    /// The mission spec (Test 2 of `media_capabilities_match_upload_limit`)
+    /// requires this boundary. A regression that changes the
+    /// comparison from `>` to `>=` would still pass at 100 MiB + 1
+    /// but would reject a payload of exactly 100 MiB (still legal).
+    /// A regression that removes the check entirely would let the
+    /// payload reach `Client::upload` and surface as a less-actionable
+    /// server-side rejection. The test uses a 100 MiB + 1 byte payload
+    /// to pin the off-by-one boundary. Runs without a live session
+    /// because the pre-flight check short-circuits before any network
+    /// call.
+    #[tokio::test]
+    async fn upload_media_rejects_payload_over_max_upload_bytes() {
+        let adapter = offline_adapter();
+        // 100 MiB + 1 byte
+        let oversized = vec![0u8; WhatsAppWebAdapter::MAX_UPLOAD_BYTES + 1];
+        let result = adapter
+            .upload_media("test.bin", &oversized, "application/octet-stream")
+            .await;
+        match result {
+            Err(PlatformAdapterError::PayloadTooLarge {
+                size,
+                max,
+                platform,
+            }) => {
+                assert_eq!(size, WhatsAppWebAdapter::MAX_UPLOAD_BYTES + 1);
+                assert_eq!(max, WhatsAppWebAdapter::MAX_UPLOAD_BYTES);
+                assert_eq!(platform, "whatsapp");
+            }
+            Err(other) => panic!("expected PayloadTooLarge, got {other:?}"),
+            Ok(_) => panic!("oversized payload must be rejected by pre-flight"),
+        }
+    }
+
+    /// R10-L1 fix: pin the pre-flight at-the-boundary case.
+    /// A payload of EXACTLY 100 MiB must NOT be rejected by the
+    /// pre-flight check (the check uses `>`, not `>=`). This test
+    /// would fail if a future change inverted the comparison. It
+    /// then fails at the `client not connected` step (the
+    /// pre-flight passes), proving the boundary is inclusive at
+    /// `MAX_UPLOAD_BYTES`.
+    #[tokio::test]
+    async fn upload_media_accepts_payload_exactly_at_max_upload_bytes() {
+        let adapter = offline_adapter();
+        // Exactly 100 MiB
+        let at_boundary = vec![0u8; WhatsAppWebAdapter::MAX_UPLOAD_BYTES];
+        let result = adapter
+            .upload_media("test.bin", &at_boundary, "application/octet-stream")
+            .await;
+        match result {
+            // Pre-flight passes (size == MAX, not >), fails at client-not-connected.
+            Err(PlatformAdapterError::Unreachable { reason, .. }) => {
+                assert!(
+                    reason.contains("client not connected"),
+                    "at-the-boundary payload must pass pre-flight and fail at \
+                     client-not-connected step, got reason: {reason}"
+                );
+            }
+            Err(PlatformAdapterError::PayloadTooLarge { .. }) => {
+                panic!(
+                    "at-the-boundary payload (exactly MAX_UPLOAD_BYTES) must \
+                        NOT be rejected by pre-flight; check uses > not >="
+                )
+            }
+            Err(other) => panic!(
+                "expected Unreachable (pre-flight passes, client disconnected), got {other:?}"
+            ),
+            Ok(_) => panic!("upload_media must fail when client is not connected"),
+        }
+    }
+
     /// Mission 0850 AC (R1-H3, R18): `download_media` with a malformed
     /// token MUST return `ApiError { code: 400, .. }` with the redacted
     /// "invalid media ref format" message. The 4xx-shaped variant
@@ -3639,14 +3842,16 @@ mod tests {
         }
     }
 
-    /// R9-L3 fix: `accept_message` MUST reject an empty `DOT/2/` token
-    /// at the boundary instead of letting it cascade through the
-    /// receive pipeline as a noisy decode failure. The literal string
-    /// `"DOT/2/"` (no token after the slash) previously passed the
-    /// prefix check, then failed `decode_native_ref → None`,
-    /// then failed text-decode, and was dropped with two cascading
-    /// errors. Rejecting here gives a single, clear rejection
-    /// reason.
+    /// R9-L3 fix + R10-L2: `accept_message` MUST reject an empty or
+    /// whitespace-only `DOT/2/` token at the boundary instead of
+    /// letting it cascade through the receive pipeline as a noisy
+    /// decode failure. The literal string `"DOT/2/"` (no token after
+    /// the slash) previously passed the prefix check, then failed
+    /// `decode_native_ref → None`, then failed text-decode, and was
+    /// dropped with two cascading errors. Rejecting here gives a
+    /// single, clear rejection reason. The `trim()` (R10-L2 fix)
+    /// also catches `"DOT/2/   "` (whitespace-only) and
+    /// `"DOT/2/\t"` (tab-only) tokens.
     #[test]
     fn accept_message_rejects_empty_dot2_token() {
         let groups = vec!["120363012345678901".to_string()];
@@ -3660,9 +3865,33 @@ mod tests {
         );
         match decision {
             AcceptDecision::Reject { reason } => {
-                assert_eq!(reason, "DOT/2/ token is empty");
+                assert_eq!(reason, "DOT/2/ token is empty or whitespace");
             }
             AcceptDecision::Accept => panic!("empty DOT/2/ token must be rejected"),
+        }
+    }
+
+    /// R10-L2 fix: `accept_message` MUST also reject `DOT/2/` tokens
+    /// that are entirely whitespace. `"DOT/2/   "` previously
+    /// slipped through the `is_empty()` check (the string `"   "`
+    /// is non-empty) and surfaced deeper as a generic
+    /// "invalid media ref format" error.
+    #[test]
+    fn accept_message_rejects_whitespace_dot2_token() {
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "1234@s.whatsapp.net",
+            "DOT/2/   ",
+            &groups,
+            &allowlist,
+        );
+        match decision {
+            AcceptDecision::Reject { reason } => {
+                assert_eq!(reason, "DOT/2/ token is empty or whitespace");
+            }
+            AcceptDecision::Accept => panic!("whitespace DOT/2/ token must be rejected"),
         }
     }
 
@@ -3988,9 +4217,8 @@ mod tests {
             tokio::sync::mpsc::Sender<DownloadRequest>,
             tokio::task::JoinHandle<()>,
         ) {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<DownloadRequest>(
-                Self::DOWNLOAD_CHANNEL_CAPACITY,
-            );
+            let (tx, mut rx) =
+                tokio::sync::mpsc::channel::<DownloadRequest>(Self::DOWNLOAD_CHANNEL_CAPACITY);
             // R8-H2 fix: do NOT clone `tx` into `self.download_tx`.
             // The field is for the production `on_event` closure,
             // which the test stub's tests don't exercise (they push

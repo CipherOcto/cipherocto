@@ -17,8 +17,8 @@
 use serde::{Deserialize, Serialize};
 
 use octo_network::dot::transport::{b64url_decode, b64url_encode};
-use whatsapp_rust::upload::UploadResponse;
 use waproto::whatsapp as wa;
+use whatsapp_rust::upload::UploadResponse;
 
 // ── MediaRef ───────────────────────────────────────────────────────
 
@@ -121,9 +121,7 @@ impl MediaRef {
 /// other `Option`-less, non-serializable field) would surface a
 /// production panic via this call site. Returning `Result` lets the
 /// caller propagate the error and keeps the adapter panic-free.
-pub(crate) fn encode_base64url(
-    media_ref: &MediaRef,
-) -> Result<String, MediaRefError> {
+pub(crate) fn encode_base64url(media_ref: &MediaRef) -> Result<String, MediaRefError> {
     // SAFETY: `MediaRef` contains `media_key` in plaintext in the JSON.
     // Callers MUST NOT log the result except inside the `DOT/2/{token}`
     // wire envelope itself.
@@ -244,7 +242,10 @@ mod tests {
 
         // Populated fields:
         assert_eq!(doc.media_key.as_deref(), Some(upload.media_key.as_slice()));
-        assert_eq!(doc.direct_path.as_deref(), Some(upload.direct_path.as_str()));
+        assert_eq!(
+            doc.direct_path.as_deref(),
+            Some(upload.direct_path.as_str())
+        );
         assert_eq!(
             doc.file_enc_sha256.as_deref(),
             Some(upload.file_enc_sha256.as_slice())

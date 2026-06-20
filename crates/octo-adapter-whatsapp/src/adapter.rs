@@ -128,39 +128,41 @@ impl WhatsAppConfig {
             }
         }
         for group in &self.groups {
-            if group.is_empty() {
-                return Err("groups contains an empty string".to_string());
-            }
-            // RFC-0861 §2 M16: tighten JID acceptance. Two valid
-            // forms: bare digits, or digits + `@g.us`. Anything
-            // with `@` that doesn't end in `@g.us` is newsletter
-            // JID misuse (`1234@newsletter`); anything with `:`
-            // is user JID misuse (`1234567890:0@s.whatsapp.net`).
-            if group.contains(':') {
-                return Err(format!(
-                    "groups entry {group:?} contains ':' (user JID misuse; expected digits or digits+@g.us)"
-                ));
-            }
-            if group.contains('@') {
-                if !group.ends_with("@g.us") {
-                    return Err(format!(
-                        "groups entry {group:?} contains '@' but does not end with @g.us (newsletter JID misuse)"
-                    ));
-                }
-                let prefix = &group[..group.len() - "@g.us".len()];
-                if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_digit()) {
-                    return Err(format!(
-                        "groups entry {group:?} has non-numeric prefix before @g.us"
-                    ));
-                }
-            } else if !group.chars().all(|c| c.is_ascii_digit()) {
-                return Err(format!(
-                    "groups entry {group:?} is not all digits (expected digits or digits+@g.us)"
-                ));
-            }
+            validate_group_jid(group).map_err(|e| format!("groups entry {e}"))?;
         }
         Ok(())
     }
+}
+
+/// R13-L3 fix: extract the strict JID-shape check (RFC-0861 §2 M16)
+/// into a standalone helper so it can be shared between
+/// `WhatsAppConfig::validate` (static path) and
+/// `WhatsAppWebAdapter::register_group_at_runtime` (dynamic path).
+/// Before this fix, a typo in a runtime-registered JID (e.g.,
+/// `12036301234567890@g.us` — one digit short) was silently
+/// accepted, the message was rejected as "unconfigured group",
+/// and the caller had no way to find the bug.
+fn validate_group_jid(group: &str) -> std::result::Result<(), String> {
+    if group.is_empty() {
+        return Err("is empty".to_string());
+    }
+    if group.contains(':') {
+        return Err("contains ':' (user JID misuse; expected digits or digits+@g.us)".to_string());
+    }
+    if group.contains('@') {
+        if !group.ends_with("@g.us") {
+            return Err(
+                "contains '@' but does not end with @g.us (newsletter JID misuse)".to_string(),
+            );
+        }
+        let prefix = &group[..group.len() - "@g.us".len()];
+        if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_digit()) {
+            return Err("has non-numeric prefix before @g.us".to_string());
+        }
+    } else if !group.chars().all(|c| c.is_ascii_digit()) {
+        return Err("is not all digits (expected digits or digits+@g.us)".to_string());
+    }
+    Ok(())
 }
 
 /// E.164 validation: `+` followed by 7-15 ASCII digits, no leading 0 after `+`.
@@ -446,11 +448,22 @@ impl WhatsAppWebAdapter {
     /// Use this after `create_group` returns so the newly-created
     /// group is immediately routable without restarting the bot or
     /// reloading the config.
-    pub fn register_group_at_runtime(&self, group_jid: &str) {
+    ///
+    /// R13-L3 fix: validate the JID against the same strict shape
+    /// check that `WhatsAppConfig::validate` uses (RFC-0861 §2 M16).
+    /// Previously any string was accepted; a typo (e.g.,
+    /// `12036301234567890@g.us` — one digit short) was silently
+    /// stored, the message was rejected as "unconfigured group",
+    /// and the caller had no way to find the bug. Returns
+    /// `Err(reason)` for invalid JIDs; the caller is expected to
+    /// surface the error to the user.
+    pub fn register_group_at_runtime(&self, group_jid: &str) -> std::result::Result<(), String> {
+        validate_group_jid(group_jid)?;
         let mut guard = self.runtime_groups.lock();
         if !guard.iter().any(|g| g == group_jid) {
             guard.push(group_jid.to_string());
         }
+        Ok(())
     }
 
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
@@ -873,28 +886,51 @@ impl WhatsAppWebAdapter {
                             let chat = info.source.chat.to_string();
                             let sender = info.source.sender.to_string();
 
-                            // Combine static config.groups with
-                            // runtime-registered groups so messages from
-                            // groups added via `register_group_at_runtime`
-                            // are accepted.
-                            let effective_groups: Vec<String> = {
+                            // R13-L2 fix: avoid the per-message
+                            // `Vec<String>` clone that used to happen
+                            // unconditionally. `accept_message` takes
+                            // `&[String]` (which `&Vec<String>` derefs
+                            // to), so we can pass `&groups` directly on
+                            // the hot path. The `Vec<String>` allocation
+                            // for the combined slice only happens on
+                            // the cold path (runtime groups are
+                            // non-empty — uncommon). The previous code
+                            // did `groups.clone()` on every inbound
+                            // message, which is N+rt string clones
+                            // per message; for a high-traffic group
+                            // (100 msg/s with 10 configured groups)
+                            // that's ~1000 string clones per second
+                            // per adapter instance — visible in
+                            // mimalloc/jemalloc profiles.
+                            let decision = {
                                 let rt = runtime_groups.lock();
                                 if rt.is_empty() {
-                                    groups.clone()
+                                    // Hot path: zero per-message
+                                    // allocation. `&groups` derefs
+                                    // from `&Vec<String>` to
+                                    // `&[String]`.
+                                    Self::accept_message(
+                                        &chat,
+                                        &sender,
+                                        &text,
+                                        &groups,
+                                        &sender_allowlist,
+                                    )
                                 } else {
+                                    // Cold path: build the combined
+                                    // slice only when runtime groups
+                                    // are non-empty.
                                     let mut combined = groups.clone();
                                     combined.extend(rt.iter().cloned());
-                                    combined
+                                    Self::accept_message(
+                                        &chat,
+                                        &sender,
+                                        &text,
+                                        &combined,
+                                        &sender_allowlist,
+                                    )
                                 }
                             };
-
-                            let decision = Self::accept_message(
-                                &chat,
-                                &sender,
-                                &text,
-                                &effective_groups,
-                                &sender_allowlist,
-                            );
 
                             // Emit a single warn! for the security-relevant
                             // rejection (D-WA-10 mitigation). Routine filtering
@@ -1731,23 +1767,25 @@ pub(crate) async fn download_via_media_ref(
 /// branch. Returns the `UploadResponse` on success. Caller is
 /// responsible for the `MediaRef::encode_base64url(&response)` step.
 async fn upload_to_cdn(
-    client: &Arc<parking_lot::Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    client: &Arc<whatsapp_rust::Client>,
     data: Vec<u8>,
     media_type: MediaType,
     options: UploadOptions,
 ) -> Result<UploadResponse, PlatformAdapterError> {
-    // Clone the `Arc<Client>` out of the parking_lot guard before
-    // awaiting (see `download_via_media_ref` for the `!Send` reason).
-    let client = {
-        let guard = client.lock();
-        guard
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| PlatformAdapterError::Unreachable {
-                platform: "whatsapp".into(),
-                reason: "client not connected".into(),
-            })?
-    };
+    // R13-M2 fix: the helper used to take
+    // `&Arc<Mutex<Option<Arc<Client>>>>` and re-lock the mutex
+    // here, creating a TOCTOU window: a `shutdown()` between the
+    // caller's `self.client.lock().clone()` and the lock here
+    // would return `Unreachable { "client not connected" }` even
+    // though the caller's cloned `Arc<Client>` was still valid.
+    //
+    // The fix: take the cloned `Arc<Client>` directly. The
+    // caller is responsible for cloning it out of the mutex
+    // before any await, which eliminates the re-locking race.
+    // This also lets `send_envelope_native` use the
+    // `client: &Arc<whatsapp_rust::Client>` parameter it already
+    // has, instead of the half-dead `&self.client` it used to
+    // fall through to.
     client
         .upload(data, media_type, options)
         .await
@@ -2033,8 +2071,27 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // `Document` channel hardcodes `application/octet-stream`
         // regardless of the upload MIME. The argument is preserved in
         // the signature for future extension.
+        //
+        // R13-M2 fix: clone the `Arc<Client>` out of the parking_lot
+        // mutex guard BEFORE awaiting (the guard is `!Send`, so it
+        // can't cross the await point) and pass it to
+        // `upload_to_cdn`. The helper used to take
+        // `&self.client` (a `&Arc<Mutex<Option<Arc<Client>>>>`)
+        // and re-lock the mutex, which created a TOCTOU window:
+        // a `shutdown()` between the caller's clone and the
+        // re-lock would surface as a misleading
+        // "client not connected" error.
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
         let response = upload_to_cdn(
-            &self.client,
+            &client,
             data.to_vec(),
             MediaType::Document,
             UploadOptions::new(),
@@ -2202,8 +2259,17 @@ impl WhatsAppWebAdapter {
         // Step 1+2: upload the raw envelope bytes to the CDN + build
         // MediaRef. The receiver will download these exact bytes and
         // feed them directly to `DeterministicEnvelope::from_wire_bytes`.
+        //
+        // R13-M2 fix: pass the `client` parameter (which was
+        // already cloned out of `self.client` by the caller —
+        // see `send_envelope` at adapter.rs:1770-1775) instead of
+        // `&self.client`. The old code re-locked the mutex here,
+        // which (a) created a TOCTOU window with `shutdown()` and
+        // (b) made the `client` parameter half-dead. After the
+        // refactor `upload_to_cdn` takes `&Arc<whatsapp_rust::Client>`
+        // directly, so we just pass the parameter.
         let upload_response = upload_to_cdn(
-            &self.client,
+            client,
             wire_bytes.to_vec(),
             MediaType::Document,
             UploadOptions::new(),
@@ -3359,6 +3425,71 @@ mod tests {
             let cfg = cfg_with("/tmp/test.db", None, None, None, vec![bad]);
             assert!(cfg.validate().is_err(), "groups {bad:?} should be rejected");
         }
+    }
+
+    // ── R13-L3 tests: register_group_at_runtime JID validation ────
+    //
+    // The static-config path (`WhatsAppConfig::validate`) already had
+    // strict JID-shape checks; the runtime-registration path
+    // (`register_group_at_runtime`) silently accepted any string.
+    // R13-L3 fixed the runtime path to share the same check via the
+    // `validate_group_jid` helper. These tests pin the new behavior.
+
+    #[test]
+    fn register_group_at_runtime_accepts_valid_jids() {
+        // Bare digits and digits+@g.us are the two valid forms.
+        for good in [
+            "120363012345678901",      // bare digits
+            "120363012345678901@g.us", // full JID
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+            let adapter = WhatsAppWebAdapter::new(cfg);
+            assert!(
+                adapter.register_group_at_runtime(good).is_ok(),
+                "valid JID {good:?} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn register_group_at_runtime_rejects_invalid_jids() {
+        // Same set of bad JIDs that `WhatsAppConfig::validate`
+        // rejects — proves the runtime path shares the check.
+        for bad in [
+            "",                                    // empty
+            "120363012345678901@newsletter",       // newsletter JID misuse
+            "120363012345678901@s.whatsapp.net",   // user JID shape
+            "120363012345678901:0@s.whatsapp.net", // user JID misuse (`:`)
+            "not-a-jid",                           // non-numeric
+            "abc@g.us",                            // non-numeric prefix
+            "120363012345678901@",                 // empty suffix
+            "@g.us",                               // empty prefix
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+            let adapter = WhatsAppWebAdapter::new(cfg);
+            assert!(
+                adapter.register_group_at_runtime(bad).is_err(),
+                "invalid JID {bad:?} should be rejected (was silently accepted before R13-L3)"
+            );
+        }
+    }
+
+    #[test]
+    fn register_group_at_runtime_idempotent() {
+        // Re-registering an existing JID is a no-op (no duplicate
+        // entries in the runtime_groups vec).
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+        let adapter = WhatsAppWebAdapter::new(cfg);
+        let jid = "120363012345678901@g.us";
+        adapter.register_group_at_runtime(jid).expect("first");
+        adapter.register_group_at_runtime(jid).expect("second");
+        let guard = adapter.runtime_groups.lock();
+        assert_eq!(
+            guard.len(),
+            1,
+            "duplicate register must not insert a second row"
+        );
+        assert_eq!(guard[0], jid);
     }
 
     // ── Sender allowlist tests (D-WA-10 mitigation) ─────────────

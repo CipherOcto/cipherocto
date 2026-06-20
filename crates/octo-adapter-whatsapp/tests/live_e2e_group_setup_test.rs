@@ -352,7 +352,17 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     // accept the group. Without this, the inbound event would be
     // filtered as "unconfigured group" and we would never observe
     // self-delivery.
-    adapter.register_group_at_runtime(&group_jid);
+    //
+    // R13-L3 fix: `register_group_at_runtime` now returns
+    // `Result<(), String>` (validates the JID shape — RFC-0861 §2
+    // M16). The `create_group` response gives us a server-issued
+    // JID which is guaranteed to be well-formed, so the `.expect`
+    // is appropriate. If this fires it means either `create_group`
+    // returned a malformed JID (server bug) or our validation
+    // logic drifted from the server's JID format (test bug).
+    adapter
+        .register_group_at_runtime(&group_jid)
+        .expect("create_group returned a JID that failed R13-L3 validation");
 
     // ── Step 2: invite the configured phone numbers ────────────────
     // `create_group` already added the initial participants. The

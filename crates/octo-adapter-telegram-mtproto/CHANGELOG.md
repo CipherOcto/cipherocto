@@ -4,6 +4,103 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] — 2026-06-21
+
+### Security
+
+- **R15: hand-written `Debug` for all credential-bearing
+  structs.** `AuthMode::BotToken` and `UserCredentials.phone`
+  were previously leaked in full via the auto-derived
+  `Debug`; same for `BotApiConfig.token` and the
+  `RealTelegramMtprotoClient` QR-login state. Replaced with
+  manual `Debug` impls that print `[REDACTED]`.
+- **R15: hand-written `Display` for `MtprotoAuthAction`.**
+  The `MtprotoAuthError::InvalidTransition` and the
+  `From<MtprotoAuthError>` for `MtprotoTelegramError` mappings
+  used `{action:?}`, which leaked the auth code / password
+  in error messages. Switched to a variant-name-only
+  `Display` and `{action}` in the format sites.
+- **R15: `Zeroizing<String>` for `qr_api_hash`.** The
+  `RealTelegramMtprotoClient` cached the QR-login `api_hash`
+  in a plain `Mutex<Option<String>>`; now wrapped in
+  `Zeroizing` so the secret is wiped from memory on drop.
+
+### Fixed
+
+- **R15: `register_domain` accepts all three chat-id
+  conventions** (user id, basic group id, supergroup/channel
+  id with the `-100…` prefix). The previous impl rejected
+  non-positive ids, which broke supergroup / channel
+  outbound. Documented the conventions in the doc-comment.
+- **R15: `StoolapSession::Drop` zeroizes the cached
+  `auth_key: Option<[u8; 256]>`** on drop. Previously the
+  key was leaked into the heap on adapter shutdown.
+- **R15: `from_file_or_env` distinguishes
+  `io::ErrorKind::NotFound`** from other IO errors, instead
+  of substring-matching `"No such file"` / `"not found"`
+  (which is platform-fragile).
+- **R15: `MtprotoTelegramAdapter::domain_id` no longer
+  auto-populates** from a previously-used chat id. Callers
+  must now call `register_domain` explicitly before sending
+  an envelope. This closes a class of cross-chat send bugs
+  where a stale `domain_id` would route a new message to
+  the wrong conversation.
+- **R15: `examples/telegram_bot.rs` uses `tracing` for
+  runtime output.** Every `eprintln!` call has been replaced
+  with `tracing::info!` / `error!` (the pre-init usage
+  hint, which runs before the subscriber is installed,
+  is the only `eprintln!` left). A new
+  `init_tracing()` helper wires up
+  `tracing_subscriber::fmt()` + `EnvFilter` with the
+  `tracing-subscriber` dep gated on `bot-api`.
+
+### Removed (or replaced)
+
+- **R15: `MtprotoSelfIdentity::handle()` is gone.** It
+  returned the wrong canonical form (`"user:12345"`
+  instead of `"telegram:user:12345"`); callers that need
+  the canonical form should use the
+  `PlatformAdapter::self_handle` capability probe, which
+  already returns the right form.
+- **R15: `MtprotoSelfIdentity::set_username` is gone.**
+  It has been deprecated since 0.1.0; the underlying
+  field is set via `MtprotoTelegramAdapter::connect_*`
+  flows and is not externally settable.
+- **R15: env-var-driven `TELEGRAM_BOT_API_BASE_URL`
+  override removed from `BotApiConfig::new`.** The
+  public API to point the adapter at a non-default Bot
+  API endpoint is now
+  `MtprotoTelegramConfig::bot_api_base_url` (an
+  `Option<String>` field, additive). This removes a
+  racy `unsafe { std::env::set_var }` from the
+  `connect_http` test and makes the override
+  deterministic across parallel test runs.
+
+### Tests
+
+- **R15: 16 new unit tests.** `parse_flood_wait` (5),
+  `read_all_peer_infos` chat / channel round-trip (2),
+  `connect_http_tests` mod (4, gated on `bot-api`),
+  `MtprotoSelfIdentity` canonical-form check (1), the
+  `RateLimited` flood-wait integration test (1), plus
+  internal coverage in `config::from_file_or_env` /
+  `StoolapSession` zeroize on drop / `register_domain`
+  three-convention parsing.
+- **R15: bugfixes to existing tests.** Two
+  `send_envelope` tests now call `register_domain`
+  explicitly (the auto-population that used to paper
+  over the missing call is gone). The `connect_http`
+  happy-path test now points the adapter at a wiremock
+  server via `config.bot_api_base_url` instead of a
+  racy `unsafe { std::env::set_var }` /
+  `env::remove_var` dance.
+- **R15: clippy / fmt clean.** `cargo fmt --check`,
+  `cargo clippy --all-targets --features "real-network
+  bot-api" -- -D warnings`, and all four
+  `cargo test --lib` feature combinations
+  (default, `real-network`, `bot-api`, both) are green:
+  119 / 119 / 143 / 143 tests, 0 failures.
+
 ## [0.3.0] — 2026-06-21
 
 ### Added
@@ -165,6 +262,8 @@ All notable changes to this crate are documented here. The crate adheres to
 [platform-adapter]: ../octo-network
 [grammers]: https://crates.io/crates/grammers-client
 
+[0.3.1]: #031--2026-06-21
+[0.3.0]: #030--2026-06-21
 [0.2.0]: #020--2026-06-21
 [0.1.0]: #010--2026-06-21
 

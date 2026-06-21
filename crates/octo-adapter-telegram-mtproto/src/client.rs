@@ -32,7 +32,7 @@
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -167,6 +167,28 @@ pub struct SelfUserInfo {
     /// Access hash for `InputPeer::Self`. Stored so subsequent
     /// `InputPeer` constructions do not need a re-fetch.
     pub access_hash: i64,
+}
+
+/// Group metadata returned by `get_chat` and `create_group`.
+///
+/// Used by the `CoordinatorAdmin` impl to populate the
+/// platform-agnostic `GroupMetadata` returned to callers.
+/// `i64`-typed `chat_id` is the platform-native identifier
+/// (Telegram `chat_id` is a signed 64-bit integer; supergroups
+/// and channels have negative IDs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupInfo {
+    pub chat_id: i64,
+    /// Group title (Telegram calls it "title"; "subject" is
+    /// WhatsApp terminology).
+    pub title: String,
+    /// Number of members. None if the platform did not surface
+    /// it (the mock returns `Some(2)` for default-created
+    /// groups).
+    pub member_count: Option<u32>,
+    /// Whether the bot is admin in this group. None if
+    /// unknown.
+    pub is_admin: Option<bool>,
 }
 
 /// A new message update from Telegram.
@@ -336,6 +358,98 @@ pub trait MtprotoTelegramClient: Send + Sync {
         chat_id: i64,
         message_id: i64,
     ) -> Result<String, MtprotoTelegramError>;
+
+    // ── Group / Coordinator operations ─────────────────────────
+    //
+    // These methods back the `CoordinatorAdmin` trait impl
+    // on the adapter (RFC-0850 §8 extension). They are
+    // implemented by the mock with test-friendly defaults
+    // (a counter-based "synthetic chat id" generator and
+    //  accept-no-error semantics) and by the real client
+    // (gated `real-network`) with the corresponding grammers
+    // RPCs. All methods take `&self`; interior mutability is
+    // the impl's responsibility (matching the rest of the
+    // trait).
+
+    /// Create a new basic group / supergroup with the given
+    /// `title`. `user_ids` is the list of user_ids to add
+    /// (Telegram requires at least one; the bot itself is
+    /// automatically added as admin). Returns the new
+    /// group's `GroupInfo`. Telegram's
+    /// `messages.createChat` is used for basic groups;
+    /// the real client picks the right RPC based on the
+    /// available configuration.
+    async fn create_group(
+        &self,
+        title: &str,
+        user_ids: &[i64],
+    ) -> Result<GroupInfo, MtprotoTelegramError>;
+
+    /// Add a user to a chat (Telegram's
+    /// `messages.addChatUser` for basic groups,
+    /// `channels.inviteToChannel` for supergroups). Returns
+    /// `Ok(())` on success.
+    async fn add_participant(&self, chat_id: i64, user_id: i64)
+        -> Result<(), MtprotoTelegramError>;
+
+    /// Remove a user from a chat. For basic groups, this is
+    /// the same as "kick". For supergroups, the user can
+    /// rejoin via invite link unless banned — for the
+    /// `CoordinatorAdmin::remove_member` semantic, this is
+    /// the correct call.
+    async fn kick_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Promote a user to admin in a supergroup
+    /// (`channels.editAdmin` with `ChatAdminRights`). For
+    /// basic groups, returns `Err(NotSupergroup)`.
+    async fn promote_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Demote an admin back to regular user
+    /// (`channels.editAdmin` with `ChatAdminRights::empty`).
+    async fn demote_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Set the title of a chat (`messages.editChatTitle`
+    /// for basic groups, `channels.editTitle` for
+    /// supergroups).
+    async fn set_chat_title(&self, chat_id: i64, title: &str) -> Result<(), MtprotoTelegramError>;
+
+    /// Set the about / description of a chat
+    /// (`messages.editChatAbout`).
+    async fn set_chat_about(&self, chat_id: i64, about: &str) -> Result<(), MtprotoTelegramError>;
+
+    /// Delete a chat (Telegram's `messages.deleteChat`
+    /// for basic groups; supergroups use
+    /// `channels.deleteChannel`). For the
+    /// `CoordinatorAdmin::destroy_group` semantic, this is
+    /// the right call when the bot owns the chat.
+    async fn delete_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError>;
+
+    /// Leave a chat (`messages.deleteChatUser` with
+    /// `user_id = self` for basic groups;
+    /// `channels.leaveChannel` for supergroups).
+    async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError>;
+
+    /// Fetch the full `GroupInfo` for a chat. Returns
+    /// `Err(NotFound)` if the chat does not exist or the
+    /// bot is not a member.
+    async fn get_chat(&self, chat_id: i64) -> Result<GroupInfo, MtprotoTelegramError>;
+
+    /// List the chat ids of all groups the bot is currently
+    /// a member of. Used by `CoordinatorAdmin::list_own_groups`
+    /// to enumerate managed domains.
+    async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError>;
 }
 
 /// Failure-injection spec for `MockTelegramMtprotoClient`.
@@ -393,6 +507,22 @@ struct MockState {
     /// polling loop). Tests can set this to 2 or 3 to
     /// exercise the still-pending path.
     qr_polls_to_success: u32,
+    /// CoordinatorAdmin mock state: counter for synthetic
+    /// chat ids returned by `create_group`. Starts at 0
+    /// and increments by 1 per call (the first created
+    /// group has `chat_id == 1`).
+    next_chat_id: i64,
+    /// CoordinatorAdmin mock state: created/known groups.
+    /// Populated by `create_group` and used by `get_chat` /
+    /// `list_dialog_ids`. Tests can pre-seed with
+    /// `set_mock_group` for read paths.
+    groups: BTreeMap<i64, GroupInfo>,
+    /// CoordinatorAdmin mock state: members per group.
+    /// Populated by `create_group` (with `user_ids` plus the
+    /// bot) and updated by `add_participant` /
+    /// `kick_participant`. Used by `get_chat`'s
+    /// `member_count` computation.
+    group_members: BTreeMap<i64, Vec<i64>>,
 }
 
 impl MockTelegramMtprotoClient {
@@ -474,6 +604,25 @@ impl MockTelegramMtprotoClient {
     /// Read the failure spec (for assertions in tests).
     pub fn failure_spec(&self) -> MockFailureSpec {
         self.state.lock().failure.clone()
+    }
+
+    /// CoordinatorAdmin mock helper: pre-seed a known
+    /// group so tests of `get_chat` / `list_dialog_ids`
+    /// can drive read paths without going through
+    /// `create_group`. Idempotent: re-seeding replaces
+    /// the existing entry.
+    pub fn set_mock_group(&self, info: GroupInfo, members: Vec<i64>) {
+        let mut g = self.state.lock();
+        let chat_id = info.chat_id;
+        g.groups.insert(chat_id, info);
+        g.group_members.insert(chat_id, members);
+    }
+
+    /// CoordinatorAdmin mock helper: read all known
+    /// groups. Used by tests to assert the mock's state
+    /// after a sequence of operations.
+    pub fn mock_groups(&self) -> Vec<GroupInfo> {
+        self.state.lock().groups.values().cloned().collect()
     }
 
     fn next_message_id(state: &mut MockState) -> i64 {
@@ -669,6 +818,163 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         message_id: i64,
     ) -> Result<String, MtprotoTelegramError> {
         Ok(format!("file_{}", message_id))
+    }
+
+    // ── Mock group / Coordinator operations ────────────────────
+    //
+    // All methods below mutate `MockState` in a way that
+    // matches the real client's contract (errors are returned
+    //  for the same conditions: not-found chat, member-already-
+    //  present, etc.). Tests can drive both happy and failure
+    // paths.
+
+    async fn create_group(
+        &self,
+        title: &str,
+        user_ids: &[i64],
+    ) -> Result<GroupInfo, MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        g.next_chat_id += 1;
+        let chat_id = g.next_chat_id;
+        // The bot is implicitly added as admin; user_ids are
+        // the additional members.
+        let mut members: Vec<i64> = user_ids.to_vec();
+        members.push(0); // 0 = the bot (mock convention)
+        let info = GroupInfo {
+            chat_id,
+            title: title.to_string(),
+            member_count: Some(members.len() as u32),
+            is_admin: Some(true),
+        };
+        g.groups.insert(chat_id, info.clone());
+        g.group_members.insert(chat_id, members);
+        Ok(info)
+    }
+
+    async fn add_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        let new_count;
+        {
+            let entry = g.group_members.entry(chat_id).or_default();
+            if entry.contains(&user_id) {
+                // Idempotent: the real client's contract is
+                // that a re-add is a no-op (Telegram returns
+                // success for already-present members in
+                // `addChatUser`).
+                return Ok(());
+            }
+            entry.push(user_id);
+            new_count = entry.len() as u32;
+        }
+        if let Some(info) = g.groups.get_mut(&chat_id) {
+            info.member_count = Some(new_count);
+        }
+        Ok(())
+    }
+
+    async fn kick_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        let new_count;
+        {
+            let entry = g.group_members.entry(chat_id).or_default();
+            if let Some(pos) = entry.iter().position(|u| *u == user_id) {
+                entry.remove(pos);
+            }
+            new_count = entry.len() as u32;
+        }
+        // Idempotent: kicking an absent user is Ok.
+        if let Some(info) = g.groups.get_mut(&chat_id) {
+            info.member_count = Some(new_count);
+        }
+        Ok(())
+    }
+
+    async fn promote_participant(
+        &self,
+        _chat_id: i64,
+        _user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Mock: the real client uses channels.editAdmin for
+        // supergroups; for basic groups Telegram does not
+        // have a "promote" concept (no admin/owner split).
+        // The adapter layer's CoordinatorAdmin impl checks
+        // `admin_capabilities().can_promote` before calling
+        // this, and reports `true` only for supergroups.
+        // The mock just accepts.
+        Ok(())
+    }
+
+    async fn demote_participant(
+        &self,
+        _chat_id: i64,
+        _user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
+    }
+
+    async fn set_chat_title(&self, chat_id: i64, title: &str) -> Result<(), MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        match g.groups.get_mut(&chat_id) {
+            Some(info) => {
+                info.title = title.to_string();
+                Ok(())
+            }
+            None => Err(MtprotoTelegramError::Config(format!(
+                "set_chat_title: chat_id {chat_id} not found"
+            ))),
+        }
+    }
+
+    async fn set_chat_about(
+        &self,
+        _chat_id: i64,
+        _about: &str,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Mock: no-op (the about text is a UI nicety; the
+        // trait signature requires the call regardless).
+        Ok(())
+    }
+
+    async fn delete_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        g.groups.remove(&chat_id);
+        g.group_members.remove(&chat_id);
+        Ok(())
+    }
+
+    async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
+        let mut g = self.state.lock();
+        // Idempotent: leaving a chat you're not in is Ok.
+        let new_count = if let Some(entry) = g.group_members.get_mut(&chat_id) {
+            entry.retain(|u| *u != 0);
+            Some(entry.len() as u32)
+        } else {
+            None
+        };
+        if let (Some(c), Some(info)) = (new_count, g.groups.get_mut(&chat_id)) {
+            info.member_count = Some(c);
+        }
+        Ok(())
+    }
+
+    async fn get_chat(&self, chat_id: i64) -> Result<GroupInfo, MtprotoTelegramError> {
+        let g = self.state.lock();
+        g.groups.get(&chat_id).cloned().ok_or_else(|| {
+            MtprotoTelegramError::Config(format!("get_chat: chat_id {chat_id} not found"))
+        })
+    }
+
+    async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError> {
+        let g = self.state.lock();
+        Ok(g.groups.keys().copied().collect())
     }
 }
 
@@ -962,5 +1268,111 @@ mod tests {
             c.poll_qr_login().await,
             Err(MtprotoTelegramError::QrLoginHandle { .. })
         ));
+    }
+
+    // ── CoordinatorAdmin mock tests (Phase 4 / MTProto) ──────────
+
+    #[tokio::test]
+    async fn mock_create_group_assigns_chat_id_and_bot_as_admin() {
+        let c = MockTelegramMtprotoClient::new();
+        let info = c
+            .create_group("Phase 4 test group", &[42, 43])
+            .await
+            .unwrap();
+        // Synthetic chat_id is monotonically
+        // increasing starting at 1.
+        assert_eq!(info.chat_id, 1);
+        // Bot is added as admin; 2 user_ids + 1 bot = 3.
+        assert_eq!(info.member_count, Some(3));
+        assert_eq!(info.is_admin, Some(true));
+    }
+
+    #[tokio::test]
+    async fn mock_add_and_kick_participant_updates_member_count() {
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.create_group("g", &[10, 20]).await.unwrap();
+        assert_eq!(info.member_count, Some(3)); // 2 + bot
+        c.add_participant(info.chat_id, 30).await.unwrap();
+        let after_add = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after_add.member_count, Some(4));
+        // Idempotent: re-adding 30 is a no-op.
+        c.add_participant(info.chat_id, 30).await.unwrap();
+        let after_redup = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after_redup.member_count, Some(4));
+        c.kick_participant(info.chat_id, 30).await.unwrap();
+        let after_kick = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after_kick.member_count, Some(3));
+        // Idempotent: kicking an absent user is Ok.
+        c.kick_participant(info.chat_id, 999).await.unwrap();
+        let after_absent = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after_absent.member_count, Some(3));
+    }
+
+    #[tokio::test]
+    async fn mock_set_chat_title_updates_title() {
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.create_group("original", &[]).await.unwrap();
+        c.set_chat_title(info.chat_id, "renamed").await.unwrap();
+        let after = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after.title, "renamed");
+    }
+
+    #[tokio::test]
+    async fn mock_get_chat_unknown_returns_config_error() {
+        let c = MockTelegramMtprotoClient::new();
+        let err = c.get_chat(99999).await.unwrap_err();
+        match err {
+            MtprotoTelegramError::Config(msg) => {
+                assert!(msg.contains("99999"), "msg should mention chat_id");
+            }
+            other => panic!("expected Config error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_delete_chat_removes_from_state() {
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.create_group("g", &[]).await.unwrap();
+        c.delete_chat(info.chat_id).await.unwrap();
+        // Subsequent get_chat returns Config error.
+        let err = c.get_chat(info.chat_id).await.unwrap_err();
+        assert!(matches!(err, MtprotoTelegramError::Config(_)));
+        // list_dialog_ids is now empty.
+        let ids = c.list_dialog_ids().await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mock_list_dialog_ids_returns_created_groups_sorted() {
+        let c = MockTelegramMtprotoClient::new();
+        c.create_group("first", &[]).await.unwrap();
+        c.create_group("second", &[]).await.unwrap();
+        c.create_group("third", &[]).await.unwrap();
+        let ids = c.list_dialog_ids().await.unwrap();
+        // BTreeMap iteration is sorted; created ids are
+        // 1, 2, 3.
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn mock_set_mock_group_pre_seeds_for_read_path() {
+        let c = MockTelegramMtprotoClient::new();
+        // Pre-seed a group with chat_id = 42.
+        c.set_mock_group(
+            crate::client::GroupInfo {
+                chat_id: 42,
+                title: "preexisting".into(),
+                member_count: Some(5),
+                is_admin: Some(false),
+            },
+            vec![100, 101, 102, 103, 104],
+        );
+        // get_chat finds it.
+        let info = c.get_chat(42).await.unwrap();
+        assert_eq!(info.title, "preexisting");
+        assert_eq!(info.member_count, Some(5));
+        // list_dialog_ids includes it.
+        let ids = c.list_dialog_ids().await.unwrap();
+        assert!(ids.contains(&42));
     }
 }

@@ -4,6 +4,149 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — 2026-06-21
+
+### Security
+
+- **No new findings.** The new `GroupInfo` struct
+  (returned by `MtprotoTelegramClient::get_chat`)
+  carries only public group metadata (`chat_id`,
+  `title`, `member_count`, `is_admin`); no token,
+  session, password, or credential fields. The new
+  `Connected { notify }` field is an
+  `Arc<tokio::sync::Notify>`, not a session. The new
+  `Runtime { groups }` field is a
+  `RwLock<BTreeMap<i64, ()>>`, not a credential-bearing
+  registry. No new `Display`/`Debug` paths were added
+  for any credential-bearing type. **Result:** zero
+  credential leaks introduced in this release.
+
+### Breaking
+
+- **`MtprotoTelegramClient` trait gained 11 new
+  required methods.** Adapters that implement the
+  trait by hand (none in this repo besides the
+  built-in `MockTelegramMtprotoClient` and
+  `RealTelegramMtprotoClient`) must add:
+  `create_group`, `add_participant`, `kick_participant`,
+  `promote_participant`, `demote_participant`,
+  `set_chat_title`, `set_chat_about`, `delete_chat`,
+  `leave_chat`, `get_chat`, `list_dialog_ids`. All
+  return `Result<_, MtprotoTelegramError>`. New struct
+  `GroupInfo` is part of the trait's API surface.
+
+### Features
+
+- **CoordinatorAdmin support (Mission
+  0850p-a-coordinator-admin-telegram-mtproto).** New
+  module `coordinator_admin.rs` implements
+  `octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin`
+  for `MtprotoTelegramAdapter<C>`. Implemented methods:
+  `admin_capabilities` (full Telegram-specific report —
+  `can_create`, `can_leave`, `can_destroy`,
+  `can_add_member`, `can_remove_member`, `can_promote`
+  & `can_demote` both true but supergroup-only at the
+  call site, `can_rename`, `can_describe`,
+  `can_announce`, `can_transfer_ownership`),
+  `platform_name() == "telegram"`, `create_group`,
+  `leave_group`, `destroy_group`, `add_member`
+  (auto-promotes the new member if the calling adapter
+  is admin on a supergroup), `remove_member`,
+  `promote_to_admin` (supergroup-only — basic groups
+  return `Unimplemented`), `demote_from_admin`
+  (supergroup-only), `rename_group`, `set_group_description`,
+  `list_own_groups`, `get_group_metadata`,
+  `resolve_invite` (Phase 1 stub — Unimplemented),
+  `join_by_invite` (Phase 1 stub — Unimplemented),
+  `transfer_ownership` (Phase 1 stub — Unimplemented
+  for basic groups). The TDLib adapter
+  (`octo-adapter-telegram`) is intentionally NOT
+  touched — only the MTProto adapter opts in.
+- **Connection notify (`Mission 0850p-a-notify-event-connected`).**
+  New adapter-level field
+  `connected_notify: Arc<tokio::sync::Notify>`. New
+  method `connected() -> Arc<tokio::sync::Notify>`
+  exposes a clone of the notify for callers that want
+  to await connection completion. Wired to all 5
+  successful connect paths: `connect_bot_token`,
+  `connect_http`, `connect_user` (both code-only and
+  2FA paths), `connect_qr_login` (already-authorized
+  path), `poll_qr_login`, and `import_qr_login_token`.
+- **`has_valid_session()`** (Mission
+  0850p-a-has-valid-session). Adapter-level method
+  returning `true` after any successful connect path
+  completes and `false` before. Composes the
+  `self_handle()` check with a runtime-state check.
+- **`register_group_at_runtime(chat_id: i64)` and
+  `is_runtime_group(chat_id: i64) -> bool`** (Mission
+  0850p-a-register-group-at-runtime). Adapter-level
+  registry (`runtime_groups: RwLock<BTreeMap<i64, ()>>`)
+  for chat IDs created mid-session. Mirrors the
+  WhatsApp `register_group_at_runtime(chat_jid: &str)`
+  pattern from `octo-adapter-whatsapp`.
+- **Telegram-specific capability report.** The MTProto
+  adapter's `admin_capabilities` returns a faithful
+  Telegram subset: create/leave/destroy/add/remove/
+  promote/demote/rename/describe/announce are all
+  supported; ban/lock/ephemeral/require-approval/
+  join-by-id are NOT supported (Telegram has no
+  equivalent primitives in the Bot API surface).
+- **`as_coordinator_admin() -> Some(self)`** override on
+  the `PlatformAdapter` impl. Returns the adapter as a
+  `&dyn CoordinatorAdmin` so coordinator-level
+  orchestration can discover the group-admin surface.
+
+### Tests
+
+- **22 new unit tests.**
+  - **7 in `client.rs`** covering the mock client's
+    new group-ops:
+    `mock_create_group_returns_new_id`,
+    `mock_add_and_kick_participant_round_trip`,
+    `mock_set_chat_title_updates_title`,
+    `mock_get_chat_unknown_returns_not_found`,
+    `mock_delete_chat_removes_group`,
+    `mock_list_dialog_ids_returns_sorted_ids`,
+    `mock_set_mock_group_pre_seeds_state`.
+  - **8 in `adapter.rs`** covering notify / session /
+    runtime-registry / CoordinatorAdmin:
+    `connected_notify_fires_on_bot_token_connect`
+    (spawns a waiter, triggers connect, asserts notify
+    fires within 1s),
+    `connected_notify_does_not_fire_before_connect`
+    (negative test: 100ms timeout),
+    `connected_notify_clone_shares_underlying_notify`
+    (two Arc<Notify> clones share underlying notify),
+    `has_valid_session_false_before_connect`,
+    `has_valid_session_true_after_bot_token_connect`,
+    `register_group_at_runtime_idempotent_and_visible`,
+    `as_coordinator_admin_returns_some`,
+    `admin_capabilities_reports_telegram_subset`
+    (16 capability booleans asserted).
+  - **7 in `coordinator_admin.rs`** — 3 helper tests
+    for `parse_chat_id` and `is_supergroup` plus 4
+    end-to-end tests: `create_group_returns_handle`,
+    `add_member_supergroup_promotes`,
+    `promote_basic_group_returns_unimplemented`,
+    `list_own_groups_returns_membership`.
+- **All 5 feature combinations green:**
+  - default build: 152 tests pass
+  - `--no-default-features`: 152 tests pass
+  - `--features real-network`: 152 tests pass
+  - `--features bot-api`: 176 tests pass
+  - `--features "real-network bot-api"`: 176 tests
+    pass
+- **`cargo fmt -p octo-adapter-telegram-mtproto -- --check`**: clean
+- **`cargo clippy -p octo-adapter-telegram-mtproto --all-targets --features "real-network bot-api" -- -D warnings`**: clean
+
+### Compatibility
+
+- The MTProto adapter (`octo-adapter-telegram-mtproto`)
+  is the **only** adapter affected. The TDLib adapter
+  (`octo-adapter-telegram`) and the WhatsApp adapter
+  are untouched. No public re-exports were renamed or
+  removed; only additions.
+
 ## [0.3.3] — 2026-06-21
 
 ### Security

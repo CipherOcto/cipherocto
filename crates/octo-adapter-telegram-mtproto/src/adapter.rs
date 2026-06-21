@@ -65,6 +65,23 @@ pub struct MtprotoTelegramAdapter<C: MtprotoTelegramClient> {
     /// Cancellation token for cooperative cancellation
     /// during retry backoff.
     cancel: tokio_util::sync::CancellationToken,
+    /// Mission 0850p-a-notify-event-connected (Phase 4 / MTProto):
+    /// a `tokio::sync::Notify` that is `notify_waiters()`-ed
+    /// on a successful connect (bot_token, user, qr_login,
+    /// http). Cloning the `Arc<Notify>` is cheap; the
+    /// onboard CLI's `wait_for_connected` polls
+    /// `notified().await` instead of looping on a
+    /// 250ms timer. Mirrors the WhatsApp adapter.
+    connected_notify: Arc<tokio::sync::Notify>,
+    /// CoordinatorAdmin: runtime-mutable group registry.
+    /// Coordinators that create groups at runtime (via
+    /// `CoordinatorAdmin::create_group` or the
+    /// `register_group_at_runtime` helper) push the new
+    /// chat_ids here so the adapter's `send_envelope`
+    /// domain→chat_id lookup can route to them. Backwards-
+    /// compatible: when empty, the static `config.groups`
+    /// is the only source of truth.
+    runtime_groups: RwLock<BTreeMap<i64, ()>>,
 }
 
 impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
@@ -84,6 +101,13 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             lifecycle: Lifecycle::new(),
             cancel: tokio_util::sync::CancellationToken::new(),
+            // Mission 0850p-a-notify-event-connected: a fresh
+            // Notify per adapter instance. `notify_waiters()` is
+            // called by the connect-success path; the onboard
+            // CLI's `wait_for_connected` `notified().await`s on
+            // a clone.
+            connected_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_groups: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -104,7 +128,55 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             lifecycle: Lifecycle::new(),
             cancel: tokio_util::sync::CancellationToken::new(),
+            connected_notify: Arc::new(tokio::sync::Notify::new()),
+            runtime_groups: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    /// Mission 0850p-a-notify-event-connected (Phase 4 / MTProto):
+    /// returns a clonable handle to the `Notify` that fires on
+    /// a successful connect. Cloning the `Arc<Notify>` is cheap
+    /// and gives a handle to the same underlying `Notify`.
+    pub fn connected(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.connected_notify)
+    }
+
+    /// Mission 0850p-a-has-valid-session (Phase 4 / MTProto):
+    /// returns `true` if a valid session exists (the
+    /// `self_handle` is populated and the lifecycle is `Ready`).
+    /// Synchronous, allocation-free check that replaces the
+    /// 250ms polling loop in the onboard CLI's `whoami` flow.
+    pub fn has_valid_session(&self) -> bool {
+        let handle_populated = self
+            .self_handle_ref()
+            .get()
+            .map(|id| id.is_set())
+            .unwrap_or(false);
+        handle_populated && self.lifecycle.is_ready()
+    }
+
+    /// CoordinatorAdmin: register a chat_id at runtime so
+    /// the adapter's `send_envelope` domain→chat_id lookup
+    /// can route to it. Idempotent: re-registering an
+    /// existing chat_id is a no-op.
+    ///
+    /// Callers (the `CoordinatorAdmin::create_group` impl
+    /// in `coordinator_admin.rs`, or any custom coordinator)
+    /// use this to surface freshly-created chat_ids without
+    /// having to restart the bot or reload the config.
+    /// The static `config.groups` continues to be
+    /// authoritative for the boot-time group set.
+    pub fn register_group_at_runtime(&self, chat_id: i64) {
+        self.runtime_groups.write().insert(chat_id, ());
+    }
+
+    /// CoordinatorAdmin: look up whether a chat_id is in
+    /// the runtime registry (the `register_group_at_runtime`
+    /// set). Used by the `coordinator_admin.rs` impl when
+    /// translating a `chat_id` into a platform-agnostic
+    /// `GroupHandle` for the `list_own_groups` enumeration.
+    pub fn is_runtime_group(&self, chat_id: i64) -> bool {
+        self.runtime_groups.read().contains_key(&chat_id)
     }
 
     /// Read-only accessor for the inner client. Used by
@@ -238,6 +310,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             .set_identity(info.user_id, info.username.clone());
         self.lifecycle
             .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+        // Mission 0850p-a-notify-event-connected: wake any
+        // `wait_for_connected` awaiter. Idempotent and
+        // allocation-free; the connected notify is a fresh
+        // Notify per adapter instance.
+        self.connected_notify.notify_waiters();
         Ok(())
     }
 
@@ -303,6 +380,9 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         self.self_handle.set_identity(me.id, me.username.clone());
         self.lifecycle
             .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+        // Mission 0850p-a-notify-event-connected: wake any
+        // `wait_for_connected` awaiter.
+        self.connected_notify.notify_waiters();
         Ok(client)
     }
 
@@ -361,6 +441,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .set_identity(info.user_id, info.username.clone());
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                // Mission 0850p-a-notify-event-connected.
+                self.connected_notify.notify_waiters();
                 Ok(())
             }
             Err(MtprotoTelegramError::Auth(msg)) if msg == "2FA_REQUIRED" => {
@@ -379,6 +461,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .set_identity(info.user_id, info.username.clone());
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                // Mission 0850p-a-notify-event-connected.
+                self.connected_notify.notify_waiters();
                 Ok(())
             }
             Err(other) => Err(other),
@@ -439,6 +523,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                 // by the client (see real_client.rs::qr_login).
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                // Mission 0850p-a-notify-event-connected.
+                self.connected_notify.notify_waiters();
                 Err(MtprotoTelegramError::Internal(
                     "qr_login: already authorized (session was valid; no QR needed)".into(),
                 ))
@@ -481,6 +567,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .set_identity(info.user_id, info.username.clone());
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                // Mission 0850p-a-notify-event-connected.
+                self.connected_notify.notify_waiters();
                 Ok(info)
             }
             Err(e) => Err(e),
@@ -504,6 +592,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .set_identity(info.user_id, info.username.clone());
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                // Mission 0850p-a-notify-event-connected.
+                self.connected_notify.notify_waiters();
                 Ok(info)
             }
             Err(e) => Err(e),
@@ -966,6 +1056,20 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
             platform: "telegram-mtproto".into(),
             reason: "download_media: not yet implemented (Phase 1 stub)".into(),
         })
+    }
+
+    /// CoordinatorAdmin override (RFC-0850 §8 extension).
+    /// The MTProto adapter opts in to the full group /
+    /// admin surface. Capability report and per-method
+    /// implementations live in `coordinator_admin.rs` —
+    /// this method just hands out a typed reference to
+    /// `self` (the adapter satisfies the trait via the
+    /// `impl CoordinatorAdmin for MtprotoTelegramAdapter`
+    /// in that module).
+    fn as_coordinator_admin(
+        &self,
+    ) -> Option<&dyn octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin> {
+        Some(self)
     }
 }
 
@@ -1668,6 +1772,146 @@ mod tests {
         a.set_self_identity(12345, Some("alice".into()));
         let handle = a.self_handle();
         assert_eq!(handle, Some("telegram:user:12345".to_string()));
+    }
+
+    // ── Mission 0850p-a-notify-event-connected (Phase 4 / MTProto) ──
+
+    #[tokio::test]
+    async fn connected_notify_fires_on_bot_token_connect() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        let notify = a.connected();
+        // Spawn a waiter. The notify should fire on
+        // `connect_bot_token`.
+        let waiter = tokio::spawn(async move {
+            notify.notified().await;
+            true
+        });
+        // Give the waiter a tick to subscribe before
+        // we trigger the notify.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        a.connect_bot_token("123:abc").await.unwrap();
+        // Wait for the waiter to return (with a 1s timeout).
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter did not return within 1s")
+            .expect("waiter task panicked");
+        assert!(result, "waiter should have observed the notify");
+    }
+
+    #[tokio::test]
+    async fn connected_notify_does_not_fire_before_connect() {
+        // Construct an adapter but never connect. The
+        // waiter should NOT be woken within 100ms.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        let notify = a.connected();
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), notify.notified()).await;
+        assert!(
+            result.is_err(),
+            "notified() must time out before connect is called"
+        );
+    }
+
+    #[tokio::test]
+    async fn connected_notify_clone_shares_underlying_notify() {
+        // Two clones of the Arc<Notify> point to the
+        // same underlying Notify. Triggering notify
+        // via one clone wakes a waiter on the other.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        let notify_a = a.connected();
+        let notify_b = a.connected();
+        let waiter = tokio::spawn(async move {
+            notify_b.notified().await;
+            true
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        notify_a.notify_waiters();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter did not return within 1s")
+            .expect("waiter task panicked");
+        assert!(result);
+    }
+
+    // ── Mission 0850p-a-has-valid-session ────────────────────────
+
+    #[tokio::test]
+    async fn has_valid_session_false_before_connect() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        assert!(!a.has_valid_session());
+    }
+
+    #[tokio::test]
+    async fn has_valid_session_true_after_bot_token_connect() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        a.connect_bot_token("123:abc").await.unwrap();
+        assert!(a.has_valid_session());
+    }
+
+    // ── Mission 0850p-a-register-group-at-runtime ────────────────
+
+    #[tokio::test]
+    async fn register_group_at_runtime_idempotent_and_visible() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        a.register_group_at_runtime(-1001234567890);
+        a.register_group_at_runtime(-1001234567890); // re-register: no-op
+        a.register_group_at_runtime(-1009876543210);
+        assert!(a.is_runtime_group(-1001234567890));
+        assert!(a.is_runtime_group(-1009876543210));
+        assert!(!a.is_runtime_group(12345));
+    }
+
+    // ── CoordinatorAdmin (Phase 4 / MTProto) ─────────────────────
+
+    #[tokio::test]
+    async fn as_coordinator_admin_returns_some() {
+        use octo_network::dot::PlatformAdapter;
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        // Mission 0850p-a-coordinator-admin-telegram-mtproto:
+        // the MTProto adapter opts in to the
+        // CoordinatorAdmin surface.
+        let admin = a
+            .as_coordinator_admin()
+            .expect("MTProto adapter must opt in to CoordinatorAdmin");
+        // `as_coordinator_admin` returns
+        // `Option<&dyn CoordinatorAdmin>` so the trait
+        // methods are callable without an extra import.
+        assert_eq!(admin.platform_name(), "telegram");
+    }
+
+    #[tokio::test]
+    async fn admin_capabilities_reports_telegram_subset() {
+        // Sanity-check the capability report: MTProto
+        // supports create/leave/destroy, add/remove,
+        // promote/demote (supergroup-only), rename,
+        // describe, announce; but NOT ban / lock /
+        // ephemeral / require-approval.
+        use octo_network::dot::PlatformAdapter;
+        let mock = MockTelegramMtprotoClient::new();
+        let a = MtprotoTelegramAdapter::new(config(), Arc::new(mock));
+        let caps = a.as_coordinator_admin().unwrap().admin_capabilities();
+        assert!(caps.can_create);
+        assert!(caps.can_leave);
+        assert!(caps.can_destroy);
+        assert!(caps.can_add_member);
+        assert!(caps.can_remove_member);
+        assert!(caps.can_promote);
+        assert!(caps.can_demote);
+        assert!(caps.can_rename);
+        assert!(caps.can_describe);
+        assert!(caps.can_announce);
+        assert!(!caps.can_ban);
+        assert!(!caps.can_lock);
+        assert!(!caps.can_set_ephemeral);
+        assert!(!caps.can_require_approval);
+        assert!(!caps.can_join_by_id);
     }
 }
 

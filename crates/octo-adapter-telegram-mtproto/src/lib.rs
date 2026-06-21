@@ -37,6 +37,7 @@ pub mod adapter;
 pub mod auth;
 pub mod client;
 pub mod config;
+pub mod coordinator_admin;
 pub mod envelope;
 pub mod error;
 pub mod lifecycle;
@@ -68,7 +69,8 @@ pub use auth::{
     MtprotoAuthAction, MtprotoAuthError, UserAuth, UserAuthAction, UserAuthServerEvent,
 };
 pub use client::{
-    MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, QrLoginHandle, SelfUserInfo,
+    GroupInfo, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, QrLoginHandle,
+    SelfUserInfo,
 };
 pub use config::MtprotoTelegramConfig;
 pub use envelope::wire_encode;

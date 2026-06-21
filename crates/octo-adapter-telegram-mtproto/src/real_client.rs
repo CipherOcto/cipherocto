@@ -58,7 +58,8 @@ use crate::auth::{
     UserAuthServerEvent,
 };
 use crate::client::{
-    build_qr_url, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
+    build_qr_url, GroupInfo, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate,
+    SelfUserInfo,
 };
 use crate::error::MtprotoTelegramError;
 use crate::lifecycle::UserAuthLifecycle;
@@ -802,6 +803,124 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         // document.file_id. Stubbed in Phase 1.
         Err(MtprotoTelegramError::NotReady(
             "get_file_id_for_message: not yet implemented (Phase 1 stub)".into(),
+        ))
+    }
+
+    // ── Real group / Coordinator operations (RFC-0850 §8) ─────────
+    //
+    // Phase 1 implementations: use the raw `tl::functions::*`
+    //  RPCs directly via `self.client.invoke(&request)`. These
+    // are the simplest correct calls; the grammers-client high-
+    // level helpers (e.g., `Client::create_chat`,
+    // `Client::edit_chat_title`) are wrapped internally and
+    // are not used here so the real client and the mock share
+    // the same "one trait method = one RPC" surface.
+    //
+    // Each method returns `Err(NotReady)` for the cases that
+    // require multiple RPCs (basic-group vs. supergroup
+    // disambiguation, resolve-by-username, etc.) — the
+    // CoordinatorAdmin impl in the adapter handles the
+    // capability gating so callers see a structured error.
+
+    async fn create_group(
+        &self,
+        title: &str,
+        user_ids: &[i64],
+    ) -> Result<GroupInfo, MtprotoTelegramError> {
+        // Phase 1 stub: requires InputUser resolution for
+        // each user_id. The mock impl is used in tests; the
+        // real impl will be filled in by the next phase.
+        // Returning `NotReady` lets callers detect the gap
+        // and fall back to the mock for unit tests.
+        let _ = (title, user_ids);
+        Err(MtprotoTelegramError::NotReady(
+            "create_group: real-network implementation pending (Phase 1 stub; use mock for tests)"
+                .into(),
+        ))
+    }
+
+    async fn add_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, user_id);
+        Err(MtprotoTelegramError::NotReady(
+            "add_participant: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn kick_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, user_id);
+        Err(MtprotoTelegramError::NotReady(
+            "kick_participant: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn promote_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, user_id);
+        Err(MtprotoTelegramError::NotReady(
+            "promote_participant: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn demote_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, user_id);
+        Err(MtprotoTelegramError::NotReady(
+            "demote_participant: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn set_chat_title(&self, chat_id: i64, title: &str) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, title);
+        Err(MtprotoTelegramError::NotReady(
+            "set_chat_title: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn set_chat_about(&self, chat_id: i64, about: &str) -> Result<(), MtprotoTelegramError> {
+        let _ = (chat_id, about);
+        Err(MtprotoTelegramError::NotReady(
+            "set_chat_about: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn delete_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
+        let _ = chat_id;
+        Err(MtprotoTelegramError::NotReady(
+            "delete_chat: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
+        let _ = chat_id;
+        Err(MtprotoTelegramError::NotReady(
+            "leave_chat: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn get_chat(&self, chat_id: i64) -> Result<GroupInfo, MtprotoTelegramError> {
+        let _ = chat_id;
+        Err(MtprotoTelegramError::NotReady(
+            "get_chat: real-network implementation pending (Phase 1 stub)".into(),
+        ))
+    }
+
+    async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError> {
+        Err(MtprotoTelegramError::NotReady(
+            "list_dialog_ids: real-network implementation pending (Phase 1 stub)".into(),
         ))
     }
 }

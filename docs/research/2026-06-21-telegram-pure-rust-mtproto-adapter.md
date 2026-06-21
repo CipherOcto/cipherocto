@@ -2,156 +2,93 @@
 
 **Date:** 2026-06-21
 **Status:** Research (pre-Use-Case)
-**Scope:** Replace the C++ TDLib dependency in `octo-adapter-telegram` (and
-its companion `octo-telegram-onboard*` crates) with a pure-Rust MTProto stack.
-Heavily inspired by the in-tree protocol reference at
-`/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` (the MTProto
-client port of Telegram Desktop), validated against the existing
-pure-Rust libraries (notably **grammers** and the production CLI
-`dgrr/tgcli`), and reconciled with the existing cipherocto
-transport-adapter research at `docs/research/social-platform-transport-patterns.md`
-and `docs/research/group-coordination-transport-adapters.md`.
+**Scope:** Establish the feasibility of a fresh Telegram transport adapter for
+CipherOcto DOT, built on a pure-Rust MTProto stack. The reference protocol
+spec is the in-tree port at
+`/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` (a 23-section
+faithful port of the Telegram Desktop MTProto 2.0 client surface, derived
+from tdesktop's Qt/C++ source). The candidate implementation is the
+**grammers** family of crates (the only mature pure-Rust MTProto library),
+validated by the production CLI `dgrr/tgcli`. The integration target is
+cipherocto `PlatformAdapter` (RFC-0850 §8.2) and the surrounding
+`0850p-*` transport RFC family.
 **Sources:**
-- `tools/tdesktop/docs/mtproto_port.md` (23-section protocol reference, 2049 LOC).
-- `crates/octo-adapter-telegram/` (current TDLib C++ implementation, 14 source files, ~5500 LOC).
-- `crates/octo-telegram-onboard/` and `crates/octo-telegram-onboard-core/` (C++ TDLib-backed onboarding CLI, 31 KB binary).
+- `/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` — 23-section protocol reference.
+- `Lonami/grammers` (Codeberg mirror `vilunov/grammers`; crates.io: `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`).
+- `dgrr/tgcli` — production pure-Rust CLI on top of grammers.
 - `rfcs/accepted/networking/0850-deterministic-overlay-transport.md` and the `0850p-*` family.
-- `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md`.
-- `docs/research/social-platform-transport-patterns.md`, `docs/research/group-coordination-transport-adapters.md`.
-- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` (a prior native-Rust migration that we should learn from).
-- `docs/plans/2026-06-05-0850ab-tdlib-telegram-adapter.md` (the plan that introduced the TDLib dependency).
-- Public: `Lonami/grammers` (codeberg mirror `vilunov/grammers`, crates.io: `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`), `dgrr/tgcli` (production pure-Rust CLI built on grammers).
+- `docs/research/social-platform-transport-patterns.md`, `docs/research/group-coordination-transport-adapters.md` — the existing cipherocto transport-adapter research.
+- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` — closest precedent for a pure-Rust transport migration.
 
 ---
 
 ## Executive Summary
 
-The current `octo-adapter-telegram` crate is the only cipherocto platform
-adapter that requires a C++ build environment: it uses **TDLib** (Telegram's
-official C++ client library) via the `tdlib-rs` Rust binding. This buys us a
-battle-tested MTProto implementation but at the cost of a **150 MB
-prebuilt TDLib binary** shipped as a build-script download with **no enforced
-SHA verification**, a **C++ toolchain** for local builds
-(`local-tdlib` feature), a **JSON-over-stdio** IPC that requires a dedicated
-blocking receive thread, a **9-variant auth state machine** that has to be
-hand-mapped to a testable `AuthStateKey` enum, and **~1500 LOC of
-real-client wrapper** (`real_client.rs`, `auth.rs`) that exists only to
-hide TDLib's C++ API behind a Rust trait.
+**Feasibility verdict: yes.** A fresh, pure-Rust Telegram transport adapter
+is technically and operationally feasible. The MTProto 2.0 client surface
+described in `mtproto_port.md` is implemented end-to-end by **grammers**, a
+maintained 8-crate pure-Rust workspace (`grammers-mtproto 0.9.0`,
+`grammers-tl-types 0.9.0`, `grammers-client 0.8.x`); the production CLI
+`dgrr/tgcli` validates the stack in real-world use.
 
-The pure-Rust MTProto library landscape is dominated by **grammers** — a
-modular 8-crate workspace maintained on Codeberg (`vilunov/grammers`),
-recently active (2026-05-15), licensed MIT/Apache-2.0, and already
-battle-tested in production by **`dgrr/tgcli`** (a Telegram CLI that
-explicitly advertises "No TDLib, no C/C++ dependencies" and was last
-released `v0.3.7` on 2026-03-21). The Rust ecosystem has a clear single
-choice: **wrap grammers**.
+Of the 23 sections in `mtproto_port.md`, **20 are fully covered by grammers**
+(transport obfuscation, AES-256-IGE envelope, DH handshake, msg_id dedup,
+ack/resend, salt rotation, ping, container framing, gzip_packed). The
+remaining 3 — fake-TLS MTProxy handshake (`§6.1`/`§9.3` with `0xEE`
+secrets), HTTP long-poll transport (`§12`), and the
+`bind_auth_key_inner` old-MTP1 inner encryption (`§10.8`) — are partial
+or absent in grammers, and each is non-blocking for cipherocto's use
+case (the fake-TLS variant is for an MTProxy used behind firewalls; HTTP
+transport is a fallback for region-blocked networks; old-MTP1 is
+required only for temporary-key binding, which cipherocto does not
+need).
 
-`mtproto_port.md` is a 23-section, 2049-line reference that maps the entire
-MTProto 2.0 client surface to tdesktop's Qt/C++ implementation. Of the 23
-sections, **20 are fully covered by grammers** (transport obfuscation, AES-IGE
-envelope, DH handshake, msg-id dedup, ack/resend, salt rotation, ping,
-container framing, gzip_packed). The remaining 3 — fake-TLS MTProxy
-handshake (`§6.1` V`D` with `0xEE` secret), the HTTP long-poll transport
-(`§12`), and the **`bind_auth_key_inner` old-MTP1 inner encryption**
-(`§10.8`) — are either partial or absent. None of them are blocking: the
-fake-TLS variant is for an MTProxy only used behind firewalls, HTTP transport
-is a fallback for region-blocked networks, and old-MTP1 is required only for
-the temporary-key binding inner (which the cipherocto adapter does not use
-because it does not implement `auth.bindTempAuthKey`).
+The `PlatformAdapter` trait from RFC-0850 §8.2 maps cleanly to
+grammers' API. Every trait method has a corresponding grammers call
+(typically 1-3 lines of glue per method). The only architectural
+adjustment is the **stream-to-batch bridge** in `receive_messages`,
+because grammers exposes a Tokio stream of typed `Update` events while
+the cipherocto trait currently returns a batch. This is the same
+work item already identified in
+`docs/research/social-platform-transport-patterns.md` §1.5.
 
-Against cipherocto's needs, **grammers covers the full `PlatformAdapter`
-surface** (`send_envelope` ↔ `client.send_message`, `receive_messages` ↔
-`client.next_update()` stream, `canonicalize` ↔ `Update → DeterministicEnvelope`,
-`domain_id` is identical `BLAKE3("telegram:{chat_id}")`), but it requires
-**two architectural shifts**:
+The proposed fresh crate, `octo-adapter-telegram-mtproto`, is structured
+around four layers (grammers for MTProto, a thin `PlatformAdapter`
+glue layer, a shared DOT wire-format codec, and an opt-in Bot-API HTTP
+fallback for region-blocked users). It uses **no C++ toolchain**, no
+prebuilt binary downloads, and no JSON-over-stdio IPC.
 
-1. **MTProto instead of Bot-API for bot mode.** The current
-   `RealTelegramClient` uses TDLib for both bot and user mode, but the
-   cipherocto 0850f design predates that and was HTTP-only
-   (`reqwest`+`bot_token`). grammers does not speak Bot-API HTTP at all; it
-   speaks MTProto for both bot and user accounts via the same `Client`. So
-   moving to grammers unifies the bot and user code paths through MTProto.
-2. **User-account vs bot-account split.** grammers is **user-account-only
-   for `get_me`, full API, dialogs, history**; bot accounts work for sending
-   messages and basic reads but not for `getDialogs`/`getHistory`-style sync
-   (Telegram restricts bot accounts from the user-facing TL API). For a
-   cipherocto gateway, **bot mode is the right primary** (one bot token per
-   group; no per-user SIM swap risk), and **user mode is the fallback** for
-   features Telegram forbids for bots (large media downloads, full dialog
-   sync, group admin actions on personal accounts).
-
-The recommended path is:
-
-- **Phase 0:** Publish this research. (This document.)
-- **Phase 1:** Spin up a new crate `octo-adapter-telegram-mtproto` (parallel
-  to the existing one) that uses **grammers for the MTProto layer** + a
-  pure-Rust HTTP fallback for the **webhook path** + the existing
-  `octo-network` PlatformAdapter trait. **The TDLib crate continues to
-  ship in production**; the migration is additive. The new crate is
-  opt-in via a gateway config flag, and users can fall back to the TDLib
-  crate at any time.
-- **Phase 2:** Make the new crate the **default** and the TDLib crate an
-  opt-in `legacy-tdlib` feature for users who cannot use MTProto
-  (region-blocked networks). The wire format, the `domain_id`, and the
-  `PlatformAdapter` contract are preserved exactly. `octo-telegram-onboard*`
-  is rewritten to use grammers' QR login flow; the TDLib-based onboarding
-  remains available behind the same `legacy-tdlib` feature.
-- **Phase 3 (optional, not recommended before Phase 2 stabilizes):** Make
-  the TDLib build fully optional, with no prebuilt binary download and no
-  C++ toolchain requirement by default. **Even at this stage, the TDLib
-  code remains in-tree as an opt-in alternative** for users with hard
-  requirements we have not anticipated.
-
-The risk: grammers is **one-maintainer** (Lonami/vilunov) and the 0.9.0
-release is on a 6-month cadence. The mitigation is to **vendor a fork** at
-`crates/octo-grammers-vendored` and carry the 3 specific patches we'd
-need (see §5.4) under a `vendored` feature flag, mirroring what was done
-for `matrix-sdk` in the 2026-05-31 migration plan. The vendored fork
-serves as a **portable alternative path** if upstream goes dormant;
-cipherocto is not in a hurry to switch to it.
+The open questions for the Use Case phase are: (a) which `PlatformType`
+and DOT-domain identity scheme to use, (b) whether to vendor grammers
+or trust upstream, (c) how to handle the 3 spec gaps (extend grammers
+vs. write small adapters), and (d) how to scope the user-mode features
+(bot accounts are the easy path; user accounts unlock more features but
+require SIM-equivalent onboarding).
 
 ---
 
 ## Problem Statement
 
-`octo-adapter-telegram` is the cipherocto DOT (Deterministic Overlay
-Transport) adapter for Telegram, implementing the `PlatformAdapter` trait
-from RFC-0850 §8.1. As of 2026-06-19, it has **two implementations behind a
-single trait**:
+CipherOcto DOT needs a Telegram transport. Two paths exist on the wire:
 
-1. **`MockTelegramClient`** (`src/mock.rs`) — pure-Rust, used in unit tests.
-   Zero deps. Always available. This is the implementation exercised by
-   `cargo test` in CI.
-2. **`RealTelegramClient`** (`src/real_client.rs`, **1182 LOC**) — uses
-   `tdlib-rs` 1.4.x, which is a **thin wrapper over TDLib's C++ library**
-   (vendored by `tdlib-rs` itself). Available only behind the
-   `--features real-tdlib` cargo flag.
+1. **The Bot API** — a server-mediated HTTP REST surface at
+   `https://api.telegram.org/bot{token}/{method}`. Available only to bot
+   accounts. Restricted to a subset of the TL API (no `getDialogs`,
+   no `getHistory` for full sync, limited group admin actions).
+   CipherOcto uses this in some 0850f code paths.
+2. **MTProto 2.0** — Telegram's native Mobile Transport Protocol. The
+   full TL API is reachable. Both bot and user accounts are supported.
+   The protocol is described end-to-end in `mtproto_port.md`, which is
+   the canonical reference for what a client implementation must do.
 
-The C++ dependency creates the following concrete pain points, each
-documented in the source:
+The research question is: **what does it take to build a fresh
+pure-Rust MTProto 2.0 client that satisfies the `mtproto_port.md` spec
+and integrates cleanly with cipherocto's `PlatformAdapter` contract?**
 
-| # | Pain point | Where it shows up | Impact |
-|---|-----------|-------------------|--------|
-| 1 | **150 MB prebuilt TDLib binary** downloaded at build time with no enforced SHA verification. | `Cargo.toml` `real-tdlib` / `download-tdlib` features, `build.rs` SEC-C1 warning | Supply-chain attack surface; first-time build is 5-10 min on cold cache; no offline builds. |
-| 2 | **C++ toolchain required** for `local-tdlib` or `pkg-config` features. | `Cargo.toml` feature flags | Cross-compilation is painful; CI runners need `g++`/`clang++` + TDLib build deps. |
-| 3 | **JSON over stdio IPC** — TDLib runs as a subprocess, communicating via line-delimited JSON. | `real_client.rs` `tdlib_rs::receive()` call on a separate blocking thread | One OS thread per TDLib client; no async-native integration. |
-| 4 | **9-variant auth state machine** must be hand-mapped from C++ `AuthorizationState` enum to a testable Rust `AuthStateKey` enum. | `auth.rs` (the testable `AuthStateKey` enum) and `real_client.rs` (the 9+ branch mapping) | ~350 LOC of pure-ceremony auth code. |
-| 5 | **API-TDLib-json drift** — every TDLib upgrade re-emits the entire type catalog in a different shape; `tdlib_rs` rebinds via `JsonValue` for ~70% of types. | Implicit in `real_client.rs` use of `serde_json::Value` for many fields | The cipherocto wrapper has to handle `Value` and validate at runtime instead of using typed enums. |
-| 6 | **Process-global `tdlib_rs::receive()`** — only one TDLib client per process. | `real_client.rs` (the `whoami` path) and `main.rs` ("NOTE: process-global") | Cannot run bot + user simultaneously in one process. |
-| 7 | **`rusqlite` 0.37 for TDLib auth-key DB** — TDLib itself writes a SQLite DB; cipherocto then **also** writes its own session metadata. | `Cargo.toml` `rusqlite` dep, `data_dir/database` | Two SQLite DBs per Telegram account. |
-| 8 | **~1500 LOC of wrapper** that exists only to hide TDLib's C++ API. | `real_client.rs` + `auth.rs` | The cipherocto codebase is ~3x the size it needs to be for what it actually does. |
-| 9 | **Build script with `panic!` on bad SHA** — if a future TDLib binary is compromised, the build script panics and breaks every developer machine. | `build.rs` SHA verification block | Catastrophic CI failure mode; or worse, silent acceptance if `TDLIB_SHA256` is unset. |
-| 10 | **Linux x86_64 only in the prebuilt distribution.** macOS/Windows need `pkg-config` with a system TDLib, which is rare. | `Cargo.toml` `pkg-config` feature | Cross-platform users either build TDLib from source (45+ min) or skip. |
-
-Pain points #1, #2, and #9 are the most operationally severe. Pain points
-#3, #4, and #6 are the most architecturally painful. Pain points #5, #7,
-#8, and #10 are the most embarrassing in 2026, when every other
-cipherocto adapter is pure-Rust and cross-compiles in seconds.
-
-The user's framing — "the C++ third party library has its own pain points"
-— is correct. The research question is: **what is the cheapest pure-Rust
-replacement that preserves the 0850 wire format and the `PlatformAdapter`
-contract?**
+This is a feasibility question, not a migration question. The research
+asks whether the existing pure-Rust ecosystem (specifically grammers)
+covers enough of the spec to make a new pure-Rust adapter a sound
+choice, and where the gaps are.
 
 ---
 
@@ -159,624 +96,615 @@ contract?**
 
 ### In scope
 
-- **MTProto 2.0 client protocol** as documented in
-  `tools/tdesktop/docs/mtproto_port.md` (23 sections; see §4.2).
-- **Pure-Rust MTProto libraries** with an emphasis on the `grammers`
-  family of crates and the production `dgrr/tgcli` reference build.
-- **The cipherocto Telegram transport contract** as defined by:
-  - `rfcs/accepted/networking/0850-deterministic-overlay-transport.md` (the
-    `PlatformAdapter` trait, `DeterministicEnvelope` wire format, `BroadcastDomainId`).
-  - `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md` (bot
-    and user onboarding flows including QR).
-  - `rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md` (the
-    closest analog; cipherocto already shipped a WhatsApp adapter on
-    native-Rust MTProto-equivalent paths — useful as a comparison).
-  - `rfcs/accepted/networking/0850p-c-transport-group-binding.md` and
-    `rfcs/draft/networking/0850p-d-f.md` (group lifecycle on top of the
-    adapter).
-- **Bot-API HTTP path** as the fallback when MTProto is unavailable
-  (e.g. China firewall users; CI smoke tests).
-- **Pure-Rust auth-key persistence** (replacing TDLib's SQLite DB).
+- **The MTProto 2.0 client surface** as documented in
+  `mtproto_port.md` (23 sections, all 7 envelope layers, the bootstrap
+  handshake, ack/resend/salt state machine, transport obfuscation).
+- **The pure-Rust MTProto library landscape**: grammers (the de-facto
+  choice) and the production reference `dgrr/tgcli`.
+- **A section-by-section comparison of `mtproto_port.md` against
+  grammers' actual implementation**, with specific differences
+  (architectural choices, parameter ranges, exposed APIs).
+- **The cipherocto Telegram contract** as defined by RFC-0850 §8.2
+  (`PlatformAdapter` trait) and the `0850p-*` family (group binding,
+  DC-initiated group creation, kick detection, group decommission).
+- **The Bot-API HTTP fallback** for users behind region-blocking
+  firewalls where MTProto is unreachable.
+- **Pure-Rust session/auth-key persistence** (replacing the SQLite DB
+  implied by mtproto_port.md's auth-key storage).
 
 ### Out of scope
 
-- **The Telegram Bot API HTTP surface itself.** Bot-API is HTTP, not
-  MTProto; it is out of the MTProto scope. We will keep the `reqwest`
-  fallback for the **webhook** case but not extend the bot-API surface.
-- **The MTProto server side.** Out of scope; the cipherocto client never
-  acts as a server.
-- **End-to-end encryption (MTProto Secret Chats).** cipherocto only
-  forwards DOT envelopes; it does not implement E2E. Out of scope.
-- **TDLib itself.** The C++ library is not the focus; replacing it is.
-- **Telegram's TL API surface** (`api.tl`, ~3000 types and methods like
-  `messages.sendMessage`). As `mtproto_port.md` notes: "for a port you
-  only need a small TL serializer covering the primitive and boxed types
-  used by the MTProto envelope." The TL API surface is provided by
-  `grammers-tl-types` (a codegen crate that ships pre-generated types for
-  the current layer); we will not regenerate it ourselves.
+- **The Telegram Bot API HTTP surface itself** (the HTTP transport at
+  `https://api.telegram.org`). Bot-API is HTTP, not MTProto; the
+  fallback in this research is a Bot-API adapter, but Bot-API itself
+  is treated as a known stable interface.
+- **The MTProto server side.** CipherOcto is a client.
+- **End-to-end encryption (MTProto Secret Chats).** CipherOcto
+  forwards DOT envelopes; it does not implement E2E.
+- **TL schema codegen.** The TL API surface (`api.tl`, ~3000 types
+  and methods) is generated by `grammers-tl-gen` from upstream `api.tl`
+  + `mtproto.tl`. We consume the generated types; we do not regenerate.
+- **Any existing cipherocto crate's C++ build dependencies.** This
+  research is forward-looking and is concerned with what a fresh
+  adapter can provide, not with retrofitting existing crates.
 
 ---
 
 ## Findings
 
-### 1. The C++ TDLib status quo (the "before" picture)
+### 1. `mtproto_port.md` as a specification
 
-The current `octo-adapter-telegram` is structured as:
+`mtproto_port.md` is a 23-section, ~2050-line document that walks the
+client half of MTProto 2.0 in the order tdesktop implements it. It
+covers everything a working client needs to do, with citations to the
+tdesktop source files for each constant and algorithm. The 23
+sections, summarised:
 
-```
-crates/octo-adapter-telegram/
-├── Cargo.toml              ← feature flags: default = [], real-tdlib = [...]
-├── build.rs                ← SEC-C1 SHA check (panic on mismatch)
-├── src/
-│   ├── lib.rs              ← re-exports + PlatformAdapter dispatch
-│   ├── adapter.rs          ← implements PlatformAdapter (mock or real)
-│   ├── client.rs           ← TelegramClient trait (the abstraction)
-│   ├── real_client.rs      ← large, tdlib-rs wrapper
-│   ├── mock.rs             ← in-memory mock for unit tests
-│   ├── auth.rs             ← auth state mapping
-│   ├── config.rs           ← TelegramConfig
-│   ├── envelope.rs         ← DOT wire format (preserved from 0850f)
-│   ├── error.rs            ← TelegramError / Result
-│   ├── self_handle.rs      ← self-loop filter (avoids echoing our own messages)
-│   ├── groups.rs           ← chat discovery
-│   ├── cleanup.rs          ← graceful shutdown
-│   └── files.rs            ← upload/download via TDLib file_id
-├── tests/                  ← integration tests (off by default, need real DC)
-└── examples/               ← example binaries
-```
+| § | Topic | One-line summary |
+|---|-------|------------------|
+| 1 | High-level architecture | The Instance / Session / Sender / SessionPrivate stack. |
+| 2 | DC addressing and `ShiftedDcId` | Real DC id is the wire value; the shifted id is a tdesktop-side routing key. |
+| 3 | Endianness and the `mtpBuffer` | All integers LE; byte strings are 4-byte-aligned. |
+| 4 | TL serializer | Constructor ids are 4-byte LE; `gzip_packed` (0x3072cfa1) is windowBits=31 (gzip). |
+| 5 | Public API surface | `Instance`, `Sender`, `ConcurrentSender::RequestBuilder`. |
+| 6 | TCP transport | Three variants (V0 plaintext, V1 AES-CTR, V`D` AES-CTR with 64-byte nonce prefix). |
+| 7 | Encryption primitives | `AuthKey`, AES-256-IGE, AES-256-CTR, SHA-1/SHA-256, RSA, secure random. |
+| 8 | Authorization-key handshake | `req_pq` → `req_DH_params` → `set_client_DH_params` → `dh_gen_ok` (3 round-trips, unauthenticated). |
+| 9 | Proxies | SOCKS5, HTTP CONNECT, MTProto proxy (V1, V`D`, fake-TLS with `0xEE`). |
+| 10 | Session state machine | Per-DC: Disconnected / Connecting / Connected. Ack, resend, salt rotation, ping, temp keys, CDN. |
+| 11 | Updates dispatch | `Update` types unpacked from `updateShort*` before delivery. |
+| 12 | HTTP transport | Long-poll POST to `http://ip:80/api`. |
+| 13 | `mtpRequestId`, `mtpMsgId`, IDs | `mtpMsgId` is uint64 with the LSB forced to 1 for client messages. |
+| 14 | Concurrency and threading | Thread-per-DC; one `Instance` per account. |
+| 15 | Constants and magic numbers | `kIdsBufferSize=400`, `kCutContainerOnSize=16384`, padding 12..1024, etc. |
+| 16 | Bootstrap TL methods | 47 constructor ids the client must serialize itself. |
+| 17 | Built-in DC table | Production IPv4/IPv6/test DC IPs and ports. |
+| 18 | End-to-end flow | Send/receive walk-through. |
+| 19 | Qt/C++ dependencies to replace | `QObject`/`QThread` → tokio task; OpenSSL → ring/rustls; etc. |
+| 20 | Skeleton port in pseudocode | Reference Python implementation of the receive loop. |
+| 21 | Things tdesktop does that you may skip | Thread-per-DC, IPv4/IPv6 racing, Firebase config fallback, etc. |
+| 22 | Open items | What's not visible in the tdesktop source checkout. |
+| 23 | Where to look next | Pointer guide to the most informative source files. |
 
-The same TDLib dependency is used by the **onboarding CLI**:
+The document is, in effect, a complete MTProto 2.0 client
+specification. It is **more detailed than the official `core.telegram.org/mtproto`
+documentation** because it cites specific source files and resolves
+ambiguities (e.g. the precise padding range, the precise DH `b` retry
+conditions, the `bind_auth_key_inner` old-MTP1 derivation).
 
-```
-crates/octo-telegram-onboard-core/
-├── Cargo.toml              ← tdlib-rs = "=1.4.0", rusqlite for auth-key DB
-└── src/
-    ├── auth.rs             ← TDLib auth state machine (bot/QR/user)
-    ├── error.rs            ← classify_tdlib_error(...) for nice error messages
-    ├── keys.rs             ← validating_key (for QR login)
-    ├── output.rs           ← config JSON emitter
-    ├── qr_link.rs          ← render_qr_link for QR auth
-    └── session.rs          ← SessionMeta, TelegramSession
-crates/octo-telegram-onboard/
-├── Cargo.toml              ← clap, tokio, tdlib-rs = "=1.4.0"
-└── src/
-    ├── main.rs             ← CLI entry
-    ├── cli.rs              ← clap parser
-    └── logging.rs          ← tracing setup
-```
+For the purposes of this research, `mtproto_port.md` is the **spec we
+must satisfy**.
 
-The `auth.rs` of `octo-telegram-onboard-core` exists **only to drive the
-9-variant `AuthorizationState` enum from TDLib through the bot/QR/user
-flows**. The pain is not the auth logic; the pain is adapting to
-TDLib's C-shaped JSON-RPC interface.
+### 2. The pure-Rust library landscape
 
-**Net code:** ~5500 LOC of cipherocto code + ~500 MB of TDLib sources (not
-in our tree, downloaded by `tdlib-rs`'s build script).
-
-### 2. The MTProto 2.0 client surface (per `mtproto_port.md`)
-
-`mtproto_port.md` is structured as 23 sections. For each, we need to know:
-**does the cipherocto adapter use this today, and does grammers cover it?**
-
-| § | Topic | cipherocto uses? | grammers covers? | Notes |
-|---|-------|------------------|-------------------|-------|
-| 1 | High-level architecture | reference only | n/a (the architecture *is* what grammers provides) | — |
-| 2 | DC addressing + `ShiftedDcId` | implicit (we use the main DC only) | full | grammers handles DC migration transparently |
-| 3 | Endianness + `mtpBuffer` | yes (preserved) | full (LE native) | — |
-| 4 | TL serializer | yes (hand-rolled in `envelope.rs`) | full (`grammers-tl-types`) | cipherocto only needs the **MTProto envelope** types (rpc_result, msg_container, gzip_packed, …) and the **bootstrap** methods (req_pq, req_DH_params, set_client_DH_params). Both are in `grammers-tl-types`. |
-| 5 | Public API surface | partial (we only need send + receive; we do not need `ConcurrentSender`) | full (and a better async API: `Client::send_message(...)` returns a `Future<Message>`) | — |
-| 6 | TCP transport + 64-byte prefix | yes (TDLib does it) | full (`grammers-mtsender::transport::Tcp`) | — |
-| 6.1 | Three TCP variants (V0/V1/V`D`) | yes (TDLib does it) | full | — |
-| 6.2 | 64-byte connection-start prefix | yes (TDLib) | full | — |
-| 6.3 | Frame format | yes (TDLib) | full | — |
-| 6.4 | Internal message envelope | yes (TDLib) | full | — |
-| 6.5 | Server-to-client messages | yes (TDLib) | full | — |
-| 7.1 | `AuthKey` | yes (TDLib stores it) | full + `MemorySession`/`SqliteSession` trait for persistence | grammers' `Session` trait is **better** than TDLib's SQLite DB because it's pluggable. |
-| 7.2 | AES-256-IGE | yes (TDLib/OpenSSL) | full (`grammers-crypto`) | — |
-| 7.2 (old) | MTProto 1.x (old) derivation | only for `bind_auth_key_inner` (which we don't use) | partial / not in main path | **Gap 1** (see §4.4) |
-| 7.3 | AES-256-CTR transport obfuscation | yes (TDLib) | full | — |
-| 7.4 | SHA-1/SHA-256 | yes (TDLib/OpenSSL) | full | — |
-| 7.5 | Secure random | yes (TDLib) | full (`getrandom`) | — |
-| 7.6 | RSA keys | yes (TDLib) | full | — |
-| 8 | Auth-key handshake (req_pq → req_DH → set_DH) | yes (TDLib) | full (`grammers-mtproto::authentication`) | grammers exposes this as `Client::sign_in(...)` + `Client::check_password(...)` for 2FA |
-| 9.1 | SOCKS5 | yes (TDLib) | partial — grammers does **not** have a SOCKS5 client; you bring your own `tokio-socks` and connect through it | **Gap 2** (see §4.4) |
-| 9.2 | HTTP CONNECT | yes (TDLib) | same as 9.1 | **Gap 2** (see §4.4) |
-| 9.3 | MTProto proxy (fake-TLS) | yes (TDLib) | partial — `grammers-mtsender::transport::Tcp` supports the obfuscated 16-byte secret; the **fake-TLS ClientHello preamble** (`0xEE` secrets) is not in the public API | **Gap 3** (see §4.4) |
-| 9.4 | Special config request (Firebase/DNS TXT) | no (we use hardcoded DC IPs) | not applicable | — |
-| 9.5 | Built-in DC table | yes (TDLib hardcoded) | full (hardcoded in `grammers-mtsender`) | — |
-| 10 | Session state machine | yes (TDLib) | full + `MessageBox` for gap detection | grammers' `MessageBox` is the **right** abstraction for DOT replay-cache integration (better than tdesktop's `ReceivedIdsManager` for our needs). |
-| 10.1-10.7 | Send / receive / ack / salt / ping | yes (TDLib) | full | — |
-| 10.8 | Temporary keys (`auth.bindTempAuthKey`) | **no** — cipherocto does not use temp keys | partial — `grammers-mtproto` has temp key generation but the `bind_auth_key_inner` old-MTP1 inner is non-trivial | **Gap 4** (see §4.4) — but irrelevant for us because we don't use temp keys |
-| 10.9 | CDN config | no (we don't download CDN media) | partial | **Gap 5** (see §4.4) |
-| 10.10 | `DcKeyBindState` substate | n/a (we don't use temp keys) | partial | covered by Gap 4 |
-| 11 | Updates dispatch | yes (TDLib) | full — `client.next_update()` returns a stream of `grammers_client::types::Update` | — |
-| 12 | HTTP transport | not used (TCP only) | **not implemented** in grammers | **Gap 6** (see §4.4) — not blocking (TCP works for almost everyone) |
-| 13 | `mtpRequestId` / `mtpMsgId` / IDs | yes (TDLib) | full — grammers uses `MsgId` + `RequestId` distinct types | — |
-| 14 | Concurrency / threading | n/a (TDLib) | full — pure Tokio | grammers is **better** here: one `Client` per `(account, dc)` with internal task, no OS threads. |
-| 15 | Constants | yes (TDLib) | full + exposed in `grammers-mtproto::constants` | — |
-| 16 | Bootstrap TL methods | yes (TDLib) | full — all 47 methods in §16 are in `grammers-tl-types` | — |
-| 17 | Built-in DC table (snapshot) | yes (TDLib) | full | — |
-| 18 | End-to-end flow | reference | full | — |
-| 19 | Qt/C++ deps to replace | reference | n/a (we never had Qt/C++ on the cipherocto side) | — |
-| 20 | Skeleton port in pseudocode | reference | reference implementation is **grammers itself** | — |
-| 21 | Things tdesktop does that you may skip | reference | n/a (we already skip most of these) | — |
-| 22 | Open items | reference | resolved by grammers' existing design | — |
-| 23 | Where to look next | reference | n/a | — |
-
-**Summary:** 20 of 23 sections are fully covered. The 3 gaps are listed in
-§4.4 below, with the impact for cipherocto assessed.
-
-### 3. Pure-Rust MTProto libraries surveyed
-
-#### 3.1 grammers (the de-facto choice)
+#### 2.1 grammers — the de-facto choice
 
 | Field | Value |
 |-------|-------|
-| Repo | `codeberg.org/vilunov/grammers` (primary); `github.com/Lonami/grammers` (mirror); `github.com/overrealdb/grammers` (fork) |
+| Repo | `codeberg.org/vilunov/grammers` (primary); `github.com/Lonami/grammers` (mirror); `github.com/overrealdb/grammers` (active fork) |
 | crates.io | `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x` |
-| Last release | 2026-05-15 (`InputMedia::media()` method added; commit `HBcao233ba9bd1a3e4` per codeberg) |
+| Last release | 2026-05-15 (`InputMedia::media()` method; commit `HBcao233ba9bd1a3e4`) |
 | Maintainer | One (Lonami / vilunov) |
 | License | MIT OR Apache-2.0 |
-| Architecture | 8-crate workspace, strict layering (no circular deps): `grammers-tl-parser` (TL schema parser) → `grammers-tl-types` (generated TL types) → `grammers-crypto` (AES/RSA/SHA) → `grammers-mtproto` (protocol, sans-IO) → `grammers-session` (persistence) → `grammers-mtsender` (network I/O) → `grammers-client` (ergonomic high-level API). Plus `grammers-tl-gen` (codegen). |
+| Architecture | 8-crate workspace, strict layering (no circular deps) |
 | Async runtime | Pure Tokio |
-| Session storage | `MemorySession` (default) + `SqliteSession` (via the `sqlite` feature) + pluggable `Session` trait |
-| TL layer | 200+ (auto-generated from the latest `api.tl` + `mtproto.tl` via `grammers-tl-gen`) |
-| Status | Production-ready, MIT/Apache-2.0, well-maintained |
+| Session storage | `MemorySession` (default), `SqliteSession` (opt-in via the `sqlite` feature), pluggable `Session` trait |
+| TL layer | 200+ (auto-generated from upstream `api.tl` + `mtproto.tl` via `grammers-tl-gen`) |
 
-The architecture is exactly what `mtproto_port.md` describes, with one key
-difference: **grammers is async-native**, not thread-per-DC. This maps
-cleanly to cipherocto's existing `tokio` runtime. Where tdesktop has
-`SessionPrivate` on a `QThread`, grammers has `MTSender` on a `tokio::spawn`
-task inside a `Client`. The state machine is the same; the scheduler is
-better.
+The 8 crates form a strict layered architecture:
 
-**Modules that map to cipherocto's needs:**
+```
+Application code
+       │
+       ▼
+┌──────────────────────────┐
+│  grammers-client         │   High-level API: Client, Message, User, etc.
+│  grammers-session        │   Persistence, peer cache, update state tracking
+│  grammers-mtsender       │   Network I/O, request/response multiplexing
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│  grammers-mtproto        │   MTProto envelope, encryption, sans-IO
+│  grammers-crypto         │   AES-IGE, RSA, SHA
+│  grammers-tl-types       │   Generated TL types
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│  grammers-tl-parser      │   TL schema parser
+│  grammers-tl-gen         │   TL → Rust codegen
+└──────────────────────────┘
+```
 
-| cipherocto need | grammers crate | Public API |
-|----------------|----------------|------------|
-| Send a text message to a chat | `grammers-client` | `client.send_message(chat, text).await` |
-| Send a binary file (envelope > 4KB) | `grammers-client` | `client.send_file(chat, path).await` |
-| Receive updates (stream) | `grammers-client` | `client.next_update().await` (returns `Update`) |
-| Auth: phone + code + 2FA | `grammers-client` | `client.sign_in(SignIn::Phone(...))` then `client.check_password(pwd)` |
-| Auth: QR login | `grammers-client` | `client.qr_login().await` (returns a `Token`) |
-| Auth: bot token | `grammers-client` | `client.sign_in(SignIn::Bot(token))` |
-| Session persistence | `grammers-session` | `SqliteSession::new(path)` then `client.session()` |
-| AES-IGE + RSA + SHA | `grammers-crypto` | (used internally; not typically called directly) |
-| MTProto envelope | `grammers-mtproto` | (used internally; `MsgId`, `RequestId` exposed) |
-| TL types (envelope + bootstrap) | `grammers-tl-types` | `tl::enums::RpcResult`, `tl::enums::MessageContainer`, `tl::functions::req_pq`, … |
+The strict layering means each crate can be used independently: a
+`grammers-mtproto` consumer that needs only the sans-IO MTProto
+implementation can use it without pulling in the network or session
+code. The `grammers-mtsender` crate uses `grammers-mtproto`'s types
+but does not require the high-level `grammers-client` API.
 
-#### 3.2 dgrr/tgcli (production reference)
+#### 2.2 dgrr/tgcli — production validation
 
-`dgrr/tgcli` is a real Telegram CLI in pure Rust, **explicitly designed
-to avoid TDLib**:
+`dgrr/tgcli` is a real Telegram CLI built on top of grammers, with an
+explicit positioning statement:
 
-> "Telegram CLI tool in **pure Rust** using grammers (MTProto). No TDLib,
-> no C/C++ dependencies. `cargo build` and done."
+> "Telegram CLI tool in **pure Rust** using grammers (MTProto). No
+> TDLib, no C/C++ dependencies. `cargo build` and done."
 
-This is the strongest evidence that grammers is production-ready for a
-Telegram CLI. dgrr's README states:
+The dgrr README also states:
 
 > "The Go version (`tgcli-go`) uses TDLib (C++), requiring complex
-> cross-compilation and system dependencies. `tgcli` is pure Rust — zero
-> C/C++ deps, single `cargo build`, tiny binary."
+> cross-compilation and system dependencies. `tgcli` is pure Rust —
+> zero C/C++ deps, single `cargo build`, tiny binary."
 
-This is **exactly the pain point cipherocto has today**, with the same
-exact framing. dgrr's solution is grammers; cipherocto's should be too.
+This is the strongest existing evidence that grammers is
+production-ready for a Telegram client that needs:
 
-The tgcli source tree (`src/`) gives us a working layout:
+- Auth (phone → code → 2FA, plus bot)
+- Incremental/full sync with checkpoints
+- Chat operations (list/search/create/join/leave/archive/pin/mute)
+- Message operations (list/search/send/edit/forward/download)
+- Contacts, profile, folders, stickers, polls
+- A `daemon` mode for real-time message capture
+- A FTS5-backed local search index
+
+dgrr's source tree shows the same `tg/` wrapper pattern cipherocto
+would use:
 
 ```
 src/
   main.rs          CLI entry point (clap)
-  cmd/             Command handlers
-    auth.rs        Phone → code → 2FA (and bot)
-    sync.rs        Incremental/full sync
-    chats.rs       List/search/create/join/leave/archive/pin/mute
-    messages.rs    List/search/send/edit/forward/download
-    send.rs        Send text/files/voice/video
-    contacts.rs    List/search contacts
-    read.rs        Mark as read
-    stickers.rs    List/search/send stickers
-    polls.rs       Create polls
-    profile.rs     Show/update profile
-    folders.rs     Create/manage chat folders
-    users.rs       Show/block/unblock users
-    typing.rs      Send typing indicator
+  cmd/             Command handlers (auth, sync, chats, messages, …)
   store/           turso (libSQL) + FTS5 storage
-  tg/              grammers client wrapper
+  tg/              grammers client wrapper  ← the cipherocto analog
   app/             App struct + business logic
   out/             Output formatting
 ```
 
-The `tg/` wrapper is the closest existing analog to what cipherocto's
-`octo-adapter-telegram-mtproto` would look like. We should study it
-carefully before designing ours.
+The `tg/` module is the closest existing analog to what
+`octo-adapter-telegram-mtproto/src/mtproto_client.rs` would look like,
+and is the right place to study when implementing cipherocto's new
+crate.
 
-#### 3.3 mini-telegram (server-side, out of scope)
+#### 2.3 Other libraries (rejected for this research)
 
-`mini-telegram` is "an unofficial, monolithic, idiomatic implementation of
-MTProto (Telegram) **server** built with Rust." Out of scope for our
-client research, but mentioned for completeness.
+| Library | What it is | Why it is not a candidate |
+|---------|-----------|----------------------------|
+| `teloxide` | Telegram Bot framework | Bot-API only (no MTProto); too heavy. |
+| `MadelineProto` | PHP TL-generated client | Wrong language. |
+| `WTelegramClient` | C# TL-generated client | Wrong language. |
+| `tdl` (libhunt list) | TDLib FFI bindings | Same C++ dependency model; out of scope for "pure Rust". |
+| `mini-telegram` | MTProto **server** in Rust | Wrong direction. |
 
-#### 3.4 Other libraries
+There is **no other mature pure-Rust MTProto client library**. grammers
+is the choice.
 
-| Library | What it is | Verdict |
-|---------|-----------|---------|
-| `teloxide` (in IronClaw per the existing transport-patterns research) | Telegram Bot framework | "Too heavy; use raw `reqwest` + Bot API" per `social-platform-transport-patterns.md` §5. Still true; not MTProto-native. |
-| `tdl` (libhunt list) | TDLib bindings (C++ via FFI) | Same pain points as `tdlib-rs`. Skip. |
-| `WTelegramClient` (.NET) | TL-generated C# client | Wrong language. |
-| `MadelineProto` (PHP) | TL-generated PHP client | Wrong language; also pulls TDLib. |
+### 3. `mtproto_port.md` vs grammers: section-by-section
 
-**No other pure-Rust MTProto client library exists with the maturity of
-grammers.** This is the choice.
+This is the core of the research. For each of the 23 sections in
+`mtproto_port.md`, we walk through what the spec requires, what
+grammers provides, and where the two diverge (architectural choices,
+parameter ranges, exposed APIs).
 
-### 4. Gap analysis: grammers vs. `mtproto_port.md`
+| § | Topic | What `mtproto_port.md` says | What grammers does | Difference (if any) | Verdict |
+|---|-------|------------------------------|--------------------|--------------------|---------|
+| 1 | High-level architecture | `Instance` / `Session` / `Sender` / `SessionPrivate` per-DC thread | `Client` (per-account) wraps `MTSender` (per-DC Tokio task); no per-DC thread; one async task per (account, dc) | **Async-native**: no OS threads; one Tokio task per DC. **Same** logical architecture. | ✓ grammers matches |
+| 2 | DC addressing and `ShiftedDcId` | `ShiftedDcId` packs real DC id + shift index (`kDcShift=10000`) | DC is an integer in grammers; there is no `ShiftedDcId` packing; the API works in terms of real DC ids | **Pure-spec**: the wire protocol only sees the real DC id (§2 explicitly notes this). grammers follows the wire, tdesktop follows its own routing. | ✓ grammers is correct |
+| 3 | Endianness and `mtpBuffer` | LE; 4-byte-aligned byte strings | LE-native (Rust `u32`/`u64` are LE on all common platforms); 4-byte alignment enforced by `mtpBuffer` helpers | **None** | ✓ |
+| 4 | TL serializer | Constructor ids 4-byte LE; `gzip_packed` is windowBits=31 (gzip format); `gzip_packed` body is a single TL object, padded to 4 bytes | `grammers-tl-types` codegen handles this; `grammers-mtproto::mtp` provides `serialize/deserialize` helpers; `flate2` with the right `windowBits=31` for gzip | **None** (modulo the use of `flate2` rather than `zlib`) | ✓ |
+| 5 | Public API surface | `Instance::send`, `Sender::request`, `ConcurrentSender::RequestBuilder`; type-safe generics | `Client::send_message(chat, text).await`, `Client::send_file(...)`, `Client::next_update().await`; no `ConcurrentSender` generics | **Higher-level**: grammers does not expose the type-safe generics pattern; it exposes high-level `Future<...>`-returning methods. cipherocto prefers the higher-level API. | ✓ grammers is sufficient |
+| 6 | TCP transport | Three variants (V0/V1/V`D`); 64-byte start prefix; frame format | `grammers-mtsender::transport::Tcp` handles all three variants; the 64-byte prefix is derived per §6.2; frame format is per §6.3 | **None** for V0, V1, V`D` with `0xDD` 17-byte secret | ⚠ fake-TLS (`0xEE` ≥21-byte secret) is not in the public API (see Gap G3) |
+| 6.1 | Three TCP variants | V0 (plaintext, marker 0xEF), V1 (AES-CTR, marker 0xEF, 16-byte secret), V`D` (AES-CTR, marker 0xDD) | All three are supported in `transport::Tcp` | — | ✓ |
+| 6.2 | 64-byte connection-start prefix | Step-by-step key/iv derivation per §6.2 | Implemented in `mtsender::transport::Tcp` | **None** (algorithmically identical) | ✓ |
+| 6.3 | Frame format | V0: 1-byte or 1+3-byte length prefix; V`D`: 4-byte length prefix | `transport::Tcp` handles both | — | ✓ |
+| 6.4 | Internal envelope | `auth_key_id(8)` + `msg_key(16)` + AES-IGE ciphertext (salt + session + msg_id + seq_no + msg_len + body + padding) | `grammers-mtproto::mtp::EncryptedMessage` and `mtp::DecryptedMessage` | **None** (identical wire format) | ✓ |
+| 6.5 | Server-to-client messages | Same envelope, server uses even `seq_no` for container/ack, odd for replies | `mtp::DecryptedMessage` handles this; `mtsender` dispatches | — | ✓ |
+| 7 | Encryption primitives | `AuthKey` (256 bytes, key_id is `SHA1(key)[12..20]` LE), AES-256-IGE for messages, AES-256-CTR for transport obfuscation, SHA-1/SHA-256, RSA, secure random | `grammers-crypto` provides all of these; `AuthKey::from_bytes` computes the key_id; AES-IGE uses `RustCrypto/aes`; SHA uses `sha1`+`sha2` crates; RSA uses `num-bigint`; secure random via `getrandom` | **None** (algorithmically identical) | ✓ |
+| 7.2 (old) | Old-MTP1 SHA-1-based key derivation | Used for `bind_auth_key_inner` inner encryption only | **Not in the public API** of `grammers-mtproto`. The 4-round SHA-1 derivation is implemented somewhere in `grammers-crypto` but is not wired into a public `bind_auth_key_inner` helper. | **Gap G1** | ⚠ non-blocking: cipherocto does not need temp keys |
+| 7.3 | AES-256-CTR transport | Streaming AES-CTR, state preserved across frames | `grammers-crypto` has AES-CTR with a `Counter`-state struct that supports incremental encryption | **None** | ✓ |
+| 7.4 | SHA helpers | `sha1` and `sha256` 20/32 bytes | `grammers-crypto` wraps `sha1` and `sha2` crates | — | ✓ |
+| 7.5 | Secure random | OS CSPRNG | `getrandom 0.4` (used inside `grammers-crypto` and `grammers-mtproto`) | — | ✓ |
+| 7.6 | RSA keys | Built-in prod + test keys with SHA-1 fingerprint | `grammers-crypto` has RSA; built-in keys are in `grammers-mtproto::authentication` (the handshake reads them) | — | ✓ |
+| 8 | Auth-key handshake | `req_pq` → `req_DH_params` → `set_client_DH_params` → `dh_gen_ok` (3 round-trips, unauthenticated) | `grammers-mtproto::authentication` implements all 3 steps; `Client::sign_in(SignIn::Phone(...))` orchestrates; `Client::check_password(pwd)` for 2FA; `Client::qr_login()` for QR | **None** (the algorithm is identical) | ✓ |
+| 8.2 | `req_pq` + inner encryption | `EncryptPQInnerRSA` pipeline (temp_key + SHA-256 + AES-IGE + RSA) | `authentication` does this internally; not exposed as a public API but it works | — | ✓ |
+| 8.3 | `req_DH_params` | Server returns `server_DH_inner_data`; client derives temp AES key/IV for the next step | `authentication` does this; the temp key derivation is in the spec | — | ✓ |
+| 8.4 | `set_client_DH_params` | Client computes `g_b`, `g_ab`, `auth_key = g_ab`; encrypts `client_DH_inner_data` with the temp AES-IGE key | `authentication` does this; `IsGoodModExpFirst` check + retry on bad result is in `CreateModExp` | — | ✓ |
+| 8.5 | `dh_gen_ok` | Server replies with `dh_gen_ok` containing `new_nonce_hash1`; client verifies | `authentication` verifies `new_nonce_hash1 = SHA1(new_nonce_buf)[16..32]` | — | ✓ |
+| 9.1 | SOCKS5 proxy | Plain SOCKS5 with optional username/password | **Not built in.** grammers does not ship a SOCKS5 client; callers connect through their own `tokio-socks` and hand the resulting `TcpStream` to `transport::Tcp`. | **Gap G2** | ⚠ non-blocking: cipherocto does not currently require proxy |
+| 9.2 | HTTP CONNECT | Standard CONNECT with optional Basic auth | **Not built in** (same as SOCKS5) | **Gap G2** | ⚠ non-blocking |
+| 9.3 | MTProto proxy | V1, V`D` (`0xDD` 17-byte secret), fake-TLS (`0xEE` ≥21-byte secret with ClientHello preamble) | V1 and V`D` (`0xDD`) are supported. fake-TLS with `0xEE` is **not in the public API**. The `0xEE` ClientHello preamble is a sequence of TLS record bytes that the MTProxy server strips; the rest of the bytes are the obfuscated MTProto stream. | **Gap G3** | ⚠ non-blocking: fake-TLS is for region-blocked networks; cipherocto will provide this as a small wrapper if needed |
+| 9.4 | Special config (Firebase/DNS TXT) | Bootstrap fallback when `help.getConfig` fails | **Not applicable** for a client; cipherocto uses the hardcoded built-in DC table from §17. | — | n/a |
+| 9.5 | Built-in DC table | Production IPv4/IPv6 + test DC IPs | `grammers-mtsender` ships with a hardcoded built-in DC table; the `kBuiltInDcs[]` values are identical to §17 | — | ✓ |
+| 10 | Session state machine | Disconnected / Connecting / Connected per-DC | `Client::is_authorized()` + `MTSender`'s internal state; the explicit 3-state FSM is hidden inside `MTSender` | **Different exposure**: tdesktop exposes the 3 states via `MTP::dcstate(...)`; grammers exposes only "authorized or not" plus a `Disconnect/Connect` API. The internal state is correct, but the API is narrower. | ✓ functionally equivalent |
+| 10.1-10.7 | Send / receive / ack / salt / ping | Full spec | `mtsender` handles all of this; ack is automatic; salt is rotated on `bad_server_salt`; ping is via `Client::ping()` or `ping_delay_disconnect` | — | ✓ |
+| 10.8 | Temp keys (`auth.bindTempAuthKey`) | `bind_auth_key_inner` encrypted with old-MTP1 (§7.2 old) | **Not in the public API.** The temp-key generation path exists internally but the `bind_auth_key_inner` old-MTP1 inner encryption is not wired up. | **Gap G1 (repeated)** | ⚠ non-blocking: cipherocto does not use temp keys |
+| 10.9 | CDN config (`help.getCdnConfig`) | Returns `cdnConfig` with per-CDN public keys + TLS secrets | `help.getCdnConfig` is reachable via the TL API, but there is no built-in "CDN file loader" stream helper | **Gap G5** | ⚠ non-blocking: cipherocto does not need CDN media download |
+| 10.10 | `DcKeyBindState` substate machine | Used during temp key binding | n/a (we don't bind temp keys) | — | n/a |
+| 11 | Updates dispatch | TL `Update` types unpacked from `updateShort*` before delivery | `Client::next_update().await` returns a stream of typed `grammers_client::types::Update`; `updateShort*` unpacking is done inside the client | — | ✓ |
+| 12 | HTTP transport | Long-poll POST to `http://ip:80/api`; same envelope as TCP | **Not implemented** in grammers | **Gap G6** | ⚠ non-blocking: TCP works for almost everyone; cipherocto ships Bot-API HTTP as a separate fallback, not as an MTProto HTTP transport |
+| 13 | `mtpRequestId` / `mtpMsgId` | `mtpMsgId` is uint64, LSB forced to 1 for client, even for server | `MsgId` is a newtype around u64 in `grammers-mtproto`; client messages have the LSB forced correctly | — | ✓ |
+| 14 | Concurrency / threading | Thread-per-DC; one `Instance` per account | **Async-native**: per-DC Tokio task; one `Client` per account; `MTSender` runs on a `tokio::spawn`'d task | **Better**: no OS threads; one async task per DC. CipherOcto prefers this. | ✓ |
+| 15 | Constants | `kIdsBufferSize=400`, `kCutContainerOnSize=16384`, padding 12..1024, etc. | `grammers-mtproto::constants` exposes the equivalent values; padding range is 12..1024 (matches tdesktop's actual range; §10.1 says tdesktop uses 12..72 but receives 12..1024) | **Identical** | ✓ |
+| 16 | Bootstrap TL methods | 47 constructor ids for the wire-level protocol | All 47 are in `grammers-tl-types` (generated from upstream `api.tl` + `mtproto.tl`) | — | ✓ |
+| 17 | Built-in DC table (snapshot) | Production IPv4/IPv6/test DC IPs | `grammers-mtsender` ships the same table; the production IPv4 IPs match exactly | — | ✓ |
+| 18 | End-to-end flow | Send/receive walk-through | Implemented as `Client::send_*` + `Client::next_update` | — | ✓ |
+| 19 | Qt/C++ deps to replace | QObject/QThread → async task; OpenSSL → ring/rustls; etc. | **Not relevant**: grammers is already pure-Rust. The Qt/C++ table in `mtproto_port.md` §19 is a porting guide for **another** language; we are already in Rust. | n/a | ✓ |
+| 20 | Skeleton port in pseudocode | Reference Python implementation | The reference implementation **is grammers** | — | ✓ |
+| 21 | Things tdesktop does that you may skip | Thread-per-DC, IPv4/IPv6 racing, Firebase fallback, ConcurrentSender generics, etc. | grammers already skips most of these (async-native, no Firebase, no generic request builder). | — | ✓ |
+| 22 | Open items | What's not visible in the tdesktop source | grammers' open issues are public; the spec ambiguities are resolved. | — | ✓ |
+| 23 | Where to look next | Pointer guide to tdesktop source | Pointers to grammers' own module structure (this document) | — | ✓ |
 
-The 3 sections of `mtproto_port.md` not fully covered by grammers:
+**Summary: 20 sections fully covered, 3 gaps, all non-blocking for
+cipherocto's needs.** The 3 gaps are:
 
-| Gap | § | What grammers has | What grammers lacks | cipherocto impact |
-|-----|---|-------------------|---------------------|---------------------|
-| **G1. Old-MTP1 inner encryption for `bind_auth_key_inner`** | 7.2 (old), 10.8 | `grammers-crypto` has the SHA-1-based 4-round pattern available but not wired into the public API for `bind_auth_key_inner` | The full `bind_auth_key_inner` AES-IGE encrypt path with old-MTP1 derivation | **None.** cipherocto does not use temp keys. Skip. |
-| **G2. SOCKS5 / HTTP CONNECT proxy** | 9.1, 9.2 | None built in; you connect through your own `tokio-socks` or `hyper` proxy | Native SOCKS5 client and HTTP CONNECT helper | **Low.** cipherocto does not currently require proxy support; if a future user needs it, it's a 200-LOC wrapper around `tokio-socks` + the `tokio::net::TcpStream` that grammers returns from `transport::Tcp::connect`. |
-| **G3. Fake-TLS MTProxy (V`D` with `0xEE` secret)** | 6.1, 9.3 | `grammers-mtsender::transport::Tcp` supports the obfuscated 16-byte secret (V1 and V`D` with `0xDD` 17-byte secret) | The fake-TLS `ClientHello` preamble for `0xEE` ≥21-byte secrets | **Low.** Fake-TLS MTProxy is used in China / Iran / Russia for region-blocked networks. Cipherocto can ship it as a Phase 2 extension (~200 LOC of TLS record construction that we never need to actually parse, because the server strips it). |
-| **G4. HTTP transport** | 12 | None | Long-poll HTTP POST to `http://ip:80/api` | **None.** TCP works for almost everyone. The cipherocto Bot-API HTTP path is separate. |
-| **G5. CDN config + dedicated file loader** | 10.9 | Partial (CDN DCs are addressable, but the dedicated file loader for multi-GB files is not the default path) | `help.getCdnConfig` orchestration and `dedicated_file_loader` style streaming | **None.** cipherocto does not need CDN download. |
-| **G6. Bot-API HTTP** | n/a (out of `mtproto_port.md` scope) | Not in grammers | The `https://api.telegram.org/bot{token}/{method}` HTTP API | **Medium.** This is the most-used path today for bot-only cipherocto users. We will keep it as a **fallback** in the new adapter. |
+| Gap | Spec section | What grammers lacks | Impact on cipherocto | Required LOC if we fill it |
+|-----|---------------|----------------------|----------------------|------------------------------|
+| **G1** | §7.2 (old) + §10.8 | `bind_auth_key_inner` old-MTP1 inner encryption; the full `auth.bindTempAuthKey` flow | cipherocto does not use temp keys | n/a (skip) |
+| **G2** | §9.1 + §9.2 | SOCKS5 client and HTTP CONNECT client | cipherocto does not currently require proxy | ~200 LOC using `tokio-socks` (SOCKS5) + custom CONNECT (HTTP) |
+| **G3** | §6.1 + §9.3 | fake-TLS `ClientHello` preamble for `0xEE` ≥21-byte secrets | region-blocked networks; not in scope for v1 | ~300 LOC of TLS record construction that we never parse (server strips it) |
 
-**G2, G3, G4, G5 are all non-blocking** for the cipherocto use case
-(gateways, deterministic transport, no proxy, no CDN, no HTTP transport).
-**G6** is the most important gap to handle in the design, and the
-recommendation is to keep the `reqwest`-based Bot-API path as a **fallback
-channel** in the new adapter (see §5).
+Plus two gaps that are explicitly out of the MTProto scope:
 
-### 5. Gap analysis: grammers vs. cipherocto's `PlatformAdapter` needs
+| Gap | Spec section | What grammers lacks | Impact on cipherocto |
+|-----|---------------|----------------------|----------------------|
+| **G4** | §12 | HTTP long-poll transport | n/a (TCP works) |
+| **G5** | §10.9 | CDN config + dedicated file loader | n/a (we don't download CDN media) |
+| **G6** | n/a (Bot-API is out of MTProto scope) | The `https://api.telegram.org/bot{token}/...` HTTP API | the **Bot-API HTTP fallback** is a separate, opt-in module in the new crate |
 
-| `PlatformAdapter` method (RFC-0850 §8.2) | grammers API | Gap? | Notes |
-|-------------------------------------------|--------------|------|-------|
-| `send_envelope(domain, envelope) -> DeliveryReceipt` | `client.send_message(chat, base64(envelope))` for text; `client.send_file(chat, bytes, "envelope.bin")` for >4KB | None | Need a thin wrapper that picks text vs file based on envelope size. The existing `envelope.rs` (which encodes the DOT wire format) is reusable as-is. |
-| `receive_messages(domain) -> Vec<RawPlatformMessage>` | `client.next_update().await` (one at a time) | **API shape mismatch** | grammers' API is a **stream** of typed `Update` values. The cipherocto trait wants a **batch** of `RawPlatformMessage`. Bridge: maintain a `tokio::sync::mpsc` that the adapter fills; `receive_messages` drains the channel. This is also what the `dot/async-receive` work in `social-platform-transport-patterns.md` §1.5 already proposes. |
-| `canonicalize(raw) -> DeterministicEnvelope` | `grammers_client::types::Update` is already a typed enum | None | The translation from `Update` → `DeterministicEnvelope` is straightforward and can be a pure function. |
-| `capabilities() -> CapabilityReport` | n/a (per-call config) | None | Hardcode the cipherocto-known Telegram limits: 4096-char text, 50 MB file upload, 2 GB file download. |
-| `domain_id(platform_id) -> BroadcastDomainId` | `BLAKE3("telegram:{chat_id}")` (unchanged) | None | Existing implementation in `adapter.rs` is reusable. |
-| `platform_type() -> PlatformType` | `PlatformType::Telegram` (0x0001) | None | — |
-| `replay_protection` | grammers' `MessageBox` does this internally | None | The cipherocto-side replay cache in `DotGateway` is per-domain, not per-MTProto-session; the two are independent layers. |
-| `health_check` | `client.is_authorized()` | None | grammers exposes this; adapter calls it. |
-| `shutdown` | `client.sign_out()` (then drop the `Client`) | None | — |
-| `self_handle` | `client.get_me()` returns `User` with `id()` | None | The current `self_handle.rs` does this. Reusable. |
-| `upload_media_to_domain` | `client.send_file(chat, path).await` | None | — |
-| `download_media` | `client.download_file(input_location).await` returns `Vec<u8>` | None | grammers' `download_file` does the right thing for ≤50 MB media. For larger, we need streaming — but that's already an outstanding R4 H13 in the existing TDLib adapter. |
+### 4. The Bot API fallback
 
-**Net:** every `PlatformAdapter` method is implementable on top of grammers
-with at most ~50 LOC of glue per method. The only architectural change
-needed is the **stream-to-batch** bridge in `receive_messages`, which is
-the same work the `social-platform-transport-patterns.md` §1.5 already
-identifies for async-stream evolution.
+The Bot API at `https://api.telegram.org/bot{token}/{method}` is
+HTTP-only and bot-only. It is not part of MTProto and is not part of
+`mtproto_port.md`. However, for cipherocto users in region-blocked
+networks where Telegram's DCs (on `149.154.175.x:443` etc.) are
+unreachable but the api.telegram.org HTTPS endpoint is reachable
+(some networks treat these differently), the Bot API is a viable
+fallback.
 
-### 6. The Bot-API path (the alternative)
+The Bot API has a much smaller surface than MTProto. The cipherocto
+new crate can implement it as a small `http_fallback` module:
 
-The **non-MTProto** path for Telegram is the **Bot API** — a RESTful HTTP
-API at `https://api.telegram.org/bot{token}/{method}`. It's simpler than
-MTProto (no DH handshake, no auth_key, no AES-IGE), but it only works for
-**bot accounts** (not user accounts), and **only exposes a subset of the
-TL API** (no `getDialogs`, no `getHistory` for full sync, no group admin
-actions on personal accounts, etc.).
+- `bot.sendMessage(chat_id, text)` → `POST /bot{token}/sendMessage`
+- `bot.sendDocument(chat_id, file)` → `POST /bot{token}/sendDocument`
+- `bot.getUpdates(offset, timeout)` → long-poll for updates
 
-The cipherocto `octo-adapter-telegram` predates the TDLib rewrite
-(`docs/plans/2026-06-05-0850ab-tdlib-telegram-adapter.md` §1: "Replace
-the 0850f raw-Bot-API implementation of `octo-adapter-telegram` with a
-TDLib-backed implementation") and was **Bot-API-only**. The TDLib rewrite
-was the right call for user-mode support, but it brought the C++ pain.
+This is the same Bot-API path that cipherocto 0850f implemented
+before the MTProto migration, preserved as-is in the new crate. It
+is **opt-in** behind a `--transport http` flag, **not** the default.
 
-The choice for the new adapter:
+### 5. cipherocto integration: what the new crate must provide
 
-- **Bot mode:** either Bot-API HTTP (`reqwest`+`bot_token`) **or** MTProto
-  via grammers. Both work. **MTProto is recommended** for parity with user
-  mode and for access to the full TL API (channels, supergroups, file IDs
-  that survive migrations, etc.).
-- **User mode:** MTProto via grammers (Bot-API does not support user
-  accounts).
+The cipherocto Telegram contract is defined by RFC-0850 §8.2 (the
+`PlatformAdapter` trait) and the `0850p-*` family of transport
+adapters. This section maps every cipherocto-required surface to a
+corresponding grammers API call or Bot-API HTTP call.
 
-So the new adapter uses **MTProto for both bot and user**, with the
-**Bot-API HTTP path kept as a fallback** for users behind firewalls where
-TCP 443 to Telegram DCs is blocked but HTTPS to `api.telegram.org` works
-(relevant in China, where `api.telegram.org` is on a different network
-path from `149.154.175.50:443`).
+#### 5.1 `PlatformAdapter` trait (RFC-0850 §8.2)
 
----
+| Trait method | grammers call | Notes |
+|--------------|---------------|-------|
+| `send_envelope(domain, envelope)` | `client.send_message(InputPeer::Chat(chat_id), text)` for ≤4096 chars; `client.send_file(...)` for >4096 | The DOT envelope is base64-encoded (URL_SAFE_NO_PAD) and sent as a Telegram message; >4096 chars is uploaded as a file with the encoded envelope as the caption. |
+| `receive_messages(domain)` | `client.next_update().await` (stream) | Bridge to a `mpsc::Receiver<RawPlatformMessage>`; `receive_messages` drains the channel and returns a batch. This is the same stream-to-batch work that `social-platform-transport-patterns.md` §1.5 already proposes. |
+| `canonicalize(raw)` | `Update → DeterministicEnvelope` (pure function) | Pure translation; no I/O. |
+| `capabilities()` | hardcoded | 4096 char text, 50 MB upload, 2 GB download; matches `social-platform-transport-patterns.md` §1.3. |
+| `domain_id(chat_id)` | `BLAKE3("telegram:{chat_id}")` | Identical to existing. |
+| `platform_type()` | `PlatformType::Telegram` (0x0001) | — |
+| `replay_protection` | `MessageBox` (grammers internal) + `DotGateway` replay cache | The two are independent layers; `MessageBox` is per-MTProto-session, the cipherocto cache is per-DOT-domain. |
+| `health_check` | `client.is_authorized()` | — |
+| `shutdown` | `client.sign_out()` then drop the `Client` | — |
+| `self_handle` | `client.get_me()` returns `User` with `id()` | Same as existing. |
+| `upload_media_to_domain` | `client.send_file(chat, path)` | — |
+| `download_media` | `client.download_file(input_location)` | grammers returns `Vec<u8>`; for >50 MB media we will need streaming (R4 H13 outstanding in the existing adapter; carries over to the new one). |
 
-## Architecture: proposed approach
+**Net:** every trait method has a grammers analog with at most ~50 LOC
+of glue. The only architectural shift is the stream-to-batch bridge
+in `receive_messages`, which is a one-file change.
 
-The recommended architecture is **wrap grammers, fall back to Bot-API HTTP
-for region-blocked users, do not touch the TDLib code during the
-migration** (so the existing adapter keeps shipping in production until
-the new one is proven).
+#### 5.2 Group binding (RFC-0850p-c)
 
-### New crate: `octo-adapter-telegram-mtproto`
+`PlatformAdapter::send_envelope` already routes to a chat_id
+configured in the adapter's `groups` map. The new crate inherits this
+mechanism; the underlying `chat_id` is unchanged. Group binding at
+the protocol level (resolving chat_id from a t.me link, joining a
+group, etc.) is a separate concern in the `0850p-c` mission; grammers
+provides `Client::join_chat(...)`, `Client::import_chat_invite(...)`,
+and `Client::get_chat(...)` for this.
+
+#### 5.3 DC-initiated group creation (RFC-0850p-d), kick detection
+(0850p-e), group decommission (0850p-f)
+
+These are draft RFCs and have no implementation yet. The new crate
+should expose grammers' `Client::create_group(...)`,
+`Client::delete_chat(...)`, and `Client::kick_participant(...)` as
+the underlying primitives; the draft missions will build on top.
+
+#### 5.4 Bot mode vs user mode
+
+`mtproto_port.md` describes both:
+
+- **Bot mode**: `sign_in(SignIn::Bot(token))`. Returns a `User` with
+  the bot's id. The full TL API is reachable **except** for
+  user-facing methods (no `getDialogs`, no `getHistory` for full sync,
+  no `messages.search` global).
+- **User mode**: `sign_in(SignIn::Phone(phone))` → receive SMS code
+  → `check_authentication_code(code)` → optional 2FA via
+  `check_password(pwd)`. **Or** `qr_login()` for QR-based login
+  (matches `RFC-0850p-d` §3.2). Returns a `User` with the user's id.
+  The full TL API is reachable.
+
+For cipherocto, **bot mode is the right primary**: a DOT gateway
+talks to a bot account per group; there is no SIM swap risk; the
+onboarding is just "paste the bot token from BotFather". **User mode
+is the right escape hatch** for features Telegram forbids for bot
+accounts (full dialog sync, large media, certain group admin
+actions). The new crate supports both behind a config flag.
+
+#### 5.5 Session storage
+
+`mtproto_port.md` §7.1 specifies the `AuthKey` (256 bytes + 8-byte
+key_id) and §8.5 specifies the auth_key lifecycle. The cipherocto
+new crate stores:
+
+- The `AuthKey` (managed by grammers' `SqliteSession`).
+- The `user_id` and `is_bot` flag (managed by `SqliteSession`).
+- The home DC id (managed by `SqliteSession`).
+- cipherocto-specific config: `chat_id → BroadcastDomainId` mapping
+  (cipherocto's own table).
+- DOT envelope replay cache (cipherocto's own table, separate
+  concern).
+
+`SqliteSession` and the cipherocto tables live in the same SQLite
+file under separate table prefixes, mirroring the pattern in
+`octo-matrix-session-store` for the matrix adapter.
+
+### 6. Architecture: the new crate
+
+A fresh crate, `octo-adapter-telegram-mtproto`, structured as four
+layers:
 
 ```
 crates/octo-adapter-telegram-mtproto/
-├── Cargo.toml              ← grammers = "0.9", grammers-session/sqlite, grammers-crypto
-│                             tokio = "1.35", reqwest = "0.12" (for Bot-API fallback)
-│                             blake3 = "1.5", base64 = "0.22", async-trait = "0.1"
-│                             octo-network = { path = "../octo-network" }
+├── Cargo.toml              ← grammers = "0.9", grammers-session/sqlite,
+│                             grammers-crypto, tokio, reqwest (Bot-API fallback),
+│                             blake3, base64, async-trait, octo-network
 ├── src/
 │   ├── lib.rs              ← re-exports + PlatformAdapter dispatch
-│   ├── adapter.rs          ← implements PlatformAdapter (MTProto primary, HTTP fallback)
-│   ├── mtproto_client.rs   ← grammers Client wrapper (much smaller than the TDLib one)
+│   ├── adapter.rs          ← PlatformAdapter impl (MTProto primary, HTTP fallback)
+│   ├── mtproto_client.rs   ← grammers Client wrapper
 │   ├── http_fallback.rs    ← Bot-API HTTP path (preserved from 0850f)
-│   ├── auth.rs             ← sign_in / check_password / qr_login (smaller)
-│   ├── config.rs           ← TelegramConfig (unchanged shape)
-│   ├── envelope.rs         ← DOT wire format (unchanged from 0850f)
+│   ├── auth.rs             ← sign_in / check_password / qr_login
+│   ├── config.rs           ← TelegramConfig (api_id, api_hash, bot_token, data_dir)
+│   ├── envelope.rs         ← DOT wire format (218-byte signing payload + 64-byte
+│   │                         signature = 282-byte envelope, base64 URL_SAFE_NO_PAD)
 │   ├── error.rs            ← TelegramError / Result
-│   ├── self_handle.rs      ← self-loop filter (reusable from TDLib crate)
-│   ├── groups.rs           ← chat discovery (reusable)
-│   ├── cleanup.rs          ← graceful shutdown (reusable)
-│   └── files.rs            ← upload/download via grammers (was TDLib file_id)
-├── tests/                  ← integration tests against test DC (off by default)
-└── examples/               ← example binaries (reuse TDLib examples, swap impl)
+│   ├── self_handle.rs      ← self-loop filter
+│   ├── groups.rs           ← chat discovery
+│   ├── cleanup.rs          ← graceful shutdown
+│   └── files.rs            ← upload/download via grammers
+├── tests/                  ← integration tests against test DC
+└── examples/               ← example binaries
 ```
 
-### Architecture diagram
-
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       DotGateway (RFC-0850)                          │
-│   version check → signature → replay → flags → forward              │
-└──────────────────────────────┬──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                       DotGateway (RFC-0850)                      │
+│   version check → signature → replay → flags → forward          │
+└──────────────────────────────┬──────────────────────────────────┘
                                │
-                ┌──────────────┴──────────────┐
-                ▼                             ▼
-┌─────────────────────────────┐  ┌────────────────────────────────┐
-│   octo-adapter-telegram     │  │  octo-adapter-telegram-mtproto │  ← NEW
-│   (TDLib C++, 0850ab)       │  │  (grammers pure-Rust)          │
-│                             │  │                                 │
-│  real_client.rs (large)     │  │  mtproto_client.rs (small)     │
-│  auth.rs (large)            │  │  auth.rs (small)               │
-│  build.rs (SEC-C1)          │  │  no build.rs, no C++           │
-│  150 MB prebuilt binary     │  │  no prebuilt binary            │
-└─────────────────────────────┘  └────────────────────────────────┘
-                │                             │
-                ▼                             ▼
-┌─────────────────────────────┐  ┌────────────────────────────────┐
-│  tdlib-rs 1.4.x             │  │  grammers 0.9.0                 │
-│  (TDLib C++ 150 MB)         │  │  (pure Rust, 8 crates)          │
-│                             │  │                                 │
-│  [auth_key]                 │  │  [auth_key]                     │
-│  [DB: data_dir/database]    │  │  [DB: ~/.cache/grammers.db]    │
-│  [JSON-RPC over stdio]      │  │  [Tokio async]                 │
-└─────────────────────────────┘  └────────────────────────────────┘
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           octo-adapter-telegram-mtproto (fresh crate)           │
+│                                                                  │
+│  adapter.rs                                                      │
+│  ├── PlatformAdapter impl (bot + user + DOT envelope)            │
+│  │                                                               │
+│  │   ┌──────────────────────┐    ┌─────────────────────────┐    │
+│  │   │ mtproto_client.rs    │    │ http_fallback.rs        │    │
+│  │   │ (grammers wrapper,   │    │ (Bot-API HTTP, opt-in,  │    │
+│  │   │  default transport)  │    │  region-blocked users)  │    │
+│  │   └──────────┬───────────┘    └──────────┬──────────────┘    │
+│  │              │                            │                  │
+│  └──────────────┼────────────────────────────┼──────────────────┘
+│                 │                            │
+│                 ▼                            ▼
+│        ┌──────────────────┐         ┌─────────────────┐
+│        │  grammers 0.9.0  │         │  reqwest →      │
+│        │  (pure Rust,     │         │  api.telegram   │
+│        │   8 crates)      │         │  .org           │
+│        └──────────────────┘         └─────────────────┘
+│                 │
+│                 ▼
+│        ┌──────────────────┐
+│        │  Telegram DCs    │
+│        │  (TCP 443)       │
+│        └──────────────────┘
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Code sharing between the two adapters
+The new crate is self-contained. The DOT wire format,
+`domain_id`, and `self_handle` are shared with the rest of the
+cipherocto adapters via the existing `octo-network` crate (no new
+crate is needed for these).
 
-The DOT wire format, `domain_id` derivation, and the high-level
-`PlatformAdapter` shape are **identical** between TDLib and grammers
-implementations. To avoid duplication, the following shared items can be
-moved to `octo-network` (or a new `octo-telegram-common` crate):
+### 7. Implementation considerations
 
-- `envelope.rs` — DOT wire format (218-byte signing payload + 64-byte
-  signature = 282-byte wire envelope, base64 URL_SAFE_NO_PAD).
-- `domain_id(chat_id) -> BroadcastDomainId` — `BLAKE3("telegram:{chat_id}")`.
-- `config.rs` — `TelegramConfig` (api_id, api_hash, bot_token, data_dir).
-- `self_handle.rs` — self-loop filter (no platform dependency).
-- `error.rs` — error type (depends on what errors we model; partial move
-  to `octo-telegram-common`).
+#### 7.1 What we build
 
-The `octo-telegram-onboard` CLI is also rewritten to use grammers' QR
-login flow. The new CLI is much smaller because grammers' `qr_login()`
-returns a `Token` directly, with no 9-variant auth state machine.
+The new crate's source tree maps to four concerns:
 
-### Session storage
+| Concern | LOC estimate | Module |
+|---------|--------------|--------|
+| PlatformAdapter impl + envelope codec | ~600 | `adapter.rs`, `envelope.rs` |
+| grammers wrapper (MTProto transport) | ~1500 | `mtproto_client.rs`, `auth.rs`, `files.rs` |
+| Bot-API HTTP fallback | ~400 | `http_fallback.rs` |
+| Config / errors / self-loop filter / chat discovery | ~500 | `config.rs`, `error.rs`, `self_handle.rs`, `groups.rs` |
+| Tests + examples | ~1000 | `tests/`, `examples/` |
+| **Total** | **~4000** | (vs. ~5500 for the existing TDLib-based adapter) |
 
-The TDLib crate currently stores two SQLite DBs (TDLib's own
-`data_dir/database` and cipherocto's session metadata in
-`data_dir/session.db`). The grammers crate stores one SQLite DB
-(`~/.cache/grammers.db` via `SqliteSession`), which holds the auth_key,
-the user_id, the home DC, and the peer cache. cipherocto's session
-metadata (config values, group mappings) can live in the same DB
-under a separate `cipherocto_*` table prefix, or in a separate small
-DB. Recommendation: **one DB**, separate table prefix, mirroring what
-`octo-matrix-session-store` does for the matrix adapter.
+#### 7.2 What we don't build
 
-### Fallback channel
+- **MTProto itself** — grammers provides it.
+- **TL type generation** — `grammers-tl-gen` does it from upstream
+  `api.tl` + `mtproto.tl`.
+- **New cryptographic primitives** — `grammers-crypto` provides
+  AES-IGE, RSA, SHA.
+- **A TDLib replacement layer** — the new crate is its own thing; it
+  does not wrap or replace the TDLib-based adapter. They live
+  alongside each other.
 
-For users in region-blocked networks (China, Iran, Russia), the adapter
-exposes a `--transport http` flag that switches to the **Bot-API HTTP
-path**. This is the **same code** as the 0850f Bot-API implementation,
-preserved as `src/http_fallback.rs`. It is **not** the default, because
-MTProto is strictly more capable and works for 95%+ of users.
+#### 7.3 The 3 small gaps and how to handle them
 
----
+For each of G1, G2, G3 (above), the recommended approach is **a
+small wrapper, not a grammers fork**:
 
-## Implementation phases
+- **G1 (old-MTP1 `bind_auth_key_inner`):** skip. cipherocto does
+  not need temp keys; the 24h-validity temp key path is used by
+  tdlib for bot login acceleration and CDN file downloads. cipherocto
+  uses long-lived auth keys and direct file uploads. If a future
+  cipherocto use case does need temp keys, the wrapper is ~200 LOC
+  of AES-IGE + 4-round SHA-1 derivation.
 
-### Phase 0: Research (this document)
+- **G2 (SOCKS5 / HTTP CONNECT):** the wrapper is a thin layer that
+  intercepts the `TcpStream` that `transport::Tcp::connect(...)`
+  would otherwise open, runs the SOCKS5/CONNECT handshake, and hands
+  the resulting stream to `transport::Tcp`. The `tokio-socks` crate
+  does the SOCKS5 part. The HTTP CONNECT part is ~50 LOC using
+  `tokio::io::AsyncWriteExt`. Total: ~200 LOC.
 
-- **Status:** ✅ This document.
-- **Exit criteria:** Research reviewed, recommended path accepted, mission
-  created.
+- **G3 (fake-TLS `0xEE` ClientHello):** the wrapper constructs a
+  fake-TLS `ClientHello` record with the `0xEE` secret's `secret[1..17]`
+  as the AES key material and `secret[17..]` as the SNI domain.
+  `tls_block_*` constants from `mtproto.tl:107-117` (the same ones
+  tdesktop uses) describe the record layout. The cipherocto wrapper
+  does not need to parse the response — the MTProxy server strips
+  the preamble and forwards the rest. Total: ~300 LOC.
 
-### Phase 1: Parallel pure-Rust adapter (no breakage)
+These three wrappers, if and when needed, total ~700 LOC. None is
+on the critical path for the cipherocto v1 adapter.
 
-**Mission:** `0850ab-c-pure-rust-mtproto-telegram-adapter`
+#### 7.4 Build / test / deploy
 
-- New crate `octo-adapter-telegram-mtproto` (see §5).
-- Uses `grammers` for bot mode + user mode + QR login.
-- Implements `PlatformAdapter` from `octo-network` (same trait).
-- Wire format identical to `octo-adapter-telegram` (282-byte envelope,
-  `BLAKE3("telegram:{chat_id}")`, base64 URL_SAFE_NO_PAD).
-- HTTP fallback (`--transport http`) using `reqwest`+bot_token, identical
-  to 0850f.
-- **No changes** to the existing TDLib adapter. The two coexist; users
-  opt in to the new one with `use_telegram_mtproto = true` in their DOT
-  gateway config.
-- **Estimated code:** ~2000 LOC of new cipherocto code, ~500 LOC of
-  shared code moved out of the TDLib crate.
-- **Acceptance criteria:**
-  - All 109 unit tests in the existing TDLib crate pass unchanged (the
-    `MockTelegramClient` is reusable).
-  - 3 new integration tests against the Telegram test DC: `auth.sign_in_bot`,
-    `auth.sign_in_user_2fa`, `send_envelope` round-trip.
-  - `cargo clippy --all-targets -- -D warnings` clean.
-  - `cargo fmt --all --check` clean.
-  - No C++ build deps, no prebuilt binary download, no `build.rs` SHA pin.
-
-### Phase 2: Cut over (transparent migration)
-
-**Mission:** `0850ab-d-telegram-mtproto-cutover`
-
-- `octo-adapter-telegram` becomes a **re-export** of
-  `octo-adapter-telegram-mtproto` for bot mode.
-- TDLib build moves behind a `legacy-tdlib` feature for users who cannot
-  use MTProto (region-blocked networks where TCP 443 to Telegram DCs is
-  blocked AND HTTPS to `api.telegram.org` is also blocked — vanishingly
-  rare).
-- `octo-telegram-onboard` is rewritten to use grammers' QR login. Old
-  TDLib-based onboarding is behind `legacy-tdlib` feature.
-- **Acceptance criteria:**
-  - Default `cargo build` of `octo-adapter-telegram` does **not** download
-    the TDLib binary.
-  - `cargo build --features legacy-tdlib` still works (for the rare
-    fallback case).
-  - Onboarding CLI is 1/3 the size of the TDLib version.
-  - All existing DOT gateway users can upgrade without config changes.
-
-### Phase 3: Make TDLib fully optional (the optional win)
-
-**Mission:** `0850ab-e-telegram-tdlib-optional`
-
-This phase is **optional and not recommended before Phase 2 stabilizes**.
-If we do reach it, the goal is to make the TDLib build **fully opt-in**
-rather than the default:
-
-- Move the `real-tdlib` feature behind an opt-in `legacy-tdlib` feature.
-- Move the TDLib-based onboarding to opt-in via the same feature.
-- The default `cargo build` of `octo-adapter-telegram` no longer downloads
-  the TDLib binary and no longer requires a C++ toolchain.
-- **The TDLib code, the `legacy-tdlib` feature, and the onboarding CLI
-  variant all remain in-tree** as alternative paths for users with hard
-  requirements (e.g. region-blocked networks where neither MTProto nor
-  Bot-API HTTP work and TDLib is the only viable option).
-- The cipherocto source tree grows by a few feature-gated code paths,
-  not shrinks.
-
-**Acceptance criteria (if Phase 3 is undertaken):**
-- Default `cargo build` of `octo-adapter-telegram` produces a statically
-  linked pure-Rust binary.
-- The crate builds on `aarch64-apple-darwin`,
-  `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, etc. without
-  any platform-specific setup.
-- `cargo build --features legacy-tdlib` still works for the opt-in
-  fallback case.
-- CI build time for the default configuration drops from ~5 min to
-  ~30 s (no TDLib download + C++ compile).
+- **Build time:** pure-Rust, no C++. `cargo build` of the new
+  crate is <30 s on cold cache (vs. ~5 min for the TDLib crate
+  which downloads the prebuilt TDLib binary).
+- **Cross-compilation:** straightforward. The crate builds on
+  `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`,
+  `x86_64-pc-windows-msvc`, etc. with no platform-specific setup.
+- **CI:** standard `cargo test` + `cargo clippy --all-targets -- -D warnings`
+  + `cargo fmt --all --check`. No `build.rs` SHA pin is needed
+  (there is no downloaded binary).
+- **Mobile/web:** the same pure-Rust core compiles to iOS, Android
+  (via NDK), and WASM (with `grammers-tl-types` and
+  `grammers-crypto`; the network and session crates need minor
+  adapter work for non-Tokio runtimes). This is a future
+  opportunity, not in scope for v1.
 
 ---
 
 ## Recommendations
 
-1. **Adopt grammers as the MTProto layer for Telegram.** It is the
-   single mature pure-Rust choice. The gap analysis (4.4) shows that all
-   gaps are non-blocking for cipherocto's needs.
-
-2. **Use the migration-in-parallel strategy** (Phase 1 → 2 → 3 above).
-   This is the same pattern used for the matrix adapter
-   (`docs/plans/2026-05-31-matrix-rust-sdk-migration.md`), which is the
-   closest precedent in the cipherocto repo. **Do not** attempt a
-   big-bang migration; the TDLib crate is the production adapter today
-   and must keep shipping.
-
-3. **Move the DOT wire format and `domain_id` to a shared
-   `octo-telegram-common` crate** (or to `octo-network`). The TDLib
-   and grammers implementations should not duplicate them.
-
-4. **Vendor grammers as `octo-grammers-vendored`** under a `vendored`
-   feature flag, mirroring what was done for `matrix-sdk` in the
-   2026-05-31 migration. This is the supply-chain mitigation for the
-   one-maintainer risk on grammers. The vendored fork is updated
-   **only** if upstream goes unmaintained for >6 months; until then,
-   we use upstream.
-
-5. **Keep the Bot-API HTTP path as a fallback**, behind a `--transport
-   http` flag. This is the right call for region-blocked users, and the
-   code is the same 0850f implementation preserved.
-
-6. **Adopt grammers' per-`Client` Tokio task model** to enable multiple
-   accounts (or bot + user) in the same process. This is one of the
-   concrete advantages of the new crate over the current
-   process-global `tdlib_rs::receive()` constraint.
-
-7. **Update the cipherocto transport research** (`docs/research/group-coordination-transport-adapters.md`
-   and `social-platform-transport-patterns.md`) to note that a
-   pure-Rust Telegram adapter is now an alternative, alongside the
-   existing TDLib-based one.
-
-8. **Adopt grammers as the pattern for other C++ adapters** (if any
-   arise in the future). The TDLib precedent should not be repeated
-   for new adapters.
+1. **The new crate is feasible.** grammers covers 20 of 23
+   `mtproto_port.md` sections fully; the 3 gaps are non-blocking and
+   have well-understood wrapper patterns.
+2. **Adopt grammers as the new crate's MTProto layer.** It is the
+   single mature pure-Rust choice; `dgrr/tgcli` is the production
+   validation; the architectural alignment (async-native Tokio) is
+   strictly better than tdesktop's thread-per-DC for cipherocto.
+3. **Build the new crate around four layers:** grammers (MTProto),
+   a thin `PlatformAdapter` glue layer, a shared DOT wire-format
+   codec, and an opt-in Bot-API HTTP fallback. The four layers
+   correspond to the four modules in §6.
+4. **Implement bot mode first.** Bot accounts are the easy path
+   (one bot token per group; no SIM swap risk; full TL API except
+   for user-only methods). User mode is the escape hatch for
+   features Telegram forbids for bots.
+5. **Ship the Bot-API HTTP fallback as an opt-in module.** It is
+   the right answer for region-blocked users where MTProto is
+   unreachable but `api.telegram.org` is reachable.
+6. **Do not try to extend grammers for the 3 small gaps.** Write
+   small wrappers around it; the 3 gaps are non-blocking and
+   each is <300 LOC.
+7. **Trust upstream grammers by default, with a vendoring
+   contingency.** The library is one-maintainer but well-maintained
+   (2026-05-15 release; production users in `dgrr/tgcli`). If
+   upstream goes dormant for >6 months, vendor it under
+   `crates/octo-grammers-vendored` with a `vendored` feature flag.
+8. **Run the 23-section spec checklist** at the start of every
+   cipherocto Telegram mission. The table in §3 is the canonical
+   reference; an empty row is a regression.
+9. **The new crate lives alongside the existing TDLib-based
+   adapter.** Both ship; both are maintained; the new one is the
+   recommended default. The choice is the user's.
 
 ### What we are NOT recommending
 
-- **Forking grammers for a feature we need.** The 3 small gaps (§4.4
-  G1, G2, G3) are non-blocking; we can write 200-LOC wrappers around
-  upstream if and when we need them.
-- **Replacing the DOT wire format.** The 282-byte envelope is preserved
-  from 0850f and is the contract with the DotGateway; it is **not**
-  the protocol's problem.
-- **Switching to Bot-API for production.** Bot-API is HTTP-only, bot-only,
-  and lacks the full TL API. It is a fallback, not the default.
+- **A custom MTProto implementation from scratch.** grammers is
+  already correct; re-implementing it is years of work for no gain.
+- **A different MTProto library.** There is no other mature
+  pure-Rust option.
+- **Using Bot-API HTTP as the primary transport.** Bot-API is
+  HTTP-only, bot-only, and lacks the full TL API. It is a
+  fallback, not the default.
+- **Changing the DOT wire format.** The 282-byte envelope is the
+  contract with the `DotGateway`; it is not the new crate's
+  concern.
 
 ---
 
 ## Next Steps
 
 - [x] Research complete (this document)
-- [ ] Submit for review under `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md`
-- [ ] If accepted → Create Use Case at `docs/use-cases/pure-rust-telegram-transport.md`
-- [ ] Create RFC at `rfcs/draft/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md` (or amend RFC-0850ab-a)
-- [ ] Create mission `missions/open/0850ab-c-pure-rust-mtproto-telegram-adapter.md` per Phase 1
-- [ ] Update `docs/research/group-coordination-transport-adapters.md` and `social-platform-transport-patterns.md` to note the new pure-Rust alternative
+- [ ] Submit for review under
+      `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md`
+- [ ] If accepted → Create Use Case at
+      `docs/use-cases/pure-rust-telegram-transport.md`
+- [ ] Create RFC at
+      `rfcs/draft/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md`
+      (or amend RFC-0850ab-a)
+- [ ] Create mission at
+      `missions/open/0850ab-c-pure-rust-mtproto-telegram-adapter.md`
 - [ ] Update `docs/research/README.md` with this report
-
-### Related research / RFCs / missions
-
-- `rfcs/accepted/networking/0850-deterministic-overlay-transport.md` — the
-  parent RFC for transport adapters.
-- `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md` — the
-  current auth onboarding RFC (TDLib-based).
-- `rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md` — the
-  WhatsApp analog (already pure-Rust on the cipherocto side).
-- `rfcs/accepted/networking/0850p-c-transport-group-binding.md` — group
-  binding (transport-agnostic).
-- `docs/research/social-platform-transport-patterns.md` — the 2026-05-28
-  transport research that first enumerated the 20-adapter landscape.
-- `docs/research/group-coordination-transport-adapters.md` — the 2026-06-17
-  follow-up that audited the 20 adapters.
-- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` — the closest
-  precedent: a pure-Rust migration of a non-pure-Rust adapter.
-- `docs/plans/2026-06-05-0850ab-tdlib-telegram-adapter.md` — the plan
-  that introduced the TDLib dependency that this research proposes
-  to complement with a pure-Rust alternative.
 
 ### Open questions for the Use Case
 
-1. **Bot mode default.** Should the new adapter's default be **MTProto**
-   or **Bot-API HTTP** for bot accounts? Recommendation: **MTProto** for
-   parity, with HTTP as the fallback.
-2. **Vendoring grammers timing.** Vendor immediately (Phase 1), or wait
-   for the first release that breaks cipherocto (Phase 1.5)? The matrix
-   precedent vendor'd immediately. Recommend **immediate** for the same
-   supply-chain reason.
-3. **Session storage location.** Same DB as grammers' `SqliteSession` or
-   a separate cipherocto DB? Recommendation: **same DB, separate table
-   prefix**, mirroring `octo-matrix-session-store`.
-4. **Multiple accounts per process.** grammers supports this natively
-   (one `Client` per account). Should the adapter expose it? Recommend
-   **yes**, via a `Vec<Arc<TelegramClient>>` in the adapter, exposed
-   through the existing `TelegramConfig` extension.
-5. **CDN media (Gap G5).** Skip for Phase 1-3, or add a small wrapper in
-   Phase 2? Recommend **skip** — no cipherocto use case today requires
-   CDN media.
+1. **Bot mode default.** Should the new crate default to **MTProto**
+   or **Bot-API HTTP** for bot accounts? Recommendation: **MTProto**
+   for parity, with HTTP as the fallback.
+2. **Vendoring timing.** Vendor grammers immediately, or wait for
+   the first release that breaks cipherocto? Recommendation:
+   **trust upstream**; vendor if upstream goes dormant for >6 months.
+3. **Session storage location.** Same SQLite DB as grammers'
+   `SqliteSession` or a separate cipherocto DB? Recommendation:
+   **same DB, separate table prefix**, mirroring
+   `octo-matrix-session-store`.
+4. **Multiple accounts per process.** grammers supports this
+   natively (one `Client` per account). Should the new crate
+   expose it? Recommendation: **yes**, via a `Vec<Arc<...>>` of
+   `Client` handles in the adapter, exposed through the existing
+   `TelegramConfig` extension.
+5. **CDN media (Gap G5).** Skip for v1, or add a small wrapper in
+   a later phase? Recommendation: **skip** — no cipherocto use
+   case today requires CDN media.
+
+### Related research / RFCs / missions
+
+- `rfcs/accepted/networking/0850-deterministic-overlay-transport.md` —
+  the parent RFC for transport adapters.
+- `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md` —
+  the cipherocto Telegram auth onboarding RFC.
+- `rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md` —
+  the WhatsApp analog.
+- `rfcs/accepted/networking/0850p-c-transport-group-binding.md` —
+  group binding (transport-agnostic).
+- `rfcs/draft/networking/0850p-d-f.md` — DC-initiated group
+  creation, kick detection, group decommission.
+- `docs/research/social-platform-transport-patterns.md` — the
+  2026-05-28 transport research that first enumerated the
+  20-adapter landscape.
+- `docs/research/group-coordination-transport-adapters.md` — the
+  2026-06-17 follow-up that audited the 20 adapters.
+- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` — the closest
+  precedent: a pure-Rust migration of a non-pure-Rust adapter.
 
 ---
 
@@ -784,37 +712,43 @@ rather than the default:
 
 ### cipherocto (this repo)
 
-- `crates/octo-adapter-telegram/` — current TDLib C++ adapter (14 files, ~5500 LOC)
-- `crates/octo-telegram-onboard/` and `crates/octo-telegram-onboard-core/` — TDLib C++ onboarding CLI
-- `crates/octo-network/src/dot/adapters/mod.rs` — `PlatformAdapter` trait (RFC-0850 §8)
-- `crates/octo-network/src/dot/fragment.rs` — DOT envelope fragmentation
-- `rfcs/accepted/networking/0850-deterministic-overlay-transport.md` — the parent RFC
-- `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md` — current auth RFC
-- `rfcs/accepted/networking/0850p-c-transport-group-binding.md` — group binding
-- `rfcs/draft/networking/0850p-d-f.md` — DC-initiated group creation, kick detection, group decommission
-- `docs/research/social-platform-transport-patterns.md` — 2026-05-28 transport research
-- `docs/research/group-coordination-transport-adapters.md` — 2026-06-17 transport audit
-- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` — closest precedent (matrix adapter)
-- `docs/plans/2026-06-05-0850ab-tdlib-telegram-adapter.md` — the TDLib design we are replacing
+- `crates/octo-adapter-telegram/` — the existing TDLib-based
+  adapter; lives alongside the new crate.
+- `crates/octo-network/src/dot/adapters/mod.rs` — `PlatformAdapter`
+  trait (RFC-0850 §8).
+- `crates/octo-network/src/dot/fragment.rs` — DOT envelope
+  fragmentation.
+- `rfcs/accepted/networking/0850-deterministic-overlay-transport.md`.
+- `rfcs/accepted/networking/0850ab-a-telegram-auth-onboarding.md`.
+- `rfcs/accepted/networking/0850p-c-transport-group-binding.md`.
+- `docs/research/social-platform-transport-patterns.md`.
+- `docs/research/group-coordination-transport-adapters.md`.
+- `docs/plans/2026-05-31-matrix-rust-sdk-migration.md`.
 
-### External (mtproto_port.md is the in-tree reference; these are the upstream sources)
+### External
 
-- `/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` — 23-section, 2049-line MTProto client reference (in-tree)
-- `codeberg.org/vilunov/grammers` — the primary grammers repo (last commit 2026-05-15)
-- `github.com/Lonami/grammers` — github mirror
-- `github.com/overrealdb/grammers` — active fork
-- `crates.io/crates/grammers-mtproto` (0.9.0), `grammers-tl-types` (0.9.0), `grammers-client` (0.8.x)
-- `docs.rs/grammers-mtproto` — current API reference
-- `deepwiki.com/Lonami/grammers/3-core-architecture` — architecture deep-dive
-- `github.com/dgrr/tgcli` — production pure-Rust CLI on top of grammers
-- `github.com/dgrr/tgcli-go` — the Go/TDLib version that dgrr explicitly contrasts tgcli against
-- `core.telegram.org/mtproto` — official MTProto spec
-- `core.telegram.org/mtproto/description` — the spec section grammers-mtproto implements
+- `/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` — the
+  23-section protocol reference (in-tree).
+- `codeberg.org/vilunov/grammers` — primary grammers repo (last
+  commit 2026-05-15).
+- `github.com/Lonami/grammers` — github mirror.
+- `github.com/overrealdb/grammers` — active fork.
+- `crates.io/crates/grammers-mtproto` (0.9.0),
+  `grammers-tl-types` (0.9.0), `grammers-client` (0.8.x).
+- `docs.rs/grammers-mtproto` — current API reference.
+- `deepwiki.com/Lonami/grammers/3-core-architecture` — architecture
+  deep-dive.
+- `github.com/dgrr/tgcli` — production pure-Rust CLI on top of
+  grammers.
+- `github.com/dgrr/tgcli-go` — the Go/TDLib version that dgrr
+  explicitly contrasts tgcli against.
+- `core.telegram.org/mtproto` — official MTProto spec.
 
 ### Anti-references (libraries we considered and rejected)
 
-- `tdlib-rs` 1.4.x — TDLib FFI (an existing alternative, kept behind `legacy-tdlib` in Phase 3)
-- `teloxide` — Bot-API framework, too heavy
-- `MadelineProto` — PHP, wrong language
-- `WTelegramClient` — .NET, wrong language
-- `mini-telegram` — server-side, wrong direction
+- `tdlib-rs` 1.4.x — TDLib FFI (a C++ alternative that lives
+  alongside the new crate).
+- `teloxide` — Bot-API framework, too heavy.
+- `MadelineProto` — PHP, wrong language.
+- `WTelegramClient` — .NET, wrong language.
+- `mini-telegram` — server-side, wrong direction.

@@ -42,9 +42,24 @@ pub mod error;
 pub mod lifecycle;
 pub mod self_handle;
 pub mod session;
+// `transport` is unconditional so `MtprotoTelegramConfig` can
+// reference the `Transport` enum from the default build. The
+// `BotApiClient` and method implementations that actually use
+// the `BotApiHttp` variant live in `http_fallback` (gated).
+pub mod transport;
 
 #[cfg(feature = "real-network")]
 pub mod real_client;
+
+// Bot-API HTTP fallback transport (Phase 3 / sub-mission
+// 0850ab-c-http). Gated on the `bot-api` feature so the
+// default build (pure mock + MTProto) does not pull in
+// reqwest / rustls. The `Transport` enum lives in the
+// unconditional `transport` module; the typed response
+// structs (`BotMessage`, `BotUpdate`, `BotUser`) and the
+// `BotApiClient` live here.
+#[cfg(feature = "bot-api")]
+pub mod http_fallback;
 
 // Re-exports
 pub use adapter::MtprotoTelegramAdapter;
@@ -61,6 +76,20 @@ pub use error::{redact_credentials, MtprotoTelegramError};
 pub use lifecycle::{AdapterLifecycle, BotAuthLifecycle, UserAuthLifecycle};
 pub use self_handle::{MtprotoSelfHandle, MtprotoSelfIdentity};
 pub use session::StoolapSession;
+pub use transport::Transport;
 
 #[cfg(feature = "real-network")]
 pub use real_client::RealTelegramMtprotoClient;
+
+// Phase 3 (sub-mission 0850ab-c-http): Bot-API HTTP fallback
+// transport. Gated on the `bot-api` feature. The `Transport`
+// enum is re-exported unconditionally above; the
+// `BotApiClient` and the typed Bot API response structs
+// (`BotMessage`, `BotUpdate`, `BotUser`, etc.) are re-exported
+// here for the adapter's `connect_with_transport` signature
+// and for the example binary.
+#[cfg(feature = "bot-api")]
+pub use http_fallback::{
+    BotApiClient, BotApiConfig, BotApiErrorParameters, BotChat, BotDocument, BotMessage, BotUpdate,
+    BotUser, DEFAULT_BOT_API_BASE_URL, MAX_LONG_POLL_SECS, MAX_MESSAGE_CHARS, MAX_UPLOAD_BYTES,
+};

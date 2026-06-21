@@ -137,6 +137,16 @@ pub enum MtprotoTelegramError {
     #[error("rpc: code={code} message={message}")]
     Rpc { code: i32, message: String },
 
+    /// Bot-API HTTP 429 with `retry_after` parameter preserved
+    /// (Phase 3). Distinct from `Rpc { code: 429, .. }` so the
+    /// `From<MtprotoTelegramError> for PlatformAdapterError`
+    /// mapping can forward the actual server-supplied backoff
+    /// (in seconds) to the gateway's `PlatformAdapterError::RateLimited`
+    /// as `retry_after_ms`, rather than a conservative 1000 ms
+    /// default used for generic `Rpc 429`s.
+    #[error("rate limited: retry_after={retry_after_secs}s")]
+    RateLimited { retry_after_secs: u64 },
+
     /// Session store failure (stoolap I/O, schema migration, missing
     /// migration, row not found where required).
     #[error("session: {0}")]
@@ -195,6 +205,7 @@ impl MtprotoTelegramError {
         match self {
             Self::Network(_) => true,
             Self::Rpc { code, .. } => *code == 429 || *code == 500,
+            Self::RateLimited { .. } => true,
             _ => false,
         }
     }

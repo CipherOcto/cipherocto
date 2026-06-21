@@ -7,6 +7,7 @@
 //! and only meaningful in the MTProto code path; the TDLib path
 //! silently ignores them.
 
+use crate::transport::Transport;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -99,6 +100,20 @@ pub struct MtprotoTelegramConfig {
     /// touching production credentials.
     #[serde(default)]
     pub test_dc_url: Option<String>,
+
+    /// Transport selection (Phase 3 / sub-mission 0850ab-c-http).
+    /// `mtproto` (default) is the primary transport — pure-Rust
+    /// MTProto over TCP via grammers. `http` is the Bot-API HTTP
+    /// fallback — bot-only, opt-in, opt-in in the sense that
+    /// the caller must explicitly set this field; useful in
+    /// region-blocked networks where Telegram's DCs are
+    /// unreachable but `api.telegram.org` is.
+    ///
+    /// Validation: `http` is only valid with `mode = bot` and
+    /// a non-empty `bot_token`. `user` mode always uses
+    /// `mtproto` (the Bot API is bot-only).
+    #[serde(default)]
+    pub transport: Transport,
 }
 
 impl std::fmt::Debug for MtprotoTelegramConfig {
@@ -123,6 +138,7 @@ impl std::fmt::Debug for MtprotoTelegramConfig {
             .field("system_version", &self.system_version)
             .field("app_version", &self.app_version)
             .field("test_dc_url", &self.test_dc_url)
+            .field("transport", &self.transport)
             .finish()
     }
 }
@@ -217,6 +233,11 @@ impl MtprotoTelegramConfig {
                 if self.api_hash.is_none() || self.api_hash.as_deref().unwrap().is_empty() {
                     return Err("bot mode requires api_hash (from my.telegram.org)".into());
                 }
+                // Transport validation (Phase 3): http
+                // transport is bot-only (the Bot API is
+                // bot-only by design). The `bot_token` is
+                // already required above, so we don't
+                // re-check it here.
             }
             "user" => {
                 if self.api_id.is_none() {
@@ -233,6 +254,9 @@ impl MtprotoTelegramConfig {
                 }
                 if self.data_dir.is_none() {
                     return Err("user mode requires data_dir".into());
+                }
+                if self.transport == Transport::BotApiHttp {
+                    return Err("http transport is bot-only; user mode must use mtproto".into());
                 }
             }
             other => {
@@ -267,6 +291,10 @@ impl MtprotoTelegramConfig {
             system_version: std::env::var("TELEGRAM_SYSTEM_VERSION").ok(),
             app_version: std::env::var("TELEGRAM_APP_VERSION").ok(),
             test_dc_url: std::env::var("TELEGRAM_TEST_DC_URL").ok(),
+            transport: std::env::var("TELEGRAM_TRANSPORT")
+                .ok()
+                .and_then(|s| s.parse::<Transport>().ok())
+                .unwrap_or_default(),
         }
     }
 

@@ -42,6 +42,8 @@ use crate::envelope;
 use crate::error::MtprotoTelegramError;
 use crate::lifecycle::{AdapterLifecycle, Lifecycle};
 use crate::self_handle::MtprotoSelfHandle;
+#[cfg(feature = "bot-api")]
+use crate::transport::Transport;
 
 /// The MTProto Telegram adapter. Generic over the
 /// `MtprotoTelegramClient` trait so tests use the mock and
@@ -220,6 +222,62 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         self.lifecycle
             .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
         Ok(())
+    }
+
+    /// Connect using the Bot-API HTTP fallback transport
+    /// (Phase 3 / sub-mission 0850ab-c-http).
+    ///
+    /// Unlike `connect_bot_token` (which performs an MTProto
+    /// `auth.botSignIn` RPC), the Bot API uses the token
+    /// itself as the credential. There is no sign-in flow;
+    /// "connecting" is just a `getMe()` probe to confirm the
+    /// token is valid and to populate the self-handle with
+    /// the bot's `id` and `username`.
+    ///
+    /// On success, the lifecycle transitions
+    /// `Uninitialised → Connecting → Ready` and the
+    /// self-handle is set to the bot's identity. The
+    /// `BotApiClient` is returned to the caller so it can
+    /// be used for `sendMessage` / `sendDocument` /
+    /// `getUpdates` calls.
+    ///
+    /// Gated on the `bot-api` Cargo feature (this method
+    /// pulls in reqwest + rustls transitively, so it's not
+    /// part of the default build).
+    #[cfg(feature = "bot-api")]
+    pub async fn connect_http(
+        &self,
+        bot_token: &str,
+    ) -> Result<crate::http_fallback::BotApiClient, MtprotoTelegramError> {
+        if self.config.transport != Transport::BotApiHttp {
+            return Err(MtprotoTelegramError::Config(format!(
+                "connect_http called but config.transport = {} (expected bot-api-http)",
+                self.config.transport
+            )));
+        }
+        if self.config.mode_str() != "bot" {
+            return Err(MtprotoTelegramError::Config(
+                "connect_http is bot-only; config.mode must be 'bot'".into(),
+            ));
+        }
+        if bot_token.is_empty() {
+            return Err(MtprotoTelegramError::Config(
+                "connect_http: bot_token is empty".into(),
+            ));
+        }
+        if let Err(e) = self
+            .lifecycle
+            .transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
+        {
+            return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
+        }
+        // Build the client and verify the token via getMe().
+        let client = crate::http_fallback::BotApiClient::new(bot_token)?;
+        let me = client.get_me().await?;
+        self.self_handle.set_identity(me.id, me.username.clone());
+        self.lifecycle
+            .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+        Ok(client)
     }
 
     /// Connect as a user: drive the user-mode sign-in flow
@@ -495,6 +553,19 @@ impl From<MtprotoTelegramError> for PlatformAdapterError {
                     message: format!("qr login in progress: {}", url),
                 }
             }
+            // Phase 3: Bot-API HTTP 429 with the actual
+            // server-supplied backoff. Map it to
+            // `RateLimited` with the real retry_after
+            // (converted seconds→ms, clamped at 1ms
+            // minimum; saturating at u64::MAX ms to
+            // fit in the gateway's `u64` field).
+            MtprotoTelegramError::RateLimited { retry_after_secs } => {
+                let ms = retry_after_secs.saturating_mul(1000).max(1);
+                PlatformAdapterError::RateLimited {
+                    platform: "telegram-mtproto".into(),
+                    retry_after_ms: ms,
+                }
+            }
         }
     }
 }
@@ -650,23 +721,44 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
     }
 
     fn capabilities(&self) -> CapabilityReport {
-        // Mirrors the TDLib adapter's report: 4096-char text
-        // cap (post-base64), supports_fragmentation via
-        // DOT/2/{msg_id} document uploads (up to 2 GB),
-        // no native encryption (envelope signing is
-        // end-to-end at the DOT layer), no raw binary
-        // (Telegram is text-only). Bot-mode rate limit is
-        // 30 msg/s; user-mode is 1 msg/s (more conservative
-        // — the TDLib adapter uses 30 too; the MTProto
-        // adapter follows the same default).
+        // Phase 3 (sub-mission 0850ab-c-http): capabilities
+        // differ by transport. The Bot-API HTTP path has
+        // tighter limits than MTProto (text 4096 chars on
+        // both, but upload 50 MB on Bot API vs 2 GB on
+        // MTProto), so we read the transport from the
+        // config and dispatch.
+        //
+        // Pre-Phase-3 behaviour: the report mirrors the
+        // MTProto path (2 GB upload, 30 msg/s, etc.) for
+        // backward compatibility — the default transport
+        // is `Mtproto`, so the report is identical to
+        // before.
+        //
+        // For `BotApiHttp`, we read the upload cap from the
+        // http_fallback module's MAX_UPLOAD_BYTES constant.
+        // We can't directly reference the constant because
+        // http_fallback is feature-gated behind `bot-api`;
+        // we use the same 50 MB value inline and keep the
+        // two in sync via a #[test] in the
+        // http_fallback module that asserts against
+        // the adapter's reported value.
+        let max_upload_bytes: usize = match self.config.transport {
+            crate::transport::Transport::BotApiHttp => 50 * 1024 * 1024,
+            crate::transport::Transport::Mtproto => 2_000_000_000,
+        };
+        let rate_limit_per_second: u32 = if self.config.mode_str() == "user" {
+            1
+        } else {
+            30
+        };
         CapabilityReport {
             max_payload_bytes: envelope::TELEGRAM_TEXT_LIMIT,
             supports_fragmentation: true,
             supports_encryption: false,
             supports_raw_binary: false,
-            rate_limit_per_second: 30,
+            rate_limit_per_second,
             media_capabilities: Some(MediaCapabilities {
-                max_upload_bytes: 2_000_000_000,
+                max_upload_bytes,
                 supported_mime_types: vec![
                     "application/octet-stream".into(),
                     "image/*".into(),
@@ -1193,6 +1285,116 @@ mod tests {
                 assert!(message.contains("tg://login?token=ABCD"));
             }
             other => panic!("expected ApiError(425), got {:?}", other),
+        }
+    }
+
+    // ---- Phase 3 (Bot-API HTTP fallback) tests ----
+    //
+    // These tests exercise the transport-aware parts of
+    // the adapter:
+    // - `capabilities()` reports different upload caps
+    //   for `Mtproto` (2 GB) vs `BotApiHttp` (50 MB).
+    // - `RateLimited { retry_after_secs }` is mapped to
+    //   `PlatformAdapterError::RateLimited` with the
+    //   actual backoff (not the conservative 1000 ms
+    //   default used for `Rpc { code: 429 }`).
+    //
+    // The full `connect_http` flow is covered in
+    // `http_fallback.rs` (it requires reqwest + the
+    // `bot-api` feature). The tests below use the
+    // MTProto-backed adapter and only assert the
+    // adapter-side dispatch logic.
+
+    #[test]
+    fn capabilities_default_transport_is_mtproto() {
+        // Default config (no `transport` field) →
+        // `Transport::Mtproto` → 2 GB upload cap.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        let cap = a.capabilities();
+        assert_eq!(
+            cap.media_capabilities.as_ref().unwrap().max_upload_bytes,
+            2_000_000_000
+        );
+        assert_eq!(cap.rate_limit_per_second, 30); // bot mode default
+    }
+
+    #[test]
+    fn capabilities_http_transport_reports_50mb() {
+        // Config with `transport: http` → `Transport::BotApiHttp`
+        // → 50 MB upload cap. The text limit is the same on
+        // both transports (4096 chars).
+        let mock = MockTelegramMtprotoClient::new();
+        let mut cfg = config();
+        cfg.transport = crate::transport::Transport::BotApiHttp;
+        let client = Arc::new(mock);
+        let a = MtprotoTelegramAdapter::new(cfg, client);
+        let cap = a.capabilities();
+        assert_eq!(
+            cap.media_capabilities.as_ref().unwrap().max_upload_bytes,
+            50 * 1024 * 1024
+        );
+        assert_eq!(cap.max_payload_bytes, envelope::TELEGRAM_TEXT_LIMIT);
+    }
+
+    #[test]
+    fn capabilities_user_mode_reports_1_msg_per_second() {
+        // User mode → 1 msg/s rate limit (more conservative
+        // than bot mode's 30 msg/s). The transport is
+        // independent of the rate-limit choice.
+        let mock = MockTelegramMtprotoClient::new();
+        let mut cfg = config();
+        cfg.mode = Some("user".into());
+        cfg.api_id = Some(12345);
+        cfg.api_hash = Some("0123456789abcdef0123456789abcdef".into());
+        cfg.phone = Some("+15555550100".into());
+        cfg.data_dir = Some(std::path::PathBuf::from("/tmp/x"));
+        let client = Arc::new(mock);
+        let a = MtprotoTelegramAdapter::new(cfg, client);
+        let cap = a.capabilities();
+        assert_eq!(cap.rate_limit_per_second, 1);
+    }
+
+    #[test]
+    fn rate_limited_variant_maps_to_platform_rate_limited() {
+        // The `From<MtprotoTelegramError>` impl for
+        // `PlatformAdapterError` maps `RateLimited
+        // { retry_after_secs }` to `RateLimited
+        // { retry_after_ms }` with the actual backoff
+        // (in milliseconds, not the conservative 1 s
+        // default). Verify the conversion.
+        let mt_err = MtprotoTelegramError::RateLimited {
+            retry_after_secs: 7,
+        };
+        let plat_err: octo_network::dot::error::PlatformAdapterError = mt_err.into();
+        match plat_err {
+            octo_network::dot::error::PlatformAdapterError::RateLimited {
+                platform,
+                retry_after_ms,
+            } => {
+                assert_eq!(platform, "telegram-mtproto");
+                assert_eq!(retry_after_ms, 7_000);
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rate_limited_variant_clamps_to_at_least_1ms() {
+        // If the server reports `retry_after = 0` (or
+        // omits it), we still surface a positive backoff
+        // so the gateway doesn't spin-loop.
+        let mt_err = MtprotoTelegramError::RateLimited {
+            retry_after_secs: 0,
+        };
+        let plat_err: octo_network::dot::error::PlatformAdapterError = mt_err.into();
+        if let octo_network::dot::error::PlatformAdapterError::RateLimited {
+            retry_after_ms, ..
+        } = plat_err
+        {
+            assert!(retry_after_ms >= 1);
+        } else {
+            panic!("expected RateLimited");
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "octo-adapter-telegram-mtproto"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -19,6 +19,13 @@ default = []
 # (which would collide with the project-wide cipherocto persistence
 # convention) is excluded.
 real-network = ["dep:grammers-client", "dep:grammers-tl-types"]
+# Bot-API HTTP fallback transport (gap G6 in
+# docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md §4).
+# Pulls reqwest + rustls. Independent of `real-network`: a user who
+# only wants the Bot-API HTTP path doesn't need grammers, and a user
+# who only wants MTProto doesn't need reqwest. The default build
+# includes neither.
+bot-api = ["dep:reqwest", "dep:rustls", "dep:rustls-native-certs"]
 # Integration tests that require a real Telegram test DC.
 integration-test = []
 
@@ -78,6 +85,17 @@ grammers-mtproto = { version = "0.9.0" }
 grammers-client = { version = "0.9.0", default-features = false, optional = true, features = ["fs"] }
 grammers-tl-types = { version = "0.9.0", features = ["tl-mtproto"], optional = true }
 
+# --- Bot-API HTTP fallback transport (feature `bot-api`) ---
+#
+# Optional dependencies. Only pulled in when the `bot-api` feature
+# is enabled, so the default build (pure mock + MTProto) does not
+# need an HTTP client. See the `bot-api` feature in [features].
+# `default-features = false` excludes reqwest's bundled native-tls;
+# we use rustls for the cipherocto no-native-deps convention.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "form", "multipart", "query"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
+rustls-native-certs = { version = "0.8", optional = true }
+
 # --- Persistence (cipherocto convention) ---
 #
 # Stoolap fork on `feat/blockchain-sql` (see
@@ -93,12 +111,11 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3.10"
-# Test fixture: an in-process HTTP server for the Bot-API fallback tests.
-# Gated to the integration-test feature so default `cargo test` does
-# not pull the network stack.
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
+# wiremock is a tiny in-process HTTP mock used by the `bot-api` test
+# suite. We pin a recent minor; its API is stable enough for our use
+# (the `MockServer::start_async()` builder + `Mock::given(matchers::*).
+# respond_with(ResponseTemplate::*)` chain).
+wiremock = "0.6"
 # tracing_subscriber for log-capture tests (TV-11 / TV-12).
 # Pinned to a recent minor; matches the rest of the workspace.
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

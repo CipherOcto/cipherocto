@@ -271,6 +271,11 @@ impl StoolapSession {
     }
 
     fn init_schema(db: &Database) -> Result<(), TelegramError> {
+        // NB: stoolap's `db.execute` takes a params argument that is either
+        // `()` (empty tuple) for no-params queries, or `Vec<stoolap::core::Value>`
+        // for parameterized queries. The canonical pattern from
+        // crates/quota-router-core/src/storage.rs and
+        // crates/octo-matrix-session-store/src/schema.rs uses this form.
         db.execute(
             "CREATE TABLE IF NOT EXISTS mtproto_auth_keys (
                 dc_id INTEGER NOT NULL PRIMARY KEY,
@@ -278,10 +283,24 @@ impl StoolapSession {
                 created_at INTEGER NOT NULL,
                 last_used_at INTEGER NOT NULL
              )",
-            &[],
+            (),
         ).map_err(|e| TelegramError::SessionError(e.to_string()))?;
         // ... mtproto_dc_config, mtproto_user ...
         Ok(())
+    }
+
+    /// Load the auth_key for a given DC. Used by grammers' transport.
+    /// Returns `Ok(None)` if no auth_key is stored for this DC.
+    pub fn load_auth_key(&self, dc_id: i32) -> Result<Option<[u8; 256]>, TelegramError> {
+        // db.query returns Result<stoolap::Rows, Error>; Rows is iterable.
+        // Iterate with `for row in rows` or `rows.next()` (Option<Result<stoolap::ResultRow>>).
+        let mut rows = self.db.query(
+            "SELECT auth_key FROM mtproto_auth_keys WHERE dc_id = $1",
+            vec![stoolap::core::Value::integer(dc_id as i64)],
+        ).map_err(|e| TelegramError::SessionError(e.to_string()))?;
+        // ... extract auth_key bytes from the first row ...
+        // (full impl in the mission PR)
+        unimplemented!()
     }
 }
 

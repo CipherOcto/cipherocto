@@ -438,13 +438,19 @@ Output: Vec<RawPlatformMessage>
 Input: domain_id (BroadcastDomainId), envelope (DeterministicEnvelope)
 Output: Result<MessageId, SendError>
 
-1. Look up `chat_id` from the adapter's `groups` map (per RFC-0850p-c binding).
-2. Serialize the envelope: `base64::encode_config(envelope.bytes, base64::URL_SAFE_NO_PAD)`.
-3. If encoded length ≤ 4096 chars:
-   a. `client.send_message(chat_id, encoded).await?` → return message id.
-4. Else:
+1. Look up `chat_id: i64` from the adapter's `groups` map (per RFC-0850p-c binding).
+2. Construct the grammers peer reference:
+     `let peer = grammers_client::types::InputPeer::from(chat_id);`
+   (NB: grammers' high-level API takes an `InputPeer`, not a bare `i64`;
+    `InputPeer` is a TL enum with `PeerUser(id)`, `PeerChat(id)`, `PeerChannel(id)` variants.
+    For DOT transport groups (always Telegram supergroups/channels), the
+    `PeerChannel(chat_id)` variant is used.)
+3. Serialize the envelope: `base64::encode_config(envelope.bytes, base64::URL_SAFE_NO_PAD)`.
+4. If encoded length ≤ 4096 chars:
+   a. `client.send_message(peer, encoded).await?` → return message id.
+5. Else:
    a. Write encoded envelope to a temporary file.
-   b. `client.send_file(chat_id, file).await?` with the encoded envelope as the caption.
+   b. `client.send_file(peer, file).await?` with the encoded envelope as the caption.
    c. Return message id.
 ```
 

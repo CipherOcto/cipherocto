@@ -4,6 +4,67 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.2] — 2026-06-21
+
+### Security
+
+- **R16: hand-written `Debug` for `UserAuthAction`** (the
+  user-mode sister of `MtprotoAuthAction`). R15-C3 closed
+  the bot-mode auth-leak; the user-mode
+  `RequestCode { phone }` / `SubmitCode { code }` /
+  `SubmitPassword { password }` variants still derived
+  `Debug`, so any `dbg!()` or `tracing::error!(?e)` on
+  an `MtprotoAuthError::InvalidUserTransition` would
+  leak the action payload. Fix: hand-written `Debug`
+  prints variant name only, mirroring the R15-C3 fix
+  on `MtprotoAuthAction`. The `Display` impl already
+  redacted and is unchanged.
+
+### Fixed
+
+- **R16: `validate()` checks the new `bot_api_base_url`
+  field.** R15-C11 added the field for tests but the
+  `validate()` function never checked it, so empty
+  strings and non-https URLs surfaced only at request
+  time. Non-https was the worst failure mode — the
+  bot token is the only auth credential on the Bot API
+  path, and a typo (e.g. `http://attacker.example.com`)
+  would silently send the token over plaintext. The
+  new check rejects empty strings and any URL that
+  doesn't start with `https://`. Tests using
+  `MtprotoTelegramAdapter::new` directly (the wiremock
+  happy-path) bypass `validate()` and are unaffected.
+- **R16: `examples/telegram_bot.rs` uses `error!` for
+  the "you built wrong" message** in the
+  `not(bot-api)` branch. R15-C16's follow-up removed
+  `warn` from the tracing import; the example now
+  compiles cleanly without `--features bot-api` (it
+  fails to compile before the fix). The `info` import
+  is gated on `bot-api` so the `not(bot-api)` build
+  doesn't warn about an unused import.
+
+### Tests
+
+- **R16: 7 new unit tests.** 2 in `auth.rs`
+  (`user_auth_action_debug_does_not_leak_payload` covers
+  all 3 sensitive variants + `Display` and `Debug`;
+  `invalid_user_transition_error_does_not_leak_payload`
+  closes the gap on the user-mode error path). 1 in
+  `config.rs` (`bot_api_base_url_validation` covers
+  `None` / empty / `http://` / `https://`). 4 in
+  `adapter.rs` (`register_domain_accepts_user_chat_id`,
+  `register_domain_accepts_basic_group_chat_id`,
+  `register_domain_accepts_supergroup_chat_id`,
+  `register_domain_rejects_empty_zero_non_i64`).
+- **R16: test totals** 126 default / 150 with
+  `bot-api` (was 119 / 143 after R15).
+- **R16: clippy / fmt clean.** `cargo fmt --check`,
+  `cargo clippy --all-targets --features
+  "real-network bot-api" -- -D warnings`, all four
+  `cargo test --lib` feature combinations, and both
+  example builds (`--features "real-network bot-api"`
+  and no-features) are green.
+
 ## [0.3.1] — 2026-06-21
 
 ### Security
@@ -262,6 +323,7 @@ All notable changes to this crate are documented here. The crate adheres to
 [platform-adapter]: ../octo-network
 [grammers]: https://crates.io/crates/grammers-client
 
+[0.3.2]: #032--2026-06-21
 [0.3.1]: #031--2026-06-21
 [0.3.0]: #030--2026-06-21
 [0.2.0]: #020--2026-06-21

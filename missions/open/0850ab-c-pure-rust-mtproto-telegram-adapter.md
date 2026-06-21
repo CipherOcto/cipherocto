@@ -6,7 +6,9 @@ Open
 
 ## RFC
 
-RFC-0850ab-c (Networking): Pure-Rust MTProto Telegram Adapter (Draft)
+RFC-0850ab-c (Networking): Pure-Rust MTProto Telegram Adapter (Accepted v1.9)
+
+> **Note:** This mission was created when the RFC was in Draft. The RFC has since been promoted to Accepted (commit pending; see RFC §"Version History" 1.9). Mission status remains Open (no claimant yet) per BLUEPRINT.md Mission lifecycle. Implementation may begin now that the RFC is Accepted.
 
 ## Summary
 
@@ -452,7 +454,7 @@ Test: `cargo test -p octo-adapter-telegram-mtproto --target ${{ matrix.target }}
 
 ### Primary
 
-- `rfcs/draft/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md` — RFC for this mission
+- `rfcs/accepted/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md` — RFC for this mission (Accepted; multi-round adversarial review complete; 28 issues fixed across 9 rounds)
 - `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` — research report (6 review rounds, 54 issues fixed, accepted)
 - `docs/BLUEPRINT.md` — process architecture; this mission follows §"Implementation" lifecycle
 
@@ -498,10 +500,12 @@ Each sub-mission follows the same template (Status, RFC, Summary, Acceptance Cri
 | 1.5 | 2026-06-21 | Round 4: Version History tables added to both RFC and Mission; cross-ref verification (RFCs, crates, docs, paths). Commit `5eadca2c`. |
 | 1.6 | 2026-06-21 | Round 5: Sync with RFC algorithm unambiguity fixes (Algorithm 1 6-step flow; Algorithm 5 InputPeer/access_hash; stale SQLite refs). Commit `e67e84ba`. |
 | 1.7 | 2026-06-21 | Round 6: Sync with RFC Background/Glossary section addition; SQL schema plaintext-at-rest contradiction fixed. Commit `139322b7`. |
+| 1.8 | 2026-06-21 | RFC-0850ab-c promoted to Accepted (v1.9). Mission's RFC link updated to point to `rfcs/accepted/networking/`. Mission status remains Open (awaiting claimant). RFC §"Version History" 1.9 records the acceptance. |
 
 ---
 
 **Mission Created:** 2026-06-21
-**Parent RFC:** RFC-0850ab-c (Draft, awaiting acceptance)
+**Parent RFC:** RFC-0850ab-c (Accepted v1.9 — `rfcs/accepted/networking/`)
 **Source Research:** `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` (accepted)
 **Estimated Effort:** ~1700-2200 LOC, 1-2 weeks for an experienced Rust contributor with grammers familiarity; 3-4 weeks for someone new to MTProto
+**Implementation Status:** Ready to start — RFC is Accepted.

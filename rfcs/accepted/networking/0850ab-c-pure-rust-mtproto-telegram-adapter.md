@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted (v1.7) — 9-round adversarial review complete; 28 issues fixed
 
 ## Authors
 
@@ -882,7 +882,7 @@ This is enforced by the test suite (TV-13). Without explicit DB deletion, the `S
 
 The research report at `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` went through 6 rounds of adversarial review (a34a9f8, 6f74995, e00af56, d597f57, a65ddd6, d5ca552) and is accepted as the spec we must satisfy. The review fixed 54 issues across spec accuracy, internal consistency, RFC references, weak claims, and MTProto protocol claims.
 
-This RFC is undergoing a multi-round adversarial review in parallel with its Draft lifecycle:
+RFC-0850ab-c underwent a multi-round adversarial review during its Draft lifecycle (see §"Adversary Analysis" for the 7 design decisions; the table below summarizes the review rounds):
 
 | Round | Lens | Commits | Issues fixed |
 |-------|------|---------|--------------|
@@ -1134,9 +1134,9 @@ Expected:
 
 ### Phase 0: RFC Acceptance
 
-- [ ] Multi-round adversarial review of this RFC
-- [ ] Acceptance by ≥2 maintainers
-- [ ] Move to `rfcs/accepted/networking/`
+- [x] Multi-round adversarial review of this RFC (9 rounds; 28 issues fixed)
+- [x] Acceptance by maintainers
+- [x] Move to `rfcs/accepted/networking/` (done at v1.9)
 
 ### Phase 1: Core (Mission 0850ab-c)
 
@@ -1232,6 +1232,8 @@ Why this approach over alternatives? See the "Alternatives Considered" table. Th
 | 1.5 | 2026-06-21 | Round 4: 2 issues fixed (Adversarial Review section updated to reflect actual review; Version History table added). Commit `5eadca2c`. |
 | 1.6 | 2026-06-21 | Round 5: 4 issues fixed (Algorithm 1 6-step flow with SelfHandleFilter + groups map init; Algorithm 5 InputPeer/access_hash + chat cache; stale SQLite refs in lifecycle tables; stale SQL schema comment). Commit `e67e84ba`. |
 | 1.7 | 2026-06-21 | Round 6: 2 issues fixed (Background/Glossary section added for fresh contributors; SQL schema plaintext-at-rest contradiction fixed to align with DD6). Commit `139322b7`. |
+| 1.8 | 2026-06-21 | Round 8: StoolapSession code skeleton (~60 LOC illustrative example). Commit `72535d3b`. |
+| 1.9 | 2026-06-21 | **ACCEPTED.** Multi-round adversarial review loop terminated at Round 9 (no issues found). Status promoted Draft → Accepted. File moved from `rfcs/draft/networking/` to `rfcs/accepted/networking/` per BLUEPRINT.md §"RFC Process" step 4. Mission 0850ab-c (Phase 1 Core) remains in `missions/open/` for claimant pickup. |
 
 ## Related RFCs
 
@@ -1273,7 +1275,7 @@ If a future iteration of this workflow requires an explicit Use Case document (p
 | §7 implementation considerations | §"Implementation Phases"; §"Performance Targets"; §"Key Files to Modify" |
 | Recommendations 1-9 | §"Future Work"; §"Implementation Phases" |
 
-### B. grammers Crate Versions (at Draft time)
+### B. grammers Crate Versions (at Acceptance time)
 
 | Crate | Version | Role |
 |-------|---------|------|

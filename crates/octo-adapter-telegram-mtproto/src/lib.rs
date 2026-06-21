@@ -55,6 +55,7 @@ pub use client::{
 pub use config::MtprotoTelegramConfig;
 pub use envelope::wire_encode;
 pub use error::{redact_credentials, MtprotoTelegramError};
+pub use lifecycle::AdapterLifecycle;
 pub use self_handle::{MtprotoSelfHandle, MtprotoSelfIdentity};
 pub use session::StoolapSession;
 

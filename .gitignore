@@ -58,3 +58,11 @@ uv.lock
 # Cargo build artifacts (any crate)
 **/target/
 **/Cargo.lock
+
+# Telegram MTProto adapter: config files containing bot tokens,
+# api_hash, phone numbers, 2FA passwords, or session auth_keys.
+# Recommended pattern: uncomment to enforce.
+# crates/octo-adapter-telegram-mtproto/telegram*.json
+# crates/octo-adapter-telegram-mtproto/sessions.db*
+# **/telegram*.json
+# **/sessions.db*

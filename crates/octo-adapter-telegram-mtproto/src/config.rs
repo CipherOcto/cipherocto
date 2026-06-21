@@ -36,7 +36,7 @@ pub struct MtprotoTelegramFeatures {
     pub voice_video: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MtprotoTelegramConfig {
     /// "bot" | "user" (default: bot)
     #[serde(default)]
@@ -103,6 +103,12 @@ pub struct MtprotoTelegramConfig {
 
 impl std::fmt::Debug for MtprotoTelegramConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Custom Debug: redact credentials. The
+        // derive(Default) form does NOT redact secrets, so
+        // we keep this manual impl. (clippy::derivable_impls
+        // is a false positive here: the derived form would
+        // leak `bot_token` / `api_hash` / `password` /
+        // `phone` into the Debug output.)
         f.debug_struct("MtprotoTelegramConfig")
             .field("mode", &self.mode)
             .field("bot_token", &self.bot_token.as_ref().map(|_| "<redacted>"))
@@ -118,26 +124,6 @@ impl std::fmt::Debug for MtprotoTelegramConfig {
             .field("app_version", &self.app_version)
             .field("test_dc_url", &self.test_dc_url)
             .finish()
-    }
-}
-
-impl Default for MtprotoTelegramConfig {
-    fn default() -> Self {
-        Self {
-            mode: None,
-            bot_token: None,
-            api_id: None,
-            api_hash: None,
-            phone: None,
-            data_dir: None,
-            password: None,
-            features: MtprotoTelegramFeatures::default(),
-            api_layer: None,
-            device_model: None,
-            system_version: None,
-            app_version: None,
-            test_dc_url: None,
-        }
     }
 }
 

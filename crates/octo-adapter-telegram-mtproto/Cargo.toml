@@ -99,3 +99,7 @@ tempfile = "3.10"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+# tracing_subscriber for log-capture tests (TV-11 / TV-12).
+# Pinned to a recent minor; matches the rest of the workspace.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing = { workspace = true }

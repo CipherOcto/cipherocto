@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-20)
+Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): added the `DatabaseSyncAdapter` trait boundary and the `octo-sync` leaf-workspace architecture per the Phase 1 + Phase 2 dep-avoidance research.
 
 ## Authors
 
@@ -35,6 +35,12 @@ The Stoolap Data Sync Protocol defines a wire-level sub-protocol for synchronizi
 ## Review Trail
 
 This RFC was extracted from `docs/research/stoolap-data-sync-via-cipherocto-network.md` (v2.0, post 11-round adversarial review) and `docs/use-cases/stoolap-data-sync-via-cipherocto-network.md` (v1.8, post 9-round adversarial review), then itself subjected to 12 rounds of adversarial review. The 60 findings (26 in R1, 6 in R2, 4 in R3, 5 in R4, 3 in R5, 1 in R6, 2 in R7, 1 in R8, 3 in R9, 4 in R10, 5 in R11, 0 in R12) are documented in `docs/reviews/rfc-0862-adversarial-review-r{1..12}.md`. R12 declared "VERDICT: ZERO ISSUES FOUND" and the loop terminated.
+
+**Update v1.1.0** (2026-06-21): added §DatabaseSyncAdapter Trait below per the Phase 1 + Phase 2 dep-avoidance research. The update adds the `DatabaseSyncAdapter` trait (8 methods, sync, `Send + Sync + 'static`, 9-variant `SyncError` mapped to 9 wire codes) and the `octo-sync` leaf-workspace architecture that prevents Cargo workspace cycles. Source research:
+- [`docs/research/stoolap-dep-on-cipherocto-circular-avoidance.md`](../../docs/research/stoolap-dep-on-cipherocto-circular-avoidance.md) — Phase 1 (4-round review, R4 verdict: ZERO ISSUES FOUND).
+- [`docs/research/octo-sync-database-adapter-trait.md`](../../docs/research/octo-sync-database-adapter-trait.md) — Phase 2 (4-round review, R4 verdict: ZERO ISSUES FOUND).
+
+**Update invariants:** the wire protocol (envelope discriminators `0xA0–0xC2`, OCrypt contexts, LSN model, Merkle summary, state machine, error codes, security model, performance targets) is **unchanged**. The update is an *implementation-architecture* refinement: where the original RFC described the cipherocto sync engine calling Stoolap DB functions directly, the update now describes the cipherocto sync engine consuming a `DatabaseSyncAdapter` trait, with a `StoolapAdapter` providing the Stoolap-side implementation. This is a strict refinement — the wire protocol, mission semantics, and security properties are preserved exactly.
 
 ## Dependencies
 
@@ -579,7 +585,9 @@ Canonical test cases for verification:
 | File | Change |
 |------|--------|
 | `stoolap/Cargo.toml` | Add `tokio` as an **optional** dep behind a new feature `sync`. `blake3` and `lz4_flex` are already present (`:74, 111`). |
-| `crates/octo-network/Cargo.toml` | New `octo-sync` crate depending on `octo-network` and `octo-determin`. |
+| `octo-sync/` (new standalone workspace) | **NEW (v1.1.0):** A new leaf workspace at `cipherocto/octo-sync/`, modeled on the existing `octo-determin` pattern (`/home/mmacedoeu/_w/ai/cipherocto/determin/`). Contains the wire-protocol primitives (envelopes, Merkle tree, OCrypt sync context, ReplayCache, SegmentIndexer), the `DatabaseSyncAdapter` trait (see §DatabaseSyncAdapter Trait), the `SyncError` enum, and the `MockAdapter` test util. Excluded from the main cipherocto workspace via `workspace.exclude`. |
+| `crates/octo-network/Cargo.toml` | Depends on `octo-sync` via **git** (`octo-sync = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }`), NOT as a member crate. The `octo-network/src/sync/` modules consume `octo_sync::DatabaseSyncAdapter` instead of calling Stoolap DB functions directly. |
+| `stoolap/Cargo.toml` | Adds `octo-sync` as a git dep (same source as the cipherocto workspace). Adds a new `crates/sync-adapter/` sub-crate that implements `DatabaseSyncAdapter` for the Stoolap `MVCCEngine`. |
 | `stoolap/src/api/database.rs` | New `Database::open_with_sync(dsn, SyncConfig)` constructor; re-export `SyncTransport` and `SyncConfig` when `sync` feature enabled. |
 | `stoolap/src/storage/mvcc/transaction.rs` | Wrap `TransactionEngineOperations::record_commit(txn_id)` to capture LSN range and emit `WalTailChunk` to active readers. |
 | `stoolap/src/storage/mvcc/engine.rs:2642` (existing `create_snapshot` — whole-DB; used for diagnostic/manual snapshots) | No change (existing reference) |
@@ -626,6 +634,146 @@ Why this approach over alternatives?
 
 - [Research: Two-Node Data Synchronization for the Stoolap Fork via the CipherOcto Network](../../docs/research/stoolap-data-sync-via-cipherocto-network.md) (v2.0, 968 lines, post 11-round adversarial review) — the underlying feasibility study
 - [Research: Stoolap Integration with AI Quota Marketplace](../../docs/research/stoolap-integration-research.md) — the immediate downstream consumer
+- [Research: Stoolap Dep on CipherOcto — Circular Avoidance](../../docs/research/stoolap-dep-on-cipherocto-circular-avoidance.md) — Phase 1 of the dep-cycle-break research (extracts the `octo-sync` leaf workspace)
+- [Research: `octo-sync` DatabaseSyncAdapter Trait](../../docs/research/octo-sync-database-adapter-trait.md) — Phase 2 of the dep-cycle-break research (the trait boundary)
+
+## DatabaseSyncAdapter Trait (v1.1.0)
+
+The cipherocto sync engine does not call Stoolap DB functions directly. Instead, it consumes a trait `DatabaseSyncAdapter` defined in the `octo-sync` leaf workspace. The Stoolap fork provides a `StoolapAdapter` impl; the cipherocto sync engine is generic over `A: DatabaseSyncAdapter`. This trait replaces the original §Key Files to Modify line for `crates/octo-network/Cargo.toml` (which previously described an `octo-sync` member crate) and prevents a Cargo workspace cycle.
+
+### Architecture
+
+```
+                octo-sync (leaf workspace, excluded from main cipherocto workspace)
+                ├── wire primitives (envelopes, Merkle tree, OCrypt sync context,
+                │                    ReplayCache, SegmentIndexer)
+                ├── DatabaseSyncAdapter trait
+                ├── SyncError enum (9 variants)
+                └── MockAdapter test util
+                       ▲                  ▲
+                       │ trait bound      │ impl
+                       │                  │
+              cipherocto workspace        stoolap fork
+              crates/octo-network/        crates/sync-adapter/
+              (consumer: bridge)          (provider: StoolapAdapter)
+```
+
+### Trait Surface
+
+```rust
+// octo-sync/src/adapter.rs
+pub trait DatabaseSyncAdapter: Send + Sync + 'static {
+    // ── A. WAL operations (RFC-0862 §4.3.3) ──────────────────────────
+    fn read_wal_range(&self, from_lsn: Lsn, to_lsn: Lsn)
+        -> Result<Vec<Vec<u8>>, SyncError>;
+    fn current_lsn(&self) -> Result<Lsn, SyncError>;
+    fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError>;
+
+    // ── B. Snapshot operations (RFC-0862 §4.3.4) ─────────────────────
+    fn read_snapshot_segment(&self, table_id: TableId, segment_index: SegmentIndex)
+        -> Result<Option<SnapshotSegment>, SyncError>;
+    fn write_snapshot_segment(&self, table_id: TableId, segment_index: SegmentIndex, payload: &[u8])
+        -> Result<(), SyncError>;
+
+    // ── C. Backpressure (RFC-0862 §4.3.2) ───────────────────────────
+    fn set_paused(&self, paused: bool) -> Result<(), SyncError> { Ok(()) }
+
+    // ── D. Identity (RFC-0862 §4.3.1) ────────────────────────────────
+    fn mission_id(&self) -> Result<MissionId, SyncError>;
+    fn node_id(&self) -> Result<NodeId, SyncError>;
+}
+```
+
+8 methods total: 5 RFC-0862 ops + 1 backpressure + 2 auxiliary. `set_paused` has a default no-op (databases that don't support writer-side pause ignore the call; the cipherocto sync engine falls back to per-peer rate-limiting). The other 7 are required.
+
+### Why sync (not async)?
+
+The cipherocto convention is `Send + Sync` on the trait itself (4 of 5 existing traits: `PlatformAdapter`, `CoordinatorAdmin`, `Witness`, `BINDHook`). Compute/state traits (`Witness`, `DeterministicProofSystem`, `BINDHook`) are sync; transport traits (`PlatformAdapter`, `CoordinatorAdmin`) are async. Database operations are local disk I/O, not network I/O — they sit on the compute/state side. The cipherocto async runtime (`tokio`) wraps every trait call at the boundary via `tokio::task::spawn_blocking` (matching the pattern at mission 0862a:101 for the WAL read). Implementations stay `std`-only; the Stoolap fork does not need a `tokio` runtime.
+
+The `+ 'static` bound allows the trait object to be stored in `Box<dyn DatabaseSyncAdapter + 'static>` and to satisfy `'static` requirements of the cipherocto async runtime. None of the 5 existing cipherocto adapter traits have this bound; it is a new addition justified by the trait-object storage pattern. The Stoolap implementer wraps `MVCCEngine` in `Arc<parking_lot::Mutex<MVCCEngine>>` to satisfy all three bounds.
+
+### Type aliases
+
+```rust
+// octo-sync/src/types.rs
+pub type Lsn = u64;                  // WAL Logical Sequence Number (monotonic per writer)
+pub type MissionId = [u8; 32];       // per RFC-0853 MissionKeyHierarchy
+pub type NodeId = [u8; 32];         // SyncNodeId = BLAKE3(public_key || mission_id)
+pub type TableId = u32;              // Database table identifier
+pub type SegmentIndex = u32;         // Ordinal position of a snapshot segment
+```
+
+### Error Model
+
+The trait returns `Result<T, SyncError>`. The 9-variant `SyncError` enum maps to the 9 wire-level error codes (RFC-0862 §Error Handling) via `impl From<SyncError> for WireError` in `octo-sync/src/error.rs`:
+
+| `SyncError` variant | Wire code | Notes |
+|---|---|---|
+| `LsnRegression { expected, actual }` | `E_SYNC_LSN_REGRESSION` | |
+| `InvalidLsnRange { from, to }` | `E_SYNC_LSN_REGRESSION` (extended) | |
+| `UnknownPeer(SyncPeerId)` | `E_SYNC_AUTH_FAIL` | no such peer = auth fail |
+| `AllCarriersFailed` | `E_SYNC_RATE_LIMIT` | all carriers failed = rate-limited |
+| `UnknownEnvelopeSubtype(u8)` | `E_SYNC_AUTH_FAIL` | unknown subtype = corrupt envelope |
+| `DecryptionFailed` | `E_SYNC_AUTH_FAIL` | AEAD failure |
+| `SegmentNotFound { table_id, segment_index, regenerated }` | `E_SYNC_SEGMENT_NOT_FOUND` | |
+| `UnknownCarrier(String)` | `E_SYNC_AUTH_FAIL` | bad config |
+| `BackendNotReady(String)` | `E_SYNC_RATE_LIMIT` | backpressure signal |
+
+### Cargo dep graph (v1.1.0)
+
+```toml
+# cipherocto/crates/octo-network/Cargo.toml
+[dependencies]
+octo-sync = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+
+# stoolap fork/Cargo.toml
+[dependencies]
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+octo-sync     = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+```
+
+The trait is not a Cargo dep — it is a trait bound. The workspace graph becomes:
+- `octo-sync` (leaf workspace, excluded from both projects)
+- `cipherocto` (workspace) → `octo-network` (member) → `octo-sync` (git dep) → (no further cipherocto deps)
+- `stoolap` fork (single-package) → `octo-sync` (git dep) → (no further cipherocto deps)
+
+**No cycle.** The trait is the boundary.
+
+### Phasing (added in v1.1.0)
+
+A new **Phase 0** precedes the existing Phase 1 (Core):
+
+- **Phase 0 — Trait boundary** (new in v1.1.0)
+  - Create `octo-sync/` leaf workspace at `cipherocto/octo-sync/`, mirroring `octo-determin/`
+  - Define `DatabaseSyncAdapter` trait, `SyncError` enum, type aliases (8 methods, sync, `Send + Sync + 'static`)
+  - Define `MockAdapter` in `octo-sync/src/test_util.rs` for unit testing
+  - Define `WireError` and `From<SyncError> for WireError` mapping in `octo-sync/src/error.rs`
+  - Add `octo-sync` to `workspace.exclude` in main `Cargo.toml`
+  - Add `octo-sync` as a git dep in `crates/octo-network/Cargo.toml` and `stoolap/Cargo.toml`
+  - Cipherocto sync engine (`0862-base`, `0862a–0862i`) consumes `A: DatabaseSyncAdapter` instead of calling Stoolap DB functions directly
+  - Stoolap fork adds `crates/sync-adapter/` with `StoolapAdapter` impl
+  - Verification: cargo metadata --no-deps on both projects shows no cycle; integration test runs against `MockAdapter`; 0862a WAL read uses `adapter.read_wal_range(from, to)` instead of `engine.wal_manager().replay_two_phase(...)`.
+
+The original Phase 1 (Core) and onward remain unchanged in scope; they are now implemented *on top of* the trait boundary, not against Stoolap directly.
+
+### Forward compatibility
+
+- **New optional methods** (e.g., Phase 3 richer backpressure API) follow the cipherocto `default = Unimplemented` pattern; existing implementers are not broken.
+- **New error variants** use `#[non_exhaustive]` on `SyncError` (or a fallback `WireError::Other` mapping) so downstream `match` exhaustiveness is preserved.
+- **New type aliases** in `octo-sync/src/types.rs` are additive and non-breaking.
+
+### Migration path
+
+| Step | Change | Owner |
+|---|---|---|
+| v1.1.0.a | Add `DatabaseSyncAdapter` trait to `octo-sync/src/adapter.rs` (single ~80-line file) | cipherocto `octo-network` team |
+| v1.1.0.b | Update `octo-network` sync engine to consume `dyn DatabaseSyncAdapter` | cipherocto `octo-network` team |
+| v1.1.0.c | Add `crates/sync-adapter/` to stoolap fork with `StoolapAdapter` impl | stoolap fork maintainers |
+| v1.1.0.d | Update missions 0862-base, 0862a–0862i to use the trait (replace direct DB calls with `adapter.read_wal_range(...)`, etc.) | cipherocto `octo-network` team |
+
+Each step is a separate PR. The trait itself (step a) is the smallest possible change and can be merged independently of the consuming-side changes (step b).
+
+---
 
 ## Appendices
 

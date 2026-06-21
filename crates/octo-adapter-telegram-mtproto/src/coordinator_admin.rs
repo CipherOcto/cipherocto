@@ -96,10 +96,14 @@ fn map_err(e: MtprotoTelegramError) -> PlatformAdapterError {
     }
 }
 
-/// Heuristic: is this chat_id a supergroup? Telegram uses
-/// negative chat_ids with a `-100` prefix for supergroups
-/// and channels (e.g., `-1001234567890`). Basic groups
-/// and private chats have positive chat_ids.
+/// Heuristic: is this chat_id a supergroup or channel?
+/// Telegram constructs supergroup/channel chat_ids as
+/// `-(1_000_000_000_000 + local_id)` where `local_id` is a
+/// positive integer (typically 32-bit-ish). The `-1_000_000_000_000`
+/// threshold separates the supergroup/channel namespace
+/// from everything else (basic groups, private chats, and
+/// legacy migrated basic groups which use plain negative
+/// IDs like `-12345` without the `-1T` offset).
 ///
 /// This is a *best-effort* heuristic for the capability
 /// report — the real client disambiguates per-call via
@@ -108,7 +112,11 @@ fn map_err(e: MtprotoTelegramError) -> PlatformAdapterError {
 /// report `can_promote: true` for supergroups without
 /// making a separate `messages.getChats` call.
 fn is_supergroup(chat_id: i64) -> bool {
-    chat_id < 0
+    // Threshold per R19-C1: the -1T prefix is the
+    // canonical Telegram supergroup/channel chat_id
+    // prefix. Legacy basic groups (negative but not
+    // -1T) are correctly classified as NOT supergroups.
+    chat_id <= -1_000_000_000_000
 }
 
 // ── Capability report (cached, no I/O) ──────────────────────────
@@ -131,13 +139,19 @@ mod tests {
     #[test]
     fn is_supergroup_detects_negative_ids() {
         // Supergroups / channels have negative chat_ids
-        // with a -100 prefix.
+        // with a -1T (i.e., -1_000_000_000_000) prefix.
         assert!(is_supergroup(-1001234567890));
         assert!(is_supergroup(-1009876543210));
-        // Basic groups / private chats have positive
-        // chat_ids.
+        assert!(is_supergroup(-1_000_000_000_000)); // boundary: smallest supergroup
+                                                    // Basic groups / private chats have positive
+                                                    // chat_ids.
         assert!(!is_supergroup(1234567890));
         assert!(!is_supergroup(0));
+        // Legacy migrated basic groups: negative chat_ids
+        // but WITHOUT the -1T prefix. R19-C1: these must
+        // NOT be classified as supergroups.
+        assert!(!is_supergroup(-12345));
+        assert!(!is_supergroup(-1_000_000_000_000 + 1)); // just above the threshold
     }
 
     #[test]

@@ -315,6 +315,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         // allocation-free; the connected notify is a fresh
         // Notify per adapter instance.
         self.connected_notify.notify_waiters();
+        tracing::debug!(
+            path = "bot_token",
+            user_id = info.user_id,
+            "connected_notify fired"
+        );
         Ok(())
     }
 
@@ -383,6 +388,7 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         // Mission 0850p-a-notify-event-connected: wake any
         // `wait_for_connected` awaiter.
         self.connected_notify.notify_waiters();
+        tracing::debug!(path = "http", user_id = me.id, "connected_notify fired");
         Ok(client)
     }
 
@@ -443,6 +449,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 // Mission 0850p-a-notify-event-connected.
                 self.connected_notify.notify_waiters();
+                tracing::debug!(
+                    path = "user_code",
+                    user_id = info.user_id,
+                    "connected_notify fired"
+                );
                 Ok(())
             }
             Err(MtprotoTelegramError::Auth(msg)) if msg == "2FA_REQUIRED" => {
@@ -463,6 +474,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 // Mission 0850p-a-notify-event-connected.
                 self.connected_notify.notify_waiters();
+                tracing::debug!(
+                    path = "user_2fa",
+                    user_id = info.user_id,
+                    "connected_notify fired"
+                );
                 Ok(())
             }
             Err(other) => Err(other),
@@ -525,6 +541,10 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 // Mission 0850p-a-notify-event-connected.
                 self.connected_notify.notify_waiters();
+                tracing::debug!(
+                    path = "qr_login_already_authorized",
+                    "connected_notify fired"
+                );
                 Err(MtprotoTelegramError::Internal(
                     "qr_login: already authorized (session was valid; no QR needed)".into(),
                 ))
@@ -569,6 +589,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 // Mission 0850p-a-notify-event-connected.
                 self.connected_notify.notify_waiters();
+                tracing::debug!(
+                    path = "poll_qr_login",
+                    user_id = info.user_id,
+                    "connected_notify fired"
+                );
                 Ok(info)
             }
             Err(e) => Err(e),
@@ -594,6 +619,11 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 // Mission 0850p-a-notify-event-connected.
                 self.connected_notify.notify_waiters();
+                tracing::debug!(
+                    path = "import_qr_login_token",
+                    user_id = info.user_id,
+                    "connected_notify fired"
+                );
                 Ok(info)
             }
             Err(e) => Err(e),

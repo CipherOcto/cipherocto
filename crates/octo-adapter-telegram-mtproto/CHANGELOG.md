@@ -4,6 +4,57 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] — 2026-06-21
+
+### Security
+
+- **No new findings.**
+
+### Fixes
+
+- **R19-C1 (LOW): tighten `is_supergroup` heuristic.**
+  The Phase A heuristic was `chat_id < 0`, which mis-
+  classified legacy migrated basic groups (negative
+  chat_ids without the `-1T` prefix, e.g., `-12345`) as
+  supergroups. New heuristic: `chat_id <= -1_000_000_000_000`.
+  This matches Telegram's canonical supergroup/channel
+  chat_id construction
+  (`-(1_000_000_000_000 + local_id)`) and the doc comment
+  in `coordinator_admin.rs`. The fix is one line; the
+  per-method `is_supergroup` callers
+  (`promote_to_admin`, `demote_from_admin`,
+  `transfer_ownership`, `add_member` supergroup branch)
+  now correctly route legacy basic groups to
+  `PlatformAdapterError::Unimplemented` instead of
+  attempting a Telegram admin RPC. Test extended:
+  `is_supergroup_detects_negative_ids` now also asserts
+  the boundary (`-1_000_000_000_000` is a supergroup;
+  `-1_000_000_000_000 + 1` is not) and the legacy basic
+  group case (`-12345` is not a supergroup).
+- **R19-C2 (LOW): add `tracing::debug!` at all 7
+  connect-success notify sites.** The Phase A work
+  added `connected_notify.notify_waiters()` at 7
+  adapter connect-success paths
+  (`connect_bot_token`, `connect_http`,
+  `connect_user` code-only, `connect_user` 2FA,
+  `connect_qr_login` already-authorized,
+  `poll_qr_login`, `import_qr_login_token`) but no
+  accompanying tracing. Operators debugging "why did
+  the onboard CLI hang at wait_for_connected" had no
+  log to inspect. Each site now emits
+  `tracing::debug!(path, user_id, "connected_notify fired")`.
+
+### Tests
+
+- All 5 feature combinations still green:
+  - default build: 152 tests pass
+  - `--no-default-features`: 152 tests pass
+  - `--features real-network`: 152 tests pass
+  - `--features bot-api`: 176 tests pass
+  - `--features "real-network bot-api"`: 176 tests pass
+- `cargo fmt -p octo-adapter-telegram-mtproto -- --check`: clean
+- `cargo clippy -p octo-adapter-telegram-mtproto --all-targets --features "real-network bot-api" -- -D warnings`: clean
+
 ## [0.4.0] — 2026-06-21
 
 ### Security

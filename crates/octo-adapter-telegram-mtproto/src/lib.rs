@@ -48,7 +48,10 @@ pub mod real_client;
 
 // Re-exports
 pub use adapter::MtprotoTelegramAdapter;
-pub use auth::{AuthMode, AuthStateKey, BotIdentity, MtprotoAuthAction, MtprotoAuthError, UserAuth};
+pub use auth::{
+    next_user_auth_state, next_user_auth_state_server, AuthMode, AuthStateKey, BotIdentity,
+    MtprotoAuthAction, MtprotoAuthError, UserAuth, UserAuthAction, UserAuthServerEvent,
+};
 pub use client::{
     MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
 };

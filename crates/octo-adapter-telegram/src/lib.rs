@@ -38,7 +38,7 @@ pub use mock::{FailureSpec, MockTelegramClient};
 pub use adapter::TelegramAdapter;
 pub use auth::{AuthAction, AuthError, AuthMode, AuthStateKey, BotIdentity, UserAuth};
 pub use client::TelegramClient;
-pub use config::{AdapterKind, TelegramConfig};
+pub use config::TelegramConfig;
 // API-L3: redact_credentials re-exported for binary use
 pub use error::{redact_credentials, TelegramError};
 pub use self_handle::{SelfHandle, SelfIdentity};

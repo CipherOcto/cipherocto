@@ -4,34 +4,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Selects which Telegram adapter implementation the runtime
-/// should construct when both are linked. Forward-compatible:
-/// existing configs that omit this field default to `Tdlib` (no
-/// breaking change). New deployments that want to opt into the
-/// pure-Rust MTProto adapter (RFC-0850ab-c) can set
-/// `adapter_kind = "Mtproto"` (or `octo.telegram.adapter =
-/// "mtproto"` at the orchestrator level).
-///
-/// The TDLib adapter itself does NOT branch on this field —
-/// it's the dispatcher's signal: if the orchestrator sees
-/// `Mtproto`, it constructs
-/// `octo_adapter_telegram_mtproto::MtprotoTelegramAdapter`
-/// instead of this crate's TDLib-backed adapter. The field
-/// lives here (not in a separate `orchestrator` crate) so the
-/// two adapters share one canonical schema.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AdapterKind {
-    /// Use `octo-adapter-telegram` (TDLib-based; the legacy
-    /// default; pulls ~150 MB TDLib binary + C++ build).
-    #[default]
-    Tdlib,
-    /// Use `octo-adapter-telegram-mtproto` (pure-Rust MTProto
-    /// via the `grammers` family of crates; no TDLib, no
-    /// C/C++ toolchain). See RFC-0850ab-c.
-    Mtproto,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelegramFeatures {
     /// Enable access to secret chats (user mode only).
@@ -91,14 +63,6 @@ pub struct TelegramConfig {
     /// Base64-encoded 32-byte public key.
     #[serde(default)]
     pub verifying_key: Option<String>,
-
-    /// Adapter kind: which Telegram adapter the runtime should
-    /// construct. Default `Tdlib` (no breaking change for
-    /// existing deployments). Forward-compatible — the TDLib
-    /// adapter does not branch on this; the orchestrator
-    /// dispatches based on its value.
-    #[serde(default)]
-    pub adapter_kind: AdapterKind,
 }
 
 impl std::fmt::Debug for TelegramConfig {
@@ -118,7 +82,6 @@ impl std::fmt::Debug for TelegramConfig {
                 "verifying_key",
                 &self.verifying_key.as_ref().map(|_| "<redacted>"),
             )
-            .field("adapter_kind", &self.adapter_kind)
             .finish()
     }
 }
@@ -233,14 +196,6 @@ impl TelegramConfig {
             webhook_port: None,
             features: TelegramFeatures::default(),
             verifying_key: std::env::var("TELEGRAM_VERIFYING_KEY").ok(),
-            adapter_kind: std::env::var("TELEGRAM_ADAPTER")
-                .ok()
-                .and_then(|s| match s.to_ascii_lowercase().as_str() {
-                    "mtproto" => Some(AdapterKind::Mtproto),
-                    "tdlib" => Some(AdapterKind::Tdlib),
-                    _ => None,
-                })
-                .unwrap_or_default(),
         }
     }
 

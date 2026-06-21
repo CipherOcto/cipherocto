@@ -62,8 +62,10 @@ pub fn redact_credentials(input: &str) -> String {
                 let after_pos = i + key.len();
                 let after_ok = after_pos >= input.len()
                     || !input.as_bytes()[after_pos].is_ascii_alphanumeric();
-                if before_ok && after_ok && matched.is_none_or(|m| key.len() > m.len()) {
-                    matched = Some(key);
+                if before_ok && after_ok {
+                    if matched.map_or(true, |m| key.len() > m.len()) {
+                        matched = Some(key);
+                    }
                 }
             }
         }

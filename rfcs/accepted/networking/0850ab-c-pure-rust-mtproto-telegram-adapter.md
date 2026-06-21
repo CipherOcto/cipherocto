@@ -70,7 +70,7 @@ CipherOcto has a Telegram transport (`crates/octo-adapter-telegram/`), but it is
 
 The pure-Rust ecosystem has matured to the point where a pure-Rust MTProto client is production-ready:
 
-- **grammers** (`codeberg.org/vilunov/grammers`; crates.io: `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-session 0.9.0`, `grammers-client 0.9.0`) is an 8-crate pure-Rust workspace maintained by a single maintainer (Lonami / vilunov) with MIT OR Apache-2.0 license.
+- **grammers** (`codeberg.org/vilunov/grammers`; crates.io: `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`) is an 8-crate pure-Rust workspace maintained by a single maintainer (Lonami / vilunov) with MIT OR Apache-2.0 license.
 - **dgrr/tgcli** is a production Telegram CLI built on grammers that validates the stack for real-world use cases (auth, full sync, chat operations, daemon mode, FTS5 search).
 - The research report's section-by-section walk of `mtproto_port.md` (23 sections of the tdesktop-derived MTProto 2.0 spec) shows that grammers implements all 23 sections, with 5 of 23 having sub-row gaps (3 protocol-level cipherocto could wrap, 2 protocol-level cipherocto does not need) — all non-blocking for cipherocto's needs.
 
@@ -395,90 +395,118 @@ The custom `StoolapSession` (`src/stoolap_session.rs`) is a `grammers_session::S
 trait impl backed by CipherOcto's stoolap fork. It writes to `data_dir/sessions.db`
 (via `stoolap::Database::open(&dsn)` per the `octo-matrix-session-store` canonical
 pattern — NB: `Database::open` takes a DSN string like `file:///path/to.db`,
-not a bare path). Schema (idempotent `CREATE TABLE IF NOT EXISTS` on adapter init).
-
-**Schema, post-implementation note (RFC v1.10, 2026-06-21).** During
-implementation we discovered that `grammers_session::Session` 0.9 does NOT
-expose `load_auth_key` / `save_auth_key` as trait methods; the trait instead
-persists `DcOption { id, ipv4, ipv6, auth_key }`, `PeerInfo` (an enum with
-`User / Chat / Channel` variants carrying `access_hash`), `UpdatesState`
-(pts/qts/date/seq + per-channel state), and a single `home_dc_id` per session.
-The schema below mirrors `grammers_session::storages::sqlite::SqliteSession`'s
-5-table layout, ported into stoolap's type system:
+not a bare path). Schema (idempotent `CREATE TABLE IF NOT EXISTS` on adapter init):
 
 ```sql
--- Home DC (the DC the logged-in user is bound to). One row.
-CREATE TABLE IF NOT EXISTS mtproto_dc_home (
-    dc_id         INTEGER NOT NULL,
-    PRIMARY KEY (dc_id));
+-- One row per DC's auth_key (256 bytes, plaintext at rest in v1 — see Security
+-- Considerations §"Adversary Analysis / Design decision 6"; F6 plans OS-keyring
+-- encryption as future work).
+-- Multiple DCs may have keys for the same account (Telegram rebalancing).
+CREATE TABLE IF NOT EXISTS mtproto_auth_keys (
+    dc_id         INTEGER NOT NULL PRIMARY KEY,
+    auth_key      BLOB    NOT NULL,           -- 256-byte AES key material (plaintext in v1)
+    created_at    INTEGER NOT NULL,           -- epoch seconds
+    last_used_at  INTEGER NOT NULL            -- epoch seconds; updated on each auth round-trip
+);
 
--- All known DC options, indexed by dc_id. `auth_key` is a 256-byte BLOB
--- (None until the first successful key-exchange round-trip). The default
--- `SessionData::default()` ships DC 1-5 with the statically-known IPs from
--- `grammers_session::dc_options::KNOWN_DC_OPTIONS`.
-CREATE TABLE IF NOT EXISTS mtproto_dc_option (
-    dc_id         INTEGER NOT NULL,
-    ipv4          TEXT    NOT NULL,            -- "ip:port" (SocketAddrV4)
-    ipv6          TEXT    NOT NULL,            -- "[ip]:port" (SocketAddrV6)
-    auth_key      BLOB,                        -- 256-byte AES key (None = unkeyed)
-    PRIMARY KEY (dc_id));
+-- DC connection config (main DC + media DCs). Grammers' transport reads
+-- this on connect; we mirror grammers' SqliteSession schema but in stoolap.
+CREATE TABLE IF NOT EXISTS mtproto_dc_config (
+    dc_id         INTEGER NOT NULL PRIMARY KEY,
+    ip            TEXT    NOT NULL,
+    port          INTEGER NOT NULL,
+    is_media      INTEGER NOT NULL,           -- 0 = main, 1 = media DC
+    is_cdn        INTEGER NOT NULL,           -- 0 = not CDN, 1 = CDN DC
+    updated_at    INTEGER NOT NULL
+);
 
--- Cached peer (User / Chat / Channel) info, indexed by bare peer id. The
--- `subtype` column distinguishes User (0) / UserSelf (1) / Chat (2) /
--- Channel (3); `bot` and `channel_kind` are optional fields populated from
--- the matching `PeerInfo` variant. `hash` is the `access_hash` (i64).
-CREATE TABLE IF NOT EXISTS mtproto_peer_info (
-    peer_id       INTEGER NOT NULL,
-    hash          INTEGER,                     -- access_hash (PeerAuth::hash())
-    subtype       INTEGER NOT NULL,            -- 0=User, 1=UserSelf, 2=Chat, 3=Channel
-    bot           INTEGER,                     -- 0=false, 1=true, NULL=unknown
-    channel_kind  INTEGER,                     -- 1=Broadcast, 2=Megagroup, 3=Gigagroup
-    PRIMARY KEY (peer_id));
+-- The bound user (bot or user account); populated by get_me() after sign-in.
+CREATE TABLE IF NOT EXISTS mtproto_user (
+    user_id       INTEGER NOT NULL PRIMARY KEY,
+    is_bot        INTEGER NOT NULL,           -- 0 = user, 1 = bot
+    dc_id         INTEGER NOT NULL,           -- the DC the auth_key for this user lives on
+    first_name    TEXT,
+    last_name     TEXT,
+    username      TEXT,
+    signed_in_at  INTEGER NOT NULL
+);
 
--- Global update state (pts/qts/date/seq). One row. Updated by every
--- `set_update_state` call.
-CREATE TABLE IF NOT EXISTS mtproto_update_state (
-    pts           INTEGER NOT NULL,
-    qts           INTEGER NOT NULL,
-    date          INTEGER NOT NULL,
-    seq           INTEGER NOT NULL);
-
--- Per-channel update state, indexed by channel id (peer_id). The Session
--- trait models this as a list inside `UpdatesState::channels`; we
--- persist it as separate rows for SQL-friendly updates.
-CREATE TABLE IF NOT EXISTS mtproto_channel_state (
-    peer_id       INTEGER NOT NULL,
-    pts           INTEGER NOT NULL,
-    PRIMARY KEY (peer_id));
+-- Index for fast user lookup by username (used by sign-in check after restart).
+CREATE INDEX IF NOT EXISTS mtproto_user_username_idx ON mtproto_user(username);
 ```
-
-**Why these 5 tables?** This mirrors `grammers_session::storages::sqlite::SqliteSession`'s
-schema, ported to stoolap. The `Session` trait (grammers-session 0.9.0) has
-nine methods — `home_dc_id`, `dc_option`, `set_dc_option`, `peer`, `cache_peer`,
-`updates_state`, `set_update_state`, plus two `BoxFuture`-returning
-siblings (`sign_in_user` / `sign_out_user`, which we stub as no-ops) — and the
-five tables above are exactly what those methods need.
 
 **Why not grammers' `SqliteSession`?** The grammers session API exposes a
 `Session` trait for custom backends. The default `SqliteSession` uses raw
 `rusqlite`, which violates the cipherocto persistence convention (the project-wide
 stoolap-fork mandate; closest Accepted RFC precedent: RFC-0914).
-The custom `StoolapSession` impl is ~600 LOC and preserves the `Session` trait
-semantics on top of stoolap. The 9-method `grammers_session::Session` trait
-is implemented one-to-one; each method mutates the in-memory
-`grammers_session::SessionData` cache and asynchronously persists the delta.
+The custom `StoolapSession` is ~150 LOC and preserves the `Session` trait
+semantics (load/save auth_key by `dc_id`, load/save DC config, load/save user)
+on top of stoolap.
 
-**StoolapSession implementation, post-implementation note.**
-The actual `StoolapSession` (in `crates/octo-adapter-telegram-mtproto/src/session.rs`)
-uses:
+**StoolapSession code skeleton** (illustrative; mirrors the canonical pattern
+at `crates/octo-matrix-session-store/src/store.rs::StoolapSessionStore`):
 
-- **Stoolap DSN form**: `format!("file://{}", path.display())`.
-- **Parameter placeholders**: stoolap uses PostgreSQL-style `$1, $2, ...` (NOT `?`).
-- **Parameter values**: `Vec<stoolap::Value>` (created via `.into()` on i64/i32/&str/String/bool, or `stoolap::Value::blob(Vec<u8>)` for BLOB and `stoolap::Value::Null(stoolap::core::DataType::X)` for SQL NULL).
-- **Upsert idiom**: `DELETE FROM <table> WHERE <pk> = $1; INSERT INTO <table> (...) VALUES ($1, $2, ...);` (stoolap does not support `INSERT OR REPLACE` or `ON CONFLICT DO UPDATE`; the canonical idiom is delete-then-insert, run outside a transaction because the primary key makes the race window negligible in practice).
-- **Cache layer**: in-memory `grammers_session::SessionData` (mirror of the type stored in `grammers_session::MemorySession`) sits in front of the DB; every Session-trait call mutates the cache and asynchronously persists the delta to stoolap via a `BoxFuture`. `parking_lot::Mutex` (Send) is used to hold the cache; data is cloned out under the lock so the Send-guard is dropped before any await point.
-- **Hydration**: on `open`, read all rows and assemble a `SessionData`. Fresh DB (no rows) returns `SessionData::default()` which already contains the 5 statically-known DC options from `grammers_session::dc_options::KNOWN_DC_OPTIONS` and `home_dc = 2` (the grammers `DEFAULT_DC`).
-- **Schema file**: there is no separate `schema.sql` file; the 5 `CREATE TABLE IF NOT EXISTS` statements are emitted from `init_schema(&db)` in Rust, keeping the schema definition co-located with the read/write helpers.
+```rust
+use grammers_session::Session;
+use stoolap::Database;
+
+pub struct StoolapSession {
+    db: Database,
+}
+
+impl StoolapSession {
+    pub fn new(data_dir: &Path) -> Result<Self, Error> {
+        // DSN string form (NOT a bare path): stoolap::Database::open takes a DSN.
+        let dsn = format!("file://{}", data_dir.join("sessions.db").display());
+        let db = Database::open(&dsn)?;
+        // Idempotent schema creation (see SQL above).
+        db.execute(include_str!("schema.sql"), ())?;
+        Ok(Self { db })
+    }
+
+    fn load_auth_key(&self, dc_id: i32) -> Result<Option<Vec<u8>>, Error> {
+        let rows = self.db.query(
+            "SELECT auth_key FROM mtproto_auth_keys WHERE dc_id = ?",
+            vec![stoolap::core::Value::Integer(dc_id as i64)],
+        )?;
+        // stoolap::Rows iteration: collect first row's first column if present.
+        for row in rows {
+            let row = row?;
+            if let Some(stoolap::core::Value::Blob(key)) = row.get(0) {
+                return Ok(Some(key.clone()));
+            }
+        }
+        Ok(None)
+    }
+}
+
+impl Session for StoolapSession {
+    fn load_auth_key(&self, dc_id: i32) -> Result<Option<Vec<u8>>> { /* delegates */ }
+    fn save_auth_key(&self, dc_id: i32, key: &[u8]) -> Result<()> {
+        // UPSERT (stoolap supports INSERT OR REPLACE / ON CONFLICT).
+        self.db.execute(
+            "INSERT INTO mtproto_auth_keys (dc_id, auth_key, created_at, last_used_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT(dc_id) DO UPDATE SET auth_key = excluded.auth_key, last_used_at = excluded.last_used_at",
+            vec![
+                stoolap::core::Value::Integer(dc_id as i64),
+                stoolap::core::Value::Blob(key.to_vec()),
+                stoolap::core::Value::Integer(now() as i64),
+                stoolap::core::Value::Integer(now() as i64),
+            ],
+        )?;
+        Ok(())
+    }
+    // ... other Session trait methods: sign_in_user (no-op for bots),
+    //     sign_out_user (deletes rows from mtproto_auth_keys + mtproto_user per
+    //     Security Considerations §"sign_out semantics"), load/save dc config ...
+}
+```
+
+The `db.execute(sql, ())` form is used for no-parameter queries (e.g., `CREATE TABLE IF NOT EXISTS`).
+The `db.execute(sql, params)` form takes a `Vec<stoolap::core::Value>` for parameterized queries.
+The `db.query(sql, params)` form returns `stoolap::Rows` which iterates `Result<Row, Error>`.
+See `octo-matrix-session-store::store::StoolapSessionStore::load_*` methods for the full pattern.
 
 **Coexistence with the TDLib adapter.** The TDLib adapter uses
 `data_dir/database` (TDLib manages its own SQLite database; cipherocto does

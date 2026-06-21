@@ -450,13 +450,13 @@ fn read_all_peer_infos(
 }
 
 fn read_update_state(db: &Database) -> Result<Option<UpdatesState>, MtprotoSessionError> {
-    let mut rows = db
+    let rows = db
         .query(
             "SELECT pts, qts, date, seq FROM mtproto_update_state LIMIT 1",
             [],
         )
         .map_err(MtprotoSessionError::from)?;
-    if let Some(row) = rows.next() {
+    for row in rows {
         let row = row.map_err(MtprotoSessionError::from)?;
         let pts = match row.get(0).map_err(MtprotoSessionError::from)? {
             Value::Integer(i) => i as i32,

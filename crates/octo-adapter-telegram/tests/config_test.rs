@@ -1,7 +1,7 @@
 //! Tests for TelegramConfig.
 //! Mission AC line 136: "Config: mode, bot_token, api_id+api_hash+phone, data_dir, groups, webhook_port, password, features"
 
-use octo_adapter_telegram::{AdapterKind, TelegramConfig};
+use octo_adapter_telegram::TelegramConfig;
 
 #[test]
 fn test_default_config() {
@@ -17,8 +17,6 @@ fn test_default_config() {
     assert!(cfg.data_dir.is_none());
     assert!(!cfg.features.e2e_chats);
     assert!(!cfg.features.voice_video);
-    // Mission AC: default adapter_kind is Tdlib (no breaking change).
-    assert_eq!(cfg.adapter_kind, AdapterKind::Tdlib);
 }
 
 #[test]
@@ -35,35 +33,6 @@ webhook_port: 8443
     assert_eq!(cfg.bot_token.as_deref(), Some("123:ABC"));
     assert_eq!(cfg.groups, vec!["-100123", "-100456"]);
     assert_eq!(cfg.webhook_port, Some(8443));
-    // AdapterKind defaults to Tdlib when not specified — backward compatible.
-    assert_eq!(cfg.adapter_kind, AdapterKind::Tdlib);
-}
-
-#[test]
-fn test_adapter_kind_mtproto_opt_in() {
-    // New opt-in path: pure-Rust MTProto adapter (RFC-0850ab-c).
-    let yaml = r#"
-mode: bot
-bot_token: "123:ABC"
-data_dir: "/tmp/tg"
-adapter_kind: mtproto
-"#;
-    let cfg: TelegramConfig = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(cfg.adapter_kind, AdapterKind::Mtproto);
-}
-
-#[test]
-fn test_adapter_kind_round_trip_json() {
-    let yaml = r#"
-mode: bot
-bot_token: "x:y"
-data_dir: "/tmp/tg"
-adapter_kind: mtproto
-"#;
-    let cfg: TelegramConfig = serde_yaml::from_str(yaml).unwrap();
-    let json = serde_json::to_string(&cfg).unwrap();
-    let back: TelegramConfig = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.adapter_kind, AdapterKind::Mtproto);
 }
 
 #[test]

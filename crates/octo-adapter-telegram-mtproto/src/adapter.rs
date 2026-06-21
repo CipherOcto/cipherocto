@@ -114,43 +114,8 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         &self.client
     }
 
-    /// Read-only accessor for the inner `MtprotoSelfHandle`.
-    /// Used by tests and by callers that want to read the
-    /// cached identity. Mutation goes through the
-    /// `set_self_identity` helper below.
-    ///
-    /// NB: this is NOT the `PlatformAdapter::self_handle` trait
-    /// method (which returns `Option<String>`); it's the
-    /// accessor for the underlying `MtprotoSelfHandle` struct.
-    /// Callers that want the gateway-formatted handle should
-    /// call `self_handle()` (no args) which is dispatched to
-    /// the trait method by Rust's method-resolution rules.
-    pub fn self_handle_ref(&self) -> &MtprotoSelfHandle {
-        &self.self_handle
-    }
-
-    /// Set the cached self-identity. Mirrors what
-    /// `connect_bot_token` does internally after a successful
-    /// `sign_in_bot`. Exposed publicly so integration tests
-    /// (and the real-network `RealTelegramMtprotoClient`,
-    /// which writes from `get_me()`) can populate the
-    /// identity without going through the full connect
-    /// flow.
-    pub fn set_self_identity(&self, user_id: i64, username: Option<String>) {
-        self.self_handle.set_identity(user_id, username);
-    }
-
     /// Read-only accessor for the lifecycle state machine.
     pub fn lifecycle(&self) -> &Lifecycle {
-        &self.lifecycle
-    }
-
-    /// Mutable accessor for the lifecycle state machine.
-    /// Used by tests (e.g., to force a particular state for
-    /// a focused unit test) and by the `sign_out` /
-    /// `shutdown` flows that need to bypass the normal
-    /// transition table.
-    pub fn lifecycle_mut(&self) -> &Lifecycle {
         &self.lifecycle
     }
 

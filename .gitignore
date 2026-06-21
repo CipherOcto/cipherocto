@@ -53,3 +53,8 @@ cocoindex_main.py
 # Python lockfile
 uv.lock
 .env
+*.tmp
+
+# Cargo build artifacts (any crate)
+**/target/
+**/Cargo.lock

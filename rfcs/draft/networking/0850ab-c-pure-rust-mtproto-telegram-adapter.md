@@ -663,6 +663,31 @@ Future work F3: integrate with system keyring (e.g., `keyring` crate) for OS-nat
 
 When the auth_key's home DC moves (Telegram rebalancing), grammers handles this internally. The cipherocto `health_check` may briefly return `false` during the migration window. No additional cipherocto-side logic required.
 
+**Migration window caveat.** During DC migration, grammers may temporarily have two valid `auth_key`s (old + new DC) in `mtproto_auth_keys`. The migration is atomic from the cipherocto perspective: the old DC continues to serve until the new DC is fully authenticated, at which point the old auth_key is deleted. There is no window where the adapter accepts messages from an unauthorized DC.
+
+### Log Redaction (security invariant)
+
+The crate MUST install a `tracing` redaction layer that strips secrets from all log output. The integration test suite enforces this invariant (see Test Vectors TV-11 and TV-12). Forbidden substrings in any tracing output (regardless of level):
+
+- Bot tokens (`[0-9]+:[A-Za-z0-9_-]+`)
+- `api_hash` values (32-char hex strings)
+- 2FA passwords (any value tagged `password` or `2fa`)
+- `auth_key` byte arrays (any `Vec<u8>` logged at INFO+)
+- Session IDs / `msg_id`s at INFO+ (allowed at TRACE for protocol debugging)
+
+User IDs, chat IDs, and channel IDs MAY be logged (public identifiers). Message content is logged at DEBUG only and truncated to the first 80 characters.
+
+### sign_out semantics (security invariant)
+
+When `client.sign_out()` is called:
+
+1. The in-memory `Client` is dropped.
+2. The `mtproto_auth_keys` rows for this account MUST be deleted from the stoolap DB.
+3. The `mtproto_user` row MUST be deleted.
+4. The `mtproto_dc_config` rows MAY be retained (they're public knowledge; cleaning them up is an optimization, not a security requirement).
+
+This is enforced by the test suite (TV-13). Without explicit DB deletion, the `SigningOut → SignedOut` transition is a UX lie — the auth_key remains in the DB and can be loaded by a subsequent process restart.
+
 ## Adversarial Review
 
 The research report at `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` went through 6 rounds of adversarial review (a34a9f8, 6f74995, e00af56, d597f57, a65ddd6, d5ca552) and is accepted as the spec we must satisfy. The review fixed 54 issues across spec accuracy, internal consistency, RFC references, weak claims, and MTProto protocol claims.
@@ -712,6 +737,22 @@ A future RFC-level adversarial review will be performed before this RFC is Accep
 3. **What do they gain if successful?** DoS against the adapter (denial of `DOT/1/*` envelope routing).
 4. **What's our defense?** Backoff caps at 30s with max 5 attempts; after that, the adapter transitions to `Failed` and requires operator intervention. The operator can switch to Bot-API HTTP fallback.
 5. **Residual risk:** Acceptable. The 5-attempt cap prevents infinite loops.
+
+### Design decision 6: Auth_key persisted in plaintext (BLOB) in the cipherocto stoolap DB
+
+1. **Who benefits?** An attacker with read access to the operator's filesystem (specifically `data_dir/sessions.db`), or with backup/snapshot access, or with root on the host.
+2. **What does it cost them?** Exploiting a vulnerability in the operator's filesystem/backup security (the same trust boundary that protects the existing `octo-adapter-telegram`'s auth_key in `data_dir/database`).
+3. **What do they gain if successful?** Full bot impersonation from any device: they can sign in as the bot, send/receive `DOT/1/*` envelopes, and (critically) decrypt historical traffic if they also have a pcap of past MTProto sessions.
+4. **What's our defense?** (a) File permissions on `data_dir` (operator's responsibility; documented as `chmod 700` for `data_dir` and `chmod 600` for files inside). (b) **NOT** encrypting the auth_key at rest in v1 (matching the existing TDLib-based adapter's behavior; the auth_key is sensitive but TLS-grade network encryption is the boundary that matters in practice). (c) Future work F6: integrate with OS keyring for the auth_key material (similar to F3 for bot tokens). (d) `client.sign_out()` MUST explicitly delete the auth_key row from `mtproto_auth_keys` (not just clear the in-memory `Client`).
+5. **Residual risk:** **Acceptable for v1** with documented operator responsibility. The threat model is the same as the existing TDLib-based adapter; we don't regress. Future F6 closes the residual risk for security-conscious deployments.
+
+### Design decision 7: Log redaction (tracing output)
+
+1. **Who benefits?** An attacker who can read the operator's logs (log aggregation service, support staff with log access, log files left in world-readable directories).
+2. **What does it cost them?** Access to log storage; potentially free if logs are aggregated to a third-party service.
+3. **What do they gain if successful?** Bot tokens (if logged), `api_hash` (if logged), user IDs of contacts, message content (if not redacted), session IDs (if logged).
+4. **What's our defense?** (a) The crate uses `tracing` (not `println!` or `eprintln!`) so we can install a redaction layer. (b) The crate MUST NOT log bot tokens, `api_hash`, 2FA passwords, auth_key bytes, or session IDs at any level. (c) User IDs and chat IDs MAY be logged (they're not secrets in DOT context — they're public identifiers). (d) Message content MUST NOT be logged at INFO or higher; DEBUG-level logging of message content is allowed but truncated to the first 80 chars. (e) The integration test suite includes a redaction test (asserts that capturing tracing output and grepping for known secret patterns returns no matches).
+5. **Residual risk:** Acceptable. The integration test enforces the redaction invariant; CI fails if a regression introduces secret logging.
 
 ## Compatibility
 
@@ -838,6 +879,45 @@ Expected:
   - On success: Connected → Authenticated → Connected (re-authenticated via persisted auth_key)
 ```
 
+### TV-11: Log redaction — bot token / api_hash / auth_key not in output
+
+```
+Input: Run a test scenario at INFO log level that touches:
+  - bot token in config (e.g., "123456:ABC-DEF...")
+  - api_hash in config (e.g., "0123456789abcdef0123456789abcdef")
+  - auth_key in stoolap DB (256 random bytes)
+  - 2FA password input prompt
+Expected:
+  - tracing-subscriber captures all INFO+ output
+  - Grep for the bot token pattern returns ZERO matches
+  - Grep for the api_hash hex string returns ZERO matches
+  - Grep for any of the 256 auth_key bytes (as hex) returns ZERO matches
+  - Test FAILS if any pattern matches
+```
+
+### TV-12: Log redaction — message content not at INFO+
+
+```
+Input: Send a DOT envelope with a known plaintext payload "secret message body"
+Expected:
+  - At INFO log level, the message body is NOT in any log line
+  - At DEBUG log level, the message body MAY appear but is truncated to ≤80 chars
+  - Test asserts INFO+ output does not contain the full payload
+```
+
+### TV-13: sign_out wipes DB state
+
+```
+Input: Adapter is signed in (TV-1 happy path completed); then sign_out() is called
+Expected:
+  - AdapterLifecycle transitions Connected → Disconnected → (terminated)
+  - BotAuthLifecycle transitions SignedIn → SigningOut → SignedOut
+  - mtproto_auth_keys has ZERO rows (auth_key deleted)
+  - mtproto_user has ZERO rows (user record deleted)
+  - mtproto_dc_config MAY retain rows (public knowledge)
+  - Subsequent sign_in_bot(token) re-authenticates from scratch (no auth_key reuse)
+```
+
 ## Alternatives Considered
 
 | Approach | Pros | Cons |
@@ -927,6 +1007,7 @@ Expected:
 - **F3: OS keyring integration** — store bot tokens in system keyring via the `keyring` crate. Eliminates plaintext config storage.
 - **F4: Multi-account fan-out** — expose `Vec<Arc<Client>>` via the existing `TelegramConfig` extension for multi-account scenarios.
 - **F5: Temp-key support (Gap G1)** — if a future cipherocto use case needs temp keys, add the ~200 LOC wrapper.
+- **F6: OS keyring for auth_key** — store the 256-byte `auth_key` material in the system keyring via the `keyring` crate instead of plaintext in the stoolap DB. Closes the residual risk in §"Adversary Analysis / Design decision 6". Pairs with F3 (bot tokens).
 
 ## Rationale
 

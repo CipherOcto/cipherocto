@@ -94,7 +94,16 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - [ ] `FLOOD_WAIT_X` responses trigger internal pause-and-retry (matrix adapter pattern)
 - [ ] `AuthKeyUnregistered` transitions adapter to `Failed` and surfaces to caller
 - [ ] `RpcError` is logged and surfaced as `SendError`
-- [ ] `SessionError` (corrupted auth_key) deletes the SQLite row and transitions to `Failed`
+- [ ] `SessionError` (corrupted auth_key) deletes the stoolap DB row and transitions to `Failed`
+- [ ] `sign_out` flow (TV-13) deletes the auth_key row from `mtproto_auth_keys` AND the `mtproto_user` row (not just drops the in-memory Client); otherwise the SigningOut → SignedOut transition is a UX lie
+
+### Security invariants
+
+- [ ] **Log redaction test (TV-11, TV-12)** passes: capturing tracing output at INFO+ for any test scenario and grepping for known secret patterns (`[0-9]+:[A-Za-z0-9_-]+` for bot tokens, 32-char hex strings for api_hash, `auth_key`, `password`) returns ZERO matches
+- [ ] **sign_out DB cleanup test (TV-13)** passes: after `sign_out()`, `mtproto_auth_keys` has zero rows for the account and `mtproto_user` has zero rows for the account
+- [ ] **File permissions test** passes: after init, `data_dir/sessions.db` has mode `0600` (or `0o600` on Unix; equivalent on Windows)
+- [ ] **No `rusqlite`/`sqlx`/`sqlite` in `cargo tree`** (verifies no transitive SQLite dep slipped in)
+- [ ] tracing crate is used (NOT `println!`/`eprintln!`) for all output; CI grep enforces this
 
 ### Integration
 

@@ -2,13 +2,19 @@
 
 ## Status
 
-Open
+Claimed (2026-06-21, agent-assisted)
 
 ## RFC
 
 RFC-0850ab-c (Networking): Pure-Rust MTProto Telegram Adapter (Accepted v1.9)
 
-> **Note:** This mission was created when the RFC was in Draft. The RFC has since been promoted to Accepted (commit pending; see RFC §"Version History" 1.9). Mission status remains Open (no claimant yet) per BLUEPRINT.md Mission lifecycle. Implementation may begin now that the RFC is Accepted.
+## Claimant
+
+@mmacedoeu (agent-assisted)
+
+## Pull Request
+
+(none yet)
 
 ## Summary
 

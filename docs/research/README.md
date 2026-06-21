@@ -31,6 +31,7 @@ Mission (implementation)
 | [stoolap-integration-research.md](./stoolap-integration-research.md) | Complete | Stoolap × AI Quota Marketplace integration |
 | [stoolap-determinism-analysis.md](./stoolap-determinism-analysis.md) | Complete | Stoolap determinism (RFC-0104) compliance |
 | [stoolap-data-sync-via-cipherocto-network.md](./stoolap-data-sync-via-cipherocto-network.md) | **Draft** | Two-node data sync for the Stoolap fork via the CipherOcto network (this is the missing feature) |
+| [stoolap-dep-on-cipherocto-circular-avoidance.md](./stoolap-dep-on-cipherocto-circular-avoidance.md) | **Draft** | Reversing the Stoolap → CipherOcto dependency: how to avoid Cargo workspace cycles when adding cipherocto network as a dep of the Stoolap fork (extracts an `octo-sync` leaf workspace, mirroring the `octo-determin` pattern) |
 | [deterministic-overlay-transport.md](./deterministic-overlay-transport.md) | In progress | Source scratch pad for the networking RFC family (DOT, GDP, DGP, OCrypt, MON, DRS, DOM, ORR) |
 | [networking-rfc-cross-reference-analysis.md](./networking-rfc-cross-reference-analysis.md) | Complete | Audit of the 11 networking RFCs and their dependencies |
 | [2026-06-21-telegram-pure-rust-mtproto-adapter.md](./2026-06-21-telegram-pure-rust-mtproto-adapter.md) | Complete | Pure-Rust MTProto Telegram adapter (grammers) to replace TDLib C++ dependency |

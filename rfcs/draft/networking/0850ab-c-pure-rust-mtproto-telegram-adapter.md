@@ -24,14 +24,14 @@ Specify a fresh CipherOcto crate, `octo-adapter-telegram-mtproto`, that implemen
 - RFC-0850ab-a (Networking): Telegram Auth Onboarding CLI — for the `TelegramConfig` schema this adapter consumes
 - RFC-0850p-c (Networking): Transport Group Binding Ceremony — for `GroupState`, `domain_id` semantics, and the multi-platform binding rule
 - RFC-0851p-a (Networking): Network Bootstrap Protocol — a node must be bootstrapped into the mesh before it can route `DOT/1/*` envelopes through any adapter
-- RFC-0914-a (Networking / Process): CipherOcto Stoolap Persistence Convention — for the project-wide mandate that **all new persistence uses CipherOcto's stoolap fork on `feat/blockchain-sql`**; raw `rusqlite` / `sqlx` / `sqlite` is reserved for legacy libraries that require it (TDLib, matrix-sdk-crypto). The new adapter ships with no SQLite dependency.
+- **The cipherocto stoolap-fork persistence convention** (informal; documented in `crates/octo-matrix-session-store/Cargo.toml` and `crates/octo-matrix-session-store/src/lib.rs`; closest Accepted RFC precedent: RFC-0914 (Economics): Stoolap-Only Quota Router Persistence — but the convention is project-wide and not codified in a single RFC). The mandate: **all new persistence uses CipherOcto's stoolap fork on `feat/blockchain-sql`**; raw `rusqlite` / `sqlx` / `sqlite` is reserved for legacy libraries that require it (TDLib, matrix-sdk-crypto). The new adapter ships with no SQLite dependency.
 
 **Optional:**
 
-- RFC-0850p-d (Networking): DC-initiated group creation (draft) — uses grammers' `Client::create_group(...)` as the underlying primitive
-- RFC-0850p-e (Networking): Kick detection (draft) — uses grammers' `Client::kick_participant(...)`
-- RFC-0850p-f (Networking): Group decommission (draft) — uses grammers' `Client::delete_chat(...)`
-- RFC-0853 (Networking): Overlay Cryptography — for mission-scoped signing keys (only relevant when DOT mission signing is enabled)
+- RFC-0850p-d (Networking): DC-initiated group creation (Draft) — uses grammers' `Client::create_group(...)` as the underlying primitive
+- RFC-0850p-e (Networking): Kick detection (Draft) — uses grammers' `Client::kick_participant(...)`
+- RFC-0850p-f (Networking): Group decommission (Draft) — uses grammers' `Client::delete_chat(...)`
+- RFC-0853 (Networking): Overlay Cryptography (Draft) — for mission-scoped signing keys (only relevant when DOT mission signing is enabled)
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG (no cycles) — verified: this RFC depends on 0850, 0850ab-a, 0850p-c, 0851p-a; none depend on this RFC.
@@ -47,7 +47,7 @@ Specify a fresh CipherOcto crate, `octo-adapter-telegram-mtproto`, that implemen
 | G3 | Co-exists with the existing TDLib-based `octo-adapter-telegram` (no breaking changes, no shared state) | Both crates compile in the same workspace; the config flag `octo.telegram.adapter = mtproto \| tdlib` selects at runtime |
 | G4 | Bot-API HTTP fallback is opt-in via `--transport http` flag, never the default | Default transport is MTProto; HTTP fallback requires explicit user opt-in |
 | G5 | Bot mode is the primary auth path; user mode and QR login are escape hatches | The crate compiles and signs in with a bot token in the canonical happy path |
-| G6 | Session storage uses CipherOcto's stoolap fork (RFC-0914-a); no raw SQLite dependency | No `rusqlite` / `sqlx` / `sqlite` in `cargo tree`; auth_key persisted via a custom `StoolapSession` impl of `grammers_session::Session`, in `data_dir/sessions.db` (separate file from the TDLib adapter's `data_dir/database`) |
+| G6 | Session storage uses CipherOcto's stoolap fork (project-wide persistence convention; closest RFC: RFC-0914); no raw SQLite dependency | No `rusqlite` / `sqlx` / `sqlite` in `cargo tree`; auth_key persisted via a custom `StoolapSession` impl of `grammers_session::Session`, in `data_dir/sessions.db` (separate file from the TDLib adapter's `data_dir/database`) |
 | G7 | All `PlatformAdapter` trait methods have a grammers analog with bounded LOC | No trait method requires >50 LOC of glue + the shared envelope codec (~200 LOC total) |
 | G8 | Cross-compilation works for the standard targets | `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `wasm32-unknown-unknown` (sans-IO subset only) |
 | G9 | RFC-0008 execution class is C (transport is non-deterministic; DOT handles consensus) | The class mapping table is explicit |
@@ -301,12 +301,13 @@ pub enum ProxyKind {
 }
 ```
 
-#### Session Storage Schema (CipherOcto Stoolap Fork, per RFC-0914-a)
+#### Session Storage Schema (CipherOcto Stoolap Fork, project-wide persistence convention)
 
 The custom `StoolapSession` (`src/stoolap_session.rs`) is a `grammers_session::Session`
 trait impl backed by CipherOcto's stoolap fork. It writes to `data_dir/sessions.db`
-(via `stoolap::Database::open(path)` per the `octo-matrix-session-store` canonical
-pattern). Schema (idempotent `CREATE TABLE IF NOT EXISTS` on adapter init):
+(via `stoolap::Database::open(&dsn)` per the `octo-matrix-session-store` canonical
+pattern — NB: `Database::open` takes a DSN string like `file:///path/to.db`,
+not a bare path). Schema (idempotent `CREATE TABLE IF NOT EXISTS` on adapter init):
 
 ```sql
 -- One row per DC's auth_key (256 bytes, AES-IGE encrypted at rest by grammers).
@@ -346,7 +347,8 @@ CREATE INDEX IF NOT EXISTS mtproto_user_username_idx ON mtproto_user(username);
 
 **Why not grammers' `SqliteSession`?** The grammers session API exposes a
 `Session` trait for custom backends. The default `SqliteSession` uses raw
-`rusqlite`, which violates the cipherocto persistence convention (RFC-0914-a).
+`rusqlite`, which violates the cipherocto persistence convention (the project-wide
+stoolap-fork mandate; closest Accepted RFC precedent: RFC-0914).
 The custom `StoolapSession` is ~150 LOC and preserves the `Session` trait
 semantics (load/save auth_key by `dc_id`, load/save DC config, load/save user)
 on top of stoolap.
@@ -371,8 +373,13 @@ Output: Result<User, AuthError>
 2. Call `client.sign_in_bot(bot_token).await?`; receive `User` with bot id.
 3. Persist auth_key via the custom `StoolapSession` (this RFC's `src/stoolap_session.rs`),
    a `grammers_session::Session` trait impl backed by CipherOcto's stoolap fork
-   (RFC-0914-a). Database file: `data_dir/sessions.db` (separate from the TDLib
-   adapter's `data_dir/database`; no shared SQLite file, no table-prefix trick).
+   (project-wide persistence convention; canonical pattern at
+   `crates/octo-matrix-session-store/src/store.rs::StoolapSessionStore::new`).
+   Database file: `data_dir/sessions.db` (separate from the TDLib adapter's
+   `data_dir/database`; no shared SQLite file, no table-prefix trick).
+   NB: `stoolap::Database::open` takes a DSN string like `file:///path/to.db`,
+   not a bare path; the `StoolapSession` constructs the DSN from the configured
+   path at open time.
 4. Transition `BotAuthLifecycle::Validating` → `SignedIn`.
 5. Return `User`.
 ```
@@ -602,7 +609,7 @@ The research report identifies 3 protocol gaps where grammers does not ship a pu
 | The existing `octo-adapter-telegram` is not deprecated by this RFC | Co-existence | If deprecated, migration is forced | **ACCEPTED DESIGN:** neither adapter is deprecated; both ship |
 | Bot tokens are stored in `TelegramConfig`, not environment | Auth path | Token leakage via config file | Documented as user responsibility; recommend `chmod 600` |
 | 2FA passwords are not stored | User mode auth | Operator must re-enter on each sign-in | Documented; matches RFC-0850ab-a behavior |
-| The cipherocto stoolap fork (`feat/blockchain-sql`) is the canonical persistence layer (RFC-0914-a) and builds for all primary targets | Session storage | If stoolap fails to build on a target, the adapter cannot persist auth_keys | Pinned branch + checked in CI; alternatives (vendoring, custom fork) documented as Future Work |
+| The cipherocto stoolap fork (`feat/blockchain-sql`) is the canonical persistence layer (project-wide convention; closest RFC: RFC-0914) and builds for all primary targets | Session storage | If stoolap fails to build on a target, the adapter cannot persist auth_keys | Pinned branch + checked in CI; alternatives (vendoring, custom fork) documented as Future Work |
 
 An empty audit is acceptable ONLY for trivial RFCs; this RFC has 12 entries.
 
@@ -734,7 +741,7 @@ Input: api_id=12345, api_hash="abc...", bot_token="123456:ABC..."
 Expected:
   - BotAuthLifecycle transitions NoToken → Validating → SignedIn
   - get_me() returns User with bot id
-  - auth_key persisted in data_dir/sessions.db (CipherOcto stoolap fork, RFC-0914-a)
+  - auth_key persisted in data_dir/sessions.db (CipherOcto stoolap fork; project-wide persistence convention)
     in the mtproto_auth_keys table, keyed on dc_id
   - AdapterLifecycle transitions Uninitialized → Authenticated → Connected
 ```
@@ -889,20 +896,22 @@ Expected:
 
 | File | Change |
 |------|--------|
-| `crates/octo-adapter-telegram-mtproto/Cargo.toml` | New file; grammers deps |
+| `crates/octo-adapter-telegram-mtproto/Cargo.toml` | New file; grammers deps (no `sqlite` feature on `grammers-session`) + CipherOcto stoolap fork (`stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }`) + serde + tokio + reqwest (for future use) + base64 + blake3 + thiserror + tracing |
 | `crates/octo-adapter-telegram-mtproto/src/lib.rs` | New file; re-exports + dispatch |
-| `crates/octo-adapter-telegram-mtproto/src/adapter.rs` | New file; `PlatformAdapter` impl |
+| `crates/octo-adapter-telegram-mtproto/src/config.rs` | New file; `MtprotoAdapterConfig` |
+| `crates/octo-adapter-telegram-mtproto/src/error.rs` | New file; `TelegramError` |
+| `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs` | New file; `AdapterLifecycle` + `BotAuthLifecycle` + `UserAuthLifecycle` enums |
+| `crates/octo-adapter-telegram-mtproto/src/stoolap_session.rs` | New file; custom `StoolapSession` impl of `grammers_session::Session` trait, backed by CipherOcto's stoolap fork; ~150 LOC |
 | `crates/octo-adapter-telegram-mtproto/src/mtproto_client.rs` | New file; grammers wrapper |
 | `crates/octo-adapter-telegram-mtproto/src/auth.rs` | New file; sign_in flows |
-| `crates/octo-adapter-telegram-mtproto/src/http_fallback.rs` | New file (Phase 3); Bot-API |
-| `crates/octo-adapter-telegram-mtproto/src/config.rs` | New file; `MtprotoAdapterConfig` |
 | `crates/octo-adapter-telegram-mtproto/src/envelope.rs` | New file; DOT codec |
-| `crates/octo-adapter-telegram-mtproto/src/error.rs` | New file; `TelegramError` |
+| `crates/octo-adapter-telegram-mtproto/src/adapter.rs` | New file; `PlatformAdapter` impl |
+| `crates/octo-adapter-telegram-mtproto/src/http_fallback.rs` | New file (Phase 3); Bot-API |
 | `crates/octo-adapter-telegram-mtproto/src/self_handle.rs` | New file; loop filter |
 | `crates/octo-adapter-telegram-mtproto/src/groups.rs` | New file; chat discovery |
-| `crates/octo-adapter-telegram-mtproto/src/cleanup.rs` | New file; graceful shutdown |
+| `crates/octo-adapter-telegram-mtproto/src/cleanup.rs` | New file; graceful shutdown (uses `stoolap_session` to persist on shutdown) |
 | `crates/octo-adapter-telegram-mtproto/src/files.rs` | New file; upload/download |
-| `Cargo.toml` (workspace) | Add new crate to members; NO new raw-SQLite dependency added at workspace level (stoolap fork is the only DB dep, per RFC-0914-a) |
+| `Cargo.toml` (workspace) | Add new crate to members; NO new raw-SQLite dependency added at workspace level (stoolap fork is the only DB dep, per the project-wide persistence convention) |
 | `crates/octo-adapter-telegram/src/config.rs` | Add `adapter_kind` field with default `tdlib` (no breaking change) |
 
 ## Future Work
@@ -939,7 +948,7 @@ Why this approach over alternatives? See the "Alternatives Considered" table. Th
 - RFC-0850p-e (Networking): Kick detection (draft) — downstream; uses grammers' `Client::kick_participant(...)`
 - RFC-0850p-f (Networking): Group decommission (draft) — downstream; uses grammers' `Client::delete_chat(...)`
 - RFC-0853 (Networking): Overlay Cryptography — optional; for mission-scoped signing keys
-- RFC-0914-a (Networking / Process): CipherOcto Stoolap Persistence Convention — mandates the stoolap fork for all new persistence; this adapter's session storage conforms via a custom `StoolapSession` impl of the `grammers_session::Session` trait
+- RFC-0914 (Economics): Stoolap-Only Quota Router Persistence — Accepted precedent for the cipherocto stoolap-fork convention; this adapter's session storage extends the convention to the Networking adapter layer (the convention is project-wide, not codified in a single RFC)
 
 ## Related Use Cases
 
@@ -976,7 +985,7 @@ If a future iteration of this workflow requires an explicit Use Case document (p
 | `grammers-mtproto` | 0.9.0 | Sans-IO MTProto envelope, encryption |
 | `grammers-tl-types` | 0.9.0 | Generated TL types |
 | `grammers-client` | 0.8.x | High-level API (Client, Message, User) |
-| `grammers-session` | 0.9.x | Persistence trait (`Session`); we do **NOT** use `SqliteSession` — we ship a custom `StoolapSession` impl of the `Session` trait, backed by CipherOcto's stoolap fork (RFC-0914-a) |
+| `grammers-session` | 0.9.x | Persistence trait (`Session`); we do **NOT** use `SqliteSession` — we ship a custom `StoolapSession` impl of the `Session` trait, backed by CipherOcto's stoolap fork (project-wide persistence convention) |
 | `grammers-crypto` | (workspace-internal) | AES-IGE, RSA, SHA |
 | `grammers-mtsender` | (workspace-internal) | Network I/O; uses Tokio |
 | `grammers-tl-parser` | dev-time only | TL schema parser |
@@ -990,7 +999,7 @@ These are the 8 open questions from the research report's "Open Questions for th
 
 1. Bot mode default — mission acceptance: MTProto default, HTTP fallback opt-in.
 2. Vendoring timing — mission acceptance: trust upstream; vendor after 6 months inactivity.
-3. Session storage location — mission acceptance: CipherOcto stoolap fork in `data_dir/sessions.db` (RFC-0914-a). Separate file from the TDLib adapter's `data_dir/database` (TDLib manages its own SQLite for legacy reasons). No shared SQLite file, no table-prefix trick. The grammers `SqliteSession` is not used.
+3. Session storage location — mission acceptance: CipherOcto stoolap fork in `data_dir/sessions.db` (project-wide persistence convention; closest Accepted RFC: RFC-0914 (Economics)). Separate file from the TDLib adapter's `data_dir/database` (TDLib manages its own SQLite for legacy reasons). No shared SQLite file, no table-prefix trick. The grammers `SqliteSession` is not used.
 4. Multiple accounts per process — mission acceptance: yes, `Vec<Arc<Client>>` via `TelegramConfig` extension.
 5. CDN media (Gap G5) — mission acceptance: skip for v1.
 6. DC migration handling — mission acceptance: grammers handles internally; `health_check` surfaces transient false.

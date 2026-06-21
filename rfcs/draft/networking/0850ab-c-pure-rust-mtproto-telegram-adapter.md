@@ -201,7 +201,7 @@ pub struct MtprotoAdapterConfig {
     /// Optional Bot-API HTTP fallback transport
     pub http_fallback: Option<HttpFallbackConfig>,
 
-    /// Directory for the auth_key SQLite database
+    /// Directory for the auth_key database (CipherOcto stoolap fork; project-wide persistence convention)
     pub data_dir: PathBuf,
 
     /// Optional proxy (SOCKS5 / HTTP CONNECT / MTProto fake-TLS, see §"Optional Wrappers")
@@ -369,19 +369,30 @@ must re-authenticate (auth_keys are not portable between TDLib and grammers).
 Input: bot_token (String)
 Output: Result<User, AuthError>
 
-1. Construct `Client::connect(config)` against the test DC; receive `Client`.
-2. Call `client.sign_in_bot(bot_token).await?`; receive `User` with bot id.
-3. Persist auth_key via the custom `StoolapSession` (this RFC's `src/stoolap_session.rs`),
-   a `grammers_session::Session` trait impl backed by CipherOcto's stoolap fork
-   (project-wide persistence convention; canonical pattern at
+1. Construct `Client::connect(config)` where `config` embeds the custom
+   `StoolapSession` (this RFC's `src/stoolap_session.rs` — a
+   `grammers_session::Session` trait impl backed by CipherOcto's stoolap fork;
+   project-wide persistence convention; canonical pattern at
    `crates/octo-matrix-session-store/src/store.rs::StoolapSessionStore::new`).
    Database file: `data_dir/sessions.db` (separate from the TDLib adapter's
    `data_dir/database`; no shared SQLite file, no table-prefix trick).
    NB: `stoolap::Database::open` takes a DSN string like `file:///path/to.db`,
-   not a bare path; the `StoolapSession` constructs the DSN from the configured
-   path at open time.
-4. Transition `BotAuthLifecycle::Validating` → `SignedIn`.
-5. Return `User`.
+   not a bare path; the `StoolapSession::new` constructs the DSN from the
+   configured path at open time.
+2. Call `client.sign_in_bot(bot_token).await?`; receive `User` with bot id.
+   (grammers internally calls `session.sign_in(...)` on the `StoolapSession`
+   during step 2; persistence is automatic via the trait impl, NOT a manual
+   `session.save()` call from our code.)
+3. Capture `bot_user_id = user.id()` and initialize the adapter's
+   `SelfHandleFilter { self_user_id: bot_user_id }`.
+4. Populate `groups: HashMap<DomainId, ChatId>` map from the bot's group
+   bindings (per RFC-0850p-c): for each `domain_id` the bot is bound to,
+   resolve the corresponding Telegram `chat_id` via `client.resolve_username(...)`
+   or via a previously-cached `Peer` from the last received message in that
+   domain. The map is updated lazily; a missing entry triggers an
+   `UnknownDomain` error on send (see Algorithm 5 step 1).
+5. Transition `BotAuthLifecycle::Validating` → `SignedIn`.
+6. Return `User`.
 ```
 
 #### Algorithm 2: User-mode sign-in (TDLib-style state machine, mirrored from RFC-0850ab-a)
@@ -438,19 +449,43 @@ Output: Vec<RawPlatformMessage>
 Input: domain_id (BroadcastDomainId), envelope (DeterministicEnvelope)
 Output: Result<MessageId, SendError>
 
-1. Look up `chat_id: i64` from the adapter's `groups` map (per RFC-0850p-c binding).
-2. Construct the grammers peer reference:
-     `let peer = grammers_client::types::InputPeer::from(chat_id);`
-   (NB: grammers' high-level API takes an `InputPeer`, not a bare `i64`;
-    `InputPeer` is a TL enum with `PeerUser(id)`, `PeerChat(id)`, `PeerChannel(id)` variants.
-    For DOT transport groups (always Telegram supergroups/channels), the
-    `PeerChannel(chat_id)` variant is used.)
+1. Look up `chat_id: i64` from the adapter's `groups` map (populated in Algorithm 1 step 4):
+   - Map type: `HashMap<DomainId, i64>` (DomainId from RFC-0850 §8.2)
+   - Map key: `DomainId` (32-byte blake3 digest); value: Telegram `chat_id` (i64)
+   - If missing: return `Err(SendError::UnknownDomain(domain_id))`. The operator
+     must re-bind the domain via the RFC-0850p-c binding ceremony.
+
+2. Construct the grammers peer reference. NB: Telegram requires `access_hash`
+   for `InputPeerUser` and `InputPeerChannel`, not just `chat_id`. The adapter
+   maintains a secondary cache `peers: HashMap<i64, InputPeer>` of previously
+   seen peers (populated from incoming updates in Algorithm 4):
+     `let peer = peers.get(&chat_id).cloned()
+         .ok_or(SendError::UnknownChat(chat_id))?;`
+   If the peer is not in the cache (e.g., first send to a domain the bot has
+   never received a message from), call `client.resolve_peer(chat_id).await?`
+   to fetch it from the DC, cache it, then proceed. (Note: `chat_id` resolves
+   to either `PeerChat` for legacy groups or `PeerChannel` for supergroups;
+   grammers' `resolve_peer` handles both. For DOT transport groups — always
+   Telegram supergroups/channels — the `PeerChannel(chat_id)` variant is
+   returned.)
+
 3. Serialize the envelope: `base64::encode_config(envelope.bytes, base64::URL_SAFE_NO_PAD)`.
+   NB: the encoded form is what the test vectors (TV-6, TV-7) call the
+   "envelope payload" — e.g., for a 1KB envelope the encoded form is ~1366 chars
+   (1KB * 4/3 ≈ 1366 with URL_SAFE_NO_PAD).
+
 4. If encoded length ≤ 4096 chars:
    a. `client.send_message(peer, encoded).await?` → return message id.
+   b. Message body is plain text containing ONLY the base64 string (no prefix,
+      no suffix, no markdown); the receiving adapter parses it back via
+      `base64::decode_config(trimmed, base64::URL_SAFE_NO_PAD)`.
+
 5. Else:
-   a. Write encoded envelope to a temporary file.
-   b. `client.send_file(peer, file).await?` with the encoded envelope as the caption.
+   a. Write encoded envelope to a temporary file (`tempfile::NamedTempFile`).
+   b. `client.send_file(peer, file).await?` with `caption = encoded[..4096]`
+      (truncated to fit Telegram's caption limit; the receiver detects truncation
+      by the absence of padding `=` and re-fetches the full file via
+      `get_messages` -> `media.download()`).
    c. Return message id.
 ```
 
@@ -477,13 +512,13 @@ stateDiagram-v2
 
 | From | To | Trigger | Deterministic? | Side Effects | Signing |
 |------|----|---------|----------------|--------------|---------|
-| Uninitialized | Authenticated | `sign_in_*` returns Ok | Yes | Persist auth_key to SQLite | n/a |
+| Uninitialized | Authenticated | `sign_in_*` returns Ok | Yes | grammers persists auth_key via `StoolapSession` trait impl (project-wide persistence convention); no manual `session.save()` call | n/a |
 | Authenticated | Connected | First `send_message` or `next_update` succeeds | Yes | Begin `mtsender` task | n/a |
 | Connected | Disconnected | Network error / DC migration signal | Yes | Stop `mtsender` task; emit `health_check = false` | n/a |
 | Disconnected | Connected | Reconnect succeeds | Yes | Restart `mtsender` task | n/a |
 | Connected | Failed | `AUTH_KEY_INVALID` / `USER_DEACTIVATED` / ban response | Yes | Stop `mtsender`; require operator intervention | n/a |
 | Failed | Uninitialized | Explicit recovery (operator re-creates adapter) | Yes | Re-init from config | n/a |
-| Disconnected | (terminated) | `shutdown` | Yes | Persist state; close SQLite | n/a |
+| Disconnected | (terminated) | `shutdown` | Yes | Persist state; close stoolap DB handle | n/a |
 | Connected | (terminated) | `shutdown` | Yes | Same as above | n/a |
 
 **Liveness check:** `health_check = client.is_authorized()` polled by the `DotGateway` on demand; no background heartbeat required.
@@ -509,10 +544,10 @@ stateDiagram-v2
 | From | To | Trigger | Deterministic? | Side Effects | Signing |
 |------|----|---------|----------------|--------------|---------|
 | NoToken | Validating | Operator provides token | Yes | None | n/a |
-| Validating | SignedIn | `sign_in_bot` returns `Ok(User)` | Yes | Persist auth_key | n/a |
+| Validating | SignedIn | `sign_in_bot` returns `Ok(User)` | Yes | grammers persists auth_key via `StoolapSession` trait impl | n/a |
 | Validating | Failed | `sign_in_bot` returns `Err(_)` | Yes | Log error | n/a |
 | SignedIn | SigningOut | `client.sign_out()` called | Yes | Begin auth_key cleanup | n/a |
-| SigningOut | SignedOut | Auth_key cleared from session | Yes | Drop SQLite row | n/a |
+| SigningOut | SignedOut | Auth_key row deleted from `mtproto_auth_keys` in stoolap DB | Yes | Drop stoolap DB row (also `mtproto_user` per Security Considerations §"sign_out semantics") | n/a |
 
 **Liveness check:** Implicit via `client.is_authorized()`.
 
@@ -954,7 +989,7 @@ Expected:
 - [ ] Bot-mode sign-in (TV-1, TV-2)
 - [ ] Send/receive (TV-6, TV-7, TV-8)
 - [ ] SelfHandleFilter
-- [ ] Session storage (same SQLite, separate table prefix)
+- [ ] Session storage (stoolap DB in `data_dir/sessions.db`, separate file from the TDLib adapter's `data_dir/database`)
 - [ ] Integration tests against Telegram test DC
 
 ### Phase 2: User Mode (Sub-mission 0850ab-c-user)

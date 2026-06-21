@@ -4,6 +4,61 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.3] — 2026-06-21
+
+### Security
+
+- **R17: hand-written `Debug` for `QrLoginHandle { token, url }`.**
+  R15-C3 closed the bot-mode auth-leak
+  (`MtprotoAuthAction`); R16-C1 closed the user-mode
+  sister (`UserAuthAction`). R17 found the next sister
+  leak: `QrLoginHandle` (a struct in `client.rs`) AND
+  `MtprotoTelegramError::QrLoginHandle` (the matching
+  error variant in `error.rs`) both derived `Debug` and
+  would auto-format the raw QR login token bytes (the
+  `auth.exportLoginToken` return — an authorization
+  credential paired with the user scanning the QR) plus
+  the `tg://login?token=<base64>` URL (same data,
+  base64-encoded) on any `dbg!()`,
+  `tracing::error!(?e, ...)`, or panic message. Fix:
+  hand-written `Debug` on the struct prints
+  `token: <redacted N bytes>` and `url: <redacted>`. The
+  error enum's `Debug` is rewritten to mirror the
+  auto-derive for every other variant (Auth / Network /
+  Rpc / RateLimited / Session / Config / Capability /
+  NotReady / Envelope / Internal) and only the
+  `QrLoginHandle` variant is redacted. The `Display` path
+  is unchanged: the QR variant still includes
+  `url={url}` (caller needs the URL to render the QR
+  code — it's the QR data, intentionally public) but the
+  raw token never appears in any user-facing string.
+
+### Tests
+
+- **R17: 4 new unit tests.** 1 in `client.rs`
+  (`qr_login_handle_struct_debug_does_not_leak_token_or_url`
+  covers the struct's Debug redaction: no raw bytes, no
+  base64 URL, redaction marker present, struct name
+  present). 3 in `error.rs`
+  (`qr_login_handle_error_variant_debug_does_not_leak_token_or_url`
+  mirrors the struct test for the error variant;
+  `qr_login_handle_error_variant_display_includes_url`
+  locks in that the QR variant's `Display` still includes
+  the URL — the caller needs it to render the QR code;
+  `mtproto_telegram_error_debug_still_works_for_non_sensitive_variants`
+  spot-checks that the hand-written Debug mirrors the
+  auto-derive shape for the 10 non-credential variants so
+  existing log lines / dbg!() calls on Auth / Network /
+  Rpc / Session errors continue to show useful info).
+- **R17: test totals** 130 default / 154 with
+  `bot-api` (was 126 / 150 after R16).
+- **R17: clippy / fmt clean.** `cargo fmt --check`,
+  `cargo clippy --all-targets --features
+  "real-network bot-api" -- -D warnings`, all four
+  `cargo test --lib` feature combinations, and both
+  example builds (`--features "real-network bot-api"`
+  and no-features) are green.
+
 ## [0.3.2] — 2026-06-21
 
 ### Security
@@ -323,6 +378,7 @@ All notable changes to this crate are documented here. The crate adheres to
 [platform-adapter]: ../octo-network
 [grammers]: https://crates.io/crates/grammers-client
 
+[0.3.3]: #033--2026-06-21
 [0.3.2]: #032--2026-06-21
 [0.3.1]: #031--2026-06-21
 [0.3.0]: #030--2026-06-21

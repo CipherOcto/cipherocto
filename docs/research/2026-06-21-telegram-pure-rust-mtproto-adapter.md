@@ -181,7 +181,7 @@ must satisfy**.
 
 | Field | Value |
 |-------|-------|
-| Repo | `codeberg.org/vilunov/grammers` (primary); `github.com/Lonami/grammers` (mirror); `github.com/overrealdb/grammers` (active fork) |
+| Repo | `codeberg.org/vilunov/grammers` (primary); `github.com/Lonami/grammers` (mirror); `github.com/overrealdb/grammers` (third-party fork) |
 | crates.io | `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x` |
 | Last release | 2026-05-15 (see Codeberg for the exact commit; the recent `grammers-mtproto` and `grammers-client` releases include envelope-format changes and session-storage extensions) |
 | Maintainer | One (Lonami / vilunov) |
@@ -267,7 +267,7 @@ The `tg/` module is the closest existing analog to what
 | `teloxide` | Telegram Bot framework | Bot-API only (no MTProto); too heavy. |
 | `MadelineProto` | PHP TL-generated client | Wrong language. |
 | `WTelegramClient` | C# TL-generated client | Wrong language. |
-| `tdl` (libhunt list) | TDLib FFI bindings | Same C++ dependency model; out of scope for "pure Rust". |
+| `tdl` | Rust FFI bindings to the C++ TDLib | Same C++ dependency model; out of scope for "pure Rust". |
 | `mini-telegram` | MTProto **server** in Rust | Wrong direction. |
 
 There is **no other mature pure-Rust MTProto client library**. grammers
@@ -297,7 +297,7 @@ parameter ranges, exposed APIs).
 | 7.2 (old) | Old-MTP1 SHA-1-based key derivation | Used for `bind_auth_key_inner` inner encryption only | **Not in the public API** of `grammers-mtproto`. The 4-round SHA-1 derivation may be present in `grammers-crypto` as a low-level helper but is not exposed via a public `bind_auth_key_inner` function. | **Gap G1** | ⚠ non-blocking: cipherocto does not need temp keys |
 | 7.3 | AES-256-CTR transport | Streaming AES-CTR, state preserved across frames | `grammers-crypto` has AES-CTR with a `Counter`-state struct that supports incremental encryption | **None** | ✓ |
 | 7.4 | SHA helpers | `sha1` and `sha256` 20/32 bytes | `grammers-crypto` wraps `sha1` and `sha2` crates | — | ✓ |
-| 7.5 | Secure random | OS CSPRNG | `getrandom 0.4` (used inside `grammers-crypto` and `grammers-mtproto`) | — | ✓ |
+| 7.5 | Secure random | OS CSPRNG | `getrandom` (used inside `grammers-crypto` and `grammers-mtproto`; exact version depends on the grammers sub-crate) | — | ✓ |
 | 7.6 | RSA keys | Built-in prod + test keys with SHA-1 fingerprint | `grammers-crypto` has RSA; built-in keys are in `grammers-mtproto::authentication` (the handshake reads them) | — | ✓ |
 | 8 | Auth-key handshake | `req_pq` → `req_DH_params` → `set_client_DH_params` → `dh_gen_ok` (3 round-trips, unauthenticated) | `grammers-mtproto::authentication` implements all 3 steps; `client.sign_in_user(...)` orchestrates the user-mode flow; `client.check_auth_code(...)` for SMS; `client.check_2fa_password(...)` for 2FA; `client.sign_in_bot(...)` for bot mode; `client.qr_login()` for QR | **None** (the algorithm is identical) | ✓ |
 | 8.2 | `req_pq` + inner encryption | `EncryptPQInnerRSA` pipeline (temp_key + SHA-256 + AES-IGE + RSA) | `authentication` does this internally; not exposed as a public API but it works | — | ✓ |
@@ -331,11 +331,13 @@ parameter ranges, exposed APIs).
 **Summary: all 23 top-level sections have a grammers analog; 5 of 23
 have sub-row gaps. All gaps are non-blocking for cipherocto's needs.**
 
-The 3 protocol gaps and 3 out-of-scope gaps are:
+The 3 protocol gaps cipherocto could wrap if needed (G1, G2, G3),
+the 2 protocol gaps cipherocto does not need (G4, G5), and the
+1 gap that is out of MTProto scope (G6) are:
 
 | Gap | Spec section | What grammers lacks | Impact on cipherocto | Required LOC if we fill it |
 |-----|---------------|----------------------|----------------------|------------------------------|
-| **G1** | §7.2 (old) + §10.8 | `bind_auth_key_inner` old-MTP1 inner encryption; the full `auth.bindTempAuthKey` flow | cipherocto does not use temp keys | n/a (skip) |
+| **G1** | §7.2 (old) + §10.8 | `bind_auth_key_inner` old-MTP1 inner encryption; the full `auth.bindTempAuthKey` flow | cipherocto does not use temp keys | n/a (cipherocto does not need this) |
 | **G2** | §9.1 + §9.2 | SOCKS5 client and HTTP CONNECT client | cipherocto does not currently require proxy | ~200 LOC using `tokio-socks` (SOCKS5) + custom CONNECT (HTTP) |
 | **G3** | §6.1 + §9.3 | fake-TLS `ClientHello` preamble for `0xEE` ≥21-byte secrets | region-blocked networks; not in scope for v1 | ~300 LOC of TLS record construction that we never parse (server strips it) |
 

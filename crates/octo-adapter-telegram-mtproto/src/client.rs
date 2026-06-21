@@ -37,6 +37,45 @@ use std::sync::Arc;
 
 use crate::error::MtprotoTelegramError;
 
+/// Build a `tg://login?token=<base64>` URL from the raw
+/// token bytes. Uses standard base64 (with padding) as
+/// the format Telegram's mobile client expects. The
+/// input token is typically 16 random bytes from
+/// `auth.exportLoginToken`.
+///
+/// Hand-rolled to avoid pulling in the `base64` crate
+/// for the `no-default-features` build (where
+/// `grammers-client` is not compiled in).
+pub(crate) fn build_qr_url(token: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(token.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i + 3 <= token.len() {
+        let n = ((token[i] as u32) << 16) | ((token[i + 1] as u32) << 8) | (token[i + 2] as u32);
+        out.push(ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 6) & 0x3F) as usize] as char);
+        out.push(ALPHABET[(n & 0x3F) as usize] as char);
+        i += 3;
+    }
+    let rem = token.len() - i;
+    if rem == 1 {
+        let n = (token[i] as u32) << 16;
+        out.push(ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let n = ((token[i] as u32) << 16) | ((token[i + 1] as u32) << 8);
+        out.push(ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((n >> 6) & 0x3F) as usize] as char);
+        out.push('=');
+    }
+    format!("tg://login?token={}", out)
+}
+
 /// Result of sending a message — includes the platform
 /// message id and the Unix timestamp (seconds since epoch)
 /// when the message was sent.
@@ -49,6 +88,46 @@ pub struct MtprotoSentMessage {
 impl MtprotoSentMessage {
     pub fn new(id: i64, timestamp: i64) -> Self {
         Self { id, timestamp }
+    }
+}
+
+/// A QR code handle returned to the caller. Used by
+/// `MtprotoTelegramAdapter::connect_qr_login` /
+/// `MtprotoTelegramAdapter::poll_qr_login`.
+///
+/// `token` is the raw `auth.LoginToken.token` bytes from
+/// Telegram (NOT base64-encoded). `url` is the
+/// `tg://login?token=<base64>` form the caller embeds in
+/// the QR code (Telegram's mobile clients expect this URL
+/// when scanned).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QrLoginHandle {
+    pub token: Vec<u8>,
+    pub url: String,
+}
+
+impl QrLoginHandle {
+    /// Construct a handle from a `MtprotoTelegramError`.
+    /// Returns `None` if the error is not a `QrLoginHandle`.
+    /// Used by the adapter to extract the handle from the
+    /// client's error return.
+    pub fn from_error(err: &MtprotoTelegramError) -> Option<Self> {
+        match err {
+            MtprotoTelegramError::QrLoginHandle { token, url } => Some(Self {
+                token: token.clone(),
+                url: url.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// True if the handle carries real QR data (token + url).
+    /// Always true today; the field is reserved for future
+    /// variants (e.g., a "session is already authorised"
+    /// marker returned by `connect_qr_login` if the user
+    /// re-scans while signed in).
+    pub fn is_pending(&self) -> bool {
+        !self.token.is_empty() && !self.url.is_empty()
     }
 }
 
@@ -199,6 +278,47 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// (calls `StoolapSession::reset()`).
     async fn sign_out(&self) -> Result<(), MtprotoTelegramError>;
 
+    /// Phase 2.5: start a QR login flow. Calls Telegram's
+    /// `auth.exportLoginToken` and returns the result as
+    /// `Err(MtprotoTelegramError::QrLoginHandle { token, url })`
+    /// so the caller can extract the data and display it
+    /// as a QR code. The caller then loops on
+    /// `poll_qr_login` until the user has scanned the QR
+    /// and the import finalizes.
+    async fn qr_login(
+        &self,
+        api_id: i32,
+        api_hash: &str,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Phase 2.5: poll the QR login status by re-invoking
+    /// `auth.exportLoginToken`. Returns:
+    /// - `Ok(SelfUserInfo)` if the import has finalized
+    ///   (i.e., the user has scanned the QR and the
+    ///   `auth.loginTokenSuccess` response was received).
+    /// - `Err(MtprotoTelegramError::QrLoginHandle { token, url })`
+    ///   if the user has not yet scanned, OR has scanned
+    ///   but the import is not yet ready (the token may
+    ///   have been refreshed; the caller should re-display
+    ///   the QR with the new URL and call `poll_qr_login`
+    ///   again).
+    /// - `Err(MtprotoTelegramError::Auth("2FA_REQUIRED"))`
+    ///   if the primary device has 2FA enabled; the
+    ///   caller should then call `submit_password`.
+    async fn poll_qr_login(&self) -> Result<SelfUserInfo, MtprotoTelegramError>;
+
+    /// Phase 2.5: import the login token after the QR
+    /// scan has finalized. Calls
+    /// `auth.importLoginToken { token: bytes }` which
+    /// returns the authorization (or signals 2FA).
+    /// Returns `Ok(SelfUserInfo)` on success, or
+    /// `Err(MtprotoTelegramError::Auth("2FA_REQUIRED"))`
+    /// if the primary has 2FA enabled.
+    async fn import_login_token(
+        &self,
+        token: &[u8],
+    ) -> Result<SelfUserInfo, MtprotoTelegramError>;
+
     /// Resolve a message by chat_id and message_id to its
     /// attached file_id. Used by the `download_media`
     /// adapter method for the `DOT/2/{msg_id}` path.
@@ -254,6 +374,16 @@ struct MockState {
     updates: VecDeque<MtprotoTelegramUpdate>,
     failure: MockFailureSpec,
     signed_in: bool,
+    /// Phase 2.5: number of times `poll_qr_login` has been
+    /// called since the last `qr_login`.
+    qr_poll_count: u32,
+    /// Phase 2.5: how many `poll_qr_login` calls before the
+    /// mock returns `Ok(SelfUserInfo)`. Default is 0
+    /// (i.e., the very first poll returns success — handy
+    /// for adapter tests that don't care about the
+    /// polling loop). Tests can set this to 2 or 3 to
+    /// exercise the still-pending path.
+    qr_polls_to_success: u32,
 }
 
 impl MockTelegramMtprotoClient {
@@ -316,6 +446,19 @@ impl MockTelegramMtprotoClient {
     /// path).
     pub fn set_signed_in(&self, signed_in: bool) {
         self.state.lock().signed_in = signed_in;
+    }
+
+    /// Phase 2.5: configure the mock's `poll_qr_login`
+    /// behaviour. With `polls=N`, the next `N` calls to
+    /// `poll_qr_login` (after the most recent `qr_login`)
+    /// return `Err(QrLoginHandle { .. })` and the (N+1)th
+    /// returns `Ok(SelfUserInfo)`. Default is 0 (first
+    /// poll succeeds). Each call to `qr_login` resets the
+    /// poll counter.
+    pub fn set_qr_polls_to_success(&self, polls: u32) {
+        let mut g = self.state.lock();
+        g.qr_polls_to_success = polls;
+        g.qr_poll_count = 0;
     }
 
     /// Read the failure spec (for assertions in tests).
@@ -448,6 +591,74 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         Ok(())
     }
 
+    // ----- Phase 2.5: QR login (mock) -----
+
+    async fn qr_login(
+        &self,
+        api_id: i32,
+        api_hash: &str,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Reset the poll counter so the next
+        // `poll_qr_login` call starts fresh.
+        let mut g = self.state.lock();
+        g.qr_poll_count = 0;
+        // Deterministic mock: emit a fixed 16-byte token
+        // built from the api_id + api_hash so tests are
+        // reproducible. The real client uses random bytes
+        // from Telegram.
+        let mut token = Vec::with_capacity(16);
+        let a = api_id.to_le_bytes();
+        let h = api_hash.as_bytes();
+        for i in 0..16 {
+            token.push(a[i % a.len()].wrapping_add(h[i % h.len()]));
+        }
+        let url = build_qr_url(&token);
+        Err(MtprotoTelegramError::QrLoginHandle { token, url })
+    }
+
+    async fn poll_qr_login(&self) -> Result<SelfUserInfo, MtprotoTelegramError> {
+        // Mock: increment a poll counter. After
+        // `qr_polls_to_success` polls, return
+        // `Ok(SelfUserInfo)`. Until then, re-emit the
+        // same handle (the test controls the QR data
+        // by re-calling `qr_login` if it wants a new
+        // token, but the default is to keep the same
+        // handle).
+        let mut g = self.state.lock();
+        g.qr_poll_count += 1;
+        if g.qr_poll_count > g.qr_polls_to_success {
+            g.next_user_id += 1;
+            g.signed_in = true;
+            Ok(SelfUserInfo {
+                user_id: g.next_user_id,
+                username: Some("mock_qr_user".into()),
+                access_hash: 0,
+            })
+        } else {
+            // Re-emit a deterministic handle. The test
+            // can call `qr_login` again to get a fresh
+            // one.
+            let token = vec![0u8; 16];
+            let url = build_qr_url(&token);
+            Err(MtprotoTelegramError::QrLoginHandle { token, url })
+        }
+    }
+
+    async fn import_login_token(
+        &self,
+        _token: &[u8],
+    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+        // Mock: always succeed.
+        let mut g = self.state.lock();
+        g.next_user_id += 1;
+        g.signed_in = true;
+        Ok(SelfUserInfo {
+            user_id: g.next_user_id,
+            username: Some("mock_qr_user".into()),
+            access_hash: 0,
+        })
+    }
+
     async fn get_file_id_for_message(
         &self,
         _chat_id: i64,
@@ -533,5 +744,154 @@ mod tests {
         let info = c.submit_code("12345").await.unwrap();
         assert_eq!(info.username.as_deref(), Some("mock_user"));
         assert!(c.state.lock().signed_in);
+    }
+
+    // ----- Phase 2.5: QR login mock tests -----
+
+    #[test]
+    fn build_qr_url_standard_base64_encoding() {
+        // "hello" (5 bytes) → "aGVsbG8="
+        // Hand-rolled base64 in build_qr_url uses the same
+        // alphabet and padding as RFC 4648 §4.
+        assert_eq!(build_qr_url(b"hello"), "tg://login?token=aGVsbG8=");
+    }
+
+    #[test]
+    fn build_qr_url_empty_input() {
+        // 0 bytes → 0 chars of base64 + "tg://login?token="
+        assert_eq!(build_qr_url(b""), "tg://login?token=");
+    }
+
+    #[test]
+    fn build_qr_url_one_byte_input() {
+        // "a" (1 byte) → "YQ==" (2 chars + padding)
+        assert_eq!(build_qr_url(b"a"), "tg://login?token=YQ==");
+    }
+
+    #[test]
+    fn build_qr_url_two_bytes_input() {
+        // "ab" (2 bytes) → "YWI=" (3 chars + 1 padding)
+        assert_eq!(build_qr_url(b"ab"), "tg://login?token=YWI=");
+    }
+
+    #[test]
+    fn build_qr_url_three_bytes_input_no_padding() {
+        // "abc" (3 bytes) → "YWJj" (no padding)
+        assert_eq!(build_qr_url(b"abc"), "tg://login?token=YWJj");
+    }
+
+    #[test]
+    fn build_qr_url_sixteen_bytes() {
+        // 16 bytes (the typical token size) → 24 base64 chars
+        // (no padding because 16 is not divisible by 3, but
+        // 16 % 3 == 1 → 2 padding chars).
+        let token = [0u8; 16];
+        let url = build_qr_url(&token);
+        assert_eq!(url.len(), "tg://login?token=".len() + 24);
+        assert!(url.ends_with("=="));
+    }
+
+    #[test]
+    fn qr_login_handle_from_error_extracts_token_and_url() {
+        let err = MtprotoTelegramError::QrLoginHandle {
+            token: vec![1, 2, 3, 4],
+            url: "tg://login?token=ABCD".into(),
+        };
+        let h = QrLoginHandle::from_error(&err).expect("from_error");
+        assert_eq!(h.token, vec![1, 2, 3, 4]);
+        assert_eq!(h.url, "tg://login?token=ABCD");
+        assert!(h.is_pending());
+    }
+
+    #[test]
+    fn qr_login_handle_from_error_returns_none_for_other_errors() {
+        let err = MtprotoTelegramError::Auth("nope".into());
+        assert!(QrLoginHandle::from_error(&err).is_none());
+        let err = MtprotoTelegramError::Network("timeout".into());
+        assert!(QrLoginHandle::from_error(&err).is_none());
+    }
+
+    #[tokio::test]
+    async fn mock_qr_login_returns_qr_login_handle() {
+        let c = MockTelegramMtprotoClient::new();
+        let r = c.qr_login(12345, "0123456789abcdef0123456789abcdef").await;
+        match r {
+            Err(MtprotoTelegramError::QrLoginHandle { token, url }) => {
+                assert_eq!(token.len(), 16);
+                assert!(url.starts_with("tg://login?token="));
+            }
+            other => panic!("expected QrLoginHandle, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_poll_qr_login_first_call_succeeds_by_default() {
+        // Default mock: qr_polls_to_success = 0, so the very
+        // first poll_qr_login call returns Ok(SelfUserInfo).
+        let c = MockTelegramMtprotoClient::new();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        let info = c.poll_qr_login().await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
+        assert!(c.state.lock().signed_in);
+    }
+
+    #[tokio::test]
+    async fn mock_poll_qr_login_returns_handle_until_threshold() {
+        // Configure 2 polls before success: the next 2
+        // poll_qr_login calls return Err(QrLoginHandle)
+        // and the 3rd returns Ok.
+        let c = MockTelegramMtprotoClient::new();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        c.set_qr_polls_to_success(2);
+        for i in 0..2 {
+            match c.poll_qr_login().await {
+                Err(MtprotoTelegramError::QrLoginHandle { .. }) => {}
+                other => panic!("poll #{}: expected QrLoginHandle, got {:?}", i, other),
+            }
+        }
+        let info = c.poll_qr_login().await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
+    }
+
+    #[tokio::test]
+    async fn mock_import_login_token_succeeds() {
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.import_login_token(b"any-token-bytes").await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
+        assert!(c.state.lock().signed_in);
+    }
+
+    #[tokio::test]
+    async fn mock_qr_login_resets_poll_counter() {
+        // After a successful poll, calling qr_login again
+        // resets the poll counter so the next poll is
+        // again counted from 0 against the existing
+        // threshold.
+        let c = MockTelegramMtprotoClient::new();
+        c.set_qr_polls_to_success(2);
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        // First 2 polls return handle (counter 1, 2).
+        assert!(matches!(
+            c.poll_qr_login().await,
+            Err(MtprotoTelegramError::QrLoginHandle { .. })
+        ));
+        assert!(matches!(
+            c.poll_qr_login().await,
+            Err(MtprotoTelegramError::QrLoginHandle { .. })
+        ));
+        // 3rd poll succeeds (counter 3 > threshold 2).
+        let info = c.poll_qr_login().await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
+        // Calling qr_login again resets the counter so the
+        // next 2 polls return handle again.
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        assert!(matches!(
+            c.poll_qr_login().await,
+            Err(MtprotoTelegramError::QrLoginHandle { .. })
+        ));
+        assert!(matches!(
+            c.poll_qr_login().await,
+            Err(MtprotoTelegramError::QrLoginHandle { .. })
+        ));
     }
 }

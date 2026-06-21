@@ -49,6 +49,7 @@ use grammers_client::client::{LoginToken, PasswordToken};
 use grammers_client::sender::SenderPool;
 use grammers_client::Client as GrammersClient;
 use grammers_client::SignInError;
+use grammers_tl_types as tl;
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
@@ -57,12 +58,53 @@ use crate::auth::{
     UserAuthServerEvent,
 };
 use crate::client::{
-    MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
+    build_qr_url, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
 };
 use crate::error::MtprotoTelegramError;
 use crate::lifecycle::UserAuthLifecycle;
 use crate::self_handle::MtprotoSelfHandle;
 use crate::session::StoolapSession;
+
+/// Extract a `SelfUserInfo` from a `tl::enums::auth::Authorization`.
+///
+/// `LoginTokenSuccess.authorization` is `tl::enums::auth::Authorization`
+/// (the enum). Its only payload variant carries the
+/// `tl::types::auth::Authorization` struct, which itself
+/// holds `user: tl::enums::User` (the user enum: `Empty`
+/// or `User`). For the `SignUpRequired` variant we fall
+/// back to zeros — same behaviour as the legacy Phase 2.4
+/// code.
+fn extract_self_user_info(
+    authorization: tl::enums::auth::Authorization,
+) -> SelfUserInfo {
+    match authorization {
+        tl::enums::auth::Authorization::Authorization(inner) => {
+            // `tl::enums::User::id()` collapses both
+            // `Empty(UserEmpty)` and `User(User)` to the
+            // inner i64.
+            let user_id = inner.user.id();
+            // Username lives on the inner `User` struct
+            // only (the `UserEmpty` variant has no
+            // username). Filter out empty strings so the
+            // optional is well-defined.
+            let username = match &inner.user {
+                tl::enums::User::User(u) => u.username.clone(),
+                tl::enums::User::Empty(_) => None,
+            }
+            .filter(|s| !s.is_empty());
+            SelfUserInfo {
+                user_id,
+                username,
+                access_hash: 0,
+            }
+        }
+        _ => SelfUserInfo {
+            user_id: 0,
+            username: None,
+            access_hash: 0,
+        },
+    }
+}
 
 /// Wrapper around `grammers_client::Client` that implements
 /// `MtprotoTelegramClient`. Constructed via
@@ -97,6 +139,20 @@ pub struct RealTelegramMtprotoClient {
     /// `submit_password`. `None` outside the
     /// submit_code(2FA) → submit_password window.
     pending_password: parking_lot::Mutex<Option<PasswordToken>>,
+    /// Phase 2.5: api_id used for the current QR login
+    /// attempt. Set by `qr_login`, used by `poll_qr_login`
+    /// and `import_login_token` to re-invoke the same TL
+    /// functions.
+    qr_api_id: parking_lot::Mutex<Option<i32>>,
+    /// Phase 2.5: api_hash used for the current QR login
+    /// attempt. Set by `qr_login`, used by `poll_qr_login`.
+    qr_api_hash: parking_lot::Mutex<Option<String>>,
+    /// Phase 2.5: token bytes returned by the most recent
+    /// successful `auth.exportLoginToken` call. Used by
+    /// `poll_qr_login` to detect when the token changes
+    /// (the user scanned) and by `import_login_token`
+    /// to finalize the import.
+    qr_token: parking_lot::Mutex<Option<Vec<u8>>>,
 }
 
 impl RealTelegramMtprotoClient {
@@ -131,6 +187,9 @@ impl RealTelegramMtprotoClient {
             user_auth_state: parking_lot::Mutex::new(UserAuthLifecycle::NoCredentials),
             pending_login: parking_lot::Mutex::new(None),
             pending_password: parking_lot::Mutex::new(None),
+            qr_api_id: parking_lot::Mutex::new(None),
+            qr_api_hash: parking_lot::Mutex::new(None),
+            qr_token: parking_lot::Mutex::new(None),
         }))
     }
 
@@ -517,7 +576,244 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
         *self.pending_login.lock() = None;
         *self.pending_password.lock() = None;
+        *self.qr_api_id.lock() = None;
+        *self.qr_api_hash.lock() = None;
+        *self.qr_token.lock() = None;
         Ok(())
+    }
+
+    // ----- Phase 2.5: QR login -----
+
+    async fn qr_login(
+        &self,
+        api_id: i32,
+        api_hash: &str,
+    ) -> Result<(), MtprotoTelegramError> {
+        // 1. Drive the state machine: NoCredentials →
+        //    QrLoginPending (client).
+        let new_state = {
+            let current = *self.user_auth_state.lock();
+            next_user_auth_state(UserAuthAction::QrLoginStart, current)?
+        };
+        *self.user_auth_state.lock() = new_state;
+
+        // 2. Invoke `auth.exportLoginToken` and parse the
+        //    response. The response is one of:
+        //    - `LoginToken::Token { token, expires }` — emit
+        //      the handle for the caller to display as a QR
+        //      code. Stash the token + api_id/api_hash for
+        //      the subsequent `poll_qr_login` and
+        //      `import_login_token` calls.
+        //    - `LoginToken::Success(Authorization)` — we're
+        //      already authorized (this is a no-op QR flow).
+        //      Return Ok(SelfUserInfo) and drive the state
+        //      machine to SignedIn.
+        //    - `LoginToken::MigrateTo { dc_id, token }` —
+        //      not implemented in Phase 2.5; treat as an
+        //      internal error.
+        let request = tl::functions::auth::ExportLoginToken {
+            api_id,
+            api_hash: api_hash.to_string(),
+            except_ids: Vec::new(),
+        };
+        let response: tl::enums::auth::LoginToken =
+            self.client.invoke(&request).await.map_err(|e| {
+                MtprotoTelegramError::Auth(format!(
+                    "auth.exportLoginToken: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                ))
+            })?;
+        match response {
+            tl::enums::auth::LoginToken::Token(t) => {
+                // Stash the api_id / api_hash / token for
+                // the subsequent poll and import calls.
+                *self.qr_api_id.lock() = Some(api_id);
+                *self.qr_api_hash.lock() = Some(api_hash.to_string());
+                *self.qr_token.lock() = Some(t.token.clone());
+                let url = build_qr_url(&t.token);
+                Err(MtprotoTelegramError::QrLoginHandle {
+                    token: t.token,
+                    url,
+                })
+            }
+            tl::enums::auth::LoginToken::Success(login_token_success) => {
+                // Already authorized: drive the state
+                // machine QrLoginPending → SignedIn.
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::SignInSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                // Pull user_id / username via the inner
+                // `Authorization::Authorization` variant,
+                // which carries `tl::enums::User` (itself
+                // an enum: `Empty(UserEmpty)` or `User(User)`).
+                // Note: `qr_login` returns `Result<(), _>`
+                // (the user_id/username is exposed via the
+                // `self_handle` for the adapter to read);
+                // a successful `LoginToken::Success` here
+                // is unusual (the session is already
+                // authorised) but we still populate the
+                // self-handle so the adapter can detect
+                // it.
+                let info =
+                    extract_self_user_info(login_token_success.authorization);
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                Ok(())
+            }
+            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                // Not implemented in Phase 2.5. Roll back
+                // to NoCredentials.
+                *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+                Err(MtprotoTelegramError::Internal(
+                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5"
+                        .into(),
+                ))
+            }
+        }
+    }
+
+    async fn poll_qr_login(&self) -> Result<SelfUserInfo, MtprotoTelegramError> {
+        // 1. Re-invoke `auth.exportLoginToken` with the
+        //    same api_id / api_hash as the initial
+        //    `qr_login` call.
+        let (api_id, api_hash) = {
+            let id = self.qr_api_id.lock();
+            let hash = self.qr_api_hash.lock();
+            match (id.as_ref(), hash.as_ref()) {
+                (Some(id), Some(hash)) => (*id, hash.clone()),
+                _ => {
+                    return Err(MtprotoTelegramError::Auth(
+                        "poll_qr_login called without a prior qr_login".into(),
+                    ));
+                }
+            }
+        };
+        let request = tl::functions::auth::ExportLoginToken {
+            api_id,
+            api_hash: api_hash.clone(),
+            except_ids: Vec::new(),
+        };
+        let response: tl::enums::auth::LoginToken =
+            self.client.invoke(&request).await.map_err(|e| {
+                MtprotoTelegramError::Auth(format!(
+                    "auth.exportLoginToken: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                ))
+            })?;
+        match response {
+            tl::enums::auth::LoginToken::Token(t) => {
+                // No scan yet (token unchanged), or scan
+                // happened but import not ready (new
+                // token). Either way, return the handle
+                // for the caller to re-display.
+                *self.qr_token.lock() = Some(t.token.clone());
+                let url = build_qr_url(&t.token);
+                Err(MtprotoTelegramError::QrLoginHandle {
+                    token: t.token,
+                    url,
+                })
+            }
+            tl::enums::auth::LoginToken::Success(login_token_success) => {
+                // Final import succeeded. Drive the state
+                // machine: QrLoginPending → QrLoginConfirmed
+                // (client) then → SignedIn (server).
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
+                };
+                *self.user_auth_state.lock() = new_state;
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::SignInSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                let info =
+                    extract_self_user_info(login_token_success.authorization);
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                Ok(info)
+            }
+            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                Err(MtprotoTelegramError::Internal(
+                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5"
+                        .into(),
+                ))
+            }
+        }
+    }
+
+    async fn import_login_token(
+        &self,
+        token: &[u8],
+    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+        // Drive the state machine: QrLoginPending →
+        // QrLoginConfirmed (client) via QrLoginConfirm.
+        // (After a successful poll, the state is
+        // QrLoginPending; this drives the transition to
+        // QrLoginConfirmed so the import call can advance
+        // to SignedIn.)
+        let new_state = {
+            let current = *self.user_auth_state.lock();
+            next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
+        };
+        *self.user_auth_state.lock() = new_state;
+
+        // Invoke `auth.importLoginToken` with the token
+        // bytes. The response is `LoginToken::Success`
+        // (signed in) or `LoginToken::Token` (a new token
+        // to be re-imported — not expected in normal
+        // flow) or error variants.
+        let request = tl::functions::auth::ImportLoginToken {
+            token: token.to_vec(),
+        };
+        let response: tl::enums::auth::LoginToken =
+            self.client.invoke(&request).await.map_err(|e| {
+                MtprotoTelegramError::Auth(format!(
+                    "auth.importLoginToken: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                ))
+            })?;
+        match response {
+            tl::enums::auth::LoginToken::Success(login_token_success) => {
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::SignInSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                let info =
+                    extract_self_user_info(login_token_success.authorization);
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                Ok(info)
+            }
+            tl::enums::auth::LoginToken::Token(_) => {
+                // Unexpected: the import returned a new
+                // token. Roll back to QrLoginPending and
+                // tell the caller to re-poll.
+                *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
+                Err(MtprotoTelegramError::Auth(
+                    "auth.importLoginToken returned a new token; re-poll required".into(),
+                ))
+            }
+            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
+                Err(MtprotoTelegramError::Internal(
+                    "auth.importLoginToken returned MigrateTo; not implemented in Phase 2.5"
+                        .into(),
+                ))
+            }
+        }
     }
 
     async fn get_file_id_for_message(

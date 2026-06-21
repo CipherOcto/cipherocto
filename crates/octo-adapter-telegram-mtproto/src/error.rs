@@ -168,6 +168,21 @@ pub enum MtprotoTelegramError {
     /// display.
     #[error("internal: {0}")]
     Internal(String),
+
+    /// Phase 2.5: QR login "in progress" marker. The
+    /// adapter's `qr_login` / `poll_qr_login` methods
+    /// return `Err(MtprotoTelegramError::QrLoginHandle {..})`
+    /// when the QR is being displayed (no final authorization
+    /// yet) so the caller can extract the `token` and `url`
+    /// for display, then loop on `poll_qr_login` until it
+    /// returns `Ok(SelfUserInfo)`.
+    ///
+    /// The token is the raw `auth.LoginToken.token` bytes
+    /// (NOT base64-encoded). The URL is the
+    /// `tg://login?token=<base64>` form the caller embeds
+    /// in the QR code.
+    #[error("qr login in progress: url={url}")]
+    QrLoginHandle { token: Vec<u8>, url: String },
 }
 
 impl MtprotoTelegramError {

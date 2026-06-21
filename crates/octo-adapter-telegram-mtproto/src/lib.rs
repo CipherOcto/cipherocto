@@ -53,7 +53,8 @@ pub use auth::{
     MtprotoAuthAction, MtprotoAuthError, UserAuth, UserAuthAction, UserAuthServerEvent,
 };
 pub use client::{
-    MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
+    MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, QrLoginHandle,
+    SelfUserInfo,
 };
 pub use config::MtprotoTelegramConfig;
 pub use envelope::wire_encode;

@@ -4,6 +4,65 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] — 2026-06-21
+
+### Added
+
+- **Phase 2.5: QR login flow** (sub-mission `0850ab-c-user`).
+- `MtprotoTelegramClient::qr_login` / `poll_qr_login` /
+  `import_login_token` trait methods. Implementations:
+  - `MockTelegramMtprotoClient` — deterministic mock that
+    accepts a configurable number of pending polls before
+    returning success (`set_qr_polls_to_success`).
+  - `RealTelegramMtprotoClient` — wraps
+    `tl::functions::auth::ExportLoginToken` and
+    `tl::functions::auth::ImportLoginToken`. Drives the
+    `UserAuthLifecycle` state machine through
+    `NoCredentials → QrLoginPending → QrLoginConfirmed →
+    SignedIn` on success.
+- `MtprotoTelegramAdapter::connect_qr_login` /
+  `poll_qr_login` / `import_qr_login_token` adapter
+  methods that orchestrate the flow and drive the outer
+  `AdapterLifecycle` to `Ready` on success.
+- `QrLoginHandle` struct (re-export of the
+  `MtprotoTelegramError::QrLoginHandle` variant payload;
+  `QrLoginHandle::from_error` helper).
+- Hand-rolled `build_qr_url` (standard base64 with padding)
+  — no extra crate dependency for the
+  `no-default-features` build.
+- `MtprotoTelegramError::QrLoginHandle { token, url }`
+  variant: a flow-state marker (not a real error). The
+  `From<MtprotoTelegramError>` for `PlatformAdapterError`
+  mapping translates it to `ApiError(425)` ("Too Early —
+  the QR isn't scanned yet") for generic platform code
+  that doesn't pattern-match on the variant directly.
+- `UserAuthLifecycle::QrLoginPending` and
+  `UserAuthLifecycle::QrLoginConfirmed` enum variants
+  (repr `0x09` and `0x0A`) plus `UserAuthAction::QrLoginStart`
+  / `UserAuthAction::QrLoginConfirm` client-side
+  transitions; `SignInSucceeded` server-side transition
+  drives `QrLoginConfirmed → SignedIn`.
+
+### Changed
+
+- `clippy::manual_div_ceil` fix in the new
+  `build_qr_url` (`(n + 2) / 3` → `n.div_ceil(3)`).
+
+### Deferred to sub-missions
+
+- **Phase 3 — Bot-API HTTP fallback**: sub-mission
+  `0850ab-c-http`.
+- **Phase 4 — Transport wrappers** (SOCKS5, HTTP CONNECT,
+  fake-TLS): sub-mission `0850ab-c-wrappers` (conditional
+  on cipherocto use case).
+
+[rfc]: ../../../rfcs/accepted/networking/0850ab-c-pure-rust-mtproto-telegram-adapter.md
+[platform-adapter]: ../octo-network
+[grammers]: https://crates.io/crates/grammers-client
+
+[0.2.0]: #020--2026-06-21
+[0.1.0]: #010--2026-06-21
+
 ## [0.1.0] — 2026-06-21
 
 ### Added

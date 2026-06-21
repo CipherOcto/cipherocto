@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use octo_adapter_telegram_mtproto::client::{
-    MockTelegramMtprotoClient, MtprotoTelegramClient, MtprotoTelegramUpdate, NewMessage,
+    MockTelegramMtprotoClient, MtprotoTelegramUpdate, NewMessage,
 };
 use octo_adapter_telegram_mtproto::{
     AdapterLifecycle, AuthStateKey, MtprotoTelegramAdapter, MtprotoTelegramConfig,

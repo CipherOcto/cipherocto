@@ -16,7 +16,7 @@ cipherocto `PlatformAdapter` (RFC-0850 §8.2) and the surrounding
 - `/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` — 23-section protocol reference (in-tree, not part of this repo).
 - `Lonami/grammers` (Codeberg mirror `vilunov/grammers`; crates.io: `grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`).
 - `dgrr/tgcli` — production pure-Rust CLI on top of grammers.
-- The cipherocto RFCs `0850-deterministic-overlay-transport.md` (parent) and the `0850p-*` family (siblings) under `rfcs/accepted/networking/`.
+- The cipherocto RFCs `0850-deterministic-overlay-transport.md` (parent) and the `0850p-*` family (accepted transport RFCs: 0850p-a WhatsApp auth onboarding, 0850p-c group binding; draft RFCs: 0850p-d DC-initiated group creation, 0850p-e kick detection, 0850p-f group decommission) under `rfcs/accepted/networking/` and `rfcs/draft/networking/`.
 - The cipherocto research docs `docs/research/social-platform-transport-patterns.md` and `docs/research/group-coordination-transport-adapters.md` — the existing transport-adapter research.
 - `docs/plans/2026-05-31-matrix-rust-sdk-migration.md` — the closest precedent: a pure-Rust migration of a non-pure-Rust adapter.
 
@@ -577,16 +577,19 @@ small wrapper, not a grammers fork**:
 
 - **G1 (old-MTP1 `bind_auth_key_inner`):** skip. cipherocto does
   not need temp keys; the 24h-validity temp key path is used by
-  tdlib for bot login acceleration and CDN file downloads. cipherocto
-  uses long-lived auth keys and direct file uploads. If a future
-  cipherocto use case does need temp keys, the wrapper is ~200 LOC
-  of AES-IGE + 4-round SHA-1 derivation.
+  tdlib/tdesktop for CDN file downloads/uploads, web previews,
+  payments, and other bandwidth-heavy operations that benefit
+  from cheap per-request auth. cipherocto uses long-lived auth
+  keys and direct file uploads. If a future cipherocto use case
+  does need temp keys, the wrapper is ~200 LOC of AES-IGE +
+  4-round SHA-1 derivation.
 
-- **G2 (SOCKS5 / HTTP CONNECT):** the wrapper is a thin layer that
-  intercepts the `TcpStream` that `transport::Tcp::connect(...)`
-  would otherwise open, runs the SOCKS5/CONNECT handshake, and hands
-  the resulting stream to `transport::Tcp`. The `tokio-socks` crate
-  does the SOCKS5 part. The HTTP CONNECT part is ~50 LOC using
+- **G2 (SOCKS5 / HTTP CONNECT):** the wrapper pre-establishes
+  the TCP connection through SOCKS5 or HTTP CONNECT and hands
+  the resulting `tokio::net::TcpStream` to grammers' transport
+  (rather than letting `transport::Tcp::connect(...)` open its
+  own connection). The `tokio-socks` crate does the SOCKS5 part.
+  The HTTP CONNECT part is ~50 LOC using
   `tokio::io::AsyncWriteExt`. Total: ~200 LOC.
 
 - **G3 (fake-TLS `0xEE` ClientHello):** the wrapper constructs a
@@ -785,7 +788,7 @@ on the critical path for the cipherocto v1 adapter.
 - `codeberg.org/vilunov/grammers` — primary grammers repo (last
   commit 2026-05-15).
 - `github.com/Lonami/grammers` — github mirror.
-- `github.com/overrealdb/grammers` — active fork.
+- `github.com/overrealdb/grammers` — third-party fork.
 - `crates.io/crates/grammers-mtproto` (0.9.0),
   `grammers-tl-types` (0.9.0), `grammers-client` (0.8.x).
 - `docs.rs/grammers-mtproto` — current API reference.

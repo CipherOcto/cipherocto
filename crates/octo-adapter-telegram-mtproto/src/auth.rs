@@ -196,7 +196,7 @@ use crate::lifecycle::UserAuthLifecycle;
 /// RequestCode/SubmitCode/SubmitPassword shape); `UserAuthAction`
 /// is the user-mode-specific equivalent that drives the
 /// `UserAuthLifecycle` state machine.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UserAuthAction {
     /// Begin user sign-in: send a login code to the configured
@@ -231,9 +231,16 @@ pub enum UserAuthAction {
     SignOut,
 }
 
-impl fmt::Display for UserAuthAction {
+// Custom Debug impl: the derived `Debug` would print the
+// phone / SMS code / 2FA password payloads in cleartext
+// (TV-11/TV-12). This is the user-mode sister of the
+// `MtprotoAuthAction` Debug fix in R15-C3; R16-C1 is the
+// follow-up that closed the gap. We print the variant name
+// only and let the caller introspect the payload via the
+// `match` arms if they need it.
+impl fmt::Debug for UserAuthAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+        let variant = match self {
             Self::RequestCode { .. } => "RequestCode",
             Self::SubmitCode { .. } => "SubmitCode",
             Self::SubmitPassword { .. } => "SubmitPassword",
@@ -241,7 +248,22 @@ impl fmt::Display for UserAuthAction {
             Self::QrLoginConfirm => "QrLoginConfirm",
             Self::SignOut => "SignOut",
         };
-        f.write_str(s)
+        f.write_str(variant)
+    }
+}
+
+impl fmt::Display for UserAuthAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Same as the Debug impl above: variant name only,
+        // never the payload (phone / code / password).
+        f.write_str(match self {
+            Self::RequestCode { .. } => "RequestCode",
+            Self::SubmitCode { .. } => "SubmitCode",
+            Self::SubmitPassword { .. } => "SubmitPassword",
+            Self::QrLoginStart => "QrLoginStart",
+            Self::QrLoginConfirm => "QrLoginConfirm",
+            Self::SignOut => "SignOut",
+        })
     }
 }
 
@@ -901,6 +923,86 @@ mod tests {
             !mapped_msg.contains("another-secret"),
             "From<MtprotoAuthError> mapping leaked password: {}",
             mapped_msg
+        );
+    }
+
+    #[test]
+    fn user_auth_action_debug_does_not_leak_payload() {
+        // R16-C1: UserAuthAction is the user-mode sister of
+        // MtprotoAuthAction. R15-C3 fixed the bot-mode Debug
+        // (variant name only); the user-mode Debug was
+        // missed. The 3 sensitive variants (RequestCode /
+        // SubmitCode / SubmitPassword) all hold a payload
+        // that must NOT appear in `{:?}` output — same
+        // threat model as TV-11/TV-12.
+
+        let a = UserAuthAction::RequestCode {
+            phone: "+15555550100".into(),
+        };
+        let dbg = format!("{:?}", a);
+        assert!(
+            !dbg.contains("+15555550100"),
+            "UserAuthAction::RequestCode Debug leaked phone: {}",
+            dbg
+        );
+        assert_eq!(dbg, "RequestCode");
+
+        let a = UserAuthAction::SubmitCode {
+            code: "12345".into(),
+        };
+        let dbg = format!("{:?}", a);
+        assert!(
+            !dbg.contains("12345"),
+            "UserAuthAction::SubmitCode Debug leaked code: {}",
+            dbg
+        );
+        assert_eq!(dbg, "SubmitCode");
+
+        let a = UserAuthAction::SubmitPassword {
+            password: "hunter2".into(),
+        };
+        let dbg = format!("{:?}", a);
+        assert!(
+            !dbg.contains("hunter2"),
+            "UserAuthAction::SubmitPassword Debug leaked password: {}",
+            dbg
+        );
+        assert_eq!(dbg, "SubmitPassword");
+    }
+
+    #[test]
+    fn invalid_user_transition_error_does_not_leak_payload() {
+        // R16-C1: closing the gap on the user-mode side.
+        // R15-C3's test only covered `InvalidTransition`
+        // (bot mode). The user-mode `InvalidUserTransition`
+        // has the same leak risk because
+        // `MtprotoAuthError` derives `Debug` and the
+        // action field would be auto-formatted. With the
+        // hand-written Debug for `UserAuthAction` the
+        // leak is closed.
+
+        let action = UserAuthAction::SubmitPassword {
+            password: "another-secret".into(),
+        };
+        let e = MtprotoAuthError::InvalidUserTransition {
+            from: UserAuthLifecycle::PasswordRequired,
+            action,
+        };
+        // Display (the path used by `#[error("...")]`).
+        let msg = format!("{}", e);
+        assert!(
+            !msg.contains("another-secret"),
+            "InvalidUserTransition Display leaked password: {}",
+            msg
+        );
+        assert!(msg.contains("SubmitPassword"), "msg = {}", msg);
+        // Debug (the path used by `tracing::error!(?e, ...)`,
+        // `dbg!(e)`, or any `{:?}` formatter on the error).
+        let dbg = format!("{:?}", e);
+        assert!(
+            !dbg.contains("another-secret"),
+            "InvalidUserTransition Debug leaked password: {}",
+            dbg
         );
     }
 }

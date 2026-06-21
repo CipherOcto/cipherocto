@@ -235,6 +235,26 @@ impl MtprotoTelegramConfig {
                 ));
             }
         }
+        // R16-C2: validate `bot_api_base_url` so misconfiguration
+        // surfaces at config-load time, not at first request.
+        // Three failure modes we want to catch:
+        //   1. Empty string → `BotApiClient::method_url` would
+        //      produce a relative URL (reqwest rejects at request
+        //      time, not at config time).
+        //   2. Non-https URL → would silently send the bot token
+        //      (the only auth credential on the Bot API path) over
+        //      plaintext. Footgun prevention.
+        //   3. Malformed URL → also caught at request time, not at
+        //      config time. The `starts_with("https://")` check
+        //      catches this case incidentally.
+        if let Some(url) = &self.bot_api_base_url {
+            if url.is_empty() {
+                return Err("bot_api_base_url must not be empty".into());
+            }
+            if !url.starts_with("https://") {
+                return Err(format!("bot_api_base_url must use https (got {})", url));
+            }
+        }
         match self.mode_str() {
             "bot" => {
                 if self.bot_token.is_none() || self.bot_token.as_deref().unwrap().is_empty() {
@@ -395,6 +415,28 @@ mod tests {
         let mut c = bot_config();
         c.api_layer = Some(999);
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn bot_api_base_url_validation() {
+        // R16-C2: validate() must reject empty / non-https
+        // `bot_api_base_url`. The wiremock happy-path test
+        // bypasses validate() (uses MtprotoTelegramAdapter::new
+        // directly), so this is the only place the new
+        // validation is exercised.
+        let mut c = bot_config();
+        // None is the default and must pass.
+        assert!(c.validate().is_ok());
+        // Empty string is rejected.
+        c.bot_api_base_url = Some(String::new());
+        assert!(c.validate().is_err());
+        // http:// is rejected (token-over-plaintext footgun).
+        c.bot_api_base_url = Some("http://example.com".to_string());
+        let e = c.validate().unwrap_err();
+        assert!(e.contains("https"), "err = {}", e);
+        // https:// is accepted.
+        c.bot_api_base_url = Some("https://api.telegram.org".to_string());
+        assert!(c.validate().is_ok());
     }
 
     #[test]

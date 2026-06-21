@@ -1168,6 +1168,83 @@ mod tests {
         assert_eq!(d1.domain_hash, d2.domain_hash);
     }
 
+    // R16-C4: unit tests for the three chat-id conventions
+    // that R15-C7 added to `register_domain`. The previous
+    // version rejected positive ids, which excluded user
+    // and basic-group chats. The integration coverage in
+    // the send_envelope tests only exercises the
+    // supergroup form (`-100…`); these tests cover the
+    // other two conventions and the reject path.
+
+    #[test]
+    fn register_domain_accepts_user_chat_id() {
+        // R16-C4: positive i64 — the "user" convention.
+        // The previous impl rejected this (`n > 0` was
+        // the reject path); R15-C7 fixed it.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        let d = a.domain_id("123456789");
+        assert!(
+            a.register_domain(&d, "123456789").is_ok(),
+            "register_domain must accept user chat_id"
+        );
+        // chat_id_for_domain round-trips.
+        assert_eq!(a.chat_id_for_domain(&d).as_deref(), Some("123456789"));
+    }
+
+    #[test]
+    fn register_domain_accepts_basic_group_chat_id() {
+        // R16-C4: positive i32 within the small-group
+        // range (typical Telegram basic groups are
+        // < 1e12). The previous impl rejected this too.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        let d = a.domain_id("987654321");
+        assert!(
+            a.register_domain(&d, "987654321").is_ok(),
+            "register_domain must accept basic-group chat_id"
+        );
+        assert_eq!(a.chat_id_for_domain(&d).as_deref(), Some("987654321"));
+    }
+
+    #[test]
+    fn register_domain_accepts_supergroup_chat_id() {
+        // R16-C4: the canonical `-100…` form. This is
+        // the form the existing send_envelope tests
+        // cover; we duplicate the assertion here so
+        // register_domain has direct test coverage of
+        // its own accept path.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        let d = a.domain_id("-1001234567890");
+        assert!(
+            a.register_domain(&d, "-1001234567890").is_ok(),
+            "register_domain must accept supergroup chat_id"
+        );
+        assert_eq!(a.chat_id_for_domain(&d).as_deref(), Some("-1001234567890"));
+    }
+
+    #[test]
+    fn register_domain_rejects_empty_zero_non_i64() {
+        // R16-C4: the reject path. R15-C7 added these
+        // checks; this test locks them in.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        let d = a.domain_id("dummy");
+        // Empty.
+        let e = a.register_domain(&d, "").unwrap_err();
+        assert!(e.contains("empty"), "err = {}", e);
+        // Whitespace only (trims to empty).
+        let e = a.register_domain(&d, "   ").unwrap_err();
+        assert!(e.contains("empty"), "err = {}", e);
+        // Zero.
+        let e = a.register_domain(&d, "0").unwrap_err();
+        assert!(e.contains("0"), "err = {}", e);
+        // Not an i64.
+        let e = a.register_domain(&d, "not-a-number").unwrap_err();
+        assert!(e.contains("not a valid i64"), "err = {}", e);
+    }
+
     #[tokio::test]
     async fn shutdown_transitions_to_stopped() {
         let mock = MockTelegramMtprotoClient::new();

@@ -26,7 +26,14 @@
 use std::env;
 use std::process::ExitCode;
 
-use tracing::{error, info};
+// R16-C3: gate the `info` import on `bot-api` so the
+// `not(bot-api)` build doesn't warn about an unused
+// import. `error!` is used in both branches (the main
+// pre-init usage hint, the connect-time errors, and the
+// `not(bot-api)` "you built wrong" message).
+use tracing::error;
+#[cfg(feature = "bot-api")]
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "bot-api")]
@@ -107,7 +114,11 @@ async fn main() -> ExitCode {
     #[cfg(not(feature = "bot-api"))]
     {
         let _ = (bot_token, chat_id, text, long_poll);
-        warn!("this example requires the `bot-api` feature; rebuild with --features bot-api");
+        // R16-C3: use `error!` here (not `warn!`) so this
+        // branch compiles without an extra `use tracing::warn;`
+        // that the `bot-api` branch doesn't need. Semantically
+        // the message IS an error — the user built wrong.
+        error!("this example requires the `bot-api` feature; rebuild with --features bot-api");
         ExitCode::from(2)
     }
 }

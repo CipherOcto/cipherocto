@@ -252,6 +252,30 @@ impl StoolapSession {
     }
 }
 
+impl Drop for StoolapSession {
+    /// Zeroize the cached `auth_key` bytes on drop.
+    ///
+    /// The cache's `DcOption::auth_key: Option<[u8; 256]>`
+    /// holds the raw 256-byte MTProto auth key in plaintext
+    /// (DD6: an attacker who reads them can impersonate the
+    /// user to Telegram). The `StoolapSession` outlives the
+    /// adapter in `Arc<StoolapSession>` form; when the last
+    /// `Arc` is dropped, this `Drop` impl fires and clears
+    /// every cached auth key in the in-memory map.
+    ///
+    /// Note: during the session's lifetime the bytes are
+    /// still in memory (grammers needs them to sign RPC
+    /// requests). The `Drop` impl wipes them on shutdown.
+    fn drop(&mut self) {
+        let mut cache = self.cache.lock();
+        for dc_opt in cache.dc_options.values_mut() {
+            if let Some(key) = dc_opt.auth_key.as_mut() {
+                zeroize::Zeroize::zeroize(key);
+            }
+        }
+    }
+}
+
 /// Schema migration. Mirrors the grammers `SqliteSession`
 /// schema (5 tables) but in stoolap's type system.
 ///
@@ -435,15 +459,34 @@ fn read_all_peer_infos(db: &Database) -> Result<HashMap<PeerId, PeerInfo>, Mtpro
             _ => None,
         };
         let info = info_from_subtype(subtype, peer_id, hash, bot, channel_kind);
-        // Persist the bare id; reconstruct the PeerId on
-        // load (we only have the bare id from the SQL
-        // INTEGER column). The peer kind is encoded in
-        // the `subtype` column, so we can pick the right
-        // constructor (user / chat / channel). We assume
-        // User here because the most common case is a
-        // cached bot/user peer; Chat and Channel would
-        // need a richer reconstruction path.
-        out.insert(PeerId::user_unchecked(peer_id), info);
+        // Reconstruct the `PeerId` based on the `subtype`
+        // column. Telegram's three peer kinds have different
+        // sign conventions and access-hash requirements:
+        //
+        // - User (incl. self): positive or arbitrary id.
+        //   `PeerId::user_unchecked` is always safe.
+        // - Chat: small-group id (positive i32). The
+        //   `chat_unchecked` constructor is the only one
+        //   that yields a `PeerKind::Chat` discriminant.
+        // - Channel: supergroup / channel id (negative i64).
+        //   Reconstructing as `user_unchecked` would yield
+        //   a User peer with a negative id, which is NOT
+        //   the same `PeerId` and breaks the cache lookup
+        //   (`peer(PeerId::channel(id))` would miss).
+        //
+        // The unchecked constructors skip the validity check
+        // (the persisted rows were already validated at
+        // write time via `peer(peer_id)` returning
+        // `Some(PeerInfo::...)`).
+        let peer_id_value = match subtype {
+            SUBTYPE_CHAT => PeerId::chat_unchecked(peer_id),
+            SUBTYPE_CHANNEL => PeerId::channel_unchecked(peer_id),
+            // User and UserSelf both yield a User PeerId.
+            // Unknown subtype falls back to user_unchecked so
+            // we don't lose the row entirely.
+            _ => PeerId::user_unchecked(peer_id),
+        };
+        out.insert(peer_id_value, info);
     }
     Ok(out)
 }
@@ -801,6 +844,58 @@ mod tests {
         // Re-open the file and confirm hydration.
         let s2 = StoolapSession::open(&path).unwrap();
         let got2 = s2.peer(PeerId::user_unchecked(12345)).await.unwrap();
+        assert_eq!(got2, info);
+    }
+
+    #[tokio::test]
+    async fn cache_peer_chat_round_trip() {
+        // R15-C5: a small-group (chat) peer must hydrate back
+        // as a `PeerId` with `PeerKind::Chat`, not as a User.
+        // The previous reconstruction used
+        // `PeerId::user_unchecked(peer_id)` for every row,
+        // which means `peer(PeerId::chat(id))` would miss
+        // the row after re-opening the session file.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let s = StoolapSession::open(&path).unwrap();
+        let info = PeerInfo::Chat { id: 42 };
+        s.cache_peer(&info).await;
+        let got = s.peer(PeerId::chat_unchecked(42)).await.unwrap();
+        assert_eq!(got, info);
+        drop(s);
+        // Re-open the file and confirm hydration with the
+        // chat constructor.
+        let s2 = StoolapSession::open(&path).unwrap();
+        let got2 = s2.peer(PeerId::chat_unchecked(42)).await.unwrap();
+        assert_eq!(got2, info);
+    }
+
+    #[tokio::test]
+    async fn cache_peer_channel_round_trip() {
+        // R15-C5: a channel / supergroup peer must hydrate
+        // back as `PeerId::channel(...)`, not
+        // `PeerId::user_unchecked(...)`. The bare id is
+        // positive; the `PeerId` constructor handles the
+        // negative encoding internally. Reconstructing as
+        // user would yield a User peer with a negative
+        // bare_id, which is a different `PeerId` value.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let s = StoolapSession::open(&path).unwrap();
+        let info = PeerInfo::Channel {
+            id: 1234567890,
+            auth: Some(PeerAuth::from_hash(7777)),
+            kind: Some(ChannelKind::Megagroup),
+        };
+        s.cache_peer(&info).await;
+        let got = s.peer(PeerId::channel_unchecked(1234567890)).await.unwrap();
+        assert_eq!(got, info);
+        drop(s);
+        let s2 = StoolapSession::open(&path).unwrap();
+        let got2 = s2
+            .peer(PeerId::channel_unchecked(1234567890))
+            .await
+            .unwrap();
         assert_eq!(got2, info);
     }
 

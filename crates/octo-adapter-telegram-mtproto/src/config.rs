@@ -114,6 +114,18 @@ pub struct MtprotoTelegramConfig {
     /// `mtproto` (the Bot API is bot-only).
     #[serde(default)]
     pub transport: Transport,
+
+    /// Override the Bot API base URL (Phase 3 /
+    /// sub-mission 0850ab-c-http). Only used when
+    /// `transport = http`. Defaults to
+    /// `https://api.telegram.org`; tests override this to
+    /// point the adapter at a wiremock server.
+    ///
+    /// NB: this is NOT a credential. The base URL is
+    /// public; the bot token is the only secret on the
+    /// Bot API path.
+    #[serde(default)]
+    pub bot_api_base_url: Option<String>,
 }
 
 impl std::fmt::Debug for MtprotoTelegramConfig {
@@ -139,6 +151,7 @@ impl std::fmt::Debug for MtprotoTelegramConfig {
             .field("app_version", &self.app_version)
             .field("test_dc_url", &self.test_dc_url)
             .field("transport", &self.transport)
+            .field("bot_api_base_url", &self.bot_api_base_url)
             .finish()
     }
 }
@@ -295,6 +308,9 @@ impl MtprotoTelegramConfig {
                 .ok()
                 .and_then(|s| s.parse::<Transport>().ok())
                 .unwrap_or_default(),
+            bot_api_base_url: std::env::var("TELEGRAM_BOT_API_BASE_URL")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 
@@ -308,11 +324,24 @@ impl MtprotoTelegramConfig {
 
     /// Load from file; fall back to env vars if the file is
     /// missing. Other read/parse errors are returned.
+    ///
+    /// The "is the file missing?" check is done by inspecting
+    /// the `io::ErrorKind` of the underlying error rather
+    /// than matching on the platform-localised error string
+    /// (the previous implementation matched on `"No such
+    /// file"` / `"not found"` substrings, which broke on
+    /// Windows where the OS error is
+    /// "The system cannot find the file specified. (os
+    /// error 2)" and on some glibc versions where the
+    /// message is `"No such file or directory (os error 2)"`).
+    /// The cross-platform way to ask "did the read fail
+    /// because the file doesn't exist?" is `ErrorKind::NotFound`.
     pub fn from_file_or_env(path: &std::path::Path) -> Result<Self, String> {
-        match Self::from_file(path) {
-            Ok(c) => Ok(c),
-            Err(e) if e.contains("No such file") || e.contains("not found") => Ok(Self::from_env()),
-            Err(e) => Err(e),
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| format!("parse {}: {}", path.display(), e)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::from_env()),
+            Err(e) => Err(format!("read {}: {}", path.display(), e)),
         }
     }
 }

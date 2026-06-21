@@ -144,7 +144,13 @@ pub struct RealTelegramMtprotoClient {
     qr_api_id: parking_lot::Mutex<Option<i32>>,
     /// Phase 2.5: api_hash used for the current QR login
     /// attempt. Set by `qr_login`, used by `poll_qr_login`.
-    qr_api_hash: parking_lot::Mutex<Option<String>>,
+    /// Wrapped in `Zeroizing<String>` (R15-C17 fix) so the
+    /// sensitive `api_hash` is wiped from memory on drop
+    /// (the API hash is a credential — anyone with both
+    /// the api_id and api_hash can sign MTProto requests
+    /// as our app, which would let them re-use our session
+    /// if they also obtained the auth_key).
+    qr_api_hash: parking_lot::Mutex<Option<zeroize::Zeroizing<String>>>,
     /// Phase 2.5: token bytes returned by the most recent
     /// successful `auth.exportLoginToken` call. Used by
     /// `poll_qr_login` to detect when the token changes
@@ -610,7 +616,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 // Stash the api_id / api_hash / token for
                 // the subsequent poll and import calls.
                 *self.qr_api_id.lock() = Some(api_id);
-                *self.qr_api_hash.lock() = Some(api_hash.to_string());
+                *self.qr_api_hash.lock() = Some(zeroize::Zeroizing::new(api_hash.to_string()));
                 *self.qr_token.lock() = Some(t.token.clone());
                 let url = build_qr_url(&t.token);
                 Err(MtprotoTelegramError::QrLoginHandle {
@@ -672,7 +678,15 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         };
         let request = tl::functions::auth::ExportLoginToken {
             api_id,
-            api_hash: api_hash.clone(),
+            // The TL layer takes a `String`; we have a
+            // `Zeroizing<String>`. Clone-into-`String` keeps
+            // the in-cache copy zeroized while handing a
+            // transient plaintext copy to the TL stack
+            // (which the TL layer copies internally and
+            // drops; the transient String on this stack
+            // is a one-shot use so it doesn't need to be
+            // zeroized explicitly).
+            api_hash: api_hash.as_str().to_string(),
             except_ids: Vec::new(),
         };
         let response: tl::enums::auth::LoginToken =

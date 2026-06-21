@@ -26,9 +26,19 @@
 use std::env;
 use std::process::ExitCode;
 
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
+
 #[cfg(feature = "bot-api")]
 use octo_adapter_telegram_mtproto::{BotApiClient, BotApiConfig};
 
+/// Print the usage help to stderr. Examples are run
+/// interactively, so we use `eprintln` here for the help
+/// text itself (which is pre-init output — the
+/// `tracing_subscriber` has not been initialised yet). The
+/// runtime output uses `tracing` (R15-C16 fix; the previous
+/// example used `eprintln!` for every status message,
+/// which violated the mission's tracing-only rule).
 fn print_usage_and_exit() -> ExitCode {
     eprintln!("usage: TELEGRAM_BOT_TOKEN=... [TELEGRAM_DEST_CHAT=...] telegram_bot");
     eprintln!();
@@ -42,12 +52,30 @@ fn print_usage_and_exit() -> ExitCode {
     ExitCode::from(2)
 }
 
+/// Initialise a `tracing_subscriber` with a default `EnvFilter`
+/// (RUST_LOG or `info`) so the example binary emits
+/// structured log lines to stderr. The example is run
+/// interactively, so we install the subscriber on every
+/// invocation (re-init is harmless because we use
+/// `try_init`, not `init`).
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // Ignore the "already initialised" error if a parent
+    // test harness or workspace binary has already
+    // installed a subscriber.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .try_init();
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
+    init_tracing();
     let bot_token = match env::var("TELEGRAM_BOT_TOKEN") {
         Ok(t) if !t.is_empty() => t,
         _ => {
-            eprintln!("TELEGRAM_BOT_TOKEN is required");
+            error!("TELEGRAM_BOT_TOKEN is required");
             return print_usage_and_exit();
         }
     };
@@ -57,7 +85,7 @@ async fn main() -> ExitCode {
     {
         Some(id) => id,
         None => {
-            eprintln!("TELEGRAM_DEST_CHAT is required (must be a valid chat id)");
+            error!("TELEGRAM_DEST_CHAT is required (must be a valid chat id)");
             return print_usage_and_exit();
         }
     };
@@ -79,7 +107,7 @@ async fn main() -> ExitCode {
     #[cfg(not(feature = "bot-api"))]
     {
         let _ = (bot_token, chat_id, text, long_poll);
-        eprintln!("this example requires the `bot-api` feature; rebuild with --features bot-api");
+        warn!("this example requires the `bot-api` feature; rebuild with --features bot-api");
         ExitCode::from(2)
     }
 }
@@ -97,44 +125,48 @@ async fn run_http(
         BotApiConfig::new(&bot_token).with_user_agent("octo-adapter-telegram-mtproto/telegram_bot"),
     )
     .map_err(|e| {
-        eprintln!("bot api client build failed: {:?}", e);
+        error!(error = ?e, "bot api client build failed");
         ExitCode::from(1)
     })?;
     // Smoke-test 1: getMe — verifies the token and prints the
     // bot's identity.
     let me = client.get_me().await.map_err(|e| {
-        eprintln!("getMe failed: {:?}", e);
+        error!(error = ?e, "getMe failed");
         ExitCode::from(1)
     })?;
-    eprintln!(
-        "bot api http: connected as @{:?} (id={}, is_bot={})",
-        me.username, me.id, me.is_bot
+    info!(
+        username = ?me.username,
+        id = me.id,
+        is_bot = me.is_bot,
+        "bot api http: connected"
     );
     // Smoke-test 2: sendMessage — sends the user-supplied text
     // to the destination chat.
     let sent = client.send_message(chat_id, &text).await.map_err(|e| {
-        eprintln!("sendMessage failed: {:?}", e);
+        error!(error = ?e, "sendMessage failed");
         ExitCode::from(1)
     })?;
-    eprintln!(
-        "sendMessage ok: message_id={} chat_id={} text={:?}",
-        sent.message_id, sent.chat.id, sent.text
+    info!(
+        message_id = sent.message_id,
+        chat_id = sent.chat.id,
+        text = ?sent.text,
+        "sendMessage ok"
     );
     // Smoke-test 3: getUpdates — long-polls for up to
     // `long_poll` seconds. The server holds the response
     // open and only replies when there's a new update OR
     // the long-poll window expires.
     let updates = client.get_updates(None, long_poll).await.map_err(|e| {
-        eprintln!("getUpdates failed: {:?}", e);
+        error!(error = ?e, "getUpdates failed");
         ExitCode::from(1)
     })?;
-    eprintln!(
-        "getUpdates returned {} update(s) after up to {} s long-poll",
-        updates.len(),
-        long_poll
+    info!(
+        count = updates.len(),
+        long_poll_secs = long_poll,
+        "getUpdates returned"
     );
     for u in &updates {
-        eprintln!("  update_id={} text={:?}", u.update_id, u.text());
+        info!(update_id = u.update_id, text = ?u.text(), "update");
     }
     Ok(())
 }

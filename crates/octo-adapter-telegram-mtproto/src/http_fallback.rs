@@ -73,6 +73,12 @@ pub const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 /// Maximum text length accepted by the Bot API for `sendMessage`
 /// (4096 chars). Beyond this, the Bot API returns 400. Same
 /// rationale as `MAX_UPLOAD_BYTES`.
+///
+/// **Unit:** CHARACTERS (Unicode `chars().count()`), not bytes.
+/// Distinct from `envelope::TELEGRAM_TEXT_BYTES` (bytes). The
+/// two limits coincide numerically (4096) and behave
+/// identically for the DOT wire format (which is base64, all
+/// ASCII), but the type-level unit is different (R15-C14 fix).
 pub const MAX_MESSAGE_CHARS: usize = 4096;
 
 /// Subset of the Bot API `User` type we need for `getMe` and
@@ -217,7 +223,7 @@ struct RawBotApiResponse {
 }
 
 /// Configuration for the Bot API client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BotApiConfig {
     /// Bot token in the canonical `<bot_id>:<secret>` form.
     pub token: String,
@@ -231,6 +237,21 @@ pub struct BotApiConfig {
     /// User-Agent string sent on every request. Defaults to
     /// `octo-adapter-telegram-mtproto/<version>`.
     pub user_agent: String,
+}
+
+// Custom Debug impl: the derived `Debug` would print the bot
+// token in cleartext (TV-11/TV-12). We redact the token but
+// print the other fields. The `BotApiClient::Debug` impl
+// (line ~471) follows the same pattern.
+impl fmt::Debug for BotApiConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BotApiConfig")
+            .field("token", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .field("request_timeout", &self.request_timeout)
+            .field("user_agent", &self.user_agent)
+            .finish()
+    }
 }
 
 impl BotApiConfig {
@@ -719,6 +740,30 @@ mod tests {
         let s = format!("{:?}", c);
         assert!(!s.contains(&test_token()), "token leaked: {}", s);
         assert!(s.contains("<redacted>"), "redaction marker missing: {}", s);
+    }
+
+    #[test]
+    fn bot_api_config_debug_redacts_token() {
+        // R15-C2: `BotApiConfig` previously derived `Debug`,
+        // which printed the bot token in cleartext. The custom
+        // `Debug` impl now redacts `token` while keeping the
+        // other fields visible.
+        let cfg = BotApiConfig::new(test_token());
+        let s = format!("{:?}", cfg);
+        assert!(
+            !s.contains(&test_token()),
+            "BotApiConfig Debug leaked token: {}",
+            s
+        );
+        assert!(
+            s.contains("[REDACTED]") || s.contains("redacted"),
+            "BotApiConfig Debug redaction marker missing: {}",
+            s
+        );
+        // The non-credential fields should still be visible so
+        // a debug-printed config is still useful for diagnostics.
+        assert!(s.contains("BotApiConfig"));
+        assert!(s.contains(&cfg.base_url));
     }
 
     #[test]

@@ -120,7 +120,9 @@ impl fmt::Display for BotAuthLifecycle {
 
 /// User-mode auth lifecycle. Per RFC-0850ab-c §"Data Structures /
 /// UserAuthLifecycle" (mirrors RFC-0850ab-a's user-mode state
-/// machine). 10 states; `#[repr(u8)]` values are public API and
+/// machine). 11 states (R15-C13 fix; the previous doc-comment
+/// said 10, but `QrLoginPending` and `QrLoginConfirmed` are
+/// distinct states). `#[repr(u8)]` values are public API and
 /// are locked in by
 /// `tests::user_auth_lifecycle_repr_values_match_rfc`.
 ///

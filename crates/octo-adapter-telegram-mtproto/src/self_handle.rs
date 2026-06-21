@@ -35,18 +35,16 @@ impl MtprotoSelfIdentity {
     pub fn is_set(&self) -> bool {
         self.user_id != 0
     }
-
-    /// String form expected by the gateway's self-loop filter:
-    /// `"user:12345"`. Returns `"user:unknown"` if the identity is
-    /// not yet known (defensive default; the gateway treats this
-    /// as a non-match and lets the message through).
-    pub fn handle(&self) -> String {
-        if self.user_id == 0 {
-            "user:unknown".to_string()
-        } else {
-            format!("user:{}", self.user_id)
-        }
-    }
+    // NB (R15-C15): there is intentionally NO `handle()`
+    // method on `MtprotoSelfIdentity`. The canonical
+    // self-handle string is built by
+    // `PlatformAdapter::self_handle()` (adapter.rs), which
+    // returns the `"telegram:user:<id>"` form consumed by
+    // the gateway's self-loop filter. A previous version
+    // had `handle()` returning `"user:<id>"` (no platform
+    // prefix) and a deprecated test; both have been
+    // removed so there is a single source of truth for
+    // the handle form.
 }
 
 /// Shared self-handle. Cheap to clone (`Arc` inside).
@@ -74,16 +72,6 @@ impl MtprotoSelfHandle {
         let mut g = self.inner.lock();
         let entry = g.get_or_insert_with(MtprotoSelfIdentity::default);
         entry.user_id = user_id;
-    }
-
-    /// Set just the username (rare; the user_id is what the filter
-    /// actually keys on, but the username is useful for log
-    /// messages).
-    #[deprecated(since = "0.1.0", note = "use set_identity() instead")]
-    pub fn set_username(&self, username: String) {
-        let mut g = self.inner.lock();
-        let entry = g.get_or_insert_with(MtprotoSelfIdentity::default);
-        entry.username = Some(username);
     }
 
     /// Read the current identity. `None` if the adapter has not
@@ -135,25 +123,11 @@ mod tests {
     }
 
     #[test]
-    fn handle_form_is_user_id() {
-        let h = MtprotoSelfHandle::new();
-        h.set_user_id(12345);
-        assert_eq!(h.get().unwrap().handle(), "user:12345");
-    }
-
-    #[test]
     fn clear_removes_identity() {
         let h = MtprotoSelfHandle::new();
         h.set_user_id(1);
         h.clear();
         assert!(h.get().is_none());
-    }
-
-    #[test]
-    fn handle_form_unknown_when_unset() {
-        let _h = MtprotoSelfHandle::new();
-        let id = MtprotoSelfIdentity::default();
-        assert_eq!(id.handle(), "user:unknown");
     }
 
     #[test]

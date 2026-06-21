@@ -25,7 +25,7 @@ real-network = ["dep:grammers-client", "dep:grammers-tl-types"]
 # only wants the Bot-API HTTP path doesn't need grammers, and a user
 # who only wants MTProto doesn't need reqwest. The default build
 # includes neither.
-bot-api = ["dep:reqwest", "dep:rustls", "dep:rustls-native-certs"]
+bot-api = ["dep:reqwest", "dep:rustls", "dep:rustls-native-certs", "dep:tracing-subscriber"]
 # Integration tests that require a real Telegram test DC.
 integration-test = []
 
@@ -95,6 +95,12 @@ grammers-tl-types = { version = "0.9.0", features = ["tl-mtproto"], optional = t
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "form", "multipart", "query"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
 rustls-native-certs = { version = "0.8", optional = true }
+# tracing-subscriber for the `telegram_bot` example (R15-C16
+# fix: the example used to use `eprintln!` for every status
+# line, which violated the mission's tracing-only rule).
+# Optional because the example is gated on `bot-api` and we
+# don't want to pull tracing-subscriber into a default build.
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
 
 # --- Persistence (cipherocto convention) ---
 #

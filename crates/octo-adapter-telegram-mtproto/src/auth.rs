@@ -32,7 +32,7 @@ use thiserror::Error;
 /// `{"UserCredentials": {"phone": "..."}}`, `"QrLogin"`) would
 /// break every existing Phase 1 JSON config. The runtime form is
 /// the type used by the adapter for type-safe dispatch.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AuthMode {
     /// Bot token from BotFather (primary mode).
@@ -52,6 +52,21 @@ pub enum AuthMode {
     QrLogin,
 }
 
+// Custom Debug impl: the derived `Debug` would print the bot
+// token / phone number in cleartext (TV-11/TV-12). We use the
+// same redacted form that `MtprotoTelegramConfig` and
+// `BotApiClient` use (see `config.rs::Debug for MtprotoTelegramConfig`,
+// `http_fallback.rs::Debug for BotApiClient`).
+impl fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BotToken(_) => f.write_str("BotToken([REDACTED])"),
+            Self::UserCredentials { .. } => f.write_str("UserCredentials { phone: [REDACTED] }"),
+            Self::QrLogin => f.write_str("QrLogin"),
+        }
+    }
+}
+
 impl fmt::Display for AuthMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -65,7 +80,7 @@ impl fmt::Display for AuthMode {
 /// Subset of the auth action surface that the gateway can
 /// request. Mirrors `octo-adapter-telegram::auth::AuthAction` so
 /// the two adapters share the same external API.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MtprotoAuthAction {
     /// Bot sign-in (no user interaction).
@@ -83,6 +98,38 @@ pub enum MtprotoAuthAction {
     SubmitPassword { password: String },
     /// Tear down the current session (calls `Client::sign_out`).
     SignOut,
+}
+
+// Custom Debug impl: the derived `Debug` would print the SMS
+// `code` and 2FA `password` payloads in cleartext (TV-11/TV-12).
+// We redact the payload but keep the variant name so log
+// messages are still informative. The `Display` impl below is
+// used by error messages for the same reason.
+impl fmt::Debug for MtprotoAuthAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::BotSignIn => "BotSignIn",
+            Self::RequestCode => "RequestCode",
+            Self::SubmitCode { .. } => "SubmitCode",
+            Self::SubmitPassword { .. } => "SubmitPassword",
+            Self::SignOut => "SignOut",
+        };
+        f.write_str(variant)
+    }
+}
+
+impl fmt::Display for MtprotoAuthAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Same as the Debug impl above: variant name only,
+        // never the payload (code / password).
+        f.write_str(match self {
+            Self::BotSignIn => "BotSignIn",
+            Self::RequestCode => "RequestCode",
+            Self::SubmitCode { .. } => "SubmitCode",
+            Self::SubmitPassword { .. } => "SubmitPassword",
+            Self::SignOut => "SignOut",
+        })
+    }
 }
 
 /// Identity of a logged-in bot. Set after a successful
@@ -326,7 +373,7 @@ impl fmt::Display for UserAuthServerEvent {
 
 #[derive(Debug, Error)]
 pub enum MtprotoAuthError {
-    #[error("invalid transition from {from} via {action:?}")]
+    #[error("invalid transition from {from} via {action}")]
     InvalidTransition {
         from: AuthStateKey,
         action: MtprotoAuthAction,
@@ -361,7 +408,7 @@ impl From<MtprotoAuthError> for crate::error::MtprotoTelegramError {
         use MtprotoAuthError::*;
         match e {
             InvalidTransition { from, action } => crate::error::MtprotoTelegramError::Auth(
-                format!("invalid transition from {} via {:?}", from, action),
+                format!("invalid transition from {} via {}", from, action),
             ),
             InvalidUserTransition { from, action } => crate::error::MtprotoTelegramError::Auth(
                 format!("invalid user-mode transition from {} via {}", from, action),
@@ -755,5 +802,105 @@ mod tests {
             }
             other => panic!("expected Auth, got {:?}", other),
         }
+    }
+
+    // ----- Debug redaction tests (R15-C1, R15-C3) -----
+
+    #[test]
+    fn auth_mode_debug_redacts_token_and_phone() {
+        let am = AuthMode::BotToken("1234:secret-token-value".into());
+        let dbg = format!("{:?}", am);
+        assert!(!dbg.contains("1234:secret-token-value"));
+        assert!(dbg.contains("[REDACTED]") || dbg.contains("BotToken"));
+        assert!(dbg.contains("BotToken"));
+
+        let am = AuthMode::UserCredentials {
+            phone: "+15551234567".into(),
+        };
+        let dbg = format!("{:?}", am);
+        assert!(!dbg.contains("+15551234567"));
+        assert!(dbg.contains("UserCredentials"));
+        assert!(dbg.contains("[REDACTED]"));
+
+        let am = AuthMode::QrLogin;
+        assert_eq!(format!("{:?}", am), "QrLogin");
+    }
+
+    #[test]
+    fn mtproto_auth_action_debug_redacts_payload() {
+        let a = MtprotoAuthAction::SubmitCode {
+            code: "12345".into(),
+        };
+        let dbg = format!("{:?}", a);
+        assert!(!dbg.contains("12345"), "Debug leaked code: {}", dbg);
+        assert_eq!(dbg, "SubmitCode");
+
+        let a = MtprotoAuthAction::SubmitPassword {
+            password: "hunter2".into(),
+        };
+        let dbg = format!("{:?}", a);
+        assert!(!dbg.contains("hunter2"), "Debug leaked password: {}", dbg);
+        assert_eq!(dbg, "SubmitPassword");
+
+        let a = MtprotoAuthAction::BotSignIn;
+        assert_eq!(format!("{:?}", a), "BotSignIn");
+    }
+
+    #[test]
+    fn invalid_transition_error_does_not_leak_payload() {
+        // R15-C3: `InvalidTransition` previously formatted the
+        // `MtprotoAuthAction` via `{:?}` (Debug), which leaked
+        // the SMS `code` / 2FA `password` into the error
+        // message. The `#[error("...")]` now uses `{}` (Display),
+        // and the custom `Debug`/`Display` impls for
+        // `MtprotoAuthAction` print only the variant name.
+
+        let action = MtprotoAuthAction::SubmitPassword {
+            password: "super-secret-2fa".into(),
+        };
+        let e = MtprotoAuthError::InvalidTransition {
+            from: AuthStateKey::SignedIn,
+            action,
+        };
+        let msg = format!("{}", e);
+        assert!(
+            !msg.contains("super-secret-2fa"),
+            "InvalidTransition leaked password: {}",
+            msg
+        );
+        assert!(msg.contains("SubmitPassword"), "msg = {}", msg);
+
+        let action = MtprotoAuthAction::SubmitCode {
+            code: "987654".into(),
+        };
+        let e = MtprotoAuthError::InvalidTransition {
+            from: AuthStateKey::CodeRequested,
+            action,
+        };
+        let msg = format!("{}", e);
+        assert!(
+            !msg.contains("987654"),
+            "InvalidTransition leaked code: {}",
+            msg
+        );
+        assert!(msg.contains("SubmitCode"), "msg = {}", msg);
+
+        // The `From<MtprotoAuthError>` mapping (used when
+        // state-machine errors propagate through `?`) must
+        // also be free of leaked credentials.
+        let action = MtprotoAuthAction::SubmitPassword {
+            password: "another-secret".into(),
+        };
+        let mapped: crate::error::MtprotoTelegramError = MtprotoAuthError::InvalidTransition {
+            from: AuthStateKey::SignedIn,
+            action,
+        }
+        .into();
+        let mapped_msg = format!("{}", mapped);
+        assert!(
+            !mapped_msg.contains("another-secret"),
+            "From<MtprotoAuthError> mapping leaked password: {}",
+            mapped_msg
+        );
     }
 }

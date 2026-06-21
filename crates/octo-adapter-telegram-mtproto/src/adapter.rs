@@ -23,7 +23,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -159,6 +158,23 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
     /// Register a domain → chat_id mapping. Explicit
     /// escape hatch when auto-population in `domain_id` is
     /// not what the caller wants.
+    ///
+    /// Telegram has three chat-id conventions and this
+    /// method accepts all three (R15-C7 fix; the previous
+    /// version rejected positive ids which excluded
+    /// users and small basic groups):
+    ///
+    /// - **User**: positive i64, e.g. `123456789`.
+    /// - **Basic group (chat)**: positive i32 (typically
+    ///   `<= 999_999_999_999`), e.g. `123456789`.
+    /// - **Supergroup / channel**: negative i64 of the form
+    ///   `-1001234567890`. The leading `-100` prefix is the
+    ///   canonical "supergroup or channel" marker.
+    ///
+    /// The full i64 range is accepted; downstream code
+    /// (the `MtprotoTelegramClient` trait) handles the
+    /// user/chat/channel kind disambiguation via
+    /// `PeerId::*_unchecked` constructors.
     pub fn register_domain(&self, domain: &BroadcastDomainId, chat_id: &str) -> Result<(), String> {
         let normalized = chat_id.trim().to_string();
         if normalized.is_empty() {
@@ -167,8 +183,9 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
         let n: i64 = normalized
             .parse()
             .map_err(|_| "chat_id is not a valid i64")?;
-        if n >= 0 {
-            return Err("chat_id must be negative (Telegram convention)".into());
+        // Reject zero — Telegram chat ids are never 0.
+        if n == 0 {
+            return Err("chat_id must not be 0".into());
         }
         self.domain_chat_ids
             .write()
@@ -251,7 +268,7 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
     ) -> Result<crate::http_fallback::BotApiClient, MtprotoTelegramError> {
         if self.config.transport != Transport::BotApiHttp {
             return Err(MtprotoTelegramError::Config(format!(
-                "connect_http called but config.transport = {} (expected bot-api-http)",
+                "connect_http called but config.transport = {} (expected http)",
                 self.config.transport
             )));
         }
@@ -272,7 +289,16 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
         }
         // Build the client and verify the token via getMe().
-        let client = crate::http_fallback::BotApiClient::new(bot_token)?;
+        // The base URL defaults to `https://api.telegram.org`
+        // but is overridable via `config.bot_api_base_url`
+        // (Phase 3); tests set this to a wiremock server.
+        let cfg = crate::http_fallback::BotApiConfig::new(bot_token).with_base_url(
+            self.config
+                .bot_api_base_url
+                .as_deref()
+                .unwrap_or(crate::http_fallback::DEFAULT_BOT_API_BASE_URL),
+        );
+        let client = crate::http_fallback::BotApiClient::with_config(cfg)?;
         let me = client.get_me().await?;
         self.self_handle.set_identity(me.id, me.username.clone());
         self.lifecycle
@@ -485,6 +511,62 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
     }
 }
 
+/// Parse Telegram's `FLOOD_WAIT_X` (or `FLOOD_WAIT_XXX`)
+/// backoff from a `Rpc { code: 429, message }` payload.
+///
+/// Telegram returns errors like:
+///
+/// - `FLOOD_WAIT_30`           — wait 30 seconds
+/// - `FLOOD_WAIT_300`          — wait 300 seconds
+/// - `FLOOD_WAIT (30)`         — alternative parenthesised form
+/// - `FLOOD_WAIT_X: please wait` — text-suffixed form
+///
+/// All four forms are normalised to the integer `X`. Returns
+/// `None` if no `FLOOD_WAIT` token is present so the caller can
+/// fall back to a conservative default. The match is
+/// case-insensitive and only consumes ASCII digits after the
+/// `FLOOD_WAIT_` prefix; non-digit suffixes (e.g.,
+/// `_FLOOD_PREMIUM_WAIT`) are not matched.
+fn parse_flood_wait(message: &str) -> Option<u64> {
+    // Lowercase once so the scan is case-insensitive.
+    let lower = message.to_ascii_lowercase();
+    let needle = "flood_wait";
+    let mut i = 0usize;
+    while let Some(rel) = lower[i..].find(needle) {
+        let start = i + rel;
+        let after = start + needle.len();
+        // Right-side word boundary: a non-letter character (or
+        // end of string). This rejects `FLOOD_WAITING` while
+        // allowing `FLOOD_WAIT_30`, `FLOOD_WAIT (30)`,
+        // `FLOOD_WAIT: ...`.
+        let boundary_ok = after >= lower.len() || !lower.as_bytes()[after].is_ascii_alphabetic();
+        if boundary_ok {
+            // Skip any number of non-digit, non-letter
+            // separators: `_`, ` `, `(`. The form
+            // `FLOOD_WAIT (45)` is canonical; the
+            // `space + open-paren` sequence is two
+            // separators. We stop at the first digit or
+            // first letter (which is an error in any case
+            // — `FLOOD_WAIT_30retry` would mean "30" is
+            // followed by `r`, which is not a digit).
+            let mut j = after;
+            while j < lower.len() && matches!(lower.as_bytes()[j], b'_' | b' ' | b'(') {
+                j += 1;
+            }
+            // Consume ASCII digits.
+            let digits_start = j;
+            while j < lower.len() && lower.as_bytes()[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > digits_start {
+                return lower[digits_start..j].parse::<u64>().ok();
+            }
+        }
+        i = after;
+    }
+    None
+}
+
 /// `From<MtprotoTelegramError>` for `PlatformAdapterError`.
 /// Mirrors the TDLib adapter's mapping: RateLimited stays
 /// `RateLimited`, transient RPC errors become
@@ -493,22 +575,30 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
 impl From<MtprotoTelegramError> for PlatformAdapterError {
     fn from(e: MtprotoTelegramError) -> Self {
         match e {
-            MtprotoTelegramError::Rpc {
-                code: 429,
-                message: _,
-            } => {
+            MtprotoTelegramError::Rpc { code: 429, message } => {
+                // Telegram returns FLOOD_WAIT_X (or FLOOD_WAIT_XXX)
+                // inside the RPC error message; the canonical
+                // forms are "FLOOD_WAIT_30" or "FLOOD_WAIT_300".
+                // We parse the X and use it as the real backoff;
+                // if the message has no parseable FLOOD_WAIT
+                // token, we fall back to the conservative
+                // 1000 ms default. See `parse_flood_wait` for
+                // the matching rules.
+                let retry_after_ms = parse_flood_wait(&message)
+                    .map(|secs| secs.saturating_mul(1000).max(1))
+                    .unwrap_or(1000);
                 PlatformAdapterError::RateLimited {
                     platform: "telegram-mtproto".into(),
-                    retry_after_ms: 1000, // conservative default; real impl would extract from message
+                    retry_after_ms,
                 }
             }
-            MtprotoTelegramError::Network(msg) => PlatformAdapterError::Unreachable {
-                platform: "telegram-mtproto".into(),
-                reason: format!("network: {}", msg),
-            },
             MtprotoTelegramError::Rpc { code, message } => PlatformAdapterError::ApiError {
                 code: code as u16,
                 message,
+            },
+            MtprotoTelegramError::Network(msg) => PlatformAdapterError::Unreachable {
+                platform: "telegram-mtproto".into(),
+                reason: format!("network: {}", msg),
             },
             MtprotoTelegramError::Auth(msg) => PlatformAdapterError::ApiError {
                 code: 401,
@@ -611,7 +701,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
             },
             other => other.into(),
         })?;
-        let sent = if text.len() <= envelope::TELEGRAM_TEXT_LIMIT {
+        let sent = if text.len() <= envelope::TELEGRAM_TEXT_BYTES {
             self.client
                 .send_message(chat_id, &text)
                 .await
@@ -752,7 +842,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
             30
         };
         CapabilityReport {
-            max_payload_bytes: envelope::TELEGRAM_TEXT_LIMIT,
+            max_payload_bytes: envelope::TELEGRAM_TEXT_BYTES,
             supports_fragmentation: true,
             supports_encryption: false,
             supports_raw_binary: false,
@@ -770,12 +860,15 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
-        let normalized = platform_id.trim().to_string();
-        let domain = BroadcastDomainId::new(PlatformType::Telegram, &normalized);
-        self.domain_chat_ids
-            .write()
-            .insert(domain.domain_hash, normalized);
-        domain
+        // R15-C10: previously this method auto-inserted into
+        // `domain_chat_ids` on every call. That made the map
+        // grow unboundedly for long-running adapters that
+        // poll many distinct chat ids (e.g. a bot in 10k
+        // groups). The map is now populated only by
+        // `register_domain`; `send_envelope` requires
+        // `register_domain` to be called first (so the
+        // auto-population didn't help anyway).
+        BroadcastDomainId::new(PlatformType::Telegram, platform_id.trim())
     }
 
     fn platform_type(&self) -> PlatformType {
@@ -907,13 +1000,6 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             .map_err(PlatformAdapterError::from)?;
         Ok(sent.id.to_string())
     }
-
-    /// Suppress the unused-import warning on `Duration` in
-    /// the no-feature build. Phase 1 does not yet use
-    /// `Duration` directly (retry config is F2 future
-    /// work), but the import is kept for forward-compat.
-    #[allow(dead_code)]
-    fn _unused_duration_anchor(_: Duration) {}
 }
 
 #[cfg(test)]
@@ -947,6 +1033,10 @@ mod tests {
         let mock = MockTelegramMtprotoClient::new();
         let a = adapter_with(mock.clone());
         let domain = a.domain_id("-1001234567890");
+        // R15-C10: `domain_id` no longer auto-populates the
+        // domain→chat_id map. `send_envelope` requires
+        // `register_domain` to be called first.
+        a.register_domain(&domain, "-1001234567890").unwrap();
         let env = DeterministicEnvelope::default();
         let r = a.send_envelope(&domain, &env).await.unwrap();
         assert!(!r.platform_message_id.is_empty());
@@ -957,6 +1047,8 @@ mod tests {
         let mock = MockTelegramMtprotoClient::new();
         let a = adapter_with(mock.clone());
         let domain = a.domain_id("-1001234567890");
+        // R15-C10: see `send_envelope_uses_send_message_for_text_path`.
+        a.register_domain(&domain, "-1001234567890").unwrap();
         // Force a payload that exceeds the text limit.
         // DeterministicEnvelope is fixed at 282 bytes; to
         // exceed the limit we need to modify the
@@ -1062,7 +1154,7 @@ mod tests {
         let mock = MockTelegramMtprotoClient::new();
         let a = adapter_with(mock);
         let cap = a.capabilities();
-        assert_eq!(cap.max_payload_bytes, envelope::TELEGRAM_TEXT_LIMIT);
+        assert_eq!(cap.max_payload_bytes, envelope::TELEGRAM_TEXT_BYTES);
         assert!(cap.supports_fragmentation);
         assert!(!cap.supports_raw_binary);
     }
@@ -1334,7 +1426,7 @@ mod tests {
             cap.media_capabilities.as_ref().unwrap().max_upload_bytes,
             50 * 1024 * 1024
         );
-        assert_eq!(cap.max_payload_bytes, envelope::TELEGRAM_TEXT_LIMIT);
+        assert_eq!(cap.max_payload_bytes, envelope::TELEGRAM_TEXT_BYTES);
     }
 
     #[test]
@@ -1396,5 +1488,262 @@ mod tests {
         } else {
             panic!("expected RateLimited");
         }
+    }
+
+    // ----- R15-C4: FLOOD_WAIT_X parsing -----
+
+    #[test]
+    fn parse_flood_wait_basic_form() {
+        // Canonical Telegram form: `FLOOD_WAIT_30` or
+        // `FLOOD_WAIT_300`. The function is case-insensitive.
+        assert_eq!(parse_flood_wait("FLOOD_WAIT_30"), Some(30));
+        assert_eq!(parse_flood_wait("FLOOD_WAIT_300"), Some(300));
+        assert_eq!(parse_flood_wait("flood_wait_30"), Some(30));
+        assert_eq!(parse_flood_wait("Flood_Wait_42"), Some(42));
+    }
+
+    #[test]
+    fn parse_flood_wait_parenthesised_form() {
+        // Telegram sometimes wraps the number in parens.
+        assert_eq!(parse_flood_wait("FLOOD_WAIT (45)"), Some(45));
+    }
+
+    #[test]
+    fn parse_flood_wait_suffixed_form() {
+        // Telegram sometimes suffixes with extra text.
+        assert_eq!(
+            parse_flood_wait("FLOOD_WAIT_60: please retry later"),
+            Some(60)
+        );
+        assert_eq!(parse_flood_wait("FLOOD_WAIT_5. (server)"), Some(5));
+    }
+
+    #[test]
+    fn parse_flood_wait_does_not_match_flood_waiting() {
+        // Right-side word boundary: `FLOOD_WAITING` is not
+        // a FLOOD_WAIT token (no `_`/digit after).
+        assert_eq!(parse_flood_wait("FLOOD_WAITING_30"), None);
+        // Similarly `FLOOD_PREMIUM_WAIT` doesn't have FLOOD_WAIT
+        // as a whole-word prefix.
+        assert_eq!(parse_flood_wait("FLOOD_PREMIUM_WAIT"), None);
+    }
+
+    #[test]
+    fn parse_flood_wait_no_token_returns_none() {
+        // No FLOOD_WAIT substring.
+        assert_eq!(parse_flood_wait(""), None);
+        assert_eq!(parse_flood_wait("some other error"), None);
+        // Token present but no digit after.
+        assert_eq!(parse_flood_wait("FLOOD_WAIT_"), None);
+    }
+
+    #[test]
+    fn rpc_429_maps_flood_wait_to_real_backoff() {
+        // R15-C4: previously the Rpc 429 mapping used a
+        // conservative 1000 ms default regardless of the
+        // FLOOD_WAIT_X token. Now the helper extracts the
+        // server-supplied backoff (in ms).
+        let mt_err = MtprotoTelegramError::Rpc {
+            code: 429,
+            message: "FLOOD_WAIT_30: please retry later".into(),
+        };
+        let plat_err: octo_network::dot::error::PlatformAdapterError = mt_err.into();
+        if let octo_network::dot::error::PlatformAdapterError::RateLimited {
+            retry_after_ms, ..
+        } = plat_err
+        {
+            assert_eq!(retry_after_ms, 30_000);
+        } else {
+            panic!("expected RateLimited, got {:?}", plat_err);
+        }
+
+        // No FLOOD_WAIT token in the message: fall back to
+        // the conservative 1000 ms.
+        let mt_err = MtprotoTelegramError::Rpc {
+            code: 429,
+            message: "Too Many Requests".into(),
+        };
+        let plat_err: octo_network::dot::error::PlatformAdapterError = mt_err.into();
+        if let octo_network::dot::error::PlatformAdapterError::RateLimited {
+            retry_after_ms, ..
+        } = plat_err
+        {
+            assert_eq!(retry_after_ms, 1000);
+        } else {
+            panic!("expected RateLimited, got {:?}", plat_err);
+        }
+    }
+
+    // ----- R15-C15: handle() helper consistency -----
+
+    #[test]
+    fn platform_adapter_self_handle_uses_canonical_form() {
+        // R15-C15: the `MtprotoSelfIdentity::handle()` helper
+        // returns "user:12345", but `PlatformAdapter::self_handle()`
+        // returns "telegram:user:12345". The two forms are
+        // inconsistent and the helper is unused. Verify the
+        // canonical form returned by `PlatformAdapter::self_handle`.
+        use crate::client::MockTelegramMtprotoClient;
+        use std::sync::Arc;
+        let mock = Arc::new(MockTelegramMtprotoClient::new());
+        let a = MtprotoTelegramAdapter::new(config(), mock);
+        a.mark_ready_for_test();
+        a.set_self_identity(12345, Some("alice".into()));
+        let handle = a.self_handle();
+        assert_eq!(handle, Some("telegram:user:12345".to_string()));
+    }
+}
+
+// ----- R15-C11: connect_http adapter-method tests (bot-api feature) -----
+
+#[cfg(all(test, feature = "bot-api"))]
+mod connect_http_tests {
+    use super::*;
+    use crate::client::MockTelegramMtprotoClient;
+    use crate::transport::Transport;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn bot_config_with_transport(transport: Transport) -> MtprotoTelegramConfig {
+        MtprotoTelegramConfig {
+            mode: Some("bot".into()),
+            bot_token: Some("123:abc".into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            transport,
+            ..Default::default()
+        }
+    }
+
+    fn adapter_with_config(
+        cfg: MtprotoTelegramConfig,
+    ) -> MtprotoTelegramAdapter<MockTelegramMtprotoClient> {
+        let mock = Arc::new(MockTelegramMtprotoClient::new());
+        MtprotoTelegramAdapter::new(cfg, mock)
+    }
+
+    #[tokio::test]
+    async fn connect_http_rejects_non_http_transport() {
+        // R15-C11: connect_http must validate
+        // `config.transport == BotApiHttp` before any HTTP
+        // call. If the transport is `Mtproto` (the default),
+        // the call must fail with a `Config` error and the
+        // error message must use the canonical `"http"` form
+        // (R15-C6 fix), not the serde alias `"bot-api-http"`.
+        let cfg = bot_config_with_transport(Transport::Mtproto);
+        let a = adapter_with_config(cfg);
+        let r = a
+            .connect_http("123:abc")
+            .await
+            .expect_err("connect_http must reject Mtproto transport");
+        match r {
+            MtprotoTelegramError::Config(msg) => {
+                assert!(msg.contains("expected http"), "msg = {}", msg);
+                assert!(
+                    !msg.contains("expected bot-api-http"),
+                    "msg should not contain the alias: {}",
+                    msg
+                );
+            }
+            other => panic!("expected Config error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_http_rejects_user_mode() {
+        let cfg = MtprotoTelegramConfig {
+            mode: Some("user".into()),
+            bot_token: None,
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            phone: Some("+15551234567".into()),
+            data_dir: Some(std::path::PathBuf::from("/tmp/nonexistent")),
+            transport: Transport::BotApiHttp,
+            ..Default::default()
+        };
+        let a = adapter_with_config(cfg);
+        let r = a
+            .connect_http("123:abc")
+            .await
+            .expect_err("connect_http must reject user mode");
+        match r {
+            MtprotoTelegramError::Config(msg) => {
+                assert!(msg.contains("bot-only"), "msg = {}", msg);
+            }
+            other => panic!("expected Config error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_http_rejects_empty_token() {
+        let cfg = bot_config_with_transport(Transport::BotApiHttp);
+        let a = adapter_with_config(cfg);
+        let r = a
+            .connect_http("")
+            .await
+            .expect_err("connect_http must reject empty token");
+        match r {
+            MtprotoTelegramError::Config(msg) => {
+                assert!(msg.contains("empty"), "msg = {}", msg);
+            }
+            other => panic!("expected Config error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_http_happy_path_populates_self_handle() {
+        // R15-C11: happy path: connect_http with a wiremock
+        // server that returns a canned getMe response should
+        // transition the lifecycle to Ready, populate the
+        // self-handle, and return a working BotApiClient.
+        // The base URL is overridden via
+        // `config.bot_api_base_url` (no env-var fiddling).
+        let server = MockServer::start().await;
+        let token = "987:bot-http-test-token";
+        Mock::given(method("POST"))
+            .and(path(format!("/bot{}/getMe", token)))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {
+                    "id": 555_123_456_i64,
+                    "is_bot": true,
+                    "first_name": "TestBot",
+                    "username": "testbot",
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let cfg = MtprotoTelegramConfig {
+            mode: Some("bot".into()),
+            bot_token: Some(token.into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            transport: Transport::BotApiHttp,
+            bot_api_base_url: Some(server.uri()),
+            ..Default::default()
+        };
+        let mock = Arc::new(MockTelegramMtprotoClient::new());
+        let a = MtprotoTelegramAdapter::new(cfg, mock);
+        let client = a
+            .connect_http(token)
+            .await
+            .expect("connect_http happy path should succeed");
+        // Lifecycle is now Ready.
+        assert_eq!(
+            a.lifecycle().state(),
+            AdapterLifecycle::Ready,
+            "lifecycle should be Ready after connect_http"
+        );
+        // Self-handle is populated.
+        let handle = a
+            .self_handle_ref()
+            .get()
+            .expect("self-handle should be set");
+        assert_eq!(handle.user_id, 555_123_456);
+        assert_eq!(handle.username.as_deref(), Some("testbot"));
+        // The returned client works for follow-up calls.
+        assert!(client.base_url().contains(&server.uri()));
     }
 }

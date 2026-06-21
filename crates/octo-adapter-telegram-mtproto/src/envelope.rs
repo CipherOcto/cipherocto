@@ -27,25 +27,35 @@ use octo_network::dot::envelope::DeterministicEnvelope;
 use crate::error::MtprotoTelegramError;
 
 /// Telegram's per-message text size limit, in bytes, for
-/// UTF-8 encoded text. Source: Telegram Bot API docs §"sendMessage".
-/// 4096 characters, but each character can be up to 4 UTF-8
-/// bytes; we cap at 4096 to be safe.
-pub const TELEGRAM_TEXT_LIMIT: usize = 4096;
+/// UTF-8 encoded text. Source: Telegram Bot API docs §"sendMessage":
+/// 4096 characters, where each character can be up to 4 UTF-8
+/// bytes; we cap at 4096 bytes to be safe (a check on
+/// `text.chars().count()` would be more permissive but
+/// yields the same answer for ASCII DOT envelopes).
+///
+/// **Unit:** BYTES, not characters. Distinct from
+/// `http_fallback::MAX_MESSAGE_CHARS` (chars). The two
+/// limits coincide numerically (4096) and behave
+/// identically for the DOT wire format (which is base64,
+/// all ASCII), but the type-level unit is different and
+/// callers should pick the right one for the right
+/// payload (R15-C14 fix).
+pub const TELEGRAM_TEXT_BYTES: usize = 4096;
 
 /// Encode an envelope to the `DOT/1/{b64}` text form.
 ///
 /// Returns `Err(MtprotoTelegramError::Capability(_))` if the
 /// envelope's `to_wire_bytes()` would produce a payload
-/// larger than `TELEGRAM_TEXT_LIMIT`. The adapter's
+/// larger than `TELEGRAM_TEXT_BYTES`. The adapter's
 /// `send_envelope` will then route to `DOT/2/{msg_id}`
 /// (media upload) instead.
 pub fn wire_encode(env: &DeterministicEnvelope) -> Result<String, MtprotoTelegramError> {
     let bytes = env.to_wire_bytes();
-    if bytes.len() > TELEGRAM_TEXT_LIMIT {
+    if bytes.len() > TELEGRAM_TEXT_BYTES {
         return Err(MtprotoTelegramError::Capability(format!(
             "envelope payload {} bytes exceeds Telegram text limit {}",
             bytes.len(),
-            TELEGRAM_TEXT_LIMIT
+            TELEGRAM_TEXT_BYTES
         )));
     }
     let b64 = URL_SAFE_NO_PAD.encode(&bytes);
@@ -83,6 +93,14 @@ pub fn wire_decode(text: &str) -> Result<DeterministicEnvelope, MtprotoTelegramE
 /// (i.e., is a DOT envelope, not a regular Telegram message).
 /// Used by `receive_messages` to filter plain-text
 /// non-DOT chatter before calling `wire_decode`.
+///
+/// Currently unused in the production code path (the
+/// `wire_decode` function returns an `Err` for non-`DOT/`
+/// prefixes, so the gateway can filter on the result).
+/// Kept as a public API for downstream consumers who want
+/// to short-circuit early (e.g., the operator UI which
+/// wants to render incoming text as-is when it isn't a
+/// DOT envelope).
 pub fn is_dot_message(text: &str) -> bool {
     text.starts_with("DOT/")
 }
@@ -127,10 +145,10 @@ mod tests {
     #[test]
     fn encode_rejects_oversize() {
         // DeterministicEnvelope is 282 bytes on the wire. To make
-        // the wire encoding exceed TELEGRAM_TEXT_LIMIT, we'd need
+        // the wire encoding exceed TELEGRAM_TEXT_BYTES, we'd need
         // to mutate the struct directly, but the struct is
         // 282 bytes regardless of payload size. Instead, test that
         // the constant is correct (sanity).
-        assert!(TELEGRAM_TEXT_LIMIT < DeterministicEnvelope::default().to_wire_bytes().len() * 100);
+        assert!(TELEGRAM_TEXT_BYTES < DeterministicEnvelope::default().to_wire_bytes().len() * 100);
     }
 }

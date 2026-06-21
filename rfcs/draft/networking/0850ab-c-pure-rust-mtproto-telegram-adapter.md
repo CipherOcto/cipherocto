@@ -443,6 +443,71 @@ The custom `StoolapSession` is ~150 LOC and preserves the `Session` trait
 semantics (load/save auth_key by `dc_id`, load/save DC config, load/save user)
 on top of stoolap.
 
+**StoolapSession code skeleton** (illustrative; mirrors the canonical pattern
+at `crates/octo-matrix-session-store/src/store.rs::StoolapSessionStore`):
+
+```rust
+use grammers_session::Session;
+use stoolap::Database;
+
+pub struct StoolapSession {
+    db: Database,
+}
+
+impl StoolapSession {
+    pub fn new(data_dir: &Path) -> Result<Self, Error> {
+        // DSN string form (NOT a bare path): stoolap::Database::open takes a DSN.
+        let dsn = format!("file://{}", data_dir.join("sessions.db").display());
+        let db = Database::open(&dsn)?;
+        // Idempotent schema creation (see SQL above).
+        db.execute(include_str!("schema.sql"), ())?;
+        Ok(Self { db })
+    }
+
+    fn load_auth_key(&self, dc_id: i32) -> Result<Option<Vec<u8>>, Error> {
+        let rows = self.db.query(
+            "SELECT auth_key FROM mtproto_auth_keys WHERE dc_id = ?",
+            vec![stoolap::core::Value::Integer(dc_id as i64)],
+        )?;
+        // stoolap::Rows iteration: collect first row's first column if present.
+        for row in rows {
+            let row = row?;
+            if let Some(stoolap::core::Value::Blob(key)) = row.get(0) {
+                return Ok(Some(key.clone()));
+            }
+        }
+        Ok(None)
+    }
+}
+
+impl Session for StoolapSession {
+    fn load_auth_key(&self, dc_id: i32) -> Result<Option<Vec<u8>>> { /* delegates */ }
+    fn save_auth_key(&self, dc_id: i32, key: &[u8]) -> Result<()> {
+        // UPSERT (stoolap supports INSERT OR REPLACE / ON CONFLICT).
+        self.db.execute(
+            "INSERT INTO mtproto_auth_keys (dc_id, auth_key, created_at, last_used_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT(dc_id) DO UPDATE SET auth_key = excluded.auth_key, last_used_at = excluded.last_used_at",
+            vec![
+                stoolap::core::Value::Integer(dc_id as i64),
+                stoolap::core::Value::Blob(key.to_vec()),
+                stoolap::core::Value::Integer(now() as i64),
+                stoolap::core::Value::Integer(now() as i64),
+            ],
+        )?;
+        Ok(())
+    }
+    // ... other Session trait methods: sign_in_user (no-op for bots),
+    //     sign_out_user (deletes rows from mtproto_auth_keys + mtproto_user per
+    //     Security Considerations §"sign_out semantics"), load/save dc config ...
+}
+```
+
+The `db.execute(sql, ())` form is used for no-parameter queries (e.g., `CREATE TABLE IF NOT EXISTS`).
+The `db.execute(sql, params)` form takes a `Vec<stoolap::core::Value>` for parameterized queries.
+The `db.query(sql, params)` form returns `stoolap::Rows` which iterates `Result<Row, Error>`.
+See `octo-matrix-session-store::store::StoolapSessionStore::load_*` methods for the full pattern.
+
 **Coexistence with the TDLib adapter.** The TDLib adapter uses
 `data_dir/database` (TDLib manages its own SQLite database; cipherocto does
 not own that file). The new mtproto adapter uses `data_dir/sessions.db`

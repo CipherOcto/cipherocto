@@ -19,6 +19,51 @@
 use std::fmt;
 use thiserror::Error;
 
+/// Runtime auth-mode selector. Per RFC-0850ab-c §"Data Structures".
+///
+/// Distinct from the on-disk `MtprotoTelegramConfig.mode: Option<String>`
+/// form: the JSON config keeps the legacy flat string + flat
+/// `bot_token` / `phone` / `password` fields for backward
+/// compatibility (existing Phase 1 deployments), and `AuthMode` is
+/// constructed at runtime via `MtprotoTelegramConfig::auth_mode()`.
+///
+/// The on-disk form is intentionally not the `AuthMode` enum
+/// directly: serde-tagged enum forms (`{"BotToken": "..."}`,
+/// `{"UserCredentials": {"phone": "..."}}`, `"QrLogin"`) would
+/// break every existing Phase 1 JSON config. The runtime form is
+/// the type used by the adapter for type-safe dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AuthMode {
+    /// Bot token from BotFather (primary mode).
+    /// The string is the bot token (without the `bot` prefix).
+    BotToken(String),
+
+    /// User-mode sign-in: phone number is fixed at config time;
+    /// SMS code + (optional) 2FA password are prompted at runtime.
+    /// The 2FA password is NEVER stored (RFC-0850ab-c §"Security
+    /// Considerations / 2FA Password Storage").
+    UserCredentials {
+        phone: String,
+    },
+
+    /// QR login flow (per RFC-0850ab-a). The adapter calls
+    /// `auth::ExportLoginToken` and returns the token + URL; the
+    /// caller is responsible for displaying the QR code and polling
+    /// until the user scans.
+    QrLogin,
+}
+
+impl fmt::Display for AuthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BotToken(_) => f.write_str("bot"),
+            Self::UserCredentials { .. } => f.write_str("user"),
+            Self::QrLogin => f.write_str("qr"),
+        }
+    }
+}
+
 /// Subset of the auth action surface that the gateway can
 /// request. Mirrors `octo-adapter-telegram::auth::AuthAction` so
 /// the two adapters share the same external API.
@@ -125,5 +170,40 @@ mod tests {
             let printed = format!("{}", s);
             assert!(!printed.is_empty());
         }
+    }
+
+    #[test]
+    fn auth_mode_display_matches_mode_str() {
+        // The runtime AuthMode Display matches the
+        // MtprotoTelegramConfig.mode string form so callers can
+        // serialise either way without translation.
+        assert_eq!(AuthMode::BotToken("123:abc".into()).to_string(), "bot");
+        assert_eq!(
+            AuthMode::UserCredentials { phone: "+15555550100".into() }.to_string(),
+            "user"
+        );
+        assert_eq!(AuthMode::QrLogin.to_string(), "qr");
+    }
+
+    #[test]
+    fn auth_mode_partial_eq_distinguishes_token() {
+        // Two BotToken variants with different tokens are not equal.
+        assert_ne!(
+            AuthMode::BotToken("111:aaa".into()),
+            AuthMode::BotToken("222:bbb".into())
+        );
+        assert_eq!(
+            AuthMode::BotToken("111:aaa".into()),
+            AuthMode::BotToken("111:aaa".into())
+        );
+        // UserCredentials equality ignores nothing (only phone).
+        assert_eq!(
+            AuthMode::UserCredentials { phone: "+1".into() },
+            AuthMode::UserCredentials { phone: "+1".into() }
+        );
+        assert_ne!(
+            AuthMode::UserCredentials { phone: "+1".into() },
+            AuthMode::UserCredentials { phone: "+2".into() }
+        );
     }
 }

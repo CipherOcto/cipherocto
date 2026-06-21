@@ -48,14 +48,14 @@ pub mod real_client;
 
 // Re-exports
 pub use adapter::MtprotoTelegramAdapter;
-pub use auth::{AuthStateKey, BotIdentity, MtprotoAuthAction, MtprotoAuthError, UserAuth};
+pub use auth::{AuthMode, AuthStateKey, BotIdentity, MtprotoAuthAction, MtprotoAuthError, UserAuth};
 pub use client::{
     MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
 };
 pub use config::MtprotoTelegramConfig;
 pub use envelope::wire_encode;
 pub use error::{redact_credentials, MtprotoTelegramError};
-pub use lifecycle::AdapterLifecycle;
+pub use lifecycle::{AdapterLifecycle, BotAuthLifecycle, UserAuthLifecycle};
 pub use self_handle::{MtprotoSelfHandle, MtprotoSelfIdentity};
 pub use session::StoolapSession;
 

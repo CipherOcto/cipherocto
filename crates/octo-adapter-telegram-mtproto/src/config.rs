@@ -133,6 +133,33 @@ impl MtprotoTelegramConfig {
         self.mode.as_deref().unwrap_or("bot")
     }
 
+    /// Construct the runtime `AuthMode` from the flat config
+    /// fields. Additive: existing JSON configs continue to
+    /// deserialise identically; this method just interprets the
+    /// `mode` discriminator + the flat credential fields.
+    ///
+    /// Recognised `mode` values: `"bot"`, `"user"`, `"qr"`,
+    /// `"qr_login"`. Default is `AuthMode::BotToken` (empty
+    /// token) — callers should call `validate()` first to get a
+    /// usable error if the token is missing.
+    pub fn auth_mode(&self) -> Result<crate::auth::AuthMode, String> {
+        use crate::auth::AuthMode;
+        match self.mode_str() {
+            "bot" => Ok(AuthMode::BotToken(self.bot_token.clone().unwrap_or_default())),
+            "user" => {
+                let phone = self.phone.clone().ok_or_else(|| {
+                    String::from("user mode requires phone field (set TELEGRAM_PHONE or mode=+phone)")
+                })?;
+                Ok(AuthMode::UserCredentials { phone })
+            }
+            "qr" | "qr_login" => Ok(AuthMode::QrLogin),
+            other => Err(format!(
+                "unknown mode '{}': expected 'bot', 'user', or 'qr'",
+                other
+            )),
+        }
+    }
+
     /// Resolved `api_layer` (configured value, or default).
     pub fn resolved_api_layer(&self) -> i32 {
         self.api_layer.unwrap_or(DEFAULT_API_LAYER)
@@ -326,5 +353,76 @@ mod tests {
         let dbg = format!("{:?}", c);
         assert!(!dbg.contains("123:abc"));
         assert!(!dbg.contains("0123456789abcdef"));
+    }
+
+    #[test]
+    fn auth_mode_bot_default() {
+        // Default config has no mode field; auth_mode() falls back
+        // to BotToken with the (default-empty) bot_token.
+        let c = MtprotoTelegramConfig::default();
+        match c.auth_mode().unwrap() {
+            crate::auth::AuthMode::BotToken(t) => assert!(t.is_empty()),
+            other => panic!("expected BotToken default, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_mode_bot_with_token() {
+        let c = bot_config();
+        match c.auth_mode().unwrap() {
+            crate::auth::AuthMode::BotToken(t) => assert_eq!(t, "123:abc"),
+            other => panic!("expected BotToken, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_mode_user_requires_phone() {
+        // mode=user without phone is an auth_mode error (validate()
+        // also catches it; both methods report it).
+        let c = MtprotoTelegramConfig {
+            mode: Some("user".into()),
+            ..Default::default()
+        };
+        assert!(c.auth_mode().is_err());
+    }
+
+    #[test]
+    fn auth_mode_user_with_phone() {
+        let c = MtprotoTelegramConfig {
+            mode: Some("user".into()),
+            phone: Some("+15555550100".into()),
+            ..Default::default()
+        };
+        match c.auth_mode().unwrap() {
+            crate::auth::AuthMode::UserCredentials { phone } => {
+                assert_eq!(phone, "+15555550100");
+            }
+            other => panic!("expected UserCredentials, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn auth_mode_qr_login() {
+        for mode in ["qr", "qr_login"] {
+            let c = MtprotoTelegramConfig {
+                mode: Some(mode.into()),
+                ..Default::default()
+            };
+            assert!(matches!(
+                c.auth_mode().unwrap(),
+                crate::auth::AuthMode::QrLogin
+            ));
+        }
+    }
+
+    #[test]
+    fn auth_mode_unknown_rejected() {
+        let c = MtprotoTelegramConfig {
+            mode: Some("websocket".into()),
+            ..Default::default()
+        };
+        let err = c.auth_mode().unwrap_err();
+        assert!(err.contains("unknown mode"));
+        assert!(err.contains("websocket"));
     }
 }

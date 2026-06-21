@@ -27,6 +27,13 @@ Mission (implementation)
 | [ZKP_Research_Report.md](./ZKP_Research_Report.md)           | Complete | Zero-knowledge proofs landscape analysis |
 | [cairo-ai-research-report.md](./cairo-ai-research-report.md) | Complete | Cairo AI integration feasibility         |
 | [litellm-analysis-and-quota-router-comparison.md](./litellm-analysis-and-quota-router-comparison.md) | **Approved** | LiteLLM analysis and quota-router gaps   |
+| [stoolap-research.md](./stoolap-research.md) | Complete | Original Stoolap embedded-SQL capability catalogue |
+| [stoolap-integration-research.md](./stoolap-integration-research.md) | Complete | Stoolap × AI Quota Marketplace integration |
+| [stoolap-determinism-analysis.md](./stoolap-determinism-analysis.md) | Complete | Stoolap determinism (RFC-0104) compliance |
+| [stoolap-data-sync-via-cipherocto-network.md](./stoolap-data-sync-via-cipherocto-network.md) | **Draft** | Two-node data sync for the Stoolap fork via the CipherOcto network (this is the missing feature) |
+| [deterministic-overlay-transport.md](./deterministic-overlay-transport.md) | In progress | Source scratch pad for the networking RFC family (DOT, GDP, DGP, OCrypt, MON, DRS, DOM, ORR) |
+| [networking-rfc-cross-reference-analysis.md](./networking-rfc-cross-reference-analysis.md) | Complete | Audit of the 11 networking RFCs and their dependencies |
+| [2026-06-21-telegram-pure-rust-mtproto-adapter.md](./2026-06-21-telegram-pure-rust-mtproto-adapter.md) | Complete | Pure-Rust MTProto Telegram adapter (grammers) to replace TDLib C++ dependency |
 
 ## Research vs RFC
 

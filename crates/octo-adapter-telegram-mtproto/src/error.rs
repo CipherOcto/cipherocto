@@ -122,7 +122,20 @@ pub fn redact_credentials(input: &str) -> String {
 }
 
 /// Top-level error type for the MTProto adapter.
-#[derive(Debug, Error)]
+///
+/// R17-C1: derived `Debug` would auto-format every variant's
+/// fields, including `QrLoginHandle { token: Vec<u8>, url: String }`
+/// — leaking the raw QR login token (an authorization
+/// credential) and the base64-encoded URL (same data,
+/// encoded). Hand-written `Debug` mirrors the auto-derive for
+/// every variant EXCEPT `QrLoginHandle`, which redacts both
+/// `token` (prints byte count only) and `url` (prints
+/// `"<redacted>"`). `Display` (via thiserror's `#[error(...)]`
+/// attributes) is unchanged: the QR variant still includes
+/// `url={url}` because the caller needs the URL to render
+/// the QR code — but the `Display` path is intentional, not a
+/// leak.
+#[derive(Error)]
 #[non_exhaustive]
 pub enum MtprotoTelegramError {
     /// Bot token invalid, account banned, or sign-in failed.
@@ -193,8 +206,55 @@ pub enum MtprotoTelegramError {
     /// (NOT base64-encoded). The URL is the
     /// `tg://login?token=<base64>` form the caller embeds
     /// in the QR code.
+    ///
+    /// R17-C1: the `Debug` impl below redacts both fields.
+    /// `Display` (this `#[error(...)]` attribute) intentionally
+    /// includes `url={url}` because the caller needs the URL
+    /// to render the QR code — the URL is the QR data, not a
+    /// secret. The token (raw bytes) is the credential; the
+    /// URL is the public form.
     #[error("qr login in progress: url={url}")]
     QrLoginHandle { token: Vec<u8>, url: String },
+}
+
+// R17-C1: hand-written `Debug` for `MtprotoTelegramError`.
+// Mirrors the auto-derived shape for every variant EXCEPT
+// `QrLoginHandle`, which redacts the raw token bytes and
+// the base64-encoded URL. thiserror's `#[derive(Error)]`
+// does NOT require Debug — it only provides `Display`,
+// `source()`, and `from()` impls — so removing Debug from
+// the derive is safe. The `std::error::Error` trait still
+// works because the hand-written Debug satisfies its bound.
+impl fmt::Debug for MtprotoTelegramError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Auth(m) => f.debug_tuple("Auth").field(m).finish(),
+            Self::Network(m) => f.debug_tuple("Network").field(m).finish(),
+            Self::Rpc { code, message } => f
+                .debug_struct("Rpc")
+                .field("code", code)
+                .field("message", message)
+                .finish(),
+            Self::RateLimited { retry_after_secs } => f
+                .debug_struct("RateLimited")
+                .field("retry_after_secs", retry_after_secs)
+                .finish(),
+            Self::Session(m) => f.debug_tuple("Session").field(m).finish(),
+            Self::Config(m) => f.debug_tuple("Config").field(m).finish(),
+            Self::Capability(m) => f.debug_tuple("Capability").field(m).finish(),
+            Self::NotReady(m) => f.debug_tuple("NotReady").field(m).finish(),
+            Self::Envelope(m) => f.debug_tuple("Envelope").field(m).finish(),
+            Self::Internal(m) => f.debug_tuple("Internal").field(m).finish(),
+            // R17-C1: redacts the raw token bytes (prints byte
+            // count) and the base64-encoded URL. Mirrors the
+            // `client::QrLoginHandle` Debug impl.
+            Self::QrLoginHandle { token, .. } => f
+                .debug_struct("QrLoginHandle")
+                .field("token", &format_args!("<redacted {} bytes>", token.len()))
+                .field("url", &"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 impl MtprotoTelegramError {
@@ -266,5 +326,140 @@ mod tests {
             message: "bad".into(),
         };
         assert!(!r.is_retryable());
+    }
+
+    // ---- R17-C1: QrLoginHandle Debug redaction tests ----
+
+    #[test]
+    fn qr_login_handle_error_variant_debug_does_not_leak_token_or_url() {
+        // R17-C1: the hand-written Debug for the
+        // QrLoginHandle variant of MtprotoTelegramError
+        // must NOT contain the raw token bytes or the
+        // base64-encoded URL. The token is the QR login
+        // authorization credential (same class of leak as
+        // R15-C3 / R16-C1 fixed for the auth-action
+        // variants).
+        let e = MtprotoTelegramError::QrLoginHandle {
+            token: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            url: "tg://login?token=ABCD_SECRET_BASE64_DATA".into(),
+        };
+        let dbg = format!("{:?}", e);
+        // Token / URL must not appear in any form.
+        assert!(
+            !dbg.contains("ABCD_SECRET_BASE64_DATA"),
+            "Debug leaked URL token: {}",
+            dbg
+        );
+        assert!(
+            !dbg.contains("[1, 2, 3"),
+            "Debug leaked raw token bytes: {}",
+            dbg
+        );
+        assert!(
+            !dbg.contains("0x01") && !dbg.contains("0x08"),
+            "Debug leaked raw token bytes (hex): {}",
+            dbg
+        );
+        // The redaction marker must be present so an
+        // operator reading a log line knows the field is
+        // redacted (and not silently missing).
+        assert!(
+            dbg.contains("<redacted 8 bytes>"),
+            "Debug missing token redaction marker: {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("url") && dbg.contains("<redacted>"),
+            "Debug missing url redaction marker: {}",
+            dbg
+        );
+        // Variant name must still be present so the log
+        // line is still useful for triage.
+        assert!(
+            dbg.contains("QrLoginHandle"),
+            "Debug missing variant name: {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn qr_login_handle_error_variant_display_includes_url() {
+        // R17-C1: Display (thiserror #[error("...url={url}")])
+        // must still include the URL — the caller needs it
+        // to render the QR code. The token remains in the
+        // inner field but is NOT in the Display string
+        // (the {url} interpolation only references url).
+        let e = MtprotoTelegramError::QrLoginHandle {
+            token: vec![0x01, 0x02, 0x03],
+            url: "tg://login?token=ABCD_SECRET_BASE64_DATA".into(),
+        };
+        let msg = format!("{}", e);
+        assert!(
+            msg.contains("ABCD_SECRET_BASE64_DATA"),
+            "Display must include URL for QR rendering: {}",
+            msg
+        );
+        assert!(
+            msg.contains("tg://login"),
+            "Display must include the tg:// scheme: {}",
+            msg
+        );
+        // Token should NOT appear as raw bytes in the
+        // Display path (thiserror's {url} interpolation
+        // only references the url field, not token).
+        assert!(
+            !msg.contains("[1, 2, 3"),
+            "Display leaked raw token bytes: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn mtproto_telegram_error_debug_still_works_for_non_sensitive_variants() {
+        // R17-C1: the hand-written Debug for
+        // MtprotoTelegramError must mirror the auto-derive
+        // shape for the 10 non-QrLoginHandle variants so
+        // existing log lines / dbg!() calls on Auth /
+        // Network / Rpc / Session errors continue to show
+        // useful info. Spot-check a tuple variant, a
+        // struct variant, and a numeric variant.
+        let e = MtprotoTelegramError::Network("connect timeout".into());
+        assert_eq!(
+            format!("{:?}", e),
+            r#"Network("connect timeout")"#,
+            "tuple-variant Debug shape changed"
+        );
+        let e = MtprotoTelegramError::Rpc {
+            code: 429,
+            message: "FLOOD_WAIT_5".into(),
+        };
+        let dbg = format!("{:?}", e);
+        assert!(dbg.contains("Rpc"), "Rpc variant name missing: {}", dbg);
+        assert!(dbg.contains("429"), "Rpc code missing: {}", dbg);
+        assert!(dbg.contains("FLOOD_WAIT_5"), "Rpc message missing: {}", dbg);
+        let e = MtprotoTelegramError::RateLimited {
+            retry_after_secs: 7,
+        };
+        let dbg = format!("{:?}", e);
+        assert!(
+            dbg.contains("RateLimited"),
+            "RateLimited variant name missing: {}",
+            dbg
+        );
+        assert!(dbg.contains("7"), "RateLimited value missing: {}", dbg);
+        // Spot-check the catch-all variants.
+        assert_eq!(
+            format!("{:?}", MtprotoTelegramError::Auth("bad token".into())),
+            r#"Auth("bad token")"#,
+            "Auth Debug shape changed"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                MtprotoTelegramError::NotReady("connect not called".into())
+            ),
+            r#"NotReady("connect not called")"#,
+            "NotReady Debug shape changed"
+        );
     }
 }

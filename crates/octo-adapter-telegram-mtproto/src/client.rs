@@ -33,6 +33,7 @@
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::Arc;
 
 use crate::error::MtprotoTelegramError;
@@ -99,10 +100,37 @@ impl MtprotoSentMessage {
 /// `tg://login?token=<base64>` form the caller embeds in
 /// the QR code (Telegram's mobile clients expect this URL
 /// when scanned).
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// R17-C1: the derived `Debug` would print the raw token
+/// bytes and the base64-encoded URL on any `dbg!()`,
+/// `tracing::error!(?handle)`, or panic message. The
+/// token is the QR-session authorization credential (paired
+/// with the user scanning the QR) — same threat class as
+/// the R15-C3 / R16-C1 fixes on `MtprotoAuthAction` /
+/// `UserAuthAction`. Hand-written `Debug` redacts both
+/// fields; the `Display` impl is not provided (callers that
+/// need the URL reach it via the field accessor).
+#[derive(Clone, PartialEq, Eq)]
 pub struct QrLoginHandle {
     pub token: Vec<u8>,
     pub url: String,
+}
+
+// R17-C1: hand-written Debug that prints the byte count
+// instead of the raw token bytes, and the literal string
+// "<redacted>" instead of the base64-encoded URL. The
+// `Display` impl is intentionally absent (no caller path
+// needs Display on this struct).
+impl fmt::Debug for QrLoginHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QrLoginHandle")
+            .field(
+                "token",
+                &format_args!("<redacted {} bytes>", self.token.len()),
+            )
+            .field("url", &"<redacted>")
+            .finish()
+    }
 }
 
 impl QrLoginHandle {
@@ -798,6 +826,63 @@ mod tests {
             }
             other => panic!("expected QrLoginHandle, got {:?}", other),
         }
+    }
+
+    // ---- R17-C1: QrLoginHandle struct Debug redaction ----
+
+    #[test]
+    fn qr_login_handle_struct_debug_does_not_leak_token_or_url() {
+        // R17-C1: the hand-written Debug for the
+        // `QrLoginHandle` struct (this file) must NOT
+        // contain the raw token bytes or the
+        // base64-encoded URL. Sister to the
+        // `MtprotoTelegramError::QrLoginHandle` variant
+        // Debug fix in error.rs. The struct is returned
+        // to the caller of `connect_qr_login` as
+        // `Ok(QrLoginHandle)`, so a real caller doing
+        // `dbg!(handle)` or `tracing::error!(?handle)`
+        // would otherwise leak the credential.
+        let h = QrLoginHandle {
+            token: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            url: "tg://login?token=ABCD_SECRET_BASE64_DATA".into(),
+        };
+        let dbg = format!("{:?}", h);
+        // Token / URL must not appear in any form.
+        assert!(
+            !dbg.contains("ABCD_SECRET_BASE64_DATA"),
+            "Debug leaked URL token: {}",
+            dbg
+        );
+        assert!(
+            !dbg.contains("[1, 2, 3"),
+            "Debug leaked raw token bytes: {}",
+            dbg
+        );
+        assert!(
+            !dbg.contains("0x01") && !dbg.contains("0x08"),
+            "Debug leaked raw token bytes (hex): {}",
+            dbg
+        );
+        // The redaction marker must be present so an
+        // operator reading a log line knows the field is
+        // redacted (and not silently missing).
+        assert!(
+            dbg.contains("<redacted 8 bytes>"),
+            "Debug missing token redaction marker: {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("url") && dbg.contains("<redacted>"),
+            "Debug missing url redaction marker: {}",
+            dbg
+        );
+        // Variant / struct name must still be present so
+        // the log line is still useful for triage.
+        assert!(
+            dbg.contains("QrLoginHandle"),
+            "Debug missing struct name: {}",
+            dbg
+        );
     }
 
     #[tokio::test]

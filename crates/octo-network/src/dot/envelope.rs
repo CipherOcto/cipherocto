@@ -59,6 +59,33 @@ pub struct DeterministicEnvelope {
     pub signature: [u8; 64],
 }
 
+impl Default for DeterministicEnvelope {
+    /// Returns a zeroed envelope.
+    ///
+    /// Useful for test fixtures and for places where a placeholder
+    /// envelope is needed before the canonical fields are filled in.
+    /// The returned envelope is NOT valid for transport — every
+    /// field is zero (including the signature), so it will fail
+    /// any signature or structural validation.
+    fn default() -> Self {
+        Self {
+            version: 0,
+            network_id: 0,
+            message_type: 0,
+            envelope_id: [0u8; 32],
+            mission_id: [0u8; 32],
+            source_peer: [0u8; 32],
+            origin_gateway: [0u8; 32],
+            logical_timestamp: 0,
+            ttl_hops: 0,
+            payload_hash: [0u8; 32],
+            route_trace_root: [0u8; 32],
+            flags: 0,
+            signature: [0u8; 64],
+        }
+    }
+}
+
 impl DeterministicEnvelope {
     /// Derive envelope_id from canonical fields.
     ///

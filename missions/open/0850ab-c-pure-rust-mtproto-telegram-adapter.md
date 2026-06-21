@@ -16,12 +16,12 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 **Scope:**
 
-- Bot-mode sign-in (`AuthMode::BotToken(String)`) with `grammers_session::SqliteSession`
+- Bot-mode sign-in (`AuthMode::BotToken(String)`) with a custom `StoolapSession` impl of `grammers_session::Session` (NO use of grammers' built-in `SqliteSession`, per RFC-0914-a)
 - `PlatformAdapter` trait methods: `send_envelope`, `receive_messages`, `canonicalize`, `capabilities`, `domain_id`, `platform_type`, `replay_protection`, `health_check`, `shutdown`, `self_handle`, `upload_media_to_domain`, `download_media`
 - Self-handle filter (drop self-originated messages)
 - Three lifecycles: `AdapterLifecycle`, `BotAuthLifecycle`, `UserAuthLifecycle` (UserAuthLifecycle skeleton only; full state machine in Phase 2)
 - DOT wire-format codec (shared with `octo-network`)
-- Session storage in the same SQLite file as `octo-adapter-telegram`, with a separate table prefix (`mtproto_*`) for isolation
+- Session storage in `data_dir/sessions.db` via CipherOcto's stoolap fork on `feat/blockchain-sql` (RFC-0914-a / 0914-a-stoolap-persistence); separate FILE from the TDLib adapter's `data_dir/database` (no shared SQLite file, no table-prefix trick); the crate ships with NO `rusqlite`/`sqlx`/`sqlite` dependency
 - Error type (`thiserror` enum) covering auth, network, RPC, session, and configuration failures
 - Integration tests against the Telegram test DC
 
@@ -38,7 +38,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 ### Crate structure
 
-- [ ] `crates/octo-adapter-telegram-mtproto/Cargo.toml` exists with grammers deps (`grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`, `grammers-session 0.9.x` with `sqlite` feature, `grammers-crypto`)
+- [ ] `crates/octo-adapter-telegram-mtproto/Cargo.toml` exists with grammers deps (`grammers-mtproto 0.9.0`, `grammers-tl-types 0.9.0`, `grammers-client 0.8.x`, `grammers-session 0.9.x` with **NO** `sqlite` feature, `grammers-crypto`) + CipherOcto stoolap fork (`stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }`, per RFC-0914-a)
 - [ ] Workspace `Cargo.toml` updated to include the new crate in `members`
 - [ ] Crate compiles in isolation: `cargo build -p octo-adapter-telegram-mtproto`
 - [ ] Workspace still compiles: `cargo build --workspace`
@@ -48,15 +48,16 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 - [ ] `src/lib.rs` exposes the public API (`MtprotoAdapter`, `MtprotoAdapterConfig`, `AuthMode`, `AdapterLifecycle`, `BotAuthLifecycle`, `UserAuthLifecycle`, `TelegramCapabilities`, `TelegramError`, `ProxyConfig`, `ProxyKind`)
 - [ ] `src/config.rs` defines `MtprotoAdapterConfig` with serde derives (Serialize/Deserialize) matching RFC-0850ab-c §"Data Structures"
-- [ ] `src/adapter.rs` defines `MtprotoAdapter` struct and implements all `PlatformAdapter` trait methods
-- [ ] `src/mtproto_client.rs` wraps `grammers_client::Client` with cipherocto-specific convenience methods
-- [ ] `src/auth.rs` implements `sign_in_bot(token: &str) -> Result<User, TelegramError>` per RFC-0850ab-c §"Algorithms / Algorithm 1"
-- [ ] `src/envelope.rs` implements DOT wire-format codec using `base64::encode_config(URL_SAFE_NO_PAD)` and `octo_network::DeterministicEnvelope::bytes()`
 - [ ] `src/error.rs` defines `TelegramError` enum with thiserror derives (variants: `AuthKeyUnregistered`, `FloodWait`, `NetworkError`, `RpcError`, `SessionError`, `ConfigError`, `Unsupported`)
+- [ ] `src/stoolap_session.rs` implements the `grammers_session::Session` trait backed by CipherOcto's stoolap fork (RFC-0914-a); the schema (`mtproto_auth_keys`, `mtproto_dc_config`, `mtproto_user` tables) matches RFC-0850ab-c §"Specification / Session Storage Schema"; the API follows the `octo-matrix-session-store` canonical pattern (`Database::open(path)` / `db.execute(sql, params)` / `db.query(sql, params) -> stoolap::Rows`)
+- [ ] `src/mtproto_client.rs` wraps `grammers_client::Client` with cipherocto-specific convenience methods
+- [ ] `src/auth.rs` implements `sign_in_bot(token: &str) -> Result<User, TelegramError>` per RFC-0850ab-c §"Algorithms / Algorithm 1" (uses `stoolap_session` for persistence)
+- [ ] `src/envelope.rs` implements DOT wire-format codec using `base64::encode_config(URL_SAFE_NO_PAD)` and `octo_network::DeterministicEnvelope::bytes()`
+- [ ] `src/adapter.rs` defines `MtprotoAdapter` struct and implements all `PlatformAdapter` trait methods
 - [ ] `src/self_handle.rs` implements `SelfHandleFilter` with deterministic integer comparison
 - [ ] `src/groups.rs` implements chat discovery (list groups, get chat_id from group_jid)
 - [ ] `src/files.rs` stubs out upload/download with `unimplemented!()` deferred to Phase 2 (user mode required for large uploads) — methods return `TelegramError::Unsupported`
-- [ ] `src/cleanup.rs` implements graceful shutdown (drop mtsender task, persist session, close SQLite)
+- [ ] `src/cleanup.rs` implements graceful shutdown (drop mtsender task, persist session via `stoolap_session`, close stoolap DB)
 
 ### PlatformAdapter trait implementation
 
@@ -75,7 +76,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 - [ ] TV-1 passes: valid bot token signs in, persists auth_key, transitions `NoToken → Validating → SignedIn`, `Uninitialized → Authenticated → Connected`
 - [ ] TV-2 passes: invalid bot token returns `Err(AuthKeyUnregistered)`, transitions `NoToken → Validating → Failed`, no auth_key persisted
-- [ ] Session is persisted to `data_dir/session.db` in the `mtproto_sessions` table (separate from `octo-adapter-telegram`'s session table)
+- [ ] Session is persisted to `data_dir/sessions.db` (CipherOcto stoolap fork) in the `mtproto_auth_keys` table, keyed on `dc_id`; **separate FILE** from the TDLib adapter's `data_dir/database` (no shared SQLite file); re-authentication is required if the operator switches adapters because auth_keys are not portable between TDLib and grammers
 - [ ] Subsequent `sign_in_bot` calls with the same config restore from SQLite (no re-authentication needed if auth_key is valid)
 
 ### Envelope send/receive
@@ -119,7 +120,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 | Path | Change |
 |------|--------|
-| `crates/octo-adapter-telegram-mtproto/Cargo.toml` | New file; grammers deps + serde + tokio + reqwest (for future use) + base64 + blake3 + thiserror + tracing |
+| `crates/octo-adapter-telegram-mtproto/Cargo.toml` | New file; grammers deps (no `sqlite` feature on `grammers-session`) + CipherOcto stoolap fork (`stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }`, per RFC-0914-a) + serde + tokio + reqwest (for future use) + base64 + blake3 + thiserror + tracing |
 | `crates/octo-adapter-telegram-mtproto/src/lib.rs` | New file; re-exports + dispatch |
 | `crates/octo-adapter-telegram-mtproto/src/config.rs` | New file; `MtprotoAdapterConfig` + `AuthMode` + `ProxyConfig` + `ProxyKind` |
 | `crates/octo-adapter-telegram-mtproto/src/adapter.rs` | New file; `MtprotoAdapter` + `PlatformAdapter` impl |
@@ -132,6 +133,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 | `crates/octo-adapter-telegram-mtproto/src/files.rs` | New file; upload/download stubs (return `TelegramError::Unsupported` until Phase 2) |
 | `crates/octo-adapter-telegram-mtproto/src/cleanup.rs` | New file; graceful shutdown |
 | `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs` | New file; `AdapterLifecycle` + `BotAuthLifecycle` + `UserAuthLifecycle` enums |
+| `crates/octo-adapter-telegram-mtproto/src/stoolap_session.rs` | New file; custom `StoolapSession` impl of `grammers_session::Session` trait, backed by CipherOcto's stoolap fork (RFC-0914-a); ~150 LOC |
 | `crates/octo-adapter-telegram-mtproto/README.md` | New file; quick-start + architecture + config |
 | `crates/octo-adapter-telegram-mtproto/CHANGELOG.md` | New file; 0.1.0 entry |
 | `crates/octo-adapter-telegram-mtproto/tests/integration_telegram_mtproto.rs` | New file; integration test |
@@ -140,9 +142,9 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 ## Complexity
 
-**Large.** Estimated ~1500-2000 LOC of Rust, excluding tests. Drivers:
+**Large.** Estimated ~1700-2200 LOC of Rust, excluding tests. Drivers:
 
-- 13 source files (one per module listed above)
+- 14 source files (one per module listed above), including the new `src/stoolap_session.rs` (custom `StoolapSession` impl of the `grammers_session::Session` trait, ~150 LOC, per RFC-0914-a)
 - `PlatformAdapter` trait implementation requires understanding of the 23 sections of `mtproto_port.md` and the grammers analogs
 - Bot-mode auth is the happy path but must integrate with the TDLib-style state machine for future user mode
 - Error handling must cover 6 distinct error categories
@@ -158,6 +160,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - Mission 0850ab (DOT Telegram Adapter TDLib rewrite) — must be Accepted or superseded by this mission's RFC
 - RFC-0850 (DOT parent) — already Accepted
 - RFC-0850ab-a (Telegram Auth Onboarding CLI) — already Accepted; defines `TelegramConfig` schema
+- RFC-0914-a (CipherOcto Stoolap Persistence Convention) — Accepted; this mission's session storage conforms via the canonical `octo-matrix-session-store` pattern (`Database::open(path)` + `db.execute(sql, params)` + `db.query(sql, params) -> stoolap::Rows`)
 
 **Required upstream crates (MUST exist in workspace):**
 
@@ -169,7 +172,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - `grammers-mtproto 0.9.0`
 - `grammers-tl-types 0.9.0`
 - `grammers-client 0.8.x`
-- `grammers-session 0.9.x` with `sqlite` feature
+- `grammers-session 0.9.x` (NO `sqlite` feature; we ship a custom `StoolapSession` impl of the `Session` trait backed by CipherOcto's stoolap fork per RFC-0914-a)
 - `grammers-crypto` (workspace-internal)
 - `tokio` (runtime)
 - `reqwest` (for future HTTP fallback; unused in Phase 1)
@@ -178,7 +181,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - `thiserror 2.x`
 - `tracing 0.1`
 - `serde 1.0` + `serde_json 1.0`
-- `rusqlite 0.32` (for session storage; OR `sqlx 0.8` if cipherocto standardizes on sqlx)
+- `stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }` (per RFC-0914-a / 0914-a-stoolap-persistence; **NOT** `rusqlite` / `sqlx` / `sqlite` — those are reserved for legacy libraries that require them)
 
 > **Dependency Validation Rules:**
 > 1. The mission's RFC (0850ab-c) depends on RFC-0850, RFC-0850ab-a, RFC-0850p-c, RFC-0851p-a. All four are Accepted.
@@ -198,9 +201,9 @@ The 4-layer architecture maps to 4 modules:
 | DOT codec | `envelope.rs` | 100 |
 | (Bot-API HTTP — deferred) | `http_fallback.rs` | 0 (Phase 3) |
 
-Plus supporting modules: `config.rs` (150), `auth.rs` (250), `error.rs` (100), `self_handle.rs` (50), `groups.rs` (100), `files.rs` (50), `cleanup.rs` (50), `lifecycle.rs` (100).
+Plus supporting modules: `config.rs` (150), `error.rs` (100), `lifecycle.rs` (100), `stoolap_session.rs` (150; custom `StoolapSession` impl of `grammers_session::Session`, backed by CipherOcto stoolap fork per RFC-0914-a), `auth.rs` (250), `envelope.rs` (100), `self_handle.rs` (50), `groups.rs` (100), `files.rs` (50), `cleanup.rs` (50).
 
-Total: ~1550 LOC excluding tests.
+Total: ~1700 LOC excluding tests.
 
 ### 2. Bot-mode sign-in is the happy path
 
@@ -210,9 +213,48 @@ This is the matrix adapter's pattern: ship bot mode first, add user mode in a se
 
 ### 3. Session storage isolation
 
-The existing `octo-adapter-telegram` (TDLib-based) uses `data_dir/session.db` for TDLib's auth database. The new crate uses `data_dir/session.db` (same file) but its own `mtproto_*` table prefix for `grammers_session::SqliteSession`.
+The existing `octo-adapter-telegram` (TDLib-based) uses `data_dir/database` for TDLib's own auth database (TDLib is a legacy C++ library that manages its own SQLite file internally; cipherocto does not own that file). The new crate uses `data_dir/sessions.db`, backed by **CipherOcto's stoolap fork on `feat/blockchain-sql`** (per RFC-0914-a / 0914-a-stoolap-persistence).
 
-This is intentional: the operator uses one `data_dir` for both adapters, but the auth_keys are kept separate (different table prefix, different schema, different lifecycle). An operator can run both adapters against the same `data_dir` without conflict.
+Both files live in the same `data_dir` but are **completely separate**. No shared SQLite file, no table-prefix trick. The new crate ships with **no** `rusqlite` / `sqlx` / `sqlite` dependency.
+
+The canonical pattern from `octo-matrix-session-store` applies:
+
+```rust
+// src/stoolap_session.rs (sketch — full impl in the mission PR)
+use stoolap::Database;
+
+pub struct StoolapSession {
+    db: Database,  // opens via Database::open(path); stoolap owns the connection
+}
+
+impl StoolapSession {
+    pub fn new(path: &Path) -> Result<Self, TelegramError> {
+        let db = Database::open(path)
+            .map_err(|e| TelegramError::SessionError(e.to_string()))?;
+        init_schema(&db)?;  // idempotent CREATE TABLE IF NOT EXISTS
+        Ok(Self { db })
+    }
+
+    fn init_schema(db: &Database) -> Result<(), TelegramError> {
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS mtproto_auth_keys (
+                dc_id INTEGER NOT NULL PRIMARY KEY,
+                auth_key BLOB NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER NOT NULL
+             )",
+            &[],
+        ).map_err(|e| TelegramError::SessionError(e.to_string()))?;
+        // ... mtproto_dc_config, mtproto_user ...
+        Ok(())
+    }
+}
+
+// Implement grammers_session::Session trait by mapping load/save calls to db.query/db.execute.
+impl grammers_session::Session for StoolapSession { /* ... */ }
+```
+
+**Migration note.** Auth_keys are NOT portable between TDLib and grammers (different key derivation, different storage layout). An operator who switches from the TDLib adapter to the mtproto adapter must re-authenticate once. The reverse direction (mtproto → TDLib) is the same. This is documented in the crate README.
 
 ### 4. Error type design
 
@@ -356,10 +398,12 @@ Test: `cargo test -p octo-adapter-telegram-mtproto --target ${{ matrix.target }}
 - RFC-0850 (Networking): Deterministic Overlay Transport — for `PlatformAdapter` trait
 - RFC-0850ab-a (Networking): Telegram Auth Onboarding CLI — for `TelegramConfig` schema (future Phase 2 will reuse interactive prompts)
 - RFC-0850p-c (Networking): Transport Group Binding Ceremony — for `GroupState`, `domain_id` semantics
+- RFC-0914-a (Networking / Process): CipherOcto Stoolap Persistence Convention — for the project-wide mandate that all new persistence uses CipherOcto's stoolap fork (this mission conforms via a custom `StoolapSession` impl of the `grammers_session::Session` trait, per the `octo-matrix-session-store` canonical pattern)
 
 ### Existing CipherOcto code
 
-- `crates/octo-adapter-telegram/` — the existing TDLib-based adapter (must NOT be broken)
+- `crates/octo-adapter-telegram/` — the existing TDLib-based adapter (uses `rusqlite` ONLY because TDLib requires it; legacy)
+- `crates/octo-matrix-session-store/` — canonical pattern for stoolap-backed session storage; reference for `Database::open(path)` + `db.execute(sql, params)` + `db.query(sql, params) -> stoolap::Rows` API usage
 - `crates/octo-adapter-matrix/` — architectural reference (similar adapter pattern; uses matrix-rust-sdk)
 - `crates/octo-network/` — for `DeterministicEnvelope`, `BroadcastDomainId`, `PlatformAdapter` trait
 
@@ -384,4 +428,4 @@ Each sub-mission follows the same template (Status, RFC, Summary, Acceptance Cri
 **Mission Created:** 2026-06-21
 **Parent RFC:** RFC-0850ab-c (Draft, awaiting acceptance)
 **Source Research:** `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` (accepted)
-**Estimated Effort:** ~1500-2000 LOC, 1-2 weeks for an experienced Rust contributor with grammers familiarity; 3-4 weeks for someone new to MTProto
+**Estimated Effort:** ~1700-2200 LOC, 1-2 weeks for an experienced Rust contributor with grammers familiarity; 3-4 weeks for someone new to MTProto

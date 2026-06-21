@@ -486,6 +486,16 @@ Test: `cargo test -p octo-adapter-telegram-mtproto --target ${{ matrix.target }}
 
 Each sub-mission follows the same template (Status, RFC, Summary, Acceptance Criteria, etc.) and references the parent RFC-0850ab-c.
 
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-06-21 | Initial mission; Phase 1 Core implementation work. Derived from RFC-0850ab-c §"Implementation Phases / Phase 1: Core" |
+| 1.1 | 2026-06-21 | Storage layer switched from raw SQLite to CipherOcto's stoolap fork; added `src/stoolap_session.rs` module reference. Commit `0079d0b`. |
+| 1.2 | 2026-06-21 | Round 1 of RFC+Mission co-review: 9 issues fixed (BLUEPRINT template; Prerequisites→Dependencies; Type Coverage subsection; stoolap API correction). Commit `1e166b5`. |
+| 1.3 | 2026-06-21 | Round 2: 3 issues fixed (stoolap API realism; `db.execute(sql, ())`; grammers InputPeer boundary). Commit `a64879e`. |
+| 1.4 | 2026-06-21 | Round 3: Security invariants subsection added (5 acceptance checks for log redaction, sign_out DB cleanup, file permissions, no transitive SQLite, tracing-only output). Commit `8a7b823`. |
+
 ---
 
 **Mission Created:** 2026-06-21

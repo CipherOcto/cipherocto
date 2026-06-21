@@ -692,7 +692,16 @@ This is enforced by the test suite (TV-13). Without explicit DB deletion, the `S
 
 The research report at `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` went through 6 rounds of adversarial review (a34a9f8, 6f74995, e00af56, d597f57, a65ddd6, d5ca552) and is accepted as the spec we must satisfy. The review fixed 54 issues across spec accuracy, internal consistency, RFC references, weak claims, and MTProto protocol claims.
 
-A future RFC-level adversarial review will be performed before this RFC is Accepted (see §"Implementation Phases" → Phase 0).
+This RFC is undergoing a multi-round adversarial review in parallel with its Draft lifecycle:
+
+| Round | Lens | Commits | Issues fixed |
+|-------|------|---------|--------------|
+| 1 | BLUEPRINT compliance + cross-ref validity (template gaps; fabricated RFC-0914-a removed; stoolap API corrections; Key Files additions) | `1e166b5` | 9 |
+| 2 | grammers API realism + stoolap API realism + protocol accuracy (db.execute params type; stoolap::Rows iteration; InputPeer boundary type) | `a64879e` | 3 |
+| 3 | Security + Crypto + Adversary Analysis 5-Q Test rigor (DD6 auth_key at rest; DD7 log redaction; sign_out DB cleanup invariant; TV-11/12/13) | `8a7b823` | 5 |
+| 4 | Ops + path/file cross-ref + doc style + RFC reference accuracy | (this round) | (this round) |
+
+The loop continues until a round finds no substantive issues. See §"Version History" for the cumulative change log.
 
 ## Adversary Analysis
 
@@ -1024,6 +1033,10 @@ Why this approach over alternatives? See the "Alternatives Considered" table. Th
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-06-21 | Initial draft; derived from the research report `docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md` (6 rounds of adversarial review, 54 issues fixed, accepted) |
+| 1.1 | 2026-06-21 | Storage layer switched from raw SQLite to CipherOcto's stoolap fork (`feat/blockchain-sql`); RFC-0914-a reference removed (was fabricated); closest Accepted precedent now RFC-0914 (Economics). Commit `697d2a0`. |
+| 1.2 | 2026-06-21 | Round 1 of RFC-level adversarial review: 9 issues fixed (BLUEPRINT template compliance; Key Files additions; stoolap `Database::open` API correction; Type Coverage subsection added). Commit `1e166b5`. |
+| 1.3 | 2026-06-21 | Round 2: 3 issues fixed (stoolap API realism; `db.execute(sql, ())` not `&[]`; `stoolap::Rows` iteration example; RFC Algorithm 5 grammers `InputPeer` boundary type). Commit `a64879e`. |
+| 1.4 | 2026-06-21 | Round 3: 5 issues fixed (Security + Crypto + Adversary 5-Q rigor: DD6 auth_key at rest; DD7 log redaction; sign_out DB cleanup invariant; TV-11/12/13; F6 OS keyring). Commit `8a7b823`. |
 
 ## Related RFCs
 

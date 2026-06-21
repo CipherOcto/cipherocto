@@ -220,6 +220,13 @@ pub struct MockFailureSpec {
     pub send_document_error: Option<String>,
     /// If set, `download_file` returns this error every call.
     pub download_file_error: Option<String>,
+    /// Phase 2.4: if set, `submit_code` returns
+    /// `MtprotoTelegramError::Auth("2FA_REQUIRED")` instead of
+    /// `Ok(SelfUserInfo {..})`. The caller is then expected to
+    /// call `submit_password` next, which the mock always
+    /// accepts. Use `MockTelegramMtprotoClient::set_require_2fa`
+    /// to toggle.
+    pub require_2fa: bool,
 }
 
 /// Pure-Rust mock used by tests. Behaviour:
@@ -287,6 +294,21 @@ impl MockTelegramMtprotoClient {
     /// Set the failure-injection spec.
     pub fn set_failure_spec(&self, spec: MockFailureSpec) {
         self.state.lock().failure = spec;
+    }
+
+    /// Phase 2.4: set the `require_2fa` flag on the failure
+    /// spec. When `true`, `submit_code` returns
+    /// `MtprotoTelegramError::Auth("2FA_REQUIRED")` instead of
+    /// `Ok(SelfUserInfo {..})` so adapter tests can drive the
+    /// full 2FA flow.
+    pub fn set_require_2fa(&self, require: bool) {
+        self.state.lock().failure.require_2fa = require;
+    }
+
+    /// Read the current `require_2fa` flag (for assertions in
+    /// tests).
+    pub fn require_2fa(&self) -> bool {
+        self.state.lock().failure.require_2fa
     }
 
     /// Mark the mock as signed in (used by the adapter's
@@ -386,6 +408,17 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         _code: &str,
     ) -> Result<SelfUserInfo, MtprotoTelegramError> {
         let mut g = self.state.lock();
+        // Phase 2.4: simulate 2FA-required when the mock's
+        // `require_2fa` flag is set (set via
+        // `set_require_2fa(true)`). The real-network impl
+        // signals the same condition by returning
+        // `MtprotoTelegramError::Auth("2FA_REQUIRED")` after
+        // receiving `SignInError::PasswordRequired` from
+        // grammers. Without the flag, the mock returns
+        // `Ok(SelfUserInfo {..})` and is signed in.
+        if g.failure.require_2fa {
+            return Err(MtprotoTelegramError::Auth("2FA_REQUIRED".into()));
+        }
         g.next_user_id += 1;
         g.signed_in = true;
         Ok(SelfUserInfo {
@@ -470,5 +503,35 @@ mod tests {
         c.sign_in_bot("123:abc", 1, "hash").await.unwrap();
         c.sign_out().await.unwrap();
         assert!(!c.state.lock().signed_in);
+    }
+
+    #[tokio::test]
+    async fn mock_submit_code_signals_2fa_required() {
+        // Phase 2.4: with `require_2fa` set, `submit_code`
+        // returns `MtprotoTelegramError::Auth("2FA_REQUIRED")`
+        // matching the real-network impl's signal. Without
+        // the flag, `submit_code` returns `Ok(SelfUserInfo)`.
+        let c = MockTelegramMtprotoClient::new();
+        c.set_require_2fa(true);
+        let r = c.submit_code("12345").await;
+        match r {
+            Err(MtprotoTelegramError::Auth(msg)) => {
+                assert_eq!(msg, "2FA_REQUIRED");
+            }
+            other => panic!("expected Auth(2FA_REQUIRED), got {:?}", other),
+        }
+        // After 2FA, submit_password completes the sign-in.
+        let info = c.submit_password("hunter2").await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_user_2fa"));
+        assert!(c.state.lock().signed_in);
+    }
+
+    #[tokio::test]
+    async fn mock_submit_code_no_2fa_succeeds() {
+        // Default: no 2FA flag, submit_code succeeds.
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.submit_code("12345").await.unwrap();
+        assert_eq!(info.username.as_deref(), Some("mock_user"));
+        assert!(c.state.lock().signed_in);
     }
 }

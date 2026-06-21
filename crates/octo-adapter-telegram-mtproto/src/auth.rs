@@ -347,6 +347,46 @@ pub enum MtprotoAuthError {
     NotSignedIn,
 }
 
+/// Map a `MtprotoAuthError` (state-machine error) into the
+/// public `MtprotoTelegramError` so the real-network impl
+/// (`real_client.rs`) can use `?` to propagate state-machine
+/// failures without manually wrapping each one.
+///
+/// Mapping:
+/// - `InvalidTransition` / `InvalidUserTransition` /
+///   `InvalidUserServerTransition` → `Auth(...)` (operator
+///   called an action out of order; this is a programmer error,
+///   not a transient failure).
+/// - `NotSignedIn` → `Auth(...)` (auth-related).
+impl From<MtprotoAuthError> for crate::error::MtprotoTelegramError {
+    fn from(e: MtprotoAuthError) -> Self {
+        use MtprotoAuthError::*;
+        match e {
+            InvalidTransition { from, action } => {
+                crate::error::MtprotoTelegramError::Auth(format!(
+                    "invalid transition from {} via {:?}",
+                    from, action
+                ))
+            }
+            InvalidUserTransition { from, action } => {
+                crate::error::MtprotoTelegramError::Auth(format!(
+                    "invalid user-mode transition from {} via {}",
+                    from, action
+                ))
+            }
+            InvalidUserServerTransition { from, event } => {
+                crate::error::MtprotoTelegramError::Auth(format!(
+                    "invalid user-mode server transition from {} via {}",
+                    from, event
+                ))
+            }
+            NotSignedIn => {
+                crate::error::MtprotoTelegramError::Auth("not signed in".into())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,6 +672,52 @@ mod tests {
                 bad,
                 r
             );
+        }
+    }
+
+    // ----- From<MtprotoAuthError> for MtprotoTelegramError -----
+
+    #[test]
+    fn auth_error_to_telegram_error_mapping() {
+        use crate::error::MtprotoTelegramError;
+        use MtprotoAuthError::*;
+
+        let e: MtprotoTelegramError = InvalidUserTransition {
+            from: UserAuthLifecycle::NoCredentials,
+            action: UserAuthAction::SignOut,
+        }
+        .into();
+        match e {
+            MtprotoTelegramError::Auth(msg) => {
+                assert!(msg.contains("invalid user-mode transition"), "msg = {}", msg);
+                assert!(msg.contains("SignOut"), "msg = {}", msg);
+            }
+            other => panic!("expected Auth, got {:?}", other),
+        }
+
+        let e: MtprotoTelegramError = InvalidUserServerTransition {
+            from: UserAuthLifecycle::NoCredentials,
+            event: UserAuthServerEvent::SignInSucceeded,
+        }
+        .into();
+        match e {
+            MtprotoTelegramError::Auth(msg) => {
+                assert!(
+                    msg.contains("invalid user-mode server transition"),
+                    "msg = {}",
+                    msg
+                );
+                assert!(msg.contains("SignInSucceeded"), "msg = {}", msg);
+            }
+            other => panic!("expected Auth, got {:?}", other),
+        }
+
+        let e: MtprotoTelegramError = NotSignedIn.into();
+        match e {
+            MtprotoTelegramError::Auth(msg) => {
+                assert_eq!(msg, "not signed in");
+            }
+            other => panic!("expected Auth, got {:?}", other),
         }
     }
 }

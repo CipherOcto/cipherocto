@@ -228,6 +228,88 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
         Ok(())
     }
+
+    /// Connect as a user: drive the user-mode sign-in flow
+    /// (`request_login_code` → `submit_code` → optional
+    /// `submit_password`) end-to-end and on success
+    /// transition the lifecycle to `Ready`.
+    ///
+    /// `phone` is the user's E.164 phone number; `ask_code`
+    /// is a closure that returns the SMS code the user
+    /// received from Telegram (used for the
+    /// `submit_code` call); `ask_password` is a closure
+    /// that returns `Some(password)` if 2FA is required
+    /// (the mock signals this by returning
+    /// `MtprotoTelegramError::Auth("2FA_REQUIRED")` from
+    /// `submit_code`) or `None` to abort the flow.
+    ///
+    /// The real-network impl handles the
+    /// `MtprotoTelegramError::Auth("2FA_REQUIRED")` signal
+    /// itself and returns it; this adapter method
+    /// catches it and calls `ask_password()` for the
+    /// next step. The mock's behaviour matches
+    /// (configurable via `set_require_2fa`).
+    pub async fn connect_user<F, G>(
+        &self,
+        phone: &str,
+        ask_code: F,
+        ask_password: G,
+    ) -> Result<(), MtprotoTelegramError>
+    where
+        F: FnOnce() -> String,
+        G: FnOnce() -> Option<String>,
+    {
+        if let Err(e) = self
+            .lifecycle
+            .transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
+        {
+            return Err(MtprotoTelegramError::Config(format!(
+                "lifecycle: {}",
+                e
+            )));
+        }
+        // Step 1: send the login code.
+        self.client
+            .request_login_code(
+                self.config.api_id.unwrap_or(0),
+                self.config.api_hash.as_deref().unwrap_or(""),
+                phone,
+            )
+            .await?;
+        // Step 2: submit the SMS code.
+        let code = ask_code();
+        match self.client.submit_code(&code).await {
+            Ok(info) => {
+                // Signed in. Populate the self-handle from
+                // the auth result and drive the outer
+                // lifecycle to Ready.
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                self.lifecycle
+                    .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                Ok(())
+            }
+            Err(MtprotoTelegramError::Auth(msg)) if msg == "2FA_REQUIRED" => {
+                // Step 3: 2FA required. Ask the user for
+                // the password.
+                let password = match ask_password() {
+                    Some(p) => p,
+                    None => {
+                        return Err(MtprotoTelegramError::Auth(
+                            "2FA required but ask_password returned None".into(),
+                        ));
+                    }
+                };
+                let info = self.client.submit_password(&password).await?;
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                self.lifecycle
+                    .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
 }
 
 /// `From<MtprotoTelegramError>` for `PlatformAdapterError`.
@@ -780,6 +862,71 @@ mod tests {
         a.connect_bot_token("123:abc").await.unwrap();
         assert!(a.lifecycle().is_ready());
         assert!(a.self_handle.get().is_some());
+    }
+
+    // ----- Phase 2.4: user-mode connect_user() tests -----
+
+    #[tokio::test]
+    async fn connect_user_no_2fa_marks_ready() {
+        // Default mock: no 2FA, submit_code succeeds and
+        // returns SelfUserInfo. The adapter's connect_user
+        // should drive the lifecycle to Ready.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock);
+        a.lifecycle()
+            .force(AdapterLifecycle::Uninitialised, AuthStateKey::Uninitialised);
+        a.connect_user("+15555550100", || "12345".into(), || None)
+            .await
+            .unwrap();
+        assert!(a.lifecycle().is_ready());
+        assert!(a.self_handle.get().is_some());
+    }
+
+    #[tokio::test]
+    async fn connect_user_with_2fa_marks_ready() {
+        // Mock with `set_require_2fa(true)`: submit_code
+        // returns `Auth("2FA_REQUIRED")` and the adapter
+        // should then call submit_password.
+        let mock = MockTelegramMtprotoClient::new();
+        mock.set_require_2fa(true);
+        let a = adapter_with(mock);
+        a.lifecycle()
+            .force(AdapterLifecycle::Uninitialised, AuthStateKey::Uninitialised);
+        a.connect_user(
+            "+15555550100",
+            || "12345".into(),
+            || Some("hunter2".into()),
+        )
+        .await
+        .unwrap();
+        assert!(a.lifecycle().is_ready());
+        assert!(a.self_handle.get().is_some());
+    }
+
+    #[tokio::test]
+    async fn connect_user_2fa_aborted_when_ask_password_returns_none() {
+        // 2FA required but `ask_password` returns None:
+        // connect_user should error without ever calling
+        // submit_password.
+        let mock = MockTelegramMtprotoClient::new();
+        mock.set_require_2fa(true);
+        let a = adapter_with(mock);
+        a.lifecycle()
+            .force(AdapterLifecycle::Uninitialised, AuthStateKey::Uninitialised);
+        let r = a
+            .connect_user("+15555550100", || "12345".into(), || None)
+            .await;
+        match r {
+            Err(MtprotoTelegramError::Auth(msg)) => {
+                assert!(
+                    msg.contains("2FA required but ask_password returned None"),
+                    "msg = {}",
+                    msg
+                );
+            }
+            other => panic!("expected Auth, got {:?}", other),
+        }
+        assert!(!a.lifecycle().is_ready());
     }
 
     #[test]

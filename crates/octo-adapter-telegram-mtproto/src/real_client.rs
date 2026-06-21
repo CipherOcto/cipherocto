@@ -1,16 +1,14 @@
-//! Real `grammers_client::Client`-backed impl of
-//! `MtprotoTelegramClient`. Gated behind `--features
-//! real-network`.
+//! ## Status: Phase 2 in progress
 //!
-//! ## Status: Phase 1 stub
-//!
-//! The `connect` path wires up the `SenderPool` and a real
-//! `grammers_client::Client`, but the per-RPC implementations
-//! (`send_message`, `send_document`, etc.) are stubbed out
-//! because Phase 1 is bot-mode auth + basic adapter plumbing
-//! only. Peer resolution (which needs an `InputPeer` carrying
-//! `access_hash`) and the user-mode auth flow are Phase 2
-//! work tracked under sub-mission `0850ab-c-user`.
+//! Bot-mode `sign_in_bot`, `sign_out`, and the user-mode auth
+//! flow (`request_login_code` / `submit_code` /
+//! `submit_password`) are all wired to the real `grammers`
+//! client. The user-mode flow drives the `UserAuthLifecycle`
+//! state machine (`NoCredentials → PhoneProvided → SmsCodeSent
+//! → SmsCodeProvided → SignedIn`, or via `PasswordRequired →
+//! PasswordProvided → SignedIn` if the account has 2FA
+//! enabled). Phase 2.5 (QR login) and Phase 2.7 (session
+//! persistence integration) are still pending.
 //!
 //! ## Storage
 //!
@@ -20,21 +18,49 @@
 //! `RealTelegramMtprotoClient` additionally holds a typed
 //! `Arc<StoolapSession>` so `sign_out` can call
 //! `StoolapSession::reset()` to wipe the on-disk store.
+//!
+//! ## User-mode state
+//!
+//! Across the multi-step user-mode flow, the real client holds:
+//! - `user_auth_state: Mutex<UserAuthLifecycle>` — the
+//!   state-machine cursor. Every action goes through
+//!   `next_user_auth_state` (client-side) and
+//!   `next_user_auth_state_server` (server-side) so the
+//!   adapter can audit transitions.
+//! - `pending_login: Mutex<Option<grammers_client::LoginToken>>` —
+//!   returned by `Client::request_login_code` and consumed by
+//!   `Client::sign_in`. Lives only between `request_login_code`
+//!   and `submit_code`.
+//! - `pending_password: Mutex<Option<grammers_client::PasswordToken>>` —
+//!   returned by `Client::sign_in` on `SignInError::PasswordRequired`
+//!   and consumed by `Client::check_password`. Lives only between
+//!   `submit_code` (when it returns `2FA_REQUIRED`) and
+//!   `submit_password`.
+//!
+//! All three are reset on `sign_out` so a fresh sign-in
+//! attempt starts from `NoCredentials`.
 
 #![cfg(feature = "real-network")]
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use grammers_client::client::{LoginToken, PasswordToken};
 use grammers_client::sender::SenderPool;
 use grammers_client::Client as GrammersClient;
+use grammers_client::SignInError;
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
+use crate::auth::{
+    next_user_auth_state, next_user_auth_state_server, MtprotoAuthError, UserAuthAction,
+    UserAuthServerEvent,
+};
 use crate::client::{
     MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, SelfUserInfo,
 };
 use crate::error::MtprotoTelegramError;
+use crate::lifecycle::UserAuthLifecycle;
 use crate::self_handle::MtprotoSelfHandle;
 use crate::session::StoolapSession;
 
@@ -56,6 +82,21 @@ pub struct RealTelegramMtprotoClient {
     /// Shared self-handle. Populated by the `sign_in_*`
     /// methods after a successful `get_me()`.
     self_handle: MtprotoSelfHandle,
+    /// User-mode lifecycle cursor. Always present; starts at
+    /// `NoCredentials` after `connect` and is reset to
+    /// `NoCredentials` on `sign_out`.
+    user_auth_state: parking_lot::Mutex<UserAuthLifecycle>,
+    /// `LoginToken` returned by `Client::request_login_code`.
+    /// Set by `request_login_code`, consumed by
+    /// `submit_code`. `None` outside the request_login_code
+    /// → submit_code window.
+    pending_login: parking_lot::Mutex<Option<LoginToken>>,
+    /// `PasswordToken` returned by `Client::sign_in` on
+    /// `SignInError::PasswordRequired`. Set when
+    /// `submit_code` returns `2FA_REQUIRED`, consumed by
+    /// `submit_password`. `None` outside the
+    /// submit_code(2FA) → submit_password window.
+    pending_password: parking_lot::Mutex<Option<PasswordToken>>,
 }
 
 impl RealTelegramMtprotoClient {
@@ -87,6 +128,9 @@ impl RealTelegramMtprotoClient {
             runner: parking_lot::Mutex::new(Some(runner_task)),
             session,
             self_handle,
+            user_auth_state: parking_lot::Mutex::new(UserAuthLifecycle::NoCredentials),
+            pending_login: parking_lot::Mutex::new(None),
+            pending_password: parking_lot::Mutex::new(None),
         }))
     }
 
@@ -98,6 +142,37 @@ impl RealTelegramMtprotoClient {
     #[allow(dead_code)]
     pub fn grammers_client(&self) -> &GrammersClient {
         &self.client
+    }
+
+    /// Helper: drive the user-mode state machine through the
+    /// two SignOut transitions (`SignedIn → SigningOut →
+    /// SignedOut`). Called from `sign_out` and from
+    /// any other place that tears down user-mode state.
+    /// Errors are deliberately swallowed: sign-out is a
+    /// best-effort cleanup and we don't want a state-machine
+    /// mismatch to block the session reset.
+    fn maybe_transition_user_signout(&self) -> Result<(), MtprotoAuthError> {
+        use UserAuthLifecycle::*;
+        match *self.user_auth_state.lock() {
+            SignedIn => {
+                let s = next_user_auth_state(UserAuthAction::SignOut, SignedIn)?;
+                *self.user_auth_state.lock() = s;
+                let s = next_user_auth_state(UserAuthAction::SignOut, SigningOut)?;
+                *self.user_auth_state.lock() = s;
+            }
+            SigningOut => {
+                let s = next_user_auth_state(UserAuthAction::SignOut, SigningOut)?;
+                *self.user_auth_state.lock() = s;
+            }
+            _ => {
+                // NoCredentials, PhoneProvided, SmsCodeSent,
+                // SmsCodeProvided, PasswordRequired,
+                // PasswordProvided, QrLoginPending,
+                // QrLoginConfirmed, SignedOut: no transition
+                // to perform.
+            }
+        }
+        Ok(())
     }
 }
 
@@ -178,43 +253,255 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
     async fn request_login_code(
         &self,
         _api_id: i32,
-        _api_hash: &str,
-        _phone: &str,
+        api_hash: &str,
+        phone: &str,
     ) -> Result<(), MtprotoTelegramError> {
-        // Phase 1: bot mode only. The user-mode flow is
-        // Phase 2 (sub-mission 0850ab-c-user).
-        Err(MtprotoTelegramError::NotReady(
-            "user-mode auth (request_login_code) is Phase 2 — not implemented in Phase 1".into(),
-        ))
+        // 1. Drive the state machine (client-side):
+        //    `NoCredentials → PhoneProvided` on `RequestCode`.
+        let new_state = {
+            let current = *self.user_auth_state.lock();
+            next_user_auth_state(
+                UserAuthAction::RequestCode { phone: phone.to_string() },
+                current,
+            )?
+        };
+        *self.user_auth_state.lock() = new_state;
+
+        // 2. Call grammers' `Client::request_login_code`. On
+        //    success, stash the `LoginToken` and advance
+        //    `PhoneProvided → SmsCodeSent` (server-side).
+        match self.client.request_login_code(phone, api_hash).await {
+            Ok(login_token) => {
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::RequestCodeSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                *self.pending_login.lock() = Some(login_token);
+                Ok(())
+            }
+            Err(e) => {
+                // Server didn't accept the phone. Roll the
+                // state machine back to NoCredentials so the
+                // operator can retry with a corrected phone.
+                *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+                error!(error = %e, "Client::request_login_code failed");
+                Err(MtprotoTelegramError::Auth(format!(
+                    "request_login_code: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                )))
+            }
+        }
     }
 
     async fn submit_code(
         &self,
-        _code: &str,
+        code: &str,
     ) -> Result<SelfUserInfo, MtprotoTelegramError> {
-        Err(MtprotoTelegramError::NotReady(
-            "user-mode auth (submit_code) is Phase 2 — not implemented in Phase 1".into(),
-        ))
+        // 1. Pull the stashed LoginToken. If missing, the
+        //    caller skipped `request_login_code` — that's a
+        //    state-machine violation.
+        let token = self.pending_login.lock().take().ok_or_else(|| {
+            MtprotoTelegramError::Auth(
+                "submit_code called without a prior request_login_code".into(),
+            )
+        })?;
+
+        // 2. Drive the state machine (client-side):
+        //    `SmsCodeSent → SmsCodeProvided` on `SubmitCode`.
+        let new_state = {
+            let current = *self.user_auth_state.lock();
+            next_user_auth_state(
+                UserAuthAction::SubmitCode { code: code.to_string() },
+                current,
+            )?
+        };
+        *self.user_auth_state.lock() = new_state;
+
+        // 3. Call grammers' `Client::sign_in`.
+        match self.client.sign_in(&token, code).await {
+            Ok(user) => {
+                // 4a. Server succeeded. Advance
+                //     `SmsCodeProvided → SignedIn` and
+                //     populate the self-handle.
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::SignInSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                let info = SelfUserInfo {
+                    user_id: user.id().bare_id(),
+                    username: user.username().map(String::from),
+                    access_hash: 0,
+                };
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                Ok(info)
+            }
+            Err(SignInError::PasswordRequired(password_token)) => {
+                // 4b. Server returned SESSION_PASSWORD_NEEDED.
+                //     Stash the password token, advance
+                //     `SmsCodeProvided → PasswordRequired`, and
+                //     signal the caller via the trait-level
+                //     sentinel `MtprotoTelegramError::Auth("2FA_REQUIRED")`.
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::PasswordRequired,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                *self.pending_password.lock() = Some(password_token);
+                Err(MtprotoTelegramError::Auth("2FA_REQUIRED".into()))
+            }
+            Err(SignInError::InvalidCode) => {
+                // Roll the state back to SmsCodeSent so the
+                // operator can retry with a corrected code.
+                // The next `submit_code` call is then valid.
+                *self.user_auth_state.lock() = UserAuthLifecycle::SmsCodeSent;
+                Err(MtprotoTelegramError::Auth("invalid code".into()))
+            }
+            Err(SignInError::Other(e)) => {
+                // Generic failure — roll back to SmsCodeSent
+                // so the operator can retry.
+                *self.user_auth_state.lock() = UserAuthLifecycle::SmsCodeSent;
+                error!(error = %e, "Client::sign_in failed");
+                Err(MtprotoTelegramError::Auth(format!(
+                    "sign_in: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                )))
+            }
+            Err(SignInError::SignUpRequired) => {
+                // grammers does not support third-party sign-up.
+                // Reset state to NoCredentials; the user must
+                // create their account on an official client
+                // first.
+                *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+                Err(MtprotoTelegramError::Auth(
+                    "sign-up required (use an official Telegram client first)".into(),
+                ))
+            }
+            Err(SignInError::InvalidPassword(_)) => {
+                // Not expected from `sign_in` — `sign_in`
+                // returns `InvalidPassword` only from
+                // `check_password`. Treat as a generic
+                // failure.
+                *self.user_auth_state.lock() = UserAuthLifecycle::SmsCodeSent;
+                Err(MtprotoTelegramError::Auth(
+                    "unexpected invalid-password from sign_in".into(),
+                ))
+            }
+        }
     }
 
     async fn submit_password(
         &self,
-        _password: &str,
+        password: &str,
     ) -> Result<SelfUserInfo, MtprotoTelegramError> {
-        Err(MtprotoTelegramError::NotReady(
-            "user-mode auth (submit_password) is Phase 2 — not implemented in Phase 1".into(),
-        ))
+        // 1. Pull the stashed PasswordToken. If missing, the
+        //    caller skipped `submit_code` (or `submit_code`
+        //    did not return `2FA_REQUIRED`).
+        let password_token = self.pending_password.lock().take().ok_or_else(|| {
+            MtprotoTelegramError::Auth(
+                "submit_password called without a 2FA_REQUIRED from submit_code".into(),
+            )
+        })?;
+
+        // 2. Drive the state machine (client-side):
+        //    `PasswordRequired → PasswordProvided` on `SubmitPassword`.
+        let new_state = {
+            let current = *self.user_auth_state.lock();
+            next_user_auth_state(
+                UserAuthAction::SubmitPassword {
+                    password: password.to_string(),
+                },
+                current,
+            )?
+        };
+        *self.user_auth_state.lock() = new_state;
+
+        // 3. Call grammers' `Client::check_password`.
+        match self
+            .client
+            .check_password(password_token, password.as_bytes())
+            .await
+        {
+            Ok(user) => {
+                // 4a. Server accepted the password. Advance
+                //     `PasswordProvided → SignedIn` and
+                //     populate the self-handle.
+                let new_state = {
+                    let current = *self.user_auth_state.lock();
+                    next_user_auth_state_server(
+                        UserAuthServerEvent::CheckPasswordSucceeded,
+                        current,
+                    )?
+                };
+                *self.user_auth_state.lock() = new_state;
+                let info = SelfUserInfo {
+                    user_id: user.id().bare_id(),
+                    username: user.username().map(String::from),
+                    access_hash: 0,
+                };
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
+                Ok(info)
+            }
+            Err(SignInError::InvalidPassword(_)) => {
+                // 4b. Wrong password. Roll back to
+                //     `PasswordRequired` so the operator can
+                //     retry.
+                *self.user_auth_state.lock() = UserAuthLifecycle::PasswordRequired;
+                Err(MtprotoTelegramError::Auth("invalid password".into()))
+            }
+            Err(SignInError::Other(e)) => {
+                *self.user_auth_state.lock() = UserAuthLifecycle::PasswordRequired;
+                error!(error = %e, "Client::check_password failed");
+                Err(MtprotoTelegramError::Auth(format!(
+                    "check_password: {}",
+                    crate::error::redact_credentials(&e.to_string())
+                )))
+            }
+            // The remaining SignInError variants
+            // (SignUpRequired, InvalidCode) are not produced
+            // by `check_password`. Treat them as
+            // programmer-error / internal failures.
+            Err(other) => {
+                *self.user_auth_state.lock() = UserAuthLifecycle::PasswordRequired;
+                error!(error = %other, "unexpected SignInError from check_password");
+                Err(MtprotoTelegramError::Internal(format!(
+                    "check_password: unexpected {}",
+                    other
+                )))
+            }
+        }
     }
 
     async fn sign_out(&self) -> Result<(), MtprotoTelegramError> {
-        // 1. Call Telegram's auth.logOut to invalidate the
-        // server-side session.
+        // 1. Drive the state machine: if currently
+        //    `SignedIn` or `SigningOut`, advance to `SignedOut`
+        //    so a fresh sign-in attempt can start from
+        //    `NoCredentials`. Errors here are non-fatal: the
+        //    user might be in `NoCredentials` (never signed
+        //    in) and the rest of the sign-out still needs to
+        //    run.
+        let _ = self.maybe_transition_user_signout();
+
+        // 2. Call Telegram's auth.logOut to invalidate the
+        //    server-side session.
         if let Err(e) = self.client.sign_out().await {
             warn!(error = %e, "auth.logOut RPC failed; continuing to wipe local state");
         }
-        // 2. Wipe the local session store (DD6:
-        // mtproto_dc_option rows including auth_key;
-        // mtproto_peer_info including self_user).
+        // 3. Wipe the local session store (DD6:
+        //    mtproto_dc_option rows including auth_key;
+        //    mtproto_peer_info including self_user).
         if let Err(e) = self.session.reset() {
             error!(error = %e, "StoolapSession::reset failed; signing out left on-disk artifacts");
             return Err(MtprotoTelegramError::Session(format!(
@@ -222,8 +509,14 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 e
             )));
         }
-        // 3. Clear the cached self-handle.
+        // 4. Clear the cached self-handle.
         self.self_handle.clear();
+        // 5. Reset the user-mode state machine cursor and
+        //    drop any stashed login/password tokens so a
+        //    fresh sign-in attempt starts clean.
+        *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+        *self.pending_login.lock() = None;
+        *self.pending_password.lock() = None;
         Ok(())
     }
 

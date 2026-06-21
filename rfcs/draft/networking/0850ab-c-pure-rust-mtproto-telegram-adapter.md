@@ -131,6 +131,94 @@ The existing TDLib-based adapter is not deprecated by this RFC. The new crate **
 
 If a role has no lifecycle, "stateless" is recorded with a one-line justification (e.g., "validation function with no persistent state").
 
+## Background and Glossary (for fresh contributors)
+
+This section preempts the most common onboarding questions. If you have never worked with MTProto or grammers, read this before §"Specification".
+
+### What is MTProto?
+
+**MTProto** (Mobile Protocol) is Telegram's custom binary protocol for client-server communication. The current version, **MTProto 2.0**, uses:
+
+- **Transport layer:** TCP, with optional obfuscation (fake-TLS). All Telegram DCs listen on TCP port 443.
+- **Cryptographic layer:** AES-256-IGE (Infinite Garble Extension) for payload encryption, SHA-1/SHA-256 for integrity, and RSA-2048 for initial `auth_key` exchange.
+- **Message layer:** Each message is framed with `auth_key_id` (8 bytes), `msg_id` (8 bytes, 64-bit monotonic), `msg_len` (4 bytes), and a `TL-serialized` payload.
+- **Authorization:** After the initial `auth_key` exchange (which uses RSA-2048 + Diffie-Hellman), the client and server share a 256-byte `auth_key`. All subsequent messages are encrypted with AES-IGE keyed on this `auth_key` plus per-message salts.
+
+References:
+
+- Official spec: <https://core.telegram.org/mtproto/description>
+- The CipherOcto-curated spec used by this RFC: `/home/mmacedoeu/_w/tools/tdesktop/docs/mtproto_port.md` (referenced as plain text per the project's external-path convention)
+
+### What is grammers?
+
+**grammers** is the de-facto pure-Rust MTProto client library, maintained by Lonami (vilunov) under MIT OR Apache-2.0. It is organized as an 8-crate Cargo workspace:
+
+| Crate | Purpose |
+|-------|---------|
+| `grammers-mtproto` | Sans-IO MTProto transport (frame encode/decode, message serialization) |
+| `grammers-tl-types` | TL (Type Language) type definitions for the Telegram API |
+| `grammers-tl-gen` | TL code generator (reads `.tl` files, generates Rust types) |
+| `grammers-client` | High-level async client wrapping `grammers-mtproto` and `grammers-session` |
+| `grammers-session` | `Session` trait for auth state persistence (built-in `MemorySession` and `SqliteSession`) |
+| `grammers-crypto` | AES-IGE, RSA, SHA primitives used by `grammers-mtproto` |
+| `grammers-parser` | TL syntax parser |
+| `grammers-mtsender` | Async sender/receiver task runner |
+
+The CipherOcto adapter uses 4 of these crates directly (`mtproto`, `tl-types`, `client`, `session`) and relies transitively on `crypto`. The other 4 are dev-time or build-time only.
+
+Source: <https://codeberg.org/vilunov/grammers> (canonical); mirrored to crates.io.
+
+### What do I need to obtain before running the adapter?
+
+A Telegram **bot token** (from [@BotFather](https://t.me/BotFather)) AND an **api_id / api_hash pair** (from <https://my.telegram.org>):
+
+```
+1. Message @BotFather on Telegram; send /newbot; follow prompts; receive:
+     bot_token = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+2. Visit https://my.telegram.org; create a "new application"; receive:
+     api_id   = 12345  (integer)
+     api_hash = "0123456789abcdef0123456789abcdef"  (32 hex chars)
+```
+
+Both are required even in bot mode. The api_id/api_hash identify the *application* (not the bot or user); they are public per Telegram's API terms of service. The bot_token is the per-bot secret.
+
+### What is a "DC"?
+
+**DC** = Data Center. Telegram operates DCs in multiple geographic regions (currently 5 globally: DC1=Europe/Miami, DC2=Europe/Amsterdam, DC3=USA/Miami, DC4=Europe/Amsterdam, DC5=Asia/Singapore). Each bot/user is assigned to a "home DC"; traffic is routed via the home DC unless `dc_id` is explicitly overridden (e.g., for media downloads from the nearest DC). The grammers `Session` trait persists one `auth_key` per DC the adapter has connected to.
+
+### Quick start (minimal config + minimal code)
+
+```toml
+# Cargo.toml (workspace member)
+[dependencies]
+octo-adapter-telegram-mtproto = { path = "../crates/octo-adapter-telegram-mtproto" }
+octo-network = { path = "../crates/octo-network" }
+tokio = { version = "1", features = ["full"] }
+```
+
+```rust
+use octo_adapter_telegram_mtproto::{MtprotoAdapter, MtprotoAdapterConfig, AuthMode};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = MtprotoAdapterConfig {
+        api_id: 12345,
+        api_hash: "0123456789abcdef0123456789abcdef".to_string(),
+        data_dir: std::path::PathBuf::from("/var/lib/cipherocto/telegram-mtproto"),
+        mode: AuthMode::BotToken("1234567890:ABCdefGHIjklMNOpqrsTUVwxyz".to_string()),
+        ..Default::default()
+    };
+    config.validate()?;
+
+    let mut adapter = MtprotoAdapter::new(config).await?;
+    adapter.sign_in().await?;
+    // ... use adapter as a PlatformAdapter (see octo-network §8.2) ...
+    Ok(())
+}
+```
+
+For a working example with full envelope send/receive, see the `examples/bot_mode.rs` file shipped with the new crate.
+
 ## Specification
 
 ### System Architecture
@@ -310,11 +398,13 @@ pattern — NB: `Database::open` takes a DSN string like `file:///path/to.db`,
 not a bare path). Schema (idempotent `CREATE TABLE IF NOT EXISTS` on adapter init):
 
 ```sql
--- One row per DC's auth_key (256 bytes, AES-IGE encrypted at rest by grammers).
+-- One row per DC's auth_key (256 bytes, plaintext at rest in v1 — see Security
+-- Considerations §"Adversary Analysis / Design decision 6"; F6 plans OS-keyring
+-- encryption as future work).
 -- Multiple DCs may have keys for the same account (Telegram rebalancing).
 CREATE TABLE IF NOT EXISTS mtproto_auth_keys (
     dc_id         INTEGER NOT NULL PRIMARY KEY,
-    auth_key      BLOB    NOT NULL,           -- 256-byte AES key material
+    auth_key      BLOB    NOT NULL,           -- 256-byte AES key material (plaintext in v1)
     created_at    INTEGER NOT NULL,           -- epoch seconds
     last_used_at  INTEGER NOT NULL            -- epoch seconds; updated on each auth round-trip
 );

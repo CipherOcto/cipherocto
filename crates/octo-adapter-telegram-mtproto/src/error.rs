@@ -57,8 +57,7 @@ pub fn redact_credentials(input: &str) -> String {
         let mut matched: Option<&str> = None;
         for &key in keys {
             if lower[i..].starts_with(key) {
-                let before_ok = i == 0
-                    || !input.as_bytes()[i - 1].is_ascii_alphanumeric();
+                let before_ok = i == 0 || !input.as_bytes()[i - 1].is_ascii_alphanumeric();
                 let after_pos = i + key.len();
                 let after_ok = after_pos >= input.len()
                     || !input.as_bytes()[after_pos].is_ascii_alphanumeric();
@@ -106,7 +105,10 @@ pub fn redact_credentials(input: &str) -> String {
         }
         // No match — copy one Unicode char (byte-accurate UTF-8
         // advance, so we never split a multi-byte sequence).
-        let ch = input[i..].chars().next().unwrap_or(char::REPLACEMENT_CHARACTER);
+        let ch = input[i..]
+            .chars()
+            .next()
+            .unwrap_or(char::REPLACEMENT_CHARACTER);
         out.push(ch);
         i += ch.len_utf8();
     }
@@ -243,9 +245,15 @@ mod tests {
     fn is_retryable_classifies_correctly() {
         let n = MtprotoTelegramError::Network("timeout".into());
         assert!(n.is_retryable());
-        let r = MtprotoTelegramError::Rpc { code: 429, message: "flood".into() };
+        let r = MtprotoTelegramError::Rpc {
+            code: 429,
+            message: "flood".into(),
+        };
         assert!(r.is_retryable());
-        let r = MtprotoTelegramError::Rpc { code: 400, message: "bad".into() };
+        let r = MtprotoTelegramError::Rpc {
+            code: 400,
+            message: "bad".into(),
+        };
         assert!(!r.is_retryable());
     }
 }

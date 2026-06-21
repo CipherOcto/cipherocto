@@ -64,7 +64,10 @@ async fn tv1_bot_sign_in_happy_path() {
         .connect_bot_token(&token)
         .await
         .expect("connect_bot_token should succeed");
-    assert!(adapter.lifecycle().is_ready(), "must be Ready after bot sign-in");
+    assert!(
+        adapter.lifecycle().is_ready(),
+        "must be Ready after bot sign-in"
+    );
     assert_eq!(
         adapter.lifecycle().auth_state(),
         AuthStateKey::SignedIn,
@@ -99,7 +102,10 @@ async fn tv2_invalid_token_returns_error() {
     // test does the actual RPC.
     let adapter = MtprotoTelegramAdapter::new(cfg, client);
     let r = adapter.connect_bot_token("invalid").await;
-    assert!(r.is_ok(), "mock accepts any token; real-network test verifies failure");
+    assert!(
+        r.is_ok(),
+        "mock accepts any token; real-network test verifies failure"
+    );
 }
 
 /// TV-8: 3 incoming updates (1 self) result in 2 messages returned.
@@ -220,7 +226,10 @@ async fn tv11_log_redaction() {
     let redacted = octo_adapter_telegram_mtproto::redact_credentials(
         "bot_token=1234567890:AAEZ-SECRET-bot-token-aBcDeF0123456789",
     );
-    assert!(!redacted.contains("AAEZ-SECRET"), "redact_credentials failed");
+    assert!(
+        !redacted.contains("AAEZ-SECRET"),
+        "redact_credentials failed"
+    );
 }
 
 /// TV-13: sign_out DB cleanup. After `sign_out()`, the on-disk
@@ -242,7 +251,11 @@ async fn tv13_sign_out_wipes_session() {
     (*session).set_home_dc_id(5).await;
     assert_eq!((*session).home_dc_id(), 5);
     (*session).reset().expect("reset must succeed");
-    assert_eq!((*session).home_dc_id(), 2, "home_dc back to default after reset");
+    assert_eq!(
+        (*session).home_dc_id(),
+        2,
+        "home_dc back to default after reset"
+    );
 }
 
 /// Replay protection is handled at the DOT network layer
@@ -310,16 +323,20 @@ async fn round_trip_send_receive() {
         document_id: None,
         timestamp: 0,
     }));
-    let msgs = adapter.receive_messages(&domain).await.expect("receive_messages");
+    let msgs = adapter
+        .receive_messages(&domain)
+        .await
+        .expect("receive_messages");
     assert_eq!(msgs.len(), 1);
     // Canonicalize the received payload.
-    let back = adapter
-        .canonicalize(&msgs[0])
-        .expect("canonicalize");
+    let back = adapter.canonicalize(&msgs[0]).expect("canonicalize");
     // Round-trip the wire bytes (signature field is not verified by
     // DeterministicEnvelope::from_wire_bytes, only length; this is
     // a smoke test).
-    assert_eq!(back.to_wire_bytes(), DeterministicEnvelope::default().to_wire_bytes());
+    assert_eq!(
+        back.to_wire_bytes(),
+        DeterministicEnvelope::default().to_wire_bytes()
+    );
 }
 
 /// Health check returns Ok when the adapter is in Ready.
@@ -338,7 +355,10 @@ async fn health_check_when_ready() {
     adapter
         .lifecycle_mut()
         .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
-    adapter.health_check().await.expect("health_check should pass");
+    adapter
+        .health_check()
+        .await
+        .expect("health_check should pass");
 }
 
 /// Shutdown transitions to terminal state.

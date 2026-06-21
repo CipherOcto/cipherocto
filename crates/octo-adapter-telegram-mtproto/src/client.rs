@@ -47,8 +47,7 @@ use crate::error::MtprotoTelegramError;
 /// for the `no-default-features` build (where
 /// `grammers-client` is not compiled in).
 pub(crate) fn build_qr_url(token: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(token.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= token.len() {
@@ -225,17 +224,12 @@ pub trait MtprotoTelegramClient: Send + Sync {
 
     /// Download a file by grammers file_id. Returns the
     /// raw bytes.
-    async fn download_file(
-        &self,
-        file_id: &str,
-    ) -> Result<Vec<u8>, MtprotoTelegramError>;
+    async fn download_file(&self, file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError>;
 
     /// Receive pending updates. Yields all queued updates.
     /// Takes `&self`; interior mutability is the impl's
     /// responsibility.
-    async fn receive_updates(
-        &self,
-    ) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError>;
+    async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError>;
 
     /// Bot sign-in (no user interaction). Returns the
     /// bot's `SelfUserInfo` on success.
@@ -262,17 +256,11 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// If 2FA is required, returns
     /// `MtprotoTelegramError::Auth("2FA_REQUIRED")` and the
     /// caller must then call `submit_password`.
-    async fn submit_code(
-        &self,
-        code: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError>;
+    async fn submit_code(&self, code: &str) -> Result<SelfUserInfo, MtprotoTelegramError>;
 
     /// Submit a 2FA password (only valid after
     /// `submit_code` returned `2FA_REQUIRED`).
-    async fn submit_password(
-        &self,
-        password: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError>;
+    async fn submit_password(&self, password: &str) -> Result<SelfUserInfo, MtprotoTelegramError>;
 
     /// `auth.logOut` and clear the local session state
     /// (calls `StoolapSession::reset()`).
@@ -285,11 +273,7 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// as a QR code. The caller then loops on
     /// `poll_qr_login` until the user has scanned the QR
     /// and the import finalizes.
-    async fn qr_login(
-        &self,
-        api_id: i32,
-        api_hash: &str,
-    ) -> Result<(), MtprotoTelegramError>;
+    async fn qr_login(&self, api_id: i32, api_hash: &str) -> Result<(), MtprotoTelegramError>;
 
     /// Phase 2.5: poll the QR login status by re-invoking
     /// `auth.exportLoginToken`. Returns:
@@ -314,10 +298,7 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// Returns `Ok(SelfUserInfo)` on success, or
     /// `Err(MtprotoTelegramError::Auth("2FA_REQUIRED"))`
     /// if the primary has 2FA enabled.
-    async fn import_login_token(
-        &self,
-        token: &[u8],
-    ) -> Result<SelfUserInfo, MtprotoTelegramError>;
+    async fn import_login_token(&self, token: &[u8]) -> Result<SelfUserInfo, MtprotoTelegramError>;
 
     /// Resolve a message by chat_id and message_id to its
     /// attached file_id. Used by the `download_media`
@@ -411,14 +392,15 @@ impl MockTelegramMtprotoClient {
             g.next_message_id += 1;
             g.next_message_id
         });
-        g.updates.push_back(MtprotoTelegramUpdate::NewMessage(NewMessage {
-            chat_id,
-            message,
-            from_id,
-            message_id: mid,
-            document_id: None,
-            timestamp: 0,
-        }));
+        g.updates
+            .push_back(MtprotoTelegramUpdate::NewMessage(NewMessage {
+                chat_id,
+                message,
+                from_id,
+                message_id: mid,
+                document_id: None,
+                timestamp: 0,
+            }));
     }
 
     /// Set the failure-injection spec.
@@ -481,7 +463,10 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
     ) -> Result<MtprotoSentMessage, MtprotoTelegramError> {
         let mut g = self.state.lock();
         if let Some(msg) = &g.failure.send_message_error {
-            return Err(MtprotoTelegramError::Rpc { code: -1, message: msg.clone() });
+            return Err(MtprotoTelegramError::Rpc {
+                code: -1,
+                message: msg.clone(),
+            });
         }
         let id = Self::next_message_id(&mut g);
         Ok(MtprotoSentMessage::new(id, 0))
@@ -496,26 +481,27 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
     ) -> Result<MtprotoSentMessage, MtprotoTelegramError> {
         let mut g = self.state.lock();
         if let Some(msg) = &g.failure.send_document_error {
-            return Err(MtprotoTelegramError::Rpc { code: -1, message: msg.clone() });
+            return Err(MtprotoTelegramError::Rpc {
+                code: -1,
+                message: msg.clone(),
+            });
         }
         let id = Self::next_message_id(&mut g);
         Ok(MtprotoSentMessage::new(id, 0))
     }
 
-    async fn download_file(
-        &self,
-        _file_id: &str,
-    ) -> Result<Vec<u8>, MtprotoTelegramError> {
+    async fn download_file(&self, _file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError> {
         let g = self.state.lock();
         if let Some(msg) = &g.failure.download_file_error {
-            return Err(MtprotoTelegramError::Rpc { code: -1, message: msg.clone() });
+            return Err(MtprotoTelegramError::Rpc {
+                code: -1,
+                message: msg.clone(),
+            });
         }
         Ok(vec![])
     }
 
-    async fn receive_updates(
-        &self,
-    ) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
+    async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
         let mut g = self.state.lock();
         let out: Vec<_> = g.updates.drain(..).collect();
         Ok(out)
@@ -546,10 +532,7 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         Ok(())
     }
 
-    async fn submit_code(
-        &self,
-        _code: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+    async fn submit_code(&self, _code: &str) -> Result<SelfUserInfo, MtprotoTelegramError> {
         let mut g = self.state.lock();
         // Phase 2.4: simulate 2FA-required when the mock's
         // `require_2fa` flag is set (set via
@@ -571,10 +554,7 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         })
     }
 
-    async fn submit_password(
-        &self,
-        _password: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+    async fn submit_password(&self, _password: &str) -> Result<SelfUserInfo, MtprotoTelegramError> {
         let mut g = self.state.lock();
         g.next_user_id += 1;
         g.signed_in = true;
@@ -593,11 +573,7 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
 
     // ----- Phase 2.5: QR login (mock) -----
 
-    async fn qr_login(
-        &self,
-        api_id: i32,
-        api_hash: &str,
-    ) -> Result<(), MtprotoTelegramError> {
+    async fn qr_login(&self, api_id: i32, api_hash: &str) -> Result<(), MtprotoTelegramError> {
         // Reset the poll counter so the next
         // `poll_qr_login` call starts fresh.
         let mut g = self.state.lock();
@@ -829,7 +805,9 @@ mod tests {
         // Default mock: qr_polls_to_success = 0, so the very
         // first poll_qr_login call returns Ok(SelfUserInfo).
         let c = MockTelegramMtprotoClient::new();
-        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef")
+            .await
+            .ok();
         let info = c.poll_qr_login().await.unwrap();
         assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
         assert!(c.state.lock().signed_in);
@@ -841,7 +819,9 @@ mod tests {
         // poll_qr_login calls return Err(QrLoginHandle)
         // and the 3rd returns Ok.
         let c = MockTelegramMtprotoClient::new();
-        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef")
+            .await
+            .ok();
         c.set_qr_polls_to_success(2);
         for i in 0..2 {
             match c.poll_qr_login().await {
@@ -869,7 +849,9 @@ mod tests {
         // threshold.
         let c = MockTelegramMtprotoClient::new();
         c.set_qr_polls_to_success(2);
-        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef")
+            .await
+            .ok();
         // First 2 polls return handle (counter 1, 2).
         assert!(matches!(
             c.poll_qr_login().await,
@@ -884,7 +866,9 @@ mod tests {
         assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
         // Calling qr_login again resets the counter so the
         // next 2 polls return handle again.
-        c.qr_login(12345, "0123456789abcdef0123456789abcdef").await.ok();
+        c.qr_login(12345, "0123456789abcdef0123456789abcdef")
+            .await
+            .ok();
         assert!(matches!(
             c.poll_qr_login().await,
             Err(MtprotoTelegramError::QrLoginHandle { .. })

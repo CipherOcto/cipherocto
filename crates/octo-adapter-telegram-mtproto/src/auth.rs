@@ -43,9 +43,7 @@ pub enum AuthMode {
     /// SMS code + (optional) 2FA password are prompted at runtime.
     /// The 2FA password is NEVER stored (RFC-0850ab-c §"Security
     /// Considerations / 2FA Password Storage").
-    UserCredentials {
-        phone: String,
-    },
+    UserCredentials { phone: String },
 
     /// QR login flow (per RFC-0850ab-a). The adapter calls
     /// `auth::ExportLoginToken` and returns the token + URL; the
@@ -362,27 +360,19 @@ impl From<MtprotoAuthError> for crate::error::MtprotoTelegramError {
     fn from(e: MtprotoAuthError) -> Self {
         use MtprotoAuthError::*;
         match e {
-            InvalidTransition { from, action } => {
-                crate::error::MtprotoTelegramError::Auth(format!(
-                    "invalid transition from {} via {:?}",
-                    from, action
-                ))
-            }
-            InvalidUserTransition { from, action } => {
-                crate::error::MtprotoTelegramError::Auth(format!(
-                    "invalid user-mode transition from {} via {}",
-                    from, action
-                ))
-            }
+            InvalidTransition { from, action } => crate::error::MtprotoTelegramError::Auth(
+                format!("invalid transition from {} via {:?}", from, action),
+            ),
+            InvalidUserTransition { from, action } => crate::error::MtprotoTelegramError::Auth(
+                format!("invalid user-mode transition from {} via {}", from, action),
+            ),
             InvalidUserServerTransition { from, event } => {
                 crate::error::MtprotoTelegramError::Auth(format!(
                     "invalid user-mode server transition from {} via {}",
                     from, event
                 ))
             }
-            NotSignedIn => {
-                crate::error::MtprotoTelegramError::Auth("not signed in".into())
-            }
+            NotSignedIn => crate::error::MtprotoTelegramError::Auth("not signed in".into()),
         }
     }
 }
@@ -412,7 +402,10 @@ mod tests {
         // serialise either way without translation.
         assert_eq!(AuthMode::BotToken("123:abc".into()).to_string(), "bot");
         assert_eq!(
-            AuthMode::UserCredentials { phone: "+15555550100".into() }.to_string(),
+            AuthMode::UserCredentials {
+                phone: "+15555550100".into()
+            }
+            .to_string(),
             "user"
         );
         assert_eq!(AuthMode::QrLogin.to_string(), "qr");
@@ -447,8 +440,12 @@ mod tests {
         use UserAuthAction::*;
         for a in [
             RequestCode { phone: "+1".into() },
-            SubmitCode { code: "12345".into() },
-            SubmitPassword { password: "secret".into() },
+            SubmitCode {
+                code: "12345".into(),
+            },
+            SubmitPassword {
+                password: "secret".into(),
+            },
             QrLoginStart,
             QrLoginConfirm,
             SignOut,
@@ -461,7 +458,12 @@ mod tests {
     #[test]
     fn user_auth_server_event_display_round_trip() {
         use UserAuthServerEvent::*;
-        for e in [RequestCodeSucceeded, SignInSucceeded, PasswordRequired, CheckPasswordSucceeded] {
+        for e in [
+            RequestCodeSucceeded,
+            SignInSucceeded,
+            PasswordRequired,
+            CheckPasswordSucceeded,
+        ] {
             let printed = format!("{}", e);
             assert!(!printed.is_empty());
         }
@@ -474,7 +476,9 @@ mod tests {
 
         // 1. Operator provides phone → NoCredentials → PhoneProvided.
         let s = next_user_auth_state(
-            RequestCode { phone: "+15555550100".into() },
+            RequestCode {
+                phone: "+15555550100".into(),
+            },
             NoCredentials,
         )
         .unwrap();
@@ -485,7 +489,13 @@ mod tests {
         assert_eq!(s, SmsCodeSent);
 
         // 3. Operator submits SMS code → SmsCodeSent → SmsCodeProvided.
-        let s = next_user_auth_state(SubmitCode { code: "12345".into() }, s).unwrap();
+        let s = next_user_auth_state(
+            SubmitCode {
+                code: "12345".into(),
+            },
+            s,
+        )
+        .unwrap();
         assert_eq!(s, SmsCodeProvided);
 
         // 4. Server sign_in succeeds (no 2FA) → SmsCodeProvided → SignedIn.
@@ -506,20 +516,33 @@ mod tests {
 
         // Steps 1-3 identical to the no-2FA happy path.
         let s = next_user_auth_state(
-            RequestCode { phone: "+15555550100".into() },
+            RequestCode {
+                phone: "+15555550100".into(),
+            },
             NoCredentials,
         )
         .unwrap();
         let s = next_user_auth_state_server(UserAuthServerEvent::RequestCodeSucceeded, s).unwrap();
-        let s = next_user_auth_state(SubmitCode { code: "12345".into() }, s).unwrap();
+        let s = next_user_auth_state(
+            SubmitCode {
+                code: "12345".into(),
+            },
+            s,
+        )
+        .unwrap();
 
         // 4. Server returns SESSION_PASSWORD_NEEDED → PasswordRequired.
         let s = next_user_auth_state_server(UserAuthServerEvent::PasswordRequired, s).unwrap();
         assert_eq!(s, PasswordRequired);
 
         // 5. Operator submits 2FA password → PasswordRequired → PasswordProvided.
-        let s =
-            next_user_auth_state(SubmitPassword { password: "secret".into() }, s).unwrap();
+        let s = next_user_auth_state(
+            SubmitPassword {
+                password: "secret".into(),
+            },
+            s,
+        )
+        .unwrap();
         assert_eq!(s, PasswordProvided);
 
         // 6. Server check_password succeeds → PasswordProvided → SignedIn.
@@ -557,8 +580,13 @@ mod tests {
         let s = next_user_auth_state(QrLoginConfirm, s).unwrap();
         let s = next_user_auth_state_server(UserAuthServerEvent::PasswordRequired, s).unwrap();
         assert_eq!(s, PasswordRequired);
-        let s =
-            next_user_auth_state(SubmitPassword { password: "secret".into() }, s).unwrap();
+        let s = next_user_auth_state(
+            SubmitPassword {
+                password: "secret".into(),
+            },
+            s,
+        )
+        .unwrap();
         let s =
             next_user_auth_state_server(UserAuthServerEvent::CheckPasswordSucceeded, s).unwrap();
         assert_eq!(s, SignedIn);
@@ -571,7 +599,9 @@ mod tests {
 
         // SubmitCode from NoCredentials is not valid (must RequestCode first).
         let err = next_user_auth_state(
-            SubmitCode { code: "12345".into() },
+            SubmitCode {
+                code: "12345".into(),
+            },
             NoCredentials,
         )
         .unwrap_err();
@@ -582,7 +612,9 @@ mod tests {
 
         // SubmitPassword from SmsCodeSent (no 2FA flow yet) is invalid.
         let err = next_user_auth_state(
-            SubmitPassword { password: "x".into() },
+            SubmitPassword {
+                password: "x".into(),
+            },
             SmsCodeSent,
         )
         .unwrap_err();
@@ -689,7 +721,11 @@ mod tests {
         .into();
         match e {
             MtprotoTelegramError::Auth(msg) => {
-                assert!(msg.contains("invalid user-mode transition"), "msg = {}", msg);
+                assert!(
+                    msg.contains("invalid user-mode transition"),
+                    "msg = {}",
+                    msg
+                );
                 assert!(msg.contains("SignOut"), "msg = {}", msg);
             }
             other => panic!("expected Auth, got {:?}", other),

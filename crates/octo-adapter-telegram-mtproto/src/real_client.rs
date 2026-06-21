@@ -74,9 +74,7 @@ use crate::session::StoolapSession;
 /// or `User`). For the `SignUpRequired` variant we fall
 /// back to zeros — same behaviour as the legacy Phase 2.4
 /// code.
-fn extract_self_user_info(
-    authorization: tl::enums::auth::Authorization,
-) -> SelfUserInfo {
+fn extract_self_user_info(authorization: tl::enums::auth::Authorization) -> SelfUserInfo {
     match authorization {
         tl::enums::auth::Authorization::Authorization(inner) => {
             // `tl::enums::User::id()` collapses both
@@ -175,8 +173,11 @@ impl RealTelegramMtprotoClient {
         // signature requires a concrete `Arc<S>` (not `Arc<dyn Session>`).
         // `StoolapSession` implements `Session`, so the clone here is
         // straightforward.
-        let SenderPool { runner, handle: _handle, .. } =
-            SenderPool::new(session.clone(), api_id);
+        let SenderPool {
+            runner,
+            handle: _handle,
+            ..
+        } = SenderPool::new(session.clone(), api_id);
         let client = Arc::new(GrammersClient::new(_handle));
         let runner_task = tokio::spawn(runner.run());
         Ok(Arc::new(Self {
@@ -262,18 +263,13 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         ))
     }
 
-    async fn download_file(
-        &self,
-        _file_id: &str,
-    ) -> Result<Vec<u8>, MtprotoTelegramError> {
+    async fn download_file(&self, _file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError> {
         Err(MtprotoTelegramError::NotReady(
             "RealTelegramMtprotoClient::download_file: not yet implemented".into(),
         ))
     }
 
-    async fn receive_updates(
-        &self,
-    ) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
+    async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
         // Phase 1 stub: real impl drains the SenderPool's
         // update channel and converts via `convert_update`.
         Ok(Vec::new())
@@ -296,7 +292,8 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     // don't need it here.
                     access_hash: 0,
                 };
-                self.self_handle.set_identity(info.user_id, info.username.clone());
+                self.self_handle
+                    .set_identity(info.user_id, info.username.clone());
                 Ok(info)
             }
             Err(e) => {
@@ -320,7 +317,9 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         let new_state = {
             let current = *self.user_auth_state.lock();
             next_user_auth_state(
-                UserAuthAction::RequestCode { phone: phone.to_string() },
+                UserAuthAction::RequestCode {
+                    phone: phone.to_string(),
+                },
                 current,
             )?
         };
@@ -333,10 +332,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             Ok(login_token) => {
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::RequestCodeSucceeded,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::RequestCodeSucceeded, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
                 *self.pending_login.lock() = Some(login_token);
@@ -356,10 +352,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         }
     }
 
-    async fn submit_code(
-        &self,
-        code: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+    async fn submit_code(&self, code: &str) -> Result<SelfUserInfo, MtprotoTelegramError> {
         // 1. Pull the stashed LoginToken. If missing, the
         //    caller skipped `request_login_code` — that's a
         //    state-machine violation.
@@ -374,7 +367,9 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         let new_state = {
             let current = *self.user_auth_state.lock();
             next_user_auth_state(
-                UserAuthAction::SubmitCode { code: code.to_string() },
+                UserAuthAction::SubmitCode {
+                    code: code.to_string(),
+                },
                 current,
             )?
         };
@@ -388,10 +383,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 //     populate the self-handle.
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::SignInSucceeded,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::SignInSucceeded, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
                 let info = SelfUserInfo {
@@ -411,10 +403,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 //     sentinel `MtprotoTelegramError::Auth("2FA_REQUIRED")`.
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::PasswordRequired,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::PasswordRequired, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
                 *self.pending_password.lock() = Some(password_token);
@@ -460,10 +449,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         }
     }
 
-    async fn submit_password(
-        &self,
-        password: &str,
-    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+    async fn submit_password(&self, password: &str) -> Result<SelfUserInfo, MtprotoTelegramError> {
         // 1. Pull the stashed PasswordToken. If missing, the
         //    caller skipped `submit_code` (or `submit_code`
         //    did not return `2FA_REQUIRED`).
@@ -584,11 +570,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
 
     // ----- Phase 2.5: QR login -----
 
-    async fn qr_login(
-        &self,
-        api_id: i32,
-        api_hash: &str,
-    ) -> Result<(), MtprotoTelegramError> {
+    async fn qr_login(&self, api_id: i32, api_hash: &str) -> Result<(), MtprotoTelegramError> {
         // 1. Drive the state machine: NoCredentials →
         //    QrLoginPending (client).
         let new_state = {
@@ -641,10 +623,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 // machine QrLoginPending → SignedIn.
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::SignInSucceeded,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::SignInSucceeded, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
                 // Pull user_id / username via the inner
@@ -659,8 +638,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 // authorised) but we still populate the
                 // self-handle so the adapter can detect
                 // it.
-                let info =
-                    extract_self_user_info(login_token_success.authorization);
+                let info = extract_self_user_info(login_token_success.authorization);
                 self.self_handle
                     .set_identity(info.user_id, info.username.clone());
                 Ok(())
@@ -670,8 +648,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 // to NoCredentials.
                 *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
                 Err(MtprotoTelegramError::Internal(
-                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5"
-                        .into(),
+                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
                 ))
             }
         }
@@ -729,31 +706,21 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 *self.user_auth_state.lock() = new_state;
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::SignInSucceeded,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::SignInSucceeded, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
-                let info =
-                    extract_self_user_info(login_token_success.authorization);
+                let info = extract_self_user_info(login_token_success.authorization);
                 self.self_handle
                     .set_identity(info.user_id, info.username.clone());
                 Ok(info)
             }
-            tl::enums::auth::LoginToken::MigrateTo(_) => {
-                Err(MtprotoTelegramError::Internal(
-                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5"
-                        .into(),
-                ))
-            }
+            tl::enums::auth::LoginToken::MigrateTo(_) => Err(MtprotoTelegramError::Internal(
+                "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
+            )),
         }
     }
 
-    async fn import_login_token(
-        &self,
-        token: &[u8],
-    ) -> Result<SelfUserInfo, MtprotoTelegramError> {
+    async fn import_login_token(&self, token: &[u8]) -> Result<SelfUserInfo, MtprotoTelegramError> {
         // Drive the state machine: QrLoginPending →
         // QrLoginConfirmed (client) via QrLoginConfirm.
         // (After a successful poll, the state is
@@ -785,14 +752,10 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             tl::enums::auth::LoginToken::Success(login_token_success) => {
                 let new_state = {
                     let current = *self.user_auth_state.lock();
-                    next_user_auth_state_server(
-                        UserAuthServerEvent::SignInSucceeded,
-                        current,
-                    )?
+                    next_user_auth_state_server(UserAuthServerEvent::SignInSucceeded, current)?
                 };
                 *self.user_auth_state.lock() = new_state;
-                let info =
-                    extract_self_user_info(login_token_success.authorization);
+                let info = extract_self_user_info(login_token_success.authorization);
                 self.self_handle
                     .set_identity(info.user_id, info.username.clone());
                 Ok(info)
@@ -809,8 +772,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             tl::enums::auth::LoginToken::MigrateTo(_) => {
                 *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
                 Err(MtprotoTelegramError::Internal(
-                    "auth.importLoginToken returned MigrateTo; not implemented in Phase 2.5"
-                        .into(),
+                    "auth.importLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
                 ))
             }
         }

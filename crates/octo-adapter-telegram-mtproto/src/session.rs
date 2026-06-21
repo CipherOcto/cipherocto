@@ -226,7 +226,10 @@ impl StoolapSession {
         let db = Arc::new(db);
         init_schema(&db)?;
         let cache = hydrate_cache(&db)?;
-        Ok(Self { db, cache: Mutex::new(cache) })
+        Ok(Self {
+            db,
+            cache: Mutex::new(cache),
+        })
     }
 
     /// Wipe the on-disk store. Used by `sign_out` to
@@ -354,9 +357,7 @@ fn read_home_dc(db: &Database) -> Result<Option<i32>, MtprotoSessionError> {
     Ok(None)
 }
 
-fn read_all_dc_options(
-    db: &Database,
-) -> Result<HashMap<i32, DcOption>, MtprotoSessionError> {
+fn read_all_dc_options(db: &Database) -> Result<HashMap<i32, DcOption>, MtprotoSessionError> {
     let rows = db
         .query(
             "SELECT dc_id, ipv4, ipv6, auth_key FROM mtproto_dc_option",
@@ -403,9 +404,7 @@ fn read_all_dc_options(
     Ok(out)
 }
 
-fn read_all_peer_infos(
-    db: &Database,
-) -> Result<HashMap<PeerId, PeerInfo>, MtprotoSessionError> {
+fn read_all_peer_infos(db: &Database) -> Result<HashMap<PeerId, PeerInfo>, MtprotoSessionError> {
     let rows = db
         .query(
             "SELECT peer_id, hash, subtype, bot, channel_kind FROM mtproto_peer_info",
@@ -478,7 +477,13 @@ fn read_update_state(db: &Database) -> Result<Option<UpdatesState>, MtprotoSessi
         // when the adapter's `set_update_state` is called with
         // `UpdateState::Channel`).
         let channels = read_all_channel_state(db)?;
-        return Ok(Some(UpdatesState { pts, qts, date, seq, channels }));
+        return Ok(Some(UpdatesState {
+            pts,
+            qts,
+            date,
+            seq,
+            channels,
+        }));
     }
     Ok(None)
 }

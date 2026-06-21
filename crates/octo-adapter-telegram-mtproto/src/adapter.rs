@@ -157,11 +157,7 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
     /// Register a domain → chat_id mapping. Explicit
     /// escape hatch when auto-population in `domain_id` is
     /// not what the caller wants.
-    pub fn register_domain(
-        &self,
-        domain: &BroadcastDomainId,
-        chat_id: &str,
-    ) -> Result<(), String> {
+    pub fn register_domain(&self, domain: &BroadcastDomainId, chat_id: &str) -> Result<(), String> {
         let normalized = chat_id.trim().to_string();
         if normalized.is_empty() {
             return Err("chat_id is empty".into());
@@ -206,10 +202,7 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             .lifecycle
             .transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
         {
-            return Err(MtprotoTelegramError::Config(format!(
-                "lifecycle: {}",
-                e
-            )));
+            return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
         }
         // For bot mode, the auth is a single step. Skip
         // Authenticating and go straight to Ready.
@@ -263,10 +256,7 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
             .lifecycle
             .transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
         {
-            return Err(MtprotoTelegramError::Config(format!(
-                "lifecycle: {}",
-                e
-            )));
+            return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
         }
         // Step 1: send the login code.
         self.client
@@ -329,28 +319,20 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
     /// checking `self_handle().is_some()` before/after
     /// the call (the client populates the self-handle on
     /// the success branch).
-    pub async fn connect_qr_login(
-        &self,
-    ) -> Result<QrLoginHandle, MtprotoTelegramError> {
+    pub async fn connect_qr_login(&self) -> Result<QrLoginHandle, MtprotoTelegramError> {
         // 1. Drive the outer lifecycle to Authenticating.
         //    The first call must come from Uninitialised.
         if let Err(e) = self
             .lifecycle
             .transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
         {
-            return Err(MtprotoTelegramError::Config(format!(
-                "lifecycle: {}",
-                e
-            )));
+            return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
         }
-        if let Err(e) = self
-            .lifecycle
-            .transition(AdapterLifecycle::Authenticating, AuthStateKey::CodeRequested)
-        {
-            return Err(MtprotoTelegramError::Config(format!(
-                "lifecycle: {}",
-                e
-            )));
+        if let Err(e) = self.lifecycle.transition(
+            AdapterLifecycle::Authenticating,
+            AuthStateKey::CodeRequested,
+        ) {
+            return Err(MtprotoTelegramError::Config(format!("lifecycle: {}", e)));
         }
 
         // 2. Call the client's qr_login. It returns:
@@ -374,17 +356,15 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                 self.lifecycle
                     .force(AdapterLifecycle::Ready, AuthStateKey::SignedIn);
                 Err(MtprotoTelegramError::Internal(
-                    "qr_login: already authorized (session was valid; no QR needed)"
-                        .into(),
+                    "qr_login: already authorized (session was valid; no QR needed)".into(),
                 ))
             }
             Err(e @ MtprotoTelegramError::QrLoginHandle { .. }) => {
                 // The caller is responsible for displaying
                 // the QR code and looping on poll_qr_login.
                 // Return the handle via QrLoginHandle::from_error.
-                Ok(QrLoginHandle::from_error(&e).expect(
-                    "QrLoginHandle::from_error is infallible on QrLoginHandle variant",
-                ))
+                Ok(QrLoginHandle::from_error(&e)
+                    .expect("QrLoginHandle::from_error is infallible on QrLoginHandle variant"))
             }
             Err(other) => Err(other),
         }
@@ -455,7 +435,10 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
 impl From<MtprotoTelegramError> for PlatformAdapterError {
     fn from(e: MtprotoTelegramError) -> Self {
         match e {
-            MtprotoTelegramError::Rpc { code: 429, message: _ } => {
+            MtprotoTelegramError::Rpc {
+                code: 429,
+                message: _,
+            } => {
                 PlatformAdapterError::RateLimited {
                     platform: "telegram-mtproto".into(),
                     retry_after_ms: 1000, // conservative default; real impl would extract from message
@@ -532,16 +515,19 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
                 reason: format!("lifecycle: {}", self.lifecycle.state()),
             });
         }
-        let chat_id_str = self.chat_id_for_domain(domain).ok_or_else(|| {
-            PlatformAdapterError::Unreachable {
+        let chat_id_str =
+            self.chat_id_for_domain(domain)
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "telegram-mtproto".into(),
+                    reason: "domain not registered: call register_domain() after domain_id()"
+                        .into(),
+                })?;
+        let chat_id: i64 = chat_id_str
+            .parse()
+            .map_err(|_| PlatformAdapterError::Unreachable {
                 platform: "telegram-mtproto".into(),
-                reason: "domain not registered: call register_domain() after domain_id()".into(),
-            }
-        })?;
-        let chat_id: i64 = chat_id_str.parse().map_err(|_| PlatformAdapterError::Unreachable {
-            platform: "telegram-mtproto".into(),
-            reason: format!("chat_id not a valid i64: {}", chat_id_str),
-        })?;
+                reason: format!("chat_id not a valid i64: {}", chat_id_str),
+            })?;
         // Wire-encode the envelope. For payloads that fit in
         // a Telegram text message, use `send_message` with
         // the `DOT/1/{b64}` text. Otherwise, route to
@@ -649,10 +635,11 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        let text = std::str::from_utf8(&raw.payload).map_err(|e| PlatformAdapterError::ApiError {
-            code: 400,
-            message: format!("invalid utf8 in payload: {}", e),
-        })?;
+        let text =
+            std::str::from_utf8(&raw.payload).map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid utf8 in payload: {}", e),
+            })?;
         envelope::wire_decode(text).map_err(|e| match e {
             MtprotoTelegramError::Envelope(msg) => PlatformAdapterError::ApiError {
                 code: 400,
@@ -766,9 +753,8 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
         if domains.len() > 1 {
             return Err(PlatformAdapterError::Unreachable {
                 platform: "telegram-mtproto".into(),
-                reason:
-                    "multiple domains registered; use upload_media_to_domain to disambiguate"
-                        .into(),
+                reason: "multiple domains registered; use upload_media_to_domain to disambiguate"
+                    .into(),
             });
         }
         let domain = BroadcastDomainId {
@@ -814,10 +800,12 @@ impl<C: MtprotoTelegramClient> MtprotoTelegramAdapter<C> {
                     platform: "telegram-mtproto".into(),
                     reason: "domain not registered".into(),
                 })?;
-        let chat_id: i64 = chat_id_str.parse().map_err(|_| PlatformAdapterError::Unreachable {
-            platform: "telegram-mtproto".into(),
-            reason: format!("chat_id not a valid i64: {}", chat_id_str),
-        })?;
+        let chat_id: i64 = chat_id_str
+            .parse()
+            .map_err(|_| PlatformAdapterError::Unreachable {
+                platform: "telegram-mtproto".into(),
+                reason: format!("chat_id not a valid i64: {}", chat_id_str),
+            })?;
         let data = data.to_vec();
         let caption = String::new();
         let sent = self
@@ -853,7 +841,9 @@ mod tests {
         }
     }
 
-    fn adapter_with(client: MockTelegramMtprotoClient) -> MtprotoTelegramAdapter<MockTelegramMtprotoClient> {
+    fn adapter_with(
+        client: MockTelegramMtprotoClient,
+    ) -> MtprotoTelegramAdapter<MockTelegramMtprotoClient> {
         let client = Arc::new(client);
         let a = MtprotoTelegramAdapter::new(config(), client);
         a.mark_ready_for_test();
@@ -1042,13 +1032,9 @@ mod tests {
         let a = adapter_with(mock);
         a.lifecycle()
             .force(AdapterLifecycle::Uninitialised, AuthStateKey::Uninitialised);
-        a.connect_user(
-            "+15555550100",
-            || "12345".into(),
-            || Some("hunter2".into()),
-        )
-        .await
-        .unwrap();
+        a.connect_user("+15555550100", || "12345".into(), || Some("hunter2".into()))
+            .await
+            .unwrap();
         assert!(a.lifecycle().is_ready());
         assert!(a.self_handle.get().is_some());
     }
@@ -1126,7 +1112,7 @@ mod tests {
         a.lifecycle()
             .force(AdapterLifecycle::Uninitialised, AuthStateKey::Uninitialised);
         let _ = a.connect_qr_login().await.unwrap(); // returns handle
-        // Default mock: poll_qr_login succeeds immediately.
+                                                     // Default mock: poll_qr_login succeeds immediately.
         let info = a.poll_qr_login().await.unwrap();
         assert_eq!(info.username.as_deref(), Some("mock_qr_user"));
         assert!(a.lifecycle().is_ready());

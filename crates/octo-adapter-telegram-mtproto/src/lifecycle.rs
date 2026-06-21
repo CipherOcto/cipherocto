@@ -219,12 +219,43 @@ impl From<BotAuthLifecycle> for AuthStateKey {
 /// Valid transitions. Used by `Lifecycle::transition_to` to
 /// reject out-of-order calls (e.g., `Ready → Connecting`).
 const VALID_TRANSITIONS: &[(AdapterLifecycle, &[AdapterLifecycle])] = &[
-    (AdapterLifecycle::Uninitialised, &[AdapterLifecycle::Connecting, AdapterLifecycle::Failed]),
-    (AdapterLifecycle::Connecting, &[AdapterLifecycle::Connected, AdapterLifecycle::Authenticating, AdapterLifecycle::Failed]),
-    (AdapterLifecycle::Connected, &[AdapterLifecycle::Authenticating, AdapterLifecycle::Ready, AdapterLifecycle::Failed, AdapterLifecycle::ShuttingDown]),
-    (AdapterLifecycle::Authenticating, &[AdapterLifecycle::Ready, AdapterLifecycle::Failed, AdapterLifecycle::ShuttingDown]),
-    (AdapterLifecycle::Ready, &[AdapterLifecycle::ShuttingDown, AdapterLifecycle::Failed]),
-    (AdapterLifecycle::ShuttingDown, &[AdapterLifecycle::Stopped, AdapterLifecycle::Failed]),
+    (
+        AdapterLifecycle::Uninitialised,
+        &[AdapterLifecycle::Connecting, AdapterLifecycle::Failed],
+    ),
+    (
+        AdapterLifecycle::Connecting,
+        &[
+            AdapterLifecycle::Connected,
+            AdapterLifecycle::Authenticating,
+            AdapterLifecycle::Failed,
+        ],
+    ),
+    (
+        AdapterLifecycle::Connected,
+        &[
+            AdapterLifecycle::Authenticating,
+            AdapterLifecycle::Ready,
+            AdapterLifecycle::Failed,
+            AdapterLifecycle::ShuttingDown,
+        ],
+    ),
+    (
+        AdapterLifecycle::Authenticating,
+        &[
+            AdapterLifecycle::Ready,
+            AdapterLifecycle::Failed,
+            AdapterLifecycle::ShuttingDown,
+        ],
+    ),
+    (
+        AdapterLifecycle::Ready,
+        &[AdapterLifecycle::ShuttingDown, AdapterLifecycle::Failed],
+    ),
+    (
+        AdapterLifecycle::ShuttingDown,
+        &[AdapterLifecycle::Stopped, AdapterLifecycle::Failed],
+    ),
     (AdapterLifecycle::Stopped, &[]),
     (AdapterLifecycle::Failed, &[AdapterLifecycle::Stopped]),
 ];
@@ -341,9 +372,15 @@ mod tests {
     #[test]
     fn happy_path() {
         let l = Lifecycle::new();
-        l.transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised).unwrap();
-        l.transition(AdapterLifecycle::Authenticating, AuthStateKey::Uninitialised).unwrap();
-        l.transition(AdapterLifecycle::Ready, AuthStateKey::SignedIn).unwrap();
+        l.transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
+            .unwrap();
+        l.transition(
+            AdapterLifecycle::Authenticating,
+            AuthStateKey::Uninitialised,
+        )
+        .unwrap();
+        l.transition(AdapterLifecycle::Ready, AuthStateKey::SignedIn)
+            .unwrap();
         assert!(l.is_ready());
     }
 
@@ -378,10 +415,16 @@ mod tests {
     #[test]
     fn user_mode_auth_substate() {
         let l = Lifecycle::new();
-        l.transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised).unwrap();
-        l.transition(AdapterLifecycle::Authenticating, AuthStateKey::CodeRequested).unwrap();
+        l.transition(AdapterLifecycle::Connecting, AuthStateKey::Uninitialised)
+            .unwrap();
+        l.transition(
+            AdapterLifecycle::Authenticating,
+            AuthStateKey::CodeRequested,
+        )
+        .unwrap();
         assert_eq!(l.auth_state(), AuthStateKey::CodeRequested);
-        l.transition(AdapterLifecycle::Ready, AuthStateKey::SignedIn).unwrap();
+        l.transition(AdapterLifecycle::Ready, AuthStateKey::SignedIn)
+            .unwrap();
         assert_eq!(l.auth_state(), AuthStateKey::SignedIn);
     }
 
@@ -410,7 +453,11 @@ mod tests {
             BotAuthLifecycle::SignedOut,
         ] {
             let printed = format!("{}", s);
-            assert!(!printed.is_empty(), "BotAuthLifecycle {:?} displays empty", s);
+            assert!(
+                !printed.is_empty(),
+                "BotAuthLifecycle {:?} displays empty",
+                s
+            );
             // Re-parse via the FromStr is intentionally NOT
             // provided (the enum is fixed-shape; callers use the
             // variant directly). Round-trip is via Debug instead.

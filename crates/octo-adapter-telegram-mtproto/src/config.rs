@@ -145,10 +145,14 @@ impl MtprotoTelegramConfig {
     pub fn auth_mode(&self) -> Result<crate::auth::AuthMode, String> {
         use crate::auth::AuthMode;
         match self.mode_str() {
-            "bot" => Ok(AuthMode::BotToken(self.bot_token.clone().unwrap_or_default())),
+            "bot" => Ok(AuthMode::BotToken(
+                self.bot_token.clone().unwrap_or_default(),
+            )),
             "user" => {
                 let phone = self.phone.clone().ok_or_else(|| {
-                    String::from("user mode requires phone field (set TELEGRAM_PHONE or mode=+phone)")
+                    String::from(
+                        "user mode requires phone field (set TELEGRAM_PHONE or mode=+phone)",
+                    )
                 })?;
                 Ok(AuthMode::UserCredentials { phone })
             }
@@ -172,7 +176,9 @@ impl MtprotoTelegramConfig {
 
     /// Resolved `system_version`.
     pub fn resolved_system_version(&self) -> &str {
-        self.system_version.as_deref().unwrap_or(DEFAULT_SYSTEM_VERSION)
+        self.system_version
+            .as_deref()
+            .unwrap_or(DEFAULT_SYSTEM_VERSION)
     }
 
     /// Resolved `app_version`.

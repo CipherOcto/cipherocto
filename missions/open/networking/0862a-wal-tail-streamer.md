@@ -6,36 +6,48 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §4.3.3 WAL-tail streaming, §Implementation Phases Phase 1
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §4.3.3 WAL-tail streaming, §Implementation Phases Phase 0 + Phase 1, §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
-Implement the writer-side WAL-tail streamer: capture LSN ranges on every `TransactionEngineOperations::record_commit(txn_id)`, package them in `WalTailChunk` envelopes, ship to subscribed readers. The reader-side apply path consumes the chunks and applies entries via `WALManager::replay_two_phase`.
+Implement the writer-side WAL-tail streamer: capture LSN ranges on every `TransactionEngineOperations::record_commit(txn_id)`, package them in `WalTailChunk` envelopes, ship to subscribed readers. The reader-side apply path consumes the chunks and applies entries via `adapter.apply_wal_entry(entry)` — the underlying DB write is delegated to the `StoolapAdapter` (mission 0862-base), **not** to `MVCCEngine::replay_two_phase` directly (per RFC-0862 v1.1.0 §Migration path step v1.1.0.d).
 
-This mission is split out of `0862-base` for parallel execution. It depends on `0862-base` for the envelope types, identity derivation, and state machine, but ships independently as a focused module.
+This mission is split out of `0862-base` for parallel execution. It depends on `0862-base` for the envelope types, identity derivation, state machine, **and the `DatabaseSyncAdapter` trait**, but ships independently as a focused module.
 
 ## Design
 
-### New module: `crates/octo-sync/src/stream.rs`
+### New module: `octo-sync/src/stream.rs` (leaf workspace at `cipherocto/octo-sync/src/stream.rs`)
 
 The streamer has three components:
 
 1. **Commit capture hook** — wraps the writer's `record_commit` to capture `(previous_lsn+1, current_lsn)` ranges
-2. **WalTailChunk packaging** — serializes captured entries via `WALEntry::encode()` (raw V2 binary)
+2. **WalTailChunk packaging** — serializes captured entries via `WALEntry::encode()` (raw V2 binary) by calling `adapter.read_wal_range(from, to)`
 3. **Subscription manager** — tracks active readers and pushes chunks to each one
 
 ### Pseudocode
 
 ```rust
-// crates/octo-sync/src/stream.rs
+// octo-sync/src/stream.rs
 //
+use octo_sync::DatabaseSyncAdapter;
+use octo_sync::error::SyncError;
+use octo_sync::types::Lsn;
+use std::sync::Arc;
+
 /// The subscribers map is wrapped in a `parking_lot::Mutex` to allow `&self` mutation
 /// from both `on_commit` (which iterates over subscribers) and `on_lsn_ack` (which
 /// updates the per-peer watermark). parking_lot's Mutex is faster than `std::sync::Mutex`
 /// under contention and has no poisoning semantics; `lock()` returns the guard directly
 /// without a `Result`.
+///
+/// The `adapter` field is `Arc<dyn DatabaseSyncAdapter>` (trait object) — the cipherocto
+/// sync engine does NOT hold a direct `Arc<MVCCEngine>` reference. The Stoolap fork
+/// provides the concrete `StoolapAdapter` impl (per mission 0862-base Phase 0).
 pub struct WalTailStreamer {
-    engine: Arc<MVCCEngine>,           // local DB engine (writer side)
+    /// The database adapter (trait object). Per RFC-0862 v1.1.0 §DatabaseSyncAdapter
+    /// Trait, the cipherocto sync engine consumes the trait, not the concrete
+    /// `MVCCEngine`. WAL reads go through `adapter.read_wal_range(from, to)`.
+    adapter: Arc<dyn DatabaseSyncAdapter>,
     subscribers: parking_lot::Mutex<HashMap<SyncPeerId, SubscriberChannel>>,
     rate_limiter: RateLimiter,
     current_lsn: AtomicU64,            // monotonic, persisted in WAL
@@ -94,14 +106,13 @@ impl WalTailStreamer {
         if self.paused.load(Ordering::SeqCst) {
             return Ok(());
         }
-        // 4. Capture entries from WAL via replay_two_phase.
-        //    (Note: WALManager has no `read_range` method; we use replay_two_phase
-        //    with a callback that collects the entries into a Vec.)
-        let mut entries: Vec<Vec<u8>> = Vec::new();
-        self.engine.wal_manager().replay_two_phase(from_lsn, |entry: &[u8]| {
-            entries.push(entry.to_vec());
-            Ok(())
-        })?;
+        // 4. Read WAL entries via the trait. Per RFC-0862 v1.1.0 §Migration path
+        //    step v1.1.0.d, the cipherocto sync engine reads WAL through
+        //    `adapter.read_wal_range(from, to)` — NOT via direct
+        //    `self.engine.wal_manager().replay_two_phase(...)`. The trait is the
+        //    integration boundary; the underlying `replay_two_phase` lives inside
+        //    the StoolapAdapter impl.
+        let entries = self.adapter.read_wal_range(from_lsn, to_lsn)?;
         // 5. Package as WalTailChunk with is_last = true (matches RFC-0862 §4.3).
         let chunk = WalTailChunk { from_lsn, to_lsn, entries, is_last: true };
         // 6. Fan-out to subscribers (rate-limited). Rate-limit and channel errors are
@@ -133,20 +144,29 @@ impl WalTailStreamer {
     /// When paused, `on_commit` skips fan-out but the LSN counter still advances.
     /// Cleared on RESUME. The heartbeat handler is defined in mission 0862-base
     /// (not 0862a) as part of the unified envelope handler.
+    ///
+    /// The pause flag is also propagated to the underlying adapter via
+    /// `adapter.set_paused(paused)`. This is a default no-op on the trait
+    /// (databases that don't support writer-side pause ignore the call); for
+    /// StoolapAdapter, the writer-side pause is implemented in the fork and
+    /// gates `record_commit`'s WAL emission.
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::SeqCst);
+        let _ = self.adapter.set_paused(paused);
     }
 
     /// Reader's request for WAL entries from a given LSN.
     /// Returns `WalTailChunk` (the wire-level payload for envelope `0xB1 WalTailResponse`,
     /// per RFC-0862 §4.3 and §Envelope Payload Discriminators) containing the entries
     /// in `[from_lsn, current_lsn]` inclusive. The reader is responsible for applying
-    /// the entries in LSN order via `WALManager::replay_two_phase`.
+    /// the entries in LSN order via `adapter.apply_wal_entry(entry)` on the reader side.
     ///
-    /// Implementation: inlines the WAL read into `tokio::task::block_in_place` because
-    /// the underlying `replay_two_phase` is sync. Returns `Err(SyncError::InvalidLsnRange)`
-    /// if `from_lsn > current_lsn`. The `_peer` parameter is currently unused (prefixed
-    /// with `_`) — a future per-peer rate-limit check would use it.
+    /// Implementation: inlines the adapter call into `tokio::task::block_in_place` because
+    /// `DatabaseSyncAdapter` is a sync trait (per RFC-0862 v1.1.0 §Why sync (not async)?).
+    /// The cipherocto async runtime wraps the sync call at the boundary. Returns
+    /// `Err(SyncError::InvalidLsnRange)` if `from_lsn > current_lsn`. The `_peer` parameter
+    /// is currently unused (prefixed with `_`) — a future per-peer rate-limit check would
+    /// use it.
     pub async fn handle_wal_tail_request(
         &self,
         _peer: SyncPeerId,
@@ -159,13 +179,9 @@ impl WalTailStreamer {
         if from_lsn == 0 {
             return Err(SyncError::InvalidLsnRange { from: 0, to: prev });
         }
-        let engine = self.engine.clone();
+        let adapter = self.adapter.clone();
         let (entries, to_lsn) = tokio::task::block_in_place(|| {
-            let mut entries: Vec<Vec<u8>> = Vec::new();
-            engine.wal_manager().replay_two_phase(from_lsn, |entry: &[u8]| {
-                entries.push(entry.to_vec());
-                Ok(())
-            })?;
+            let entries = adapter.read_wal_range(from_lsn, prev)?;
             Ok((entries, prev))
         })?;
         Ok(WalTailChunk {
@@ -212,6 +228,12 @@ impl WalTailStreamer {
 ```
 
 ### Stoolap fork changes (resolves N2, N3)
+
+The Stoolap fork's `record_commit` hook now feeds the cipherocto sync engine via the `DatabaseSyncAdapter` trait, not by direct engine calls. The `WalTailStreamer` already holds an `Arc<dyn DatabaseSyncAdapter>` — the fork's job is to:
+
+1. Build a `StoolapAdapter` (from mission 0862-base) and wrap it in `Arc<dyn DatabaseSyncAdapter>`
+2. Construct the `WalTailStreamer` with that adapter
+3. In `record_commit`, call `streamer.on_commit(txn_id, from_lsn, to_lsn)` — same as before; the trait boundary is internal to the streamer
 
 ```rust
 // stoolap/src/storage/mvcc/transaction.rs
@@ -289,18 +311,21 @@ Note: `record_commit` is a trait method, not an inherent method on `MVCCEngine`.
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/stream.rs` exists with `WalTailStreamer` struct
+- [ ] `octo-sync/src/stream.rs` (in the `octo-sync/` leaf workspace) exists with `WalTailStreamer` struct
+- [ ] `WalTailStreamer` holds `adapter: Arc<dyn DatabaseSyncAdapter>` — NOT `engine: Arc<MVCCEngine>` (per RFC-0862 v1.1.0)
+- [ ] `on_commit` reads WAL via `adapter.read_wal_range(from_lsn, to_lsn)` — NOT via direct `self.engine.wal_manager().replay_two_phase(...)` (per RFC-0862 v1.1.0 §Migration path step v1.1.0.d)
 - [ ] `on_commit` captures LSN range `(from_lsn, to_lsn)` and packages as `WalTailChunk`
 - [ ] `WalTailChunk` contains `from_lsn`, `to_lsn`, `entries: Vec<Vec<u8>>`, `is_last: bool`
 - [ ] `is_last` is always `true` (post-store invariant: `to_lsn == current_lsn` is unconditionally true after `current_lsn.store(to_lsn, …)`)
-- [ ] `handle_wal_tail_request` returns `WalTailChunk` with entries in `[from_lsn, current_lsn]` inclusive
+- [ ] `handle_wal_tail_request` returns `WalTailChunk` with entries in `[from_lsn, current_lsn]` inclusive (also via `adapter.read_wal_range`)
 - [ ] `on_lsn_ack` updates per-peer watermark
 - [ ] Batch-by-count (default 100 commits per chunk) AND batch-by-time (default 50ms timeout) — whichever comes first
 - [ ] Per-peer rate limit: 100 envelopes/s sustained, 500 burst (delegated to `rate_limit.rs`)
 - [ ] LSN monotonicity: reject any chunk where `from_lsn != previous_chunk.to_lsn + 1`
+- [ ] `set_paused` propagates to the adapter via `adapter.set_paused(paused)` (default no-op on the trait; the underlying StoolapAdapter may or may not implement it)
 - [ ] `record_commit` hook invokes `WalTailStreamer::on_commit` when `sync` feature is enabled
-- [ ] Unit tests for all 3 components (capture, package, subscribe)
-- [ ] Integration test: writer commits 10K rows in one transaction → reader receives one `WalTailChunk` with all 10K entries → reader applies in LSN order → `BLAKE3-256(SELECT * FROM table)` matches
+- [ ] Unit tests for all 3 components (capture, package, subscribe) using `MockAdapter` (per mission 0862-base)
+- [ ] Integration test: writer commits 10K rows in one transaction → reader receives one `WalTailChunk` with all 10K entries → reader applies via `adapter.apply_wal_entry` in LSN order → `BLAKE3-256(SELECT * FROM table)` matches
 
 ## Tests
 
@@ -329,25 +354,29 @@ Note: `record_commit` is a trait method, not an inherent method on `MVCCEngine`.
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — envelope types, identity derivation, state machine
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1282` (`current_lsn()` no-arg)
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1353` (`previous_lsn()` no-arg)
-  - `stoolap/src/storage/mvcc/wal_manager.rs:1595` (`WALManager::replay_two_phase` for reader apply)
-  - `stoolap/src/storage/mvcc/persistence.rs:549` (`PersistenceManager::replay_two_phase` — thin wrapper around `WALManager::replay_two_phase`; use the `WALManager` version directly)
+  - `0862-base` — envelope types, identity derivation, state machine, **`DatabaseSyncAdapter` trait**, `MockAdapter`
+  - `octo_sync::DatabaseSyncAdapter` trait (8 methods, sync, `Send + Sync + 'static`; per RFC-0862 v1.1.0)
+  - The `adapter.read_wal_range(from, to)` method (per RFC-0862 §4.3.3 via the trait boundary)
   - RFC-0862 §4.3.3 (WAL-tail streaming algorithm)
 
 - **Required by:**
   - `0862-base` (integration glue)
   - `0862h` (property tests for LSN monotonicity)
 
+- **No longer requires direct access to:**
+  - `stoolap/src/storage/mvcc/wal_manager.rs:1282` (`current_lsn()` no-arg) — accessed via `adapter.current_lsn()`
+  - `stoolap/src/storage/mvcc/wal_manager.rs:1353` (`previous_lsn()` no-arg) — not directly used; the sync engine tracks its own LSN watermark
+  - `stoolap/src/storage/mvcc/wal_manager.rs:1595` (`WALManager::replay_two_phase` for reader apply) — accessed via `adapter.apply_wal_entry(entry)` on the reader side, which internally delegates to `replay_two_phase` inside the StoolapAdapter impl
+  - `stoolap/src/storage/mvcc/persistence.rs:549` (`PersistenceManager::replay_two_phase` — thin wrapper around `WALManager::replay_two_phase`) — not directly used; the adapter owns the choice of which apply method to call
+
 ## Blockers / Dependencies
 
-- **Blocked by:** `0862-base` (for envelope types, state machine)
+- **Blocked by:** `0862-base` (for envelope types, state machine, **and the `DatabaseSyncAdapter` trait**)
 - **Blocks:** `0862b` (Merkle summary for catch-up), `0862c` (snapshot segment), `0862f` (multi-peer)
 
 ## Description
 
-The WAL-tail streamer is the heart of v1 single-leader sync. The writer captures LSN ranges on every commit and ships them as `WalTailChunk` envelopes. The reader applies them in LSN order via `WALManager::replay_two_phase`, which is the Stoolap fork's built-in recovery path. This is the same pattern as PostgreSQL logical replication, MySQL binlog replication, and SQLite session extension.
+The WAL-tail streamer is the heart of v1 single-leader sync. The writer captures LSN ranges on every commit and ships them as `WalTailChunk` envelopes. The reader applies them in LSN order via `adapter.apply_wal_entry(entry)`, which (for the StoolapAdapter impl) delegates to `WALManager::replay_two_phase` — the Stoolap fork's built-in recovery path. This is the same pattern as PostgreSQL logical replication, MySQL binlog replication, and SQLite session extension. **The trait is the integration boundary; the cipherocto sync engine never calls Stoolap DB functions directly.**
 
 ## Technical Details
 
@@ -363,14 +392,16 @@ The WAL-tail streamer is the heart of v1 single-leader sync. The writer captures
 - `blake3` (already in `stoolap/Cargo.toml:111`)
 - `tracing` (for the `tracing::error!` call in `record_commit`; for structured error logging)
 - `parking_lot` (for the `Mutex<HashMap>` wrappers; the code uses `parking_lot::Mutex` not `std::sync::Mutex`)
+- `octo-sync` (git dep, `branch = "next"`; the `DatabaseSyncAdapter` trait and `MockAdapter` are consumed from this leaf workspace)
 
 ### Pitfalls
 
-- **Don't read entries from the WAL after they have been truncated.** The reader's LSN watermark must always be > the writer's truncated LSN, otherwise the reader must re-snapshot.
-- **Don't ship `Rollback` entries.** Only ship `Commit` markers; `Rollback` markers trigger entry discard on the reader (matches `WALManager::replay_two_phase` semantics).
-- **Don't conflate "current LSN" with "highest shipped LSN".** The writer's current LSN is the highest committed; the writer's highest shipped LSN is what the reader has acknowledged.
+- **Don't read entries from the WAL after they have been truncated.** The reader's LSN watermark must always be > the writer's truncated LSN, otherwise the reader must re-snapshot. Per the v1.1.0 trait boundary, this check happens inside `StoolapAdapter::read_wal_range` (it returns `Err(SyncError::InvalidLsnRange)` if `from_lsn > current_lsn`), NOT in the cipherocto sync engine.
+- **Don't ship `Rollback` entries.** Only ship `Commit` markers; `Rollback` markers trigger entry discard on the reader (matches `WALManager::replay_two_phase` semantics). The StoolapAdapter impl must filter out `Rollback` entries when responding to `read_wal_range`.
+- **Don't conflate "current LSN" with "highest shipped LSN".** The writer's current LSN is the highest committed (returned by `adapter.current_lsn()`); the writer's highest shipped LSN is what the reader has acknowledged.
 - **Don't use `is_last` to mean "no more chunks in this session".** It means "this chunk's `to_lsn` equals the writer's `current_lsn` at packaging time". The reader should treat `is_last || WalTailEnd` as the stop signal (defense-in-depth).
 - **Don't ship chunks out of order across multiple writers.** v1 is single-leader, so this can't happen, but the design must reject chunks with `from_lsn != previous_chunk.to_lsn + 1` (LSN monotonicity).
+- **Don't store `Arc<MVCCEngine>` in the streamer.** Per RFC-0862 v1.1.0, the streamer stores `Arc<dyn DatabaseSyncAdapter>`. Direct engine access is forbidden — it would bypass the trait boundary and re-create the Cargo workspace cycle.
 
 ---
 

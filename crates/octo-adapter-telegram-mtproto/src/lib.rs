@@ -57,6 +57,14 @@ pub mod transport;
 #[cfg(feature = "real-network")]
 pub mod real_client;
 
+// Production wiring factory. Gated on `real-network` so the
+// default build (mock-only, no grammers) doesn't pull in
+// `RealTelegramMtprotoClient`. The factory is the **only**
+// recommended way to construct a production adapter; the
+// mock client (see `client::mock`) is reserved for tests.
+#[cfg(feature = "real-network")]
+pub mod factory;
+
 // Bot-API HTTP fallback transport (Phase 3 / sub-mission
 // 0850ab-c-http). Gated on the `bot-api` feature so the
 // default build (pure mock + MTProto) does not pull in
@@ -69,10 +77,6 @@ pub mod http_fallback;
 
 // Re-exports
 pub use adapter::MtprotoTelegramAdapter;
-pub use auth::{
-    next_user_auth_state, next_user_auth_state_server, AuthMode, AuthStateKey, BotIdentity,
-    MtprotoAuthAction, MtprotoAuthError, UserAuth, UserAuthAction, UserAuthServerEvent,
-};
 pub use client::{
     GroupInfo, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate, QrLoginHandle,
     SelfUserInfo,
@@ -86,7 +90,18 @@ pub use session::StoolapSession;
 pub use transport::Transport;
 
 #[cfg(feature = "real-network")]
+pub use factory::{connect_real, open_session, RealMtprotoTelegramAdapter};
+#[cfg(feature = "real-network")]
 pub use real_client::RealTelegramMtprotoClient;
+
+// Test mock exports. The `MockTelegramMtprotoClient` is only
+// available when the `test-mock` Cargo feature is enabled
+// (which is for test binaries of downstream crates) OR
+// during the adapter's own `cargo test`. Production crates
+// that build with default features cannot see the mock and
+// cannot accidentally wire it into a release binary.
+#[cfg(any(test, feature = "test-mock"))]
+pub use client::{MockFailureSpec, MockTelegramMtprotoClient};
 
 // Phase 3 (sub-mission 0850ab-c-http): Bot-API HTTP fallback
 // transport. Gated on the `bot-api` feature. The `Transport`

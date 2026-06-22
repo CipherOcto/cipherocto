@@ -19,6 +19,17 @@ default = []
 # (which would collide with the project-wide cipherocto persistence
 # convention) is excluded.
 real-network = ["dep:grammers-client", "dep:grammers-tl-types"]
+# Test mock: enables `MockTelegramMtprotoClient` and the
+# `client::mock::*` exports. This feature is **only** intended for
+# test binaries of downstream crates (e.g.,
+# `octo-telegram-mtproto-onboard-core`). Production binaries and
+# integration tests that exercise a real Telegram DC must NOT
+# enable this — the project rule is "no mocks in production code
+# paths". When `test-mock` is *not* enabled, the mock is hidden
+# behind `#[cfg(test)]` inside the adapter crate and the
+# production factory in `factory.rs` is the only public way to
+# obtain an adapter.
+test-mock = []
 # Bot-API HTTP fallback transport (gap G6 in
 # docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md §4).
 # Pulls reqwest + rustls. Independent of `real-network`: a user who

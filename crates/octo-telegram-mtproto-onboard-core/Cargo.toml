@@ -1,0 +1,56 @@
+[package]
+name = "octo-telegram-mtproto-onboard-core"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core library for the MTProto-backed Telegram auth onboarding CLI (Mission 0850ab-c Phase B)."
+
+[lib]
+name = "octo_telegram_mtproto_onboard_core"
+path = "src/lib.rs"
+
+[features]
+# Default: build the production wiring (real-network). The library
+# cannot be useful without the real client — every public flow
+# (`bot_token`, `user_code`, `qr_login`) drives a real Telegram
+# connection through the `connect_real` factory in the adapter.
+#
+# To run unit tests with the in-memory mock client instead, build
+# with `--features test-mock --no-default-features`. CI uses that
+# configuration; production binaries use the default.
+default = ["real-network"]
+# Pulls in grammers-client + grammers-tl-types (the real MTProto
+# transport). Required for production use; gated so the test-only
+# build does not pull the libsql conflict from grammers-session.
+real-network = ["octo-adapter-telegram-mtproto/real-network"]
+# Test mock: enables `MockTelegramMtprotoClient` so the library
+# can be tested without a real Telegram DC. NEVER enable this in
+# a production binary. The project rule "no mocks in production
+# code paths" is enforced structurally.
+test-mock = ["octo-adapter-telegram-mtproto/test-mock"]
+
+[dependencies]
+# `default-features = false` because we manage our own feature
+# surface (`real-network` and `test-mock` are passthroughs to
+# the upstream crate). The adapter's `default` feature is empty
+# (no libsql, no reqwest) so we don't lose anything by
+# disabling it.
+octo-adapter-telegram-mtproto = { path = "../octo-adapter-telegram-mtproto", default-features = false }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+directories = "6"
+tempfile = "3"
+
+[dev-dependencies]
+tokio = { workspace = true }
+# The library's own tests use the mock (via `test-mock`) so
+# they don't need a live Telegram DC. We don't need to
+# redeclare the adapter dependency — the [dependencies]
+# section already pulls it in, and Cargo unifies the
+# features for tests.

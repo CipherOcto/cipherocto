@@ -119,6 +119,64 @@ fn is_supergroup(chat_id: i64) -> bool {
     chat_id <= -1_000_000_000_000
 }
 
+/// Extract the bare invite hash from an `InviteRef`. Telegram
+/// accepts three surface forms:
+///
+/// 1. `https://t.me/joinchat/<hash>` (legacy public-ish)
+/// 2. `https://t.me/+<hash>` (newer private invite)
+/// 3. `<hash>` (bare)
+///
+/// We strip URL prefixes and the `+` prefix. The hash is
+/// then passed to `messages.checkChatInvite` /
+/// `messages.importChatInvite` unchanged. An empty /
+/// unparseable result is surfaced as `ApiError(400)`.
+fn extract_invite_hash(invite: &InviteRef) -> Result<String, PlatformAdapterError> {
+    let raw = invite.0.as_str();
+    // Trim whitespace and any trailing slash / query string.
+    let trimmed = raw.trim();
+    let trimmed = trimmed
+        .split('?')
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    let trimmed = trimmed.trim();
+    let hash = if let Some(rest) = trimmed.strip_prefix("https://t.me/joinchat/") {
+        rest.to_string()
+    } else if let Some(rest) = trimmed.strip_prefix("http://t.me/joinchat/") {
+        rest.to_string()
+    } else if let Some(rest) = trimmed.strip_prefix("t.me/joinchat/") {
+        rest.to_string()
+    } else if let Some(rest) = trimmed.strip_prefix("https://t.me/+") {
+        rest.to_string()
+    } else if let Some(rest) = trimmed.strip_prefix("http://t.me/+") {
+        rest.to_string()
+    } else if let Some(rest) = trimmed.strip_prefix("t.me/+") {
+        rest.to_string()
+    } else if trimmed.starts_with("https://t.me/")
+        || trimmed.starts_with("http://t.me/")
+        || trimmed.starts_with("t.me/")
+    {
+        // The string is a `t.me` URL but we couldn't
+        // match a known invite prefix (`joinchat/`,
+        // `+<hash>`). That's malformed for our purposes
+        // (e.g., `https://t.me/joinchat` with no hash,
+        // or `https://t.me/foo` which is a username
+        // link, not an invite). Surface as empty so the
+        // caller gets an `ApiError(400)`.
+        String::new()
+    } else {
+        // Already a bare hash.
+        trimmed.to_string()
+    };
+    if hash.is_empty() {
+        return Err(PlatformAdapterError::ApiError {
+            code: 400,
+            message: format!("invite {:?} has empty hash after parsing", invite.0),
+        });
+    }
+    Ok(hash)
+}
+
 // ── Capability report (cached, no I/O) ──────────────────────────
 //
 // The capability report is a static struct — it does not
@@ -165,6 +223,53 @@ mod tests {
     fn parse_chat_id_rejects_garbage() {
         let id = GroupId::new("not a number");
         let err = parse_chat_id(&id).unwrap_err();
+        match err {
+            PlatformAdapterError::ApiError { code, .. } => assert_eq!(code, 400),
+            other => panic!("expected ApiError(400), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_invite_hash_strips_legacy_joinchat_url() {
+        let inv = InviteRef::new("https://t.me/joinchat/AAAA-AAAA");
+        assert_eq!(extract_invite_hash(&inv).unwrap(), "AAAA-AAAA");
+    }
+
+    #[test]
+    fn extract_invite_hash_strips_new_plus_url() {
+        let inv = InviteRef::new("https://t.me/+BBBBBBBB");
+        assert_eq!(extract_invite_hash(&inv).unwrap(), "BBBBBBBB");
+    }
+
+    #[test]
+    fn extract_invite_hash_passes_bare_hash_through() {
+        let inv = InviteRef::new("CCCCCCCC");
+        assert_eq!(extract_invite_hash(&inv).unwrap(), "CCCCCCCC");
+    }
+
+    #[test]
+    fn extract_invite_hash_strips_trailing_query_and_slash() {
+        let inv = InviteRef::new("https://t.me/+DDDDDDDD/?utm=foo");
+        assert_eq!(extract_invite_hash(&inv).unwrap(), "DDDDDDDD");
+    }
+
+    #[test]
+    fn extract_invite_hash_rejects_empty_after_strip() {
+        let inv = InviteRef::new("https://t.me/joinchat/");
+        let err = extract_invite_hash(&inv).unwrap_err();
+        match err {
+            PlatformAdapterError::ApiError { code, .. } => assert_eq!(code, 400),
+            other => panic!("expected ApiError(400), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_invite_hash_rejects_non_invite_tme_url() {
+        // A `t.me` URL that isn't an invite (e.g., a
+        // public-channel username link) is malformed
+        // for our purposes.
+        let inv = InviteRef::new("https://t.me/telegram");
+        let err = extract_invite_hash(&inv).unwrap_err();
         match err {
             PlatformAdapterError::ApiError { code, .. } => assert_eq!(code, 400),
             other => panic!("expected ApiError(400), got {other:?}"),
@@ -526,31 +631,71 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
 
     async fn resolve_invite(
         &self,
-        _invite: &InviteRef,
+        invite: &InviteRef,
     ) -> Result<GroupHandle, PlatformAdapterError> {
-        // Phase 1 stub: the real client uses
-        // `messages.checkChatInvite` to resolve a
-        // `t.me/joinchat/<hash>` URL or a `t.me/+<hash>`
-        // invite link to a `ChatInvite` struct, which we
-        // translate to `GroupHandle`. The mock does
-        // not support this.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: self.platform_name(),
-            action: "resolve_invite".into(),
+        // Resolve a Telegram invite hash to its metadata
+        // without joining. Telegram's
+        // `messages.checkChatInvite` returns a `ChatInvite`
+        // payload; we translate it to `GroupHandle`.
+        //
+        // Three ChatInvite variants:
+        // - `ChatInviteAlready` — user is already a member;
+        //   we surface `id + title`.
+        // - `ChatInvite` — standard metadata: title,
+        //   participants_count, megagroup / public flags.
+        //   No `chat_id` is available until the bot joins.
+        // - `ChatInvitePeek` — minimal preview; the bot is
+        //   not yet a member.
+        let hash = extract_invite_hash(invite)?;
+        let preview = self.client.check_invite(&hash).await.map_err(map_err)?;
+        let id = preview
+            .chat_id
+            .map(|cid| GroupId::new(cid.to_string()))
+            .unwrap_or_else(|| GroupId::new(invite.0.clone()));
+        let subject = if preview.title.is_empty() {
+            None
+        } else {
+            Some(preview.title)
+        };
+        let mode_flags = if preview.is_megagroup || preview.is_public {
+            Some(GroupModeFlags::default())
+        } else {
+            None
+        };
+        Ok(GroupHandle {
+            id,
+            subject,
+            invite_url: Some(invite.to_string()),
+            is_admin: false, // Resolved but not joined yet
+            member_count: preview.member_count,
+            mode_flags,
+            initial_admins_promoted: false,
         })
     }
 
     async fn join_by_invite(
         &self,
-        _invite: &InviteRef,
+        invite: &InviteRef,
     ) -> Result<GroupHandle, PlatformAdapterError> {
-        // Phase 1 stub: the real client uses
-        // `messages.importChatInvite` to join via
-        // `t.me/joinchat/<hash>`. The mock does not
-        // support this.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: self.platform_name(),
-            action: "join_by_invite".into(),
+        // Join a group via an invite hash. Telegram's
+        // `messages.importChatInvite` returns an `Updates`
+        // payload; we extract the chat id from the
+        // resulting chat list.
+        let hash = extract_invite_hash(invite)?;
+        let chat_id = self.client.import_invite(&hash).await.map_err(map_err)?;
+        // We don't have direct post-join metadata from the
+        // import response alone (Updates only carries the
+        // chat id). Callers can issue a follow-up
+        // `get_group_metadata` to populate subject /
+        // member_count if needed.
+        Ok(GroupHandle {
+            id: GroupId::new(chat_id.to_string()),
+            subject: None,
+            invite_url: Some(invite.to_string()),
+            is_admin: false, // Telegram doesn't make the joiner an admin
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
         })
     }
 
@@ -559,6 +704,11 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
         group_id: &GroupId,
         new_owner: &PeerId,
     ) -> Result<(), PlatformAdapterError> {
+        // Telegram's `channels.editCreator` transfers
+        // ownership of a supergroup to `new_owner`. The
+        // caller must be the current owner and the
+        // supergroup must already be a channel
+        // (`chat_id <= -1_000_000_000_001`).
         let chat_id = parse_chat_id(group_id)?;
         let user_id =
             new_owner
@@ -569,22 +719,18 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
                     message: format!("invalid user_id {:?}: {}", new_owner.as_str(), e),
                 })?;
         if !is_supergroup(chat_id) {
-            return Err(PlatformAdapterError::Unimplemented {
-                platform: self.platform_name(),
-                action: format!(
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
                     "transfer_ownership: chat_id {chat_id} is a basic group (no ownership concept)"
                 ),
             });
         }
-        // Phase 1 stub: the real client uses
-        // `channels.editCreator` (only the current
-        // owner can transfer). The mock does not
-        // support this.
-        let _ = user_id;
-        Err(PlatformAdapterError::Unimplemented {
-            platform: self.platform_name(),
-            action: "transfer_ownership: not yet implemented (Phase 1 stub)".into(),
-        })
+        self.client
+            .edit_creator(chat_id, user_id, None)
+            .await
+            .map_err(map_err)?;
+        Ok(())
     }
 }
 
@@ -656,6 +802,7 @@ mod end_to_end_tests {
                 title: "super".into(),
                 member_count: Some(1),
                 is_admin: Some(true),
+                about: None,
             },
             vec![0],
         );
@@ -687,6 +834,7 @@ mod end_to_end_tests {
                 title: "basic".into(),
                 member_count: Some(2),
                 is_admin: Some(true),
+                about: None,
             },
             vec![0, 42],
         );
@@ -716,5 +864,133 @@ mod end_to_end_tests {
         // first created group has chat_id = 1.
         assert_eq!(handles[0].id.as_str(), "1");
         assert_eq!(handles[1].id.as_str(), "2");
+    }
+
+    #[tokio::test]
+    async fn resolve_invite_surfaces_unreachable_for_mock() {
+        // The mock's `check_invite` returns
+        // `MtprotoTelegramError::NotReady`, which
+        // `map_err` translates to `Unreachable`. The
+        // real client (real-network feature) is the
+        // path used for invite resolution.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock).await;
+        let admin = a.as_coordinator_admin().unwrap();
+        let err = admin
+            .resolve_invite(&InviteRef::new("https://t.me/+ABCDABCD"))
+            .await
+            .unwrap_err();
+        match err {
+            PlatformAdapterError::Unreachable { platform, .. } => {
+                assert_eq!(platform, "telegram-mtproto");
+            }
+            other => panic!("expected Unreachable, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn join_by_invite_surfaces_unreachable_for_mock() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock).await;
+        let admin = a.as_coordinator_admin().unwrap();
+        let err = admin
+            .join_by_invite(&InviteRef::new("https://t.me/joinchat/ABCDABCD"))
+            .await
+            .unwrap_err();
+        match err {
+            PlatformAdapterError::Unreachable { platform, .. } => {
+                assert_eq!(platform, "telegram-mtproto");
+            }
+            other => panic!("expected Unreachable, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transfer_ownership_succeeds_for_supergroup() {
+        // The mock's `edit_creator` records the
+        // (chat_id, new_owner) tuple and returns Ok.
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock.clone()).await;
+        // Pre-seed a supergroup with the bot as owner.
+        mock.set_mock_group(
+            crate::client::GroupInfo {
+                chat_id: -1001234567890,
+                title: "owned".into(),
+                member_count: Some(2),
+                is_admin: Some(true),
+                about: None,
+            },
+            vec![0, 99],
+        );
+        let admin = a.as_coordinator_admin().unwrap();
+        admin
+            .transfer_ownership(&GroupId::new("-1001234567890"), &PeerId::new("99"))
+            .await
+            .expect("transfer_ownership should succeed");
+        // Side-channel assertion: the mock recorded the
+        // transfer.
+        assert_eq!(mock.last_transferred_to(), Some((-1001234567890, 99)),);
+    }
+
+    #[tokio::test]
+    async fn transfer_ownership_rejects_basic_group() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock.clone()).await;
+        mock.set_mock_group(
+            crate::client::GroupInfo {
+                chat_id: 123, // basic group
+                title: "basic".into(),
+                member_count: Some(2),
+                is_admin: Some(true),
+                about: None,
+            },
+            vec![0, 99],
+        );
+        let admin = a.as_coordinator_admin().unwrap();
+        let err = admin
+            .transfer_ownership(&GroupId::new("123"), &PeerId::new("99"))
+            .await
+            .unwrap_err();
+        match err {
+            PlatformAdapterError::ApiError { code, message } => {
+                assert_eq!(code, 400);
+                assert!(message.contains("basic group"));
+            }
+            other => panic!("expected ApiError(400), got {other:?}"),
+        }
+        // No transfer was recorded.
+        assert_eq!(mock.last_transferred_to(), None);
+    }
+
+    #[tokio::test]
+    async fn transfer_ownership_rejects_non_numeric_user_id() {
+        let mock = MockTelegramMtprotoClient::new();
+        let a = adapter_with(mock.clone()).await;
+        mock.set_mock_group(
+            crate::client::GroupInfo {
+                chat_id: -1001234567890,
+                title: "owned".into(),
+                member_count: Some(2),
+                is_admin: Some(true),
+                about: None,
+            },
+            vec![0, 99],
+        );
+        let admin = a.as_coordinator_admin().unwrap();
+        let err = admin
+            .transfer_ownership(
+                &GroupId::new("-1001234567890"),
+                &PeerId::new("not-a-user-id"),
+            )
+            .await
+            .unwrap_err();
+        match err {
+            PlatformAdapterError::ApiError { code, message } => {
+                assert_eq!(code, 400);
+                assert!(message.contains("invalid user_id"));
+            }
+            other => panic!("expected ApiError(400), got {other:?}"),
+        }
+        assert_eq!(mock.last_transferred_to(), None);
     }
 }

@@ -189,6 +189,13 @@ pub struct GroupInfo {
     /// Whether the bot is admin in this group. None if
     /// unknown.
     pub is_admin: Option<bool>,
+    /// Optional `about` text. None if the platform did not
+    /// surface it; empty string if the platform cleared the
+    /// existing about text via `set_chat_about`. The mock
+    /// records the latest value set via `set_chat_about`
+    /// (R19-C3 consistency: mirrors how `title` is recorded
+    /// by `set_chat_title`).
+    pub about: Option<String>,
 }
 
 /// A new message update from Telegram.
@@ -450,6 +457,50 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// a member of. Used by `CoordinatorAdmin::list_own_groups`
     /// to enumerate managed domains.
     async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError>;
+
+    /// Resolve an invite hash (e.g., the `<hash>` in
+    /// `https://t.me/+<hash>` or the bare hash from a
+    /// `t.me/joinchat/<hash>` URL) to its metadata
+    /// without joining. Used by
+    /// `CoordinatorAdmin::resolve_invite`. Telegram's
+    /// `messages.CheckChatInvite` returns a `ChatInvite`
+    /// describing the chat (title, member count,
+    /// participant list if public, etc.). Returns
+    /// `(chat_id, title, member_count)` on success.
+    async fn check_invite(&self, hash: &str) -> Result<InvitePreview, MtprotoTelegramError>;
+
+    /// Join a group via an invite hash. Telegram's
+    /// `messages.ImportChatInvite` performs the join and
+    /// returns an `Updates` payload with the new chat
+    /// info. Used by `CoordinatorAdmin::join_by_invite`.
+    /// On success returns the joined chat's `chat_id`.
+    async fn import_invite(&self, hash: &str) -> Result<i64, MtprotoTelegramError>;
+
+    /// Transfer ownership of a supergroup to `new_owner`.
+    /// Telegram's `channels.EditCreator` performs the
+    /// transfer. The caller must be the current owner.
+    /// Used by `CoordinatorAdmin::transfer_ownership`.
+    /// `chat_id` must be a supergroup (negative chat_id
+    /// `<= -1_000_000_000_001`).
+    async fn edit_creator(
+        &self,
+        chat_id: i64,
+        new_owner_user_id: i64,
+        password: Option<&str>,
+    ) -> Result<(), MtprotoTelegramError>;
+}
+
+/// Preview of a chat invite returned by
+/// `MtprotoTelegramClient::check_invite`. The
+/// `CoordinatorAdmin::resolve_invite` impl translates
+/// this to a `GroupHandle`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvitePreview {
+    pub chat_id: Option<i64>,
+    pub title: String,
+    pub member_count: Option<u32>,
+    pub is_public: bool,
+    pub is_megagroup: bool,
 }
 
 /// Failure-injection spec for `MockTelegramMtprotoClient`.
@@ -523,6 +574,12 @@ struct MockState {
     /// `kick_participant`. Used by `get_chat`'s
     /// `member_count` computation.
     group_members: BTreeMap<i64, Vec<i64>>,
+    /// CoordinatorAdmin mock state: side-channel for
+    /// `edit_creator`. The most recent successful
+    /// `edit_creator(chat_id, new_owner_user_id)` is
+    /// recorded here so tests can assert on the
+    /// ownership-transfer flow.
+    last_transferred_to: Option<(i64, i64)>,
 }
 
 impl MockTelegramMtprotoClient {
@@ -623,6 +680,15 @@ impl MockTelegramMtprotoClient {
     /// after a sequence of operations.
     pub fn mock_groups(&self) -> Vec<GroupInfo> {
         self.state.lock().groups.values().cloned().collect()
+    }
+
+    /// CoordinatorAdmin mock helper: read the most
+    /// recent successful `edit_creator` transfer
+    /// recorded by the mock. Used by tests to assert on
+    /// the ownership-transfer flow without coupling to
+    /// the network behavior of a real client.
+    pub fn last_transferred_to(&self) -> Option<(i64, i64)> {
+        self.state.lock().last_transferred_to
     }
 
     fn next_message_id(state: &mut MockState) -> i64 {
@@ -845,6 +911,7 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
             title: title.to_string(),
             member_count: Some(members.len() as u32),
             is_admin: Some(true),
+            about: None,
         };
         g.groups.insert(chat_id, info.clone());
         g.group_members.insert(chat_id, members);
@@ -933,14 +1000,23 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         }
     }
 
-    async fn set_chat_about(
-        &self,
-        _chat_id: i64,
-        _about: &str,
-    ) -> Result<(), MtprotoTelegramError> {
-        // Mock: no-op (the about text is a UI nicety; the
-        // trait signature requires the call regardless).
-        Ok(())
+    async fn set_chat_about(&self, chat_id: i64, about: &str) -> Result<(), MtprotoTelegramError> {
+        // R19-C3: mirror `set_chat_title` so tests that
+        // drive `set_chat_about` see the same
+        // get-after-set behavior. Records the value
+        // (including empty string for "clear about")
+        // and returns `Config` if the chat_id is not
+        // known.
+        let mut g = self.state.lock();
+        match g.groups.get_mut(&chat_id) {
+            Some(info) => {
+                info.about = Some(about.to_string());
+                Ok(())
+            }
+            None => Err(MtprotoTelegramError::Config(format!(
+                "set_chat_about: chat_id {chat_id} not found"
+            ))),
+        }
     }
 
     async fn delete_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
@@ -975,6 +1051,41 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
     async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError> {
         let g = self.state.lock();
         Ok(g.groups.keys().copied().collect())
+    }
+
+    async fn check_invite(&self, hash: &str) -> Result<InvitePreview, MtprotoTelegramError> {
+        // Mock does not surface invite metadata. Tests
+        // that exercise the invite flow use a hardcoded
+        // chat_id or a pre-seeded group; the real client
+        // is the path used for invite resolution.
+        let _ = hash;
+        Err(MtprotoTelegramError::NotReady(
+            "MockTelegramMtprotoClient::check_invite: not implemented (use real client for invite resolution)".into(),
+        ))
+    }
+
+    async fn import_invite(&self, hash: &str) -> Result<i64, MtprotoTelegramError> {
+        // Mock does not perform network joins. Tests that
+        // exercise the join flow use the real client.
+        let _ = hash;
+        Err(MtprotoTelegramError::NotReady(
+            "MockTelegramMtprotoClient::import_invite: not implemented (use real client for invite joins)".into(),
+        ))
+    }
+
+    async fn edit_creator(
+        &self,
+        chat_id: i64,
+        new_owner_user_id: i64,
+        password: Option<&str>,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Mock accepts the transfer for tests that exercise
+        // the ownership-transfer flow. We record the new
+        // owner via a side-channel that tests can query.
+        let _ = password;
+        let mut s = self.state.lock();
+        s.last_transferred_to = Some((chat_id, new_owner_user_id));
+        Ok(())
     }
 }
 
@@ -1318,6 +1429,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mock_set_chat_about_updates_about() {
+        // R19-C3: `set_chat_about` mirrors
+        // `set_chat_title` — records the value and
+        // returns Config on unknown chat_id.
+        let c = MockTelegramMtprotoClient::new();
+        let info = c.create_group("g", &[]).await.unwrap();
+        // Default state: about is None.
+        let before = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(before.about, None);
+        c.set_chat_about(info.chat_id, "hello world").await.unwrap();
+        let after = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(after.about.as_deref(), Some("hello world"));
+        // Clearing via empty string is recorded.
+        c.set_chat_about(info.chat_id, "").await.unwrap();
+        let cleared = c.get_chat(info.chat_id).await.unwrap();
+        assert_eq!(cleared.about.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn mock_set_chat_about_unknown_chat_returns_config_error() {
+        let c = MockTelegramMtprotoClient::new();
+        let err = c.set_chat_about(99999, "x").await.unwrap_err();
+        match err {
+            MtprotoTelegramError::Config(msg) => {
+                assert!(msg.contains("99999"), "msg should mention chat_id");
+            }
+            other => panic!("expected Config error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn mock_get_chat_unknown_returns_config_error() {
         let c = MockTelegramMtprotoClient::new();
         let err = c.get_chat(99999).await.unwrap_err();
@@ -1364,6 +1506,7 @@ mod tests {
                 title: "preexisting".into(),
                 member_count: Some(5),
                 is_admin: Some(false),
+                about: None,
             },
             vec![100, 101, 102, 103, 104],
         );

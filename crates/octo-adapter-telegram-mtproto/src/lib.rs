@@ -43,6 +43,11 @@ pub mod error;
 pub mod lifecycle;
 pub mod self_handle;
 pub mod session;
+// `peer_resolve` is gated on `real-network` because it pulls in
+// the grammers-client + grammers-tl-types crates which are
+// optional deps (the mock-only build does not link grammers).
+#[cfg(feature = "real-network")]
+pub mod peer_resolve;
 // `transport` is unconditional so `MtprotoTelegramConfig` can
 // reference the `Transport` enum from the default build. The
 // `BotApiClient` and method implementations that actually use

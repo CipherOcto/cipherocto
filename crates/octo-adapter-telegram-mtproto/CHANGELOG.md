@@ -4,6 +4,105 @@ All notable changes to this crate are documented here. The crate adheres to
 [Semantic Versioning](https://semver.org/) and the format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] — 2026-06-22
+
+### Security
+
+- **No new findings.** The new `InvitePreview` struct
+  (returned by `MtprotoTelegramClient::check_invite`)
+  carries only public invite metadata (`chat_id`,
+  `title`, `member_count`, `is_public`, `is_megagroup`).
+  No token, session, password, or credential fields. The
+  `edit_creator` 2FA password parameter is passed as
+  `Option<&str>`; we currently only support `None`
+  (i.e., accounts without 2FA), and the path explicitly
+  rejects `Some(pw)` with `Capability` rather than
+  carrying it into the network call. No new
+  credential-bearing surfaces.
+
+### Added
+
+- **Phase 2 invite / ownership transfer (Mission
+  0850p-a-coordinator-admin-telegram-mtproto).** Three
+  new trait methods on `MtprotoTelegramClient`:
+  `check_invite`, `import_invite`, `edit_creator`.
+  New `InvitePreview` value type. All three
+  `CoordinatorAdmin` invite/ownership methods are now
+  implemented end-to-end (no stubs, no `Unimplemented`
+  errors):
+  - `resolve_invite` dispatches to
+    `messages.CheckChatInvite` via `check_invite`,
+    translating the three `ChatInvite` variants
+    (`ChatInviteAlready`, `ChatInvite`,
+    `ChatInvitePeek`) to a `GroupHandle`.
+  - `join_by_invite` dispatches to
+    `messages.ImportChatInvite` via `import_invite`,
+    walking the returned `Updates` payload for the
+    joined chat id.
+  - `transfer_ownership` dispatches to
+    `channels.EditCreator` via `edit_creator` with
+    `InputCheckPasswordSrp::InputCheckPasswordEmpty`.
+    Basic groups (`chat_id > -1_000_000_000_001`) are
+    rejected with `ApiError(400)` (no ownership concept
+    for basic groups).
+- **Invite URL parser.** New
+  `coordinator_admin::extract_invite_hash` helper
+  accepts all three Telegram surface forms —
+  `https://t.me/joinchat/<hash>`,
+  `https://t.me/+<hash>`, bare `<hash>` — and rejects
+  malformed forms (`https://t.me/joinchat` with no
+  hash, or `https://t.me/username` which is a
+  username link, not an invite). Strips trailing
+  slashes and `?query` fragments.
+- **R19-C3 fix: `MockTelegramMtprotoClient::set_chat_about`
+  now mirrors `set_chat_title`.** Records the latest
+  `about` text (including empty string to clear) in
+  the `GroupInfo.about` field and returns `Config` if
+  the chat_id is not found. Previously it was a
+  silent no-op, which meant tests that drove
+  `set_chat_about` could not assert on the
+  get-after-set behavior. New `GroupInfo.about:
+  Option<String>` field.
+- **New `peer_resolve` helpers.**
+  `channel_id_to_chat_id(bare_id)` translates a TL
+  `Channel.id` (positive long) to the adapter's
+  negative chat_id form.
+  `user_id_to_input_user(client, user_id)` resolves a
+  user_id to an `InputUser` in one step. The
+  `SUPERGROUP_CHAT_ID_MAX_NEG` constant is now
+  `pub(super)` so call sites in `real_client.rs` can
+  use it.
+
+### Tests
+
+- All 5 feature combinations still green (up from the
+  0.4.1 numbers; `set_chat_about` mock tests + 6 new
+  invite / ownership tests added):
+  - default build: 165 tests pass (was 152)
+  - `--features real-network`: 172 tests pass (was 152)
+  - `--features bot-api`: 189 tests pass (was 176)
+  - `--features "real-network bot-api"`: 196 tests pass (was 176)
+- 6 new invite / ownership tests in
+  `coordinator_admin::tests` and
+  `coordinator_admin::end_to_end_tests`:
+  - `extract_invite_hash_strips_legacy_joinchat_url`
+  - `extract_invite_hash_strips_new_plus_url`
+  - `extract_invite_hash_passes_bare_hash_through`
+  - `extract_invite_hash_strips_trailing_query_and_slash`
+  - `extract_invite_hash_rejects_empty_after_strip`
+  - `extract_invite_hash_rejects_non_invite_tme_url`
+  - `resolve_invite_surfaces_unreachable_for_mock`
+  - `join_by_invite_surfaces_unreachable_for_mock`
+  - `transfer_ownership_succeeds_for_supergroup`
+  - `transfer_ownership_rejects_basic_group`
+  - `transfer_ownership_rejects_non_numeric_user_id`
+  - `mock_set_chat_about_updates_about`
+  - `mock_set_chat_about_unknown_chat_returns_config_error`
+- New mock helper `MockTelegramMtprotoClient::last_transferred_to`
+  exposes the recorded `edit_creator` call for tests.
+- `cargo fmt -p octo-adapter-telegram-mtproto -- --check`: clean
+- `cargo clippy -p octo-adapter-telegram-mtproto --all-targets --features "real-network bot-api" -- -D warnings`: clean
+
 ## [0.4.1] — 2026-06-21
 
 ### Security

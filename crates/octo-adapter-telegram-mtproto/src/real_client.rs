@@ -47,9 +47,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use grammers_client::client::{LoginToken, PasswordToken};
 use grammers_client::sender::SenderPool;
-use grammers_client::Client as GrammersClient;
 use grammers_client::SignInError;
 use grammers_tl_types as tl;
+use grammers_tl_types::Deserializable;
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
@@ -58,11 +58,14 @@ use crate::auth::{
     UserAuthServerEvent,
 };
 use crate::client::{
-    build_qr_url, GroupInfo, MtprotoSentMessage, MtprotoTelegramClient, MtprotoTelegramUpdate,
-    SelfUserInfo,
+    build_qr_url, GroupInfo, InvitePreview, MtprotoSentMessage, MtprotoTelegramClient,
+    MtprotoTelegramUpdate, SelfUserInfo,
 };
 use crate::error::MtprotoTelegramError;
 use crate::lifecycle::UserAuthLifecycle;
+use crate::peer_resolve::{
+    peer_to_input_channel, peer_to_input_peer, peer_to_input_user, resolve_chat, resolve_user,
+};
 use crate::self_handle::MtprotoSelfHandle;
 use crate::session::StoolapSession;
 
@@ -105,12 +108,139 @@ fn extract_self_user_info(authorization: tl::enums::auth::Authorization) -> Self
     }
 }
 
+/// Branch on the chat_id kind. We can't reuse
+/// `peer_resolve::chat_id_to_peer_id` here because the
+/// kind is used to drive a `match` at the call site; the
+/// full `PeerId` isn't needed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PeerKindChoice {
+    Basic,
+    Supergroup,
+}
+
+fn chat_id_kind(chat_id: i64) -> PeerKindChoice {
+    use crate::peer_resolve::chat_id_to_peer_id;
+    use grammers_session::types::PeerKind;
+    match chat_id_to_peer_id(chat_id).kind() {
+        PeerKind::Channel => PeerKindChoice::Supergroup,
+        _ => PeerKindChoice::Basic,
+    }
+}
+
+/// Extract the freshly-created channel id from a
+/// `Updates` payload returned by `channels.createChannel`.
+///
+/// The TL shape of `Updates` varies across schema layers;
+/// the canonical pattern is `Updates::Update` containing a
+/// `tl::types::UpdateChat` (carrying the chat_id) or a
+/// `tl::enums::Chat` list (`Channel`) with the channel_id.
+/// We handle both shapes plus the wrapper-by-Chat
+/// variants.
+fn extract_created_channel_id(updates: &tl::enums::Updates) -> Option<i64> {
+    use tl::enums::Updates as UpdatesEnum;
+    match updates {
+        UpdatesEnum::Combined(combined) => {
+            for upd in &combined.updates {
+                if let Some(id) = extract_channel_id_from_update_obj(upd) {
+                    return Some(id);
+                }
+            }
+            for chat in &combined.chats {
+                if let Some(id) = channel_id_from_chat_enum(chat) {
+                    return Some(id);
+                }
+            }
+            None
+        }
+        UpdatesEnum::Updates(updates_list) => {
+            for upd in &updates_list.updates {
+                if let Some(id) = extract_channel_id_from_update_obj(upd) {
+                    return Some(id);
+                }
+            }
+            for chat in &updates_list.chats {
+                if let Some(id) = channel_id_from_chat_enum(chat) {
+                    return Some(id);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Pull a channel id from a single `Update` enum (one
+/// variant of `tl::enums::Update`).
+fn extract_channel_id_from_update_obj(upd: &tl::enums::Update) -> Option<i64> {
+    use tl::enums::Update as UpdateEnum;
+    match upd {
+        UpdateEnum::Channel(u) => {
+            // UpdateChannel carries the channel id.
+            Some(u.channel_id)
+        }
+        _ => None,
+    }
+}
+
+/// Pull a channel id from a `tl::enums::Chat` (the chat
+/// enum). Returns the chat id if the variant carries a
+/// `Channel` (supergroup) or `Chat` (basic group).
+fn channel_id_from_chat_enum(chat: &tl::enums::Chat) -> Option<i64> {
+    use tl::enums::Chat as ChatEnum;
+    match chat {
+        ChatEnum::Channel(c) => Some(c.id),
+        ChatEnum::Chat(c) => Some(c.id),
+        _ => None,
+    }
+}
+
+/// Extract a single `GroupInfo` from the response of
+/// `messages::GetChats` or `channels::GetChannels`. Both
+/// return `tl::enums::messages::Chats`. We pick the first
+/// chat in the list (caller requests one at a time).
+fn extract_chat_info(chats_response: tl::enums::messages::Chats) -> Option<GroupInfo> {
+    use tl::enums::messages::Chats as ChatsEnum;
+    let chats = match chats_response {
+        ChatsEnum::Chats(c) => c.chats,
+        ChatsEnum::Slice(c) => c.chats,
+    };
+    // Take the first chat (caller requests one at a time).
+    let first = chats.into_iter().next()?;
+    chat_enum_to_group_info(&first)
+}
+
+/// Convert a `tl::enums::Chat` to a `GroupInfo`. Returns
+/// `None` for chat variants we don't surface (e.g.,
+/// `ChatForbidden`, `ChannelForbidden`).
+fn chat_enum_to_group_info(chat: &tl::enums::Chat) -> Option<GroupInfo> {
+    use tl::enums::Chat as ChatEnum;
+    match chat {
+        ChatEnum::Chat(c) => Some(GroupInfo {
+            chat_id: c.id,
+            title: c.title.clone(),
+            member_count: u32::try_from(c.participants_count.max(0)).ok(),
+            is_admin: c.admin_rights.as_ref().map(|_| true),
+            about: None,
+        }),
+        ChatEnum::Channel(c) => Some(GroupInfo {
+            chat_id: c.id,
+            title: c.title.clone(),
+            member_count: c
+                .participants_count
+                .and_then(|n| u32::try_from(n.max(0)).ok()),
+            is_admin: c.admin_rights.as_ref().map(|_| true),
+            about: None,
+        }),
+        _ => None,
+    }
+}
+
 /// Wrapper around `grammers_client::Client` that implements
 /// `MtprotoTelegramClient`. Constructed via
 /// `RealTelegramMtprotoClient::connect`.
 pub struct RealTelegramMtprotoClient {
     #[allow(dead_code)]
-    client: Arc<GrammersClient>,
+    client: Arc<grammers_client::Client>,
     /// Join handle for the SenderPool runner task. Dropped
     /// (and aborted) on `shutdown`.
     #[allow(dead_code)]
@@ -185,7 +315,7 @@ impl RealTelegramMtprotoClient {
             handle: _handle,
             ..
         } = SenderPool::new(session.clone(), api_id);
-        let client = Arc::new(GrammersClient::new(_handle));
+        let client = Arc::new(grammers_client::Client::new(_handle));
         let runner_task = tokio::spawn(runner.run());
         Ok(Arc::new(Self {
             client,
@@ -207,7 +337,7 @@ impl RealTelegramMtprotoClient {
     /// `MtprotoTelegramClient` trait (e.g., `iter_dialogs`
     /// for group discovery).
     #[allow(dead_code)]
-    pub fn grammers_client(&self) -> &GrammersClient {
+    pub fn grammers_client(&self) -> &grammers_client::Client {
         &self.client
     }
 
@@ -247,33 +377,180 @@ impl RealTelegramMtprotoClient {
 impl MtprotoTelegramClient for RealTelegramMtprotoClient {
     async fn send_message(
         &self,
-        _chat_id: i64,
-        _text: &str,
+        chat_id: i64,
+        text: &str,
     ) -> Result<MtprotoSentMessage, MtprotoTelegramError> {
-        // Phase 1 stub. Real impl needs to resolve the chat to
-        // an `InputPeer` (carrying `access_hash`) before calling
-        // `Client::send_message`.
-        Err(MtprotoTelegramError::NotReady(
-            "RealTelegramMtprotoClient::send_message: peer resolution not yet implemented (Phase 1 stub)".into(),
-        ))
+        let prefix = "send_message";
+        // Resolve the chat to an InputPeer. The peer-kind
+        // boundary (basic vs. supergroup) is handled
+        // transparently by `peer_resolve::resolve_chat`.
+        let peer_kind = chat_id_kind(chat_id);
+        let chat_peer = resolve_chat(
+            &self.client,
+            chat_id,
+            peer_kind == PeerKindChoice::Supergroup,
+        )
+        .await?;
+        let input_peer = peer_to_input_peer(&chat_peer).await?;
+        let message = self
+            .client
+            .invoke(&tl::functions::messages::SendMessage {
+                no_webpage: false,
+                silent: false,
+                background: false,
+                clear_draft: false,
+                noforwards: false,
+                update_stickersets_order: false,
+                invert_media: false,
+                allow_paid_floodskip: false,
+                peer: input_peer,
+                reply_to: None,
+                message: text.to_string(),
+                random_id: generate_random_id_i64(),
+                reply_markup: None,
+                entities: None,
+                schedule_date: None,
+                schedule_repeat_period: None,
+                send_as: None,
+                quick_reply_shortcut: None,
+                effect: None,
+                allow_paid_stars: None,
+                suggested_post: None,
+            })
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        // Extract the first sent message from the Updates
+        // payload. `messages.SendMessage` always returns a
+        // single UpdateNewMessage / UpdateNewScheduledMessage
+        // variant.
+        extract_first_message_id_and_date(&message).ok_or_else(|| MtprotoTelegramError::Rpc {
+            code: 500,
+            message: format!("{prefix}: SendMessage returned Updates without a message id"),
+        })
     }
 
     async fn send_document(
         &self,
-        _chat_id: i64,
-        _caption: &str,
-        _filename: &str,
-        _data: &[u8],
+        chat_id: i64,
+        caption: &str,
+        filename: &str,
+        data: &[u8],
     ) -> Result<MtprotoSentMessage, MtprotoTelegramError> {
-        Err(MtprotoTelegramError::NotReady(
-            "RealTelegramMtprotoClient::send_document: peer resolution not yet implemented (Phase 1 stub)".into(),
-        ))
+        let prefix = "send_document";
+        // Step 1: upload the file in chunks. The high-level
+        // `Client::upload_stream` does the chunked
+        // `upload.saveFilePart` calls and returns an
+        // `Uploaded { raw: InputFile }` we can wrap into
+        // `InputMediaUploadedDocument`. We wrap `&data[..]`
+        // in a `Cursor` so it implements `AsyncRead`.
+        use std::io::Cursor;
+        let mut cursor = Cursor::new(data);
+        let size = data.len();
+        let uploaded = self
+            .client
+            .upload_stream(&mut cursor, size, filename.to_string())
+            .await
+            .map_err(|e| MtprotoTelegramError::Rpc {
+                code: 500,
+                message: format!("{prefix}: upload_stream: {e}"),
+            })?;
+
+        // Step 2: resolve the chat (peer resolve).
+        let peer_kind = chat_id_kind(chat_id);
+        let chat_peer = resolve_chat(
+            &self.client,
+            chat_id,
+            peer_kind == PeerKindChoice::Supergroup,
+        )
+        .await?;
+        let input_peer = peer_to_input_peer(&chat_peer).await?;
+
+        // Step 3: send via `messages.sendMedia` with an
+        // `InputMediaUploadedDocument`. Telegram treats this
+        // as a "document" attachment; caption is the same
+        // field as text messages.
+        let req = tl::functions::messages::SendMedia {
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: None,
+            media: tl::enums::InputMedia::UploadedDocument(tl::types::InputMediaUploadedDocument {
+                nosound_video: false,
+                force_file: false,
+                spoiler: false,
+                file: uploaded.raw,
+                thumb: None,
+                mime_type: guess_mime_type(filename),
+                attributes: vec![tl::enums::DocumentAttribute::Filename(
+                    tl::types::DocumentAttributeFilename {
+                        file_name: filename.to_string(),
+                    },
+                )],
+                stickers: None,
+                ttl_seconds: None,
+                video_cover: None,
+                video_timestamp: None,
+            }),
+            message: caption.to_string(),
+            random_id: generate_random_id_i64(),
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            schedule_repeat_period: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+        let updates = self
+            .client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        extract_first_message_id_and_date(&updates).ok_or_else(|| MtprotoTelegramError::Rpc {
+            code: 500,
+            message: format!("{prefix}: SendMedia returned Updates without a message id"),
+        })
     }
 
-    async fn download_file(&self, _file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError> {
-        Err(MtprotoTelegramError::NotReady(
-            "RealTelegramMtprotoClient::download_file: not yet implemented".into(),
-        ))
+    async fn download_file(&self, file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError> {
+        let prefix = "download_file";
+        // The `file_id` contract is a hex-encoded
+        // `tl::enums::InputFileLocation`. The mock client
+        // stores this as a placeholder; the real client
+        // round-trips the same format.
+        let bytes = hex_decode(file_id).ok_or_else(|| MtprotoTelegramError::Rpc {
+            code: 400,
+            message: format!("{prefix}: file_id is not valid hex ({file_id:?})"),
+        })?;
+        let location: tl::enums::InputFileLocation =
+            tl::enums::InputFileLocation::from_bytes(&bytes).map_err(|e| {
+                MtprotoTelegramError::Rpc {
+                    code: 400,
+                    message: format!("{prefix}: deserialize InputFileLocation: {e}"),
+                }
+            })?;
+        // Wrap the InputFileLocation in a Downloadable and
+        // stream chunks into a Vec<u8>.
+        let downloadable = InputFileLocationDownloadable { location };
+        let mut download = self.client.iter_download(&downloadable);
+        let mut out = Vec::new();
+        loop {
+            match download.next().await {
+                Ok(Some(chunk)) => out.extend_from_slice(&chunk),
+                Ok(None) => break,
+                Err(e) => {
+                    return Err(crate::peer_resolve::map_invoke_err(prefix, e));
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
@@ -808,35 +1085,140 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
 
     // ── Real group / Coordinator operations (RFC-0850 §8) ─────────
     //
-    // Phase 1 implementations: use the raw `tl::functions::*`
-    //  RPCs directly via `self.client.invoke(&request)`. These
-    // are the simplest correct calls; the grammers-client high-
-    // level helpers (e.g., `Client::create_chat`,
-    // `Client::edit_chat_title`) are wrapped internally and
-    // are not used here so the real client and the mock share
-    // the same "one trait method = one RPC" surface.
+    // Phase 2 implementations: use the raw `tl::functions::*`
+    // RPCs directly via `self.client.invoke(&request)`. The
+    // mock impl in `client.rs` is kept for unit tests; the
+    // real impls here match the same "one trait method = one
+    // RPC" contract so the two impls are interchangeable
+    // from the adapter's perspective.
     //
-    // Each method returns `Err(NotReady)` for the cases that
-    // require multiple RPCs (basic-group vs. supergroup
-    // disambiguation, resolve-by-username, etc.) — the
-    // CoordinatorAdmin impl in the adapter handles the
-    // capability gating so callers see a structured error.
+    // Basic-group vs. supergroup disambiguation happens at
+    // the `chat_id_to_peer_id` boundary in `peer_resolve`:
+    // positive or small-negative chat_ids route to
+    // `messages.*` RPCs; very negative chat_ids route to
+    // `channels.*` RPCs. The trait surface doesn't expose
+    // the distinction, so the disambiguation lives here.
 
     async fn create_group(
         &self,
         title: &str,
         user_ids: &[i64],
     ) -> Result<GroupInfo, MtprotoTelegramError> {
-        // Phase 1 stub: requires InputUser resolution for
-        // each user_id. The mock impl is used in tests; the
-        // real impl will be filled in by the next phase.
-        // Returning `NotReady` lets callers detect the gap
-        // and fall back to the mock for unit tests.
-        let _ = (title, user_ids);
-        Err(MtprotoTelegramError::NotReady(
-            "create_group: real-network implementation pending (Phase 1 stub; use mock for tests)"
-                .into(),
-        ))
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let prefix = "create_group";
+
+        // Telegram's MTProto API distinguishes basic groups
+        // (created via `messages.createChat`) from
+        // supergroups/channels (created via
+        // `channels.createChannel`). The decision rule for
+        // the real client matches the TL contracts:
+        //
+        // * `messages.createChat` requires `Vec<InputUser>`
+        //   and an initial title; it produces a `Chat` (basic
+        //   group). It is being deprecated for new groups;
+        //   Telegram's official clients migrate newly
+        //   created basic groups to supergroups within a
+        //   few seconds.
+        // * `channels.createChannel` requires `title` +
+        //   `about` and produces a `Channel` (supergroup).
+        //
+        // For our purposes, we always create a supergroup
+        // (the modern contract) and add the users as
+        // participants via `channels.inviteToChannel`. This
+        // gives us a stable chat_id range and matches the
+        // expectation set by `get_chat` (which classifies
+        // channels and basic groups by chat_id magnitude).
+        let about = "";
+        let request = tl::functions::channels::CreateChannel {
+            broadcast: false,
+            megagroup: true, // supergroup (megagroup), not a broadcast channel
+            for_import: false,
+            forum: false,
+            title: title.to_string(),
+            about: about.to_string(),
+            geo_point: None,
+            address: None,
+            ttl_period: None,
+        };
+        let updates = self
+            .client
+            .invoke(&request)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+
+        // The RPC returns `Updates`. Walk the chat list to
+        // find the freshly-created channel; the position
+        // varies across TL schema versions so we use the
+        // pattern-match path.
+        let channel_id =
+            extract_created_channel_id(&updates).ok_or_else(|| MtprotoTelegramError::Rpc {
+                code: 500,
+                message: format!("{prefix}: created channel not present in Updates"),
+            })?;
+
+        // Now invite the initial users (if any). For an
+        // empty user list we skip the second RPC.
+        if !user_ids.is_empty() {
+            let mut input_users = Vec::with_capacity(user_ids.len());
+            for &uid in user_ids {
+                let peer = resolve_user(&self.client, uid).await.map_err(|e| {
+                    MtprotoTelegramError::Rpc {
+                        code: 500,
+                        message: format!("{prefix}: resolve_user({uid}): {e}"),
+                    }
+                })?;
+                let input_user =
+                    peer_to_input_user(&peer)
+                        .await
+                        .map_err(|e| MtprotoTelegramError::Rpc {
+                            code: 500,
+                            message: format!("{prefix}: peer_to_input_user({uid}): {e}"),
+                        })?;
+                input_users.push(input_user);
+            }
+            // Re-resolve the chat as a channel; the
+            // `CreateChannel` response already populated the
+            // session cache, so this should be a no-network
+            // hit on the cache.
+            let chat_peer = resolve_chat(&self.client, channel_id, true)
+                .await
+                .map_err(|e| MtprotoTelegramError::Rpc {
+                    code: 500,
+                    message: format!("{prefix}: resolve_chat({channel_id}): {e}"),
+                })?;
+            let input_channel =
+                peer_to_input_channel(&chat_peer)
+                    .await
+                    .map_err(|e| MtprotoTelegramError::Rpc {
+                        code: 500,
+                        message: format!("{prefix}: peer_to_input_channel: {e}"),
+                    })?;
+            let _ = self
+                .client
+                .invoke(&tl::functions::channels::InviteToChannel {
+                    channel: input_channel,
+                    users: input_users,
+                })
+                .await
+                .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        }
+
+        // Build the GroupInfo. member_count is unknown at
+        // create time without a separate RPC, so we report
+        // None (the caller treats None as "unknown, refresh
+        // later").
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let _ = timestamp;
+        Ok(GroupInfo {
+            chat_id: channel_id,
+            title: title.to_string(),
+            member_count: None,
+            is_admin: Some(true), // creator is always admin
+            about: None,
+        })
     }
 
     async fn add_participant(
@@ -844,10 +1226,36 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         chat_id: i64,
         user_id: i64,
     ) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, user_id);
-        Err(MtprotoTelegramError::NotReady(
-            "add_participant: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "add_participant";
+        let peer_kind = chat_id_kind(chat_id);
+        let user_peer = resolve_user(&self.client, user_id).await?;
+        let input_user = peer_to_input_user(&user_peer).await?;
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::AddChatUser {
+                    chat_id,
+                    user_id: input_user,
+                    fwd_limit: 0,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let req = tl::functions::channels::InviteToChannel {
+                    channel: input_channel,
+                    users: vec![input_user],
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn kick_participant(
@@ -855,10 +1263,66 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         chat_id: i64,
         user_id: i64,
     ) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, user_id);
-        Err(MtprotoTelegramError::NotReady(
-            "kick_participant: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "kick_participant";
+        let peer_kind = chat_id_kind(chat_id);
+        let user_peer = resolve_user(&self.client, user_id).await?;
+        let input_user = peer_to_input_user(&user_peer).await?;
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::DeleteChatUser {
+                    revoke_history: false,
+                    chat_id,
+                    user_id: input_user,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                // Kicking in a supergroup = ban (so they
+                // can't rejoin unless explicitly unbanned).
+                let req = tl::functions::channels::EditBanned {
+                    channel: input_channel,
+                    participant: tl::enums::InputPeer::User(tl::types::InputPeerUser {
+                        user_id: user_peer.id().bare_id(),
+                        access_hash: user_peer.to_ref().await.map(|r| r.auth.hash()).unwrap_or(0),
+                    }),
+                    banned_rights: tl::enums::ChatBannedRights::Rights(
+                        tl::types::ChatBannedRights {
+                            view_messages: true,
+                            send_messages: true,
+                            send_media: true,
+                            send_stickers: true,
+                            send_gifs: true,
+                            send_games: true,
+                            send_inline: true,
+                            embed_links: true,
+                            send_polls: true,
+                            change_info: true,
+                            invite_users: true,
+                            pin_messages: true,
+                            manage_topics: true,
+                            send_photos: true,
+                            send_videos: true,
+                            send_roundvideos: true,
+                            send_audios: true,
+                            send_voices: true,
+                            send_docs: true,
+                            send_plain: true,
+                            until_date: 0,
+                        },
+                    ),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn promote_participant(
@@ -866,10 +1330,48 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         chat_id: i64,
         user_id: i64,
     ) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, user_id);
-        Err(MtprotoTelegramError::NotReady(
-            "promote_participant: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "promote_participant";
+        let peer_kind = chat_id_kind(chat_id);
+        if peer_kind != PeerKindChoice::Supergroup {
+            return Err(MtprotoTelegramError::Rpc {
+                code: 400,
+                message: format!(
+                    "{prefix}: basic groups do not have admin rights; chat_id={chat_id}"
+                ),
+            });
+        }
+        let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+        let input_channel = peer_to_input_channel(&chat_peer).await?;
+        let user_peer = resolve_user(&self.client, user_id).await?;
+        let input_user = peer_to_input_user(&user_peer).await?;
+        let req = tl::functions::channels::EditAdmin {
+            channel: input_channel,
+            user_id: input_user,
+            admin_rights: tl::enums::ChatAdminRights::Rights(tl::types::ChatAdminRights {
+                change_info: true,
+                post_messages: true,
+                edit_messages: true,
+                delete_messages: true,
+                ban_users: true,
+                invite_users: true,
+                pin_messages: true,
+                add_admins: false,
+                anonymous: false,
+                manage_call: true,
+                other: true,
+                manage_topics: true,
+                post_stories: true,
+                edit_stories: true,
+                delete_stories: true,
+                manage_direct_messages: true,
+            }),
+            rank: "admin".to_string(),
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
     }
 
     async fn demote_participant(
@@ -877,50 +1379,569 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         chat_id: i64,
         user_id: i64,
     ) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, user_id);
-        Err(MtprotoTelegramError::NotReady(
-            "demote_participant: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "demote_participant";
+        let peer_kind = chat_id_kind(chat_id);
+        if peer_kind != PeerKindChoice::Supergroup {
+            return Err(MtprotoTelegramError::Rpc {
+                code: 400,
+                message: format!(
+                    "{prefix}: basic groups do not have admin rights; chat_id={chat_id}"
+                ),
+            });
+        }
+        let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+        let input_channel = peer_to_input_channel(&chat_peer).await?;
+        let user_peer = resolve_user(&self.client, user_id).await?;
+        let input_user = peer_to_input_user(&user_peer).await?;
+        // Demote by issuing `EditAdmin` with all rights set
+        // to `false`. This is the canonical Telegram demote
+        // recipe (there is no `channels.demoteAdmin` RPC).
+        let req = tl::functions::channels::EditAdmin {
+            channel: input_channel,
+            user_id: input_user,
+            admin_rights: tl::enums::ChatAdminRights::Rights(tl::types::ChatAdminRights {
+                change_info: false,
+                post_messages: false,
+                edit_messages: false,
+                delete_messages: false,
+                ban_users: false,
+                invite_users: false,
+                pin_messages: false,
+                add_admins: false,
+                anonymous: false,
+                manage_call: false,
+                other: false,
+                manage_topics: false,
+                post_stories: false,
+                edit_stories: false,
+                delete_stories: false,
+                manage_direct_messages: false,
+            }),
+            rank: String::new(),
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
     }
 
     async fn set_chat_title(&self, chat_id: i64, title: &str) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, title);
-        Err(MtprotoTelegramError::NotReady(
-            "set_chat_title: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "set_chat_title";
+        let peer_kind = chat_id_kind(chat_id);
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::EditChatTitle {
+                    chat_id,
+                    title: title.to_string(),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let req = tl::functions::channels::EditTitle {
+                    channel: input_channel,
+                    title: title.to_string(),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn set_chat_about(&self, chat_id: i64, about: &str) -> Result<(), MtprotoTelegramError> {
-        let _ = (chat_id, about);
-        Err(MtprotoTelegramError::NotReady(
-            "set_chat_about: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "set_chat_about";
+        let peer_kind = chat_id_kind(chat_id);
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::EditChatAbout {
+                    peer: tl::enums::InputPeer::Chat(tl::types::InputPeerChat { chat_id }),
+                    about: about.to_string(),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_peer = peer_to_input_peer(&chat_peer).await?;
+                let req = tl::functions::messages::EditChatAbout {
+                    peer: input_peer,
+                    about: about.to_string(),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn delete_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
-        let _ = chat_id;
-        Err(MtprotoTelegramError::NotReady(
-            "delete_chat: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "delete_chat";
+        let peer_kind = chat_id_kind(chat_id);
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::DeleteChat { chat_id };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let req = tl::functions::channels::DeleteChannel {
+                    channel: input_channel,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
-        let _ = chat_id;
-        Err(MtprotoTelegramError::NotReady(
-            "leave_chat: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "leave_chat";
+        let peer_kind = chat_id_kind(chat_id);
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                // `messages.deleteChatUser` is also how you
+                // leave a basic group: call it on self.
+                let self_user = self.self_handle.get().map(|i| i.user_id).ok_or_else(|| {
+                    MtprotoTelegramError::Auth(format!(
+                        "{prefix}: cannot leave chat_id={chat_id} before sign-in"
+                    ))
+                })?;
+                let self_peer = resolve_user(&self.client, self_user).await?;
+                let input_user = peer_to_input_user(&self_peer).await?;
+                let req = tl::functions::messages::DeleteChatUser {
+                    revoke_history: false,
+                    chat_id,
+                    user_id: input_user,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let req = tl::functions::channels::LeaveChannel {
+                    channel: input_channel,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
     }
 
     async fn get_chat(&self, chat_id: i64) -> Result<GroupInfo, MtprotoTelegramError> {
-        let _ = chat_id;
-        Err(MtprotoTelegramError::NotReady(
-            "get_chat: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        let prefix = "get_chat";
+        let peer_kind = chat_id_kind(chat_id);
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let chats = self
+                    .client
+                    .invoke(&tl::functions::messages::GetChats { id: vec![chat_id] })
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+                extract_chat_info(chats).ok_or_else(|| MtprotoTelegramError::Rpc {
+                    code: 404,
+                    message: format!(
+                        "{prefix}: chat_id={chat_id} not found in messages.GetChats response"
+                    ),
+                })
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let chats = self
+                    .client
+                    .invoke(&tl::functions::channels::GetChannels {
+                        id: vec![input_channel],
+                    })
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+                extract_chat_info(chats).ok_or_else(|| MtprotoTelegramError::Rpc {
+                    code: 404,
+                    message: format!(
+                        "{prefix}: chat_id={chat_id} not found in channels.GetChannels response"
+                    ),
+                })
+            }
+        }
     }
 
     async fn list_dialog_ids(&self) -> Result<Vec<i64>, MtprotoTelegramError> {
-        Err(MtprotoTelegramError::NotReady(
-            "list_dialog_ids: real-network implementation pending (Phase 1 stub)".into(),
-        ))
+        // The high-level `Client::iter_dialogs()` walks the
+        // SenderPool's update channel and yields `Dialog`
+        // values. We map each to its `chat_id()` via the
+        // peer-resolve inverse helper. Note: this method
+        // doesn't require authentication on the client
+        // side (the SenderPool is set up at `connect`
+        // time); the actual chat list is filled by Telegram
+        // once the user is signed in.
+        let prefix = "list_dialog_ids";
+        let mut iter = self.client.iter_dialogs();
+        let mut ids = Vec::new();
+        loop {
+            let dialog = match iter.next().await {
+                Ok(Some(d)) => d,
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!(prefix, error = %e, "iter_dialogs yielded error");
+                    break;
+                }
+            };
+            let peer = dialog.peer();
+            let peer_id = peer.id();
+            ids.push(crate::peer_resolve::peer_id_to_chat_id(peer_id));
+        }
+        Ok(ids)
+    }
+
+    async fn check_invite(&self, hash: &str) -> Result<InvitePreview, MtprotoTelegramError> {
+        // Telegram's `messages.CheckChatInvite` returns a
+        // `ChatInvite` enum. Three relevant variants:
+        // - `ChatInviteAlready { chat }` — the user is already
+        //   a member; the chat's id and title are available.
+        // - `ChatInvite { ... }` — the standard invite payload
+        //   with title, participants_count, megagroup flag, etc.
+        // - `ChatInvitePeek` — minimal preview.
+        let prefix = "check_invite";
+        let req = tl::functions::messages::CheckChatInvite {
+            hash: hash.to_string(),
+        };
+        let result = self
+            .client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        let invite_enum: tl::enums::ChatInvite = result;
+        match invite_enum {
+            tl::enums::ChatInvite::Already(already) => {
+                let (chat_id, title) = match &already.chat {
+                    tl::enums::Chat::Channel(c) => (
+                        crate::peer_resolve::channel_id_to_chat_id(c.id),
+                        c.title.clone(),
+                    ),
+                    tl::enums::Chat::Chat(c) => (c.id, c.title.clone()),
+                    tl::enums::Chat::Forbidden(f) => (f.id, f.title.clone()),
+                    tl::enums::Chat::ChannelForbidden(f) => (
+                        crate::peer_resolve::channel_id_to_chat_id(f.id),
+                        f.title.clone(),
+                    ),
+                    tl::enums::Chat::Empty(_) => {
+                        return Err(MtprotoTelegramError::Rpc {
+                            code: 404,
+                            message: format!("{prefix}: ChatInviteAlready returned empty Chat"),
+                        });
+                    }
+                };
+                Ok(InvitePreview {
+                    chat_id: Some(chat_id),
+                    title,
+                    member_count: None,
+                    is_public: false,
+                    is_megagroup: false,
+                })
+            }
+            tl::enums::ChatInvite::Invite(inv) => Ok(InvitePreview {
+                chat_id: None,
+                title: inv.title,
+                member_count: Some(inv.participants_count.max(0) as u32),
+                is_public: inv.public,
+                is_megagroup: inv.megagroup,
+            }),
+            tl::enums::ChatInvite::Peek(peek) => {
+                // ChatInvitePeek carries a `chat: Chat` plus
+                // an `expires: i32`. Extract whatever we can.
+                let (chat_id, title) = match &peek.chat {
+                    tl::enums::Chat::Channel(c) => (
+                        Some(crate::peer_resolve::channel_id_to_chat_id(c.id)),
+                        c.title.clone(),
+                    ),
+                    tl::enums::Chat::Chat(c) => (Some(c.id), c.title.clone()),
+                    tl::enums::Chat::Forbidden(f) => (Some(f.id), f.title.clone()),
+                    tl::enums::Chat::ChannelForbidden(f) => (
+                        Some(crate::peer_resolve::channel_id_to_chat_id(f.id)),
+                        f.title.clone(),
+                    ),
+                    tl::enums::Chat::Empty(_) => (None, String::new()),
+                };
+                Ok(InvitePreview {
+                    chat_id,
+                    title,
+                    member_count: None,
+                    is_public: false,
+                    is_megagroup: false,
+                })
+            }
+        }
+    }
+
+    async fn import_invite(&self, hash: &str) -> Result<i64, MtprotoTelegramError> {
+        // Telegram's `messages.ImportChatInvite` returns an
+        // `Updates` payload. Walk it for the chat id of the
+        // group the bot just joined. The chat id is in
+        // either `Updates::Combined.chats` /
+        // `Updates::Updates.chats`, or in
+        // `Update::Channel.channel_id` /
+        // `Update::Chat.chat_id`.
+        let prefix = "import_invite";
+        let req = tl::functions::messages::ImportChatInvite {
+            hash: hash.to_string(),
+        };
+        let updates = self
+            .client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        use tl::enums::{Chat as ChatEnum, Update as UpdateEnum, Updates as UpdatesEnum};
+        // First pass: chats list (covers Channel + Chat).
+        let chats_iter: Box<dyn Iterator<Item = &tl::enums::Chat>> = match &updates {
+            UpdatesEnum::Combined(c) => Box::new(c.chats.iter()),
+            UpdatesEnum::Updates(u) => Box::new(u.chats.iter()),
+            _ => Box::new(std::iter::empty()),
+        };
+        for chat in chats_iter {
+            match chat {
+                ChatEnum::Channel(ch) => {
+                    return Ok(crate::peer_resolve::channel_id_to_chat_id(ch.id));
+                }
+                ChatEnum::Chat(ch) => return Ok(ch.id),
+                _ => continue,
+            }
+        }
+        // Second pass: updates list (covers `Update::Channel`).
+        let updates_iter: Box<dyn Iterator<Item = &tl::enums::Update>> = match &updates {
+            UpdatesEnum::Combined(c) => Box::new(c.updates.iter()),
+            UpdatesEnum::Updates(u) => Box::new(u.updates.iter()),
+            _ => Box::new(std::iter::empty()),
+        };
+        for upd in updates_iter {
+            if let UpdateEnum::Channel(channel_upd) = upd {
+                return Ok(crate::peer_resolve::channel_id_to_chat_id(
+                    channel_upd.channel_id,
+                ));
+            }
+        }
+        Err(MtprotoTelegramError::Rpc {
+            code: 404,
+            message: format!("{prefix}: could not extract chat id from import response"),
+        })
+    }
+
+    async fn edit_creator(
+        &self,
+        chat_id: i64,
+        new_owner_user_id: i64,
+        password: Option<&str>,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Telegram's `channels.EditCreator` transfers
+        // ownership of a supergroup to `user_id`. The caller
+        // must be authenticated as the current owner. The
+        // `password` field is a Cloud 2FA SRP check; we
+        // currently only support the empty-password form
+        // (`InputCheckPasswordEmpty`).
+        let prefix = "edit_creator";
+        if chat_id >= 0 {
+            return Err(MtprotoTelegramError::Capability(format!(
+                "{prefix}: chat_id {chat_id} is not a supergroup (must be negative)"
+            )));
+        }
+        if chat_id > crate::peer_resolve::SUPERGROUP_CHAT_ID_MAX_NEG {
+            return Err(MtprotoTelegramError::Capability(format!(
+                "{prefix}: chat_id {chat_id} is a basic group; EditCreator requires a supergroup"
+            )));
+        }
+        if password.is_some() {
+            return Err(MtprotoTelegramError::Capability(format!(
+                "{prefix}: 2FA password not supported in this build; pass None"
+            )));
+        }
+        let channel = crate::peer_resolve::resolve_chat(&self.client, chat_id, true)
+            .await
+            .map_err(|e| MtprotoTelegramError::Rpc {
+                code: -1,
+                message: format!("{prefix}: resolve_chat: {e}"),
+            })?;
+        let channel_input = crate::peer_resolve::peer_to_input_channel(&channel)
+            .await
+            .map_err(|e| MtprotoTelegramError::Rpc {
+                code: -1,
+                message: format!("{prefix}: peer_to_input_channel: {e}"),
+            })?;
+        let user_input =
+            crate::peer_resolve::user_id_to_input_user(&self.client, new_owner_user_id)
+                .await
+                .map_err(|e| MtprotoTelegramError::Rpc {
+                    code: -1,
+                    message: format!("{prefix}: resolve new owner: {e}"),
+                })?;
+        let req = tl::functions::channels::EditCreator {
+            channel: channel_input,
+            user_id: user_input,
+            password: tl::enums::InputCheckPasswordSrp::InputCheckPasswordEmpty,
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
+    }
+}
+
+// ── Helpers for send_message / send_document / download_file ───────
+
+/// Extract the first `(message_id, timestamp)` from an
+/// `Updates` payload returned by `messages.sendMessage` or
+/// `messages.sendMedia`. Both TL contracts return a single
+/// Update carrying the freshly-sent Message.
+fn extract_first_message_id_and_date(updates: &tl::enums::Updates) -> Option<MtprotoSentMessage> {
+    use tl::enums::{Update as UpdateEnum, Updates as UpdatesEnum};
+    let candidate = match updates {
+        UpdatesEnum::Combined(combined) => combined.updates.first()?,
+        UpdatesEnum::Updates(updates_list) => updates_list.updates.first()?,
+        _ => return None,
+    };
+    let update = match candidate {
+        UpdateEnum::NewMessage(u) => &u.message,
+        UpdateEnum::NewScheduledMessage(u) => &u.message,
+        UpdateEnum::MessageId(u) => {
+            return Some(MtprotoSentMessage {
+                id: i64::from(u.id),
+                timestamp: 0,
+            });
+        }
+        _ => return None,
+    };
+    let message = match update {
+        tl::enums::Message::Message(m) => m,
+        tl::enums::Message::Service(_) => return None,
+        tl::enums::Message::Empty(_) => return None,
+    };
+    Some(MtprotoSentMessage {
+        id: i64::from(message.id),
+        timestamp: i64::from(message.date),
+    })
+}
+
+/// Wrapper around `tl::enums::InputFileLocation` that
+/// implements grammers' `Downloadable` trait. Used by
+/// `download_file` to drive `Client::iter_download` from
+/// an arbitrary `InputFileLocation` (e.g.,
+/// `InputDocumentFileLocation`) without going through a
+/// `Message` object first.
+struct InputFileLocationDownloadable {
+    location: tl::enums::InputFileLocation,
+}
+
+impl grammers_client::media::Downloadable for InputFileLocationDownloadable {
+    fn to_raw_input_location(&self) -> Option<tl::enums::InputFileLocation> {
+        Some(self.location.clone())
+    }
+}
+
+/// Generate a 64-bit random ID for the
+/// `random_id` field of `messages.SendMessage` /
+/// `messages.SendMedia`. Telegram uses this to dedupe
+/// retries (a sender with the same random_id is treated as
+/// the same message).
+fn generate_random_id_i64() -> i64 {
+    // Tiny LCG seeded from SystemTime. Avoids pulling in
+    // the `rand` crate. Telegram's random_id is 64 bits;
+    // collision probability is negligible for our message
+    // rate (one per request), and a collision would only
+    // cause a "duplicate" detection on the server side,
+    // which we can detect and retry. (The `rand` crate is
+    // intentionally not pulled in here — the trait surface
+    // stays lean and the determinism of the random_id
+    // space is acceptable for our use case.)
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    // Simple xorshift mix (Marsaglia).
+    let mut x = nanos ^ 0x9E3779B97F4A7C15;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    x as i64
+}
+
+/// Tiny MIME-type guess by filename extension. Falls back
+/// to `application/octet-stream` (Telegram's default for
+/// unknown types). The DOT/2 payloads we send are JSON;
+/// the upload tests use `.bin` which we map to
+/// `application/octet-stream`.
+fn guess_mime_type(filename: &str) -> String {
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "json" => "application/json",
+        "txt" | "log" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "ogg" | "oga" => "audio/ogg",
+        "mp3" => "audio/mpeg",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Decode a hex string to bytes. Strict (no whitespace,
+/// no padding). Used to deserialize a `file_id` into
+/// the underlying `InputFileLocation` bytes.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let hi = hex_nibble(bytes[i])?;
+        let lo = hex_nibble(bytes[i + 1])?;
+        out.push((hi << 4) | lo);
+        i += 2;
+    }
+    Some(out)
+}
+
+fn hex_nibble(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
     }
 }

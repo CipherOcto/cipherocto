@@ -38,7 +38,14 @@
 //! # Modules
 //!
 //! - [`adapter`] — the [`DatabaseSyncAdapter`] trait (8 methods)
+//! - [`apply`] — the reader-side WAL apply wrapper
+//! - [`config`] — [`SyncConfig`] and [`SyncRole`]
+//! - [`envelope`] — the 13 envelope types and [`EnvelopeKind`] discriminator
 //! - [`error`] — the internal [`SyncError`] enum and the wire-level [`WireError`] enum
+//! - [`identity`] — [`SyncNodeId`] and [`SyncPeerId`] derivation
+//! - [`keyring_stub`] — the [`KeyRing`](keyring_stub::KeyRing) trait (interface only)
+//! - [`lsn`] — the [`LsnTracker`](lsn::LsnTracker) per-peer LSN watermark
+//! - [`state`] — the 7-state [`SyncLifecycle`] enum and transition table
 //! - [`types`] — type aliases: [`Lsn`], [`MissionId`], [`NodeId`], [`TableId`], [`SegmentIndex`]
 //! - [`test_util`] — the [`MockAdapter`](test_util::MockAdapter) test util
 
@@ -46,12 +53,26 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapter;
+pub mod apply;
+pub mod config;
+pub mod envelope;
 pub mod error;
+pub mod identity;
+pub mod keyring_stub;
+pub mod lsn;
+pub mod state;
 pub mod types;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 
 pub use adapter::DatabaseSyncAdapter;
+pub use config::{SyncConfig, SyncRole};
+pub use envelope::{
+    EnvelopeKind, Heartbeat, LsnAck, SummaryRequest, WalTailChunk,
+};
 pub use error::{SyncError, WireError};
+pub use identity::{SyncNodeId, SyncPeerId};
+pub use lsn::LsnTracker;
+pub use state::{Peer, StateTransition, SyncLifecycle, TransitionTrigger};
 pub use types::{Lsn, MissionId, NodeId, SegmentIndex, TableId};

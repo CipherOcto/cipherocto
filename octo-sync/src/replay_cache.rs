@@ -50,10 +50,8 @@ impl ReplayCache {
         self.entries.insert(envelope_id, first_seen_ms);
         // Evict the oldest if over the limit
         while self.entries.len() > self.max_entries {
-            // Find the smallest first_seen
-            if let Some((&oldest_id, &oldest_ts)) = self.entries.iter().next() {
-                let oldest_id = oldest_id;
-                let _ = oldest_ts;
+            if let Some((oldest_id, _oldest_ts)) = self.entries.iter().next() {
+                let oldest_id = *oldest_id;
                 self.entries.remove(&oldest_id);
             } else {
                 break;
@@ -79,9 +77,9 @@ impl ReplayCache {
     /// Evict the oldest entry. Returns the evicted envelope_id and its
     /// first_seen timestamp, or `None` if the cache is empty.
     pub fn evict_oldest(&mut self) -> Option<([u8; 32], u64)> {
-        if let Some((&id, &ts)) = self.entries.iter().next() {
-            let id = id;
-            let ts = ts;
+        if let Some((id, ts)) = self.entries.iter().next() {
+            let id = *id;
+            let ts = *ts;
             self.entries.remove(&id);
             Some((id, ts))
         } else {

@@ -153,6 +153,15 @@ impl DatabaseSyncAdapter for MockAdapter {
         Ok(())
     }
 
+    fn regenerate_snapshot(&self, table_id: TableId) -> Result<u32, SyncError> {
+        let snapshots = self.inner.snapshots.lock();
+        let count = snapshots
+            .keys()
+            .filter(|(t, _)| *t == table_id)
+            .count() as u32;
+        Ok(count)
+    }
+
     fn set_paused(&self, paused: bool) -> Result<(), SyncError> {
         self.inner.paused.store(paused, Ordering::SeqCst);
         Ok(())

@@ -9,7 +9,6 @@
 //! impl handles that internally.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +32,7 @@ pub struct SubscriberChannel {
     /// this would be a `tokio::sync::mpsc::Sender<WalTailChunk>`; for v1 we
     /// use a bounded `Mutex<VecDeque>` that the cipherocto transport layer
     /// drains.
-    pub outbox: Mutex<VecDeque<WalTailChunk>>,
+    pub outbox: Mutex<VecDeque<Arc<WalTailChunk>>>,
 }
 
 impl SubscriberChannel {
@@ -50,7 +49,7 @@ impl SubscriberChannel {
     /// if the channel has been closed (the outbox is empty AND we choose to
     /// not buffer). In v1 the outbox is unbounded; the cipherocto transport
     /// drains it asynchronously.
-    pub fn send(&self, chunk: WalTailChunk) -> Result<(), SyncError> {
+    pub fn send(&self, chunk: Arc<WalTailChunk>) -> Result<(), SyncError> {
         self.outbox.lock().push_back(chunk);
         Ok(())
     }
@@ -69,6 +68,8 @@ pub struct RateLimiter {
     tokens: Arc<Mutex<u32>>,
     /// Last refill timestamp (Unix milliseconds).
     last_refill_ms: Arc<Mutex<u64>>,
+    /// Previous Unix millisecond timestamp (for clock-backwards detection).
+    prev_now_ms: Arc<Mutex<Option<u64>>>,
 }
 
 impl RateLimiter {
@@ -79,6 +80,7 @@ impl RateLimiter {
             burst,
             tokens: Arc::new(Mutex::new(burst)),
             last_refill_ms: Arc::new(Mutex::new(0)),
+            prev_now_ms: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -89,17 +91,25 @@ impl RateLimiter {
     }
 
     /// Check at a specific Unix-millisecond timestamp (for testing).
+    ///
+    /// # Clock-backwards behavior
+    ///
+    /// If the system clock moves backwards (now_ms < last_refill_ms), the
+    /// limiter does NOT add tokens (it would allow more than the burst in
+    /// a malicious clock scenario). This is the conservative choice per
+    /// RFC-0862 §Implicit Assumptions Audit row "time source".
     pub fn check_at(&self, now_ms: u64) -> Result<(), SyncError> {
-        // Refill: add (now - last) * rate / 1000 tokens, capped at burst
         let mut last = self.last_refill_ms.lock();
         let mut tokens = self.tokens.lock();
-        if now_ms > *last {
+        let mut prev_now = self.prev_now_ms.lock();
+        if now_ms > *last && now_ms > prev_now.unwrap_or(0) {
             let elapsed_ms = now_ms - *last;
-            // Use u64 to avoid overflow
-            let refill = (elapsed_ms as u64) * (self.rate_per_sec as u64) / 1000;
-            *tokens = (*tokens as u64).saturating_add(refill).min(self.burst as u64) as u32;
+            let refill = elapsed_ms * (self.rate_per_sec as u64) / 1000;
+            let new_tokens = (*tokens as u64).saturating_add(refill).min(self.burst as u64);
+            *tokens = new_tokens as u32;
             *last = now_ms;
         }
+        *prev_now = Some(now_ms);
         if *tokens == 0 {
             return Err(SyncError::BackendNotReady("rate limit exhausted".to_string()));
         }
@@ -123,11 +133,21 @@ pub struct CommitError {
 /// - `adapter`: the `DatabaseSyncAdapter` trait object (per RFC-0862 v1.1.0)
 /// - `subscribers`: per-peer subscription channels
 /// - `rate_limiter`: per-peer rate limiters
-/// - `current_lsn`: monotonic, persisted in WAL
+/// - `current_lsn`: monotonic, persisted in WAL (wrapped in a Mutex for
+///   concurrent on_commit safety — avoids the AtomicU64 TOCTOU race)
 /// - `error_queue`: per-txn errors drained every 100ms
 /// - `peers`: per-peer state machines
 /// - `txn_subscribers`: per-txn fan-out mapping
 /// - `paused`: backpressure flag
+///
+/// # Batching
+///
+/// `commit_batch_size` (default 100 commits per chunk) and
+/// `commit_batch_timeout` (default 50ms) are documented in mission 0862a
+/// but the actual batch accumulation is in the cipherocto sync engine's
+/// upper layer (which has access to the `tokio` runtime). The streamer
+/// flushes immediately on every `on_commit`; upper layers may buffer
+/// calls if they want batching.
 pub struct WalTailStreamer {
     /// The database adapter (trait object). The cipherocto sync engine does NOT
     /// hold a direct `Arc<MVCCEngine>` reference; all WAL reads go through
@@ -135,8 +155,10 @@ pub struct WalTailStreamer {
     adapter: Arc<dyn DatabaseSyncAdapter>,
     /// Per-peer subscription channels.
     subscribers: Mutex<HashMap<SyncPeerId, SubscriberChannel>>,
-    /// Current LSN (monotonic, persisted in WAL). Incremented on every commit.
-    current_lsn: AtomicU64,
+    /// Current LSN (monotonic, persisted in WAL). Wrapped in a Mutex to
+    /// avoid the TOCTOU race that AtomicU64 would have when two threads
+    /// call `on_commit` concurrently.
+    current_lsn: Mutex<Lsn>,
     /// Per-txn error queue: drained every 100ms by the Sync engine.
     error_queue: Mutex<VecDeque<CommitError>>,
     /// Per-peer state machines.
@@ -144,10 +166,14 @@ pub struct WalTailStreamer {
     /// Maps each in-flight txn to the set of subscribers that were fanned-out.
     txn_subscribers: Mutex<HashMap<u64, Vec<SyncPeerId>>>,
     /// Backpressure flag: when the reader sends PAUSE, the writer stops shipping.
-    paused: AtomicBool,
-    /// Commit batch size (default 100 commits per chunk).
+    paused: Mutex<bool>,
+    /// Default commit batch size (100 commits per chunk). Held as documentation;
+    /// the actual batching is the upper layer's responsibility.
+    #[allow(dead_code)]
     commit_batch_size: usize,
-    /// Commit batch timeout (default 50ms).
+    /// Default commit batch timeout (50ms). Held as documentation; the
+    /// actual batching is the upper layer's responsibility.
+    #[allow(dead_code)]
     commit_batch_timeout: Duration,
 }
 
@@ -157,11 +183,11 @@ impl WalTailStreamer {
         Self {
             adapter,
             subscribers: Mutex::new(HashMap::new()),
-            current_lsn: AtomicU64::new(0),
+            current_lsn: Mutex::new(0),
             error_queue: Mutex::new(VecDeque::new()),
             peers: Mutex::new(HashMap::new()),
             txn_subscribers: Mutex::new(HashMap::new()),
-            paused: AtomicBool::new(false),
+            paused: Mutex::new(false),
             commit_batch_size: 100,
             commit_batch_timeout: Duration::from_millis(50),
         }
@@ -183,12 +209,12 @@ impl WalTailStreamer {
 
     /// Return the current LSN.
     pub fn current_lsn(&self) -> Lsn {
-        self.current_lsn.load(Ordering::SeqCst)
+        *self.current_lsn.lock()
     }
 
     /// Set the pause flag. Propagates to the adapter (per RFC-0862 v1.1.0).
     pub fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::SeqCst);
+        *self.paused.lock() = paused;
         let _ = self.adapter.set_paused(paused);
     }
 
@@ -200,6 +226,14 @@ impl WalTailStreamer {
     /// `is_last` semantics: per RFC-0862 §4.3 `WalTailChunk.is_last: bool` is
     /// "true if to_lsn == writer.current_lsn". After the `store` on line 4,
     /// `current_lsn == to_lsn`, so this condition is always true.
+    ///
+    /// # Concurrency
+    ///
+    /// The `current_lsn` Mutex serializes `on_commit` calls across threads.
+    /// This is necessary because AtomicU64 would have a TOCTOU race: two
+    /// threads could read the same value, both decide to advance, and one
+    /// of them would be silently dropped. The Mutex is fine for v1's
+    /// single-writer model; a sharded or lock-free design is in future work.
     pub fn on_commit(
         &self,
         txn_id: u64,
@@ -210,11 +244,19 @@ impl WalTailStreamer {
         if from_lsn > to_lsn {
             return Err(SyncError::InvalidLsnRange { from: from_lsn, to: to_lsn });
         }
-        // 2. Update current_lsn (advances even when paused, so the next
-        //    non-paused commit computes the correct is_last value)
-        self.current_lsn.store(to_lsn, Ordering::SeqCst);
+        // 2. Update current_lsn under a lock (advances even when paused)
+        {
+            let mut lsn = self.current_lsn.lock();
+            if from_lsn != *lsn + 1 {
+                return Err(SyncError::LsnRegression {
+                    expected: *lsn + 1,
+                    actual: from_lsn,
+                });
+            }
+            *lsn = to_lsn;
+        }
         // 3. Check backpressure
-        if self.paused.load(Ordering::SeqCst) {
+        if *self.paused.lock() {
             return Ok(());
         }
         // 4. Read WAL entries via the trait. Per RFC-0862 v1.1.0
@@ -222,8 +264,9 @@ impl WalTailStreamer {
         //    WAL through `adapter.read_wal_range(from, to)` — NOT via direct
         //    `self.engine.wal_manager().replay_two_phase(...)`.
         let entries = self.adapter.read_wal_range(from_lsn, to_lsn)?;
-        // 5. Package as WalTailChunk
-        let chunk = WalTailChunk { from_lsn, to_lsn, entries, is_last: true };
+        // 5. Package as WalTailChunk (Arc-wrapped for shared ownership across
+        //    subscribers — no per-subscriber clone).
+        let chunk = Arc::new(WalTailChunk { from_lsn, to_lsn, entries, is_last: true });
         // 6. Fan-out to subscribers (rate-limited)
         let subscriber_ids: Vec<SyncPeerId> = {
             let subs = self.subscribers.lock();
@@ -248,7 +291,7 @@ impl WalTailStreamer {
         &self,
         from_lsn: Lsn,
     ) -> Result<WalTailChunk, SyncError> {
-        let prev = self.current_lsn.load(Ordering::SeqCst);
+        let prev = *self.current_lsn.lock();
         if from_lsn > prev {
             return Err(SyncError::InvalidLsnRange { from: from_lsn, to: prev });
         }
@@ -260,7 +303,7 @@ impl WalTailStreamer {
             from_lsn,
             to_lsn: prev,
             entries,
-            is_last: prev == self.current_lsn.load(Ordering::SeqCst),
+            is_last: prev == *self.current_lsn.lock(),
         })
     }
 

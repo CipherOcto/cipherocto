@@ -157,6 +157,19 @@ pub trait DatabaseSyncAdapter: Send + Sync + 'static {
         payload: &[u8],
     ) -> Result<(), SyncError>;
 
+    /// Regenerate ALL snapshot segments for a table.
+    ///
+    /// This is called by the cipherocto sync engine when a `SegmentRequest`
+    /// fails (the requested segment is missing or has a stale root). The
+    /// adapter impl is responsible for invoking the underlying database's
+    /// per-table snapshot API (e.g., `MVCCEngine::create_snapshot_for_table`
+    /// in the Stoolap fork).
+    ///
+    /// Returns the new segment count after regeneration. The cipherocto
+    /// sync engine uses this to decide whether to re-send the summary or
+    /// re-attempt the segment request.
+    fn regenerate_snapshot(&self, table_id: TableId) -> Result<u32, SyncError>;
+
     // ── C. LSN model and backpressure (RFC-0862 §4.3.2) ──────────────
 
     /// Set or clear the writer's pause flag.

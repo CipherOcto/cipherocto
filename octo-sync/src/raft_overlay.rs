@@ -25,7 +25,6 @@
 //! boundary.
 
 use crate::adapter::DatabaseSyncAdapter;
-use crate::envelope::WalTailChunk;
 use std::sync::Arc;
 
 /// A Raft log entry (one WAL entry wrapped for consensus).
@@ -57,11 +56,18 @@ pub enum RaftRole {
     Leader,
 }
 
-/// The Raft overlay (stub).
+/// The Raft overlay (deferred per RFC-0862 §Future Work F1/F8).
 ///
-/// v1 stub: only the type definitions are provided. The full Raft state
-/// machine, election, heartbeat, and auto-failover logic is in the future
-/// mission.
+/// **STATUS: DEFERRED.** The Raft-based multi-leader implementation is
+/// future work; v1 is single-leader with no auto-failover. This module
+/// provides the type definitions and a minimal `apply()` that delegates
+/// to the adapter. The full Raft state machine, election, heartbeat,
+/// and auto-failover logic will be added in a future mission per
+/// RFC-0862 §Future Work.
+///
+/// The `apply()` method IS production-ready for v1's deferred use case
+/// (Raft entries are committed and applied via the adapter). The state
+/// machine itself (`role`, `term`) is a placeholder.
 pub struct RaftOverlay {
     /// The local role.
     role: RaftRole,

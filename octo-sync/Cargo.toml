@@ -18,26 +18,32 @@ blake3 = "1.5"
 chacha20poly1305 = "0.10"
 ed25519-dalek = "2"
 
+# CSPRNG for AEAD nonces (matches cipherocto convention)
+rand = "0.8"
+
 # Compression (for SyncSegment LZ4 wrapping per RFC-0862 §4.3.4)
 lz4_flex = "0.12"
 
-# Async test runtime (only used in dev-dependencies for #[tokio::test])
+# Async traits (used by Carrier)
+async-trait = "0.1"
+
+# Concurrent fan-out for MultiCarrierSync::broadcast
+futures = "0.3"
+
 [dev-dependencies]
 # Property-based testing (RFC-0862 §Test Vectors)
 proptest = "1.4"
 # Async test runtime
 tokio = { version = "1", features = ["macros", "rt"] }
+# Enable the `test-util` feature for integration tests so they can use the
+# MockAdapter. This is a self-referential dev-dependency on the same crate.
+octo-sync = { path = ".", features = ["test-util"] }
 
 [features]
 # When enabled, the MockAdapter is exposed as `octo_sync::test_util::MockAdapter`
 # to downstream crates (e.g., the cipherocto sync engine tests). The MockAdapter
 # is always available in this crate's own `cargo test` (gated on `#[cfg(test)]`).
 test-util = []
-
-# Integration tests need access to the test_util module
-[dev-dependencies.octo-sync]
-path = "."
-features = ["test-util"]
 
 [profile.release]
 codegen-units = 1

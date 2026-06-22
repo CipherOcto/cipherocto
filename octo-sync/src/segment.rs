@@ -130,21 +130,17 @@ impl SegmentIndexer {
 
     /// Request a snapshot regeneration via the adapter.
     /// The StoolapAdapter impl calls `MVCCEngine::create_snapshot_for_table`
-    /// internally.
+    /// internally and returns the new segment count.
     pub async fn regenerate_snapshot(
         &self,
         table_id: TableId,
     ) -> Result<SegmentLookupResult, SyncError> {
-        // Signal regeneration via the trait; the adapter impl handles
-        // the actual MVCCEngine call.
-        let dummy_payload: &[u8] = &[];
-        self.adapter
-            .write_snapshot_segment(table_id, SegmentIndex::from(u32::MAX), dummy_payload)?;
-        // Return Regenerated; the new_segment_count is the adapter's
-        // responsibility to compute (it knows the directory state).
+        // Delegate to the trait; the adapter impl handles the actual
+        // MVCCEngine call and returns the new segment count.
+        let new_segment_count = self.adapter.regenerate_snapshot(table_id)?;
         Ok(SegmentLookupResult::Regenerated {
             table_id,
-            new_segment_count: 0, // The adapter would fill this in; the cipherocto sync engine treats 0 as "re-fetch"
+            new_segment_count,
         })
     }
 }
@@ -174,7 +170,6 @@ fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use crate::test_util::MockAdapter;
-    use crate::types::MissionId;
 
     #[tokio::test]
     async fn missing_segment_returns_not_found() {

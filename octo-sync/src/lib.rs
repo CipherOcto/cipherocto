@@ -38,13 +38,12 @@
 //! # Modules
 //!
 //! - [`adapter`] — the [`DatabaseSyncAdapter`] trait (8 methods)
-//! - [`apply`] — the reader-side WAL apply wrapper
 //! - [`config`] — [`SyncConfig`] and [`SyncRole`]
 //! - [`envelope`] — the 13 envelope types and [`EnvelopeKind`] discriminator
 //! - [`error`] — the internal [`SyncError`] enum and the wire-level [`WireError`] enum
 //! - [`identity`] — [`SyncNodeId`] and [`SyncPeerId`] derivation
-//! - [`carrier`] — the multi-carrier broadcaster (mission 0862g; v1 stub)
-//! - [`dgp_bridge`] — the DGP sync bridge (mission 0862f; v1 stub)
+//! - [`carrier`] — the multi-carrier broadcaster (mission 0862g)
+//! - [`dgp_bridge`] — the DGP sync bridge (mission 0862f)
 //! - [`replay_cache`] — the per-peer ReplayCache (mission 0862e; in-memory variant)
 //! - [`segment`] — the snapshot segment indexer (mission 0862c)
 //! - [`state`] — the 7-state [`SyncLifecycle`] enum and transition table
@@ -58,7 +57,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapter;
-pub mod apply;
 pub mod config;
 pub mod dgp_bridge;
 pub mod carrier;
@@ -66,7 +64,6 @@ pub mod envelope;
 pub mod error;
 pub mod identity;
 pub mod keyring;
-pub mod keyring_stub;
 pub mod lsn;
 pub mod raft_overlay;
 pub mod replay_cache;

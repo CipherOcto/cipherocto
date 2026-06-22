@@ -32,8 +32,20 @@ pub struct SubscriberChannel {
     /// this would be a `tokio::sync::mpsc::Sender<WalTailChunk>`; for v1 we
     /// use a bounded `Mutex<VecDeque>` that the cipherocto transport layer
     /// drains.
+    ///
+    /// # Bounded outbox
+    ///
+    /// The outbox is bounded at `OUTBOX_CAPACITY` (default 1024) to prevent
+    /// unbounded memory growth if the cipherocto transport layer fails to
+    /// drain. When the outbox is full, `send` returns `BackendNotReady`
+    /// (which maps to `E_SYNC_RATE_LIMIT` — backpressure signal).
     pub outbox: Mutex<VecDeque<Arc<WalTailChunk>>>,
 }
+
+/// The default outbox capacity for a `SubscriberChannel`. Matches the
+/// default ReplayCache bound (10K entries, but WAL chunks are larger so
+/// we use 1K for the per-peer outbox).
+pub const OUTBOX_CAPACITY: usize = 1024;
 
 impl SubscriberChannel {
     /// Create a new subscriber channel.
@@ -41,16 +53,29 @@ impl SubscriberChannel {
         Self {
             last_ack: 0,
             rate_limiter,
-            outbox: Mutex::new(VecDeque::new()),
+            outbox: Mutex::new(VecDeque::with_capacity(OUTBOX_CAPACITY)),
         }
     }
 
     /// Send a chunk to the subscriber. Returns `Err(SyncError::UnknownPeer)`
     /// if the channel has been closed (the outbox is empty AND we choose to
-    /// not buffer). In v1 the outbox is unbounded; the cipherocto transport
+    /// not buffer). In v1 the outbox is bounded; the cipherocto transport
     /// drains it asynchronously.
+    ///
+    /// If the outbox is full, returns `Err(SyncError::BackendNotReady)`
+    /// (backpressure: the cipherocto transport layer is too slow). The
+    /// caller (WalTailStreamer::on_commit) propagates this to the upper
+    /// layer which may demote the peer to Suspect per RFC-0862
+    /// §Lifecycle Requirements.
     pub fn send(&self, chunk: Arc<WalTailChunk>) -> Result<(), SyncError> {
-        self.outbox.lock().push_back(chunk);
+        let mut outbox = self.outbox.lock();
+        if outbox.len() >= OUTBOX_CAPACITY {
+            return Err(SyncError::BackendNotReady(format!(
+                "outbox full ({} chunks); peer not draining",
+                OUTBOX_CAPACITY
+            )));
+        }
+        outbox.push_back(chunk);
         Ok(())
     }
 }
@@ -264,22 +289,19 @@ impl WalTailStreamer {
         //    WAL through `adapter.read_wal_range(from, to)` — NOT via direct
         //    `self.engine.wal_manager().replay_two_phase(...)`.
         let entries = self.adapter.read_wal_range(from_lsn, to_lsn)?;
-        // 5. Package as WalTailChunk (Arc-wrapped for shared ownership across
-        //    subscribers — no per-subscriber clone).
+        // 6. Fan-out to subscribers (rate-limited). Acquire the subscribers
+        //    lock ONCE; iterate over the snapshot. This avoids O(N) lock
+        //    acquisitions and prevents a peer that unsubscribes mid-fan-out
+        //    from racing with the lock.
         let chunk = Arc::new(WalTailChunk { from_lsn, to_lsn, entries, is_last: true });
-        // 6. Fan-out to subscribers (rate-limited)
-        let subscriber_ids: Vec<SyncPeerId> = {
+        {
             let subs = self.subscribers.lock();
             let mut txn_subs = self.txn_subscribers.lock();
-            let ids: Vec<SyncPeerId> = subs.keys().copied().collect();
-            txn_subs.insert(txn_id, ids.clone());
-            ids
-        };
-        for peer_id in &subscriber_ids {
-            let subs = self.subscribers.lock();
-            if let Some(channel) = subs.get(peer_id) {
+            for (peer_id, channel) in subs.iter() {
                 channel.rate_limiter.check()?;
                 channel.send(chunk.clone())?;
+                // Track this txn → peer mapping for drain_error_queue
+                txn_subs.entry(txn_id).or_default().push(*peer_id);
             }
         }
         Ok(())
@@ -459,5 +481,31 @@ mod tests {
         }
         // After 100ms, refilled by 100 * 100 / 1000 = 10 tokens, capped at 5
         rl.check_at(100).unwrap();
+    }
+
+    #[test]
+    fn outbox_full_returns_backpressure_error() {
+        use crate::envelope::WalTailChunk;
+        let rl = RateLimiter::new(10000, 10000);
+        let channel = SubscriberChannel::new(rl);
+        // Fill the outbox
+        for i in 0..OUTBOX_CAPACITY {
+            let chunk = Arc::new(WalTailChunk {
+                from_lsn: i as u64,
+                to_lsn: i as u64,
+                entries: vec![],
+                is_last: true,
+            });
+            channel.send(chunk).unwrap();
+        }
+        // One more should fail with backpressure
+        let chunk = Arc::new(WalTailChunk {
+            from_lsn: 999,
+            to_lsn: 999,
+            entries: vec![],
+            is_last: true,
+        });
+        let err = channel.send(chunk).unwrap_err();
+        assert!(matches!(err, SyncError::BackendNotReady(_)));
     }
 }

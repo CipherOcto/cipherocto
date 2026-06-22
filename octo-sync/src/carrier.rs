@@ -53,17 +53,35 @@ pub struct CarrierHealth {
     pub last_heartbeat: Instant,
     /// The last successful send timestamp.
     pub last_successful_send: Instant,
-    /// The success rate over the last 100 attempts (0.0 to 1.0).
+    /// The success rate over the last N attempts (0.0 to 1.0).
     pub success_rate: f64,
-    /// The average latency in milliseconds over the last 100 attempts.
+    /// The average latency in milliseconds over the last N attempts.
     pub avg_latency_ms: f64,
     /// The last error (if any).
     pub last_error: Option<String>,
+    /// EMA alpha for the health stats (0.0 to 1.0). Higher alpha = more
+    /// weight on recent samples (faster reaction to changes but more
+    /// noise); lower alpha = more weight on history (smoother but slower
+    /// to react). Default: 0.1 (10% on new samples, 90% on history).
+    pub alpha: f64,
+    /// Health threshold: a carrier with `success_rate < health_threshold` is
+    /// considered unhealthy and is skipped by `broadcast`. Default: 0.5
+    /// (matches RFC-0862 §Performance Targets "≥ 50% success over 100 attempts").
+    pub health_threshold: f64,
 }
 
 impl CarrierHealth {
     /// Create a new `CarrierHealth` with default values (perfect health).
     pub fn new(name: impl Into<String>) -> Self {
+        Self::with_params(name, DEFAULT_EMA_ALPHA, DEFAULT_HEALTH_THRESHOLD)
+    }
+
+    /// Create a new `CarrierHealth` with custom EMA alpha and health threshold.
+    pub fn with_params(
+        name: impl Into<String>,
+        alpha: f64,
+        health_threshold: f64,
+    ) -> Self {
         let now = Instant::now();
         Self {
             name: name.into(),
@@ -72,20 +90,24 @@ impl CarrierHealth {
             success_rate: 1.0,
             avg_latency_ms: 0.0,
             last_error: None,
+            alpha,
+            health_threshold,
         }
     }
 
-    /// Return `true` if the carrier is healthy (success rate ≥ 0.5).
+    /// Return `true` if the carrier is healthy (success rate ≥ threshold).
     pub fn is_healthy(&self) -> bool {
-        self.success_rate >= 0.5
+        self.success_rate >= self.health_threshold
     }
 
     /// Update the health stats after a send attempt.
     pub fn record_attempt(&mut self, success: bool, latency_ms: f64, error: Option<String>) {
-        // Exponential moving average with alpha = 0.1 (10% weight on new sample)
-        const ALPHA: f64 = 0.1;
-        self.success_rate = (1.0 - ALPHA) * self.success_rate + ALPHA * if success { 1.0 } else { 0.0 };
-        self.avg_latency_ms = (1.0 - ALPHA) * self.avg_latency_ms + ALPHA * latency_ms;
+        // Exponential moving average with `self.alpha` (default 0.1).
+        // 10% weight on new samples, 90% on history.
+        let alpha = self.alpha;
+        self.success_rate =
+            (1.0 - alpha) * self.success_rate + alpha * if success { 1.0 } else { 0.0 };
+        self.avg_latency_ms = (1.0 - alpha) * self.avg_latency_ms + alpha * latency_ms;
         if success {
             self.last_successful_send = Instant::now();
             self.last_error = None;
@@ -94,6 +116,13 @@ impl CarrierHealth {
         }
     }
 }
+
+/// Default EMA alpha for `CarrierHealth` (10% weight on new samples).
+pub const DEFAULT_EMA_ALPHA: f64 = 0.1;
+
+/// Default health threshold (RFC-0862 §Performance Targets:
+/// "≥ 50% success over 100 attempts" → 0.5).
+pub const DEFAULT_HEALTH_THRESHOLD: f64 = 0.5;
 
 /// A multi-carrier sync broadcaster.
 ///

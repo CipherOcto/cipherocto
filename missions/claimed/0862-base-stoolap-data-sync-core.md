@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (awaiting adversarial review)
+Claimed (2026-06-22)
 
 ## RFC
 
@@ -401,11 +401,11 @@ Build the v1 single-leader core of the Stoolap Data Sync Protocol. The base miss
 
 ## Claimant
 
-TBD
+@cipherocto (agent)
 
 ## Pull Request
 
-<!-- PR number when submitted -->
+TBD (will be `missions/with-pr/0862-base-stoolap-data-sync-core.md` upon submission)
 
 ## Completion Criteria
 

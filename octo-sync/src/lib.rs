@@ -12,12 +12,26 @@
 //!
 //! ```text
 //!                octo-sync (this crate, leaf workspace)
-//!                ├── wire primitives (envelopes, Merkle tree, OCrypt sync context)
-//! ├── DatabaseSyncAdapter trait
-//! ├── SyncError enum
-//! ├── WireError enum
-//! ├── type aliases (Lsn, MissionId, NodeId, TableId, SegmentIndex)
-//! └── MockAdapter test util
+//!                ├── wire primitives
+//!                │   ├── envelope (13 envelope types + EnvelopeKind)
+//!                │   ├── summary (16-way Merkle tree over segments)
+//!                │   ├── keyring (HKDF-BLAKE3 + ChaCha20-Poly1305 AEAD)
+//!                │   ├── replay_cache (per-peer BTreeMap, 10K bound)
+//!                │   ├── stream (WalTailStreamer with adapter)
+//!                │   ├── segment (SegmentIndexer with adapter)
+//!                │   ├── dgp_bridge (DGP SnapshotFragment dispatch)
+//!                │   ├── carrier (multi-carrier broadcaster)
+//!                │   └── raft_overlay (deferred per RFC-0862 §Future Work F1/F8)
+//!                ├── state machine
+//!                │   ├── state (7-state SyncLifecycle + transition table)
+//!                │   ├── lsn (LsnTracker per-peer watermark)
+//!                │   ├── identity (SyncNodeId, SyncPeerId)
+//!                │   └── config (SyncConfig, SyncRole)
+//!                ├── integration
+//!                │   ├── adapter (DatabaseSyncAdapter trait — 9 methods)
+//!                │   ├── error (SyncError → WireError mapping)
+//!                │   ├── types (Lsn, MissionId, NodeId, TableId, SegmentIndex)
+//!                │   └── test_util (MockAdapter, gated on test-util feature)
 //!                        ▲                  ▲
 //!                        │ trait bound      │ impl
 //!                        │                  │
@@ -37,21 +51,23 @@
 //!
 //! # Modules
 //!
-//! - [`adapter`] — the [`DatabaseSyncAdapter`] trait (8 methods)
+//! - [`adapter`] — the [`DatabaseSyncAdapter`] trait (9 methods: 8 RFC-0862 ops + 1 regeneration)
 //! - [`config`] — [`SyncConfig`] and [`SyncRole`]
 //! - [`envelope`] — the 13 envelope types and [`EnvelopeKind`] discriminator
 //! - [`error`] — the internal [`SyncError`] enum and the wire-level [`WireError`] enum
 //! - [`identity`] — [`SyncNodeId`] and [`SyncPeerId`] derivation
+//! - [`keyring`] — the [`KeyRing`](keyring::KeyRing) trait and [`MissionKeyRing`](keyring::MissionKeyRing) impl
+//! - [`lsn`] — the [`LsnTracker`](lsn::LsnTracker) per-peer LSN watermark
 //! - [`carrier`] — the multi-carrier broadcaster (mission 0862g)
 //! - [`dgp_bridge`] — the DGP sync bridge (mission 0862f)
 //! - [`replay_cache`] — the per-peer ReplayCache (mission 0862e; in-memory variant)
 //! - [`segment`] — the snapshot segment indexer (mission 0862c)
 //! - [`state`] — the 7-state [`SyncLifecycle`] enum and transition table
-//! - [`stream`] — the writer-side [`WalTailStreamer`](stream::WalTailStreamer)
-                               // (mission 0862a)
+//! - [`stream`] — the writer-side [`WalTailStreamer`](stream::WalTailStreamer) (mission 0862a)
 //! - [`summary`] — the per-table Merkle segment summary builder (mission 0862b)
+//! - [`raft_overlay`] — the deferred Raft overlay (mission 0862i; v1 `apply()` only)
 //! - [`types`] — type aliases: [`Lsn`], [`MissionId`], [`NodeId`], [`TableId`], [`SegmentIndex`]
-//! - [`test_util`] — the [`MockAdapter`](test_util::MockAdapter) test util
+//! - [`test_util`] — the [`MockAdapter`](test_util::MockAdapter) test util (gated on `test-util` feature)
 
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]

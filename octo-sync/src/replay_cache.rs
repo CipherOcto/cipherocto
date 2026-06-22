@@ -91,14 +91,6 @@ impl ReplayCache {
     pub fn max_entries(&self) -> usize {
         self.max_entries
     }
-
-    /// Persist the cache to a file. Stub implementation for v1; the full
-    /// persistent variant is in `octo-sync-replay-store` (per mission 0862e).
-    pub fn flush(&self) -> Result<(), String> {
-        // v1: no-op (in-memory only). The persistent variant in
-        // `octo-sync-replay-store` handles disk flushing.
-        Ok(())
-    }
 }
 
 /// Per-peer cache manager.

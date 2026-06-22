@@ -81,7 +81,8 @@ pub use carrier::MultiCarrierSync;
 pub use config::{SyncConfig, SyncRole};
 pub use dgp_bridge::{DgpSyncBridge, GossipSnapshotFragment};
 pub use envelope::{
-    EnvelopeKind, Heartbeat, LsnAck, SummaryRequest, WalTailChunk,
+    AuthChallenge, AuthResponse, EnvelopeKind, Heartbeat, LsnAck, NodeStatus, SegmentNotFound,
+    SegmentRequest, SummaryRequest, SummaryResponse, WalTailChunk, WalTailEnd, WalTailRequest,
 };
 pub use error::{SyncError, WireError};
 pub use identity::{SyncNodeId, SyncPeerId};

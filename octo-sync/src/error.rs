@@ -20,6 +20,7 @@
 //! | `UnknownCarrier` | `E_SYNC_AUTH_FAIL` |
 //! | `BackendNotReady` | `E_SYNC_RATE_LIMIT` |
 
+use crate::state::{SyncLifecycle, TransitionTrigger};
 use crate::types::Lsn;
 use thiserror::Error;
 
@@ -101,6 +102,21 @@ pub enum SyncError {
     /// with backoff. Maps to `E_SYNC_RATE_LIMIT` (backpressure signal).
     #[error("backend not ready: {0}")]
     BackendNotReady(String),
+
+    /// Invalid state transition: the per-peer state machine (RFC-0862
+    /// §Lifecycle Requirements) does not allow this transition. Indicates
+    /// a bug in the cipherocto sync engine — the caller should log and
+    /// transition the peer to `Terminated`. Maps to `E_SYNC_AUTH_FAIL`
+    /// (defensive: the engine is sending an out-of-sequence state update).
+    #[error("invalid state transition: {from:?} → {to:?} via {trigger:?}")]
+    InvalidStateTransition {
+        /// The state being transitioned from.
+        from: SyncLifecycle,
+        /// The state being transitioned to.
+        to: SyncLifecycle,
+        /// The trigger that caused the invalid transition.
+        trigger: TransitionTrigger,
+    },
 }
 
 /// Wire-level error code (the 9 codes defined in RFC-0862 §Error Handling).
@@ -170,13 +186,13 @@ impl WireError {
     }
 }
 
+/// Mapping from internal [`SyncError`] to wire-level [`WireError`] codes.
+///
+/// Many-to-one: the 9 internal variants collapse to 4 distinct wire codes.
+/// The remaining 5 wire codes (`SegmentCorruption`, `WalAppendFail`,
+/// `SchemaDrift`, `HeartbeatTimeout`, `RoleNotSyncCapable`) originate
+/// outside the adapter and have no `SyncError` variant.
 impl From<SyncError> for WireError {
-    /// Maps internal [`SyncError`] variants to wire-level [`WireError`] codes.
-    ///
-    /// Many-to-one: the 9 internal variants collapse to 4 distinct wire codes.
-    /// The remaining 5 wire codes (`SegmentCorruption`, `WalAppendFail`,
-    /// `SchemaDrift`, `HeartbeatTimeout`, `RoleNotSyncCapable`) originate
-    /// outside the adapter and have no `SyncError` variant.
     fn from(err: SyncError) -> Self {
         match err {
             SyncError::LsnRegression { .. } | SyncError::InvalidLsnRange { .. } => {
@@ -185,7 +201,8 @@ impl From<SyncError> for WireError {
             SyncError::UnknownPeer(_)
             | SyncError::UnknownEnvelopeSubtype(_)
             | SyncError::DecryptionFailed
-            | SyncError::UnknownCarrier(_) => WireError::AuthFailure,
+            | SyncError::UnknownCarrier(_)
+            | SyncError::InvalidStateTransition { .. } => WireError::AuthFailure,
             SyncError::AllCarriersFailed | SyncError::BackendNotReady(_) => {
                 WireError::RateLimit
             }

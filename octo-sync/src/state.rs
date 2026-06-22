@@ -198,18 +198,34 @@ impl Peer {
 
     /// Attempt to transition this peer to `to` with the given `trigger`.
     ///
-    /// Returns the new state on success, or the current state unchanged on
-    /// failure (with a warning logged via `tracing` if enabled).
-    pub fn transition(&mut self, to: SyncLifecycle, trigger: TransitionTrigger) -> SyncLifecycle {
+    /// Returns `Ok(new_state)` on success, or `Err(SyncError::InvalidStateTransition)`
+    /// if the transition is not in the canonical transition table (RFC-0862
+    /// §Lifecycle Requirements). The peer's state is unchanged on error.
+    ///
+    /// Invalid transitions are a sign of a bug in the cipherocto sync engine
+    /// (e.g., trying to transition from `Init` to `Streaming` without going
+    /// through `Connecting` / `Authenticating`). They MUST be surfaced to the
+    /// caller so the engine can emit a tracing event and (in production)
+    /// transition the peer to `Terminated` per the RFC.
+    pub fn transition(
+        &mut self,
+        to: SyncLifecycle,
+        trigger: TransitionTrigger,
+    ) -> Result<SyncLifecycle, crate::error::SyncError> {
         let t = StateTransition { from: self.state, to, trigger };
         if t.is_allowed() {
             self.state = to;
+            Ok(self.state)
         } else {
-            // Invalid transition: log and keep current state.
-            // (In a real implementation, this would also emit a tracing event
-            // and possibly transition to Terminated.)
+            // Invalid transition: surface to the caller. The caller decides
+            // what to do (typically: log via tracing, transition to
+            // Terminated, increment a metrics counter).
+            Err(crate::error::SyncError::InvalidStateTransition {
+                from: self.state,
+                to,
+                trigger,
+            })
         }
-        self.state
     }
 }
 

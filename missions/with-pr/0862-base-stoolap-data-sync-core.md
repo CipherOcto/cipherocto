@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-06-22)
+In Review (PR submitted 2026-06-22)
 
 ## RFC
 

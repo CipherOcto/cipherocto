@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §4.3.1 (rate limit + replay cache), §Implementation Phases Phase 2, §Performance Targets (memory overhead ≤ 50 MB per peer)
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §4.3.1 (rate limit + replay cache), §Implementation Phases Phase 2, §Performance Targets (memory overhead ≤ 50 MB per peer), §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -16,11 +16,11 @@ This mission is split out of `0862-base` for parallel execution. It depends on `
 
 ## Design
 
-### New module: `crates/octo-sync/src/replay_cache.rs`
+### New module: `octo-sync-replay-store/src/persistent_cache.rs` (sub-crate of cipherocto workspace; depends on Stoolap as a persistence backend, NOT on `octo-sync` directly)
 
 The existing in-memory ReplayCache is a `BTreeMap<envelope_id, first_seen>`. This mission adds:
 
-1. **Disk-backed storage** using the Stoolap fork as the persistence layer (per the cipherocto convention established in mission [`0850h-d`](../../with-pr/0850h-d-stoolap-session-storage.md): raw SQLite is never used in new persistence layers in cipherocto).
+1. **Disk-backed storage** using the Stoolap fork as the persistence layer (per the cipherocto convention established in mission [`0850h-d`](../../with-pr/0850h-d-stoolap-session-storage.md): raw SQLite is never used in new persistence layers in cipherocto). The Stoolap DB is accessed via the `DatabaseSyncAdapter` trait from the `octo-sync` leaf workspace, NOT via direct `MVCCEngine` calls — the cipherocto workspace does not depend on the Stoolap fork Cargo-wise (per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait).
 2. **Lru-on-disk eviction** with the same 10K-entry bound as the in-memory cache
 3. **Atomic flush** to ensure consistency between in-memory and on-disk state
 
@@ -51,7 +51,7 @@ When the cache exceeds 10K entries for a `(mission_id, peer_id)` pair, evict the
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/replay_cache.rs` extends the existing in-memory cache with disk-backed storage
+- [ ] `octo-sync-replay-store/src/persistent_cache.rs` (in a new sub-crate `octo-sync-replay-store`, NOT inside the `octo-sync` leaf workspace — see the cargo layering below) extends the existing in-memory cache with disk-backed storage
 - [ ] `ReplayCache::open(mission_id, peer_id, db)` opens or creates the on-disk cache
 - [ ] `ReplayCache::insert(envelope_id, first_seen)` inserts into both in-memory and on-disk
 - [ ] `ReplayCache::contains(envelope_id)` checks in-memory first (fast path), then on-disk
@@ -84,8 +84,8 @@ When the cache exceeds 10K entries for a `(mission_id, peer_id)` pair, evict the
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — for the in-memory ReplayCache
-  - `stoolap` (as a dependency, per the cipherocto convention established in mission [`0850h-d`](../../with-pr/0850h-d-stoolap-session-storage.md): raw SQLite is never used)
+  - `0862-base` — for the in-memory ReplayCache, **`DatabaseSyncAdapter` trait**
+  - `stoolap` (as a dependency, per the cipherocto convention established in mission [`0850h-d`](../../with-pr/0850h-d-stoolap-session-storage.md): raw SQLite is never used) — accessed via the `DatabaseSyncAdapter` trait from the `octo-sync` leaf workspace, NOT via direct `MVCCEngine` calls
   - RFC-0850 §Replay Cache (the DOT-level ReplayCache that this mission extends)
 
 - **Required by:**
@@ -146,7 +146,7 @@ Replay protection is about preventing the *first* re-application of a captured e
 - **Don't use `std::collections::HashMap` for the in-memory cache.** The BTreeMap is required for deterministic ordering (per RFC-0850's ReplayCache specification).
 - **Don't use `tokio::fs` for synchronous flush.** Flush is critical for security; it must block until the disk write completes.
 - **Don't store the `mission_id` and `peer_id` in every entry.** The schema uses them as the primary key prefix; the cache instance is per (mission_id, peer_id) pair.
-- **Don't use the Stoolap fork's `replay_two_phase` for the ReplayCache.** The cache is not a transaction log; it's a set. Use plain SQL `INSERT` / `SELECT` / `DELETE`.
+- **Don't call `stoolap`'s `replay_two_phase` directly from the cipherocto sync engine.** The ReplayCache's DB access goes through `DatabaseSyncAdapter` (e.g., `adapter.apply_wal_entry` for inserts, `adapter.read_wal_range` for queries). The cipherocto workspace does not depend on the Stoolap fork Cargo-wise; the trait is the integration boundary.
 - **Don't evict on every insert.** Evict only when size > 10K; otherwise the eviction cost is wasted.
 
 ---

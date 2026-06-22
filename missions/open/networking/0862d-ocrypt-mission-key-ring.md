@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §4.3.1 Identity, key hierarchy, and trust, §Appendix B Mission Key Derivation
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §4.3.1 Identity, key hierarchy, and trust, §Appendix B Mission Key Derivation, §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -16,7 +16,7 @@ This mission is split out of `0862-base` for parallel execution. It depends on `
 
 ## Design
 
-### New module: `crates/octo-sync/src/keyring.rs`
+### New module: `octo-sync/src/keyring.rs` (leaf workspace at `cipherocto/octo-sync/src/keyring.rs`)
 
 ```rust
 use octo_network::ocrypt::hkdf_blake3;  // RFC-0853 §1.1: HKDF-BLAKE3
@@ -112,7 +112,7 @@ This binds the ciphertext to the envelope identity, sender, mission, timestamp, 
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/keyring.rs` exists with `MissionKeyRing` struct
+- [ ] `octo-sync/src/keyring.rs` (in the `octo-sync/` leaf workspace) exists with `MissionKeyRing` struct
 - [ ] `MissionKeyRing::derive(mission_root_key, mission_id)` produces both `transport_key` and `execution_key` via HKDF-BLAKE3
 - [ ] The HKDF call uses `octo_network::ocrypt::hkdf_blake3(salt="sync:v1", ikm=mission_root_key, info=mission_id)` (the cipherocto convention; salt is `"sync:v1"`, info is `mission_id`)
 - [ ] The `transport_key` is the first 32 bytes of the OKM
@@ -152,7 +152,7 @@ This binds the ciphertext to the envelope identity, sender, mission, timestamp, 
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — for identity (consumes `OverlayIdentity.public_key`)
+  - `0862-base` — for identity (consumes `OverlayIdentity.public_key`), **`DatabaseSyncAdapter` trait**, the `KeyRingStub` interface
   - RFC-0853 §1.1 (HKDF-BLAKE3 definition)
   - RFC-0853 §6 (Mission Cryptography — needs amendment for `"sync:v1"`)
 

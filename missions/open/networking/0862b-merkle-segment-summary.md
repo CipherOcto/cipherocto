@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §4.3.4 Anti-entropy Merkle summary, §Envelope Payload Discriminators (`0xA0`/`0xA1`), §Implementation Phases Phase 2
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §4.3.4 Anti-entropy Merkle summary, §Envelope Payload Discriminators (`0xA0`/`0xA1`), §Implementation Phases Phase 2, §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -14,7 +14,9 @@ Implement the per-table Merkle segment summary builder: for each table in the lo
 
 ## Design
 
-### New module: `crates/octo-sync/src/summary.rs`
+### New module: `octo-sync/src/summary.rs` (leaf workspace at `cipherocto/octo-sync/src/summary.rs`)
+
+The Merkle summary builder is **pure compute** — it does not call any DB functions. The cipherocto sync engine feeds it a list of `SegmentMetadata` (built from `adapter.read_snapshot_segment` results; see mission 0862c) and it returns a `MerkleSegmentTree`. The adapter boundary means this module is testable in isolation with hand-crafted `SegmentMetadata` (no DB needed).
 
 ```rust
 pub struct SyncSummary {
@@ -80,7 +82,7 @@ A "segment" is a single snapshot file (`<dsn-path>/snapshots/<table>/snapshot-<t
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/summary.rs` exists with `SyncSummary`, `MerkleSegmentTree`, and segment metadata types
+- [ ] `octo-sync/src/summary.rs` (in the `octo-sync/` leaf workspace) exists with `SyncSummary`, `MerkleSegmentTree`, and segment metadata types
 - [ ] `SyncSummary` has all 5 fields: `table_id`, `segment_count`, `segment_root`, `lsn_watermark`, `hmac`
 - [ ] `MerkleSegmentTree::from_segments` builds a 16-way tree with depth ≤ 4
 - [ ] Empty segments tree returns a single zero-hash root
@@ -121,15 +123,18 @@ A "segment" is a single snapshot file (`<dsn-path>/snapshots/<table>/snapshot-<t
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — envelope types, identity, state machine
+  - `0862-base` — envelope types, identity, state machine, **`DatabaseSyncAdapter` trait**
   - `0862a` — WAL-tail streamer (for LSN watermarks)
-  - `stoolap/src/storage/mvcc/snapshot.rs` — `MVCCEngine::create_snapshot` (for segment generation)
+  - `octo_sync::DatabaseSyncAdapter::read_snapshot_segment` (per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait) — used by mission 0862c to enumerate the writer's segments; this mission consumes the resulting `SegmentMetadata` list as input
   - RFC-0862 §4.3.4 (anti-entropy Merkle summary algorithm)
   - RFC-0852 §7 (DGP anti-entropy pattern, adapted for per-table segments)
 
 - **Required by:**
   - `0862c` (snapshot segment indexer — uses the Merkle tree to decide which segments to ship)
   - `0862f` (multi-peer — multiple readers can verify against the same Merkle root)
+
+- **No longer requires direct access to:**
+  - `stoolap/src/storage/mvcc/snapshot.rs` — segment enumeration is now done by 0862c via `adapter.read_snapshot_segment`
 
 ## Blockers / Dependencies
 
@@ -164,6 +169,7 @@ BLAKE3-256 is RFC-0853's standardized hash for overlay state (`GossipStateSummar
 - **Don't compute the root differently on writer and reader.** Both sides must use the same `MerkleSegmentTree::from_segments` algorithm.
 - **Don't reuse zero-hashes across different tables.** Each table has its own tree, and the zero-hash for an empty slot at depth 2 is different from the zero-hash at depth 3.
 - **Don't ship the Merkle tree itself.** Ship only the `segment_root` in `SyncSummary`. The reader descends by requesting individual segments via `SegmentRequest`.
+- **Don't call Stoolap DB functions from this module.** The Merkle summary builder is pure compute over `SegmentMetadata`; segment enumeration is delegated to mission 0862c via the `DatabaseSyncAdapter` trait.
 
 ---
 

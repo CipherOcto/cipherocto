@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §Implementation Phases Phase 4, §System Architecture (transport adapters)
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §Implementation Phases Phase 4, §System Architecture (transport adapters), §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -16,7 +16,7 @@ This is **Phase 4** of RFC-0862. It builds on Phase 3 (multi-peer) by adding car
 
 ## Design
 
-### New module: `crates/octo-sync/src/carrier.rs`
+### New module: `octo-sync/src/carrier.rs` (leaf workspace at `cipherocto/octo-sync/src/carrier.rs`)
 
 ```rust
 use std::collections::HashMap;
@@ -119,7 +119,7 @@ A carrier is promoted to primary when:
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/carrier.rs` exists with `MultiCarrierSync` struct
+- [ ] `octo-sync/src/carrier.rs` (in the `octo-sync/` leaf workspace) exists with `MultiCarrierSync` struct
 - [ ] `broadcast(envelope)` sends via all healthy carriers concurrently
 - [ ] `broadcast` returns `Ok` if at least one carrier succeeds
 - [ ] `broadcast` returns `SyncError::AllCarriersFailed` if all carriers fail
@@ -154,7 +154,7 @@ A carrier is promoted to primary when:
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — Sync engine
+  - `0862-base` — Sync engine, **`DatabaseSyncAdapter` trait**
   - `0862f` — multi-peer (for DGP integration with multiple carriers)
   - RFC-0850 §3.1 (platform types)
   - RFC-0850 §8.7 (QUIC profile, if NativeP2P uses QUIC)

@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §Implementation Phases Phase 3; RFC-0852 §3 (DGP `GossipObjectType::SnapshotFragment = 0x0008`)
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §Implementation Phases Phase 3; RFC-0852 §3 (DGP `GossipObjectType::SnapshotFragment = 0x0008`); §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -16,7 +16,7 @@ This is the **N-node extension** to v1. Phase 3 of RFC-0862. Per RFC-0862 §Impl
 
 ## Design
 
-### New module: `crates/octo-sync/src/dgp_bridge.rs`
+### New module: `octo-sync/src/dgp_bridge.rs` (leaf workspace at `cipherocto/octo-sync/src/dgp_bridge.rs`)
 
 ```rust
 use octo_network::dgp::{GossipObject, GossipStateSummary};
@@ -85,7 +85,7 @@ In v1 (single-leader), only the writer produces new WAL entries; readers only ap
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/src/dgp_bridge.rs` exists with `DgpSyncBridge` struct
+- [ ] `octo-sync/src/dgp_bridge.rs` (in the `octo-sync/` leaf workspace) exists with `DgpSyncBridge` struct
 - [ ] `on_snapshot_fragment` decodes and dispatches based on `fragment.subtype`
 - [ ] `tick()` runs every 5s: handles reconnection, sends `SummaryRequest` for stale peers, gossips summaries to DRS-selected neighbors
 - [ ] DRS-based peer selection respects the 2 Regional + 3 Global diversity rule
@@ -119,7 +119,7 @@ In v1 (single-leader), only the writer produces new WAL entries; readers only ap
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — for the per-peer state machine and Sync engine
+  - `0862-base` — for the per-peer state machine and Sync engine, **`DatabaseSyncAdapter` trait**
   - `0862a` — WAL-tail streamer (writer-side)
   - `0862b` — Merkle summary (for divergence detection)
   - `0862c` — snapshot segment indexer

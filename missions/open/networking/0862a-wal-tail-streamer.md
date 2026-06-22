@@ -266,7 +266,7 @@ impl TransactionEngineOperations for EngineOperations {
 ```
 
 ```rust
-// crates/octo-sync/src/stream.rs (continuation of the WalTailStreamer impl)
+// octo-sync/src/stream.rs (continuation of the WalTailStreamer impl)
 impl WalTailStreamer {
     /// Record an on_commit error for later per-peer demotion.
     /// The Sync engine polls this queue every 100ms; entries are mapped

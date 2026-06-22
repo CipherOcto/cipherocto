@@ -2,11 +2,11 @@
 
 ## Status
 
-Draft (awaiting adversarial review)
+Draft (deferred)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §Future Work F1 (Multi-leader / active-active), §Future Work F8 (Writer election / auto-failover)
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §Future Work F1 (Multi-leader / active-active), §Future Work F8 (Writer election / auto-failover), §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -30,7 +30,7 @@ The Raft overlay is a separate sub-protocol that:
 
 ### Raft integration with Sync
 
-The Raft overlay produces "Raft entries" (each entry is a `WALEntry` from the Sync protocol). The Sync engine wraps each `WALEntry` in a Raft entry and submits it to the Raft consensus. When the Raft entry is committed, the Sync engine applies it via `MVCCEngine::replay_two_phase`.
+The Raft overlay produces "Raft entries" (each entry is a `WALEntry` from the Sync protocol). The Sync engine wraps each `WALEntry` in a Raft entry and submits it to the Raft consensus. When the Raft entry is committed, the Sync engine applies it via `adapter.apply_wal_entry(entry)` — the underlying `StoolapAdapter` impl (per RFC-0862 v1.1.0) internally calls `MVCCEngine::replay_two_phase`. **The cipherocto sync engine never calls `MVCCEngine::replay_two_phase` directly; the trait is the integration boundary.**
 
 ### Domain Coordinator
 
@@ -42,18 +42,18 @@ This mission is **deferred beyond Phase 4** of RFC-0862. It is documented here f
 
 ## Acceptance Criteria (placeholder — to be refined when mission is un-deferred)
 
-- [ ] `crates/octo-sync/src/raft_overlay.rs` exists with the Raft state machine
+- [ ] `octo-sync/src/raft_overlay.rs` (in the `octo-sync/` leaf workspace) exists with the Raft state machine
 - [ ] Election: candidate sends `RequestVote` to peers; majority wins
 - [ ] Heartbeat: leader sends `AppendEntries` every 100ms; 3 missed → election
 - [ ] Auto-failover: when leader fails, a new leader is elected within 5s
 - [ ] Raft entries are Sync `WALEntry`s
-- [ ] When a Raft entry is committed, the Sync engine applies it via `MVCCEngine::replay_two_phase`
+- [ ] When a Raft entry is committed, the Sync engine applies it via `adapter.apply_wal_entry(entry)` (per RFC-0862 v1.1.0; the underlying `StoolapAdapter` impl delegates to `MVCCEngine::replay_two_phase` internally)
 - [ ] Integration with `DomainCoordinatorRecord` (RFC-0855p-c) for writer identity
 
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` (single-leader core)
+  - `0862-base` (single-leader core, **`DatabaseSyncAdapter` trait**)
   - `0862f` (multi-peer)
   - RFC-0855p-c (Domain Coordinator Role)
   - RFC-0200 (Production Vector-SQL Storage Engine v2) — body-section Raft sketch
@@ -94,6 +94,7 @@ This is F1 (Multi-leader / active-active) in the Future Work section. It is a si
 - **Don't use raw `raft-rs` directly.** It requires async; the Sync engine is currently sync. Wrap it in a `spawn_blocking` task.
 - **Don't conflate "Raft leader" with "Sync writer".** The Raft leader is a coordinator; the Sync writer is the database. They may be the same node, but the abstractions are different.
 - **Don't implement Raft from scratch.** Use `raft-rs` and add the Sync-specific extensions on top.
+- **Don't call `MVCCEngine::replay_two_phase` from the cipherocto sync engine.** Per RFC-0862 v1.1.0, all DB writes go through `adapter.apply_wal_entry(entry)`. The Raft overlay (which IS part of the cipherocto sync engine) must follow the same rule; the underlying `StoolapAdapter` impl handles the engine-level call.
 
 ---
 

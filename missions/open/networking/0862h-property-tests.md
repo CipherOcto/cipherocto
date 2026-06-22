@@ -6,7 +6,7 @@ Draft (awaiting adversarial review)
 
 ## RFC
 
-RFC-0862 (Networking): Stoolap Data Sync Protocol — §Test Vectors, §Performance Targets, §Implementation Phases
+RFC-0862 v1.1.0 (Networking): Stoolap Data Sync Protocol — §Test Vectors, §Performance Targets, §Implementation Phases, §DatabaseSyncAdapter Trait (v1.1.0)
 
 ## Summary
 
@@ -21,9 +21,9 @@ Implement comprehensive property-based tests for the Sync protocol. Property tes
 
 ## Design
 
-### New module: `crates/octo-sync/tests/property_tests.rs`
+### New module: `octo-sync/tests/property_tests.rs` (in the `octo-sync/` leaf workspace at `cipherocto/octo-sync/tests/`)
 
-Use the `proptest` crate (already in cipherocto's dev-dependencies) for property-based testing.
+Use the `proptest` crate (already in cipherocto's dev-dependencies) for property-based testing. The tests run against `MockAdapter` (per mission 0862-base Phase 0) — the property tests do NOT require a real Stoolap database; the adapter boundary means tests are runnable on a plain `cargo test -p octo-sync` invocation.
 
 ```rust
 use proptest::prelude::*;
@@ -118,14 +118,15 @@ proptest! {
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-sync/tests/property_tests.rs` exists with 6 property tests
-- [ ] `crates/octo-sync/tests/property_integration_tests.rs` exists with 5 integration property tests
+- [ ] `octo-sync/tests/property_tests.rs` (in the `octo-sync/` leaf workspace) exists with 6 property tests
+- [ ] `octo-sync/tests/property_integration_tests.rs` exists with 5 integration property tests
 - [ ] Each property test runs 1000+ iterations (`PROPTEST_CASES=1000` env var)
 - [ ] All property tests pass in CI on Linux x86_64 and macOS arm64
 - [ ] Cross-implementation determinism: property tests produce the same counterexamples on both platforms
 - [ ] No false positives: each found counterexample is a real bug, not a test bug
 - [ ] `cargo test -p octo-sync --features proptest` passes
 - [ ] The test runner reports the number of cases run for each property test
+- [ ] Property tests use `MockAdapter` from `octo-sync/src/test_util.rs`; no real Stoolap DB is required (per RFC-0862 v1.1.0)
 
 ## Tests
 
@@ -135,7 +136,7 @@ proptest! {
 ## Dependencies
 
 - **Requires:**
-  - `0862-base` — Sync engine (the unit under test)
+  - `0862-base` — Sync engine (the unit under test), **`MockAdapter`** (per RFC-0862 v1.1.0)
   - `0862a` — WAL-tail streamer
   - `0862b` — Merkle summary
   - `0862c` — snapshot segment indexer

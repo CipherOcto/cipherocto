@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (awaiting adversarial review)
+In Review (PR submitted 2026-06-22)
 
 ## RFC
 

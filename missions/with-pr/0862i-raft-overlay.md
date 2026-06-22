@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (deferred)
+In Review (PR submitted 2026-06-22; deferred mission)
 
 ## RFC
 

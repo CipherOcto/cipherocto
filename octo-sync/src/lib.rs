@@ -43,9 +43,14 @@
 //! - [`envelope`] — the 13 envelope types and [`EnvelopeKind`] discriminator
 //! - [`error`] — the internal [`SyncError`] enum and the wire-level [`WireError`] enum
 //! - [`identity`] — [`SyncNodeId`] and [`SyncPeerId`] derivation
-//! - [`keyring_stub`] — the [`KeyRing`](keyring_stub::KeyRing) trait (interface only)
-//! - [`lsn`] — the [`LsnTracker`](lsn::LsnTracker) per-peer LSN watermark
+//! - [`carrier`] — the multi-carrier broadcaster (mission 0862g; v1 stub)
+//! - [`dgp_bridge`] — the DGP sync bridge (mission 0862f; v1 stub)
+//! - [`replay_cache`] — the per-peer ReplayCache (mission 0862e; in-memory variant)
+//! - [`segment`] — the snapshot segment indexer (mission 0862c)
 //! - [`state`] — the 7-state [`SyncLifecycle`] enum and transition table
+//! - [`stream`] — the writer-side [`WalTailStreamer`](stream::WalTailStreamer)
+                               // (mission 0862a)
+//! - [`summary`] — the per-table Merkle segment summary builder (mission 0862b)
 //! - [`types`] — type aliases: [`Lsn`], [`MissionId`], [`NodeId`], [`TableId`], [`SegmentIndex`]
 //! - [`test_util`] — the [`MockAdapter`](test_util::MockAdapter) test util
 
@@ -55,24 +60,40 @@
 pub mod adapter;
 pub mod apply;
 pub mod config;
+pub mod dgp_bridge;
+pub mod carrier;
 pub mod envelope;
 pub mod error;
 pub mod identity;
+pub mod keyring;
 pub mod keyring_stub;
 pub mod lsn;
+pub mod raft_overlay;
+pub mod replay_cache;
+pub mod segment;
 pub mod state;
+pub mod stream;
+pub mod summary;
 pub mod types;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_util;
 
 pub use adapter::DatabaseSyncAdapter;
+pub use carrier::MultiCarrierSync;
 pub use config::{SyncConfig, SyncRole};
+pub use dgp_bridge::{DgpSyncBridge, GossipSnapshotFragment};
 pub use envelope::{
     EnvelopeKind, Heartbeat, LsnAck, SummaryRequest, WalTailChunk,
 };
 pub use error::{SyncError, WireError};
 pub use identity::{SyncNodeId, SyncPeerId};
+pub use keyring::MissionKeyRing;
 pub use lsn::LsnTracker;
+pub use raft_overlay::{RaftEntry, RaftOverlay, RaftRole};
+pub use replay_cache::{ReplayCache, ReplayCacheManager};
+pub use segment::{SegmentIndexer, SegmentLookupResult, SyncSegment};
 pub use state::{Peer, StateTransition, SyncLifecycle, TransitionTrigger};
+pub use stream::{CommitError, RateLimiter, SubscriberChannel, WalTailStreamer};
+pub use summary::{MerkleSegmentTree, SegmentMetadata, SyncSummary};
 pub use types::{Lsn, MissionId, NodeId, SegmentIndex, TableId};

@@ -102,8 +102,8 @@ impl MerkleSegmentTree {
             if current_self.len() <= 1 && current_other.len() <= 1 {
                 break;
             }
-            current_self = next_level(&current_self, level);
-            current_other = next_level(&current_other, level);
+            current_self = next_level(&current_self);
+            current_other = next_level(&current_other);
             level += 1;
             if level > 4 {
                 break;
@@ -145,7 +145,7 @@ fn compute_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     let mut current: Vec<[u8; 32]> = leaves.to_vec();
     while current.len() > 1 {
         let padded = pad_to_16(&current, level);
-        current = next_level(&padded, level);
+        current = next_level(&padded);
         level += 1;
         if level > 4 {
             break;
@@ -168,7 +168,7 @@ fn pad_to_16(arr: &[[u8; 32]], level: usize) -> Vec<[u8; 32]> {
 
 /// Compute the next level of the tree from the current level.
 /// The input is assumed to already be padded to a multiple of 16.
-fn next_level(arr: &[[u8; 32]], level: usize) -> Vec<[u8; 32]> {
+fn next_level(arr: &[[u8; 32]]) -> Vec<[u8; 32]> {
     let mut next = Vec::with_capacity(arr.len() / 16);
     for chunk in arr.chunks(16) {
         let mut hasher = blake3::Hasher::new();
@@ -178,7 +178,6 @@ fn next_level(arr: &[[u8; 32]], level: usize) -> Vec<[u8; 32]> {
         let hash: [u8; 32] = *hasher.finalize().as_bytes();
         next.push(hash);
     }
-    let _ = level;
     next
 }
 

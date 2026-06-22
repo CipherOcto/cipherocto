@@ -173,14 +173,19 @@ impl StateTransition {
 }
 
 /// The per-peer state record held by the cipherocto sync engine.
+///
+/// # LSN tracking
+///
+/// The per-peer LSN watermark (highest LSN that has been acknowledged) is
+/// held in `WalTailStreamer::peers: HashMap<SyncPeerId, LsnTracker>` (the
+/// single source of truth). This struct does NOT duplicate the watermark;
+/// it only tracks the lifecycle state and the last heartbeat timestamp.
 #[derive(Clone, Debug)]
 pub struct Peer {
     /// The peer's `SyncPeerId`.
     pub peer_id: crate::identity::SyncPeerId,
     /// The peer's current lifecycle state.
     pub state: SyncLifecycle,
-    /// The peer's LSN watermark (highest LSN that has been acknowledged).
-    pub last_ack: crate::types::Lsn,
     /// The peer's last heartbeat timestamp (Unix seconds).
     pub last_heartbeat_unix: u64,
 }
@@ -191,7 +196,6 @@ impl Peer {
         Self {
             peer_id,
             state: SyncLifecycle::Init,
-            last_ack: 0,
             last_heartbeat_unix: 0,
         }
     }

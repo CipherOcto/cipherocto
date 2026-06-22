@@ -22,10 +22,12 @@ use crate::lsn::LsnTracker;
 use crate::types::Lsn;
 
 /// Per-peer subscription state.
+///
+/// The LSN watermark is held in `WalTailStreamer::peers: HashMap<SyncPeerId, LsnTracker>`
+/// (the single source of truth for per-peer LSN tracking). This struct holds
+/// the per-peer rate limiter and the outbound channel buffer.
 #[derive(Debug)]
 pub struct SubscriberChannel {
-    /// The peer's LSN watermark (highest LSN that has been acknowledged).
-    pub last_ack: Lsn,
     /// The per-peer rate limiter (consumed in `on_commit`).
     pub rate_limiter: RateLimiter,
     /// Outbound channel for `WalTailChunk` envelopes. In a real implementation
@@ -51,7 +53,6 @@ impl SubscriberChannel {
     /// Create a new subscriber channel.
     pub fn new(rate_limiter: RateLimiter) -> Self {
         Self {
-            last_ack: 0,
             rate_limiter,
             outbox: Mutex::new(VecDeque::with_capacity(OUTBOX_CAPACITY)),
         }
@@ -343,18 +344,17 @@ impl WalTailStreamer {
     /// Returns `Ok(())` on success, `Err(SyncError::UnknownPeer)` if the peer
     /// is not subscribed, or `Err(SyncError::LsnRegression)` if the ack
     /// regresses.
+    ///
+    /// The per-peer LSN watermark is held in `self.peers: HashMap<SyncPeerId, LsnTracker>`.
+    /// This method advances the watermark (which also validates the regression).
     pub fn on_lsn_ack(&self, peer: SyncPeerId, applied_lsn: Lsn) -> Result<(), SyncError> {
-        let mut subs = self.subscribers.lock();
-        let channel = subs.get_mut(&peer).ok_or(SyncError::UnknownPeer(peer.0))?;
-        if applied_lsn < channel.last_ack {
-            return Err(SyncError::LsnRegression {
-                expected: channel.last_ack,
-                actual: applied_lsn,
-            });
+        // Verify the peer is subscribed (the LsnTracker in self.peers is the
+        // single source of truth for subscription state).
+        if !self.subscribers.lock().contains_key(&peer) {
+            return Err(SyncError::UnknownPeer(peer.0));
         }
-        channel.last_ack = applied_lsn;
-        drop(subs);
-        // Advance the per-peer LSN tracker
+        // Advance the LsnTracker; this validates the regression internally
+        // (returns Err(SyncError::LsnRegression) if applied_lsn < watermark).
         if let Some(tracker) = self.peers.lock().get_mut(&peer) {
             tracker.advance(applied_lsn)?;
         }

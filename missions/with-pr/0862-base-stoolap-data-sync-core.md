@@ -403,10 +403,6 @@ Build the v1 single-leader core of the Stoolap Data Sync Protocol. The base miss
 
 @cipherocto (agent)
 
-## Pull Request
-
-TBD (will be `missions/with-pr/0862-base-stoolap-data-sync-core.md` upon submission)
-
 ## Completion Criteria
 
 When complete:

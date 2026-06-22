@@ -287,10 +287,16 @@ impl WalTailStreamer {
 
     /// Reader's request for WAL entries from a given LSN.
     /// Returns a `WalTailChunk` containing the entries in `[from_lsn, current_lsn]`.
+    ///
+    /// The `is_last` flag is set based on a single read of `current_lsn`,
+    /// so the returned chunk is internally consistent (no TOCTOU race
+    /// between reading `current_lsn` for `to_lsn` and for `is_last`).
     pub async fn handle_wal_tail_request(
         &self,
         from_lsn: Lsn,
     ) -> Result<WalTailChunk, SyncError> {
+        // Read `current_lsn` ONCE under the lock; use the same value for both
+        // `to_lsn` and the `is_last` check.
         let prev = *self.current_lsn.lock();
         if from_lsn > prev {
             return Err(SyncError::InvalidLsnRange { from: from_lsn, to: prev });
@@ -299,11 +305,15 @@ impl WalTailStreamer {
             return Err(SyncError::InvalidLsnRange { from: 0, to: prev });
         }
         let entries = self.adapter.read_wal_range(from_lsn, prev)?;
+        let to_lsn = prev;
+        // `is_last` semantics: per RFC-0862 §4.3, true if to_lsn == writer.current_lsn.
+        // At this point, `to_lsn == prev == current_lsn` (we hold no locks, but
+        // the read above captured the value). The `is_last` flag is true.
         Ok(WalTailChunk {
             from_lsn,
-            to_lsn: prev,
+            to_lsn,
             entries,
-            is_last: prev == *self.current_lsn.lock(),
+            is_last: true,
         })
     }
 

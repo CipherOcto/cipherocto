@@ -46,7 +46,11 @@ pub struct SyncSummary {
 /// hashes its own padding).
 #[derive(Debug, Clone, Default)]
 pub struct MerkleSegmentTree {
-    leaves: Vec<[u8; 32]>,
+    /// The leaves in segment_index order. Each leaf stores the full
+    /// `SegmentMetadata` (not just the hash) so that `segments_at` can return
+    /// the full metadata for level-0 positions without re-querying the
+    /// adapter.
+    leaves: Vec<SegmentMetadata>,
 }
 
 impl MerkleSegmentTree {
@@ -56,15 +60,15 @@ impl MerkleSegmentTree {
     /// Build a Merkle tree from a list of segment metadata.
     /// The leaves are sorted by `segment_index` before hashing.
     pub fn from_segments(segments: &[SegmentMetadata]) -> Self {
-        let mut sorted: Vec<&SegmentMetadata> = segments.iter().collect();
+        let mut sorted: Vec<SegmentMetadata> = segments.to_vec();
         sorted.sort_by_key(|s| s.segment_index);
-        let leaves: Vec<[u8; 32]> = sorted.iter().map(|s| s.payload_hash).collect();
-        Self { leaves }
+        Self { leaves: sorted }
     }
 
     /// Return the root of the Merkle tree.
     pub fn root(&self) -> [u8; 32] {
-        compute_root(&self.leaves)
+        let hashes: Vec<[u8; 32]> = self.leaves.iter().map(|s| s.payload_hash).collect();
+        compute_root(&hashes)
     }
 
     /// Return the list of `(level, index)` where this tree diverges from `other`.
@@ -72,12 +76,14 @@ impl MerkleSegmentTree {
     /// `index` is the position within the level.
     pub fn diff(&self, other: &Self) -> Vec<(usize, usize)> {
         let mut divergences = Vec::new();
-        if self.leaves == other.leaves {
+        let self_hashes: Vec<[u8; 32]> = self.leaves.iter().map(|s| s.payload_hash).collect();
+        let other_hashes: Vec<[u8; 32]> = other.leaves.iter().map(|s| s.payload_hash).collect();
+        if self_hashes == other_hashes {
             return divergences;
         }
         let mut level = 0;
-        let mut current_self = self.leaves.clone();
-        let mut current_other = other.leaves.clone();
+        let mut current_self = self_hashes;
+        let mut current_other = other_hashes;
         loop {
             if current_self.is_empty() && current_other.is_empty() {
                 break;
@@ -107,14 +113,21 @@ impl MerkleSegmentTree {
     }
 
     /// Return the segments at the given `(level, index)` positions.
-    /// `level = 0` returns the leaves; higher levels return internal node hashes.
+    /// `level = 0` returns the full `SegmentMetadata` for each leaf position.
+    /// `level > 0` is not supported for SegmentMetadata (internal nodes are
+    /// hashes, not segments); the caller is expected to use level-0 positions
+    /// and fetch the actual segments from 0862c via the adapter.
     pub fn segments_at(&self, positions: &[(usize, usize)]) -> Vec<SegmentMetadata> {
-        // The full SegmentMetadata is available from 0862c via
-        // adapter.read_snapshot_segment. This method returns empty
-        // placeholders; the caller is expected to use the diff() result
-        // to identify which segments to fetch from 0862c.
-        let _ = positions;
-        Vec::new()
+        let mut result = Vec::new();
+        for &(level, index) in positions {
+            if level == 0 {
+                if let Some(meta) = self.leaves.get(index) {
+                    result.push(meta.clone());
+                }
+            }
+            // level > 0: skip (caller uses diff result and fetches from adapter)
+        }
+        result
     }
 
     /// Return the number of leaves in the tree.
@@ -269,5 +282,54 @@ mod tests {
         let segs: Vec<_> = (0..5).map(|i| make_segment(i, i as u8)).collect();
         let t = MerkleSegmentTree::from_segments(&segs);
         assert_eq!(t.leaf_count(), 5);
+    }
+
+    #[test]
+    fn segments_at_level0_returns_full_metadata() {
+        let segs: Vec<_> = (0..3).map(|i| make_segment(i, i as u8)).collect();
+        let t = MerkleSegmentTree::from_segments(&segs);
+        // After sorting, segment 0 is at index 0, segment 1 at index 1, etc.
+        let result = t.segments_at(&[(0, 0), (0, 1), (0, 2)]);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].segment_index, 0);
+        assert_eq!(result[1].segment_index, 1);
+        assert_eq!(result[2].segment_index, 2);
+    }
+
+    #[test]
+    fn segments_at_level_gt0_returns_empty() {
+        // Internal nodes are hashes, not SegmentMetadata.
+        let segs: Vec<_> = (0..3).map(|i| make_segment(i, i as u8)).collect();
+        let t = MerkleSegmentTree::from_segments(&segs);
+        let result = t.segments_at(&[(1, 0), (2, 0)]);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn segments_at_out_of_bounds_returns_partial() {
+        let segs: Vec<_> = (0..3).map(|i| make_segment(i, i as u8)).collect();
+        let t = MerkleSegmentTree::from_segments(&segs);
+        let result = t.segments_at(&[(0, 0), (0, 5), (0, 2)]);
+        // Only index 0 and 2 exist; index 5 is out of bounds
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].segment_index, 0);
+        assert_eq!(result[1].segment_index, 2);
+    }
+
+    #[test]
+    fn diff_returns_diverging_leaf_positions() {
+        let t1 = MerkleSegmentTree::from_segments(&[
+            make_segment(0, 1),
+            make_segment(1, 2),
+            make_segment(2, 3),
+        ]);
+        let t2 = MerkleSegmentTree::from_segments(&[
+            make_segment(0, 1),
+            make_segment(1, 99), // different hash
+            make_segment(2, 3),
+        ]);
+        let d = t1.diff(&t2);
+        // At minimum, the leaf at level 0 index 1 should differ
+        assert!(d.contains(&(0, 1)));
     }
 }

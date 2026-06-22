@@ -7,11 +7,10 @@
 //! The new HKDF context `"sync:v1"` is to be documented in RFC-0853 §6
 //! (Mission Cryptography).
 //!
-//! # Implementation note
-//!
-//! This module uses the cipherocto `KeyRing` trait (defined in `keyring_stub.rs`)
-//! as the public interface. The concrete `MissionKeyRing` impl is here; the
-//! cipherocto sync engine consumes it via `Arc<dyn KeyRing>`.
+//! This module defines both the `KeyRing` trait (the interface the cipherocto
+//! sync engine consumes via `Arc<dyn KeyRing>`) and the concrete
+//! `MissionKeyRing` impl. The trait is the abstraction; the impl is the
+//! v1 production implementation.
 
 use blake3::Hasher;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};

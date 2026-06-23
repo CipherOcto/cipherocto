@@ -238,16 +238,24 @@ where
     let password_deadline_due = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let password_deadline_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
-    // R2-IE-11: track whether the code channel was closed
-    // (operator's input pipe died) so we can translate the
-    // resulting `PHONE_CODE_INVALID` from the adapter into a
-    // clearer `OnboardError::ChannelClosed`. The previous
-    // version surfaced the empty-string submission as a
-    // confusing "PHONE_CODE_INVALID" error, which made it
-    // look like the operator typed a wrong code rather than
-    // that the input pipeline had died.
-    let code_channel_closed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let code_channel_closed_flag = std::sync::Arc::clone(&code_channel_closed);
+    // R2-IE-11: track whether the code input failed BEFORE
+    // it reached the closure — i.e. either the channel was
+    // closed (operator's input pipe died) or the SMS-code
+    // deadline elapsed. Both produce the same downstream
+    // symptom (the adapter sees an empty string and reports
+    // `PHONE_CODE_INVALID`), but neither is "the operator
+    // typed the wrong code". The previous version surfaced
+    // a confusing `PHONE_CODE_INVALID` to the operator, who
+    // would then re-type the code (which is missing, not
+    // wrong). The fix translates both into
+    // `OnboardError::ChannelClosed("code")` (the operator
+    // can interpret "the input pipeline failed" but not
+    // "PHONE_CODE_INVALID"). R3-2: the R2-IE-11 fix only
+    // tracked the closed case, leaving the timeout case to
+    // surface as `PHONE_CODE_INVALID`; the fix now
+    // covers both.
+    let code_input_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let code_input_failed_flag = std::sync::Arc::clone(&code_input_failed);
     let ask_code = {
         let due_flag = std::sync::Arc::clone(&code_deadline_due);
         let due_at = std::sync::Arc::clone(&code_deadline_at);
@@ -262,7 +270,7 @@ where
                 Ok(code) => return code,
                 Err(oneshot::error::TryRecvError::Closed) => {
                     warn!("ask_code: channel closed before code arrived");
-                    code_channel_closed_flag
+                    code_input_failed_flag
                         .store(true, std::sync::atomic::Ordering::Relaxed);
                     return String::new();
                 }
@@ -274,6 +282,8 @@ where
                         .unwrap_or(false)
                     {
                         warn!("ask_code: timed out waiting for code");
+                        code_input_failed_flag
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
                         return String::new();
                     }
                     std::thread::sleep(poll);
@@ -357,16 +367,18 @@ where
     forward_password.abort();
 
     connect_result.map_err(|e| {
-        // R2-IE-11: if the SMS code channel was closed
-        // (operator's input pipe died), translate the
+        // R2-IE-11 / R3-2: if the SMS code input failed
+        // (channel closed OR deadline elapsed — both are
+        // tracked by `code_input_failed`), translate the
         // empty-string submission (which the adapter
         // reports as `PHONE_CODE_INVALID`) to a more
         // accurate `ChannelClosed("code")` error. The
         // previous version surfaced the adapter's
         // `PHONE_CODE_INVALID` to the operator, which
         // made it look like they typed a wrong code
-        // rather than that the input pipeline had died.
-        if code_channel_closed.load(std::sync::atomic::Ordering::Relaxed) {
+        // rather than that the input pipeline had died
+        // or timed out.
+        if code_input_failed.load(std::sync::atomic::Ordering::Relaxed) {
             return OnboardError::ChannelClosed("code".to_string());
         }
         // R2-ARCH-4 / R2-IE-12: use the shared

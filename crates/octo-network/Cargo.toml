@@ -24,6 +24,10 @@ wasmtime = { version = "28.0", optional = true }
 # Mission 0850p-d: nonce generation for DcOrchestrator
 rand = "0.9"
 
+# Stoolap Data Sync (RFC-0862) — leaf workspace dependency
+octo-sync = { path = "../../octo-sync" }
+parking_lot = "0.12"
+
 [dev-dependencies]
 serde_json = "1.0"
 tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }

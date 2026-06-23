@@ -17,8 +17,8 @@
 //! write a `SessionRecord` to `data_dir`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClient};
@@ -117,83 +117,74 @@ where
 
     // Step 1: ask the adapter for a QR handle.
     let handle_result = adapter.connect_qr_login().await;
-    let handle = match handle_result {
-        Ok(h) => h,
-        Err(e) => {
-            // R2-IE-9: classify the error via the typed
-            // `AdapterErrorKind` enum (centralised in
-            // `crate::adapter_error`) instead of substring-
-            // matching the `Display` output. The round-1
-            // implementation used `if s.contains("already
-            // authorized")`, which is fragile (any change to
-            // the adapter's error message breaks the flow
-            // silently). The classification is a prefix match
-            // against the adapter-documented
-            // `"qr_login: already authorized"` string — still
-            // a string match, but now centralised here with a
-            // test that pins the prefix.
-            match adapter_error::classify(&e) {
-                AdapterErrorKind::AlreadyAuthorized => {
-                    // IE-7 (R26): the adapter has already
-                    // driven the lifecycle to `Ready` and
-                    // populated the self-handle. Surface
-                    // this as a successful flow so the
-                    // operator doesn't have to re-onboard.
-                    if !adapter.has_valid_session() {
-                        return Err(adapter_error::map(
-                            e,
-                            &auth_state_name(&adapter),
-                        ));
-                    }
-                    let identity = adapter
-                        .self_handle_ref()
-                        .get()
-                        .ok_or_else(|| OnboardError::Lifecycle {
-                            state: auth_state_name(&adapter),
+    let handle =
+        match handle_result {
+            Ok(h) => h,
+            Err(e) => {
+                // R2-IE-9: classify the error via the typed
+                // `AdapterErrorKind` enum (centralised in
+                // `crate::adapter_error`) instead of substring-
+                // matching the `Display` output. The round-1
+                // implementation used `if s.contains("already
+                // authorized")`, which is fragile (any change to
+                // the adapter's error message breaks the flow
+                // silently). The classification is a prefix match
+                // against the adapter-documented
+                // `"qr_login: already authorized"` string — still
+                // a string match, but now centralised here with a
+                // test that pins the prefix.
+                match adapter_error::classify(&e) {
+                    AdapterErrorKind::AlreadyAuthorized => {
+                        // IE-7 (R26): the adapter has already
+                        // driven the lifecycle to `Ready` and
+                        // populated the self-handle. Surface
+                        // this as a successful flow so the
+                        // operator doesn't have to re-onboard.
+                        if !adapter.has_valid_session() {
+                            return Err(adapter_error::map(e, &auth_state_name(&adapter)));
+                        }
+                        let identity = adapter.self_handle_ref().get().ok_or_else(|| {
+                            OnboardError::Lifecycle {
+                                state: auth_state_name(&adapter),
+                            }
                         })?;
-                    let elapsed = start.elapsed();
-                    let record = SessionRecord::from_identity(
-                        &identity,
-                        "qr_login",
-                        unix_now_secs(),
-                    );
-                    let _session_path = record.write_to(data_dir)?;
-                    let config_path = data_dir.join("config.json");
-                    let output = OnboardOutput {
-                        schema_version: OnboardOutput::SCHEMA_VERSION,
-                        mode: OnboardMode::QrLogin,
-                        self_id: identity.user_id,
-                        // R2-PROTO-14: strip control chars
-                        // and look-alike unicode codepoints.
-                        self_username: validate_username(identity.username.clone()),
-                        is_bot: false,
-                        data_dir: data_dir.display().to_string(),
-                        config_path: config_path.display().to_string(),
-                        elapsed_ms: elapsed.as_millis() as u64,
-                    };
-                    info!(
-                        user_id = identity.user_id,
-                        elapsed_ms = output.elapsed_ms,
-                        "qr-login already authorised; reusing existing session"
-                    );
-                    return Ok((output, config_path));
-                }
-                // R2-ARCH-4 / R2-IE-12: every other error
-                // path goes through the shared
-                // `adapter_error::map`. The QR-login flow
-                // used to inline its own match (which was
-                // a less-complete superset of the bot/user
-                // flows' matches); the shared helper is
-                // the single source of truth.
-                _ => {
-                    return Err(adapter_error::map(
-                        e,
-                        &auth_state_name(&adapter),
-                    ));
+                        let elapsed = start.elapsed();
+                        let record =
+                            SessionRecord::from_identity(&identity, "qr_login", unix_now_secs());
+                        let _session_path = record.write_to(data_dir)?;
+                        let config_path = data_dir.join("config.json");
+                        let output = OnboardOutput {
+                            schema_version: OnboardOutput::SCHEMA_VERSION,
+                            mode: OnboardMode::QrLogin,
+                            self_id: identity.user_id,
+                            // R2-PROTO-14: strip control chars
+                            // and look-alike unicode codepoints.
+                            self_username: validate_username(identity.username.clone()),
+                            is_bot: false,
+                            data_dir: data_dir.display().to_string(),
+                            config_path: config_path.display().to_string(),
+                            elapsed_ms: elapsed.as_millis() as u64,
+                        };
+                        info!(
+                            user_id = identity.user_id,
+                            elapsed_ms = output.elapsed_ms,
+                            "qr-login already authorised; reusing existing session"
+                        );
+                        return Ok((output, config_path));
+                    }
+                    // R2-ARCH-4 / R2-IE-12: every other error
+                    // path goes through the shared
+                    // `adapter_error::map`. The QR-login flow
+                    // used to inline its own match (which was
+                    // a less-complete superset of the bot/user
+                    // flows' matches); the shared helper is
+                    // the single source of truth.
+                    _ => {
+                        return Err(adapter_error::map(e, &auth_state_name(&adapter)));
+                    }
                 }
             }
-        }
-    };
+        };
 
     let mut first_handle = QrLoginPrompt::from_handle(&handle);
     on_handle(&first_handle);
@@ -208,9 +199,7 @@ where
         // process killed mid-write.
         if abort.load(Ordering::Relaxed) {
             warn!("QR login: abort requested (SIGINT or operator cancel)");
-            return Err(OnboardError::ChannelClosed(
-                "aborted by SIGINT".to_string(),
-            ));
+            return Err(OnboardError::ChannelClosed("aborted by SIGINT".to_string()));
         }
         if start.elapsed() > timeout {
             return Err(OnboardError::Timeout(format!(
@@ -328,10 +317,7 @@ where
                         ));
                     }
                 }
-                return Err(adapter_error::map(
-                    other,
-                    &auth_state_name(&adapter),
-                ));
+                return Err(adapter_error::map(other, &auth_state_name(&adapter)));
             }
         }
     }

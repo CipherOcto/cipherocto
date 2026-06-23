@@ -270,8 +270,7 @@ where
                 Ok(code) => return code,
                 Err(oneshot::error::TryRecvError::Closed) => {
                     warn!("ask_code: channel closed before code arrived");
-                    code_input_failed_flag
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    code_input_failed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                     return String::new();
                 }
                 Err(oneshot::error::TryRecvError::Empty) => {
@@ -282,8 +281,7 @@ where
                         .unwrap_or(false)
                     {
                         warn!("ask_code: timed out waiting for code");
-                        code_input_failed_flag
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        code_input_failed_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                         return String::new();
                     }
                     std::thread::sleep(poll);

@@ -63,10 +63,7 @@ fn write_session_tmp(tmp: &Path, data: &[u8]) -> Result<(), OnboardError> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600);
+        opts.write(true).create(true).truncate(true).mode(0o600);
         let mut f = opts.open(tmp)?;
         use std::io::Write;
         f.write_all(data)?;
@@ -303,7 +300,9 @@ mod tests {
         rec.write_to(tmp.path()).unwrap();
         assert!(tmp.path().join(SESSION_FILENAME).exists());
         assert!(
-            !tmp.path().join(format!("{}.tmp", SESSION_FILENAME)).exists(),
+            !tmp.path()
+                .join(format!("{}.tmp", SESSION_FILENAME))
+                .exists(),
             "tmp file must be renamed away"
         );
     }

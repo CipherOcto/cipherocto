@@ -68,10 +68,8 @@ mod tests {
 
     #[test]
     fn render_produces_non_empty_output() {
-        let out = render_qr_link(
-            "tg://login?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef",
-        )
-        .expect("render should succeed for a real token");
+        let out = render_qr_link("tg://login?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef")
+            .expect("render should succeed for a real token");
         assert!(!out.is_empty());
         // Quiet zone is on, so the output has leading/trailing newlines.
         assert!(out.starts_with('\n'));
@@ -80,10 +78,8 @@ mod tests {
 
     #[test]
     fn render_contains_half_block_characters() {
-        let out = render_qr_link(
-            "tg://login?token=deadbeef-cafe-1234-5678-90abcdef0000",
-        )
-        .expect("render should succeed");
+        let out = render_qr_link("tg://login?token=deadbeef-cafe-1234-5678-90abcdef0000")
+            .expect("render should succeed");
         // Dense1x2 uses upper-half / lower-half / full block + space.
         // We don't pin the exact mix (it depends on the encoded
         // data), but at least one of the half-block glyphs must
@@ -135,10 +131,8 @@ mod tests {
     /// encoded URL, not a redacted one.
     #[test]
     fn render_does_not_redact_token_substring() {
-        let out = render_qr_link(
-            "tg://login?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef",
-        )
-        .expect("render should succeed");
+        let out = render_qr_link("tg://login?token=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef")
+            .expect("render should succeed");
         // The `qrcode` crate encodes the bytes as a bitmap;
         // the substring "token=" does NOT appear in the
         // rendered output (it's a visual encoding, not the

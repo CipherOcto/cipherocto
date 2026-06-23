@@ -106,7 +106,10 @@ pub struct BotTokenArgs {
     /// <string>, "session_path": <string>, "elapsed_ms":
     /// <i64> }`. The file is created with `0o600` (operator-
     /// only) per R2-IE-15.
-    #[arg(long, long_help = "Path to write the JSON OnboardOutput. Schema: { schema_version: 1, mode, self_id, self_username, is_bot, data_dir, config_path, session_path, elapsed_ms }. Defaults to stdout. The file is created with mode 0o600 (operator-only).")]
+    #[arg(
+        long,
+        long_help = "Path to write the JSON OnboardOutput. Schema: { schema_version: 1, mode, self_id, self_username, is_bot, data_dir, config_path, session_path, elapsed_ms }. Defaults to stdout. The file is created with mode 0o600 (operator-only)."
+    )]
     pub output: Option<PathBuf>,
 
     /// Overwrite `<data_dir>/config.json` if it already
@@ -115,7 +118,10 @@ pub struct BotTokenArgs {
     /// observed that the CLI had no `--force` flag, so a
     /// re-onboard always failed with a confusing "file
     /// exists" error.
-    #[arg(long, long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite.")]
+    #[arg(
+        long,
+        long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite."
+    )]
     pub force: bool,
 }
 
@@ -154,7 +160,10 @@ pub struct UserCodeArgs {
     /// Where to write the JSON `OnboardOutput`. If omitted,
     /// prints to stdout. See `BotTokenArgs::output` for the
     /// schema (R2-OPS-15).
-    #[arg(long, long_help = "Path to write the JSON OnboardOutput. See BotTokenArgs::output for the schema. Defaults to stdout. The file is created with mode 0o600 (operator-only).")]
+    #[arg(
+        long,
+        long_help = "Path to write the JSON OnboardOutput. See BotTokenArgs::output for the schema. Defaults to stdout. The file is created with mode 0o600 (operator-only)."
+    )]
     pub output: Option<PathBuf>,
 
     /// Read the SMS code from a file (test-friendly).
@@ -169,17 +178,28 @@ pub struct UserCodeArgs {
 
     /// R2-OPS-12: how long to wait for the operator to
     /// type the SMS code, in seconds. Default 60.
-    #[arg(long, default_value_t = 60, long_help = "How long to wait for the SMS code, in seconds. Default 60. R2-OPS-12.")]
+    #[arg(
+        long,
+        default_value_t = 60,
+        long_help = "How long to wait for the SMS code, in seconds. Default 60. R2-OPS-12."
+    )]
     pub code_timeout_secs: u64,
 
     /// R2-OPS-12: how long to wait for the 2FA password,
     /// in seconds. Default 60.
-    #[arg(long, default_value_t = 60, long_help = "How long to wait for the 2FA password, in seconds. Default 60. R2-OPS-12.")]
+    #[arg(
+        long,
+        default_value_t = 60,
+        long_help = "How long to wait for the 2FA password, in seconds. Default 60. R2-OPS-12."
+    )]
     pub password_timeout_secs: u64,
 
     /// Overwrite `<data_dir>/config.json` if it already
     /// exists. See `BotTokenArgs::force` (R2-ARCH-22).
-    #[arg(long, long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite. R2-ARCH-22.")]
+    #[arg(
+        long,
+        long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite. R2-ARCH-22."
+    )]
     pub force: bool,
 }
 
@@ -213,18 +233,29 @@ pub struct QrLoginArgs {
     /// Where to write the JSON `OnboardOutput`. If omitted,
     /// prints to stdout. See `BotTokenArgs::output` for the
     /// schema (R2-OPS-15).
-    #[arg(long, long_help = "Path to write the JSON OnboardOutput. See BotTokenArgs::output for the schema. Defaults to stdout. The file is created with mode 0o600 (operator-only).")]
+    #[arg(
+        long,
+        long_help = "Path to write the JSON OnboardOutput. See BotTokenArgs::output for the schema. Defaults to stdout. The file is created with mode 0o600 (operator-only)."
+    )]
     pub output: Option<PathBuf>,
 
     /// Maximum time to wait for the operator to scan the
     /// QR code, in seconds. Default 300 (5 min). R2-IE-17:
     /// must be > 0 (the core floors at 1s).
-    #[arg(long, default_value_t = 300, long_help = "Maximum time to wait for the QR scan, in seconds. Default 300. Must be > 0 (R2-IE-17).")]
+    #[arg(
+        long,
+        default_value_t = 300,
+        long_help = "Maximum time to wait for the QR scan, in seconds. Default 300. Must be > 0 (R2-IE-17)."
+    )]
     pub timeout_secs: u64,
 
     /// Poll interval in seconds. Default 2. R2-IE-17: must
     /// be > 0 (the core floors at 100ms).
-    #[arg(long, default_value_t = 2, long_help = "QR poll interval, in seconds. Default 2. Must be > 0 (R2-IE-17).")]
+    #[arg(
+        long,
+        default_value_t = 2,
+        long_help = "QR poll interval, in seconds. Default 2. Must be > 0 (R2-IE-17)."
+    )]
     pub poll_interval_secs: u64,
 
     /// Render the QR code as ASCII to stdout instead of
@@ -236,7 +267,10 @@ pub struct QrLoginArgs {
 
     /// Overwrite `<data_dir>/config.json` if it already
     /// exists. See `BotTokenArgs::force` (R2-ARCH-22).
-    #[arg(long, long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite. R2-ARCH-22.")]
+    #[arg(
+        long,
+        long_help = "Overwrite <data_dir>/config.json if it already exists. Default: refuse to overwrite. R2-ARCH-22."
+    )]
     pub force: bool,
 }
 
@@ -339,10 +373,7 @@ pub fn resolve_api_id(flag: Option<i32>, file: Option<&Path>) -> Result<i32, Str
 /// used as the hash. Precedence: explicit `--api-hash`
 /// flag → `--api-hash-file` → `TELEGRAM_API_HASH` env var
 /// → error.
-pub fn resolve_api_hash(
-    flag: Option<String>,
-    file: Option<&Path>,
-) -> Result<String, String> {
+pub fn resolve_api_hash(flag: Option<String>, file: Option<&Path>) -> Result<String, String> {
     if let Some(h) = flag {
         if !h.is_empty() {
             return Ok(h);
@@ -353,10 +384,7 @@ pub fn resolve_api_hash(
             .map_err(|e| format!("--api-hash-file {}: {}", path.display(), e))?;
         let trimmed = body.trim();
         if trimmed.is_empty() {
-            return Err(format!(
-                "--api-hash-file {}: file is empty",
-                path.display()
-            ));
+            return Err(format!("--api-hash-file {}: file is empty", path.display()));
         }
         return Ok(trimmed.to_string());
     }

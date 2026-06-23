@@ -9,8 +9,8 @@
 
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use clap::Parser;
 use octo_adapter_telegram_mtproto::MtprotoTelegramConfig;
@@ -75,8 +75,7 @@ async fn main() -> ExitCode {
             // `OnboardError::Display` is a hand-written
             // `thiserror` impl that doesn't go through
             // that redaction. Apply it explicitly.
-            let redacted =
-                octo_adapter_telegram_mtproto::error::redact_credentials(&e.to_string());
+            let redacted = octo_adapter_telegram_mtproto::error::redact_credentials(&e.to_string());
             error!(kind = e.kind(), "{}", redacted);
             ExitCode::from(e.exit_code())
         }
@@ -92,8 +91,8 @@ async fn run_bot_token(
     // `--api-id-file` / `--api-hash-file` paths through to
     // the resolvers. Precedence is enforced inside
     // `resolve_api_id` / `resolve_api_hash`.
-    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
-        .map_err(OnboardError::Config)?;
+    let api_id =
+        resolve_api_id(args.api_id, args.api_id_file.as_deref()).map_err(OnboardError::Config)?;
     let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
         .map_err(OnboardError::Config)?;
     // R26-S4: bot token is a long-lived credential. Read it
@@ -157,8 +156,8 @@ async fn run_user_code(
     // R2-ARCH-5 / R2-OPS-6: pass the optional
     // `--api-id-file` / `--api-hash-file` paths through to
     // the resolvers. See `run_bot_token` for the rationale.
-    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
-        .map_err(OnboardError::Config)?;
+    let api_id =
+        resolve_api_id(args.api_id, args.api_id_file.as_deref()).map_err(OnboardError::Config)?;
     let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
         .map_err(OnboardError::Config)?;
     let phone = match args.phone {
@@ -251,8 +250,7 @@ async fn run_user_code(
             // frustrate the operator (they have to type it
             // within 30s). For automated use, --code-file is
             // the recommended path.
-            let code_zs: Zeroizing<String> =
-                Zeroizing::new(read_line_from_stdin("SMS code: ")?);
+            let code_zs: Zeroizing<String> = Zeroizing::new(read_line_from_stdin("SMS code: ")?);
             let payload = Zeroizing::new(code_zs.to_string());
             code_tx
                 .send(payload)
@@ -386,8 +384,8 @@ async fn run_qr_login(
     // R2-ARCH-5 / R2-OPS-6: pass the optional
     // `--api-id-file` / `--api-hash-file` paths through to
     // the resolvers. See `run_bot_token` for the rationale.
-    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
-        .map_err(OnboardError::Config)?;
+    let api_id =
+        resolve_api_id(args.api_id, args.api_id_file.as_deref()).map_err(OnboardError::Config)?;
     let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
         .map_err(OnboardError::Config)?;
     let data_dir = resolve_data_dir(args.data_dir);
@@ -616,7 +614,10 @@ async fn run_whoami(
 /// operator who passes `--poll-interval-secs 0` gets a
 /// poll loop with no feedback that their input was
 /// ignored. Reject at the CLI layer with a clear error.
-fn validate_qr_login_timing(timeout_secs: u64, poll_interval_secs: u64) -> Result<(), OnboardError> {
+fn validate_qr_login_timing(
+    timeout_secs: u64,
+    poll_interval_secs: u64,
+) -> Result<(), OnboardError> {
     if timeout_secs == 0 {
         return Err(OnboardError::Config(
             "--timeout-secs must be > 0 (R2-IE-17)".to_string(),
@@ -820,7 +821,8 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false)
+            .unwrap();
         assert!(config_path.exists());
     }
 
@@ -851,30 +853,13 @@ mod tests {
         write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false)
             .unwrap();
         // Second call without --force must fail.
-        let e = write_config_and_output(
-            &out,
-            &config_path,
-            &cfg,
-            "bot",
-            "1:abc",
-            None,
-            None,
-            false,
-        )
-        .unwrap_err();
+        let e =
+            write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false)
+                .unwrap_err();
         assert_eq!(e.kind(), "config");
         // ...and with --force must succeed.
-        write_config_and_output(
-            &out,
-            &config_path,
-            &cfg,
-            "bot",
-            "1:abc",
-            None,
-            None,
-            true,
-        )
-        .unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, true)
+            .unwrap();
     }
 
     /// R26-S1: the config.json written by
@@ -902,8 +887,17 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "123:secret", None, None, false)
-            .unwrap();
+        write_config_and_output(
+            &out,
+            &config_path,
+            &cfg,
+            "bot",
+            "123:secret",
+            None,
+            None,
+            false,
+        )
+        .unwrap();
         let mode = std::fs::metadata(&config_path)
             .unwrap()
             .permissions()
@@ -943,7 +937,8 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false)
+            .unwrap();
         assert!(config_path.exists());
         assert!(
             !tmp.path().join("config.json.tmp").exists(),
@@ -1036,7 +1031,10 @@ mod tests {
             qr_path.display().to_string(),
             0,
         );
-        write_config_and_output(&qr_out, &qr_path, &cfg_base, "qr_login", "", None, None, false).unwrap();
+        write_config_and_output(
+            &qr_out, &qr_path, &cfg_base, "qr_login", "", None, None, false,
+        )
+        .unwrap();
         let qr_json = std::fs::read_to_string(&qr_path).unwrap();
         let qr_cfg: MtprotoTelegramConfig = serde_json::from_str(&qr_json).unwrap();
         qr_cfg

@@ -207,16 +207,7 @@ mod tests {
     /// from different causes.
     #[test]
     fn lifecycle_and_no_session_share_exit_code_4() {
-        assert_eq!(
-            OnboardError::Lifecycle {
-                state: "x".into()
-            }
-            .exit_code(),
-            4
-        );
-        assert_eq!(
-            OnboardError::NoSessionFile("x".into()).exit_code(),
-            4
-        );
+        assert_eq!(OnboardError::Lifecycle { state: "x".into() }.exit_code(), 4);
+        assert_eq!(OnboardError::NoSessionFile("x".into()).exit_code(), 4);
     }
 }

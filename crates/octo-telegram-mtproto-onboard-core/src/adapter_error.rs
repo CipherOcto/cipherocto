@@ -160,10 +160,7 @@ pub fn classify(err: &MtprotoTelegramError) -> AdapterErrorKind {
 /// codes don't distinguish between them — but the
 /// `AdapterErrorKind` is still useful for control flow in
 /// the QR-login flow's "already authorized" special case.
-pub fn map(
-    err: MtprotoTelegramError,
-    last_state: &str,
-) -> OnboardError {
+pub fn map(err: MtprotoTelegramError, last_state: &str) -> OnboardError {
     use AdapterErrorKind as K;
     use OnboardError as O;
     match classify(&err) {
@@ -174,9 +171,7 @@ pub fn map(
         K::Network => O::Network(err.to_string()),
         K::Config => O::Config(err.to_string()),
         K::Session => O::Io(std::io::Error::other(err.to_string())),
-        K::Capability | K::Envelope | K::Internal | K::QrLoginHandle => {
-            O::Adapter(err.to_string())
-        }
+        K::Capability | K::Envelope | K::Internal | K::QrLoginHandle => O::Adapter(err.to_string()),
         K::AlreadyAuthorized => {
             // Callers that care about this case must check
             // `classify(&err)` BEFORE calling `map`, because
@@ -338,9 +333,7 @@ mod tests {
         assert_eq!(mapped.kind(), "adapter");
         // The display message includes the internal
         // string for diagnostics.
-        assert!(mapped
-            .to_string()
-            .contains("qr_login: already authorized"));
+        assert!(mapped.to_string().contains("qr_login: already authorized"));
     }
 
     /// Regression: a Session error mapped via `map` should

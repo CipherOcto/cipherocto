@@ -153,9 +153,7 @@ pub fn validate_username(raw: Option<String>) -> Option<String> {
     // spaces, RTL marks, etc.).
     let cleaned: String = s
         .chars()
-        .filter(|c| {
-            !c.is_control() && !is_invisible_unicode(*c)
-        })
+        .filter(|c| !c.is_control() && !is_invisible_unicode(*c))
         .collect();
     if cleaned.is_empty() {
         None
@@ -290,6 +288,9 @@ mod tests {
     /// username" — semantically wrong.
     #[test]
     fn validate_username_returns_none_when_only_control_chars() {
-        assert_eq!(validate_username(Some("\u{0000}\u{0001}\u{200B}".into())), None);
+        assert_eq!(
+            validate_username(Some("\u{0000}\u{0001}\u{200B}".into())),
+            None
+        );
     }
 }

@@ -60,10 +60,16 @@ mod tests {
     /// across releases.
     #[test]
     fn state_name_is_kebab_case() {
-        assert_eq!(AdapterLifecycle::Uninitialised.state_name(), "uninitialised");
+        assert_eq!(
+            AdapterLifecycle::Uninitialised.state_name(),
+            "uninitialised"
+        );
         assert_eq!(AdapterLifecycle::Connecting.state_name(), "connecting");
         assert_eq!(AdapterLifecycle::Connected.state_name(), "connected");
-        assert_eq!(AdapterLifecycle::Authenticating.state_name(), "authenticating");
+        assert_eq!(
+            AdapterLifecycle::Authenticating.state_name(),
+            "authenticating"
+        );
         assert_eq!(AdapterLifecycle::Ready.state_name(), "ready");
         assert_eq!(AdapterLifecycle::ShuttingDown.state_name(), "shutting-down");
         assert_eq!(AdapterLifecycle::Stopped.state_name(), "stopped");

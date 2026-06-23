@@ -38,16 +38,21 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 /// doesn't have to learn two sets.
 ///
 /// R2-ARCH-12: the previous list omitted `code`,
-/// `session_path`, and `auth_string`. The first two are
-/// field names that appear in our `tracing::info!` /
-/// `tracing::error!` calls (e.g. an operator-visible log
-/// line like `code=*** still pending`); `auth_string` is
-/// the canonical name for a one-time auth token in the
-/// QR login flow. Without these in the redaction list, a
-/// log line containing `code=12345` (an SMS code) or
-/// `auth_string=ABCDEF` (a QR token) would render in
-/// cleartext. The fix adds them to the canonical list
-/// alongside `bot_token`, `api_hash`, etc.
+/// `session_path`, and `auth_string`. None of these
+/// appear in current `tracing::info!` / `tracing::error!`
+/// calls (verified at the time of the R2 fix), but they
+/// are added defensively to the canonical redaction
+/// list. `code` is the SMS verification code the
+/// operator types during the user_code flow — if a
+/// future log line ever embeds it (e.g. a debug-level
+/// trace), the redactor will scrub it. `session_path` is
+/// the on-disk path to `session.json` — while not a
+/// secret, the path leaks the operator's username on
+/// Linux (`/home/<user>/...`); redacting it in log lines
+/// avoids that. `auth_string` is the canonical name for
+/// the QR-login token (also not currently logged, but
+/// defensive). Adding these now means future log calls
+/// that adopt the convention are already protected.
 pub const REDACTED_FIELD_NAMES: &[&str] = &[
     "bot_token",
     "api_hash",

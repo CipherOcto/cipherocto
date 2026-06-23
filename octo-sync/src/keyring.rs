@@ -146,8 +146,8 @@ impl KeyRing for MissionKeyRing {
         // Generate a fresh random nonce for every encrypt call. Reusing a nonce
         // with the same key under ChaCha20-Poly1305 is catastrophic (key
         // recovery). We sample 12 bytes from the OS CSPRNG via `rand::rngs::OsRng`.
-        use rand::RngCore;
         use rand::rngs::OsRng;
+        use rand::RngCore;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&self.execution_key));
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
@@ -155,7 +155,10 @@ impl KeyRing for MissionKeyRing {
         let ciphertext = cipher
             .encrypt(
                 nonce_obj,
-                Payload { msg: plaintext, aad },
+                Payload {
+                    msg: plaintext,
+                    aad,
+                },
             )
             .expect("ChaCha20-Poly1305 encrypt with random nonce is infallible");
         (ciphertext, nonce)
@@ -171,7 +174,10 @@ impl KeyRing for MissionKeyRing {
         cipher
             .decrypt(
                 Nonce::from_slice(nonce),
-                Payload { msg: ciphertext, aad },
+                Payload {
+                    msg: ciphertext,
+                    aad,
+                },
             )
             .map_err(|_| SyncError::DecryptionFailed)
     }

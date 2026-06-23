@@ -91,7 +91,10 @@ impl MockAdapter {
 
     /// Test-only helper: insert a snapshot segment.
     pub fn put_snapshot(&self, table_id: TableId, segment_index: SegmentIndex, payload: Vec<u8>) {
-        self.inner.snapshots.lock().insert((table_id, segment_index), payload);
+        self.inner
+            .snapshots
+            .lock()
+            .insert((table_id, segment_index), payload);
     }
 
     /// Test-only helper: read the pause flag.
@@ -103,7 +106,10 @@ impl MockAdapter {
 impl DatabaseSyncAdapter for MockAdapter {
     fn read_wal_range(&self, from_lsn: Lsn, to_lsn: Lsn) -> Result<Vec<Vec<u8>>, SyncError> {
         if from_lsn > to_lsn {
-            return Err(SyncError::InvalidLsnRange { from: from_lsn, to: to_lsn });
+            return Err(SyncError::InvalidLsnRange {
+                from: from_lsn,
+                to: to_lsn,
+            });
         }
         let wal = self.inner.wal.lock();
         Ok(wal
@@ -155,10 +161,7 @@ impl DatabaseSyncAdapter for MockAdapter {
 
     fn regenerate_snapshot(&self, table_id: TableId) -> Result<u32, SyncError> {
         let snapshots = self.inner.snapshots.lock();
-        let count = snapshots
-            .keys()
-            .filter(|(t, _)| *t == table_id)
-            .count() as u32;
+        let count = snapshots.keys().filter(|(t, _)| *t == table_id).count() as u32;
         Ok(count)
     }
 
@@ -207,10 +210,7 @@ mod tests {
         let (mid, nid) = sample_identity();
         let a = MockAdapter::new(mid, nid);
         let err = a.read_wal_range(5, 2).unwrap_err();
-        assert_eq!(
-            err,
-            SyncError::InvalidLsnRange { from: 5, to: 2 }
-        );
+        assert_eq!(err, SyncError::InvalidLsnRange { from: 5, to: 2 });
     }
 
     #[test]

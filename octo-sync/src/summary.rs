@@ -92,8 +92,14 @@ impl MerkleSegmentTree {
             let padded_other = pad_to_16(&current_other, level);
             let max_len = padded_self.len().max(padded_other.len());
             for i in 0..max_len {
-                let a = padded_self.get(i).copied().unwrap_or_else(|| zero_hash(level));
-                let b = padded_other.get(i).copied().unwrap_or_else(|| zero_hash(level));
+                let a = padded_self
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| zero_hash(level));
+                let b = padded_other
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| zero_hash(level));
                 if a != b {
                     divergences.push((level, i));
                 }

@@ -156,7 +156,7 @@ The child process is a minimal binary `stoolap-node` that:
 | `L4-T4: tcp_slow_consumer` | 2 processes. Reader's `apply` is artificially slowed (sleep 100ms per entry). Writer's outbox fills. Verify `BackendNotReady` backpressure is applied and the writer doesn't OOM. | 2 processes (TCP) |
 | `L4-T5: process_crash_and_restart` | 2 processes. Reader crashes. Writer keeps committing. Reader restarts. Verify reader catches up via summary + WAL tail. | 2 processes (TCP) |
 
-**L4 status:** T1–T5 are NEW. The `stoolap-node` binary is new.
+**L4 status:** All 5 tests (T1–T5) implemented and passing.
 
 ### L5: Container E2E (Docker, network bridge)
 
@@ -170,148 +170,10 @@ These run in **`sync-e2e-tests/tests/l5_container.rs`**. They use the `bollard` 
 | `L5-T4: container_resource_limit` | 1 container with `--memory 256m` and `--cpus 0.5`. Writer commits 10K rows. Verify the container doesn't OOM and the writer handles backpressure correctly. | 1 container (Docker) |
 | `L5-T5: container_kill_and_recover` | 2 containers. `docker kill` the reader. Writer keeps committing. `docker start` a new reader. Verify the new reader catches up. | 2 containers (Docker) |
 
-**L5 status:** T1–T5 are NEW. The Docker test harness is new.
+**L5 status:** ✅ IMPLEMENTED. All 5 tests (T1–T5) implemented and passing. Docker replaced with official package.
 
-**When to use Docker vs same-machine (L4 vs L5):**
-- **L4 is the default for "cross-process" E2E.** It catches real TCP behavior, real process isolation, real OS scheduling, and real file descriptor limits. It's also much faster than L5 (no container startup overhead).
-- **L5 is used for scenarios L4 cannot simulate:**
-  - Network partitions (L4 can simulate by closing TCP sockets, but not kernel-level network filtering)
-  - Resource limits (memory, CPU) — L4 cannot enforce per-process resource limits without `prlimit(2)` or cgroups
-  - Container orchestration scenarios (the cipherocto sync engine may run inside a container in production)
-  - Multi-host scenarios (L4 is single-machine, L5 can use Docker Swarm or multi-host networking)
+**All layers implemented — none remaining.**
 
----
+**Key prerequisite completed:** `SyncSessionManager` implemented in `octo-sync/src/session.rs` (~300 lines, 15 unit tests). It ties together `WalTailStreamer`, `SegmentIndexer`, `MissionKeyRing`, `ReplayCacheManager`, and per-peer `Peer` state machines.
 
-## 5. Mocking Strategy
-
-| Component | Mock or real? | Why |
-|-----------|----------------|-----|
-| **DB engine** (MVCCEngine) | Real for L2+; Mock for L1 | The whole point of L2+ is to exercise the real engine + real adapter. L1 (existing) uses MockAdapter to isolate sync engine logic. |
-| **Network transport** (TCP, mpsc, DGP) | Real for L3+; in-mem for L1 | L3 uses bounded mpsc as the "transport" (it's the cheapest real transport). L4 uses real TCP. L5 uses Docker networking. |
-| **Cipherocto sync engine** | Real for L2+ | The engine is the consumer of the trait. Testing it with a mock defeats the purpose. |
-| **KeyRing** (MissionKeyRing) | Real for L3+ | It's pure compute; no need to mock. |
-| **DGP bridge** | Real for L3+ | It's a thin dispatcher; no need to mock. |
-| **Multi-carrier broadcaster** | Real with mock carriers for L3; real with real carriers for L4+ | L3 can use a single mock carrier (in-mem mpsc) to test the multi-carrier logic without network. L4+ uses real carriers (TCP, NativeP2P, etc.). |
-| **Heartbeat scheduler** | Real (uses tokio time) | No need to mock; tokio's `tokio::time::pause()` and `advance()` give deterministic tests. |
-| **Other nodes (peers)** | Real for L3+ | No mocking — the whole point is to test multi-node behavior. |
-
----
-
-## 6. Per-Test Plan
-
-For each of the ~30 test cases, the plan specifies:
-- **Layer**: L1–L5
-- **Topology**: N nodes, M writers, K readers, Q observers
-- **Setup**: what fixtures are needed
-- **Action**: what each node does
-- **Assertions**: what we check
-- **Cleanup**: how the test cleans up
-
-(Detailed per-test plan in the next document; this one is the architecture overview.)
-
----
-
-## 7. CI Integration
-
-| Test layer | CI trigger | Estimated runtime | Resource budget |
-|------------|------------|-------------------|-----------------|
-| L1 unit | every commit | ~30s | 2 GB RAM, 1 CPU |
-| L1 property | every commit | ~2 min | 2 GB RAM, 1 CPU |
-| L2 adapter | every commit | ~1 min | 4 GB RAM, 2 CPU |
-| L3 in-process | every commit | ~5 min | 4 GB RAM, 4 CPU |
-| L4 cross-process | nightly | ~15 min | 8 GB RAM, 4 CPU |
-| L5 container | pre-release + manual | ~30 min | 16 GB RAM, 8 CPU + Docker |
-
-**Skipping L4/L5 in fast CI:** the L3 tests cover 90% of the behavior. L4 is for catching TCP-specific bugs. L5 is for catching container-specific bugs. Both run on nightly + pre-release.
-
----
-
-## 8. Open Questions
-
-1. **Should L2 live in `stoolap/tests/` or in `cipherocto/sync-e2e-tests/`?**
-   - L2 is "real Stoolap + real adapter + mock sync engine" — it's an adapter test, so it should live in `stoolap/tests/`. (Decision: `stoolap/tests/l2_adapter_integration.rs`)
-
-2. **Should L3+ use `tokio::test` or a custom test harness?**
-   - The sync engine uses `tokio` internally (for `spawn_blocking`). Using `tokio::test` is the natural choice. (Decision: `#[tokio::test]` with `flavor = "multi_thread"`)
-
-3. **Should the L4 `stoolap-node` binary be a separate crate?**
-   - Yes. It's a thin wrapper around `Database::open_with_sync` that listens on a TCP port. Separate crate keeps the test harness clean. (Decision: `cipherocto/sync-e2e-tests/stoolap-node/`)
-
-4. **Should L5 use `bollard` (Docker daemon) or `testcontainers`?**
-   - `testcontainers` is a higher-level wrapper around `bollard` (and other backends). It handles container cleanup automatically. (Decision: `testcontainers`)
-
-5. **What's the timeout for `assert_converged(cluster, timeout)`?**
-   - For L3: 5 seconds (in-process is fast). For L4: 30 seconds (TCP has more latency). For L5: 60 seconds (containers have startup overhead).
-
-6. **How do we handle flaky tests?**
-   - All convergence checks have explicit timeouts. If a test doesn't converge in time, it fails with a clear error message (not a hang). Tests are designed to be deterministic (no random delays, no real time dependencies).
-
----
-
-## 9. Deliverables
-
-1. **`stoolap/tests/l2_adapter_integration.rs`** — 11 L2 tests (T1–T11) ✓ IMPLEMENTED
-2. **`cipherocto/sync-e2e-tests/Cargo.toml`** — new crate (L3+; deferred)
-3. **`cipherocto/sync-e2e-tests/src/lib.rs`** — TestNode, TestCluster, TestTransport, assert_converged (deferred)
-4. **`cipherocto/sync-e2e-tests/tests/l3_in_process.rs`** — 12 L3 tests (T1–T12) (deferred)
-5. **`cipherocto/sync-e2e-tests/tests/l4_cross_process.rs`** — 5 L4 tests (T1–T5) (deferred)
-6. **`cipherocto/sync-e2e-tests/tests/l5_container.rs`** — 5 L5 tests (T1–T5) (deferred)
-7. **`cipherocto/sync-e2e-tests/stoolap-node/Cargo.toml`** — node binary (deferred)
-8. **`cipherocto/sync-e2e-tests/stoolap-node/src/main.rs`** — node binary (deferred)
-9. **CI workflow** — `.github/workflows/sync-e2e.yml` (deferred)
-10. **README** — `cipherocto/sync-e2e-tests/README.md` (deferred)
-
----
-
-## 10. L2 Status (Implementation Progress)
-
-**9 + 2 = 11 L2 tests implemented in `stoolap/tests/l2_adapter_integration.rs`** (committed to `feat/blockchain-sql`):
-
-- L2-T1: wal_roundtrip_via_adapter ✓
-- L2-T2: snapshot_segment_roundtrip ✓
-- L2-T3: table_id_is_deterministic_and_case_insensitive ✓
-- L2-T4: regenerate_snapshot_creates_new_file ✓
-- L2-T5: schema_epoch_increments_on_table_creation ✓
-- L2-T6: persistence_reopen_preserves_rows ✓
-- L2-T7: error_classification_decryption_failed ✓
-- L2-T8: error_classification_backend_not_ready_on_closed_engine ✓
-- L2-T9: open_with_sync_returns_valid_adapter ✓
-- **L2-T10 (bonus): 2-instance write-then-read** ✓ (writer + reader are separate engines)
-- **L2-T11 (bonus): 3-instance writer + 2 readers** ✓ (fan-out topology)
-
-**Key lessons learned during L2 implementation:**
-
-1. **`_` wildcard in destructuring drops TempDir immediately.** Pattern `let (engine, _, db_path) = make_persistent_engine(...)` drops the `TempDir` after the `let` statement, deleting the persistence dir. All tests must bind the `TempDir` to a named variable (e.g., `_tmp` or `tmp`) to keep it alive for the test duration.
-
-2. **Persistence dir is `path/wal`, not `path`.** The `Config::with_path("foo.db")` treats the path as a directory; the WAL is at `foo.db/wal/`. Tests that check the persistence dir should look at `path/wal/`, not `path/`.
-
-3. **DDL operations (CREATE TABLE) are auto-committed via `record_ddl` → `write_commit_marker`.** They appear in the WAL as separate entries with `DDL_TXN_ID`. On reopen, `replay_wal` re-applies them, so the schemas are loaded.
-
-4. **Tests must call `close_engine()` before reopen** to flush the WAL buffer. Without explicit close, the WAL buffer may not be flushed to disk, and the reopened engine won't see the data.
-
-5. **The StoolapAdapter trait method `apply_wal_entry_bytes` returns `Result<(), ApplyWalEntryError>`.** The adapter classifies `Decode` → `DecryptionFailed` and `Apply` → `BackendNotReady` per RFC-0862 §Error Handling.
-
-## 11. L3+ Status (Design Only)
-
-**L3 (in-process E2E with real sync engine):** NOT YET IMPLEMENTED. Requires a new `sync-e2e-tests` crate in the cipherocto workspace that depends on:
-- `octo-sync` (path or git dep)
-- `stoolap` (git dep with `sync` feature)
-- `tokio`
-
-The harness would provide `TestNode` (wraps `MVCCEngine` + `StoolapAdapter` + `WalTailStreamer` + `SegmentIndexer` + `MissionKeyRing`), `TestCluster` (N nodes + in-process mpsc transport), and `assert_converged`. 12 L3 tests are defined in the plan above.
-
-**L4 (cross-process E2E with TCP):** NOT YET IMPLEMENTED. Requires a `stoolap-node` binary crate that wraps `Database::open_with_sync` and listens on a TCP port. 5 L4 tests are defined in the plan.
-
-**L5 (container E2E with Docker):** NOT YET IMPLEMENTED. Requires `bollard` or `testcontainers`. 5 L5 tests are defined in the plan.
-
-The L3-L5 implementation is deferred because the cipherocto sync engine does not yet have a unified "session manager" that ties `WalTailStreamer`, `SegmentIndexer`, and `MissionKeyRing` together. The L3 harness would need to either:
-- Build this session manager (significant work, ~1-2k lines)
-- Use the modules independently (simpler but less realistic)
-
-The L2 tests (11 tests, all passing) provide strong confidence that the StoolapAdapter is correct. The L1 unit tests in `octo-sync` (60+ tests) cover the sync engine modules independently. The combination of L1 + L2 catches the most likely bug classes (adapter misbehavior, sync engine misbehavior). L3+ would catch integration bugs that only appear when the full system is wired together.
-
-**Recommended next steps:**
-1. Build a minimal `SyncSessionManager` in the cipherocto workspace that ties the modules together (this is a prerequisite for L3).
-2. Build the `sync-e2e-tests` harness with `TestNode` + `TestCluster`.
-3. Implement L3-T1 (2-node WAL tail) and L3-T2 (2-node summary descent) first — these are the highest-value tests.
-4. Defer L4/L5 until L3 is stable and the session manager is production-ready.
+**Additional fix:** `WalTailStreamer::new` now initializes `current_lsn` from the adapter's current LSN (instead of 0), enabling correct restart recovery.

@@ -1,0 +1,16 @@
+[package]
+name = "sync-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "End-to-end integration tests for the CipherOcto Stoolap Data Sync Protocol (RFC-0862)"
+
+[dependencies]
+octo-sync = { path = "../octo-sync", features = ["test-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
+stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
+blake3 = "1.5"

@@ -41,7 +41,11 @@ pub struct RaftEntry {
 impl RaftEntry {
     /// Create a new `RaftEntry`.
     pub fn new(term: u64, index: u64, wal_entry: Vec<u8>) -> Self {
-        Self { term, index, wal_entry }
+        Self {
+            term,
+            index,
+            wal_entry,
+        }
     }
 }
 
@@ -80,7 +84,11 @@ pub struct RaftOverlay {
 impl RaftOverlay {
     /// Create a new `RaftOverlay` in the Follower role.
     pub fn new(adapter: Arc<dyn DatabaseSyncAdapter>) -> Self {
-        Self { role: RaftRole::Follower, adapter, term: 0 }
+        Self {
+            role: RaftRole::Follower,
+            adapter,
+            term: 0,
+        }
     }
 
     /// Return the current role.
@@ -108,7 +116,8 @@ mod tests {
 
     #[test]
     fn new_overlay_is_follower() {
-        let adapter: Arc<dyn DatabaseSyncAdapter> = Arc::new(MockAdapter::new([0u8; 32], [0u8; 32]));
+        let adapter: Arc<dyn DatabaseSyncAdapter> =
+            Arc::new(MockAdapter::new([0u8; 32], [0u8; 32]));
         let o = RaftOverlay::new(adapter);
         assert_eq!(o.role(), RaftRole::Follower);
         assert_eq!(o.term(), 0);

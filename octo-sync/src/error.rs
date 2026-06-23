@@ -203,9 +203,7 @@ impl From<SyncError> for WireError {
             | SyncError::DecryptionFailed
             | SyncError::UnknownCarrier(_)
             | SyncError::InvalidStateTransition { .. } => WireError::AuthFailure,
-            SyncError::AllCarriersFailed | SyncError::BackendNotReady(_) => {
-                WireError::RateLimit
-            }
+            SyncError::AllCarriersFailed | SyncError::BackendNotReady(_) => WireError::RateLimit,
             SyncError::SegmentNotFound { .. } => WireError::SegmentNotFound,
         }
     }
@@ -232,7 +230,10 @@ mod tests {
 
     #[test]
     fn from_lsn_regression() {
-        let e = SyncError::LsnRegression { expected: 100, actual: 99 };
+        let e = SyncError::LsnRegression {
+            expected: 100,
+            actual: 99,
+        };
         assert_eq!(WireError::from(e), WireError::LsnRegression);
     }
 
@@ -292,12 +293,24 @@ mod tests {
     fn names_match_rfc() {
         assert_eq!(WireError::AuthFailure.name(), "E_SYNC_AUTH_FAIL");
         assert_eq!(WireError::LsnRegression.name(), "E_SYNC_LSN_REGRESSION");
-        assert_eq!(WireError::SegmentCorruption.name(), "E_SYNC_SEGMENT_CORRUPTION");
-        assert_eq!(WireError::SegmentNotFound.name(), "E_SYNC_SEGMENT_NOT_FOUND");
+        assert_eq!(
+            WireError::SegmentCorruption.name(),
+            "E_SYNC_SEGMENT_CORRUPTION"
+        );
+        assert_eq!(
+            WireError::SegmentNotFound.name(),
+            "E_SYNC_SEGMENT_NOT_FOUND"
+        );
         assert_eq!(WireError::RateLimit.name(), "E_SYNC_RATE_LIMIT");
         assert_eq!(WireError::WalAppendFail.name(), "E_SYNC_WAL_APPEND_FAIL");
         assert_eq!(WireError::SchemaDrift.name(), "E_SYNC_SCHEMA_DRIFT");
-        assert_eq!(WireError::HeartbeatTimeout.name(), "E_SYNC_HEARTBEAT_TIMEOUT");
-        assert_eq!(WireError::RoleNotSyncCapable.name(), "E_SYNC_ROLE_NOT_SYNC_CAPABLE");
+        assert_eq!(
+            WireError::HeartbeatTimeout.name(),
+            "E_SYNC_HEARTBEAT_TIMEOUT"
+        );
+        assert_eq!(
+            WireError::RoleNotSyncCapable.name(),
+            "E_SYNC_ROLE_NOT_SYNC_CAPABLE"
+        );
     }
 }

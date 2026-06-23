@@ -77,11 +77,7 @@ impl CarrierHealth {
     }
 
     /// Create a new `CarrierHealth` with custom EMA alpha and health threshold.
-    pub fn with_params(
-        name: impl Into<String>,
-        alpha: f64,
-        health_threshold: f64,
-    ) -> Self {
+    pub fn with_params(name: impl Into<String>, alpha: f64, health_threshold: f64) -> Self {
         let now = Instant::now();
         Self {
             name: name.into(),

@@ -64,7 +64,10 @@ pub struct SegmentIndexer {
 impl SegmentIndexer {
     /// Create a new `SegmentIndexer`.
     pub fn new(adapter: Arc<dyn DatabaseSyncAdapter>) -> Self {
-        Self { adapter, lz4_enabled: true }
+        Self {
+            adapter,
+            lz4_enabled: true,
+        }
     }
 
     /// Set whether to LZ4-compress segments.
@@ -108,11 +111,12 @@ impl SegmentIndexer {
             });
         }
         // LZ4-compress the payload if enabled and the payload is > 1 KB.
-        let (payload_for_ship, compression_flag) = if self.lz4_enabled && segment.payload.len() > 1024 {
-            (lz4_flex::compress(&segment.payload), 1u8)
-        } else {
-            (segment.payload.clone(), 0u8)
-        };
+        let (payload_for_ship, compression_flag) =
+            if self.lz4_enabled && segment.payload.len() > 1024 {
+                (lz4_flex::compress(&segment.payload), 1u8)
+            } else {
+                (segment.payload.clone(), 0u8)
+            };
         // CRC32 over the raw (uncompressed) payload.
         let crc = crc32(&segment.payload);
         // LSN watermark comes from the adapter (NOT from self.engine.wal_manager()).
@@ -160,7 +164,11 @@ fn crc32(data: &[u8]) -> u32 {
     for &byte in data {
         crc ^= byte as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB88320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB88320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -173,8 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_segment_returns_not_found() {
-        let a: Arc<dyn DatabaseSyncAdapter> =
-            Arc::new(MockAdapter::new([0u8; 32], [0u8; 32]));
+        let a: Arc<dyn DatabaseSyncAdapter> = Arc::new(MockAdapter::new([0u8; 32], [0u8; 32]));
         let idx = SegmentIndexer::new(a);
         let err = idx
             .handle_segment_request(42, 7, [1u8; 32])

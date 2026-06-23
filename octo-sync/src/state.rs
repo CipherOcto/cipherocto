@@ -216,7 +216,11 @@ impl Peer {
         to: SyncLifecycle,
         trigger: TransitionTrigger,
     ) -> Result<SyncLifecycle, crate::error::SyncError> {
-        let t = StateTransition { from: self.state, to, trigger };
+        let t = StateTransition {
+            from: self.state,
+            to,
+            trigger,
+        };
         if t.is_allowed() {
             self.state = to;
             Ok(self.state)
@@ -242,10 +246,16 @@ mod tests {
     fn happy_path_init_to_streaming() {
         let mut p = Peer::new(SyncPeerId([0u8; 32]));
         assert_eq!(p.state, SyncLifecycle::Init);
-        p.transition(SyncLifecycle::Connecting, TransitionTrigger::LocalConfigMatched)
-            .unwrap();
-        p.transition(SyncLifecycle::Authenticating, TransitionTrigger::TlsHandshakeComplete)
-            .unwrap();
+        p.transition(
+            SyncLifecycle::Connecting,
+            TransitionTrigger::LocalConfigMatched,
+        )
+        .unwrap();
+        p.transition(
+            SyncLifecycle::Authenticating,
+            TransitionTrigger::TlsHandshakeComplete,
+        )
+        .unwrap();
         p.transition(SyncLifecycle::Streaming, TransitionTrigger::SignatureValid)
             .unwrap();
         assert_eq!(p.state, SyncLifecycle::Streaming);
@@ -254,10 +264,16 @@ mod tests {
     #[test]
     fn streaming_to_terminated_on_lsn_regression() {
         let mut p = Peer::new(SyncPeerId([0u8; 32]));
-        p.transition(SyncLifecycle::Connecting, TransitionTrigger::LocalConfigMatched)
-            .unwrap();
-        p.transition(SyncLifecycle::Authenticating, TransitionTrigger::TlsHandshakeComplete)
-            .unwrap();
+        p.transition(
+            SyncLifecycle::Connecting,
+            TransitionTrigger::LocalConfigMatched,
+        )
+        .unwrap();
+        p.transition(
+            SyncLifecycle::Authenticating,
+            TransitionTrigger::TlsHandshakeComplete,
+        )
+        .unwrap();
         p.transition(SyncLifecycle::Streaming, TransitionTrigger::SignatureValid)
             .unwrap();
         p.transition(SyncLifecycle::Terminated, TransitionTrigger::LsnRegression)
@@ -269,10 +285,16 @@ mod tests {
     #[test]
     fn connecting_terminates_on_timeout() {
         let mut p = Peer::new(SyncPeerId([0u8; 32]));
-        p.transition(SyncLifecycle::Connecting, TransitionTrigger::LocalConfigMatched)
-            .unwrap();
-        p.transition(SyncLifecycle::Terminated, TransitionTrigger::ConnectTimeoutExceeded)
-            .unwrap();
+        p.transition(
+            SyncLifecycle::Connecting,
+            TransitionTrigger::LocalConfigMatched,
+        )
+        .unwrap();
+        p.transition(
+            SyncLifecycle::Terminated,
+            TransitionTrigger::ConnectTimeoutExceeded,
+        )
+        .unwrap();
         assert!(p.state.is_terminal());
     }
 

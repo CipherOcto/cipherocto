@@ -131,13 +131,17 @@ impl RateLimiter {
         if now_ms > *last && now_ms > prev_now.unwrap_or(0) {
             let elapsed_ms = now_ms - *last;
             let refill = elapsed_ms * (self.rate_per_sec as u64) / 1000;
-            let new_tokens = (*tokens as u64).saturating_add(refill).min(self.burst as u64);
+            let new_tokens = (*tokens as u64)
+                .saturating_add(refill)
+                .min(self.burst as u64);
             *tokens = new_tokens as u32;
             *last = now_ms;
         }
         *prev_now = Some(now_ms);
         if *tokens == 0 {
-            return Err(SyncError::BackendNotReady("rate limit exhausted".to_string()));
+            return Err(SyncError::BackendNotReady(
+                "rate limit exhausted".to_string(),
+            ));
         }
         *tokens -= 1;
         Ok(())
@@ -205,11 +209,16 @@ pub struct WalTailStreamer {
 
 impl WalTailStreamer {
     /// Create a new `WalTailStreamer`.
+    ///
+    /// Initializes the internal LSN counter from the adapter's current LSN,
+    /// so the streamer resumes correctly after a restart (the adapter may
+    /// already have committed entries from a previous session).
     pub fn new(adapter: Arc<dyn DatabaseSyncAdapter>) -> Self {
+        let initial_lsn = adapter.current_lsn().unwrap_or(0);
         Self {
             adapter,
             subscribers: Mutex::new(HashMap::new()),
-            current_lsn: Mutex::new(0),
+            current_lsn: Mutex::new(initial_lsn),
             error_queue: Mutex::new(VecDeque::new()),
             peers: Mutex::new(HashMap::new()),
             txn_subscribers: Mutex::new(HashMap::new()),
@@ -260,15 +269,13 @@ impl WalTailStreamer {
     /// threads could read the same value, both decide to advance, and one
     /// of them would be silently dropped. The Mutex is fine for v1's
     /// single-writer model; a sharded or lock-free design is in future work.
-    pub fn on_commit(
-        &self,
-        txn_id: u64,
-        from_lsn: Lsn,
-        to_lsn: Lsn,
-    ) -> Result<(), SyncError> {
+    pub fn on_commit(&self, txn_id: u64, from_lsn: Lsn, to_lsn: Lsn) -> Result<(), SyncError> {
         // 1. Validate LSN range
         if from_lsn > to_lsn {
-            return Err(SyncError::InvalidLsnRange { from: from_lsn, to: to_lsn });
+            return Err(SyncError::InvalidLsnRange {
+                from: from_lsn,
+                to: to_lsn,
+            });
         }
         // 2. Update current_lsn under a lock (advances even when paused)
         {
@@ -294,7 +301,12 @@ impl WalTailStreamer {
         //    lock ONCE; iterate over the snapshot. This avoids O(N) lock
         //    acquisitions and prevents a peer that unsubscribes mid-fan-out
         //    from racing with the lock.
-        let chunk = Arc::new(WalTailChunk { from_lsn, to_lsn, entries, is_last: true });
+        let chunk = Arc::new(WalTailChunk {
+            from_lsn,
+            to_lsn,
+            entries,
+            is_last: true,
+        });
         {
             let subs = self.subscribers.lock();
             let mut txn_subs = self.txn_subscribers.lock();
@@ -314,15 +326,15 @@ impl WalTailStreamer {
     /// The `is_last` flag is set based on a single read of `current_lsn`,
     /// so the returned chunk is internally consistent (no TOCTOU race
     /// between reading `current_lsn` for `to_lsn` and for `is_last`).
-    pub async fn handle_wal_tail_request(
-        &self,
-        from_lsn: Lsn,
-    ) -> Result<WalTailChunk, SyncError> {
+    pub async fn handle_wal_tail_request(&self, from_lsn: Lsn) -> Result<WalTailChunk, SyncError> {
         // Read `current_lsn` ONCE under the lock; use the same value for both
         // `to_lsn` and the `is_last` check.
         let prev = *self.current_lsn.lock();
         if from_lsn > prev {
-            return Err(SyncError::InvalidLsnRange { from: from_lsn, to: prev });
+            return Err(SyncError::InvalidLsnRange {
+                from: from_lsn,
+                to: prev,
+            });
         }
         if from_lsn == 0 {
             return Err(SyncError::InvalidLsnRange { from: 0, to: prev });
@@ -363,7 +375,9 @@ impl WalTailStreamer {
 
     /// Record an on_commit error for later per-peer demotion.
     pub fn record_commit_error(&self, txn_id: u64, error: SyncError) {
-        self.error_queue.lock().push_back(CommitError { txn_id, error });
+        self.error_queue
+            .lock()
+            .push_back(CommitError { txn_id, error });
     }
 
     /// Drain the per-txn error queue. Returns the list of (peer_id, error)

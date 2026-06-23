@@ -73,9 +73,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapter;
+pub mod carrier;
 pub mod config;
 pub mod dgp_bridge;
-pub mod carrier;
 pub mod envelope;
 pub mod error;
 pub mod identity;
@@ -84,6 +84,7 @@ pub mod lsn;
 pub mod raft_overlay;
 pub mod replay_cache;
 pub mod segment;
+pub mod session;
 pub mod state;
 pub mod stream;
 pub mod summary;
@@ -107,6 +108,7 @@ pub use lsn::LsnTracker;
 pub use raft_overlay::{RaftEntry, RaftOverlay, RaftRole};
 pub use replay_cache::{ReplayCache, ReplayCacheManager};
 pub use segment::{SegmentIndexer, SegmentLookupResult, SyncSegment};
+pub use session::{PeerSession, SyncSessionManager};
 pub use state::{Peer, StateTransition, SyncLifecycle, TransitionTrigger};
 pub use stream::{CommitError, RateLimiter, SubscriberChannel, WalTailStreamer};
 pub use summary::{MerkleSegmentTree, SegmentMetadata, SyncSummary};

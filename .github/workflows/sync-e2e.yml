@@ -1,0 +1,102 @@
+name: Sync E2E Tests
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+    branches: [main, next]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  l1-unit:
+    name: L1 Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: octo-sync
+      - name: Run octo-sync unit tests
+        run: cargo test
+        working-directory: octo-sync
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: octo-sync
+
+  l2-adapter:
+    name: L2 Adapter Integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          path: cipherocto
+      - uses: actions/checkout@v4
+        with:
+          repository: CipherOcto/stoolap
+          ref: feat/blockchain-sql
+          path: stoolap
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run L2 tests
+        run: cargo test --features sync
+        working-directory: stoolap
+
+  l3-in-process:
+    name: L3 In-Process E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sync-e2e-tests
+      - name: Build stoolap-node
+        run: cargo build
+        working-directory: sync-e2e-tests/stoolap-node
+      - name: Run L3 tests
+        run: cargo test --test l3_in_process
+        working-directory: sync-e2e-tests
+
+  l4-cross-process:
+    name: L4 Cross-Process E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sync-e2e-tests
+      - name: Build stoolap-node
+        run: cargo build
+        working-directory: sync-e2e-tests/stoolap-node
+      - name: Run L4 tests
+        run: cargo test --test l4_cross_process
+        working-directory: sync-e2e-tests
+
+  l5-container:
+    name: L5 Container E2E
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[integration]')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sync-e2e-tests
+      - name: Build stoolap-node
+        run: cargo build
+        working-directory: sync-e2e-tests/stoolap-node
+      - name: Run L5 tests
+        run: cargo test --test l5_container
+        working-directory: sync-e2e-tests
+      - name: Cleanup Docker
+        if: always()
+        run: |
+          docker kill $(docker ps -q) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          docker network rm $(docker network ls -q --filter "name=sync-e2e") 2>/dev/null || true
+          docker rmi -f stoolap-node-test 2>/dev/null || true

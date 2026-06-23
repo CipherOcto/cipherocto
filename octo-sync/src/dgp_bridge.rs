@@ -84,7 +84,10 @@ pub struct DgpSyncBridge<H: SyncHandler + ?Sized> {
 impl<H: SyncHandler + ?Sized> DgpSyncBridge<H> {
     /// Create a new `DgpSyncBridge` for the given mission and handler.
     pub fn new(mission_id: [u8; 32], handler: Arc<H>) -> Self {
-        Self { mission_id, handler }
+        Self {
+            mission_id,
+            handler,
+        }
     }
 
     /// Dispatch a DGP-delivered SnapshotFragment to the appropriate handler.
@@ -104,15 +107,18 @@ impl<H: SyncHandler + ?Sized> DgpSyncBridge<H> {
         // the handler is responsible for parsing.
         match fragment.subtype {
             0xA1 => {
-                self.handler.on_summary(fragment.peer_id, fragment.payload.clone());
+                self.handler
+                    .on_summary(fragment.peer_id, fragment.payload.clone());
                 Ok(())
             }
             0xA3 => {
-                self.handler.on_segment(fragment.peer_id, fragment.payload.clone());
+                self.handler
+                    .on_segment(fragment.peer_id, fragment.payload.clone());
                 Ok(())
             }
             0xB1 => {
-                self.handler.on_wal_tail(fragment.peer_id, fragment.payload.clone());
+                self.handler
+                    .on_wal_tail(fragment.peer_id, fragment.payload.clone());
                 Ok(())
             }
             other => Err(SyncError::UnknownEnvelopeSubtype(other)),

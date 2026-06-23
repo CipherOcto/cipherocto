@@ -66,8 +66,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
-# The library's own tests use the mock (via `test-mock`) so
-# they don't need a live Telegram DC. We don't need to
-# redeclare the adapter dependency — the [dependencies]
-# section already pulls it in, and Cargo unifies the
-# features for tests.
+# Enable test-mock for the adapter so test_helpers.rs can import
+# MockTelegramMtprotoClient. Cargo unifies features from both
+# [dependencies] and [dev-dependencies] for test builds.
+octo-adapter-telegram-mtproto = { path = "../octo-adapter-telegram-mtproto", features = ["test-mock"] }

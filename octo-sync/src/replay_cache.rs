@@ -37,7 +37,10 @@ impl Default for ReplayCache {
 impl ReplayCache {
     /// Create a new `ReplayCache` with the given max entry count.
     pub fn new(max_entries: usize) -> Self {
-        Self { entries: BTreeMap::new(), max_entries }
+        Self {
+            entries: BTreeMap::new(),
+            max_entries,
+        }
     }
 
     /// Insert an envelope_id with its first_seen timestamp.

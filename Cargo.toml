@@ -19,6 +19,7 @@ members = ["crates/*"]
 exclude = [
     "determin",
     "octo-sync",
+    "sync-e2e-tests",
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",

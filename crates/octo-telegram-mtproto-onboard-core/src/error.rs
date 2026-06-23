@@ -80,8 +80,15 @@ pub enum OnboardError {
     ChannelClosed(String),
 
     /// The interactive user did not provide input within the
-    /// deadline (currently unused but reserved for a future
-    /// timeout variant).
+    /// deadline (SMS code window or 2FA password window in the
+    /// user-code flow, or the 5-minute QR-scan window in the
+    /// QR-login flow). R2-ARCH-13: this variant IS wired —
+    /// `qr_login::run` returns it on a 5-minute poll timeout,
+    /// and `user_code::run` could return it if the
+    /// `code_timeout` / `password_timeout` deadlines elapse
+    /// without input. The doc-comment previously said
+    /// "currently unused but reserved for a future timeout
+    /// variant", which was incorrect.
     #[error("interactive timeout: {0}")]
     Timeout(String),
 

@@ -36,6 +36,18 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 /// convention used by `octo-telegram-onboard` and
 /// `octo-telegram-mtproto-onboard-core` so an operator
 /// doesn't have to learn two sets.
+///
+/// R2-ARCH-12: the previous list omitted `code`,
+/// `session_path`, and `auth_string`. The first two are
+/// field names that appear in our `tracing::info!` /
+/// `tracing::error!` calls (e.g. an operator-visible log
+/// line like `code=*** still pending`); `auth_string` is
+/// the canonical name for a one-time auth token in the
+/// QR login flow. Without these in the redaction list, a
+/// log line containing `code=12345` (an SMS code) or
+/// `auth_string=ABCDEF` (a QR token) would render in
+/// cleartext. The fix adds them to the canonical list
+/// alongside `bot_token`, `api_hash`, etc.
 pub const REDACTED_FIELD_NAMES: &[&str] = &[
     "bot_token",
     "api_hash",
@@ -45,6 +57,9 @@ pub const REDACTED_FIELD_NAMES: &[&str] = &[
     "auth_key",
     "token",
     "secret",
+    "code",
+    "session_path",
+    "auth_string",
 ];
 
 fn is_sensitive_key(name: &str) -> bool {
@@ -246,6 +261,20 @@ mod tests {
         assert!(is_sensitive_key("password"));
         assert!(is_sensitive_key("phone"));
         assert!(is_sensitive_key("auth_key"));
+    }
+
+    /// R2-ARCH-12: the redaction list now also covers
+    /// `code`, `session_path`, and `auth_string`. A log
+    /// line like `code=12345 auth_string=ABCDEF` would
+    /// otherwise render in cleartext.
+    #[test]
+    fn is_sensitive_key_covers_r2_arch_12_additions() {
+        assert!(is_sensitive_key("code"));
+        assert!(is_sensitive_key("session_path"));
+        assert!(is_sensitive_key("auth_string"));
+        // Case-insensitive.
+        assert!(is_sensitive_key("CODE"));
+        assert!(is_sensitive_key("Auth_String"));
     }
 
     #[test]

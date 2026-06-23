@@ -194,7 +194,6 @@ pub fn map(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io;
 
     /// R2-ARCH-4 / R2-IE-12: a single map function drives
     /// all three onboarding flows. Confirm it round-trips
@@ -391,12 +390,5 @@ mod tests {
         // future contributor who adds a new variant to
         // `AdapterErrorKind` must update this test and
         // the `map` function.)
-    }
-
-    // Use the imported `io` to silence the dead-import
-    // warning when no test above references it.
-    #[allow(dead_code)]
-    fn _ensure_io_in_scope() -> io::Error {
-        io::Error::other("test")
     }
 }

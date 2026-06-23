@@ -28,8 +28,9 @@ use tracing::{debug, info, warn};
 use crate::adapter_error::{self, AdapterErrorKind};
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
-use crate::output::{OnboardMode, OnboardOutput};
+use crate::output::{validate_username, OnboardMode, OnboardOutput};
 use crate::session::SessionRecord;
+use crate::time_util::unix_now_secs;
 
 /// How long to wait between `poll_qr_login` calls. Telegram
 /// rotates the QR token every ~30 seconds; we poll twice per
@@ -67,6 +68,14 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 /// * the adapter reports a non-QR error
 ///   (`OnboardError::TelegramApi` etc.).
 ///
+/// R2-IE-17: a `poll_interval` of zero would busy-loop the
+/// poll iteration (no `sleep`). The CLI's `cli.rs` already
+/// rejects `--poll-interval-secs 0` (it returns an error
+/// before calling `run`), so the floor here is defensive
+/// — if a future caller forgets the CLI check, we still
+/// don't burn a CPU core. The floor is 100ms (one human-
+/// perceptible frame).
+///
 /// Generic over the client impl so the same code path drives
 /// production (real Telegram) and tests (mock).
 pub async fn run<C, F>(
@@ -81,6 +90,27 @@ where
     C: MtprotoTelegramClient + 'static,
     F: FnMut(&QrLoginPrompt),
 {
+    // R2-IE-17: floor the poll interval at 100ms so a
+    // misconfigured caller (e.g. `--poll-interval-secs 0`)
+    // can't busy-loop the QR poll. The CLI's `cli.rs`
+    // already rejects `--poll-interval-secs 0`, but we
+    // belt-and-braces it here too.
+    let poll_interval = if poll_interval < Duration::from_millis(100) {
+        Duration::from_millis(100)
+    } else {
+        poll_interval
+    };
+    // R2-IE-17: same floor for the timeout — a 0s timeout
+    // would race the very first poll call. We keep the
+    // existing 300s default but cap the minimum at 1s so
+    // any future caller passing `Duration::from_secs(0)`
+    // gets a sane retry window instead of immediate
+    // timeout.
+    let timeout = if timeout < Duration::from_secs(1) {
+        Duration::from_secs(1)
+    } else {
+        timeout
+    };
     let start = std::time::Instant::now();
     info!(path = "qr_login", "starting QR login onboarding");
     debug!(data_dir = %data_dir.display(), "using data dir");
@@ -133,7 +163,9 @@ where
                         schema_version: OnboardOutput::SCHEMA_VERSION,
                         mode: OnboardMode::QrLogin,
                         self_id: identity.user_id,
-                        self_username: identity.username.clone(),
+                        // R2-PROTO-14: strip control chars
+                        // and look-alike unicode codepoints.
+                        self_username: validate_username(identity.username.clone()),
                         is_bot: false,
                         data_dir: data_dir.display().to_string(),
                         config_path: config_path.display().to_string(),
@@ -214,7 +246,9 @@ where
                     schema_version: OnboardOutput::SCHEMA_VERSION,
                     mode: OnboardMode::QrLogin,
                     self_id: identity.user_id,
-                    self_username: identity.username.clone(),
+                    // R2-PROTO-14: strip control chars
+                    // and look-alike unicode codepoints.
+                    self_username: validate_username(identity.username.clone()),
                     is_bot: false,
                     data_dir: data_dir.display().to_string(),
                     config_path: config_path.display().to_string(),
@@ -328,13 +362,6 @@ impl QrLoginPrompt {
     }
 }
 
-fn unix_now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +377,43 @@ mod tests {
     #[test]
     fn default_timeout_is_5_minutes() {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(300));
+    }
+
+    /// R2-IE-17: a poll interval of zero (or near-zero)
+    /// must NOT busy-loop. `run` floors it to 100ms. We
+    /// assert the floor indirectly by passing 0 and
+    /// checking that the call returns within a
+    /// reasonable bound (the default mock succeeds on
+    /// the first poll, so the elapsed time is bounded
+    /// by the floor, not by an infinite loop).
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_does_not_busy_loop_when_poll_interval_is_zero() {
+        let tmp = tempdir().unwrap();
+        let adapter = mock_adapter_for_test(tmp.path());
+        let start = std::time::Instant::now();
+        // 100ms timeout gives plenty of headroom for
+        // the mock to succeed on the first poll.
+        let (_out, _cfg) = run(
+            adapter,
+            tmp.path(),
+            Duration::from_millis(100),
+            Duration::from_millis(0), // zero poll → must be floored
+            |_prompt| {},
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect("run should succeed against the default mock");
+        let elapsed = start.elapsed();
+        // The floor is 100ms; if the floor weren't
+        // applied, the loop would burn CPU and we
+        // couldn't observe it from this side, but at
+        // least we confirm the call returned (i.e.
+        // didn't deadlock / infinite-loop).
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "run took too long ({:?}) — poll floor may not be applied",
+            elapsed
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

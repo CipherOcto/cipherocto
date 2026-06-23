@@ -41,7 +41,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-anyhow = { workspace = true }
+# R2-ARCH-23: `anyhow` was declared but never used; the
+# library uses `thiserror` (via the `OnboardError` enum)
+# for typed errors. The dependency is removed.
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 directories = "6"
@@ -56,6 +58,11 @@ tempfile = "3"
 # follow the same shape so the QR rendering is unit-tested
 # (not just CLI smoke-tested).
 qrcode = "0.14"
+# R2-SEC-6: used by `user_code::forward_input` to wrap the
+# SMS-code and 2FA-password channels in a zero-on-drop
+# buffer. The CLI already pulls in `zeroize`; the library
+# needs it for the channel type.
+zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

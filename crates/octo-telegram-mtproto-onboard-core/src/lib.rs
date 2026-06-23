@@ -28,6 +28,7 @@
 pub mod adapter_error;
 pub mod auth;
 pub mod bot_token;
+pub mod time_util;
 #[cfg(feature = "real-network")]
 pub mod connect;
 pub mod error;

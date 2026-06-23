@@ -7,7 +7,7 @@
 //! `OnboardError::Lifecycle { state }` field, so we centralize
 //! the conversion here.
 
-use octo_adapter_telegram_mtproto::{AdapterLifecycle, MtprotoTelegramAdapter, MtprotoTelegramClient};
+use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClient};
 
 /// Best-effort human-readable name of the adapter's current
 /// lifecycle state.
@@ -33,13 +33,11 @@ pub fn auth_state_name<C: MtprotoTelegramClient>(adapter: &MtprotoTelegramAdapte
     adapter.lifecycle().state().state_name().to_string()
 }
 
-#[allow(dead_code)]
-fn _lifecycle_marker(_: AdapterLifecycle) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_helpers::mock_adapter_for_test;
+    use octo_adapter_telegram_mtproto::AdapterLifecycle;
     use tempfile::tempdir;
 
     // Smoke test: build a real mock adapter and confirm the

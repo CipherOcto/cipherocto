@@ -16,17 +16,17 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClient};
-use tokio::sync::oneshot;
 use tracing::{debug, info};
 
 use crate::adapter_error;
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
-use crate::output::{OnboardMode, OnboardOutput};
+use crate::output::{validate_username, OnboardMode, OnboardOutput};
 use crate::session::SessionRecord;
+use crate::time_util::unix_now_secs;
 
 /// Validates a bot token shape. Telegram bot tokens are
 /// `<bot_id>:<47-ish random chars>` (e.g.
@@ -197,7 +197,10 @@ where
         schema_version: OnboardOutput::SCHEMA_VERSION,
         mode: OnboardMode::BotToken,
         self_id: identity.user_id,
-        self_username: identity.username.clone(),
+        // R2-PROTO-14: strip control chars and look-alike
+        // unicode codepoints from the username before
+        // embedding it in the JSON output.
+        self_username: validate_username(identity.username.clone()),
         is_bot: true,
         data_dir: data_dir.display().to_string(),
         config_path: config_path.display().to_string(),
@@ -210,24 +213,6 @@ where
     );
     Ok((output, config_path))
 }
-
-fn unix_now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-// `oneshot` is re-exported here for callers that want to wire
-// the bot_token flow into a custom runtime.
-#[allow(dead_code)]
-fn _ensure_oneshot_in_scope() -> oneshot::Sender<()> {
-    let (tx, _rx) = oneshot::channel();
-    tx
-}
-
-#[allow(dead_code)]
-const _DURATION_TYPECHECK: Duration = Duration::from_secs(0);
 
 #[cfg(test)]
 mod tests {

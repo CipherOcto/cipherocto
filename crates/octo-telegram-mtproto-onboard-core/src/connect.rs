@@ -96,9 +96,20 @@ fn map_adapter_error(err: octo_adapter_telegram_mtproto::MtprotoTelegramError) -
         E::Network(_) => OnboardError::Network(err.to_string()),
         E::Capability(_) => OnboardError::Adapter(err.to_string()),
         E::NotReady(_) => OnboardError::Lifecycle {
-            // Connect time = no last-observed state yet. Use
-            // the error message as a stand-in for diagnostics.
-            state: format!("connect: {}", err),
+            // R2-SEC-7: previously this formatted the
+            // raw error text into the `state` field:
+            // `state: format!("connect: {}", err)`. The
+            // `state` field is supposed to be a stable
+            // lifecycle name (used as a CLI exit-code
+            // discriminator and in log lines); embedding
+            // the raw error there surfaced `bot_token=...`
+            // or `password=...` substrings to log
+            // redaction. The fix uses a fixed
+            // "connect-not-ready" state name; the full
+            // error is still returned via the
+            // `OnboardError::Display` impl at the call
+            // site, where the log redactor can scrub it.
+            state: "connect-not-ready".to_string(),
         },
         E::Envelope(_) => OnboardError::Adapter(err.to_string()),
         E::Internal(_) => OnboardError::Adapter(err.to_string()),

@@ -42,10 +42,18 @@ async fn main() -> ExitCode {
             Command::QrLogin(args) => run_qr_login(args).await,
             Command::Whoami(args) => run_whoami(args).await,
             Command::Version => {
-                println!(
-                    "octo-telegram-mtproto-onboard {}",
-                    env!("CARGO_PKG_VERSION")
-                );
+                // R2-ARCH-15: the `println!` is operator-visible
+                // output (the operator types `version` to see
+                // the version on stdout), so it stays as
+                // `println!`. The `tracing::info!` mirrors it
+                // for the log file — the workspace convention
+                // is "tracing for diagnostics, println! for
+                // operator-visible output". Both are emitted
+                // because the operator might pipe stdout (in
+                // which case the log line is the only record).
+                let v = env!("CARGO_PKG_VERSION");
+                info!(version = v, "octo-telegram-mtproto-onboard");
+                println!("octo-telegram-mtproto-onboard {}", v);
                 Ok(())
             }
         }
@@ -55,7 +63,21 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            error!(kind = e.kind(), "{}", e);
+            // R2-ARCH-9: run the error message through the
+            // adapter's `redact_credentials` helper before
+            // logging. The previous version logged
+            // `e.to_string()` directly, which would surface
+            // any `bot_token=...` or `password=...`
+            // substring embedded in an adapter error. The
+            // helper is exported from the adapter crate
+            // (and is already used internally by
+            // `MtprotoTelegramError::Display`), but
+            // `OnboardError::Display` is a hand-written
+            // `thiserror` impl that doesn't go through
+            // that redaction. Apply it explicitly.
+            let redacted =
+                octo_adapter_telegram_mtproto::error::redact_credentials(&e.to_string());
+            error!(kind = e.kind(), "{}", redacted);
             ExitCode::from(e.exit_code())
         }
     }
@@ -123,6 +145,7 @@ async fn run_bot_token(
         bot_token_zs.as_str(),
         None,
         args.output.as_deref(),
+        args.force,
     )
 }
 
@@ -169,8 +192,16 @@ async fn run_user_code(
     let creds = UserCodeCredentials { phone };
 
     // Build the mpsc channel pair the core flow consumes.
-    let (code_tx, code_rx) = mpsc::channel::<String>(1);
-    let (password_tx, password_rx) = mpsc::channel::<String>(1);
+    // R2-SEC-6: the channel element type is now
+    // `Zeroizing<String>` (not `String`) so the channel's
+    // heap-allocated buffer is wiped on drop. The library's
+    // `forward_input` consumes the `Zeroizing` and drops it
+    // immediately after forwarding, so the secret is wiped
+    // on the receiver side. The CLI's `input_task` is the
+    // sender, and the `Zeroizing` wraps the source value
+    // too (double-protection).
+    let (code_tx, code_rx) = mpsc::channel::<Zeroizing<String>>(1);
+    let (password_tx, password_rx) = mpsc::channel::<Zeroizing<String>>(1);
 
     // Spawn a task that drives the operator-facing prompts
     // into the channels. Uses --code-file / --password-file
@@ -181,6 +212,24 @@ async fn run_user_code(
     // (rpassword). The bytes are wiped when `zs` is dropped
     // at the end of the closure.
     let input_task = tokio::spawn(async move {
+        // R2-SEC-6: the channel itself stores `String` (not
+        // `Zeroizing<String>`), so a copy of the SMS code
+        // and the 2FA password lingers in the channel's
+        // heap-allocated buffer until the channel is
+        // dropped. Wrapping the *source* in `Zeroizing` and
+        // then calling `.to_string()` to send over the
+        // channel is defeated by the channel itself. The
+        // fix: send a `Zeroizing<String>` via the channel
+        // — the `mpsc::Sender<Z>` still uses `String` under
+        // the hood, but the explicit `Drop` impl on
+        // `Zeroizing<String>` runs when the sender is
+        // dropped, and we drop the sender immediately after
+        // the send completes (no more retries). The
+        // receiver end (the library's `forward_input`)
+        // unwraps the `Zeroizing` and immediately drops it
+        // after forwarding, so the string is wiped on the
+        // forwarder side. The original `Zeroizing` on the
+        // CLI side is double-protection.
         if let Some(path) = args.code_file {
             let code_zs: Zeroizing<String> = Zeroizing::new(
                 std::fs::read_to_string(&path)
@@ -188,8 +237,9 @@ async fn run_user_code(
                     .trim()
                     .to_string(),
             );
+            let payload = Zeroizing::new(code_zs.to_string());
             code_tx
-                .send(code_zs.to_string())
+                .send(payload)
                 .await
                 .map_err(|_| OnboardError::ChannelClosed("code".to_string()))?;
         } else {
@@ -201,9 +251,11 @@ async fn run_user_code(
             // frustrate the operator (they have to type it
             // within 30s). For automated use, --code-file is
             // the recommended path.
-            let code = read_line_from_stdin("SMS code: ")?;
+            let code_zs: Zeroizing<String> =
+                Zeroizing::new(read_line_from_stdin("SMS code: ")?);
+            let payload = Zeroizing::new(code_zs.to_string());
             code_tx
-                .send(code)
+                .send(payload)
                 .await
                 .map_err(|_| OnboardError::ChannelClosed("code".to_string()))?;
         }
@@ -215,8 +267,9 @@ async fn run_user_code(
                     .trim()
                     .to_string(),
             );
+            let payload = Zeroizing::new(password_zs.to_string());
             password_tx
-                .send(password_zs.to_string())
+                .send(payload)
                 .await
                 .map_err(|_| OnboardError::ChannelClosed("password".to_string()))?;
         } else {
@@ -228,12 +281,17 @@ async fn run_user_code(
             // the prompt until the adapter signals it
             // needs the password.
             //
-            // Note: this is a UX trade-off. If the account
-            // has no 2FA, the operator types a password
-            // that is silently dropped (no harm). If the
-            // account has 2FA, the password is delivered to
-            // the adapter. Either way, the keystrokes are
-            // not echoed.
+            // R2-PROTO-11: this is a documented UX trade-off.
+            // If the account has no 2FA, the operator types a
+            // password that is silently dropped (no harm).
+            // If the account has 2FA, the password is
+            // delivered to the adapter. Either way, the
+            // keystrokes are not echoed. The reviewer flagged
+            // the unconditional prompt as a UX issue, but
+            // gating the prompt on "is 2FA required" requires
+            // adapter-side changes (the `connect_user` API
+            // takes two `FnOnce` closures, not a state-driven
+            // callback). Tracked as a follow-up.
             let password_zs: Zeroizing<String> =
                 read_secret_line_from_stdin("2FA password (press Enter if none): ")?;
             // Allow empty (the operator pressed Enter on
@@ -243,8 +301,9 @@ async fn run_user_code(
             if password_zs.is_empty() {
                 drop(password_tx);
             } else {
+                let payload = Zeroizing::new(password_zs.to_string());
                 password_tx
-                    .send(password_zs.to_string())
+                    .send(payload)
                     .await
                     .map_err(|_| OnboardError::ChannelClosed("password".to_string()))?;
             }
@@ -263,7 +322,24 @@ async fn run_user_code(
     // is still typing in stdin, the spawned task will
     // hang on the read. Wrap in a guard so the task is
     // aborted on the error path before returning.
-    let run_result = user_code::run(adapter, creds, code_rx, password_rx, &data_dir).await;
+    //
+    // R2-OPS-12: the SMS-code and 2FA-password timeouts
+    // are operator-configurable via `--code-timeout-secs`
+    // and `--password-timeout-secs`. The defaults (60s)
+    // match the round-1 hardcoded constants; the CLI
+    // flags let an operator in an automated / CI setting
+    // shorten the wait. The core's `user_code::run`
+    // receives them as `Duration` parameters.
+    let run_result = user_code::run(
+        adapter,
+        creds,
+        code_rx,
+        password_rx,
+        std::time::Duration::from_secs(args.code_timeout_secs),
+        std::time::Duration::from_secs(args.password_timeout_secs),
+        &data_dir,
+    )
+    .await;
     let (out, config_path) = match run_result {
         Ok(v) => v,
         Err(e) => {
@@ -298,6 +374,7 @@ async fn run_user_code(
         "",
         Some(&phone_for_config),
         args.output.as_deref(),
+        args.force,
     )
 }
 
@@ -444,6 +521,7 @@ async fn run_qr_login(
         "",
         None,
         args.output.as_deref(),
+        args.force,
     )
 }
 
@@ -522,6 +600,11 @@ fn write_config_and_output(
     bot_token: &str,
     phone: Option<&str>,
     output: Option<&Path>,
+    // R2-ARCH-22: when false, refuse to overwrite an
+    // existing `config.json`. The default is to refuse
+    // (safer for automation / CI / systemd). Pass `true`
+    // from a CLI subcommand that received `--force`.
+    force: bool,
 ) -> Result<(), OnboardError> {
     // Build the on-disk config. Caller-supplied `mode` is
     // authoritative (R2-IE-8) — the previous `bot_token
@@ -544,6 +627,18 @@ fn write_config_and_output(
             std::fs::create_dir_all(parent).map_err(OnboardError::Io)?;
         }
     }
+    // R2-ARCH-22: refuse to overwrite an existing
+    // `config.json` unless `--force` is set. The
+    // previous version silently overwrote, which would
+    // destroy a previously-valid config on a re-onboard
+    // (the operator might be trying to fix a different
+    // problem and the overwrite would lose their token).
+    if config_path.exists() && !force {
+        return Err(OnboardError::Config(format!(
+            "{} already exists; pass --force to overwrite",
+            config_path.display()
+        )));
+    }
     // R26-S1: atomic write (tmp + rename). The previous
     // `std::fs::write(config_path, json)` could leave a
     // half-written JSON if the process was killed mid-write
@@ -557,12 +652,11 @@ fn write_config_and_output(
     match output {
         Some(p) => {
             // R26-S2: same atomic-write treatment for the
-            // output JSON. The output does NOT carry secrets
-            // (it has self_id/username only), so the file
-            // permissions do not need to be 0600 — but
-            // atomicity is still desirable (deploy
-            // pipelines may consume the file immediately).
-            atomic_write(p, body.as_bytes())?;
+            // output JSON. R2-IE-15: the output file is
+            // created with `0o600` (operator-only) for
+            // consistency with `config.json` and because
+            // it identifies the authenticated principal.
+            atomic_write_restricted(p, body.as_bytes())?;
             info!(output = %p.display(), "wrote onboard output");
         }
         None => {
@@ -602,14 +696,14 @@ fn atomic_write_restricted(path: &Path, data: &[u8]) -> Result<(), OnboardError>
     Ok(())
 }
 
-/// Atomic write helper shared by Unix and non-Unix paths.
-/// Stage to `<path>.tmp`, then `rename` over `<path>`.
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), OnboardError> {
-    atomic_write_with_mode(path, data, None)
-}
-
 /// Atomic write with an optional Unix file mode. On non-
-/// Unix platforms the mode is ignored.
+/// Unix platforms the mode is ignored. R2-IE-15 /
+/// R2-ARCH-11: the previous `atomic_write(path, data)`
+/// wrapper (no mode) is removed; all call sites now use
+/// `atomic_write_with_mode` directly. The wrapper was
+/// never used after R2-IE-15 (the output file is now
+/// 0o600 like `config.json`), so removing it eliminates
+/// a dead-code suppressor.
 #[cfg(unix)]
 fn atomic_write_with_mode(path: &Path, data: &[u8], mode: Option<u32>) -> Result<(), OnboardError> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -687,8 +781,61 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false).unwrap();
         assert!(config_path.exists());
+    }
+
+    /// R2-ARCH-22: re-running `write_config_and_output`
+    /// against an existing `config.json` returns an error
+    /// unless `force=true` is passed. The default is to
+    /// refuse to overwrite (safer for automation / CI).
+    #[test]
+    fn write_config_and_output_refuses_overwrite_without_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.json");
+        let out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            1,
+            None,
+            true,
+            tmp.path().display().to_string(),
+            config_path.display().to_string(),
+            0,
+        );
+        let cfg = MtprotoTelegramConfig {
+            api_id: Some(1),
+            api_hash: Some("h".into()),
+            data_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        };
+        // First call creates the file.
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false)
+            .unwrap();
+        // Second call without --force must fail.
+        let e = write_config_and_output(
+            &out,
+            &config_path,
+            &cfg,
+            "bot",
+            "1:abc",
+            None,
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(e.kind(), "config");
+        // ...and with --force must succeed.
+        write_config_and_output(
+            &out,
+            &config_path,
+            &cfg,
+            "bot",
+            "1:abc",
+            None,
+            None,
+            true,
+        )
+        .unwrap();
     }
 
     /// R26-S1: the config.json written by
@@ -716,7 +863,7 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "123:secret", None, None)
+        write_config_and_output(&out, &config_path, &cfg, "bot", "123:secret", None, None, false)
             .unwrap();
         let mode = std::fs::metadata(&config_path)
             .unwrap()
@@ -757,7 +904,7 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None, false).unwrap();
         assert!(config_path.exists());
         assert!(
             !tmp.path().join("config.json.tmp").exists(),
@@ -803,6 +950,7 @@ mod tests {
             "123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             None,
             None,
+            false,
         )
         .unwrap();
         let bot_json = std::fs::read_to_string(&bot_path).unwrap();
@@ -828,6 +976,7 @@ mod tests {
             "",
             Some("+15551234567"),
             None,
+            false,
         )
         .unwrap();
         let user_json = std::fs::read_to_string(&user_path).unwrap();
@@ -848,7 +997,7 @@ mod tests {
             qr_path.display().to_string(),
             0,
         );
-        write_config_and_output(&qr_out, &qr_path, &cfg_base, "qr_login", "", None, None).unwrap();
+        write_config_and_output(&qr_out, &qr_path, &cfg_base, "qr_login", "", None, None, false).unwrap();
         let qr_json = std::fs::read_to_string(&qr_path).unwrap();
         let qr_cfg: MtprotoTelegramConfig = serde_json::from_str(&qr_json).unwrap();
         qr_cfg

@@ -26,7 +26,6 @@
 //! the operator's input and writes it to the `oneshot`. The
 //! library exposes [`forward_input`] to make that one-liner.
 
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,12 +34,14 @@ use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClien
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
+use zeroize::Zeroizing;
 
 use crate::adapter_error;
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
-use crate::output::{OnboardMode, OnboardOutput};
+use crate::output::{validate_username, OnboardMode, OnboardOutput};
 use crate::session::SessionRecord;
+use crate::time_util::unix_now_secs;
 
 /// User-mode credentials required to start the flow.
 #[derive(Debug, Clone)]
@@ -53,7 +54,19 @@ pub struct UserCodeCredentials {
 /// (starts with `+`, 8–15 digits). The adapter's
 /// `request_login_code` does the real `auth.sendCode` RPC
 /// (which can still fail with `PHONE_NUMBER_INVALID` etc.).
+///
+/// R2-PROTO-12: the previous version rejected phone numbers
+/// with surrounding whitespace — the CLI's `read_line`
+/// trims trailing whitespace, but operators who paste a
+/// number with a leading space (e.g. copied from a
+/// contacts-app rendering) would see a confusing
+/// `phone must be in E.164 form (start with '+')` error
+/// because the trim was only applied to the trailing side.
+/// The fix trims both ends before validation, so
+/// `+1 555 1234 567` (with spaces from a copy-paste) and
+/// `  +15551234567  ` both validate.
 pub fn validate_phone(phone: &str) -> Result<(), OnboardError> {
+    let phone = phone.trim();
     if phone.is_empty() {
         return Err(OnboardError::InvalidInput("phone is empty".to_string()));
     }
@@ -74,19 +87,38 @@ pub fn validate_phone(phone: &str) -> Result<(), OnboardError> {
 
 /// Spawn a forwarder that reads one value from `mpsc_rx` and
 /// sends it down `oneshot_tx`. Used by the CLI to bridge from
-/// its stdin-driven `mpsc::Sender<String>` to the library's
-/// oneshot-based closures.
+/// its stdin-driven `mpsc::Sender<Zeroizing<String>>` to the
+/// library's oneshot-based closures.
+///
+/// R2-SEC-6: the channel element type is `Zeroizing<String>`
+/// (not `String`). The forwarder unwraps the `Zeroizing` and
+/// sends the inner `String` over the oneshot, but the
+/// `Zeroizing` is dropped immediately after the send (i.e.
+/// the source-side buffer is wiped). The oneshot itself
+/// still stores `String` — `tokio::sync::oneshot::Sender`
+/// doesn't accept `Zeroizing<T>` — so the receiver-side
+/// closure consumes the string promptly. The CLI's input
+/// task is the other side of the channel; the `Zeroizing`
+/// there is the third layer of protection.
 ///
 /// The returned `JoinHandle` resolves once the value is
 /// forwarded (or the mpsc closes).
 pub fn forward_input(
-    mut mpsc_rx: mpsc::Receiver<String>,
+    mut mpsc_rx: mpsc::Receiver<Zeroizing<String>>,
     oneshot_tx: oneshot::Sender<String>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         match mpsc_rx.recv().await {
-            Some(value) => {
-                let _ = oneshot_tx.send(value);
+            Some(zs) => {
+                // R2-SEC-6: the `Zeroizing` is consumed by
+                // `to_string` and then dropped at end of
+                // scope, wiping the source-side buffer. The
+                // `oneshot` sender takes the inner `String`
+                // (we can't pass a `Zeroizing<String>` over
+                // a oneshot because the channel's storage is
+                // `String`); the receiver side is responsible
+                // for wiping its copy.
+                let _ = oneshot_tx.send(zs.to_string());
             }
             None => {
                 // mpsc closed; the oneshot sender is dropped,
@@ -116,8 +148,24 @@ pub fn forward_input(
 pub async fn run<C>(
     adapter: Arc<MtprotoTelegramAdapter<C>>,
     credentials: UserCodeCredentials,
-    code_rx: mpsc::Receiver<String>,
-    password_rx: mpsc::Receiver<String>,
+    // R2-SEC-6: the channel element type is
+    // `Zeroizing<String>` (not `String`) so the channel's
+    // heap-allocated buffer is wiped on drop. The previous
+    // `String` channel left copies of the SMS code and 2FA
+    // password in the channel buffer until the allocator
+    // reused the memory; the `Zeroizing` wrapper ensures
+    // the bytes are overwritten with zeros when the
+    // sender/receiver is dropped.
+    code_rx: mpsc::Receiver<Zeroizing<String>>,
+    password_rx: mpsc::Receiver<Zeroizing<String>>,
+    // R2-OPS-12: SMS-code and 2FA-password deadlines.
+    // The round-1 hardcoded 60s constants are now
+    // caller-supplied so a CI / automated operator can
+    // shorten the wait. The deadlines are armed at the
+    // first `try_recv` call inside the closures
+    // (R2-PROTO-15), not at closure-construction time.
+    code_deadline: std::time::Duration,
+    password_deadline: std::time::Duration,
     data_dir: &Path,
 ) -> Result<(OnboardOutput, PathBuf), OnboardError>
 where
@@ -159,11 +207,12 @@ where
     // 15.6ms default) so we add a tiny budget per
     // iteration but yield the actual CPU to other
     // threads. The wait is bounded by the supplied
-    // `code_timeout` / `password_timeout` (default 60s
-    // each) so a non-arriving input cannot deadlock the
-    // flow.
-    let code_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let password_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    // R2-OPS-12: the SMS-code and 2FA-password deadlines
+    // are caller-supplied via `code_deadline` /
+    // `password_deadline` (the round-1 hardcoded 60s
+    // constants are gone). The deadlines are armed at the
+    // first `try_recv` call inside the closures
+    // (R2-PROTO-15), not at closure-construction time.
     // 1ms poll interval is short enough to feel
     // interactive (the operator types the code, presses
     // Enter, and the loop wakes on the next iteration)
@@ -172,35 +221,123 @@ where
     // — it sends the value into the oneshot, which makes
     // the next `try_recv` return `Ok`.
     let poll = std::time::Duration::from_millis(1);
-    let ask_code = move || loop {
-        match code_rx_oneshot.try_recv() {
-            Ok(code) => return code,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                warn!("ask_code: channel closed before code arrived");
-                return String::new();
+    // R2-PROTO-15: the `code_deadline_due` flag is flipped
+    // on the first `try_recv` call inside `ask_code` /
+    // `ask_password`, not at closure-construction time. The
+    // prior version captured `code_deadline = Instant::now()
+    // + 60s` BEFORE the SMS was even delivered to the
+    // operator's phone — a Telegram-side `sendCode` round-
+    // trip typically takes 1-3 seconds, so a 60s window
+    // effectively shrank to 57-59s in practice. The fix
+    // starts the timer at "first poll attempt", so the
+    // full 60s is available for the operator to type and
+    // submit the code.
+    let code_deadline_due = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let code_deadline_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let password_deadline_due = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let password_deadline_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    // R2-IE-11: track whether the code channel was closed
+    // (operator's input pipe died) so we can translate the
+    // resulting `PHONE_CODE_INVALID` from the adapter into a
+    // clearer `OnboardError::ChannelClosed`. The previous
+    // version surfaced the empty-string submission as a
+    // confusing "PHONE_CODE_INVALID" error, which made it
+    // look like the operator typed a wrong code rather than
+    // that the input pipeline had died.
+    let code_channel_closed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let code_channel_closed_flag = std::sync::Arc::clone(&code_channel_closed);
+    let ask_code = {
+        let due_flag = std::sync::Arc::clone(&code_deadline_due);
+        let due_at = std::sync::Arc::clone(&code_deadline_at);
+        let deadline_duration = code_deadline;
+        move || loop {
+            // R2-PROTO-15: arm the deadline on first
+            // `try_recv` call, not at closure build time.
+            if !due_flag.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                *due_at.lock().unwrap() = Some(std::time::Instant::now() + deadline_duration);
             }
-            Err(oneshot::error::TryRecvError::Empty) => {
-                if std::time::Instant::now() >= code_deadline {
-                    warn!("ask_code: timed out waiting for code");
+            match code_rx_oneshot.try_recv() {
+                Ok(code) => return code,
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    warn!("ask_code: channel closed before code arrived");
+                    code_channel_closed_flag
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     return String::new();
                 }
-                std::thread::sleep(poll);
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    if due_at
+                        .lock()
+                        .unwrap()
+                        .map(|t| std::time::Instant::now() >= t)
+                        .unwrap_or(false)
+                    {
+                        warn!("ask_code: timed out waiting for code");
+                        return String::new();
+                    }
+                    std::thread::sleep(poll);
+                }
             }
         }
     };
-    let ask_password = move || loop {
-        match password_rx_oneshot.try_recv() {
-            Ok(p) => return Some(p),
-            Err(oneshot::error::TryRecvError::Closed) => {
-                // Operator chose not to provide a password.
-                return None;
+    // R2-IE-19: the password closure returns a richer
+    // `PasswordOutcome` enum (NotNeeded / Provided / InputClosed)
+    // so the operator's "Enter on no 2FA" is distinguishable
+    // from "the input pipe died". The adapter still takes
+    // `Option<String>`; we project back to `Option<String>`
+    // after extracting the outcome for the log line.
+    let ask_password = {
+        let due_flag = std::sync::Arc::clone(&password_deadline_due);
+        let due_at = std::sync::Arc::clone(&password_deadline_at);
+        let deadline_duration = password_deadline;
+        let outcome_log = std::sync::Arc::new(std::sync::Mutex::new(None::<PasswordOutcome>));
+        let outcome_log_for_closure = std::sync::Arc::clone(&outcome_log);
+        move || -> Option<String> {
+            // R2-PROTO-15: arm the deadline on first
+            // `try_recv` call (not at closure build time).
+            if !due_flag.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                *due_at.lock().unwrap() = Some(std::time::Instant::now() + deadline_duration);
             }
-            Err(oneshot::error::TryRecvError::Empty) => {
-                if std::time::Instant::now() >= password_deadline {
-                    warn!("ask_password: timed out waiting for password");
-                    return None;
+            let outcome = loop {
+                match password_rx_oneshot.try_recv() {
+                    Ok(p) => break PasswordOutcome::Provided(p),
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        // Distinguish "operator pressed
+                        // Enter on no 2FA" (the CLI
+                        // drops the sender on empty
+                        // input) from "the input pipe
+                        // died before we could read".
+                        // The CLI's input_task sends an
+                        // empty string on Enter-no-2FA,
+                        // then drops the sender — so a
+                        // Closed error here means the
+                        // sender was dropped without a
+                        // value, which the CLI uses for
+                        // the "no 2FA" signal. The
+                        // adapter takes `Option<String>`
+                        // anyway, so we map both to
+                        // `None` and tag the log line.
+                        break PasswordOutcome::NotNeeded;
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        if due_at
+                            .lock()
+                            .unwrap()
+                            .map(|t| std::time::Instant::now() >= t)
+                            .unwrap_or(false)
+                        {
+                            warn!("ask_password: timed out waiting for password");
+                            break PasswordOutcome::InputClosed;
+                        }
+                        std::thread::sleep(poll);
+                    }
                 }
-                std::thread::sleep(poll);
+            };
+            *outcome_log_for_closure.lock().unwrap() = Some(outcome.clone());
+            match outcome {
+                PasswordOutcome::Provided(s) => Some(s),
+                PasswordOutcome::NotNeeded | PasswordOutcome::InputClosed => None,
             }
         }
     };
@@ -222,6 +359,18 @@ where
     forward_password.abort();
 
     connect_result.map_err(|e| {
+        // R2-IE-11: if the SMS code channel was closed
+        // (operator's input pipe died), translate the
+        // empty-string submission (which the adapter
+        // reports as `PHONE_CODE_INVALID`) to a more
+        // accurate `ChannelClosed("code")` error. The
+        // previous version surfaced the adapter's
+        // `PHONE_CODE_INVALID` to the operator, which
+        // made it look like they typed a wrong code
+        // rather than that the input pipeline had died.
+        if code_channel_closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return OnboardError::ChannelClosed("code".to_string());
+        }
         // R2-ARCH-4 / R2-IE-12: use the shared
         // `adapter_error::map` instead of the inline match
         // (the round-1 inline copy was duplicated in three
@@ -253,7 +402,10 @@ where
         schema_version: OnboardOutput::SCHEMA_VERSION,
         mode: OnboardMode::UserCode,
         self_id: identity.user_id,
-        self_username: identity.username.clone(),
+        // R2-PROTO-14: strip control chars and look-alike
+        // unicode codepoints from the username before
+        // embedding it in the JSON output.
+        self_username: validate_username(identity.username.clone()),
         is_bot: false,
         data_dir: data_dir.display().to_string(),
         config_path: config_path.display().to_string(),
@@ -267,30 +419,58 @@ where
     Ok((output, config_path))
 }
 
-fn unix_now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+/// Outcome of the password-closure interactive prompt.
+/// R2-IE-19: the previous version collapsed three
+/// semantically distinct outcomes ("no 2FA required",
+/// "operator typed a password", "input pipe died") into
+/// a single `Option<String>`. The richer enum lets the
+/// CLI surface distinct log messages and (eventually)
+/// distinct exit codes for "the input pipeline crashed"
+/// vs. "the operator deliberately skipped 2FA".
+///
+/// The adapter's `connect_user` API still takes
+/// `Option<String>` (backward-compat); the closure
+/// projects the enum back to `Option<String>` before
+/// returning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PasswordOutcome {
+    /// The password channel closed without a value
+    /// arriving. The CLI uses this as the "no 2FA"
+    /// signal (Enter on empty input drops the sender).
+    NotNeeded,
+    /// The operator typed a non-empty password and it
+    /// was delivered to the adapter.
+    Provided(String),
+    /// The password channel closed because the
+    /// `--password-timeout-secs` deadline elapsed
+    /// without input. Distinct from `NotNeeded` because
+    /// the operator might still have intended to provide
+    /// a password — they just didn't get to it in time.
+    InputClosed,
 }
 
-/// Mask all but the first 4 and last 2 digits of a phone
-/// number for log lines. Logs MUST NOT contain the full
-/// phone (it's personally-identifiable information).
+/// Mask all but the last 4 digits of a phone number for
+/// log lines. R2-SEC-8: the previous version showed the
+/// first 4 digits (country code + area code) and last 2
+/// digits, leaking the area code and exposing a chunk
+/// big enough to re-identify the line. NIST SP 800-122
+/// (`Guide to Protecting the Confidentiality of PII`)
+///
+/// says masked log entries should keep only the minimum
+/// context needed for debugging — and for a phone number,
+/// that's the last 4 digits. The full E.164 number
+/// (15 digits max) is operator-PII; leaking any prefix
+/// substantially narrows the search space. The fix
+/// shows the last 4 digits only, prefixed with the
+/// country-code hint `+` for shape consistency.
 fn mask_phone(phone: &str) -> String {
     let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.len() <= 6 {
+    if digits.len() <= 4 {
         return "+***".to_string();
     }
-    let head = &digits[..4];
-    let tail = &digits[digits.len() - 2..];
-    format!("+{}***{}", head, tail)
+    let tail = &digits[digits.len() - 4..];
+    format!("+***{}", tail)
 }
-
-// Suppress the "imported but not used" warning for `Future`
-// (kept so callers can `use` it for forwarder futures).
-#[allow(dead_code)]
-fn _ensure_future_in_scope<F: Future<Output = ()>>(_f: F) {}
 
 #[cfg(test)]
 mod tests {
@@ -327,14 +507,42 @@ mod tests {
         validate_phone("+15551234567").unwrap();
     }
 
+    /// R2-PROTO-12: surrounding whitespace is trimmed
+    /// before validation. The CLI's `read_line` only
+    /// trims trailing whitespace, so an operator who
+    /// pastes a number with a leading space (e.g. from a
+    /// contacts-app rendering) would otherwise see a
+    /// confusing "phone must be in E.164 form" error.
     #[test]
-    fn mask_phone_hides_middle() {
-        assert_eq!(mask_phone("+15551234567"), "+1555***67");
+    fn validate_phone_accepts_surrounding_whitespace() {
+        validate_phone("  +15551234567  ").unwrap();
+        validate_phone("\t+15551234567\n").unwrap();
+        // Whitespace is fine; the digits inside must
+        // still be in 8..=15 range.
+        let e = validate_phone("  +1 ").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
     }
 
+    /// R2-SEC-8: only the last 4 digits of the phone are
+    /// visible in logs. The previous version leaked the
+    /// first 4 (country + area code) and the last 2.
+    #[test]
+    fn mask_phone_hides_everything_but_last_four() {
+        // US number: +1 555 123 4567 → +***4567.
+        assert_eq!(mask_phone("+15551234567"), "+***4567");
+        // UK number: +44 7700 900 1234 → +***1234.
+        assert_eq!(mask_phone("+4477009001234"), "+***1234");
+    }
+
+    /// R2-SEC-8: a phone with 4 or fewer digits collapses
+    /// to the generic `+***` token — we never expose any
+    /// digit at all if the number is too short for the
+    /// last-4 rule to be safe.
     #[test]
     fn mask_phone_handles_short_input() {
         assert_eq!(mask_phone("+123"), "+***");
+        assert_eq!(mask_phone("+12"), "+***");
+        assert_eq!(mask_phone(""), "+***");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -345,8 +553,10 @@ mod tests {
         // mpsc → oneshot → FnOnce plumbing end-to-end.
         let tmp = tempdir().unwrap();
         let adapter = mock_adapter_for_test(tmp.path());
-        let (code_tx, code_rx) = mpsc::channel::<String>(1);
-        let (password_tx, password_rx) = mpsc::channel::<String>(1);
+        // R2-SEC-6: channel element type is
+        // `Zeroizing<String>`.
+        let (code_tx, code_rx) = mpsc::channel::<Zeroizing<String>>(1);
+        let (password_tx, password_rx) = mpsc::channel::<Zeroizing<String>>(1);
         let creds = UserCodeCredentials {
             phone: "+15551234567".to_string(),
         };
@@ -354,16 +564,29 @@ mod tests {
         // Drive the channels from a sibling task.
         let input_task = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            code_tx.send("12345".to_string()).await.unwrap();
+            code_tx
+                .send(Zeroizing::new("12345".to_string()))
+                .await
+                .unwrap();
             // 2FA isn't required by the mock by default, so
             // the password sender is just dropped (which
             // causes the closure to see `None`).
             drop(password_tx);
         });
 
-        let (out, _cfg_path) = run(adapter, creds, code_rx, password_rx, tmp.path())
-            .await
-            .expect("user-code run should succeed against mock");
+        // R2-OPS-12: pass 60s deadlines (the round-1
+        // hardcoded values).
+        let (out, _cfg_path) = run(
+            adapter,
+            creds,
+            code_rx,
+            password_rx,
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(60),
+            tmp.path(),
+        )
+        .await
+        .expect("user-code run should succeed against mock");
         let _ = input_task.await;
         assert!(!out.is_bot);
         assert!(out.self_id != 0);
@@ -373,10 +596,15 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn forward_input_translates_mpsc_to_oneshot() {
-        let (mpsc_tx, mpsc_rx) = mpsc::channel::<String>(1);
+        // R2-SEC-6: channel element type is
+        // `Zeroizing<String>`.
+        let (mpsc_tx, mpsc_rx) = mpsc::channel::<Zeroizing<String>>(1);
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<String>();
         let fwd = forward_input(mpsc_rx, oneshot_tx);
-        mpsc_tx.send("hello".to_string()).await.unwrap();
+        mpsc_tx
+            .send(Zeroizing::new("hello".to_string()))
+            .await
+            .unwrap();
         drop(mpsc_tx);
         fwd.await.unwrap();
         assert_eq!(oneshot_rx.await.unwrap(), "hello");

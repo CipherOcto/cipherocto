@@ -19,13 +19,8 @@ mod tests {
         // (in the core crate) so this is a smoke test.
         assert_eq!(OnboardError::InvalidInput("x".into()).exit_code(), 2);
         assert_eq!(OnboardError::Config("x".into()).exit_code(), 3);
-        assert_eq!(
-            OnboardError::NotReady {
-                last_state: "x".into()
-            }
-            .exit_code(),
-            4
-        );
+        assert_eq!(OnboardError::Lifecycle { state: "x".into() }.exit_code(), 4);
+        assert_eq!(OnboardError::NoSessionFile("x".into()).exit_code(), 4);
         assert_eq!(OnboardError::ChannelClosed("x".into()).exit_code(), 5);
         assert_eq!(OnboardError::Timeout("x".into()).exit_code(), 6);
         assert_eq!(OnboardError::TelegramApi("x".into()).exit_code(), 7);

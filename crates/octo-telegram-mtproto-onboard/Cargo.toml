@@ -30,4 +30,14 @@ rpassword = "7"
 # convention for handling secrets that need to be removed
 # from memory after use.
 zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+# IE-5 (R26): the test suite is the only consumer of
+# `tempfile` (the production binary writes to the
+# operator-supplied `--data-dir`, never to a tempdir).
+# Move to `[dev-dependencies]` to keep the prod dep
+# tree minimal. Previously `tempfile` appeared in both
+# `[dependencies]` and `[dev-dependencies]` (a
+# no-op duplicate, but a sign the file was
+# hand-edited rather than auto-generated).
 tempfile = "3"

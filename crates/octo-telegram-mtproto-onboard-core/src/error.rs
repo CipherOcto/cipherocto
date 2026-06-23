@@ -40,13 +40,31 @@ pub enum OnboardError {
 
     /// `connect_*` returned before the adapter reached `Ready`.
     /// Carries the latest observed lifecycle state for diagnostics.
-    #[error("adapter did not reach Ready (last state: {last_state})")]
-    NotReady {
+    ///
+    /// ARCH-1 (R26): the prior `NotReady` variant was reused
+    /// for both "adapter lifecycle not yet Ready" AND "no
+    /// session file" (the `whoami` reader's missing-file
+    /// case). The two are different operator-facing
+    /// conditions: the lifecycle error means the auth flow
+    /// is in progress and the operator should retry; the
+    /// no-session-file error means the operator has never
+    /// run onboarding. Split into two variants so the CLI
+    /// can render distinct remediation hints.
+    #[error("adapter did not reach Ready (last state: {state})")]
+    Lifecycle {
         /// `auth_state_name(last_observed)` so the operator can
         /// tell at a glance whether they need a code / password /
         /// QR scan.
-        last_state: String,
+        state: String,
     },
+
+    /// `SessionRecord::read_from` could not find a session file
+    /// at `<data_dir>/session.json` (or its schema is too old).
+    /// Distinct from `Lifecycle` because the operator has
+    /// never completed onboarding (vs. the lifecycle case
+    /// where onboarding is in flight).
+    #[error("no session file: {0}")]
+    NoSessionFile(String),
 
     /// SMS code / 2FA password channel closed before the
     /// `ask_code` / `ask_password` callback consumed the
@@ -92,7 +110,8 @@ impl OnboardError {
             OnboardError::Json(_) => "json",
             OnboardError::InvalidInput(_) => "invalid_input",
             OnboardError::Config(_) => "config",
-            OnboardError::NotReady { .. } => "not_ready",
+            OnboardError::Lifecycle { .. } => "lifecycle",
+            OnboardError::NoSessionFile(_) => "no_session_file",
             OnboardError::ChannelClosed(_) => "channel_closed",
             OnboardError::Timeout(_) => "timeout",
             OnboardError::TelegramApi(_) => "telegram_api",
@@ -110,7 +129,8 @@ impl OnboardError {
         match self {
             OnboardError::InvalidInput(_) => 2,
             OnboardError::Config(_) => 3,
-            OnboardError::NotReady { .. } => 4,
+            OnboardError::Lifecycle { .. } => 4,
+            OnboardError::NoSessionFile(_) => 4,
             OnboardError::ChannelClosed(_) => 5,
             OnboardError::Timeout(_) => 6,
             OnboardError::TelegramApi(_) => 7,
@@ -134,11 +154,15 @@ mod tests {
             "invalid_input"
         );
         assert_eq!(
-            OnboardError::NotReady {
-                last_state: "WaitCode".into()
+            OnboardError::Lifecycle {
+                state: "WaitCode".into()
             }
             .kind(),
-            "not_ready"
+            "lifecycle"
+        );
+        assert_eq!(
+            OnboardError::NoSessionFile("missing".into()).kind(),
+            "no_session_file"
         );
         assert_eq!(OnboardError::Config("x".into()).kind(), "config");
     }
@@ -159,5 +183,26 @@ mod tests {
         let bad: serde_json::Error = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
         let e: OnboardError = bad.into();
         assert_eq!(e.kind(), "json");
+    }
+
+    /// ARCH-1 (R26): the `Lifecycle` and `NoSessionFile`
+    /// variants are distinct so the CLI can render
+    /// mode-specific remediation hints. The shared exit
+    /// code (4) is intentional — both are "not yet
+    /// onboarded" conditions from the operator's POV, just
+    /// from different causes.
+    #[test]
+    fn lifecycle_and_no_session_share_exit_code_4() {
+        assert_eq!(
+            OnboardError::Lifecycle {
+                state: "x".into()
+            }
+            .exit_code(),
+            4
+        );
+        assert_eq!(
+            OnboardError::NoSessionFile("x".into()).exit_code(),
+            4
+        );
     }
 }

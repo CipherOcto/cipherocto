@@ -128,14 +128,18 @@ pub struct MtprotoTelegramConfig {
     pub bot_api_base_url: Option<String>,
 }
 
+// R26-ARCH-3: clippy::derivable_impls is a false positive
+// here — the `derive(Debug)` form would leak `bot_token` /
+// `api_hash` / `password` / `phone` into the Debug
+// output. We keep the manual impl and silence the lint
+// explicitly with a comment so the next contributor
+// doesn't "fix" it back to a derive.
+#[allow(clippy::derivable_impls)]
 impl std::fmt::Debug for MtprotoTelegramConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Custom Debug: redact credentials. The
         // derive(Default) form does NOT redact secrets, so
-        // we keep this manual impl. (clippy::derivable_impls
-        // is a false positive here: the derived form would
-        // leak `bot_token` / `api_hash` / `password` /
-        // `phone` into the Debug output.)
+        // we keep this manual impl.
         f.debug_struct("MtprotoTelegramConfig")
             .field("mode", &self.mode)
             .field("bot_token", &self.bot_token.as_ref().map(|_| "<redacted>"))

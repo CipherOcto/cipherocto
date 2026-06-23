@@ -228,24 +228,24 @@ where
             E::Rpc { .. } => OnboardError::TelegramApi(e.to_string()),
             E::RateLimited { .. } => OnboardError::TelegramApi(e.to_string()),
             E::Network(_) => OnboardError::Network(e.to_string()),
-            E::NotReady(_) => OnboardError::NotReady {
-                last_state: auth_state_name(&adapter),
+            E::NotReady(_) => OnboardError::Lifecycle {
+                state: auth_state_name(&adapter),
             },
             other => OnboardError::Adapter(other.to_string()),
         }
     })?;
 
     if !adapter.has_valid_session() {
-        return Err(OnboardError::NotReady {
-            last_state: auth_state_name(&adapter),
+        return Err(OnboardError::Lifecycle {
+            state: auth_state_name(&adapter),
         });
     }
 
     let identity = adapter
         .self_handle_ref()
         .get()
-        .ok_or_else(|| OnboardError::NotReady {
-            last_state: auth_state_name(&adapter),
+        .ok_or_else(|| OnboardError::Lifecycle {
+            state: auth_state_name(&adapter),
         })?;
     let elapsed = start.elapsed();
 

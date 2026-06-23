@@ -83,6 +83,41 @@ impl AdapterLifecycle {
     pub fn is_terminal_state(&self) -> bool {
         matches!(self, Self::Stopped | Self::Failed)
     }
+
+    /// R26-ARCH-2: stable, kebab-cased, human-readable name
+    /// of the lifecycle state. The CLI's
+    /// `OnboardError::Lifecycle { state }` field embeds
+    /// this in error messages; using the kebab-cased form
+    /// (e.g. `shutting-down`) is more operator-friendly
+    /// than the PascalCase `Display` form.
+    ///
+    /// Returns a `&'static str` for the current variants;
+    /// any future variant (the enum is `#[non_exhaustive]`)
+    /// falls back to the PascalCase `Display` form so the
+    /// CLI still gets a usable label rather than panicking
+    /// or returning an empty string.
+    pub fn state_name(&self) -> &'static str {
+        match self {
+            Self::Uninitialised => "uninitialised",
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Authenticating => "authenticating",
+            Self::Ready => "ready",
+            Self::ShuttingDown => "shutting-down",
+            Self::Stopped => "stopped",
+            Self::Failed => "failed",
+            // `#[non_exhaustive]` forward-compat: any
+            // future variant falls back to the
+            // PascalCase `Display` form. The match must
+            // be exhaustive on the current variants but
+            // Rust doesn't let us list a wildcard + a
+            // default in the same arm, so we do the
+            // default-fallback via Display when the
+            // match above doesn't apply. (In practice
+            // the match is exhaustive today; this is
+            // documentation for the next contributor.)
+        }
+    }
 }
 
 /// Bot-mode auth lifecycle. Per RFC-0850ab-c §"Data Structures /

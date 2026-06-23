@@ -82,24 +82,31 @@ impl SessionRecord {
     }
 
     /// Read from `<data_dir>/session.json`. Returns
-    /// `OnboardError::NotReady` (repurposed) if the file does
-    /// not exist or its schema version is unsupported.
+    /// `OnboardError::NoSessionFile` if the file does not
+    /// exist or its schema version is unsupported.
+    ///
+    /// ARCH-1/OPS-3 (R26): the prior implementation
+    /// reused `OnboardError::NotReady { last_state:
+    /// "no session file at ..." }` for this case, which
+    /// conflated "auth flow in flight" with "never
+    /// onboarded". The CLI's `whoami` mode needs the
+    /// latter to render a "no session found; run one of
+    /// bot-token / user-code / qr-login first" hint.
     pub fn read_from(data_dir: &Path) -> Result<Self, OnboardError> {
         let path = data_dir.join(SESSION_FILENAME);
         if !path.exists() {
-            return Err(OnboardError::NotReady {
-                last_state: format!("no session file at {}", path.display()),
-            });
+            return Err(OnboardError::NoSessionFile(format!(
+                "no session file at {}",
+                path.display()
+            )));
         }
         let body = std::fs::read_to_string(&path)?;
         let rec: Self = serde_json::from_str(&body)?;
         if rec.schema_version != SESSION_SCHEMA_VERSION {
-            return Err(OnboardError::NotReady {
-                last_state: format!(
-                    "session schema_version {} (expected {})",
-                    rec.schema_version, SESSION_SCHEMA_VERSION
-                ),
-            });
+            return Err(OnboardError::NoSessionFile(format!(
+                "session schema_version {} (expected {})",
+                rec.schema_version, SESSION_SCHEMA_VERSION
+            )));
         }
         Ok(rec)
     }
@@ -127,14 +134,17 @@ mod tests {
     }
 
     #[test]
-    fn read_missing_file_returns_not_ready() {
+    fn read_missing_file_returns_no_session_file() {
         let tmp = tempdir().unwrap();
         let err = SessionRecord::read_from(tmp.path()).unwrap_err();
-        assert_eq!(err.kind(), "not_ready");
+        // ARCH-1 (R26): distinct from `Lifecycle` (the
+        // "auth flow in flight" case) so the CLI can
+        // render mode-specific hints in whoami.
+        assert_eq!(err.kind(), "no_session_file");
     }
 
     #[test]
-    fn read_unsupported_schema_returns_not_ready() {
+    fn read_unsupported_schema_returns_no_session_file() {
         let tmp = tempdir().unwrap();
         std::fs::create_dir_all(tmp.path()).unwrap();
         std::fs::write(
@@ -143,7 +153,7 @@ mod tests {
         )
         .unwrap();
         let err = SessionRecord::read_from(tmp.path()).unwrap_err();
-        assert_eq!(err.kind(), "not_ready");
+        assert_eq!(err.kind(), "no_session_file");
     }
 
     #[test]

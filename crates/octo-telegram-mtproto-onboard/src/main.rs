@@ -17,9 +17,7 @@ use octo_telegram_mtproto_onboard::cli::{
 };
 use octo_telegram_mtproto_onboard::error::OnboardError;
 use octo_telegram_mtproto_onboard::logging;
-use octo_telegram_mtproto_onboard::stdin_io::{
-    read_line_from_stdin, read_secret_line_from_stdin,
-};
+use octo_telegram_mtproto_onboard::stdin_io::{read_line_from_stdin, read_secret_line_from_stdin};
 use octo_telegram_mtproto_onboard_core::bot_token;
 use octo_telegram_mtproto_onboard_core::output::OnboardOutput;
 use octo_telegram_mtproto_onboard_core::qr_login::{self as qr_flow, QrLoginPrompt};
@@ -94,8 +92,7 @@ async fn run_bot_token(
     let adapter = octo_telegram_mtproto_onboard_core::connect::connect(cfg).await?;
     // R26-S5: keep the secret in a `Zeroizing<String>` so
     // the heap bytes are wiped after the call returns.
-    let (out, config_path) =
-        bot_token::run(adapter, bot_token_zs.as_str(), &data_dir).await?;
+    let (out, config_path) = bot_token::run(adapter, bot_token_zs.as_str(), &data_dir).await?;
     // Reconstruct the on-disk config (we moved `cfg` into the
     // adapter constructor). The adapter owns its own copy,
     // but `config.json` is written independently.
@@ -294,15 +291,28 @@ async fn run_qr_login(
         timeout,
         poll_interval,
         |prompt: &QrLoginPrompt| {
+            // R26-OPS-2: the QR URL is a per-session
+            // auth credential, not a long-lived secret,
+            // but the workspace convention is "tracing
+            // for everything, no `eprintln!` /
+            // `println!` in the binary". Use `tracing`
+            // at info level so the operator can grep
+            // for the URL if needed but it doesn't
+            // pollute `--output` JSON / structured
+            // logs. The URL is the only thing an
+            // operator needs to act on (it's what the
+            // QR code encodes).
             if render_ascii {
-                eprintln!(
-                    "[qr] token refreshed; URL ({} bytes):\n  {}",
-                    prompt.token.len(),
-                    prompt.url
+                tracing::info!(
+                    url_len = prompt.url.len(),
+                    token_len = prompt.token.len(),
+                    "[qr] token refreshed; see URL in structured logs"
                 );
             } else {
-                eprintln!("[qr] scan with another device:");
-                eprintln!("     {}", prompt.url);
+                tracing::info!(
+                    url = %prompt.url,
+                    "[qr] scan with another device"
+                );
             }
         },
     )
@@ -460,11 +470,7 @@ fn atomic_write(path: &Path, data: &[u8]) -> Result<(), OnboardError> {
 /// Atomic write with an optional Unix file mode. On non-
 /// Unix platforms the mode is ignored.
 #[cfg(unix)]
-fn atomic_write_with_mode(
-    path: &Path,
-    data: &[u8],
-    mode: Option<u32>,
-) -> Result<(), OnboardError> {
+fn atomic_write_with_mode(path: &Path, data: &[u8], mode: Option<u32>) -> Result<(), OnboardError> {
     use std::os::unix::fs::OpenOptionsExt;
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let tmp = parent.join(format!(
@@ -572,7 +578,11 @@ mod tests {
             ..Default::default()
         };
         write_config_and_output(&out, &config_path, &cfg, "123:secret", None).unwrap();
-        let mode = std::fs::metadata(&config_path).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(&config_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(
             mode, 0o600,
             "config.json perms should be 0o600 (got {:#o})",

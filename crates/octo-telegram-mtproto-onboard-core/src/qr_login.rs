@@ -73,29 +73,81 @@ where
     debug!(data_dir = %data_dir.display(), "using data dir");
 
     // Step 1: ask the adapter for a QR handle.
-    let handle = adapter.connect_qr_login().await.map_err(|e| {
-        use octo_adapter_telegram_mtproto::MtprotoTelegramError as E;
-        match e {
-            E::Config(_) => OnboardError::Config(e.to_string()),
-            E::Auth(_) => OnboardError::TelegramApi(e.to_string()),
-            E::Rpc { .. } => OnboardError::TelegramApi(e.to_string()),
-            E::RateLimited { .. } => OnboardError::TelegramApi(e.to_string()),
-            E::Network(_) => OnboardError::Network(e.to_string()),
-            E::Internal(_) => OnboardError::Adapter(e.to_string()),
-            E::QrLoginHandle { .. } => {
-                // Defensive: connect_qr_login's signature
-                // says it returns QrLoginHandle on success
-                // and only QrLoginHandle-as-error in the
-                // err variant. The from_error extraction is
-                // the adapter's job; if we get an error of
-                // this shape here it's a contract violation
-                // and we surface it as a generic adapter
-                // error.
-                OnboardError::Adapter(e.to_string())
+    let handle_result = adapter.connect_qr_login().await;
+    let handle = match handle_result {
+        Ok(h) => h,
+        Err(e) => {
+            // IE-7 (R26): the adapter returns
+            // `Internal("qr_login: already authorized (session
+            // was valid; no QR needed)")` when the underlying
+            // session is already authorised (the user
+            // re-scanned while signed in, or the session was
+            // restored from disk and the DC is already
+            // connected). The adapter has already driven the
+            // lifecycle to `Ready` and populated the
+            // self-handle. Surface this as a successful flow
+            // so the operator doesn't have to re-onboard.
+            let s = e.to_string();
+            if s.contains("already authorized") {
+                if !adapter.has_valid_session() {
+                    return Err(OnboardError::Adapter(format!(
+                        "qr_login: already authorized but session is invalid: {}",
+                        s
+                    )));
+                }
+                let identity = adapter
+                    .self_handle_ref()
+                    .get()
+                    .ok_or_else(|| OnboardError::Lifecycle {
+                        state: auth_state_name(&adapter),
+                    })?;
+                let elapsed = start.elapsed();
+                let record =
+                    SessionRecord::from_identity(&identity, "qr_login", unix_now_secs());
+                let _session_path = record.write_to(data_dir)?;
+                let config_path = data_dir.join("config.json");
+                let output = OnboardOutput {
+                    schema_version: OnboardOutput::SCHEMA_VERSION,
+                    mode: OnboardMode::QrLogin,
+                    self_id: identity.user_id,
+                    self_username: identity.username.clone(),
+                    is_bot: false,
+                    data_dir: data_dir.display().to_string(),
+                    config_path: config_path.display().to_string(),
+                    elapsed_ms: elapsed.as_millis() as u64,
+                };
+                info!(
+                    user_id = identity.user_id,
+                    elapsed_ms = output.elapsed_ms,
+                    "qr-login already authorised; reusing existing session"
+                );
+                return Ok((output, config_path));
             }
-            other => OnboardError::Adapter(other.to_string()),
+            // Otherwise: map the error to the appropriate
+            // OnboardError variant.
+            use octo_adapter_telegram_mtproto::MtprotoTelegramError as E;
+            return Err(match e {
+                E::Config(_) => OnboardError::Config(s),
+                E::Auth(_) => OnboardError::TelegramApi(s),
+                E::Rpc { .. } => OnboardError::TelegramApi(s),
+                E::RateLimited { .. } => OnboardError::TelegramApi(s),
+                E::Network(_) => OnboardError::Network(s),
+                E::Internal(_) => OnboardError::Adapter(s),
+                E::QrLoginHandle { .. } => {
+                    // Defensive: connect_qr_login's signature
+                    // says it returns QrLoginHandle on success
+                    // and only QrLoginHandle-as-error in the
+                    // err variant. The from_error extraction is
+                    // the adapter's job; if we get an error of
+                    // this shape here it's a contract violation
+                    // and we surface it as a generic adapter
+                    // error.
+                    OnboardError::Adapter(s)
+                }
+                other => OnboardError::Adapter(other.to_string()),
+            });
         }
-    })?;
+    };
 
     let mut first_handle = QrLoginPrompt::from_handle(&handle);
     on_handle(&first_handle);
@@ -115,16 +167,16 @@ where
                 // adapter (see poll_qr_login). Verify and
                 // write the session record.
                 if !adapter.has_valid_session() {
-                    return Err(OnboardError::NotReady {
-                        last_state: auth_state_name(&adapter),
+                    return Err(OnboardError::Lifecycle {
+                        state: auth_state_name(&adapter),
                     });
                 }
                 let identity =
                     adapter
                         .self_handle_ref()
                         .get()
-                        .ok_or_else(|| OnboardError::NotReady {
-                            last_state: auth_state_name(&adapter),
+                        .ok_or_else(|| OnboardError::Lifecycle {
+                            state: auth_state_name(&adapter),
                         })?;
                 let elapsed = start.elapsed();
 

@@ -174,8 +174,26 @@ pub struct WhoamiArgs {
 /// does not provide a `ProjectDirs` (e.g. some test
 /// environments). Operators can override with `--data-dir`
 /// or the `TELEGRAM_DATA_DIR` env var.
+///
+/// IE-6 (R26): the prior qualifier (`"io", "cipherocto",
+/// "octo"`) collided with the workspace-level namespace
+/// used by other cipherocto tools. On Linux this resolved
+/// to `$XDG_DATA_HOME/cipherocto/octo/telegram-mtproto`,
+/// which is also the parent of any future
+/// `io.cipherocto.octo.*` app — a future "octo-admin"
+/// tool would land at `…/cipherocto/octo/admin/` and
+/// would share the same data root as the Telegram
+/// onboard tool. Use a per-app qualifier
+/// (`"io", "cipherocto", "octo-telegram-mtproto"`) so the
+/// data root is unique to this binary. The fall-back
+/// `.octo/telegram-mtproto` path remains stable so any
+/// in-the-wild deployments don't have to migrate.
 pub fn default_data_dir() -> PathBuf {
-    if let Some(d) = directories::ProjectDirs::from("io", "cipherocto", "octo") {
+    // IE-6 (R26): the third positional arg of
+    // `ProjectDirs::from` is the application name, which
+    // becomes the leaf of the data root. Pin it to a
+    // unique name to avoid collision with future tools.
+    if let Some(d) = directories::ProjectDirs::from("io", "cipherocto", "octo-telegram-mtproto") {
         return d.data_dir().join("telegram-mtproto");
     }
     PathBuf::from(".octo/telegram-mtproto")

@@ -112,7 +112,7 @@ pub fn validate_bot_token(token: &str) -> Result<(), OnboardError> {
 ///
 /// On success returns a populated `OnboardOutput` and the path
 /// to the written config JSON. On failure returns
-/// `OnboardError::NotReady` with the last-observed lifecycle
+/// `OnboardError::Lifecycle` with the last-observed lifecycle
 /// state, or a more specific variant for I/O / API errors.
 ///
 /// The function is generic over the client impl so the same
@@ -139,16 +139,16 @@ where
     }
 
     if !adapter.has_valid_session() {
-        return Err(OnboardError::NotReady {
-            last_state: auth_state_name(&adapter),
+        return Err(OnboardError::Lifecycle {
+            state: auth_state_name(&adapter),
         });
     }
 
     let identity = adapter
         .self_handle_ref()
         .get()
-        .ok_or_else(|| OnboardError::NotReady {
-            last_state: auth_state_name(&adapter),
+        .ok_or_else(|| OnboardError::Lifecycle {
+            state: auth_state_name(&adapter),
         })?;
     let elapsed = start.elapsed();
 
@@ -189,8 +189,8 @@ fn map_adapter_error(
         E::Session(_) => OnboardError::Adapter(err.to_string()),
         E::Network(_) => OnboardError::Network(err.to_string()),
         E::Capability(_) => OnboardError::Adapter(err.to_string()),
-        E::NotReady(_) => OnboardError::NotReady {
-            last_state: last_state.to_string(),
+        E::NotReady(_) => OnboardError::Lifecycle {
+            state: last_state.to_string(),
         },
         E::Envelope(_) => OnboardError::Adapter(err.to_string()),
         E::Internal(_) => OnboardError::Adapter(err.to_string()),

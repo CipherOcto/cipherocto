@@ -95,10 +95,10 @@ fn map_adapter_error(err: octo_adapter_telegram_mtproto::MtprotoTelegramError) -
         E::Session(_) => OnboardError::Adapter(err.to_string()),
         E::Network(_) => OnboardError::Network(err.to_string()),
         E::Capability(_) => OnboardError::Adapter(err.to_string()),
-        E::NotReady(_) => OnboardError::NotReady {
+        E::NotReady(_) => OnboardError::Lifecycle {
             // Connect time = no last-observed state yet. Use
             // the error message as a stand-in for diagnostics.
-            last_state: format!("connect: {}", err),
+            state: format!("connect: {}", err),
         },
         E::Envelope(_) => OnboardError::Adapter(err.to_string()),
         E::Internal(_) => OnboardError::Adapter(err.to_string()),

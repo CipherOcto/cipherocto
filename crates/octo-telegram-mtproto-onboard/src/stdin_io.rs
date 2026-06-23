@@ -61,6 +61,16 @@ pub fn read_line<R: BufRead, W: Write>(
 /// R26-S5: the returned `Zeroizing<String>` wipes the
 /// contents on drop, satisfying the cipherocto convention
 /// for sensitive byte buffers.
+///
+/// IE-4 (R26): the prior code returned
+/// `ChannelClosed("read secret: ...rpassword error
+/// message...")` on EOF, which is uninformative. Surface a
+/// dedicated "no value supplied" error so the operator
+/// knows they hit Ctrl+D / sent EOF instead of "the
+/// channel died unexpectedly". `rpassword` exposes
+/// `ErrorKind::Io` for the EOF case (the underlying
+/// `Read` returns `Ok(0)`); the upstream message includes
+/// "no password supplied" in that case, which we forward.
 pub fn read_secret_line(prompt: &str) -> Result<Zeroizing<String>, OnboardError> {
     let stderr = io::stderr();
     let cfg = rpassword::ConfigBuilder::new()
@@ -68,8 +78,23 @@ pub fn read_secret_line(prompt: &str) -> Result<Zeroizing<String>, OnboardError>
         // is not corrupted.
         .output_writer(stderr)
         .build();
-    let pwd = rpassword::prompt_password_with_config(prompt, cfg)
-        .map_err(|e| OnboardError::ChannelClosed(format!("read secret: {}", e)))?;
+    let pwd = rpassword::prompt_password_with_config(prompt, cfg).map_err(|e| {
+        // IE-4 (R26): `rpassword` returns a single
+        // `rpassword::ReadPasswordError` enum; the
+        // displayed message is the most useful signal we
+        // can forward. EOF is signalled by `ErrorKind::Io`
+        // with the underlying error containing "no
+        // password" / "stdin closed" / "UnexpectedEof"
+        // substrings.
+        let msg = e.to_string();
+        if msg.contains("no password") || msg.contains("stdin") || msg.contains("eof") {
+            OnboardError::InvalidInput(
+                "no value supplied (EOF on stdin; pass --bot-token / --password-file for non-interactive use)".to_string(),
+            )
+        } else {
+            OnboardError::ChannelClosed(format!("read secret: {}", msg))
+        }
+    })?;
     // rpassword::prompt_password_with_config returns a
     // String; wrap in Zeroizing so the heap bytes are wiped
     // when this function returns and the caller drops the

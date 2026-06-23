@@ -17,3 +17,6 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hex = "0.4"
+
+[patch."https://github.com/CipherOcto/cipherocto"]
+octo-sync = { path = "/home/mmacedoeu/_w/ai/cipherocto/octo-sync" }

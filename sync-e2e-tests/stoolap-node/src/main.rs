@@ -1,9 +1,7 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::Parser;
 use octo_sync::adapter::DatabaseSyncAdapter;
-use octo_sync::types::Lsn;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 

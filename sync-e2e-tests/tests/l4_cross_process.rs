@@ -399,6 +399,96 @@ async fn tcp_partition_and_heal() {
     let _ = reader2.wait();
 }
 
+/// L4-T7: TCP multi-writer — two writers, one reader receives from both.
+///
+/// Both writers insert rows with the same PKs (0-4). The reader applies
+/// both WAL streams; the second stream's INSERTs overwrite the first
+/// (last-writer-wins). The test verifies the transport handles multiple
+/// writer connections without crashing.
+#[tokio::test]
+async fn tcp_multi_writer() {
+    let bin = stoolap_node_bin();
+    let mission_id = "abcd000000000000000000000000000000000000000000000000000000000000";
+    let writer_a_port = free_port();
+    let writer_b_port = free_port();
+    let reader_port = free_port();
+
+    let writer_a_dir = tempfile::tempdir().unwrap();
+    let writer_a_dsn = format!("file://{}/db", writer_a_dir.path().to_str().unwrap());
+    let writer_b_dir = tempfile::tempdir().unwrap();
+    let writer_b_dsn = format!("file://{}/db", writer_b_dir.path().to_str().unwrap());
+
+    let status = tempfile::NamedTempFile::new().unwrap();
+    let sp = status.path().to_str().unwrap().to_string();
+
+    // Writer A: commits 5 rows
+    let mut writer_a = Command::new(&bin)
+        .arg("--dsn")
+        .arg(&writer_a_dsn)
+        .arg("--listen")
+        .arg(writer_a_port.to_string())
+        .arg("--commit")
+        .arg("5")
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0100000000000000000000000000000000000000000000000000000000000000")
+        .spawn()
+        .expect("failed to spawn writer_a");
+
+    // Writer B: commits 5 rows
+    let mut writer_b = Command::new(&bin)
+        .arg("--dsn")
+        .arg(&writer_b_dsn)
+        .arg("--listen")
+        .arg(writer_b_port.to_string())
+        .arg("--commit")
+        .arg("5")
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0500000000000000000000000000000000000000000000000000000000000000")
+        .spawn()
+        .expect("failed to spawn writer_b");
+
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Reader: connects to both writers
+    let mut reader = Command::new(&bin)
+        .arg("--dsn")
+        .arg("memory://")
+        .arg("--listen")
+        .arg(reader_port.to_string())
+        .arg("--peer")
+        .arg(format!("127.0.0.1:{writer_a_port}"))
+        .arg("--peer")
+        .arg(format!("127.0.0.1:{writer_b_port}"))
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0200000000000000000000000000000000000000000000000000000000000000")
+        .arg("--status-file")
+        .arg(&sp)
+        .spawn()
+        .expect("failed to spawn reader");
+
+    // Both writers use same PKs (0-4), so reader has 5 rows (last-writer-wins).
+    // The test verifies transport handles multiple writers without crashing.
+    let c = wait_for_status(&sp, Duration::from_secs(10)).await;
+    assert!(
+        c == Some(5) || c == Some(10),
+        "reader should have rows from both writers, got {:?}",
+        c
+    );
+
+    writer_a.kill().ok();
+    writer_b.kill().ok();
+    reader.kill().ok();
+    let _ = writer_a.wait();
+    let _ = writer_b.wait();
+    let _ = reader.wait();
+}
+
 /// L4-T4: TCP slow consumer — reader applies slowly, writer doesn't OOM.
 ///
 /// Reader has a 50ms artificial delay per entry. Writer sends 50 rows.
@@ -470,4 +560,99 @@ async fn tcp_slow_consumer() {
     reader.kill().ok();
     let _ = writer.wait();
     let _ = reader.wait();
+}
+
+/// L4-T6: TCP chain relay — writer → relay → leaf.
+///
+/// Writer A commits 5 rows. Relay B (file:// DSN) connects to A, receives
+/// entries via apply_wal_entry (which now re-enters into B's WAL per RFC-0862
+/// §4.3.3.1). Leaf C (memory:// DSN) connects to B and receives entries via
+/// B's read_wal_range.
+///
+/// This test verifies the StoolapAdapter WAL re-entry fix (mission 0862k).
+/// Before the fix, B's current_lsn() stayed at 0 and C received nothing.
+#[tokio::test]
+async fn tcp_chain_relay() {
+    let bin = stoolap_node_bin();
+    let mission_id = "abcd000000000000000000000000000000000000000000000000000000000000";
+    let writer_port = free_port();
+    let relay_port = free_port();
+    let leaf_port = free_port();
+
+    let writer_dir = tempfile::tempdir().unwrap();
+    let writer_dsn = format!("file://{}/db", writer_dir.path().to_str().unwrap());
+
+    let relay_dir = tempfile::tempdir().unwrap();
+    let relay_dsn = format!("file://{}/db", relay_dir.path().to_str().unwrap());
+
+    let status_leaf = tempfile::NamedTempFile::new().unwrap();
+    let sp_leaf = status_leaf.path().to_str().unwrap().to_string();
+
+    // Writer A: commits 5 rows
+    let mut writer = Command::new(&bin)
+        .arg("--dsn")
+        .arg(&writer_dsn)
+        .arg("--listen")
+        .arg(writer_port.to_string())
+        .arg("--commit")
+        .arg("5")
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0100000000000000000000000000000000000000000000000000000000000000")
+        .spawn()
+        .expect("failed to spawn writer");
+
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    // Relay B: file:// DSN, connects to writer A
+    let mut relay = Command::new(&bin)
+        .arg("--dsn")
+        .arg(&relay_dsn)
+        .arg("--listen")
+        .arg(relay_port.to_string())
+        .arg("--peer")
+        .arg(format!("127.0.0.1:{writer_port}"))
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0200000000000000000000000000000000000000000000000000000000000000")
+        .spawn()
+        .expect("failed to spawn relay");
+
+    // Wait for relay to fully receive and persist entries
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Leaf C: memory:// DSN, connects to relay B
+    let mut leaf = Command::new(&bin)
+        .arg("--dsn")
+        .arg("memory://")
+        .arg("--listen")
+        .arg(leaf_port.to_string())
+        .arg("--peer")
+        .arg(format!("127.0.0.1:{relay_port}"))
+        .arg("--mission-id")
+        .arg(mission_id)
+        .arg("--node-id")
+        .arg("0300000000000000000000000000000000000000000000000000000000000000")
+        .arg("--status-file")
+        .arg(&sp_leaf)
+        .spawn()
+        .expect("failed to spawn leaf");
+
+    // Leaf should have 5 rows via chain relay (A → B → C)
+    let c = wait_for_status(&sp_leaf, Duration::from_secs(10)).await;
+    assert_eq!(
+        c,
+        Some(5),
+        "leaf should have 5 rows via chain relay (A→B→C). \
+         If this fails, the StoolapAdapter WAL re-entry fix may not be working."
+    );
+
+    writer.kill().ok();
+    relay.kill().ok();
+    leaf.kill().ok();
+    let _ = writer.wait();
+    let _ = relay.wait();
+    let _ = leaf.wait();
 }

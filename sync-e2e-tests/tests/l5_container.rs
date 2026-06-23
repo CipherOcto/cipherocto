@@ -434,6 +434,216 @@ async fn container_resource_limit() {
     );
 }
 
+/// L5-T6: Four-container chain — writer → r1 → r2 → r3 relay.
+#[tokio::test]
+async fn four_container_chain() {
+    if !docker_available() {
+        eprintln!("Docker not available, skipping");
+        return;
+    }
+    build_image();
+
+    let net = format!("sync-e2e-t6-{}", free_port());
+    docker_network_create(&net);
+    cleanup_containers(&["t6-writer", "t6-r1", "t6-r2", "t6-r3"]);
+
+    let writer_dir = tempfile::tempdir().unwrap();
+    let r1_dir = tempfile::tempdir().unwrap();
+    let r2_dir = tempfile::tempdir().unwrap();
+    let status_dir = tempfile::tempdir().unwrap();
+    let sh = status_dir.path().to_str().unwrap().to_string();
+    let si = format!("{}/count", sh);
+
+    // Writer: commits 5 rows
+    let mut writer = docker_run(
+        "t6-writer",
+        &net,
+        None,
+        &[
+            "--dsn",
+            &writer_dsn(&writer_dir),
+            "--listen",
+            "3333",
+            "--commit",
+            "5",
+        ],
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // R1: file:// DSN, connects to writer
+    let mut r1 = docker_run(
+        "t6-r1",
+        &net,
+        None,
+        &[
+            "--dsn",
+            &writer_dsn(&r1_dir),
+            "--listen",
+            "3333",
+            "--peer",
+            "t6-writer:3333",
+        ],
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // R2: file:// DSN, connects to r1
+    let mut r2 = docker_run(
+        "t6-r2",
+        &net,
+        None,
+        &[
+            "--dsn",
+            &writer_dsn(&r2_dir),
+            "--listen",
+            "3333",
+            "--peer",
+            "t6-r1:3333",
+        ],
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // R3: memory:// DSN, connects to r2 (leaf)
+    let mut r3 = docker_run(
+        "t6-r3",
+        &net,
+        Some((&sh, "/status")),
+        &[
+            "--dsn",
+            "memory://",
+            "--listen",
+            "3333",
+            "--peer",
+            "t6-r2:3333",
+            "--status-file",
+            "/status/count",
+        ],
+    );
+
+    let count = wait_for_status(&si, Duration::from_secs(15)).await;
+
+    writer.kill().ok();
+    r1.kill().ok();
+    r2.kill().ok();
+    r3.kill().ok();
+    let _ = writer.wait();
+    let _ = r1.wait();
+    let _ = r2.wait();
+    let _ = r3.wait();
+    docker_network_rm(&net);
+
+    assert_eq!(
+        count,
+        Some(5),
+        "leaf container should have 5 rows via chain"
+    );
+}
+
+/// L5-T7: Four-container fan-out — writer, 3 readers.
+#[tokio::test]
+async fn four_container_fan_out() {
+    if !docker_available() {
+        eprintln!("Docker not available, skipping");
+        return;
+    }
+    build_image();
+
+    let net = format!("sync-e2e-t7-{}", free_port());
+    docker_network_create(&net);
+    cleanup_containers(&["t7-writer", "t7-r1", "t7-r2", "t7-r3"]);
+
+    let writer_dir = tempfile::tempdir().unwrap();
+    let status_dir1 = tempfile::tempdir().unwrap();
+    let status_dir2 = tempfile::tempdir().unwrap();
+    let status_dir3 = tempfile::tempdir().unwrap();
+    let sh1 = status_dir1.path().to_str().unwrap().to_string();
+    let sh2 = status_dir2.path().to_str().unwrap().to_string();
+    let sh3 = status_dir3.path().to_str().unwrap().to_string();
+    let si1 = format!("{}/count", sh1);
+    let si2 = format!("{}/count", sh2);
+    let si3 = format!("{}/count", sh3);
+
+    // Writer: 100 rows
+    let mut writer = docker_run(
+        "t7-writer",
+        &net,
+        None,
+        &[
+            "--dsn",
+            &writer_dsn(&writer_dir),
+            "--listen",
+            "3333",
+            "--commit",
+            "100",
+        ],
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Three readers
+    let mut r1 = docker_run(
+        "t7-r1",
+        &net,
+        Some((&sh1, "/status")),
+        &[
+            "--dsn",
+            "memory://",
+            "--listen",
+            "3333",
+            "--peer",
+            "t7-writer:3333",
+            "--status-file",
+            "/status/count",
+        ],
+    );
+    let mut r2 = docker_run(
+        "t7-r2",
+        &net,
+        Some((&sh2, "/status")),
+        &[
+            "--dsn",
+            "memory://",
+            "--listen",
+            "3333",
+            "--peer",
+            "t7-writer:3333",
+            "--status-file",
+            "/status/count",
+        ],
+    );
+    let mut r3 = docker_run(
+        "t7-r3",
+        &net,
+        Some((&sh3, "/status")),
+        &[
+            "--dsn",
+            "memory://",
+            "--listen",
+            "3333",
+            "--peer",
+            "t7-writer:3333",
+            "--status-file",
+            "/status/count",
+        ],
+    );
+
+    let c1 = wait_for_status(&si1, Duration::from_secs(10)).await;
+    let c2 = wait_for_status(&si2, Duration::from_secs(10)).await;
+    let c3 = wait_for_status(&si3, Duration::from_secs(10)).await;
+
+    writer.kill().ok();
+    r1.kill().ok();
+    r2.kill().ok();
+    r3.kill().ok();
+    let _ = writer.wait();
+    let _ = r1.wait();
+    let _ = r2.wait();
+    let _ = r3.wait();
+    docker_network_rm(&net);
+
+    assert_eq!(c1, Some(100), "reader1 should have 100 rows");
+    assert_eq!(c2, Some(100), "reader2 should have 100 rows");
+    assert_eq!(c3, Some(100), "reader3 should have 100 rows");
+}
+
 /// L5-T5: Container kill and recover — kill reader, start new reader, catch up.
 #[tokio::test]
 async fn container_kill_and_recover() {

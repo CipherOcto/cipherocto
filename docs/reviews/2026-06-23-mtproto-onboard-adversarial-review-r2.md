@@ -115,9 +115,22 @@ Round 2 was resolved in three batches:
 - **Batch B** (`a6a109a4` — "R28: shared adapter-error mapping, file-based creds, non_exhaustive, SIGINT abort"): R2-ARCH-4/R2-IE-12, R2-IE-9, R2-ARCH-5/R2-OPS-6, R2-ARCH-6/R2-ARCH-8, R2-OPS-8.
 - **Batch C** (`63202d7e` — "R29: session fsync+0o600, Zeroizing channels, --force/--timeouts, ask_code translation"): R2-OPS-9, R2-IE-20, R2-SEC-10, R2-PROTO-14, R2-PROTO-15, R2-IE-17, R2-ARCH-14, R2-IE-19, R2-SEC-8, R2-PROTO-12, R2-IE-11, R2-SEC-6, R2-ARCH-9, R2-ARCH-12, R2-ARCH-15, R2-ARCH-22, R2-ARCH-23, R2-OPS-12, R2-OPS-15, R2-IE-15, R2-ARCH-11, R2-ARCH-13, R2-SEC-7.
 
-Final test count: 31 CLI lib + 5 CLI bin + 74 core + 169 adapter = **279 tests, clippy clean**.
+Final test count (post-Batch C): 31 CLI lib + 5 CLI bin + 74 core + 169 adapter = **279 tests, clippy clean**.
+
+### Round 3 sweep (post-Batch C)
+
+A Round 3 sweep was run to catch issues introduced or missed by Batch C:
+
+- **R3-1** (`d1c195ce`): `outcome_log: Arc<Mutex<Option<PasswordOutcome>>>` in `ask_password` was write-only — never read after `connect_user` consumed the closure. Removed (1 file, 17 insertions, 19 deletions).
+- **R3-2** (`05be0efd`): `ask_code` translation of `PHONE_CODE_INVALID` → `ChannelClosed("code")` (R2-IE-11) only covered the channel-closed case, leaving the timeout case to surface as a confusing `PHONE_CODE_INVALID`. Extended to cover both via unified `code_input_failed` flag (1 file, 27 insertions, 15 deletions).
+- **R3-3** (`fbd47955`): `--timeout-secs` and `--poll-interval-secs` were documented as "must be > 0 (R2-IE-17)" but the CLI did not actually validate — a `0` was silently floored to `100ms` by the core layer with no feedback to the operator. Added CLI-layer validation via a `validate_qr_login_timing` helper, with 3 unit tests (1 file, 73 insertions).
+- **R3-4** (`e889e330`): `logging.rs` `REDACTED_FIELD_NAMES` doc comment claimed the new entries (`code`, `session_path`, `auth_string`) "appear in our tracing::info! / tracing::error! calls" but verified at sweep time that none of them do. Rewrote the comment to accurately describe the defensive intent (1 file, 15 insertions, 10 deletions).
+
+Final test count (post-Round 3): 31 CLI lib + 8 CLI bin + 74 core + 169 adapter = **282 tests, clippy clean**.
 
 Deferred (require adapter-side changes; tracked for a follow-up): R2-PROTO-4 (typed 2FA signal), R2-PROTO-5 (QR token expiry), R2-PROTO-6 (IMPORT_TOKEN_EXPIRED), R2-IE-10 (blocking closures in async — current code uses `try_recv` + `std::thread::sleep(1ms)` which is acceptable for a 60s window but is flagged as a Tokio anti-pattern).
+
+Known minor duplicate (not addressed in Round 3): `connect.rs::map_adapter_error` and `adapter_error::map` are near-duplicates; the former is used only by `connect::connect` (real-network path) and the latter is the shared helper used by all three flows. A future refactor could collapse them but would require changing `map_adapter_error`'s call site to thread a `last_state` argument.
 
 ---
 

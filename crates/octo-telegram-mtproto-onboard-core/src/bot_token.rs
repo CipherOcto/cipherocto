@@ -81,15 +81,28 @@ pub fn validate_bot_token(token: &str) -> Result<(), OnboardError> {
             id_part
         )));
     }
-    // The auth half is base64url-ish: 35 characters of
-    // `[A-Za-z0-9_-]`. We do a permissive length check
-    // (>= 30) to allow shorter test fixtures (the mock
-    // client doesn't validate the auth half at all) and
-    // to allow future Telegram-side format tweaks
-    // without a flag day.
-    if auth_part.len() < 30 {
+    // The auth half is base64url-ish: per Telegram's
+    // @BotFather format spec, the canonical form is
+    // EXACTLY 35 characters of `[A-Za-z0-9_-]`.
+    //
+    // R2-PROTO-3: round 1 accepted any length >= 30 to
+    // accommodate shorter test fixtures. That permissiveness
+    // is wrong for production: an operator who pastes a
+    // truncated token (e.g. a 32-char copy from a log
+    // snippet) survives the pre-flight check and reaches
+    // grammers, which then returns a 401 with a less
+    // actionable error. The fix tightens to exactly 35,
+    // matching the canonical @BotFather format. The mock
+    // client's `sign_in_bot` already accepts any string,
+    // so tests use 35-char auth halves to match production
+    // (the round 1 "permissive 30+" exception is removed;
+    // a fixture that wants a non-canonical token should
+    // bypass `validate_bot_token` in `cfg(test)`, not
+    // weaken the production validator).
+    if auth_part.len() != 35 {
         return Err(OnboardError::InvalidInput(format!(
-            "bot token: auth secret is too short ({} chars, expected >= 30)",
+            "bot token: auth secret must be exactly 35 chars (got {}); \
+             the canonical @BotFather format is <bot_id>:<35 chars of [A-Za-z0-9_-]>",
             auth_part.len()
         )));
     }
@@ -100,6 +113,23 @@ pub fn validate_bot_token(token: &str) -> Result<(), OnboardError> {
         return Err(OnboardError::InvalidInput(
             "bot token: auth secret must be [A-Za-z0-9_-]".to_string(),
         ));
+    }
+    // R2-PROTO-16: reject leading/trailing `_` or `-` —
+    // these are not produced by @BotFather and are a sign
+    // of an OCR / copy-paste error.
+    if let Some(first) = auth_part.bytes().next() {
+        if first == b'_' || first == b'-' {
+            return Err(OnboardError::InvalidInput(
+                "bot token: auth secret must not start with '_' or '-'".to_string(),
+            ));
+        }
+    }
+    if let Some(last) = auth_part.bytes().last() {
+        if last == b'_' || last == b'-' {
+            return Err(OnboardError::InvalidInput(
+                "bot token: auth secret must not end with '_' or '-'".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -287,10 +317,56 @@ mod tests {
 
     #[test]
     fn validate_bot_token_rejects_short_auth() {
-        // The auth half is 30+ chars of [A-Za-z0-9_-].
+        // 5 chars — far below the canonical 35.
         let e = validate_bot_token("123:short").unwrap_err();
         assert_eq!(e.kind(), "invalid_input");
-        assert!(e.to_string().contains("short") || e.to_string().contains("30"));
+        assert!(e.to_string().contains("35") || e.to_string().contains("exactly"));
+    }
+
+    /// R2-PROTO-3: round 1 accepted any length >= 30 to
+    /// accommodate shorter test fixtures. The fix tightens
+    /// to exactly 35; this test confirms 30 and 34 are now
+    /// both rejected (would have been accepted in round 1).
+    #[test]
+    fn validate_bot_token_rejects_30_char_auth() {
+        // 30 chars — would have been accepted in round 1
+        // (the round-1 validator required `>= 30`).
+        let e = validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("35"));
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_34_char_auth() {
+        // 34 chars — also would have been accepted in round
+        // 1 but is NOT canonical @BotFather.
+        let e = validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("35"));
+    }
+
+    /// R2-PROTO-16: leading / trailing `_` and `-` are
+    /// not produced by @BotFather. Reject them so an OCR
+    /// / copy-paste error doesn't survive pre-flight. (The
+    /// auth half must be exactly 35 chars AND not start
+    /// with `_`/`-`; the test uses a 35-char string whose
+    /// first character is `_`.)
+    #[test]
+    fn validate_bot_token_rejects_leading_underscore() {
+        // 35 chars: `_` + 34 `A`. Length passes; the
+        // leading-underscore check fires.
+        let e = validate_bot_token("123:_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("start"));
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_trailing_hyphen() {
+        // 35 chars: 34 `A` + `-`. Length passes; the
+        // trailing-hyphen check fires.
+        let e = validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("end"));
     }
 
     #[test]
@@ -302,13 +378,25 @@ mod tests {
 
     #[test]
     fn validate_bot_token_accepts_canonical_form() {
+        // R2-PROTO-3: the canonical form is exactly 35
+        // chars in the auth half.
         validate_bot_token("123456789:AAEhBOweik6ad9JQBxxx_xyz-test-12345").unwrap();
     }
 
     #[test]
-    fn validate_bot_token_accepts_minimum_length_auth() {
-        // 30 chars exactly at the lower bound.
-        validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+    fn validate_bot_token_accepts_exactly_35_char_auth() {
+        // 35 chars exactly — the canonical @BotFather
+        // length.
+        validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_36_char_auth() {
+        // 36 chars — one over the canonical length; would
+        // never be produced by @BotFather.
+        let e = validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("35"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -322,7 +410,7 @@ mod tests {
         let adapter = mock_adapter_for_test(tmp.path());
         let (out, _cfg_path) = run(
             adapter,
-            "999:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "999:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // 35-char auth half (R2-PROTO-3)
             tmp.path(),
         )
         .await

@@ -20,6 +20,7 @@ use octo_telegram_mtproto_onboard::logging;
 use octo_telegram_mtproto_onboard::stdin_io::{read_line_from_stdin, read_secret_line_from_stdin};
 use octo_telegram_mtproto_onboard_core::bot_token;
 use octo_telegram_mtproto_onboard_core::output::OnboardOutput;
+use octo_telegram_mtproto_onboard_core::qr_link::render_qr_link;
 use octo_telegram_mtproto_onboard_core::qr_login::{self as qr_flow, QrLoginPrompt};
 use octo_telegram_mtproto_onboard_core::session::SessionRecord;
 use octo_telegram_mtproto_onboard_core::user_code::{self, UserCodeCredentials};
@@ -102,11 +103,17 @@ async fn run_bot_token(
         data_dir: Some(data_dir),
         ..Default::default()
     };
+    // R2-IE-8: pass the on-disk `mode` ("bot") and no
+    // `phone` explicitly. Previously the helper inferred
+    // the mode from `bot_token.is_empty()` which worked
+    // for bot mode by accident.
     write_config_and_output(
         &out,
         &config_path,
         &on_disk_cfg,
+        "bot",
         bot_token_zs.as_str(),
+        None,
         args.output.as_deref(),
     )
 }
@@ -140,6 +147,12 @@ async fn run_user_code(
     // Production wiring only — no mock fallback. See
     // `octo_telegram_mtproto_onboard_core::connect`.
     let adapter = octo_telegram_mtproto_onboard_core::connect::connect(cfg).await?;
+    // R2-IE-8: keep the phone in a `String` we can still
+    // reference after `creds` is moved into
+    // `user_code::run`. The phone is the one we need to
+    // embed in `config.json` so the next adapter boot can
+    // call `request_login_code` without re-onboarding.
+    let phone_for_config = phone.clone();
     let creds = UserCodeCredentials { phone };
 
     // Build the mpsc channel pair the core flow consumes.
@@ -255,7 +268,24 @@ async fn run_user_code(
         data_dir: Some(data_dir),
         ..Default::default()
     };
-    write_config_and_output(&out, &config_path, &on_disk_cfg, "", args.output.as_deref())
+    // R2-IE-8: pass the on-disk `mode` ("user") AND the
+    // `phone` (the validator rejects user mode without a
+    // phone). The phone is the credential the operator
+    // provided earlier in this function; it has to be
+    // embedded in `config.json` so the next adapter boot
+    // has it for `request_login_code` (re-running the
+    // user-code flow is a fixable inconvenience, but
+    // missing-phone-on-disk is a hard invalid-config
+    // error).
+    write_config_and_output(
+        &out,
+        &config_path,
+        &on_disk_cfg,
+        "user",
+        "",
+        Some(&phone_for_config),
+        args.output.as_deref(),
+    )
 }
 
 // ─── qr-login ───────────────────────────────────────────────
@@ -291,29 +321,60 @@ async fn run_qr_login(
         timeout,
         poll_interval,
         |prompt: &QrLoginPrompt| {
-            // R26-OPS-2: the QR URL is a per-session
-            // auth credential, not a long-lived secret,
-            // but the workspace convention is "tracing
-            // for everything, no `eprintln!` /
-            // `println!` in the binary". Use `tracing`
-            // at info level so the operator can grep
-            // for the URL if needed but it doesn't
-            // pollute `--output` JSON / structured
-            // logs. The URL is the only thing an
-            // operator needs to act on (it's what the
-            // QR code encodes).
-            if render_ascii {
-                tracing::info!(
-                    url_len = prompt.url.len(),
-                    token_len = prompt.token.len(),
-                    "[qr] token refreshed; see URL in structured logs"
-                );
-            } else {
-                tracing::info!(
-                    url = %prompt.url,
-                    "[qr] scan with another device"
-                );
+            // R2-OPS-4 / R2-OPS-5: the QR URL IS the auth
+            // credential and MUST be visible to the operator.
+            // The round-1 implementation routed it through
+            // `tracing::info!`, which (a) sends the URL to
+            // structured logs where the redaction layer would
+            // mangle `token=...` to `token=***`, and (b)
+            // never rendered a QR code at all (the
+            // `qr2term`/`qrcode` dependency wasn't wired up).
+            //
+            // The fix: render the QR to the terminal via
+            // `eprint!` (matches the TDLib CLI's
+            // `octo-telegram-onboard/src/main.rs:318`
+            // pattern). `eprint!` is the documented
+            // exception to the "no eprintln!/println! in the
+            // binary" rule — it's direct terminal output, not
+            // a diagnostic. The QR is per-session and meant
+            // to be scanned, not redacted.
+            //
+            // `render_qr_link` (in `-core`) is unit-tested;
+            // the renderer returns a Unicode half-block QR
+            // that is terminal-friendly and scannable from a
+            // phone camera.
+            match render_qr_link(&prompt.url) {
+                Ok(rendered) => {
+                    eprint!("{rendered}");
+                    // Also emit a structured-tracing marker
+                    // for log scrapers — but never include
+                    // the URL or token in the log (the QR
+                    // is the visible form; logs only get a
+                    // length for sanity).
+                    tracing::info!(
+                        url_len = prompt.url.len(),
+                        token_len = prompt.token.len(),
+                        "qr-login: scan the QR above with another Telegram device (token rotates ~every 30s)"
+                    );
+                }
+                Err(e) => {
+                    // Fall back to printing the raw URL so
+                    // the operator can manually copy-paste
+                    // it. The URL is still a credential but
+                    // it's better than nothing.
+                    tracing::warn!(
+                        error = %e,
+                        "qr-login: failed to render QR; printing raw URL instead"
+                    );
+                    eprintln!("\n[qr] scan with another device:\n\n  {}\n", prompt.url);
+                }
             }
+            // `render_ascii` is the CLI flag — both branches
+            // render to the terminal (the QR is always ASCII
+            // / Unicode half-block). Kept for backward
+            // compat with any operator script that
+            // pattern-matches on the flag's presence.
+            let _ = render_ascii;
         },
     )
     .await?;
@@ -326,7 +387,24 @@ async fn run_qr_login(
         data_dir: Some(data_dir),
         ..Default::default()
     };
-    write_config_and_output(&out, &config_path, &on_disk_cfg, "", args.output.as_deref())
+    // R2-IE-8: pass the on-disk `mode` ("qr_login")
+    // explicitly. The QR-login flow has no bot_token
+    // and no phone; the previous code wrote
+    // `mode = "user"` (from the empty `bot_token`
+    // heuristic) with no phone, which the next boot's
+    // validator rejects. The `qr_login` arm of
+    // `MtprotoTelegramConfig::validate` accepts
+    // api_id + api_hash + data_dir (no phone) — see
+    // PROTO-1 (R26).
+    write_config_and_output(
+        &out,
+        &config_path,
+        &on_disk_cfg,
+        "qr_login",
+        "",
+        None,
+        args.output.as_deref(),
+    )
 }
 
 // ─── whoami ─────────────────────────────────────────────────
@@ -379,23 +457,44 @@ async fn run_whoami(
 /// never world-readable. R26-S2: same atomic-write
 /// treatment for the `OnboardOutput` JSON, since the operator
 /// may consume it via `--output` (e.g., a deploy pipeline).
+///
+/// R2-IE-8: pass the on-disk `mode` and the user's `phone`
+/// explicitly. The round 1 implementation inferred `mode`
+/// from `bot_token.is_empty()` (empty → `"user"`, non-empty
+/// → `"bot"`), which silently mis-classified the QR-login
+/// flow: a successful QR-login has an empty `bot_token` and
+/// so the `config.json` was written with `mode = "user"`
+/// and no `phone` field. The adapter's
+/// `MtprotoTelegramConfig::validate` rejects
+/// `mode = "user"` without a `phone` on the next boot, so
+/// the operator's freshly-onboarded session was
+/// unrecoverable. The fix takes the `mode` and `phone` as
+/// parameters from the call site (which already knows what
+/// flow it just ran).
+#[allow(clippy::too_many_arguments)]
 fn write_config_and_output(
     out: &OnboardOutput,
     config_path: &Path,
     cfg: &MtprotoTelegramConfig,
+    mode: &str,
     bot_token: &str,
+    phone: Option<&str>,
     output: Option<&Path>,
 ) -> Result<(), OnboardError> {
-    // Build the on-disk config. For user-mode we DO NOT
-    // embed the phone (the operator re-enters it on
-    // reconnect), and we DO NOT embed the SMS code (it's
-    // already spent). For bot-mode we embed the token.
+    // Build the on-disk config. Caller-supplied `mode` is
+    // authoritative (R2-IE-8) — the previous `bot_token
+    // is_empty()` heuristic was wrong for the QR-login
+    // flow. For user mode, embed the phone so the next
+    // adapter boot has enough to validate the config
+    // (`MtprotoTelegramConfig::validate` rejects
+    // `mode = "user"` without a `phone`).
     let mut on_disk = cfg.clone();
-    if !bot_token.is_empty() {
+    on_disk.mode = Some(mode.to_string());
+    if mode == "bot" && !bot_token.is_empty() {
         on_disk.bot_token = Some(bot_token.to_string());
-        on_disk.mode = Some("bot".to_string());
-    } else {
-        on_disk.mode = Some("user".to_string());
+    }
+    if let Some(p) = phone {
+        on_disk.phone = Some(p.to_string());
     }
     let json = serde_json::to_string_pretty(&on_disk).map_err(OnboardError::Json)?;
     if let Some(parent) = config_path.parent() {
@@ -547,7 +646,7 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "1:abc", None).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None).unwrap();
         assert!(config_path.exists());
     }
 
@@ -577,7 +676,8 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "123:secret", None).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "123:secret", None, None)
+            .unwrap();
         let mode = std::fs::metadata(&config_path)
             .unwrap()
             .permissions()
@@ -618,11 +718,105 @@ mod tests {
             data_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
         };
-        write_config_and_output(&out, &config_path, &cfg, "1:abc", None).unwrap();
+        write_config_and_output(&out, &config_path, &cfg, "bot", "1:abc", None, None).unwrap();
         assert!(config_path.exists());
         assert!(
             !tmp.path().join("config.json.tmp").exists(),
             "tmp file must be renamed away"
         );
+    }
+
+    /// R2-IE-8: the config.json written by each flow must
+    /// round-trip through `MtprotoTelegramConfig::validate`.
+    /// The round 1 implementation wrote `mode = "user"`
+    /// (with no phone) for the QR-login flow, which the
+    /// validator rejects on the next boot — making the
+    /// freshly-onboarded session unrecoverable. The
+    /// regression test below exercises all three flows'
+    /// `write_config_and_output` calls and asserts the
+    /// resulting config.json validates.
+    #[test]
+    fn config_round_trips_through_validator_for_all_flows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_base = MtprotoTelegramConfig {
+            api_id: Some(1),
+            api_hash: Some("h".into()),
+            data_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        // (1) bot mode
+        let bot_path = tmp.path().join("bot").join("config.json");
+        let bot_out = OnboardOutput {
+            schema_version: 1,
+            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            self_id: 1,
+            self_username: Some("bot".into()),
+            is_bot: true,
+            data_dir: tmp.path().display().to_string(),
+            config_path: bot_path.display().to_string(),
+            elapsed_ms: 0,
+        };
+        write_config_and_output(
+            &bot_out,
+            &bot_path,
+            &cfg_base,
+            "bot",
+            "123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            None,
+            None,
+        )
+        .unwrap();
+        let bot_json = std::fs::read_to_string(&bot_path).unwrap();
+        let bot_cfg: MtprotoTelegramConfig = serde_json::from_str(&bot_json).unwrap();
+        bot_cfg.validate().expect("bot config must validate");
+
+        // (2) user mode (R2-IE-8: phone is embedded)
+        let user_path = tmp.path().join("user").join("config.json");
+        let user_out = OnboardOutput {
+            schema_version: 1,
+            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::UserCode,
+            self_id: 2,
+            self_username: Some("user".into()),
+            is_bot: false,
+            data_dir: tmp.path().display().to_string(),
+            config_path: user_path.display().to_string(),
+            elapsed_ms: 0,
+        };
+        write_config_and_output(
+            &user_out,
+            &user_path,
+            &cfg_base,
+            "user",
+            "",
+            Some("+15551234567"),
+            None,
+        )
+        .unwrap();
+        let user_json = std::fs::read_to_string(&user_path).unwrap();
+        let user_cfg: MtprotoTelegramConfig = serde_json::from_str(&user_json).unwrap();
+        user_cfg
+            .validate()
+            .expect("user config must validate (R2-IE-8)");
+
+        // (3) qr_login mode (R2-IE-8: mode is "qr_login",
+        //     no phone required)
+        let qr_path = tmp.path().join("qr").join("config.json");
+        let qr_out = OnboardOutput {
+            schema_version: 1,
+            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::QrLogin,
+            self_id: 3,
+            self_username: Some("qr".into()),
+            is_bot: false,
+            data_dir: tmp.path().display().to_string(),
+            config_path: qr_path.display().to_string(),
+            elapsed_ms: 0,
+        };
+        write_config_and_output(&qr_out, &qr_path, &cfg_base, "qr_login", "", None, None).unwrap();
+        let qr_json = std::fs::read_to_string(&qr_path).unwrap();
+        let qr_cfg: MtprotoTelegramConfig = serde_json::from_str(&qr_json).unwrap();
+        qr_cfg
+            .validate()
+            .expect("qr_login config must validate (R2-IE-8)");
     }
 }

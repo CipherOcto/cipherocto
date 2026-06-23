@@ -31,6 +31,7 @@ pub mod bot_token;
 pub mod connect;
 pub mod error;
 pub mod output;
+pub mod qr_link;
 pub mod qr_login;
 pub mod session;
 pub mod user_code;

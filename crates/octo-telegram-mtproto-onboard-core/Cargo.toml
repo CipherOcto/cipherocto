@@ -46,6 +46,16 @@ thiserror = { workspace = true }
 parking_lot = { workspace = true }
 directories = "6"
 tempfile = "3"
+# R2-OPS-4: render the QR login URL as a Unicode half-block
+# QR code on the terminal. Mirrors the TDLib CLI's
+# `octo-telegram-onboard-core::qr_link::render_qr_link` —
+# same `qrcode::render::unicode::Dense1x2` renderer for
+# consistent visual style across the two onboard CLIs. The
+# TDLib version's renderer lives in `-core` because the
+# library exposes a tested `render_qr_link` function; we
+# follow the same shape so the QR rendering is unit-tested
+# (not just CLI smoke-tested).
+qrcode = "0.14"
 
 [dev-dependencies]
 tokio = { workspace = true }

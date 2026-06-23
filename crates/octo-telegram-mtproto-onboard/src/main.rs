@@ -403,6 +403,21 @@ async fn run_qr_login(
     // arm matches.
     cfg.mode = Some("qr_login".to_string());
     cfg.validate().map_err(OnboardError::Config)?;
+    // R3-3: validate `--timeout-secs > 0` and
+    // `--poll-interval-secs > 0` at the CLI layer. The
+    // round-2 review (R2-IE-17) help text claimed "the
+    // CLI's `cli.rs` already rejects `--poll-interval-secs
+    // 0`", but the CLI only passes the values through to
+    // `Duration::from_secs`. The core layer (qr_login::run)
+    // does floor the poll interval at 100ms (so a `0` is
+    // silently bumped to `100ms` rather than busy-looping),
+    // but the operator gets no feedback that their input
+    // was ignored. Reject at the CLI layer with a clear
+    // error so the operator knows their `--timeout-secs 0`
+    // is invalid (the core floor would mask this by
+    // turning it into a `100ms` poll, defeating the
+    // operator's intent).
+    validate_qr_login_timing(args.timeout_secs, args.poll_interval_secs)?;
     // Production wiring only — no mock fallback. See
     // `octo_telegram_mtproto_onboard_core::connect`.
     let adapter = octo_telegram_mtproto_onboard_core::connect::connect(cfg).await?;
@@ -591,6 +606,30 @@ async fn run_whoami(
 /// unrecoverable. The fix takes the `mode` and `phone` as
 /// parameters from the call site (which already knows what
 /// flow it just ran).
+///
+/// R3-3: validate the `--timeout-secs` and
+/// `--poll-interval-secs` flags. The round-2 review
+/// claimed the CLI rejects `--poll-interval-secs 0` (per
+/// R2-IE-17), but the actual code path was a core-layer
+/// floor at 100ms (so `0` was silently bumped to
+/// `100ms`). That silent bumping is hostile UX: an
+/// operator who passes `--poll-interval-secs 0` gets a
+/// poll loop with no feedback that their input was
+/// ignored. Reject at the CLI layer with a clear error.
+fn validate_qr_login_timing(timeout_secs: u64, poll_interval_secs: u64) -> Result<(), OnboardError> {
+    if timeout_secs == 0 {
+        return Err(OnboardError::Config(
+            "--timeout-secs must be > 0 (R2-IE-17)".to_string(),
+        ));
+    }
+    if poll_interval_secs == 0 {
+        return Err(OnboardError::Config(
+            "--poll-interval-secs must be > 0 (R2-IE-17)".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_config_and_output(
     out: &OnboardOutput,
@@ -1003,5 +1042,39 @@ mod tests {
         qr_cfg
             .validate()
             .expect("qr_login config must validate (R2-IE-8)");
+    }
+
+    /// R3-3: the round-2 review (R2-IE-17) claimed the CLI
+    /// rejects `--poll-interval-secs 0`, but the actual
+    /// code path was a core-layer floor at 100ms (so a `0`
+    /// was silently bumped to `100ms`). The fix is to
+    /// reject at the CLI layer with a clear error. These
+    /// tests cover the four boundary cases (timeout=0,
+    /// timeout=1, poll=0, poll=1).
+    #[test]
+    fn validate_qr_login_timing_rejects_zero_timeout() {
+        let err = validate_qr_login_timing(0, 2).unwrap_err();
+        assert!(matches!(err, OnboardError::Config(_)));
+        let msg = format!("{}", err);
+        assert!(msg.contains("--timeout-secs"));
+        assert!(msg.contains("> 0"));
+    }
+
+    #[test]
+    fn validate_qr_login_timing_rejects_zero_poll_interval() {
+        let err = validate_qr_login_timing(300, 0).unwrap_err();
+        assert!(matches!(err, OnboardError::Config(_)));
+        let msg = format!("{}", err);
+        assert!(msg.contains("--poll-interval-secs"));
+        assert!(msg.contains("> 0"));
+    }
+
+    #[test]
+    fn validate_qr_login_timing_accepts_nonzero_values() {
+        // R3-3: the smallest non-zero values must pass
+        // (R2-IE-17 said "must be > 0", which means 1
+        // is the floor).
+        assert!(validate_qr_login_timing(1, 1).is_ok());
+        assert!(validate_qr_login_timing(300, 2).is_ok());
     }
 }

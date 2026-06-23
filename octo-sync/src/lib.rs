@@ -108,7 +108,7 @@ pub use lsn::LsnTracker;
 pub use raft_overlay::{RaftEntry, RaftOverlay, RaftRole};
 pub use replay_cache::{ReplayCache, ReplayCacheManager};
 pub use segment::{SegmentIndexer, SegmentLookupResult, SyncSegment};
-pub use session::{PeerSession, SyncSessionManager};
+pub use session::{PeerSession, SyncSessionManager, TickAction};
 pub use state::{Peer, StateTransition, SyncLifecycle, TransitionTrigger};
 pub use stream::{CommitError, RateLimiter, SubscriberChannel, WalTailStreamer};
 pub use summary::{MerkleSegmentTree, SegmentMetadata, SyncSummary};

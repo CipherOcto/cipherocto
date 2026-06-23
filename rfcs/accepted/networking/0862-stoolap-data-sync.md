@@ -290,9 +290,30 @@ The Sync types are the BLAKE3-256 hash `BLAKE3(public_key || mission_id)` and ar
 
 1. **Writer**: On every `TransactionEngineOperations::record_commit(txn_id)` (the Stoolap commit hook at `stoolap/src/storage/mvcc/transaction.rs`), capture the LSN range `[previous_lsn+1, current_lsn]`.
 2. **Writer → Reader (live)**: Periodically (every `commit_batch_size` commits, default 100) or on demand (e.g., reader's `WalTailRequest`), wrap the captured entries in `WalTailChunk { from_lsn, to_lsn, entries, is_last }` and ship as a `WalTailResponse` envelope.
-3. **Reader**: For each received `WalTailChunk`, dedupe by LSN (using the per-peer LSN watermark), then apply each entry via `WALManager::replay_two_phase(from_lsn, callback)`. The callback is `apply_wal_entry(entry: &[u8])` which feeds the entry into the reader's MVCC engine.
+3. **Reader**: For each received `WalTailChunk`, dedupe by LSN (using the per-peer LSN watermark), then apply each entry via `adapter.apply_wal_entry(entry)`. The adapter MUST persist the entry to its local WAL and advance `current_lsn()` (per §DatabaseSyncAdapter). This enables chain relay topologies where intermediate nodes forward entries to downstream peers.
 4. **Reader → Writer (ack)**: After successful apply, send `LsnAck { applied_lsn: chunk.to_lsn }`.
 5. **Catch-up**: On `WalTailRequest { from_lsn: reader.lsn_watermark + 1 }`, the writer responds with the requested LSN range.
+
+#### 4.3.3.1 Chain Relay Topology
+
+Chain relay extends WAL-tail streaming to multi-hop topologies where intermediate nodes forward entries to downstream peers.
+
+```text
+Writer (A) ──WAL──→ Relay (B) ──WAL──→ Leaf (C)
+         star       chain hop 1        chain hop 2
+```
+
+**Requirements:**
+1. Each intermediate node's `adapter.apply_wal_entry` MUST persist the entry to its local WAL (per §DatabaseSyncAdapter Durability).
+2. Each intermediate node's `adapter.current_lsn()` MUST reflect applied entries (per §DatabaseSyncAdapter LSN Advancement).
+3. Downstream peers connect to intermediate nodes using the same `WalTailRequest`/`WalTailChunk` protocol.
+4. The intermediate node's `adapter.read_wal_range` MUST return entries received from upstream.
+
+**Failure mode if requirements not met:** If `apply_wal_entry` only applies to in-memory state without WAL persistence, the intermediate node's `current_lsn()` remains at 0, `read_wal_range` returns empty, and the downstream peer receives no entries. This is a silent failure — no error is raised.
+
+**LSN namespacing:** In chain relay, each node assigns its own LSNs to received entries. Node A's LSN=5 and Node B's LSN=3 may refer to the same logical data. The sync engine tracks per-peer LSN watermarks to handle this correctly — each peer's watermark is independent.
+
+**v1 scope:** Chain relay is supported by the protocol but not required for v1 deployment. The default v1 topology is star (single-leader). Chain relay enables edge/gateway scenarios where direct writer connections are impractical.
 
 #### 4.3.4 Anti-entropy Merkle summary (Approach D)
 
@@ -689,6 +710,21 @@ pub trait DatabaseSyncAdapter: Send + Sync + 'static {
     fn read_wal_range(&self, from_lsn: Lsn, to_lsn: Lsn)
         -> Result<Vec<Vec<u8>>, SyncError>;
     fn current_lsn(&self) -> Result<Lsn, SyncError>;
+
+    /// Apply a single WAL entry to the database.
+    ///
+    /// # Durability (MUST)
+    /// MUST persist the entry to the write-ahead log. After this call returns,
+    /// the entry MUST be readable via `read_wal_range(entry.lsn, entry.lsn)`.
+    /// Required for chain relay topologies (§Chain Relay).
+    ///
+    /// # LSN Advancement (MUST)
+    /// MUST advance `current_lsn()` if the entry's LSN exceeds the current value.
+    /// The LSN counter must remain monotonic (never decrease).
+    ///
+    /// # Idempotency (MUST)
+    /// MUST be idempotent: replaying the same entry twice is a no-op.
+    /// MUST NOT advance the LSN counter on replay of an already-applied entry.
     fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError>;
 
     // ── B. Anti-entropy Merkle summary (RFC-0862 §4.3.4) ─────────────

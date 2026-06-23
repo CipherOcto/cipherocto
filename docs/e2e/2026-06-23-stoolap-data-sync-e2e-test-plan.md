@@ -135,7 +135,17 @@ These run in a **new crate** `sync-e2e-tests` under `cipherocto/sync-e2e-tests/`
 | `L3-T11: state_machine_lifecycle` | 2 nodes. Walk through every transition: `Standby` → `Handshaking` → `Active` → `Suspect` → `Active` (reconnect) → `Terminated`. | 2 instances |
 | `L3-T12: restart_recovery` | Writer commits 10 rows. Writer restarts. Reader's `WalTailStreamer` detects the restart (heartbeat timeout). Reader re-handshakes. Verify state converges. | 2 instances |
 
-**L3 status:** T1–T12 are all NEW. This is the bulk of the E2E work.
+#### Chain Relay Tests (L3-T13 through L3-T15)
+
+These tests verify chain relay topology (A → B → C) where intermediate nodes forward entries to downstream peers. Per RFC-0862 §4.3.3.1, `adapter.apply_wal_entry` MUST persist to WAL and advance `current_lsn()` for chain relay to work.
+
+| Test | What it verifies | Topology |
+|------|------------------|----------|
+| `L3-T13: chain_relay_basic` | Writer A commits 5 entries. Relay B receives via `apply_wal_entry`. Leaf C connects to B and receives via `read_wal_range`. Verify C has all 5 entries. | 3 instances (A→B→C) |
+| `L3-T14: chain_relay_lsn_advancement` | Verify B's `current_lsn()` advances after applying entries from A. Verify B's `read_wal_range(1, lsn)` returns the applied entries. | 2 instances |
+| `L3-T15: chain_relay_dedup` | Apply same entry to B twice. Verify idempotency (no duplicate in WAL, LSN not double-advanced). | 2 instances |
+
+**L3 status:** T1–T12 implemented and passing. T13–T15 added for chain relay (requires `DatabaseSyncAdapter` WAL persistence). Multi-peer tests (T16–T27) implemented in `l3_multi_peer.rs`.
 
 ### L4: Cross-process E2E (same machine, multiple processes, TCP transport)
 
@@ -156,7 +166,13 @@ The child process is a minimal binary `stoolap-node` that:
 | `L4-T4: tcp_slow_consumer` | 2 processes. Reader's `apply` is artificially slowed (sleep 100ms per entry). Writer's outbox fills. Verify `BackendNotReady` backpressure is applied and the writer doesn't OOM. | 2 processes (TCP) |
 | `L4-T5: process_crash_and_restart` | 2 processes. Reader crashes. Writer keeps committing. Reader restarts. Verify reader catches up via summary + WAL tail. | 2 processes (TCP) |
 
-**L4 status:** All 5 tests (T1–T5) implemented and passing.
+#### Chain Relay Tests (L4-T6)
+
+| Test | What it verifies | Topology |
+|------|------------------|----------|
+| `L4-T6: tcp_chain_relay` | Writer A commits 5 rows. Relay B (file:// DSN) connects to A, receives entries. Leaf C (memory:// DSN) connects to B. Verify C has all 5 entries via chain relay. **Requires `StoolapAdapter` WAL re-entry fix** — without it, B's `current_lsn()` stays at 0 and C receives nothing. | 3 processes (A→B→C) |
+
+**L4 status:** T1–T5 implemented and passing. T6 added for chain relay (blocked on `StoolapAdapter` WAL re-entry fix).
 
 ### L5: Container E2E (Docker, network bridge)
 
@@ -170,7 +186,14 @@ These run in **`sync-e2e-tests/tests/l5_container.rs`**. They use the `bollard` 
 | `L5-T4: container_resource_limit` | 1 container with `--memory 256m` and `--cpus 0.5`. Writer commits 10K rows. Verify the container doesn't OOM and the writer handles backpressure correctly. | 1 container (Docker) |
 | `L5-T5: container_kill_and_recover` | 2 containers. `docker kill` the reader. Writer keeps committing. `docker start` a new reader. Verify the new reader catches up. | 2 containers (Docker) |
 
-**L5 status:** ✅ IMPLEMENTED. All 5 tests (T1–T5) implemented and passing. Docker replaced with official package.
+#### Chain Relay Tests (L5-T6, L5-T7)
+
+| Test | What it verifies | Topology |
+|------|------------------|----------|
+| `L5-T6: container_chain_relay` | Writer A commits 5 rows. Relay B (file:// DSN) connects to A. Relay C (file:// DSN) connects to B. Leaf D (memory:// DSN) connects to C. Verify D has all 5 entries via 3-hop chain. **Requires `StoolapAdapter` WAL re-entry fix.** | 4 containers (A→B→C→D) |
+| `L5-T7: container_four_node_fan_out` | Writer, 3 readers. Writer commits 100 rows. Verify all 3 readers see them. | 4 containers (1 writer + 3 readers) |
+
+**L5 status:** T1–T5 implemented and passing. T6–T7 added (T6 blocked on `StoolapAdapter` WAL re-entry fix).
 
 **All layers implemented — none remaining.**
 

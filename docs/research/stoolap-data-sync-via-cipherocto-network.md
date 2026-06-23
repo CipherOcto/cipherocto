@@ -448,6 +448,13 @@ pub trait SyncTransport: Send + Sync {
 // Note: trait is sync (blocking I/O) to match the fork's synchronous
 // design (§2 Constraints, lines 55-62). Async I/O is provided by the
 // `stoolap-sync` companion crate using `tokio` behind the `sync` feature.
+//
+// NOTE (v1.1.0): The early sketch above returns `Result<u64>` (applied LSN).
+// The final trait (RFC-0862 v1.1.0) returns `Result<(), SyncError>` and adds
+// normative requirements: MUST persist to WAL (Durability), MUST advance
+// current_lsn() (LSN Advancement), MUST be idempotent (Idempotency).
+// These requirements were identified during L4/L5 chain relay testing when
+// the StoolapAdapter's in-memory-only apply path silently broke relay.
 
 pub struct NodeId(pub [u8; 32]);
 pub struct PeerId(pub [u8; 32]);
@@ -821,7 +828,7 @@ The changes below are **proposed amendments**, not 1-line additions. Each is des
 
 Alternatives that should also be considered (deferred to F1):
 
-- Chain replication.
+- ~~Chain replication.~~ **Promoted to v1.5** (RFC-0862 §4.3.3.1). The protocol supports chain relay via `DatabaseSyncAdapter` WAL persistence requirements. Not required for v1 star topology deployment; enables edge/gateway scenarios. See `adapter.rs` Durability/LSN Advancement requirements.
 - Primary-backup with log shipping (essentially what v1 is, but formalized).
 - Quorum-based replication (3+ nodes, Raft/Paxos).
 - Byzantine Fault Tolerant replication (e.g., HotStuff).

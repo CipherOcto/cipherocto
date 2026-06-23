@@ -378,6 +378,120 @@ impl SyncSessionManager {
         }
         Ok(crate::envelope::WalTailRequest { from_lsn })
     }
+
+    // ── Periodic orchestration (tick) ──────────────────────────────────
+
+    /// Periodic tick: check peer health, detect timeouts, return actions.
+    ///
+    /// The cipherocto sync engine calls this every N seconds (configurable).
+    /// Returns a list of [`TickAction`]s that the engine should execute
+    /// (e.g., transition a peer to Suspect, send a SummaryRequest).
+    pub fn tick(&self, now_unix_secs: u64) -> Vec<TickAction> {
+        let mut actions = Vec::new();
+        let peers = self.peers.lock();
+
+        for (peer_id, session) in peers.iter() {
+            match session.peer.state {
+                SyncLifecycle::Streaming => {
+                    // Check heartbeat timeout
+                    let suspect_threshold =
+                        self.config.heartbeat_interval_secs * self.config.suspect_multiplier;
+                    if session.peer.last_heartbeat_unix > 0
+                        && now_unix_secs.saturating_sub(session.peer.last_heartbeat_unix)
+                            > suspect_threshold
+                    {
+                        actions.push(TickAction::TransitionToSuspect(*peer_id));
+                    }
+                }
+                SyncLifecycle::Suspect => {
+                    // Transition to Reconnecting after a brief delay
+                    // (the caller handles the actual reconnection attempt)
+                    actions.push(TickAction::TransitionToReconnecting(*peer_id));
+                }
+                SyncLifecycle::Reconnecting => {
+                    // Attempt reconnection
+                    actions.push(TickAction::AttemptReconnect(*peer_id));
+                }
+                _ => {}
+            }
+        }
+
+        actions
+    }
+
+    /// Select peers for anti-entropy gossip using DRS criteria.
+    ///
+    /// Returns the best N peers based on:
+    /// 1. Liveness (peers in Streaming state preferred)
+    /// 2. LSN watermark (peers with lower LSN are better targets for catch-up)
+    /// 3. Diversity (simplified: prefer peers with different node_id prefixes)
+    pub fn select_gossip_peers(&self, max_peers: usize) -> Vec<SyncPeerId> {
+        let peers = self.peers.lock();
+        let mut candidates: Vec<(SyncPeerId, u64)> = peers
+            .iter()
+            .filter(|(_, session)| {
+                // Only select peers that are active (Streaming) or recently connected
+                matches!(
+                    session.peer.state,
+                    SyncLifecycle::Streaming | SyncLifecycle::Connecting
+                )
+            })
+            .map(|(peer_id, session)| {
+                // Score: lower LSN = better target for catch-up gossip
+                let lsn_score = session.lsn_tracker.watermark();
+                (*peer_id, lsn_score)
+            })
+            .collect();
+
+        // Sort by LSN (ascending) — peers with lower LSN are better gossip targets
+        candidates.sort_by_key(|(_, lsn)| *lsn);
+
+        // Deduplicate by node_id prefix (simplified diversity check)
+        let mut selected = Vec::new();
+        let mut seen_prefixes = std::collections::HashSet::new();
+        for (peer_id, _) in &candidates {
+            let prefix = peer_id.0[0..4].to_vec();
+            if seen_prefixes.insert(prefix) {
+                selected.push(*peer_id);
+                if selected.len() >= max_peers {
+                    break;
+                }
+            }
+        }
+
+        selected
+    }
+
+    /// Return the current LSN watermark for a peer.
+    pub fn peer_lsn_watermark(&self, peer_id: SyncPeerId) -> Option<Lsn> {
+        self.peers
+            .lock()
+            .get(&peer_id)
+            .map(|s| s.lsn_tracker.watermark())
+    }
+
+    /// Return the list of all subscribed peers and their states.
+    pub fn peer_states(&self) -> Vec<(SyncPeerId, SyncLifecycle)> {
+        self.peers
+            .lock()
+            .iter()
+            .map(|(id, session)| (*id, session.peer.state))
+            .collect()
+    }
+}
+
+/// Actions returned by [`SyncSessionManager::tick`].
+///
+/// The cipherocto sync engine executes these actions (e.g., transition
+/// peers, send requests) based on the periodic health check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TickAction {
+    /// Transition a peer to Suspect (heartbeat timeout).
+    TransitionToSuspect(SyncPeerId),
+    /// Transition a peer from Suspect to Reconnecting.
+    TransitionToReconnecting(SyncPeerId),
+    /// Attempt to reconnect to a peer in Reconnecting state.
+    AttemptReconnect(SyncPeerId),
 }
 
 /// BLAKE3-256 hash helper for deriving envelope IDs.
@@ -579,5 +693,91 @@ mod tests {
         assert!(adapter.is_paused());
         mgr.set_paused(false);
         assert!(!adapter.is_paused());
+    }
+
+    #[test]
+    fn tick_returns_suspect_for_stale_peer() {
+        let (mgr, _) = make_manager(SyncRole::Replicator);
+        let peer = SyncPeerId([3u8; 32]);
+        mgr.subscribe_peer(peer).unwrap();
+        mgr.transition_peer(
+            peer,
+            SyncLifecycle::Authenticating,
+            TransitionTrigger::TlsHandshakeComplete,
+        )
+        .unwrap();
+        mgr.transition_peer(
+            peer,
+            SyncLifecycle::Streaming,
+            TransitionTrigger::SignatureValid,
+        )
+        .unwrap();
+        // Record heartbeat at t=100
+        mgr.record_heartbeat(peer, 100);
+        // Tick at t=120 (> 10s suspect threshold)
+        let actions = mgr.tick(120);
+        assert!(actions.contains(&TickAction::TransitionToSuspect(peer)));
+    }
+
+    #[test]
+    fn tick_returns_empty_for_healthy_peers() {
+        let (mgr, _) = make_manager(SyncRole::Replicator);
+        let peer = SyncPeerId([3u8; 32]);
+        mgr.subscribe_peer(peer).unwrap();
+        mgr.transition_peer(
+            peer,
+            SyncLifecycle::Authenticating,
+            TransitionTrigger::TlsHandshakeComplete,
+        )
+        .unwrap();
+        mgr.transition_peer(
+            peer,
+            SyncLifecycle::Streaming,
+            TransitionTrigger::SignatureValid,
+        )
+        .unwrap();
+        // Record heartbeat at t=100
+        mgr.record_heartbeat(peer, 100);
+        // Tick at t=105 (< 10s suspect threshold)
+        let actions = mgr.tick(105);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn select_gossip_peers_returns_streaming_peers() {
+        let (mgr, _) = make_manager(SyncRole::Replicator);
+        let peer1 = SyncPeerId([3u8; 32]);
+        let peer2 = SyncPeerId([4u8; 32]);
+        mgr.subscribe_peer(peer1).unwrap();
+        mgr.subscribe_peer(peer2).unwrap();
+        // Transition both to Streaming
+        for peer in &[peer1, peer2] {
+            mgr.transition_peer(
+                *peer,
+                SyncLifecycle::Authenticating,
+                TransitionTrigger::TlsHandshakeComplete,
+            )
+            .unwrap();
+            mgr.transition_peer(
+                *peer,
+                SyncLifecycle::Streaming,
+                TransitionTrigger::SignatureValid,
+            )
+            .unwrap();
+        }
+        let selected = mgr.select_gossip_peers(5);
+        assert!(selected.contains(&peer1));
+        assert!(selected.contains(&peer2));
+    }
+
+    #[test]
+    fn peer_states_returns_all_peers() {
+        let (mgr, _) = make_manager(SyncRole::Replicator);
+        let peer1 = SyncPeerId([3u8; 32]);
+        let peer2 = SyncPeerId([4u8; 32]);
+        mgr.subscribe_peer(peer1).unwrap();
+        mgr.subscribe_peer(peer2).unwrap();
+        let states = mgr.peer_states();
+        assert_eq!(states.len(), 2);
     }
 }

@@ -103,12 +103,36 @@ pub trait DatabaseSyncAdapter: Send + Sync + 'static {
     /// sync engine calls this on the reader side after a successful `WalTailChunk`
     /// reception and a verified `LsnAck`.
     ///
+    /// # Durability
+    ///
+    /// MUST persist the entry to the write-ahead log. After this call returns,
+    /// the entry MUST be readable via `read_wal_range(entry.lsn, entry.lsn)`.
+    /// This is required for chain relay topologies where intermediate nodes
+    /// forward entries to downstream peers (see RFC-0862 §Chain Relay).
+    ///
+    /// # LSN Advancement
+    ///
+    /// MUST advance `current_lsn()` if the applied entry's LSN exceeds the
+    /// current value. The LSN counter must remain monotonic (never decrease).
+    /// This ensures downstream peers can detect new entries via `current_lsn()`.
+    ///
     /// # Idempotency
     ///
     /// MUST be idempotent: replaying the same entry twice is a no-op (the WAL V2
-    /// binary format is designed for this; see
-    /// `stoolap/src/storage/mvcc/persistence.rs:549`,
-    /// `PersistenceManager::replay_two_phase`).
+    /// binary format is designed for this). The adapter MUST NOT advance the LSN
+    /// counter on replay of an already-applied entry.
+    ///
+    /// # Chain Relay Semantics
+    ///
+    /// In a chain relay topology (A → B → C), node B receives entries from A
+    /// via `apply_wal_entry`. Node C then connects to B and calls
+    /// `read_wal_range` to fetch those entries. For this to work:
+    /// 1. B's `apply_wal_entry` MUST persist to WAL (not just in-memory state)
+    /// 2. B's `current_lsn()` MUST reflect the applied entries
+    /// 3. B's `read_wal_range` MUST return the persisted entries
+    ///
+    /// If the adapter only applies to in-memory state without WAL persistence,
+    /// chain relay will fail silently (downstream peers receive no entries).
     fn apply_wal_entry(&self, entry: &[u8]) -> Result<(), SyncError>;
 
     // ── B. Anti-entropy Merkle summary (RFC-0862 §4.3.4) ─────────────

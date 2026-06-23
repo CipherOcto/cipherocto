@@ -36,6 +36,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
+use crate::adapter_error;
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
 use crate::output::{OnboardMode, OnboardOutput};
@@ -221,18 +222,13 @@ where
     forward_password.abort();
 
     connect_result.map_err(|e| {
-        use octo_adapter_telegram_mtproto::MtprotoTelegramError as E;
-        match e {
-            E::Config(_) => OnboardError::Config(e.to_string()),
-            E::Auth(_) => OnboardError::TelegramApi(e.to_string()),
-            E::Rpc { .. } => OnboardError::TelegramApi(e.to_string()),
-            E::RateLimited { .. } => OnboardError::TelegramApi(e.to_string()),
-            E::Network(_) => OnboardError::Network(e.to_string()),
-            E::NotReady(_) => OnboardError::Lifecycle {
-                state: auth_state_name(&adapter),
-            },
-            other => OnboardError::Adapter(other.to_string()),
-        }
+        // R2-ARCH-4 / R2-IE-12: use the shared
+        // `adapter_error::map` instead of the inline match
+        // (the round-1 inline copy was duplicated in three
+        // places; the central helper is the single source of
+        // truth for the `MtprotoTelegramError` →
+        // `OnboardError` mapping).
+        adapter_error::map(e, &auth_state_name(&adapter))
     })?;
 
     if !adapter.has_valid_session() {

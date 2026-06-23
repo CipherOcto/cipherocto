@@ -16,7 +16,14 @@ use thiserror::Error;
 /// mode reported by `octo-adapter-telegram-mtproto` or by the
 /// `tokio::sync::mpsc` channel used to feed SMS codes / 2FA
 /// passwords to the adapter.
+///
+/// R2-ARCH-8: marked `#[non_exhaustive]` so adding a new
+/// variant is a backward-compatible change for downstream
+/// crates. The `kind()` and `exit_code()` methods are the
+/// supported external surface — downstream code should
+/// switch on those, not on the enum variant.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum OnboardError {
     /// I/O error reading/writing the on-disk session JSON or the
     /// data directory.

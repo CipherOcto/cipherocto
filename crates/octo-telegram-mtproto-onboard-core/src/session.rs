@@ -27,7 +27,15 @@ pub const SESSION_SCHEMA_VERSION: u32 = 1;
 pub const SESSION_FILENAME: &str = "session.json";
 
 /// On-disk session record.
+///
+/// R2-ARCH-6: marked `#[non_exhaustive]` for the same
+/// forward-compatibility reason as [`crate::output::OnboardOutput`]
+/// (a future `SessionRecord { ..., device_model: ... }`
+/// shouldn't break every external consumer). Construction
+/// inside the workspace still works; the `from_identity`
+/// constructor is the supported external surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SessionRecord {
     /// Schema version. See [`SESSION_SCHEMA_VERSION`].
     pub schema_version: u32,

@@ -25,6 +25,7 @@
 //! (`MockTelegramMtprotoClient`) is reserved for unit tests and
 //! is not reachable from production code paths.
 
+pub mod adapter_error;
 pub mod auth;
 pub mod bot_token;
 #[cfg(feature = "real-network")]

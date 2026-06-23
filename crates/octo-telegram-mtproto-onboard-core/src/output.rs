@@ -39,7 +39,19 @@ pub enum OnboardMode {
 
 /// Successful onboarding result. Serializes to JSON for the
 /// `--output` path or for stdout when `--json` is set.
+///
+/// R2-ARCH-6: marked `#[non_exhaustive]` so adding a new
+/// field is a backward-compatible change for downstream
+/// crates (a future `OnboardOutput { ..., created_at: ... }`
+/// won't break every external `match` against the struct).
+/// Construction inside the workspace still works — only
+/// external `let x = OnboardOutput { ... }` from a
+/// downstream crate becomes a compile error (which is the
+/// desired effect: external callers should use the
+/// `SCHEMA_VERSION` constant + `to_json_pretty` + JSON
+/// parsing for forward-compatibility).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OnboardOutput {
     /// Schema version. Bump on backward-incompatible changes to
     /// this struct.
@@ -70,6 +82,36 @@ pub struct OnboardOutput {
 impl OnboardOutput {
     /// Current schema version. Bump on breaking changes.
     pub const SCHEMA_VERSION: u32 = 1;
+
+    /// Construct an `OnboardOutput` from the required
+    /// fields. R2-ARCH-6: this is the supported external
+    /// construction API — the struct is `#[non_exhaustive]`
+    /// so external code cannot use a struct expression
+    /// (`OnboardOutput { .. }`). Use this constructor
+    /// instead, which pins the current field set; new
+    /// fields added in a future release will get a
+    /// `Default` (or `None` for `Option`s) so the
+    /// constructor keeps working.
+    pub fn new(
+        mode: OnboardMode,
+        self_id: i64,
+        self_username: Option<String>,
+        is_bot: bool,
+        data_dir: String,
+        config_path: String,
+        elapsed_ms: u64,
+    ) -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION,
+            mode,
+            self_id,
+            self_username,
+            is_bot,
+            data_dir,
+            config_path,
+            elapsed_ms,
+        }
+    }
 
     /// Serialize to pretty-printed JSON. The CLI writes this
     /// verbatim to the output path or stdout.

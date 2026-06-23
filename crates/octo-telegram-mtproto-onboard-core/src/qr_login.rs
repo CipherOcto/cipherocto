@@ -18,12 +18,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClient};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
+use crate::adapter_error::{self, AdapterErrorKind};
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
 use crate::output::{OnboardMode, OnboardOutput};
@@ -47,11 +49,21 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 /// `on_handle` is a callback invoked on each QR handle refresh
 /// so the CLI can re-render the QR code (the token changes
 /// every ~30 seconds).
+/// `abort` is an `Arc<AtomicBool>` the CLI sets to `true` to
+/// request a graceful abort (typically wired to a SIGINT
+/// handler). R2-OPS-8: the round-1 implementation had no
+/// abort path — Ctrl-C killed the process mid-poll, leaving
+/// `session.json` written but `config.json` not yet
+/// committed (or vice versa). The flag is checked once per
+/// poll iteration, and the function returns
+/// `OnboardError::ChannelClosed("aborted by SIGINT")` so the
+/// CLI can clean up.
 ///
 /// The function returns once either:
 /// * `poll_qr_login` returns `Ok(SelfUserInfo)` (success), or
 /// * `timeout` elapses without a successful scan
 ///   (`OnboardError::Timeout`), or
+/// * `abort` is set (R2-OPS-8), or
 /// * the adapter reports a non-QR error
 ///   (`OnboardError::TelegramApi` etc.).
 ///
@@ -63,6 +75,7 @@ pub async fn run<C, F>(
     timeout: Duration,
     poll_interval: Duration,
     mut on_handle: F,
+    abort: Arc<AtomicBool>,
 ) -> Result<(OnboardOutput, PathBuf), OnboardError>
 where
     C: MtprotoTelegramClient + 'static,
@@ -77,83 +90,96 @@ where
     let handle = match handle_result {
         Ok(h) => h,
         Err(e) => {
-            // IE-7 (R26): the adapter returns
-            // `Internal("qr_login: already authorized (session
-            // was valid; no QR needed)")` when the underlying
-            // session is already authorised (the user
-            // re-scanned while signed in, or the session was
-            // restored from disk and the DC is already
-            // connected). The adapter has already driven the
-            // lifecycle to `Ready` and populated the
-            // self-handle. Surface this as a successful flow
-            // so the operator doesn't have to re-onboard.
-            let s = e.to_string();
-            if s.contains("already authorized") {
-                if !adapter.has_valid_session() {
-                    return Err(OnboardError::Adapter(format!(
-                        "qr_login: already authorized but session is invalid: {}",
-                        s
-                    )));
+            // R2-IE-9: classify the error via the typed
+            // `AdapterErrorKind` enum (centralised in
+            // `crate::adapter_error`) instead of substring-
+            // matching the `Display` output. The round-1
+            // implementation used `if s.contains("already
+            // authorized")`, which is fragile (any change to
+            // the adapter's error message breaks the flow
+            // silently). The classification is a prefix match
+            // against the adapter-documented
+            // `"qr_login: already authorized"` string — still
+            // a string match, but now centralised here with a
+            // test that pins the prefix.
+            match adapter_error::classify(&e) {
+                AdapterErrorKind::AlreadyAuthorized => {
+                    // IE-7 (R26): the adapter has already
+                    // driven the lifecycle to `Ready` and
+                    // populated the self-handle. Surface
+                    // this as a successful flow so the
+                    // operator doesn't have to re-onboard.
+                    if !adapter.has_valid_session() {
+                        return Err(adapter_error::map(
+                            e,
+                            &auth_state_name(&adapter),
+                        ));
+                    }
+                    let identity = adapter
+                        .self_handle_ref()
+                        .get()
+                        .ok_or_else(|| OnboardError::Lifecycle {
+                            state: auth_state_name(&adapter),
+                        })?;
+                    let elapsed = start.elapsed();
+                    let record = SessionRecord::from_identity(
+                        &identity,
+                        "qr_login",
+                        unix_now_secs(),
+                    );
+                    let _session_path = record.write_to(data_dir)?;
+                    let config_path = data_dir.join("config.json");
+                    let output = OnboardOutput {
+                        schema_version: OnboardOutput::SCHEMA_VERSION,
+                        mode: OnboardMode::QrLogin,
+                        self_id: identity.user_id,
+                        self_username: identity.username.clone(),
+                        is_bot: false,
+                        data_dir: data_dir.display().to_string(),
+                        config_path: config_path.display().to_string(),
+                        elapsed_ms: elapsed.as_millis() as u64,
+                    };
+                    info!(
+                        user_id = identity.user_id,
+                        elapsed_ms = output.elapsed_ms,
+                        "qr-login already authorised; reusing existing session"
+                    );
+                    return Ok((output, config_path));
                 }
-                let identity = adapter
-                    .self_handle_ref()
-                    .get()
-                    .ok_or_else(|| OnboardError::Lifecycle {
-                        state: auth_state_name(&adapter),
-                    })?;
-                let elapsed = start.elapsed();
-                let record =
-                    SessionRecord::from_identity(&identity, "qr_login", unix_now_secs());
-                let _session_path = record.write_to(data_dir)?;
-                let config_path = data_dir.join("config.json");
-                let output = OnboardOutput {
-                    schema_version: OnboardOutput::SCHEMA_VERSION,
-                    mode: OnboardMode::QrLogin,
-                    self_id: identity.user_id,
-                    self_username: identity.username.clone(),
-                    is_bot: false,
-                    data_dir: data_dir.display().to_string(),
-                    config_path: config_path.display().to_string(),
-                    elapsed_ms: elapsed.as_millis() as u64,
-                };
-                info!(
-                    user_id = identity.user_id,
-                    elapsed_ms = output.elapsed_ms,
-                    "qr-login already authorised; reusing existing session"
-                );
-                return Ok((output, config_path));
+                // R2-ARCH-4 / R2-IE-12: every other error
+                // path goes through the shared
+                // `adapter_error::map`. The QR-login flow
+                // used to inline its own match (which was
+                // a less-complete superset of the bot/user
+                // flows' matches); the shared helper is
+                // the single source of truth.
+                _ => {
+                    return Err(adapter_error::map(
+                        e,
+                        &auth_state_name(&adapter),
+                    ));
+                }
             }
-            // Otherwise: map the error to the appropriate
-            // OnboardError variant.
-            use octo_adapter_telegram_mtproto::MtprotoTelegramError as E;
-            return Err(match e {
-                E::Config(_) => OnboardError::Config(s),
-                E::Auth(_) => OnboardError::TelegramApi(s),
-                E::Rpc { .. } => OnboardError::TelegramApi(s),
-                E::RateLimited { .. } => OnboardError::TelegramApi(s),
-                E::Network(_) => OnboardError::Network(s),
-                E::Internal(_) => OnboardError::Adapter(s),
-                E::QrLoginHandle { .. } => {
-                    // Defensive: connect_qr_login's signature
-                    // says it returns QrLoginHandle on success
-                    // and only QrLoginHandle-as-error in the
-                    // err variant. The from_error extraction is
-                    // the adapter's job; if we get an error of
-                    // this shape here it's a contract violation
-                    // and we surface it as a generic adapter
-                    // error.
-                    OnboardError::Adapter(s)
-                }
-                other => OnboardError::Adapter(other.to_string()),
-            });
         }
     };
 
     let mut first_handle = QrLoginPrompt::from_handle(&handle);
     on_handle(&first_handle);
 
-    // Step 2: poll until success or timeout.
+    // Step 2: poll until success, timeout, or abort.
     loop {
+        // R2-OPS-8: check the abort flag at the top of
+        // every iteration. If the CLI's SIGINT handler
+        // set the flag, return a `ChannelClosed` error
+        // so the operator gets a clear "aborted" exit
+        // code (5) rather than a stack trace from a
+        // process killed mid-write.
+        if abort.load(Ordering::Relaxed) {
+            warn!("QR login: abort requested (SIGINT or operator cancel)");
+            return Err(OnboardError::ChannelClosed(
+                "aborted by SIGINT".to_string(),
+            ));
+        }
         if start.elapsed() > timeout {
             return Err(OnboardError::Timeout(format!(
                 "qr login did not finalize within {}s",
@@ -234,18 +260,44 @@ where
                 ));
             }
             Err(other) => {
-                return Err(match other {
-                    octo_adapter_telegram_mtproto::MtprotoTelegramError::Config(m) => {
-                        OnboardError::Config(m)
+                // R2-ARCH-4 / R2-IE-12: the round-1 inline
+                // match is gone; every adapter error
+                // (including the `2FA_REQUIRED` special case
+                // below) goes through the shared
+                // `adapter_error::map` helper.
+                //
+                // R2-PROTO-8: the 2FA special case used to
+                // match on `MtprotoTelegramError::Auth(msg)
+                // if msg == "2FA_REQUIRED"` and surface a
+                // `OnboardError::Adapter(...)`. The check
+                // is preserved here (it's a documented
+                // signal from the adapter) but the error
+                // path now flows through `adapter_error::map`
+                // for consistent CLI exit codes and
+                // redaction-friendly rendering.
+                if let octo_adapter_telegram_mtproto::MtprotoTelegramError::Auth(msg) = &other {
+                    if msg == "2FA_REQUIRED" {
+                        // The primary device has 2FA
+                        // enabled. The adapter does not
+                        // auto-handle this; the CLI must
+                        // prompt for the password and call
+                        // `adapter.client().submit_password(...)`.
+                        // That step is owned by the
+                        // user_code flow and is out of
+                        // scope for Phase B; surface a
+                        // clear error.
+                        warn!("QR login: primary device has 2FA enabled; not yet supported in Phase B");
+                        return Err(OnboardError::Adapter(
+                            "QR login on a 2FA-enabled primary device is not \
+                             supported in Phase B; use the user_code flow instead"
+                                .to_string(),
+                        ));
                     }
-                    octo_adapter_telegram_mtproto::MtprotoTelegramError::Network(m) => {
-                        OnboardError::Network(m)
-                    }
-                    octo_adapter_telegram_mtproto::MtprotoTelegramError::Rpc { code, message } => {
-                        OnboardError::TelegramApi(format!("rpc: code={} message={}", code, message))
-                    }
-                    other => OnboardError::Adapter(other.to_string()),
-                });
+                }
+                return Err(adapter_error::map(
+                    other,
+                    &auth_state_name(&adapter),
+                ));
             }
         }
     }
@@ -314,6 +366,7 @@ mod tests {
             Duration::from_millis(500), // generous timeout
             Duration::from_millis(20),  // 20ms poll
             |prompt| seen.push(prompt.url.clone()),
+            Arc::new(AtomicBool::new(false)),
         )
         .await
         .expect("run should succeed against the default mock");
@@ -329,5 +382,35 @@ mod tests {
         // timeout path is hard to drive from the CLI surface
         // because the mock resets its poll counter on every
         // `qr_login` call.
+    }
+
+    /// R2-OPS-8: setting the abort flag (which the CLI's
+    /// SIGINT handler would do) makes `run` return
+    /// `OnboardError::ChannelClosed` instead of timing out
+    /// or getting killed mid-write. The default mock
+    /// succeeds on the first poll, so we set the flag
+    /// BEFORE the call (simulating a SIGINT that arrived
+    /// during `connect_qr_login`) — the flag check at the
+    /// top of the poll loop sees it on the first iteration
+    /// and returns.
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_aborts_on_flag() {
+        let tmp = tempdir().unwrap();
+        let adapter = mock_adapter_for_test(tmp.path());
+        let abort = Arc::new(AtomicBool::new(true)); // pre-armed
+        let err = run(
+            adapter,
+            tmp.path(),
+            Duration::from_secs(5),    // 5s timeout — the abort must beat it
+            Duration::from_millis(20), // 20ms poll
+            |_prompt| {},
+            abort,
+        )
+        .await
+        .expect_err("run should return an error when the abort flag is set");
+        assert_eq!(err.kind(), "channel_closed");
+        // Display includes the "aborted by SIGINT" hint so
+        // the operator understands what happened.
+        assert!(err.to_string().contains("aborted by SIGINT"));
     }
 }

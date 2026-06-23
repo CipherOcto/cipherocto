@@ -9,6 +9,8 @@
 
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::Parser;
 use octo_adapter_telegram_mtproto::MtprotoTelegramConfig;
@@ -64,8 +66,14 @@ async fn main() -> ExitCode {
 async fn run_bot_token(
     args: octo_telegram_mtproto_onboard::cli::BotTokenArgs,
 ) -> Result<(), OnboardError> {
-    let api_id = resolve_api_id(args.api_id).map_err(OnboardError::Config)?;
-    let api_hash = resolve_api_hash(args.api_hash).map_err(OnboardError::Config)?;
+    // R2-ARCH-5 / R2-OPS-6: pass the optional
+    // `--api-id-file` / `--api-hash-file` paths through to
+    // the resolvers. Precedence is enforced inside
+    // `resolve_api_id` / `resolve_api_hash`.
+    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
+        .map_err(OnboardError::Config)?;
+    let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
+        .map_err(OnboardError::Config)?;
     // R26-S4: bot token is a long-lived credential. Read it
     // with echo disabled. The `Zeroizing<String>` wrapper
     // wipes the heap bytes when `bot_token_zs` is dropped.
@@ -123,8 +131,13 @@ async fn run_bot_token(
 async fn run_user_code(
     args: octo_telegram_mtproto_onboard::cli::UserCodeArgs,
 ) -> Result<(), OnboardError> {
-    let api_id = resolve_api_id(args.api_id).map_err(OnboardError::Config)?;
-    let api_hash = resolve_api_hash(args.api_hash).map_err(OnboardError::Config)?;
+    // R2-ARCH-5 / R2-OPS-6: pass the optional
+    // `--api-id-file` / `--api-hash-file` paths through to
+    // the resolvers. See `run_bot_token` for the rationale.
+    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
+        .map_err(OnboardError::Config)?;
+    let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
+        .map_err(OnboardError::Config)?;
     let phone = match args.phone {
         Some(p) if !p.is_empty() => p,
         _ => read_line_from_stdin("phone (E.164, e.g. +15551234567): ")?,
@@ -293,8 +306,13 @@ async fn run_user_code(
 async fn run_qr_login(
     args: octo_telegram_mtproto_onboard::cli::QrLoginArgs,
 ) -> Result<(), OnboardError> {
-    let api_id = resolve_api_id(args.api_id).map_err(OnboardError::Config)?;
-    let api_hash = resolve_api_hash(args.api_hash).map_err(OnboardError::Config)?;
+    // R2-ARCH-5 / R2-OPS-6: pass the optional
+    // `--api-id-file` / `--api-hash-file` paths through to
+    // the resolvers. See `run_bot_token` for the rationale.
+    let api_id = resolve_api_id(args.api_id, args.api_id_file.as_deref())
+        .map_err(OnboardError::Config)?;
+    let api_hash = resolve_api_hash(args.api_hash, args.api_hash_file.as_deref())
+        .map_err(OnboardError::Config)?;
     let data_dir = resolve_data_dir(args.data_dir);
     let mut cfg = MtprotoTelegramConfig {
         api_id: Some(api_id),
@@ -315,6 +333,27 @@ async fn run_qr_login(
     let poll_interval = std::time::Duration::from_secs(args.poll_interval_secs);
 
     let render_ascii = args.render_qr_ascii;
+    // R2-OPS-8: install a SIGINT handler that sets the
+    // abort flag. The QR-login poll loop checks the flag
+    // at the top of every iteration and returns
+    // `OnboardError::ChannelClosed` so the process exits
+    // cleanly (exit code 5) instead of being killed
+    // mid-write — which would leave `session.json`
+    // without a matching `config.json` (or vice versa).
+    let abort = Arc::new(AtomicBool::new(false));
+    let abort_signal = Arc::clone(&abort);
+    tokio::spawn(async move {
+        // `tokio::signal::ctrl_c` is the platform-agnostic
+        // SIGINT primitive (it works on Windows where the
+        // underlying signal is CTRL_C_EVENT).
+        if tokio::signal::ctrl_c().await.is_ok() {
+            abort_signal.store(true, Ordering::Relaxed);
+            // Print a newline so the operator's next
+            // shell prompt doesn't end up on the same
+            // line as the QR rendering.
+            eprintln!("\n[abort] SIGINT received; cleaning up...");
+        }
+    });
     let (out, config_path) = qr_flow::run(
         adapter,
         &data_dir,
@@ -376,6 +415,7 @@ async fn run_qr_login(
             // pattern-matches on the flag's presence.
             let _ = render_ascii;
         },
+        abort,
     )
     .await?;
 
@@ -414,21 +454,23 @@ async fn run_whoami(
 ) -> Result<(), OnboardError> {
     let data_dir = resolve_data_dir(args.data_dir);
     let rec = SessionRecord::read_from(&data_dir)?;
-    let out = OnboardOutput {
-        schema_version: OnboardOutput::SCHEMA_VERSION,
-        mode: match rec.mode.as_str() {
+    // R2-ARCH-6: `OnboardOutput` is `#[non_exhaustive]`,
+    // so external code must use the `new` constructor
+    // instead of a struct expression.
+    let out = OnboardOutput::new(
+        match rec.mode.as_str() {
             "bot_token" => octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
             "user_code" => octo_telegram_mtproto_onboard_core::output::OnboardMode::UserCode,
             "qr_login" => octo_telegram_mtproto_onboard_core::output::OnboardMode::QrLogin,
             _ => octo_telegram_mtproto_onboard_core::output::OnboardMode::Whoami,
         },
-        self_id: rec.user_id,
-        self_username: rec.username,
-        is_bot: rec.mode == "bot_token",
-        data_dir: data_dir.display().to_string(),
-        config_path: data_dir.join("config.json").display().to_string(),
-        elapsed_ms: 0,
-    };
+        rec.user_id,
+        rec.username,
+        rec.mode == "bot_token",
+        data_dir.display().to_string(),
+        data_dir.join("config.json").display().to_string(),
+        0,
+    );
     let body = out.to_json_pretty().map_err(OnboardError::Json)?;
     match args.output.as_deref() {
         Some(p) => {
@@ -630,16 +672,15 @@ mod tests {
         // exist.
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("nested").join("config.json");
-        let out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
-            self_id: 1,
-            self_username: Some("x".into()),
-            is_bot: true,
-            data_dir: tmp.path().display().to_string(),
-            config_path: config_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            1,
+            Some("x".into()),
+            true,
+            tmp.path().display().to_string(),
+            config_path.display().to_string(),
+            0,
+        );
         let cfg = MtprotoTelegramConfig {
             api_id: Some(1),
             api_hash: Some("h".into()),
@@ -660,16 +701,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.json");
-        let out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
-            self_id: 1,
-            self_username: Some("x".into()),
-            is_bot: true,
-            data_dir: tmp.path().display().to_string(),
-            config_path: config_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            1,
+            Some("x".into()),
+            true,
+            tmp.path().display().to_string(),
+            config_path.display().to_string(),
+            0,
+        );
         let cfg = MtprotoTelegramConfig {
             api_id: Some(1),
             api_hash: Some("h".into()),
@@ -702,16 +742,15 @@ mod tests {
     fn write_config_leaves_no_tmp_file() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.json");
-        let out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
-            self_id: 1,
-            self_username: Some("x".into()),
-            is_bot: true,
-            data_dir: tmp.path().display().to_string(),
-            config_path: config_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            1,
+            Some("x".into()),
+            true,
+            tmp.path().display().to_string(),
+            config_path.display().to_string(),
+            0,
+        );
         let cfg = MtprotoTelegramConfig {
             api_id: Some(1),
             api_hash: Some("h".into()),
@@ -747,16 +786,15 @@ mod tests {
 
         // (1) bot mode
         let bot_path = tmp.path().join("bot").join("config.json");
-        let bot_out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
-            self_id: 1,
-            self_username: Some("bot".into()),
-            is_bot: true,
-            data_dir: tmp.path().display().to_string(),
-            config_path: bot_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let bot_out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::BotToken,
+            1,
+            Some("bot".into()),
+            true,
+            tmp.path().display().to_string(),
+            bot_path.display().to_string(),
+            0,
+        );
         write_config_and_output(
             &bot_out,
             &bot_path,
@@ -773,16 +811,15 @@ mod tests {
 
         // (2) user mode (R2-IE-8: phone is embedded)
         let user_path = tmp.path().join("user").join("config.json");
-        let user_out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::UserCode,
-            self_id: 2,
-            self_username: Some("user".into()),
-            is_bot: false,
-            data_dir: tmp.path().display().to_string(),
-            config_path: user_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let user_out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::UserCode,
+            2,
+            Some("user".into()),
+            false,
+            tmp.path().display().to_string(),
+            user_path.display().to_string(),
+            0,
+        );
         write_config_and_output(
             &user_out,
             &user_path,
@@ -802,16 +839,15 @@ mod tests {
         // (3) qr_login mode (R2-IE-8: mode is "qr_login",
         //     no phone required)
         let qr_path = tmp.path().join("qr").join("config.json");
-        let qr_out = OnboardOutput {
-            schema_version: 1,
-            mode: octo_telegram_mtproto_onboard_core::output::OnboardMode::QrLogin,
-            self_id: 3,
-            self_username: Some("qr".into()),
-            is_bot: false,
-            data_dir: tmp.path().display().to_string(),
-            config_path: qr_path.display().to_string(),
-            elapsed_ms: 0,
-        };
+        let qr_out = OnboardOutput::new(
+            octo_telegram_mtproto_onboard_core::output::OnboardMode::QrLogin,
+            3,
+            Some("qr".into()),
+            false,
+            tmp.path().display().to_string(),
+            qr_path.display().to_string(),
+            0,
+        );
         write_config_and_output(&qr_out, &qr_path, &cfg_base, "qr_login", "", None, None).unwrap();
         let qr_json = std::fs::read_to_string(&qr_path).unwrap();
         let qr_cfg: MtprotoTelegramConfig = serde_json::from_str(&qr_json).unwrap();

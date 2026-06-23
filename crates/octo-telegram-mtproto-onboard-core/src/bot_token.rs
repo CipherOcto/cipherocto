@@ -22,6 +22,7 @@ use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClien
 use tokio::sync::oneshot;
 use tracing::{debug, info};
 
+use crate::adapter_error;
 use crate::auth::auth_state_name;
 use crate::error::OnboardError;
 use crate::output::{OnboardMode, OnboardOutput};
@@ -165,7 +166,13 @@ where
     // method on the adapter (no interactive channels needed for
     // bot mode).
     if let Err(e) = adapter.connect_bot_token(bot_token).await {
-        return Err(map_adapter_error(&auth_state_name(&adapter), e));
+        // R2-ARCH-4 / R2-IE-12: use the shared
+        // `adapter_error::map` instead of the inline
+        // `map_adapter_error` (the round-1 inline copy was
+        // duplicated in three places; the central helper is
+        // the single source of truth for the
+        // `MtprotoTelegramError` → `OnboardError` mapping).
+        return Err(adapter_error::map(e, &auth_state_name(&adapter)));
     }
 
     if !adapter.has_valid_session() {
@@ -202,36 +209,6 @@ where
         "bot-token onboarding complete"
     );
     Ok((output, config_path))
-}
-
-/// Map an adapter error to the most specific `OnboardError`
-/// variant. Pure function, easily testable.
-fn map_adapter_error(
-    last_state: &str,
-    err: octo_adapter_telegram_mtproto::MtprotoTelegramError,
-) -> OnboardError {
-    use octo_adapter_telegram_mtproto::MtprotoTelegramError as E;
-    match err {
-        E::Config(_) => OnboardError::Config(err.to_string()),
-        E::Auth(_) => OnboardError::TelegramApi(err.to_string()),
-        E::Rpc { .. } => OnboardError::TelegramApi(err.to_string()),
-        E::RateLimited { .. } => OnboardError::TelegramApi(err.to_string()),
-        E::Session(_) => OnboardError::Adapter(err.to_string()),
-        E::Network(_) => OnboardError::Network(err.to_string()),
-        E::Capability(_) => OnboardError::Adapter(err.to_string()),
-        E::NotReady(_) => OnboardError::Lifecycle {
-            state: last_state.to_string(),
-        },
-        E::Envelope(_) => OnboardError::Adapter(err.to_string()),
-        E::Internal(_) => OnboardError::Adapter(err.to_string()),
-        // QrLoginHandle can never come out of connect_bot_token
-        // (that's only emitted by the QR flow), but the
-        // match must be exhaustive (the enum is
-        // #[non_exhaustive] upstream).
-        E::QrLoginHandle { .. } => OnboardError::Adapter(err.to_string()),
-        // Forward-compatible: any future variants land here.
-        other => OnboardError::Adapter(other.to_string()),
-    }
 }
 
 fn unix_now_secs() -> i64 {

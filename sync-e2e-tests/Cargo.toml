@@ -14,3 +14,4 @@ parking_lot = "0.12"
 tempfile = "3"
 stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
 blake3 = "1.5"
+parking_lot = "0.12"

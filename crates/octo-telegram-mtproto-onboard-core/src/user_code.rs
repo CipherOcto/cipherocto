@@ -148,15 +148,29 @@ where
     // runtime would mark a runtime as current, and
     // `blocking_recv` panics if any Tokio runtime is current).
     //
-    // Instead we yield the runtime thread until the oneshot
-    // resolves. `std::thread::yield_now` parks the current
-    // OS thread briefly without depending on Tokio. Combined
-    // with `try_recv`, this gives the forwarder task time to
-    // deliver the value. The wait is bounded by the supplied
-    // `code_timeout` / `password_timeout` (default 60s each)
-    // so a non-arriving input cannot deadlock the flow.
+    // IE-2 (R26): the prior implementation parked the
+    // thread on `std::thread::yield_now()` between
+    // `try_recv()` calls, which is a busy-loop that pegs
+    // a CPU core at 100% for the full 60-second wait
+    // window. Replace with a real OS-level sleep. The
+    // minimum sleep granularity on most platforms is
+    // 1-15ms (Linux ~1us with CONFIG_HZ=1000, Windows
+    // 15.6ms default) so we add a tiny budget per
+    // iteration but yield the actual CPU to other
+    // threads. The wait is bounded by the supplied
+    // `code_timeout` / `password_timeout` (default 60s
+    // each) so a non-arriving input cannot deadlock the
+    // flow.
     let code_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let password_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    // 1ms poll interval is short enough to feel
+    // interactive (the operator types the code, presses
+    // Enter, and the loop wakes on the next iteration)
+    // and long enough that we don't burn CPU. The
+    // forwarder task is the one doing the actual wakeup
+    // — it sends the value into the oneshot, which makes
+    // the next `try_recv` return `Ok`.
+    let poll = std::time::Duration::from_millis(1);
     let ask_code = move || loop {
         match code_rx_oneshot.try_recv() {
             Ok(code) => return code,
@@ -169,7 +183,7 @@ where
                     warn!("ask_code: timed out waiting for code");
                     return String::new();
                 }
-                std::thread::yield_now();
+                std::thread::sleep(poll);
             }
         }
     };
@@ -185,7 +199,7 @@ where
                     warn!("ask_password: timed out waiting for password");
                     return None;
                 }
-                std::thread::yield_now();
+                std::thread::sleep(poll);
             }
         }
     };

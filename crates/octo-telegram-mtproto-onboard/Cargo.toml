@@ -21,8 +21,13 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 directories = "6"
-tempfile = "3"
-
-[dev-dependencies]
-tokio = { workspace = true }
+# R26-S4: hidden TTY input for bot token, 2FA password.
+# Mirrors the TDLib onboard crate's setup. SMS codes are
+# not masked (short-lived) but are still zeroized on drop.
+rpassword = "7"
+# R26-S5: zeroize for sensitive byte buffers (bot token,
+# 2FA password, SMS code) — wiped on drop. The cipherocto
+# convention for handling secrets that need to be removed
+# from memory after use.
+zeroize = { version = "1", features = ["zeroize_derive"] }
 tempfile = "3"

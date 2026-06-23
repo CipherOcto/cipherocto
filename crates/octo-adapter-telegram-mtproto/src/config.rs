@@ -292,6 +292,33 @@ impl MtprotoTelegramConfig {
                     return Err("http transport is bot-only; user mode must use mtproto".into());
                 }
             }
+            // R26-PROTO-1: QR login mode is also a valid
+            // auth path; the validator used to silently
+            // reject it as "unknown mode", which meant the
+            // CLI's pre-flight validate() call in
+            // `run_qr_login` would have failed. Add an
+            // explicit arm. QR mode does not require
+            // `phone` (the login is device-based, not
+            // phone-based), but it does require the same
+            // user-mode credentials (api_id, api_hash,
+            // data_dir) plus a positive `api_id`.
+            "qr" | "qr_login" => {
+                if self.api_id.is_none() {
+                    return Err("qr_login mode requires api_id".into());
+                }
+                if self.api_id.is_none_or(|id| id <= 0) {
+                    return Err("qr_login mode api_id must be positive".into());
+                }
+                if self.api_hash.is_none() || self.api_hash.as_deref().unwrap().is_empty() {
+                    return Err("qr_login mode requires api_hash".into());
+                }
+                if self.data_dir.is_none() {
+                    return Err("qr_login mode requires data_dir".into());
+                }
+                if self.transport == Transport::BotApiHttp {
+                    return Err("http transport is bot-only; qr_login mode must use mtproto".into());
+                }
+            }
             other => {
                 return Err(format!("unknown mode: {}", other));
             }
@@ -529,5 +556,61 @@ mod tests {
         let err = c.auth_mode().unwrap_err();
         assert!(err.contains("unknown mode"));
         assert!(err.contains("websocket"));
+    }
+
+    // R26-PROTO-1: validate() must accept `qr_login` mode
+    // and require the same fields as user mode (api_id,
+    // api_hash, data_dir) — except `phone`, which QR login
+    // does not need.
+    #[test]
+    fn validate_qr_login_ok() {
+        let c = MtprotoTelegramConfig {
+            mode: Some("qr_login".into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            data_dir: Some(PathBuf::from("/tmp/x")),
+            ..Default::default()
+        };
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_qr_alias_ok() {
+        // "qr" is also a recognized alias (matches auth_mode()).
+        let c = MtprotoTelegramConfig {
+            mode: Some("qr".into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            data_dir: Some(PathBuf::from("/tmp/x")),
+            ..Default::default()
+        };
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_qr_login_missing_data_dir() {
+        let c = MtprotoTelegramConfig {
+            mode: Some("qr_login".into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            data_dir: None,
+            ..Default::default()
+        };
+        let e = c.validate().unwrap_err();
+        assert!(e.contains("data_dir"), "err = {}", e);
+    }
+
+    #[test]
+    fn validate_qr_login_rejects_http_transport() {
+        let c = MtprotoTelegramConfig {
+            mode: Some("qr_login".into()),
+            api_id: Some(12345),
+            api_hash: Some("0123456789abcdef0123456789abcdef".into()),
+            data_dir: Some(PathBuf::from("/tmp/x")),
+            transport: Transport::BotApiHttp,
+            ..Default::default()
+        };
+        let e = c.validate().unwrap_err();
+        assert!(e.contains("http transport"), "err = {}", e);
     }
 }

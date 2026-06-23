@@ -226,6 +226,66 @@ pub fn resolve_api_hash(flag: Option<String>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // R26-S3: env-var tests MUST run serially — `cargo test`
+    // runs tests in parallel by default, and
+    // `std::env::set_var` / `remove_var` mutate a process-
+    // global table. Without this lock, two parallel tests
+    // would race on the same variable and assert flaky
+    // outcomes. The previous code claimed "single-threaded
+    // test process" via an `unsafe { ... }` block, which is
+    // incorrect on a parallel test runner. `serial_test`
+    // would also work but adds a dependency we don't need.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run a closure with `var` set to `value` (and restored
+    /// on drop). Holds `ENV_LOCK` for the duration so
+    /// concurrent env-mutating tests cannot race.
+    fn with_env<F: FnOnce()>(var: &str, value: &str, f: F) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: we hold ENV_LOCK so no other test in this
+        // binary is touching env vars concurrently. We
+        // restore the prior value on scope exit (drop).
+        let prior = std::env::var(var).ok();
+        // SAFETY: see above.
+        unsafe {
+            std::env::set_var(var, value);
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        // SAFETY: see above.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var(var, v),
+                None => std::env::remove_var(var),
+            }
+        }
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// Run a closure with `var` removed. Holds `ENV_LOCK`
+    /// and restores the prior value on scope exit.
+    fn without_env<F: FnOnce()>(var: &str, f: F) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prior = std::env::var(var).ok();
+        // SAFETY: see `with_env`.
+        unsafe {
+            std::env::remove_var(var);
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        // SAFETY: see `with_env`.
+        unsafe {
+            match prior {
+                Some(v) => std::env::set_var(var, v),
+                None => std::env::remove_var(var),
+            }
+        }
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
 
     #[test]
     fn default_data_dir_is_nonempty() {
@@ -242,14 +302,10 @@ mod tests {
 
     #[test]
     fn resolve_data_dir_falls_back_to_default() {
-        // Make sure the env var is unset for the duration
-        // of this test (CI environments may set it).
-        // SAFETY: single-threaded test process.
-        unsafe {
-            std::env::remove_var("TELEGRAM_DATA_DIR");
-        }
-        let resolved = resolve_data_dir(None);
-        assert!(!resolved.as_os_str().is_empty());
+        without_env("TELEGRAM_DATA_DIR", || {
+            let resolved = resolve_data_dir(None);
+            assert!(!resolved.as_os_str().is_empty());
+        });
     }
 
     #[test]
@@ -259,28 +315,18 @@ mod tests {
 
     #[test]
     fn resolve_api_id_parses_env_var() {
-        // SAFETY: single-threaded test process.
-        unsafe {
-            std::env::set_var("TELEGRAM_API_ID", "99999");
-        }
-        let id = resolve_api_id(None).unwrap();
-        unsafe {
-            std::env::remove_var("TELEGRAM_API_ID");
-        }
-        assert_eq!(id, 99999);
+        with_env("TELEGRAM_API_ID", "99999", || {
+            let id = resolve_api_id(None).unwrap();
+            assert_eq!(id, 99999);
+        });
     }
 
     #[test]
     fn resolve_api_id_rejects_non_numeric_env_var() {
-        // SAFETY: single-threaded test process.
-        unsafe {
-            std::env::set_var("TELEGRAM_API_ID", "not-a-number");
-        }
-        let e = resolve_api_id(None).unwrap_err();
-        unsafe {
-            std::env::remove_var("TELEGRAM_API_ID");
-        }
-        assert!(e.contains("not-a-number"));
+        with_env("TELEGRAM_API_ID", "not-a-number", || {
+            let e = resolve_api_id(None).unwrap_err();
+            assert!(e.contains("not-a-number"));
+        });
     }
 
     #[test]
@@ -293,11 +339,9 @@ mod tests {
 
     #[test]
     fn resolve_api_hash_rejects_empty_flag_and_unset_env() {
-        // SAFETY: single-threaded test process.
-        unsafe {
-            std::env::remove_var("TELEGRAM_API_HASH");
-        }
-        let e = resolve_api_hash(None).unwrap_err();
-        assert!(e.contains("TELEGRAM_API_HASH"));
+        without_env("TELEGRAM_API_HASH", || {
+            let e = resolve_api_hash(None).unwrap_err();
+            assert!(e.contains("TELEGRAM_API_HASH"));
+        });
     }
 }

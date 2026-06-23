@@ -30,15 +30,75 @@ use crate::session::SessionRecord;
 /// Validates a bot token shape. Telegram bot tokens are
 /// `<bot_id>:<47-ish random chars>` (e.g.
 /// `123456789:AAEhBOweik6ad9JQB...`). We do a cheap structural
-/// check (non-empty, contains `:`) — the adapter's
-/// `sign_in_bot` does the real `auth.botSignIn` RPC.
+/// check — both halves of the colon-separated pair must be
+/// non-empty, the bot_id must be all digits, and the auth
+/// half must be 30+ characters of `[A-Za-z0-9_-]`. The
+/// adapter's `sign_in_bot` does the real `auth.botSignIn`
+/// RPC.
+///
+/// IE-1 (R26): the prior version only checked `is_empty` +
+/// `contains(':')`, which let through tokens like `":"`,
+/// `"::abc"`, or `"123:"` (empty auth half). The bot API
+/// would later reject these with a 401, but the failure
+/// surfaces only after we've opened a network connection
+/// and the operator has typed something — better to catch
+/// obvious typos at the prompt.
 pub fn validate_bot_token(token: &str) -> Result<(), OnboardError> {
     if token.is_empty() {
         return Err(OnboardError::InvalidInput("bot token is empty".to_string()));
     }
-    if !token.contains(':') {
+    // The canonical form has exactly ONE colon. Reject
+    // extra colons, leading/trailing colons, and embedded
+    // double colons (`"::"`, `":foo"`, `"foo:"`,
+    // `"a::b"`).
+    let colon_count = token.bytes().filter(|b| *b == b':').count();
+    if colon_count != 1 {
+        return Err(OnboardError::InvalidInput(format!(
+            "bot token must contain exactly one ':' separator (got {} colons)",
+            colon_count
+        )));
+    }
+    // Split on the colon and validate both halves.
+    let (id_part, auth_part) = token
+        .split_once(':')
+        .expect("colon_count == 1 implies split_once succeeds");
+    if id_part.is_empty() {
         return Err(OnboardError::InvalidInput(
-            "bot token must be in the form '<bot_id>:<auth>'".to_string(),
+            "bot token: bot id (before ':') is empty".to_string(),
+        ));
+    }
+    if auth_part.is_empty() {
+        return Err(OnboardError::InvalidInput(
+            "bot token: auth secret (after ':') is empty".to_string(),
+        ));
+    }
+    // The bot id is a positive integer (Telegram's actual
+    // bot ids are 8-10 digits, but we don't enforce an
+    // upper bound here — only that the part is numeric).
+    if !id_part.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(OnboardError::InvalidInput(format!(
+            "bot token: bot id '{}' must be all digits",
+            id_part
+        )));
+    }
+    // The auth half is base64url-ish: 35 characters of
+    // `[A-Za-z0-9_-]`. We do a permissive length check
+    // (>= 30) to allow shorter test fixtures (the mock
+    // client doesn't validate the auth half at all) and
+    // to allow future Telegram-side format tweaks
+    // without a flag day.
+    if auth_part.len() < 30 {
+        return Err(OnboardError::InvalidInput(format!(
+            "bot token: auth secret is too short ({} chars, expected >= 30)",
+            auth_part.len()
+        )));
+    }
+    if !auth_part
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(OnboardError::InvalidInput(
+            "bot token: auth secret must be [A-Za-z0-9_-]".to_string(),
         ));
     }
     Ok(())
@@ -181,8 +241,74 @@ mod tests {
     }
 
     #[test]
+    fn validate_bot_token_rejects_only_colon() {
+        // IE-1 (R26): old code accepted ":" as containing
+        // a colon. The new code rejects it.
+        let e = validate_bot_token(":").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("empty") || e.to_string().contains("bot id"));
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_double_colon() {
+        // IE-1 (R26): "::abc" — two colons, empty id_part.
+        let e = validate_bot_token("::abc").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_trailing_colon() {
+        // IE-1 (R26): "123:" — empty auth half.
+        let e = validate_bot_token("123:").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_leading_colon() {
+        // IE-1 (R26): ":abc" — empty id_part.
+        let e = validate_bot_token(":abc").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_three_colons() {
+        // IE-1 (R26): "a:b:c" — too many separators.
+        let e = validate_bot_token("a:b:c").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("exactly one"));
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_non_digit_id() {
+        // Bot id must be all digits.
+        let e = validate_bot_token("abc:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_short_auth() {
+        // The auth half is 30+ chars of [A-Za-z0-9_-].
+        let e = validate_bot_token("123:short").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+        assert!(e.to_string().contains("short") || e.to_string().contains("30"));
+    }
+
+    #[test]
+    fn validate_bot_token_rejects_bad_auth_chars() {
+        // Auth must be [A-Za-z0-9_-], not e.g. ':' or '!'.
+        let e = validate_bot_token("123:AAAAAA!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap_err();
+        assert_eq!(e.kind(), "invalid_input");
+    }
+
+    #[test]
     fn validate_bot_token_accepts_canonical_form() {
-        validate_bot_token("123456789:AAEhBOweik6ad9JQBxxx").unwrap();
+        validate_bot_token("123456789:AAEhBOweik6ad9JQBxxx_xyz-test-12345").unwrap();
+    }
+
+    #[test]
+    fn validate_bot_token_accepts_minimum_length_auth() {
+        // 30 chars exactly at the lower bound.
+        validate_bot_token("123:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -194,9 +320,13 @@ mod tests {
         // RPC.
         let tmp = tempdir().unwrap();
         let adapter = mock_adapter_for_test(tmp.path());
-        let (out, _cfg_path) = run(adapter, "999:AAA", tmp.path())
-            .await
-            .expect("bot-token run should succeed against mock");
+        let (out, _cfg_path) = run(
+            adapter,
+            "999:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            tmp.path(),
+        )
+        .await
+        .expect("bot-token run should succeed against mock");
         assert!(out.is_bot);
         assert!(out.self_id != 0);
         assert_eq!(out.mode, OnboardMode::BotToken);

@@ -286,13 +286,18 @@ where
     // so the operator's "Enter on no 2FA" is distinguishable
     // from "the input pipe died". The adapter still takes
     // `Option<String>`; we project back to `Option<String>`
-    // after extracting the outcome for the log line.
+    // before returning. R3-1: an earlier draft of this
+    // closure also stashed the outcome in an
+    // `Arc<Mutex<Option<PasswordOutcome>>>` so a caller
+    // could inspect it after `connect_user` returned. The
+    // stash was never read (the caller has no way to
+    // access it; `connect_user` consumes the closure and
+    // returns the `MtprotoSelfIdentity`, not the
+    // outcome), so it's dead code. Removed.
     let ask_password = {
         let due_flag = std::sync::Arc::clone(&password_deadline_due);
         let due_at = std::sync::Arc::clone(&password_deadline_at);
         let deadline_duration = password_deadline;
-        let outcome_log = std::sync::Arc::new(std::sync::Mutex::new(None::<PasswordOutcome>));
-        let outcome_log_for_closure = std::sync::Arc::clone(&outcome_log);
         move || -> Option<String> {
             // R2-PROTO-15: arm the deadline on first
             // `try_recv` call (not at closure build time).
@@ -303,21 +308,15 @@ where
                 match password_rx_oneshot.try_recv() {
                     Ok(p) => break PasswordOutcome::Provided(p),
                     Err(oneshot::error::TryRecvError::Closed) => {
-                        // Distinguish "operator pressed
-                        // Enter on no 2FA" (the CLI
-                        // drops the sender on empty
-                        // input) from "the input pipe
-                        // died before we could read".
-                        // The CLI's input_task sends an
-                        // empty string on Enter-no-2FA,
-                        // then drops the sender — so a
-                        // Closed error here means the
-                        // sender was dropped without a
-                        // value, which the CLI uses for
-                        // the "no 2FA" signal. The
-                        // adapter takes `Option<String>`
-                        // anyway, so we map both to
-                        // `None` and tag the log line.
+                        // R2-IE-19: the CLI's input_task
+                        // drops the sender on Enter-no-2FA,
+                        // so a `Closed` error here is the
+                        // "no 2FA" signal — the operator
+                        // deliberately chose not to
+                        // provide a password. Map to
+                        // `PasswordOutcome::NotNeeded`
+                        // (the closure projects back to
+                        // `None` at the end).
                         break PasswordOutcome::NotNeeded;
                     }
                     Err(oneshot::error::TryRecvError::Empty) => {
@@ -334,7 +333,6 @@ where
                     }
                 }
             };
-            *outcome_log_for_closure.lock().unwrap() = Some(outcome.clone());
             match outcome {
                 PasswordOutcome::Provided(s) => Some(s),
                 PasswordOutcome::NotNeeded | PasswordOutcome::InputClosed => None,

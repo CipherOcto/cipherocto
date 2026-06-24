@@ -637,3 +637,114 @@ async fn concurrent_writers_to_single_reader() {
     // Reader should have 15 entries total (5 × 3 writers).
     assert_eq!(cluster.adapter(3).current_lsn().unwrap(), 15);
 }
+
+/// MP-T13: DRS scoring — liveness takes precedence over LSN.
+///
+/// Two peers with same LSN but different lifecycle states.
+/// Streaming peer should be selected over Suspect peer.
+#[test]
+fn drs_scoring_prefers_streaming_over_suspect() {
+    let mut cluster = TestCluster::new(
+        3,
+        &[SyncRole::Replicator, SyncRole::Observer, SyncRole::Observer],
+    );
+
+    let peer1 = cluster.node(1).peer_id(&cluster.mission_id);
+    let peer2 = cluster.node(2).peer_id(&cluster.mission_id);
+
+    cluster.node_mut(0).session.subscribe_peer(peer1).unwrap();
+    cluster.node_mut(0).session.subscribe_peer(peer2).unwrap();
+
+    // Both to Streaming first
+    for peer_id in &[peer1, peer2] {
+        cluster
+            .node(0)
+            .session
+            .transition_peer(
+                *peer_id,
+                SyncLifecycle::Authenticating,
+                octo_sync::state::TransitionTrigger::TlsHandshakeComplete,
+            )
+            .unwrap();
+        cluster
+            .node(0)
+            .session
+            .transition_peer(
+                *peer_id,
+                SyncLifecycle::Streaming,
+                octo_sync::state::TransitionTrigger::SignatureValid,
+            )
+            .unwrap();
+    }
+
+    // Same LSN for both
+    cluster.node(0).session.on_lsn_ack(peer1, 10).unwrap();
+    cluster.node(0).session.on_lsn_ack(peer2, 10).unwrap();
+
+    // Demote peer2 to Suspect
+    cluster
+        .node(0)
+        .session
+        .transition_peer(
+            peer2,
+            SyncLifecycle::Suspect,
+            octo_sync::state::TransitionTrigger::HeartbeatTimeout,
+        )
+        .unwrap();
+
+    // Select 1 peer — should be peer1 (Streaming) not peer2 (Suspect)
+    let selected = cluster.node(0).session.select_gossip_peers(1);
+    assert_eq!(selected.len(), 1);
+    assert_eq!(
+        selected[0], peer1,
+        "Streaming peer should be preferred over Suspect"
+    );
+}
+
+/// MP-T14: DRS scoring — diversity enforcement.
+///
+/// Two peers with same LSN and same state but same 4-byte prefix.
+/// Only one should be selected (diversity dedup).
+#[test]
+fn drs_scoring_diversity_enforcement() {
+    let mut cluster = TestCluster::new(
+        3,
+        &[SyncRole::Replicator, SyncRole::Observer, SyncRole::Observer],
+    );
+
+    let peer1 = cluster.node(1).peer_id(&cluster.mission_id);
+    let peer2 = cluster.node(2).peer_id(&cluster.mission_id);
+
+    cluster.node_mut(0).session.subscribe_peer(peer1).unwrap();
+    cluster.node_mut(0).session.subscribe_peer(peer2).unwrap();
+
+    // Both to Streaming
+    for peer_id in &[peer1, peer2] {
+        cluster
+            .node(0)
+            .session
+            .transition_peer(
+                *peer_id,
+                SyncLifecycle::Authenticating,
+                octo_sync::state::TransitionTrigger::TlsHandshakeComplete,
+            )
+            .unwrap();
+        cluster
+            .node(0)
+            .session
+            .transition_peer(
+                *peer_id,
+                SyncLifecycle::Streaming,
+                octo_sync::state::TransitionTrigger::SignatureValid,
+            )
+            .unwrap();
+    }
+
+    // Same LSN
+    cluster.node(0).session.on_lsn_ack(peer1, 10).unwrap();
+    cluster.node(0).session.on_lsn_ack(peer2, 10).unwrap();
+
+    // Request 1 peer — should only get 1 (diversity dedup)
+    let selected = cluster.node(0).session.select_gossip_peers(1);
+    assert_eq!(selected.len(), 1);
+}

@@ -419,39 +419,63 @@ impl SyncSessionManager {
         actions
     }
 
-    /// Select peers for anti-entropy gossip using DRS criteria.
+    /// Select peers for anti-entropy gossip using DRS-adapted scoring.
     ///
-    /// Returns the best N peers based on:
-    /// 1. Liveness (peers in Streaming state preferred)
-    /// 2. LSN watermark (peers with lower LSN are better targets for catch-up)
-    /// 3. Diversity (simplified: prefer peers with different node_id prefixes)
+    /// Returns the best N peers based on composite score (per RFC-0856 §6.1):
+    /// 1. **Freshness** (LSN delta): peers with lower LSN are better catch-up targets
+    /// 2. **Liveness** (peer state): Streaming > Connecting > Suspect
+    /// 3. **Reliability** (heartbeat recency): recent heartbeat = more reliable
+    /// 4. **Diversity** (node_id prefix): prefer diverse peers to avoid correlated failures
+    ///
+    /// Weights are governance-controlled (default: freshness=400k, liveness=300k,
+    /// reliability=200k, diversity=100k). All arithmetic is u64 saturating.
     pub fn select_gossip_peers(&self, max_peers: usize) -> Vec<SyncPeerId> {
+        use crate::scoring::{self, ScoringWeights};
+
         let peers = self.peers.lock();
-        let mut candidates: Vec<(SyncPeerId, u64)> = peers
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Compute local LSN for freshness normalization
+        let local_lsn = self.streamer.current_lsn();
+
+        let weights = ScoringWeights::balanced();
+
+        let mut candidates: Vec<(SyncPeerId, u64, [u8; 4])> = peers
             .iter()
             .filter(|(_, session)| {
-                // Only select peers that are active (Streaming) or recently connected
+                // Only select peers that are active or recently connected
                 matches!(
                     session.peer.state,
-                    SyncLifecycle::Streaming | SyncLifecycle::Connecting
+                    SyncLifecycle::Streaming
+                        | SyncLifecycle::Connecting
+                        | SyncLifecycle::Authenticating
                 )
             })
             .map(|(peer_id, session)| {
-                // Score: lower LSN = better target for catch-up gossip
-                let lsn_score = session.lsn_tracker.watermark();
-                (*peer_id, lsn_score)
+                let score = scoring::compute_score(
+                    session.lsn_tracker.watermark(),
+                    local_lsn,
+                    session.peer.state,
+                    session.peer.last_heartbeat_unix,
+                    now,
+                    &weights,
+                );
+                let prefix: [u8; 4] = peer_id.0[0..4].try_into().unwrap_or([0; 4]);
+                (*peer_id, score, prefix)
             })
             .collect();
 
-        // Sort by LSN (ascending) — peers with lower LSN are better gossip targets
-        candidates.sort_by_key(|(_, lsn)| *lsn);
+        // Sort by score descending (higher = better), tie-break by node_id ascending
+        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0 .0.cmp(&b.0 .0)));
 
-        // Deduplicate by node_id prefix (simplified diversity check)
+        // Deduplicate by node_id prefix (diversity enforcement)
         let mut selected = Vec::new();
         let mut seen_prefixes = std::collections::HashSet::new();
-        for (peer_id, _) in &candidates {
-            let prefix = peer_id.0[0..4].to_vec();
-            if seen_prefixes.insert(prefix) {
+        for (peer_id, _score, prefix) in &candidates {
+            if seen_prefixes.insert(*prefix) {
                 selected.push(*peer_id);
                 if selected.len() >= max_peers {
                     break;

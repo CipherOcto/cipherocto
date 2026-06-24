@@ -83,6 +83,7 @@ pub mod keyring;
 pub mod lsn;
 pub mod raft_overlay;
 pub mod replay_cache;
+pub mod scoring;
 pub mod segment;
 pub mod session;
 pub mod state;

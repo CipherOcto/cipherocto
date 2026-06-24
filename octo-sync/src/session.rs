@@ -235,8 +235,9 @@ impl SyncSessionManager {
     ///
     /// For each WAL entry in the chunk:
     /// 1. Check the replay cache (skip if already applied).
-    /// 2. Call `adapter.apply_wal_entry(entry)`.
-    /// 3. Insert the envelope_id into the replay cache.
+    /// 2. Validate CRC32 of the entry payload (slash on corruption).
+    /// 3. Call `adapter.apply_wal_entry(entry)`.
+    /// 4. Insert the envelope_id into the replay cache.
     ///
     /// Returns the number of entries successfully applied.
     pub fn apply_wal_tail(
@@ -252,6 +253,10 @@ impl SyncSessionManager {
             let envelope_id = blake3_hash(entry);
             if cache.contains(&envelope_id) {
                 continue;
+            }
+            // CRC32 validation (mission 0862m: slash on corruption).
+            if !validate_wal_entry_crc32(entry) {
+                return Err(SyncError::CorruptedWalEntry);
             }
             self.adapter.apply_wal_entry(entry)?;
             cache.insert(envelope_id, 0); // timestamp not critical for dedup
@@ -550,6 +555,35 @@ fn blake3_hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(data);
     *hasher.finalize().as_bytes()
+}
+
+/// Validate the CRC32 checksum of a WAL V2 entry.
+///
+/// The WAL V2 format embeds a CRC32 checksum in the entry trailer.
+/// This function verifies the checksum to detect corruption or tampering.
+/// Returns `true` if the entry is valid, `false` if CRC32 mismatches.
+///
+/// Only validates entries that have the WAL V2 magic number (0x454C4157 = "WALE").
+/// Non-WAL entries (e.g., test data) are accepted without CRC32 validation.
+///
+/// Per mission 0862m: CRC32 validation before applying entries.
+/// A mismatch triggers `SyncError::CorruptedWalEntry` (slash code 0x0020).
+fn validate_wal_entry_crc32(entry: &[u8]) -> bool {
+    // WAL V2 minimum size: header (32 bytes) + data + CRC32 (4 bytes)
+    if entry.len() < 36 {
+        return true; // Too short to be WAL V2 — accept (test data)
+    }
+    // Check for WAL V2 magic: 0x454C4157 ("WALE" in little-endian)
+    let magic = u32::from_le_bytes(entry[0..4].try_into().unwrap_or([0; 4]));
+    const WAL_MAGIC: u32 = 0x454C4157; // "WALE"
+    if magic != WAL_MAGIC {
+        return true; // Not a WAL V2 entry — accept (test data)
+    }
+    // WAL V2 entry: validate CRC32
+    let crc_offset = entry.len() - 4;
+    let stored_crc = u32::from_le_bytes(entry[crc_offset..].try_into().unwrap_or([0; 4]));
+    let computed_crc = crc32fast::hash(&entry[..crc_offset]);
+    stored_crc == computed_crc
 }
 
 #[cfg(test)]

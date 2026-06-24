@@ -117,6 +117,21 @@ pub enum SyncError {
         /// The trigger that caused the invalid transition.
         trigger: TransitionTrigger,
     },
+
+    // ── Slashing detection (RFC-0862 Phase 4, mission 0862m) ──────────
+
+    /// Corrupted WAL entry: CRC32 verification failed. The entry payload
+    /// does not match its CRC32 checksum, indicating data corruption or
+    /// tampering. Maps to slash code `SyncCorruptedWalEntry` (0x0020).
+    #[error("corrupted WAL entry: CRC32 mismatch")]
+    CorruptedWalEntry,
+
+    /// Fake summary: HMAC verification failed. The summary's HMAC does not
+    /// match the expected value computed from the transport key, indicating
+    /// the summary was forged or tampered with. Maps to slash code
+    /// `SyncFakeSummary` (0x0021).
+    #[error("fake summary: HMAC mismatch")]
+    FakeSummary,
 }
 
 /// Wire-level error code (the 9 codes defined in RFC-0862 §Error Handling).
@@ -151,6 +166,12 @@ pub enum WireError {
     /// `E_SYNC_ROLE_NOT_SYNC_CAPABLE` — role check failure.
     /// Fired before the adapter is even called.
     RoleNotSyncCapable,
+    /// `E_SYNC_CORRUPTED_WAL` — WAL entry CRC32 mismatch (slash code 0x0020).
+    /// Fired by the sync engine when a received WAL entry fails CRC32 validation.
+    CorruptedWalEntry,
+    /// `E_SYNC_FAKE_SUMMARY` — Summary HMAC mismatch (slash code 0x0021).
+    /// Fired by the sync engine when a received summary fails HMAC verification.
+    FakeSummary,
 }
 
 impl WireError {
@@ -167,6 +188,8 @@ impl WireError {
             WireError::SchemaDrift => 0x07,
             WireError::HeartbeatTimeout => 0x08,
             WireError::RoleNotSyncCapable => 0x09,
+            WireError::CorruptedWalEntry => 0x0A,
+            WireError::FakeSummary => 0x0B,
         }
     }
 
@@ -182,6 +205,8 @@ impl WireError {
             WireError::SchemaDrift => "E_SYNC_SCHEMA_DRIFT",
             WireError::HeartbeatTimeout => "E_SYNC_HEARTBEAT_TIMEOUT",
             WireError::RoleNotSyncCapable => "E_SYNC_ROLE_NOT_SYNC_CAPABLE",
+            WireError::CorruptedWalEntry => "E_SYNC_CORRUPTED_WAL",
+            WireError::FakeSummary => "E_SYNC_FAKE_SUMMARY",
         }
     }
 }
@@ -205,6 +230,8 @@ impl From<SyncError> for WireError {
             | SyncError::InvalidStateTransition { .. } => WireError::AuthFailure,
             SyncError::AllCarriersFailed | SyncError::BackendNotReady(_) => WireError::RateLimit,
             SyncError::SegmentNotFound { .. } => WireError::SegmentNotFound,
+            SyncError::CorruptedWalEntry => WireError::CorruptedWalEntry,
+            SyncError::FakeSummary => WireError::FakeSummary,
         }
     }
 }

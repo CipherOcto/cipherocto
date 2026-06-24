@@ -39,6 +39,41 @@ pub struct SyncSummary {
     pub hmac: [u8; 32],
 }
 
+impl SyncSummary {
+    /// Verify the HMAC of this summary against the expected transport key.
+    ///
+    /// Recomputes the HMAC from the summary fields and compares it to the
+    /// stored HMAC. Returns `Ok(())` if valid, `Err(SyncError::FakeSummary)`
+    /// if the HMAC mismatches (indicating forgery or tampering).
+    ///
+    /// Per mission 0862m: HMAC verification before accepting summaries.
+    pub fn verify_hmac(
+        &self,
+        transport_key: &[u8; 32],
+        node_id: &[u8; 32],
+    ) -> Result<(), crate::error::SyncError> {
+        // Rebuild the summary body for HMAC computation
+        let mut body = Vec::with_capacity(4 + 4 + 32 + 8);
+        body.extend_from_slice(&self.table_id.to_le_bytes());
+        body.extend_from_slice(&self.segment_count.to_le_bytes());
+        body.extend_from_slice(&self.segment_root);
+        body.extend_from_slice(&self.lsn_watermark.to_le_bytes());
+
+        // Compute expected HMAC
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(transport_key);
+        hasher.update(&body);
+        hasher.update(node_id);
+        let expected = *hasher.finalize().as_bytes();
+
+        if self.hmac == expected {
+            Ok(())
+        } else {
+            Err(crate::error::SyncError::FakeSummary)
+        }
+    }
+}
+
 /// 16-way Merkle tree over snapshot segments.
 ///
 /// Tree depth ≤ 4 for ≤ 65,536 segments per table. The zero-hash for an empty

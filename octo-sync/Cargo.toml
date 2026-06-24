@@ -24,6 +24,9 @@ rand = "0.8"
 # Compression (for SyncSegment LZ4 wrapping per RFC-0862 §4.3.4)
 lz4_flex = "0.12"
 
+# CRC32 for WAL entry validation (mission 0862m)
+crc32fast = "1.4"
+
 # Async traits (used by Carrier)
 async-trait = "0.1"
 

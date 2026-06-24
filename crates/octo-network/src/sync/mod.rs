@@ -24,10 +24,130 @@ pub mod dgp_integration;
 use octo_sync::dgp_bridge::{DgpSyncBridge, GossipSnapshotFragment, SyncHandler};
 use octo_sync::session::SyncSessionManager;
 
-pub use dgp_integration::{SyncDgpHandler, SyncNetworkBridge};
+pub use dgp_integration::{SyncDgpHandler, SyncNetworkBridge, SyncOutboundEnvelope};
 
 /// DGP object type for sync snapshots (GossipObjectType::SnapshotFragment = 0x0008).
 pub const SYNC_SNAPSHOT_OBJECT_TYPE: u16 = 0x0008;
+
+/// Routes incoming DGP `GossipObject`s to subsystem handlers.
+///
+/// When the network transport receives a `GossipObject`, it passes it to
+/// the `GossipDispatcher` which matches on `object_type` and routes to the
+/// appropriate subsystem bridge.
+///
+/// # Link 3: DGP → Sync
+///
+/// ```text
+/// GossipObject { object_type: 0x0008, ... }
+///   → GossipDispatcher::on_gossip_object()
+///     → SyncNetworkBridge::on_dgp_object(subtype, peer_id, payload)
+///       → DgpSyncBridge::dispatch()
+///         → SyncHandler::on_summary / on_segment / on_wal_tail
+/// ```
+pub struct GossipDispatcher {
+    sync_bridge: Option<SyncNetworkBridge>,
+}
+
+impl Default for GossipDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GossipDispatcher {
+    pub fn new() -> Self {
+        Self { sync_bridge: None }
+    }
+
+    /// Register a `SyncNetworkBridge` for `SnapshotFragment` dispatch.
+    pub fn with_sync(mut self, bridge: SyncNetworkBridge) -> Self {
+        self.sync_bridge = Some(bridge);
+        self
+    }
+
+    /// Dispatch an incoming GossipObject to the appropriate subsystem.
+    ///
+    /// `payload_bytes` is the raw payload carried by the GossipObject.
+    /// `peer_id` is the originating peer.
+    pub fn on_gossip_object(
+        &self,
+        object_type: u16,
+        subtype: u8,
+        peer_id: [u8; 32],
+        payload_bytes: Vec<u8>,
+    ) -> Result<(), DispatchError> {
+        match object_type {
+            SYNC_SNAPSHOT_OBJECT_TYPE => {
+                if let Some(ref bridge) = self.sync_bridge {
+                    bridge.on_dgp_object(subtype, peer_id, payload_bytes)?;
+                    Ok(())
+                } else {
+                    Err(DispatchError::NoHandler { object_type })
+                }
+            }
+            _ => Err(DispatchError::UnknownObjectType { object_type }),
+        }
+    }
+}
+
+/// Errors from the gossip dispatcher.
+#[derive(Debug, thiserror::Error)]
+pub enum DispatchError {
+    #[error("no handler registered for object_type=0x{object_type:04x}")]
+    NoHandler { object_type: u16 },
+
+    #[error("unknown object_type=0x{object_type:04x}")]
+    UnknownObjectType { object_type: u16 },
+
+    #[error("sync dispatch failed: {0}")]
+    SyncDispatch(#[from] octo_sync::error::SyncError),
+}
+
+/// Bridges the sync engine's `on_commit` fan-out to network transport broadcast.
+///
+/// # Link 1: Sync → Transport
+///
+/// When `SyncSessionManager::on_commit()` fires, it fans out a `WalTailChunk`
+/// to all subscribers via in-memory channels. `SyncTransportSubscriber` is one
+/// such subscriber — it receives the chunk and broadcasts it via the registered
+/// transport broadcaster.
+///
+/// ```text
+/// Database commit
+///   → SyncSessionManager::on_commit(txn_id, from_lsn, to_lsn)
+///     → WalTailStreamer fans out WalTailChunk to subscribers
+///       → SyncTransportSubscriber receives chunk
+///         → TransportBroadcaster::broadcast(chunk_bytes)
+/// ```
+pub struct SyncTransportSubscriber {
+    broadcaster: std::sync::Arc<dyn TransportBroadcaster>,
+}
+
+impl SyncTransportSubscriber {
+    pub fn new(broadcaster: std::sync::Arc<dyn TransportBroadcaster>) -> Self {
+        Self { broadcaster }
+    }
+
+    /// Broadcast a WAL tail chunk payload via the registered transport.
+    pub async fn broadcast_wal_chunk(
+        &self,
+        payload: &[u8],
+        mission_id: &[u8; 32],
+    ) -> Result<(), std::io::Error> {
+        self.broadcaster.broadcast(payload, mission_id).await
+    }
+}
+
+/// Abstraction for outbound transport broadcast.
+///
+/// Implementors bridge `SyncTransportSubscriber` to concrete transports
+/// like `NodeTransport` (in `octo-transport`) without creating a
+/// circular dependency between `octo-network` and `octo-transport`.
+#[async_trait::async_trait]
+pub trait TransportBroadcaster: Send + Sync {
+    /// Broadcast a payload to all connected peers.
+    async fn broadcast(&self, payload: &[u8], mission_id: &[u8; 32]) -> Result<(), std::io::Error>;
+}
 
 /// The sync node: wraps `SyncSessionManager` and provides DGP integration.
 ///
@@ -154,5 +274,72 @@ mod tests {
         assert_eq!(frag.peer_id, peer_id);
         assert_eq!(frag.mission_id, *node.mission_id());
         assert_eq!(frag.payload, vec![0xAA]);
+    }
+
+    // === Link 3: GossipDispatcher tests ===
+
+    fn make_bridge() -> SyncNetworkBridge {
+        let mut mission_id = [0u8; 32];
+        mission_id[0] = 0xCD;
+        let config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x10; 32]);
+        let adapter = Arc::new(MockAdapter::new(mission_id, [0x11; 32]));
+        let session = SyncSessionManager::new(
+            adapter as Arc<dyn octo_sync::adapter::DatabaseSyncAdapter>,
+            config,
+            &[0x42u8; 32],
+        )
+        .unwrap();
+        let handler = Arc::new(SyncDgpHandler::new(Arc::new(session)));
+        SyncNetworkBridge::new(mission_id, handler)
+    }
+
+    #[test]
+    fn dispatcher_routes_snapshot_fragment() {
+        let bridge = make_bridge();
+        let dispatcher = GossipDispatcher::new().with_sync(bridge);
+        // SnapshotFragment (0x0008), subtype 0xA1 (summary)
+        let result = dispatcher.on_gossip_object(0x0008, 0xA1, [2u8; 32], vec![0xAA]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatcher_rejects_unknown_object_type() {
+        let dispatcher = GossipDispatcher::new();
+        let result = dispatcher.on_gossip_object(0x9999, 0xA1, [2u8; 32], vec![]);
+        assert!(matches!(
+            result,
+            Err(DispatchError::UnknownObjectType { .. })
+        ));
+    }
+
+    #[test]
+    fn dispatcher_no_sync_handler() {
+        let dispatcher = GossipDispatcher::new();
+        let result = dispatcher.on_gossip_object(0x0008, 0xA1, [2u8; 32], vec![]);
+        assert!(matches!(result, Err(DispatchError::NoHandler { .. })));
+    }
+
+    // === Link 1: SyncTransportSubscriber tests ===
+
+    struct MockBroadcaster;
+
+    #[async_trait::async_trait]
+    impl TransportBroadcaster for MockBroadcaster {
+        async fn broadcast(
+            &self,
+            _payload: &[u8],
+            _mission_id: &[u8; 32],
+        ) -> Result<(), std::io::Error> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_subscriber_broadcast() {
+        let subscriber = SyncTransportSubscriber::new(Arc::new(MockBroadcaster));
+        let result = subscriber
+            .broadcast_wal_chunk(&[1, 2, 3], &[0xABu8; 32])
+            .await;
+        assert!(result.is_ok());
     }
 }

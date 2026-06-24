@@ -81,6 +81,7 @@ pub mod error;
 pub mod identity;
 pub mod keyring;
 pub mod lsn;
+pub mod mission_crypto;
 pub mod raft_overlay;
 pub mod replay_cache;
 pub mod scoring;

@@ -130,11 +130,16 @@ impl CarrierHealth {
 /// Holds a list of carriers and per-carrier health stats. `broadcast` fans
 /// out an envelope to all healthy carriers concurrently and returns the
 /// count of successful sends.
+///
+/// Optionally holds a `MissionCrypto` for per-mission key isolation.
+/// When present, PRIVATE mission payloads are encrypted before sending.
 pub struct MultiCarrierSync {
     /// The carriers (primary + secondaries).
     carriers: Vec<Arc<dyn Carrier>>,
     /// Per-carrier health stats.
     health: Mutex<HashMap<String, CarrierHealth>>,
+    /// Optional per-mission encryption (Phase 4, mission 0862l).
+    crypto: Option<Arc<crate::mission_crypto::MissionCrypto>>,
 }
 
 impl MultiCarrierSync {
@@ -150,6 +155,26 @@ impl MultiCarrierSync {
         Self {
             carriers,
             health: Mutex::new(health),
+            crypto: None,
+        }
+    }
+
+    /// Create a new `MultiCarrierSync` with carriers and per-mission encryption.
+    pub fn with_crypto(
+        carriers: Vec<Arc<dyn Carrier>>,
+        crypto: Arc<crate::mission_crypto::MissionCrypto>,
+    ) -> Self {
+        let mut health = HashMap::new();
+        for carrier in &carriers {
+            health.insert(
+                carrier.name().to_string(),
+                CarrierHealth::new(carrier.name()),
+            );
+        }
+        Self {
+            carriers,
+            health: Mutex::new(health),
+            crypto: Some(crypto),
         }
     }
 
@@ -158,7 +183,16 @@ impl MultiCarrierSync {
     /// Returns the number of carriers that successfully sent. The function
     /// does NOT block: it uses `futures::future::join_all` to send concurrently.
     /// If a carrier is unhealthy (success_rate < 5,000 bp = 50%), it is skipped.
+    ///
+    /// If `crypto` is set (PRIVATE mission), the payload is encrypted before sending.
+    /// The 12-byte nonce is prepended to the ciphertext for the receiver.
     pub async fn broadcast(&self, envelope: &[u8]) -> usize {
+        // Prepare payload (encrypt if PRIVATE mission)
+        let wire_payload = match &self.crypto {
+            Some(crypto) => crypto.prepare_for_send(envelope, b"sync-envelope"),
+            None => envelope.to_vec(),
+        };
+
         // Filter to healthy carriers
         let healthy: Vec<Arc<dyn Carrier>> = {
             let health = self.health.lock();
@@ -176,10 +210,10 @@ impl MultiCarrierSync {
         // Send concurrently
         let send_futures = healthy.iter().map(|c| {
             let c = c.clone();
-            let envelope = envelope.to_vec();
+            let payload = wire_payload.clone();
             async move {
                 let start = std::time::Instant::now();
-                let result = c.send(&envelope).await;
+                let result = c.send(&payload).await;
                 let latency_us = start.elapsed().as_micros() as u64;
                 (c.name().to_string(), result, latency_us)
             }

@@ -3,27 +3,18 @@
 //! Fans out a single Sync envelope to multiple `Carrier` implementations
 //! (e.g., NativeP2P + Webhook + one social adapter). Each carrier's
 //! `send()` is called; the broadcaster returns the count of successful
-//! sends. Health tracking is per-carrier; a carrier with success_rate < 0.5
-//! is considered unhealthy and skipped.
+//! sends. Health tracking is per-carrier; a carrier with success_rate < 50%
+//! (5,000 basis points) is considered unhealthy and skipped.
 //!
-//! # Production architecture
+//! # Determinism
 //!
-//! ```text
-//! MultiCarrierSync
-//!   ├── primary: Box<dyn Carrier>
-//!   ├── secondaries: Vec<Box<dyn Carrier>>
-//!   └── health: HashMap<carrier_name, CarrierHealth>
-//!
-//! broadcast(envelope):
-//!   for carrier in healthy_carriers:
-//!     let result = carrier.send(envelope).await
-//!     update_health(carrier, result)
-//!   return count of successes
-//! ```
+//! All health metrics use u64 saturating arithmetic (no floating-point).
+//! Success rates are basis points (0-10,000 = 0%-100%). Latency is
+//! microseconds (u64). Timestamps are logical unix seconds, not wall-clock.
+//! Per RFC-0862 §Determinism.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use parking_lot::Mutex;
 
@@ -44,81 +35,95 @@ pub trait Carrier: Send + Sync {
     async fn send(&self, envelope: &[u8]) -> Result<(), SyncError>;
 }
 
-/// Per-carrier health tracking.
+/// Per-carrier health tracking (deterministic, no floating-point).
+///
+/// All values are u64 for deterministic arithmetic per RFC-0862 §Determinism.
+/// Success rate is basis points (0-10,000 = 0%-100%). Latency is microseconds.
 #[derive(Debug, Clone)]
 pub struct CarrierHealth {
     /// The carrier name (e.g., "nativep2p", "webhook", "telegram").
     pub name: String,
-    /// The last heartbeat timestamp.
-    pub last_heartbeat: Instant,
-    /// The last successful send timestamp.
-    pub last_successful_send: Instant,
-    /// The success rate over the last N attempts (0.0 to 1.0).
-    pub success_rate: f64,
-    /// The average latency in milliseconds over the last N attempts.
-    pub avg_latency_ms: f64,
+    /// Last successful send timestamp (logical unix seconds).
+    pub last_successful_send_secs: u64,
+    /// Success rate in basis points (0-10,000 = 0%-100%).
+    /// EMA with alpha_bp basis points weight on new samples.
+    pub success_rate_bp: u64,
+    /// Average latency in microseconds (u64, EMA).
+    pub avg_latency_us: u64,
     /// The last error (if any).
     pub last_error: Option<String>,
-    /// EMA alpha for the health stats (0.0 to 1.0). Higher alpha = more
-    /// weight on recent samples (faster reaction to changes but more
-    /// noise); lower alpha = more weight on history (smoother but slower
-    /// to react). Default: 0.1 (10% on new samples, 90% on history).
-    pub alpha: f64,
-    /// Health threshold: a carrier with `success_rate < health_threshold` is
-    /// considered unhealthy and is skipped by `broadcast`. Default: 0.5
-    /// (matches RFC-0862 §Performance Targets "≥ 50% success over 100 attempts").
-    pub health_threshold: f64,
+    /// EMA alpha in basis points (0-10,000). Default: 1,000 (10%).
+    pub alpha_bp: u64,
+    /// Health threshold in basis points. Default: 5,000 (50%).
+    pub health_threshold_bp: u64,
 }
+
+/// Default EMA alpha: 1,000 basis points = 10% weight on new samples.
+pub const DEFAULT_EMA_ALPHA_BP: u64 = 1_000;
+
+/// Default health threshold: 5,000 basis points = 50%.
+pub const DEFAULT_HEALTH_THRESHOLD_BP: u64 = 5_000;
+
+/// 10,000 basis points = 100%.
+const BP_SCALE: u64 = 10_000;
 
 impl CarrierHealth {
     /// Create a new `CarrierHealth` with default values (perfect health).
     pub fn new(name: impl Into<String>) -> Self {
-        Self::with_params(name, DEFAULT_EMA_ALPHA, DEFAULT_HEALTH_THRESHOLD)
+        Self::with_params(name, DEFAULT_EMA_ALPHA_BP, DEFAULT_HEALTH_THRESHOLD_BP)
     }
 
     /// Create a new `CarrierHealth` with custom EMA alpha and health threshold.
-    pub fn with_params(name: impl Into<String>, alpha: f64, health_threshold: f64) -> Self {
-        let now = Instant::now();
+    pub fn with_params(name: impl Into<String>, alpha_bp: u64, health_threshold_bp: u64) -> Self {
         Self {
             name: name.into(),
-            last_heartbeat: now,
-            last_successful_send: now,
-            success_rate: 1.0,
-            avg_latency_ms: 0.0,
+            last_successful_send_secs: 0,
+            success_rate_bp: BP_SCALE, // 100%
+            avg_latency_us: 0,
             last_error: None,
-            alpha,
-            health_threshold,
+            alpha_bp,
+            health_threshold_bp,
         }
     }
 
-    /// Return `true` if the carrier is healthy (success rate ≥ threshold).
+    /// Return `true` if the carrier is healthy (success rate >= threshold).
     pub fn is_healthy(&self) -> bool {
-        self.success_rate >= self.health_threshold
+        self.success_rate_bp >= self.health_threshold_bp
     }
 
     /// Update the health stats after a send attempt.
-    pub fn record_attempt(&mut self, success: bool, latency_ms: f64, error: Option<String>) {
-        // Exponential moving average with `self.alpha` (default 0.1).
-        // 10% weight on new samples, 90% on history.
-        let alpha = self.alpha;
-        self.success_rate =
-            (1.0 - alpha) * self.success_rate + alpha * if success { 1.0 } else { 0.0 };
-        self.avg_latency_ms = (1.0 - alpha) * self.avg_latency_ms + alpha * latency_ms;
+    ///
+    /// `success`: whether the send succeeded.
+    /// `latency_us`: send latency in microseconds.
+    /// `now_secs`: current logical timestamp (unix seconds).
+    /// `error`: error message if the send failed.
+    pub fn record_attempt(
+        &mut self,
+        success: bool,
+        latency_us: u64,
+        now_secs: u64,
+        error: Option<String>,
+    ) {
+        // EMA: new = (1 - alpha) * old + alpha * sample
+        // Using basis points: alpha_bp / 10,000 = fractional alpha
+        let alpha = self.alpha_bp;
+        let one_minus_alpha = BP_SCALE.saturating_sub(alpha);
+
         if success {
-            self.last_successful_send = Instant::now();
+            self.success_rate_bp =
+                (one_minus_alpha * self.success_rate_bp + alpha * BP_SCALE) / BP_SCALE;
+            self.avg_latency_us =
+                (one_minus_alpha * self.avg_latency_us + alpha * latency_us) / BP_SCALE;
+            self.last_successful_send_secs = now_secs;
             self.last_error = None;
         } else {
+            self.success_rate_bp = (one_minus_alpha * self.success_rate_bp) / BP_SCALE;
+            self.avg_latency_us =
+                (one_minus_alpha * self.avg_latency_us + alpha * latency_us) / BP_SCALE;
             self.last_error = error;
         }
     }
 }
-
-/// Default EMA alpha for `CarrierHealth` (10% weight on new samples).
-pub const DEFAULT_EMA_ALPHA: f64 = 0.1;
-
-/// Default health threshold (RFC-0862 §Performance Targets:
-/// "≥ 50% success over 100 attempts" → 0.5).
-pub const DEFAULT_HEALTH_THRESHOLD: f64 = 0.5;
 
 /// A multi-carrier sync broadcaster.
 ///
@@ -151,8 +156,8 @@ impl MultiCarrierSync {
     /// Broadcast an envelope to all healthy carriers.
     ///
     /// Returns the number of carriers that successfully sent. The function
-    /// does NOT block: it uses `tokio::join_all` to send concurrently.
-    /// If a carrier is unhealthy (success_rate < 0.5), it is skipped.
+    /// does NOT block: it uses `futures::future::join_all` to send concurrently.
+    /// If a carrier is unhealthy (success_rate < 5,000 bp = 50%), it is skipped.
     pub async fn broadcast(&self, envelope: &[u8]) -> usize {
         // Filter to healthy carriers
         let healthy: Vec<Arc<dyn Carrier>> = {
@@ -173,25 +178,26 @@ impl MultiCarrierSync {
             let c = c.clone();
             let envelope = envelope.to_vec();
             async move {
-                let start = Instant::now();
+                let start = std::time::Instant::now();
                 let result = c.send(&envelope).await;
-                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                (c.name().to_string(), result, latency_ms)
+                let latency_us = start.elapsed().as_micros() as u64;
+                (c.name().to_string(), result, latency_us)
             }
         });
         let results = futures::future::join_all(send_futures).await;
         // Update health and count successes
+        let now_secs = now_unix_secs();
         let mut health = self.health.lock();
         let mut success_count = 0;
-        for (name, result, latency_ms) in results {
+        for (name, result, latency_us) in results {
             if let Some(h) = health.get_mut(&name) {
                 match result {
                     Ok(()) => {
-                        h.record_attempt(true, latency_ms, None);
+                        h.record_attempt(true, latency_us, now_secs, None);
                         success_count += 1;
                     }
                     Err(e) => {
-                        h.record_attempt(false, latency_ms, Some(e.to_string()));
+                        h.record_attempt(false, latency_us, now_secs, Some(e.to_string()));
                     }
                 }
             }
@@ -223,6 +229,17 @@ impl MultiCarrierSync {
     pub fn health(&self, name: &str) -> Option<CarrierHealth> {
         self.health.lock().get(name).cloned()
     }
+}
+
+/// Get current logical timestamp (unix seconds).
+///
+/// In production, this comes from the DGP logical clock.
+/// For tests, it uses system time.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[cfg(test)]
@@ -275,31 +292,22 @@ mod tests {
 
     #[tokio::test]
     async fn both_carriers_send_when_both_healthy() {
-        // Both carriers start with success_rate = 1.0 (healthy), so both
-        // are sent to. c1 has 0 successes remaining, so it fails on the
-        // first send; c2 has 5, so it succeeds. After this broadcast, c1's
-        // success_rate drops to 0.9 (still healthy, but barely).
         let c1: Arc<dyn Carrier> = Arc::new(TestCarrier::new("c1", 0));
         let c2: Arc<dyn Carrier> = Arc::new(TestCarrier::new("c2", 5));
         let m = MultiCarrierSync::new(vec![c1, c2]);
         let count = m.broadcast(b"envelope").await;
-        // Both carriers were sent to (both were healthy). c1 fails, c2 succeeds.
         assert_eq!(count, 1);
     }
 
     #[tokio::test]
     async fn carrier_becomes_unhealthy_after_failures() {
-        // c1 always fails. After enough broadcasts, its success_rate drops
-        // below 0.5 and it should be skipped.
         let c1: Arc<dyn Carrier> = Arc::new(TestCarrier::new("c1", 0));
         let m = MultiCarrierSync::new(vec![c1]);
-        // 20 broadcasts — c1 fails each time. success_rate = 0.9^20 ≈ 0.12
         for _ in 0..20 {
             m.broadcast(b"envelope").await;
         }
         let h = m.health("c1").unwrap();
         assert!(!h.is_healthy());
-        // Next broadcast should skip c1 (count = 0)
         let count = m.broadcast(b"envelope").await;
         assert_eq!(count, 0);
     }
@@ -308,13 +316,11 @@ mod tests {
     async fn health_updates_after_send() {
         let c1: Arc<dyn Carrier> = Arc::new(TestCarrier::new("c1", 0));
         let m = MultiCarrierSync::new(vec![c1]);
-        // Broadcast 10 times — each time c1 fails, so success_rate drops
         for _ in 0..10 {
             m.broadcast(b"envelope").await;
         }
         let h = m.health("c1").unwrap();
-        // After 10 failures, success_rate should be very low
-        assert!(h.success_rate < 0.5);
+        assert!(h.success_rate_bp < 5_000);
         assert!(!h.is_healthy());
     }
 
@@ -322,9 +328,9 @@ mod tests {
     fn carrier_health_is_healthy_threshold() {
         let mut h = CarrierHealth::new("test");
         assert!(h.is_healthy());
-        h.success_rate = 0.5;
+        h.success_rate_bp = 5_000;
         assert!(h.is_healthy());
-        h.success_rate = 0.49;
+        h.success_rate_bp = 4_999;
         assert!(!h.is_healthy());
     }
 
@@ -336,5 +342,37 @@ mod tests {
         let mut names = m.all_carrier_names();
         names.sort();
         assert_eq!(names, vec!["c1", "c2"]);
+    }
+
+    #[test]
+    fn health_record_attempt_success() {
+        let mut h = CarrierHealth::new("test");
+        h.record_attempt(true, 1000, 100, None); // 1ms latency, t=100
+        assert_eq!(h.success_rate_bp, BP_SCALE); // 100% (EMA: 0.9*10000 + 0.1*10000 = 10000)
+        assert_eq!(h.avg_latency_us, 100); // 100us (EMA: 0.9*0 + 0.1*1000 = 100)
+        assert_eq!(h.last_successful_send_secs, 100);
+        assert!(h.last_error.is_none());
+    }
+
+    #[test]
+    fn health_record_attempt_failure() {
+        let mut h = CarrierHealth::new("test");
+        h.record_attempt(false, 5000, 100, Some("timeout".into()));
+        assert!(h.success_rate_bp < BP_SCALE);
+        assert!(h.last_error.is_some());
+    }
+
+    #[test]
+    fn health_ema_converges() {
+        let mut h = CarrierHealth::with_params("test", 5_000, 5_000); // alpha=50%
+                                                                      // After 1 success at 1000us: success_rate = 0.5*10000 + 0.5*10000 = 10000
+        h.record_attempt(true, 1000, 0, None);
+        assert_eq!(h.success_rate_bp, 10_000);
+        // After 1 failure: success_rate = 0.5*10000 + 0.5*0 = 5000
+        h.record_attempt(false, 1000, 1, None);
+        assert_eq!(h.success_rate_bp, 5_000);
+        // After 1 more failure: success_rate = 0.5*5000 + 0.5*0 = 2500
+        h.record_attempt(false, 1000, 2, None);
+        assert_eq!(h.success_rate_bp, 2_500);
     }
 }

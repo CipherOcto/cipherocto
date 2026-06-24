@@ -151,6 +151,25 @@ fn cleanup_containers(names: &[&str]) {
     }
 }
 
+fn cleanup_networks(prefix: &str) {
+    if let Ok(output) = Command::new("docker")
+        .args(["network", "ls", "--filter", &format!("name={prefix}"), "--format", "{{.Name}}"])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if !line.is_empty() {
+                let _ = Command::new("docker").args(["network", "rm", line]).output();
+            }
+        }
+    }
+}
+
+fn full_cleanup(test_prefix: &str, container_names: &[&str]) {
+    cleanup_containers(container_names);
+    cleanup_networks(test_prefix);
+}
+
 async fn wait_for_status(path: &str, timeout: Duration) -> Option<i64> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
@@ -182,8 +201,8 @@ async fn two_container_sync() {
     build_image();
 
     let net = format!("sync-e2e-t1-{}", free_port());
+    full_cleanup("sync-e2e-t1", &["t1-writer", "t1-reader"]);
     docker_network_create(&net);
-    cleanup_containers(&["t1-writer", "t1-reader"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir = tempfile::tempdir().unwrap();
@@ -242,8 +261,8 @@ async fn three_container_fan_out() {
     build_image();
 
     let net = format!("sync-e2e-t2-{}", free_port());
+    full_cleanup("sync-e2e-t2", &["t2-writer", "t2-reader1", "t2-reader2"]);
     docker_network_create(&net);
-    cleanup_containers(&["t2-writer", "t2-reader1", "t2-reader2"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir1 = tempfile::tempdir().unwrap();
@@ -324,8 +343,8 @@ async fn container_network_partition() {
     build_image();
 
     let net = format!("sync-e2e-t3-{}", free_port());
+    full_cleanup("sync-e2e-t3", &["t3-writer", "t3-reader"]);
     docker_network_create(&net);
-    cleanup_containers(&["t3-writer", "t3-reader"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir = tempfile::tempdir().unwrap();
@@ -391,8 +410,8 @@ async fn container_resource_limit() {
     build_image();
 
     let net = format!("sync-e2e-t4-{}", free_port());
+    full_cleanup("sync-e2e-t4", &["t4-writer"]);
     docker_network_create(&net);
-    cleanup_containers(&["t4-writer"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir = tempfile::tempdir().unwrap();
@@ -444,8 +463,8 @@ async fn four_container_chain() {
     build_image();
 
     let net = format!("sync-e2e-t6-{}", free_port());
+    full_cleanup("sync-e2e-t6", &["t6-writer", "t6-r1", "t6-r2", "t6-r3"]);
     docker_network_create(&net);
-    cleanup_containers(&["t6-writer", "t6-r1", "t6-r2", "t6-r3"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let r1_dir = tempfile::tempdir().unwrap();
@@ -548,8 +567,8 @@ async fn four_container_fan_out() {
     build_image();
 
     let net = format!("sync-e2e-t7-{}", free_port());
+    full_cleanup("sync-e2e-t7", &["t7-writer", "t7-r1", "t7-r2", "t7-r3"]);
     docker_network_create(&net);
-    cleanup_containers(&["t7-writer", "t7-r1", "t7-r2", "t7-r3"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir1 = tempfile::tempdir().unwrap();
@@ -654,8 +673,8 @@ async fn container_kill_and_recover() {
     build_image();
 
     let net = format!("sync-e2e-t5-{}", free_port());
+    full_cleanup("sync-e2e-t5", &["t5-writer", "t5-reader"]);
     docker_network_create(&net);
-    cleanup_containers(&["t5-writer", "t5-reader"]);
 
     let writer_dir = tempfile::tempdir().unwrap();
     let status_dir = tempfile::tempdir().unwrap();

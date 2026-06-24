@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use octo_sync::dgp_bridge::SyncHandler;
 use octo_sync::session::SyncSessionManager;
-use octo_sync::types::Lsn;
 
 use crate::dgp::domain::{GossipDomainId, GossipScope};
 
@@ -69,6 +68,7 @@ impl SyncDgpHandler {
     }
 
     /// Drain all inbound events (for testing/metrics).
+    #[allow(clippy::type_complexity)]
     pub fn drain_inbound(
         &self,
     ) -> (
@@ -87,25 +87,19 @@ impl SyncHandler for SyncDgpHandler {
     fn on_summary(&self, peer_id: [u8; 32], payload: Vec<u8>) {
         // TODO: decode the SyncSummary and apply it (RFC-0862 §Anti-Entropy).
         // For now, store raw bytes for the sync engine to process.
-        self.inbound_summaries
-            .lock()
-            .push((peer_id, payload));
+        self.inbound_summaries.lock().push((peer_id, payload));
     }
 
     fn on_segment(&self, peer_id: [u8; 32], payload: Vec<u8>) {
         // TODO: decode the SyncSegment and apply snapshot data (RFC-0862 §Snapshot).
-        self.inbound_segments
-            .lock()
-            .push((peer_id, payload));
+        self.inbound_segments.lock().push((peer_id, payload));
     }
 
     fn on_wal_tail(&self, peer_id: [u8; 32], payload: Vec<u8>) {
         // TODO: decode WalTailChunk and call session.apply_wal_tail().
         // The challenge: WalTailChunk is an octo-sync type, not raw bytes.
         // The bridge delivers raw bytes; the handler must decode.
-        self.inbound_wal_tails
-            .lock()
-            .push((peer_id, payload));
+        self.inbound_wal_tails.lock().push((peer_id, payload));
     }
 }
 
@@ -151,10 +145,7 @@ impl SyncNetworkBridge {
             self.mission_id,
             payload,
         );
-        self.handler
-            .session()
-            .adapter()
-            .current_lsn()?; // validate adapter is alive
+        self.handler.session().adapter().current_lsn()?; // validate adapter is alive
 
         let bridge = octo_sync::dgp_bridge::DgpSyncBridge::new(
             self.mission_id,
@@ -263,7 +254,9 @@ mod tests {
     #[test]
     fn bridge_routes_segment_response() {
         let (handler, bridge) = make_handler_and_bridge();
-        bridge.on_dgp_object(0xA3, [3u8; 32], vec![0xBB, 0xCC]).unwrap();
+        bridge
+            .on_dgp_object(0xA3, [3u8; 32], vec![0xBB, 0xCC])
+            .unwrap();
         let (summaries, segments, wal_tails) = handler.drain_inbound();
         assert!(summaries.is_empty());
         assert_eq!(segments.len(), 1);
@@ -285,7 +278,10 @@ mod tests {
     fn bridge_rejects_unknown_subtype() {
         let (_, bridge) = make_handler_and_bridge();
         let err = bridge.on_dgp_object(0x99, [2u8; 32], vec![]).unwrap_err();
-        assert!(matches!(err, octo_sync::error::SyncError::UnknownEnvelopeSubtype(0x99)));
+        assert!(matches!(
+            err,
+            octo_sync::error::SyncError::UnknownEnvelopeSubtype(0x99)
+        ));
     }
 
     #[test]

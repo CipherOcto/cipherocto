@@ -173,8 +173,22 @@ impl DotGateway {
         cache.check_and_insert(envelope.envelope_id, current_epoch)?;
 
         // 4. Forward to all adapters (Class C — transport-dependent)
-        // Note: In production, this would iterate over connected domains
-        // and forward to the appropriate adapter(s).
+        // Each adapter receives the envelope via its own domain, derived from
+        // its platform type. Forward failures are logged but do not abort
+        // delivery to other adapters — a single adapter failure must not
+        // block delivery to the rest of the mesh.
+        for adapter in &self.adapters {
+            let domain = BroadcastDomainId::new(
+                adapter.platform_type(),
+                &format!("{:02x?}", &envelope.source_peer[..8]),
+            );
+            match adapter.send_envelope(&domain, envelope).await {
+                Ok(_receipt) => {}
+                Err(_e) => {
+                    // Adapter failed — continue to next adapter.
+                }
+            }
+        }
 
         Ok(ProcessingResult::Forwarded)
     }

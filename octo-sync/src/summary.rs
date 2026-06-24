@@ -49,7 +49,11 @@ impl SyncSummary {
     /// Uses BLAKE3 keyed hashing (same as `MissionKeyRing::summary_hmac`):
     /// `BLAKE3::new_keyed(transport_key).update(body).update(node_id)`.
     ///
-    /// Per mission 0862m: HMAC verification before accepting summaries.
+    /// Note: this is BLAKE3 keyed hash, not a traditional HMAC construction.
+    /// The naming `verify_hmac` follows the `SyncSummary.hmac` field name.
+    ///
+    /// Per mission 0862m: verification function for receiving summaries.
+    /// Callers must invoke this before accepting a `SummaryResponse`.
     pub fn verify_hmac(
         &self,
         transport_key: &[u8; 32],

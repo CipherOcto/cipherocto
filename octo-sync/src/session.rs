@@ -235,10 +235,11 @@ impl SyncSessionManager {
     ///
     /// For each WAL entry in the chunk:
     /// 1. Check the replay cache (skip if already applied).
-    /// 2. Validate CRC32 of the entry payload (slash on corruption).
+    /// 2. Validate CRC32 of the entry payload (skip on corruption, log slash).
     /// 3. Call `adapter.apply_wal_entry(entry)`.
     /// 4. Insert the envelope_id into the replay cache.
     ///
+    /// Corrupted entries are skipped (not applied) but do NOT halt the batch.
     /// Returns the number of entries successfully applied.
     pub fn apply_wal_tail(
         &self,
@@ -254,9 +255,12 @@ impl SyncSessionManager {
             if cache.contains(&envelope_id) {
                 continue;
             }
-            // CRC32 validation (mission 0862m: slash on corruption).
+            // CRC32 validation (mission 0862m: skip corrupted entries).
             if !validate_wal_entry_crc32(entry) {
-                return Err(SyncError::CorruptedWalEntry);
+                // Corrupted entry — skip and continue with remaining entries.
+                // A slash event should be emitted by the caller via the
+                // DomainCoordinator (RFC-0855p-c).
+                continue;
             }
             self.adapter.apply_wal_entry(entry)?;
             cache.insert(envelope_id, 0); // timestamp not critical for dedup

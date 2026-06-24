@@ -200,4 +200,37 @@ mod tests {
         let result = crypto.receive(&[0u8; 5], b"aad");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn public_prepare_receive_roundtrip() {
+        let crypto = MissionCrypto::new(test_keyring(), MissionPrivacy::Public);
+        let wire = crypto.prepare_for_send(b"hello world", b"aad");
+        let pt = crypto.receive(&wire, b"aad").unwrap();
+        assert_eq!(pt, b"hello world");
+    }
+
+    #[test]
+    fn private_empty_payload() {
+        let crypto = MissionCrypto::new(test_keyring(), MissionPrivacy::Private);
+        let wire = crypto.prepare_for_send(b"", b"aad");
+        let pt = crypto.receive(&wire, b"aad").unwrap();
+        assert_eq!(pt, b"");
+    }
+
+    #[test]
+    fn public_empty_payload() {
+        let crypto = MissionCrypto::new(test_keyring(), MissionPrivacy::Public);
+        let wire = crypto.prepare_for_send(b"", b"aad");
+        assert_eq!(wire, b"");
+        let pt = crypto.receive(&wire, b"aad").unwrap();
+        assert_eq!(pt, b"");
+    }
+
+    #[test]
+    fn privacy_returns_correct_level() {
+        let crypto_pub = MissionCrypto::new(test_keyring(), MissionPrivacy::Public);
+        let crypto_priv = MissionCrypto::new(test_keyring(), MissionPrivacy::Private);
+        assert_eq!(crypto_pub.privacy(), MissionPrivacy::Public);
+        assert_eq!(crypto_priv.privacy(), MissionPrivacy::Private);
+    }
 }

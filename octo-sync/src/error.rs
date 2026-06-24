@@ -1,7 +1,7 @@
 //! Internal [`SyncError`] enum and wire-level [`WireError`] enum.
 //!
-//! Per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait §Error Model. The 9 internal
-//! `SyncError` variants collapse into a subset of the 9 wire-level codes
+//! Per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait §Error Model. The internal
+//! `SyncError` variants collapse into a subset of the wire-level codes
 //! (RFC-0862 §Error Handling) because the wire codes also cover errors that
 //! originate outside the database adapter (envelope validation, DDL, schema
 //! drift, heartbeat timeout, role checks).
@@ -27,7 +27,7 @@ use thiserror::Error;
 /// Internal error enum returned by [`DatabaseSyncAdapter`](crate::DatabaseSyncAdapter)
 /// methods.
 ///
-/// 9 variants. The cipherocto sync engine maps these to wire-level error codes
+/// 11 variants. The cipherocto sync engine maps these to wire-level error codes
 /// via [`From<SyncError> for WireError`].
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum SyncError {
@@ -119,7 +119,6 @@ pub enum SyncError {
     },
 
     // ── Slashing detection (RFC-0862 Phase 4, mission 0862m) ──────────
-
     /// Corrupted WAL entry: CRC32 verification failed. The entry payload
     /// does not match its CRC32 checksum, indicating data corruption or
     /// tampering. Maps to slash code `SyncCorruptedWalEntry` (0x0020).
@@ -134,7 +133,7 @@ pub enum SyncError {
     FakeSummary,
 }
 
-/// Wire-level error code (the 9 codes defined in RFC-0862 §Error Handling).
+/// Wire-level error code (the codes defined in RFC-0862 §Error Handling).
 ///
 /// These are the bytes-on-the-wire error codes; the cipherocto sync engine
 /// emits one of these for every error. Implementers of
@@ -213,8 +212,8 @@ impl WireError {
 
 /// Mapping from internal [`SyncError`] to wire-level [`WireError`] codes.
 ///
-/// Many-to-one: the 9 internal variants collapse to 4 distinct wire codes.
-/// The remaining 5 wire codes (`SegmentCorruption`, `WalAppendFail`,
+/// Many-to-one: the internal variants collapse to distinct wire codes.
+/// Some wire codes (`SegmentCorruption`, `WalAppendFail`,
 /// `SchemaDrift`, `HeartbeatTimeout`, `RoleNotSyncCapable`) originate
 /// outside the adapter and have no `SyncError` variant.
 impl From<SyncError> for WireError {

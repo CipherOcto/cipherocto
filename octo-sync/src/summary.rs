@@ -46,6 +46,9 @@ impl SyncSummary {
     /// stored HMAC. Returns `Ok(())` if valid, `Err(SyncError::FakeSummary)`
     /// if the HMAC mismatches (indicating forgery or tampering).
     ///
+    /// Uses BLAKE3 keyed hashing (same as `MissionKeyRing::summary_hmac`):
+    /// `BLAKE3::new_keyed(transport_key).update(body).update(node_id)`.
+    ///
     /// Per mission 0862m: HMAC verification before accepting summaries.
     pub fn verify_hmac(
         &self,
@@ -59,9 +62,8 @@ impl SyncSummary {
         body.extend_from_slice(&self.segment_root);
         body.extend_from_slice(&self.lsn_watermark.to_le_bytes());
 
-        // Compute expected HMAC
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(transport_key);
+        // Compute expected HMAC using BLAKE3 keyed hashing (same as keyring.summary_hmac)
+        let mut hasher = blake3::Hasher::new_keyed(transport_key);
         hasher.update(&body);
         hasher.update(node_id);
         let expected = *hasher.finalize().as_bytes();
@@ -371,5 +373,89 @@ mod tests {
         let d = t1.diff(&t2);
         // At minimum, the leaf at level 0 index 1 should differ
         assert!(d.contains(&(0, 1)));
+    }
+
+    #[test]
+    fn verify_hmac_valid() {
+        use crate::keyring::{KeyRing, MissionKeyRing};
+        let keyring = MissionKeyRing::derive(&[0x42u8; 32], [0xABu8; 32]);
+        let node_id = [0x01u8; 32];
+
+        // Build a summary with correct HMAC
+        let mut body = Vec::new();
+        body.extend_from_slice(&42u32.to_le_bytes());
+        body.extend_from_slice(&1u32.to_le_bytes());
+        body.extend_from_slice(&[0xAAu8; 32]);
+        body.extend_from_slice(&100u64.to_le_bytes());
+        let hmac = keyring.summary_hmac(&body, &node_id);
+
+        let summary = SyncSummary {
+            table_id: 42,
+            segment_count: 1,
+            segment_root: [0xAAu8; 32],
+            lsn_watermark: 100,
+            hmac,
+        };
+
+        assert!(summary
+            .verify_hmac(keyring.transport_key(), &node_id)
+            .is_ok());
+    }
+
+    #[test]
+    fn verify_hmac_invalid() {
+        use crate::keyring::{KeyRing, MissionKeyRing};
+        let keyring = MissionKeyRing::derive(&[0x42u8; 32], [0xABu8; 32]);
+        let wrong_keyring = MissionKeyRing::derive(&[0x99u8; 32], [0xABu8; 32]);
+        let node_id = [0x01u8; 32];
+
+        // Build a summary with wrong key's HMAC
+        let mut body = Vec::new();
+        body.extend_from_slice(&42u32.to_le_bytes());
+        body.extend_from_slice(&1u32.to_le_bytes());
+        body.extend_from_slice(&[0xAAu8; 32]);
+        body.extend_from_slice(&100u64.to_le_bytes());
+        let hmac = wrong_keyring.summary_hmac(&body, &node_id);
+
+        let summary = SyncSummary {
+            table_id: 42,
+            segment_count: 1,
+            segment_root: [0xAAu8; 32],
+            lsn_watermark: 100,
+            hmac,
+        };
+
+        // Verify with correct key should fail (HMAC was computed with wrong key)
+        assert!(summary
+            .verify_hmac(keyring.transport_key(), &node_id)
+            .is_err());
+    }
+
+    #[test]
+    fn verify_hmac_tampered_root() {
+        use crate::keyring::{KeyRing, MissionKeyRing};
+        let keyring = MissionKeyRing::derive(&[0x42u8; 32], [0xABu8; 32]);
+        let node_id = [0x01u8; 32];
+
+        // Build summary with correct HMAC for original root
+        let mut body = Vec::new();
+        body.extend_from_slice(&42u32.to_le_bytes());
+        body.extend_from_slice(&1u32.to_le_bytes());
+        body.extend_from_slice(&[0xAAu8; 32]);
+        body.extend_from_slice(&100u64.to_le_bytes());
+        let hmac = keyring.summary_hmac(&body, &node_id);
+
+        // Tamper the root
+        let summary = SyncSummary {
+            table_id: 42,
+            segment_count: 1,
+            segment_root: [0xBBu8; 32], // tampered!
+            lsn_watermark: 100,
+            hmac,
+        };
+
+        assert!(summary
+            .verify_hmac(keyring.transport_key(), &node_id)
+            .is_err());
     }
 }

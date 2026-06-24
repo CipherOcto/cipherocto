@@ -26,6 +26,7 @@ pub enum MissionPrivacy {
 /// Uses the existing `MissionKeyRing` for AEAD operations. PUBLIC missions
 /// pass payloads through unchanged; PRIVATE missions encrypt with the
 /// mission's execution key.
+#[derive(Debug, Clone)]
 pub struct MissionCrypto {
     /// The mission's key ring (already has encrypt/decrypt).
     keyring: Arc<MissionKeyRing>,
@@ -104,7 +105,9 @@ impl MissionCrypto {
                 if wire.len() < 12 {
                     return Err(SyncError::DecryptionFailed);
                 }
-                let nonce: [u8; 12] = wire[..12].try_into().map_err(|_| SyncError::DecryptionFailed)?;
+                let nonce: [u8; 12] = wire[..12]
+                    .try_into()
+                    .map_err(|_| SyncError::DecryptionFailed)?;
                 let ciphertext = &wire[12..];
                 self.keyring.decrypt(ciphertext, &nonce, aad)
             }

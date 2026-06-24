@@ -397,6 +397,20 @@ impl WalTailStreamer {
         affected
     }
 
+    /// Drain all pending chunks from a subscriber's outbox.
+    ///
+    /// Called by the transport layer to pull chunks and broadcast them via
+    /// `NodeTransport::broadcast()`. Returns the chunks in order.
+    /// If the peer is not subscribed, returns an empty vec.
+    pub fn drain_outbox(&self, peer_id: &SyncPeerId) -> Vec<Arc<WalTailChunk>> {
+        let subs = self.subscribers.lock();
+        if let Some(channel) = subs.get(peer_id) {
+            channel.outbox.lock().drain(..).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Test-only helper: the number of currently subscribed peers.
     pub fn subscriber_count(&self) -> usize {
         self.subscribers.lock().len()
@@ -521,5 +535,38 @@ mod tests {
         });
         let err = channel.send(chunk).unwrap_err();
         assert!(matches!(err, SyncError::BackendNotReady(_)));
+    }
+
+    #[test]
+    fn drain_outbox_returns_chunks() {
+        let (s, _) = make_streamer();
+        let peer = SyncPeerId([7u8; 32]);
+        s.subscribe(peer, RateLimiter::new(100, 500));
+        s.on_commit(1, 1, 3).unwrap();
+        let chunks = s.drain_outbox(&peer);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].from_lsn, 1);
+        assert_eq!(chunks[0].to_lsn, 3);
+        assert!(chunks[0].is_last);
+    }
+
+    #[test]
+    fn drain_outbox_empties_on_second_call() {
+        let (s, _) = make_streamer();
+        let peer = SyncPeerId([8u8; 32]);
+        s.subscribe(peer, RateLimiter::new(100, 500));
+        s.on_commit(1, 1, 5).unwrap();
+        let first = s.drain_outbox(&peer);
+        assert_eq!(first.len(), 1);
+        let second = s.drain_outbox(&peer);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn drain_outbox_unknown_peer_returns_empty() {
+        let (s, _) = make_streamer();
+        let peer = SyncPeerId([9u8; 32]);
+        let chunks = s.drain_outbox(&peer);
+        assert!(chunks.is_empty());
     }
 }

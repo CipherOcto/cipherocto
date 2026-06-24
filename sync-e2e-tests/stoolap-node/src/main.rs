@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use clap::Parser;
 use octo_network::dot::PlatformType;
+use octo_network::sync::TransportBroadcaster;
 use octo_sync::adapter::DatabaseSyncAdapter;
+use octo_sync::config::{SyncConfig, SyncRole};
+use octo_sync::identity::SyncPeerId;
+use octo_sync::session::SyncSessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -47,6 +51,9 @@ fn adapter_name_to_platform_type(name: &str) -> Option<PlatformType> {
     PlatformType::from_name(name)
 }
 
+/// Peer ID sentinel for the transport-based outbound subscriber.
+const TRANSPORT_PEER_ID: [u8; 32] = [0xFE; 32];
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -78,7 +85,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let adapter_arc: Arc<dyn DatabaseSyncAdapter> = adapter;
 
-    // Load platform adapters from --adapter flags if provided
+    // Create SyncSessionManager for the transport path
+    let session_config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x01; 32]);
+    let session = Arc::new(SyncSessionManager::new(
+        adapter_arc.clone(),
+        session_config,
+        &node_id,
+    )?);
+
+    // Load platform adapters and create NodeTransport when --adapter is provided
+    let transport_peer = SyncPeerId(TRANSPORT_PEER_ID);
     if !args.adapters.is_empty() {
         let plugin_dirs: Vec<std::path::PathBuf> = args.adapter_dirs.iter().map(std::path::PathBuf::from).collect();
         let mut registry = octo_network::dot::adapters::registry::AdapterRegistry::new(plugin_dirs);
@@ -101,13 +117,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|s| requested.iter().any(|pt| s.name() == pt.name()))
             .collect();
 
-        // NOTE: NodeTransport is created here as infrastructure for future
-        // use. Currently sync operates via direct TCP (serve_writer/serve_reader).
-        // Future: replace TCP sync with NodeTransport.broadcast() for
-        // multi-transport sync. This validates the integration pattern works.
-        let _transport = octo_transport::NodeTransport::new(senders);
+        if !senders.is_empty() {
+            let transport = Arc::new(octo_transport::NodeTransport::new(senders));
+            tracing::info!(
+                transports = transport.transport_count(),
+                "NodeTransport wired"
+            );
+            let broadcaster = Arc::new(
+                octo_transport::NodeTransportBroadcaster::new(transport.clone())
+                    .with_identity(node_id, node_id)
+            );
+
+            // Subscribe the transport peer to the session's outbox
+            session.subscribe_peer(transport_peer).unwrap();
+
+            // Spawn the outbox drain task: polls outbox, broadcasts via NodeTransport
+            let session_clone = session.clone();
+            let broadcaster_clone = broadcaster;
+            let mission_id_clone = mission_id;
+            let drain_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+                loop {
+                    interval.tick().await;
+                    let chunks = session_clone.streamer().drain_outbox(&transport_peer);
+                    for chunk in &chunks {
+                        let encoded = chunk.encode();
+                        match broadcaster_clone.broadcast(&encoded, &mission_id_clone).await {
+                            Ok(()) => {
+                                tracing::debug!(
+                                    from = chunk.from_lsn,
+                                    to = chunk.to_lsn,
+                                    entries = chunk.entries.len(),
+                                    "transport broadcast WAL chunk"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "transport broadcast failed");
+                            }
+                        }
+                    }
+                }
+            });
+            // Store handle to abort on shutdown
+            drop(drain_handle);
+        }
     }
 
+    // TCP sync path (default, backward-compatible)
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.listen)).await?;
     let adapter_for_accept = adapter_arc.clone();
     let accept_handle = tokio::spawn(async move {

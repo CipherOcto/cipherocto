@@ -31,8 +31,8 @@ impl PlatformAdapterBridge {
             message_type: MessageType::Message as u16,
             envelope_id: [0u8; 32],
             mission_id: ctx.mission_id,
-            source_peer: [0u8; 32],
-            origin_gateway: [0u8; 32],
+            source_peer: ctx.source_peer,
+            origin_gateway: ctx.origin_gateway,
             logical_timestamp: 0,
             ttl_hops: 10,
             payload_hash: *blake3::hash(payload).as_bytes(),
@@ -52,6 +52,10 @@ fn adapter_error_to_transport(e: PlatformAdapterError) -> TransportError {
 #[async_trait]
 impl NetworkSender for PlatformAdapterBridge {
     async fn send(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError> {
+        self.adapter
+            .health_check()
+            .await
+            .map_err(|_e| TransportError::Unhealthy)?;
         let envelope = Self::build_envelope(payload, ctx);
         self.adapter
             .send_envelope(&self.domain, &envelope)
@@ -61,29 +65,7 @@ impl NetworkSender for PlatformAdapterBridge {
     }
 
     fn name(&self) -> &str {
-        match self.adapter.platform_type() {
-            octo_network::dot::PlatformType::Telegram => "telegram",
-            octo_network::dot::PlatformType::Discord => "discord",
-            octo_network::dot::PlatformType::Matrix => "matrix",
-            octo_network::dot::PlatformType::Nostr => "nostr",
-            octo_network::dot::PlatformType::Signal => "signal",
-            octo_network::dot::PlatformType::IRC => "irc",
-            octo_network::dot::PlatformType::Slack => "slack",
-            octo_network::dot::PlatformType::WhatsApp => "whatsapp",
-            octo_network::dot::PlatformType::Webhook => "webhook",
-            octo_network::dot::PlatformType::NativeP2P => "native-p2p",
-            octo_network::dot::PlatformType::Bluetooth => "bluetooth",
-            octo_network::dot::PlatformType::LoRa => "lora",
-            octo_network::dot::PlatformType::WebRTC => "webrtc",
-            octo_network::dot::PlatformType::Bluesky => "bluesky",
-            octo_network::dot::PlatformType::Twitter => "twitter",
-            octo_network::dot::PlatformType::Reddit => "reddit",
-            octo_network::dot::PlatformType::WeChat => "wechat",
-            octo_network::dot::PlatformType::DingTalk => "dingtalk",
-            octo_network::dot::PlatformType::Lark => "lark",
-            octo_network::dot::PlatformType::QQ => "qq",
-            octo_network::dot::PlatformType::Quic => "quic",
-        }
+        self.adapter.platform_type().name()
     }
 
     fn is_healthy(&self) -> bool {
@@ -223,6 +205,8 @@ mod tests {
             mission_id: [1u8; 32],
             domain: Some(test_domain()),
             priority: 128,
+            source_peer: [0xAAu8; 32],
+            origin_gateway: [0xBBu8; 32],
         }
     }
 
@@ -295,10 +279,14 @@ mod tests {
             mission_id: [42u8; 32],
             domain: None,
             priority: 255,
+            source_peer: [0x11u8; 32],
+            origin_gateway: [0x22u8; 32],
         };
         assert_eq!(ctx.mission_id, [42u8; 32]);
         assert!(ctx.domain.is_none());
         assert_eq!(ctx.priority, 255);
+        assert_eq!(ctx.source_peer, [0x11u8; 32]);
+        assert_eq!(ctx.origin_gateway, [0x22u8; 32]);
     }
 
     // === TransportError tests ===
@@ -329,6 +317,8 @@ mod tests {
             mission_id: [0xABu8; 32],
             domain: Some(test_domain()),
             priority: 100,
+            source_peer: [0xCCu8; 32],
+            origin_gateway: [0xDDu8; 32],
         };
 
         let result = bridge.send(b"test payload", &ctx).await;

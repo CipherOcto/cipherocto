@@ -13,11 +13,11 @@ use crate::sender::NetworkSender;
 pub struct AdapterFactory;
 
 impl AdapterFactory {
-    /// Create `NetworkSender`s from all adapters in the registry.
+    /// Create `NetworkSender`s from all **healthy** adapters in the registry.
     ///
     /// Consumes the registry (via `drain`) since `dyn PlatformAdapter`
-    /// cannot be cloned. Each adapter is wrapped in a `PlatformAdapterBridge`
-    /// with the given default domain.
+    /// cannot be cloned. Filters out unhealthy adapters. Each adapter is
+    /// wrapped in a `PlatformAdapterBridge` with the given default domain.
     pub fn from_registry(
         mut registry: AdapterRegistry,
         default_domain: BroadcastDomainId,
@@ -25,6 +25,9 @@ impl AdapterFactory {
         registry
             .drain()
             .into_iter()
+            .filter(|(_, entry)| {
+                entry.health != octo_network::dot::adapters::registry::AdapterHealth::Unhealthy
+            })
             .map(|(_platform_type, entry)| {
                 let adapter: Arc<dyn octo_network::dot::adapters::PlatformAdapter> =
                     Arc::from(entry.adapter);

@@ -134,6 +134,8 @@ mod tests {
             mission_id: [0u8; 32],
             domain: None,
             priority: 0,
+            source_peer: [0u8; 32],
+            origin_gateway: [0u8; 32],
         }
     }
 
@@ -248,5 +250,11 @@ mod tests {
     fn transport_count_empty() {
         let t = NodeTransport::new(vec![]);
         assert_eq!(t.transport_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn broadcast_empty_senders() {
+        let t = NodeTransport::new(vec![]);
+        assert_eq!(t.broadcast(b"data", &ctx()).await, 0);
     }
 }

@@ -44,56 +44,7 @@ fn parse_hex32(s: &str) -> [u8; 32] {
 }
 
 fn adapter_name_to_platform_type(name: &str) -> Option<PlatformType> {
-    match name.to_lowercase().as_str() {
-        "telegram" => Some(PlatformType::Telegram),
-        "discord" => Some(PlatformType::Discord),
-        "matrix" => Some(PlatformType::Matrix),
-        "whatsapp" => Some(PlatformType::WhatsApp),
-        "webhook" => Some(PlatformType::Webhook),
-        "p2p" | "nativep2p" => Some(PlatformType::NativeP2P),
-        "quic" => Some(PlatformType::Quic),
-        "signal" => Some(PlatformType::Signal),
-        "irc" => Some(PlatformType::IRC),
-        "slack" => Some(PlatformType::Slack),
-        "nostr" => Some(PlatformType::Nostr),
-        "bluesky" => Some(PlatformType::Bluesky),
-        "twitter" => Some(PlatformType::Twitter),
-        "reddit" => Some(PlatformType::Reddit),
-        "wechat" => Some(PlatformType::WeChat),
-        "dingtalk" => Some(PlatformType::DingTalk),
-        "lark" => Some(PlatformType::Lark),
-        "qq" => Some(PlatformType::QQ),
-        "bluetooth" => Some(PlatformType::Bluetooth),
-        "lora" => Some(PlatformType::LoRa),
-        "webrtc" => Some(PlatformType::WebRTC),
-        _ => None,
-    }
-}
-
-fn adapter_platform_name(pt: PlatformType) -> &'static str {
-    match pt {
-        PlatformType::Telegram => "telegram",
-        PlatformType::Discord => "discord",
-        PlatformType::Matrix => "matrix",
-        PlatformType::Nostr => "nostr",
-        PlatformType::Signal => "signal",
-        PlatformType::IRC => "irc",
-        PlatformType::Slack => "slack",
-        PlatformType::WhatsApp => "whatsapp",
-        PlatformType::Webhook => "webhook",
-        PlatformType::NativeP2P => "native-p2p",
-        PlatformType::Bluetooth => "bluetooth",
-        PlatformType::LoRa => "lora",
-        PlatformType::WebRTC => "webrtc",
-        PlatformType::Bluesky => "bluesky",
-        PlatformType::Twitter => "twitter",
-        PlatformType::Reddit => "reddit",
-        PlatformType::WeChat => "wechat",
-        PlatformType::DingTalk => "dingtalk",
-        PlatformType::Lark => "lark",
-        PlatformType::QQ => "qq",
-        PlatformType::Quic => "quic",
-    }
+    PlatformType::from_name(name)
 }
 
 #[tokio::main]
@@ -147,16 +98,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = all_senders
             .into_iter()
-            .filter(|s| requested.iter().any(|pt| s.name() == adapter_platform_name(*pt)))
+            .filter(|s| requested.iter().any(|pt| s.name() == pt.name()))
             .collect();
 
-        let transport = octo_transport::NodeTransport::new(senders);
-        tracing::info!(
-            adapters = ?args.adapters,
-            transport_count = transport.transport_count(),
-            healthy = transport.healthy_transports().len(),
-            "NodeTransport initialized"
-        );
+        // NOTE: NodeTransport is created here as infrastructure for future
+        // use. Currently sync operates via direct TCP (serve_writer/serve_reader).
+        // Future: replace TCP sync with NodeTransport.broadcast() for
+        // multi-transport sync. This validates the integration pattern works.
+        let _transport = octo_transport::NodeTransport::new(senders);
     }
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.listen)).await?;

@@ -6,7 +6,6 @@ description = "General-purpose transport integration layer for CipherOcto Networ
 
 [dependencies]
 octo-network = { path = "../crates/octo-network" }
-octo-sync = { path = "../octo-sync" }
 async-trait = "0.1"
 thiserror = "2.0"
 blake3 = "1.5"

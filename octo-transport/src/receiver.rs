@@ -92,4 +92,35 @@ mod tests {
         };
         assert!(r.on_receive(b"payload", &ctx).await.is_ok());
     }
+
+    struct FailingReceiver;
+
+    #[async_trait]
+    impl NetworkReceiver for FailingReceiver {
+        async fn on_receive(
+            &self,
+            _payload: &[u8],
+            _ctx: &ReceiveContext,
+        ) -> Result<(), TransportError> {
+            Err(TransportError::AdapterFailure(
+                "simulated failure".to_string(),
+            ))
+        }
+
+        fn name(&self) -> &str {
+            "failing-rx"
+        }
+    }
+
+    #[tokio::test]
+    async fn receiver_failure_propagates() {
+        let r = FailingReceiver;
+        let ctx = ReceiveContext {
+            source_transport: "test".to_string(),
+            mission_id: [0u8; 32],
+            sender_id: None,
+        };
+        let result = r.on_receive(b"data", &ctx).await;
+        assert!(matches!(result, Err(TransportError::AdapterFailure(_))));
+    }
 }

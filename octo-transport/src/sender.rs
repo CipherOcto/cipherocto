@@ -9,6 +9,10 @@ pub struct SendContext {
     pub domain: Option<BroadcastDomainId>,
     /// Priority level (0 = lowest, 255 = highest).
     pub priority: u8,
+    /// Source peer public key (identifies the sending node).
+    pub source_peer: [u8; 32],
+    /// Gateway that first injected this envelope.
+    pub origin_gateway: [u8; 32],
 }
 
 /// Errors that can occur during transport operations.

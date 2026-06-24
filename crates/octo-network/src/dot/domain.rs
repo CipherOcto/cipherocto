@@ -57,6 +57,61 @@ impl PlatformType {
             _ => None,
         }
     }
+
+    /// Short human-readable name for this platform type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "telegram",
+            Self::Discord => "discord",
+            Self::Matrix => "matrix",
+            Self::Nostr => "nostr",
+            Self::Signal => "signal",
+            Self::IRC => "irc",
+            Self::Slack => "slack",
+            Self::WhatsApp => "whatsapp",
+            Self::Webhook => "webhook",
+            Self::NativeP2P => "native-p2p",
+            Self::Bluetooth => "bluetooth",
+            Self::LoRa => "lora",
+            Self::WebRTC => "webrtc",
+            Self::Bluesky => "bluesky",
+            Self::Twitter => "twitter",
+            Self::Reddit => "reddit",
+            Self::WeChat => "wechat",
+            Self::DingTalk => "dingtalk",
+            Self::Lark => "lark",
+            Self::QQ => "qq",
+            Self::Quic => "quic",
+        }
+    }
+
+    /// Parse a platform type from a short name (case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "telegram" => Some(Self::Telegram),
+            "discord" => Some(Self::Discord),
+            "matrix" => Some(Self::Matrix),
+            "whatsapp" => Some(Self::WhatsApp),
+            "webhook" => Some(Self::Webhook),
+            "p2p" | "nativep2p" => Some(Self::NativeP2P),
+            "quic" => Some(Self::Quic),
+            "signal" => Some(Self::Signal),
+            "irc" => Some(Self::IRC),
+            "slack" => Some(Self::Slack),
+            "nostr" => Some(Self::Nostr),
+            "bluesky" => Some(Self::Bluesky),
+            "twitter" => Some(Self::Twitter),
+            "reddit" => Some(Self::Reddit),
+            "wechat" => Some(Self::WeChat),
+            "dingtalk" => Some(Self::DingTalk),
+            "lark" => Some(Self::Lark),
+            "qq" => Some(Self::QQ),
+            "bluetooth" => Some(Self::Bluetooth),
+            "lora" => Some(Self::LoRa),
+            "webrtc" => Some(Self::WebRTC),
+            _ => None,
+        }
+    }
 }
 
 /// Identifies a broadcast domain (group/channel/room) across platforms

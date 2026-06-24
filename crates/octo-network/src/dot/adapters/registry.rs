@@ -275,6 +275,14 @@ impl AdapterRegistry {
     pub fn is_empty(&self) -> bool {
         self.adapters.is_empty()
     }
+
+    /// Remove and return all adapters from the registry.
+    ///
+    /// Returns `Vec<(u16, RegistryEntry)>` keyed by platform type.
+    /// Used by `AdapterFactory` to construct `NetworkSender`s from registered adapters.
+    pub fn drain(&mut self) -> Vec<(u16, RegistryEntry)> {
+        std::mem::take(&mut self.adapters).into_iter().collect()
+    }
 }
 
 /// Errors during adapter plugin loading.

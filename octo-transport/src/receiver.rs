@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use crate::sender::TransportError;
 
 /// Context for a received payload.
+#[derive(Debug)]
 pub struct ReceiveContext {
     /// The source transport name.
     pub source_transport: String,

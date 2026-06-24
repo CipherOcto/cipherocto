@@ -132,7 +132,6 @@ mod tests {
     fn ctx() -> SendContext {
         SendContext {
             mission_id: [0u8; 32],
-            domain: None,
             priority: 0,
             source_peer: [0u8; 32],
             origin_gateway: [0u8; 32],

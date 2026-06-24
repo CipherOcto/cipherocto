@@ -25,6 +25,10 @@ impl PlatformAdapterBridge {
     }
 
     fn build_envelope(payload: &[u8], ctx: &SendContext) -> DeterministicEnvelope {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let mut envelope = DeterministicEnvelope {
             version: 1,
             network_id: 1,
@@ -33,7 +37,7 @@ impl PlatformAdapterBridge {
             mission_id: ctx.mission_id,
             source_peer: ctx.source_peer,
             origin_gateway: ctx.origin_gateway,
-            logical_timestamp: 0,
+            logical_timestamp: timestamp,
             ttl_hops: 10,
             payload_hash: *blake3::hash(payload).as_bytes(),
             route_trace_root: [0u8; 32],
@@ -203,7 +207,6 @@ mod tests {
     fn test_ctx() -> SendContext {
         SendContext {
             mission_id: [1u8; 32],
-            domain: Some(test_domain()),
             priority: 128,
             source_peer: [0xAAu8; 32],
             origin_gateway: [0xBBu8; 32],
@@ -277,13 +280,11 @@ mod tests {
     fn send_context_construction() {
         let ctx = SendContext {
             mission_id: [42u8; 32],
-            domain: None,
             priority: 255,
             source_peer: [0x11u8; 32],
             origin_gateway: [0x22u8; 32],
         };
         assert_eq!(ctx.mission_id, [42u8; 32]);
-        assert!(ctx.domain.is_none());
         assert_eq!(ctx.priority, 255);
         assert_eq!(ctx.source_peer, [0x11u8; 32]);
         assert_eq!(ctx.origin_gateway, [0x22u8; 32]);
@@ -315,7 +316,6 @@ mod tests {
 
         let ctx = SendContext {
             mission_id: [0xABu8; 32],
-            domain: Some(test_domain()),
             priority: 100,
             source_peer: [0xCCu8; 32],
             origin_gateway: [0xDDu8; 32],

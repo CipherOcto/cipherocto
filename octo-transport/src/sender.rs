@@ -1,12 +1,10 @@
 use async_trait::async_trait;
-use octo_network::dot::BroadcastDomainId;
 
 /// Context for sending a payload through the transport layer.
+#[derive(Debug)]
 pub struct SendContext {
     /// Mission-scoped identifier (zero if not mission-scoped).
     pub mission_id: [u8; 32],
-    /// Broadcast domain (platform type + domain hash).
-    pub domain: Option<BroadcastDomainId>,
     /// Priority level (0 = lowest, 255 = highest).
     pub priority: u8,
     /// Source peer public key (identifies the sending node).

@@ -91,6 +91,61 @@ pub struct WalTailChunk {
     pub is_last: bool,
 }
 
+impl WalTailChunk {
+    /// Encode to binary wire format (little-endian, length-prefixed entries).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.from_lsn.to_le_bytes());
+        buf.extend_from_slice(&self.to_lsn.to_le_bytes());
+        buf.push(self.is_last as u8);
+        buf.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for entry in &self.entries {
+            buf.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+            buf.extend_from_slice(entry);
+        }
+        buf
+    }
+
+    /// Decode from binary wire format.
+    pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
+        if data.len() < 21 {
+            return Err(SyncError::BackendNotReady("WalTailChunk too short".into()));
+        }
+        let mut off = 0;
+        let from_lsn = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        off += 8;
+        let to_lsn = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        off += 8;
+        let is_last = data[off] != 0;
+        off += 1;
+        let count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            if off + 4 > data.len() {
+                return Err(SyncError::BackendNotReady(
+                    "WalTailChunk entry length truncated".into(),
+                ));
+            }
+            let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+            off += 4;
+            if off + len > data.len() {
+                return Err(SyncError::BackendNotReady(
+                    "WalTailChunk entry data truncated".into(),
+                ));
+            }
+            entries.push(data[off..off + len].to_vec());
+            off += len;
+        }
+        Ok(WalTailChunk {
+            from_lsn,
+            to_lsn,
+            entries,
+            is_last,
+        })
+    }
+}
+
 /// A `SummaryResponse` envelope payload (RFC-0862 §4.3.4, type 0xA1).
 ///
 /// The writer sends this in response to a `SummaryRequest`. Contains the
@@ -101,6 +156,68 @@ pub struct SummaryResponse {
     pub writer_lsn: Lsn,
     /// The per-table summaries for this mission.
     pub summaries: Vec<crate::summary::SyncSummary>,
+}
+
+impl SummaryResponse {
+    /// Encode to binary wire format.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.writer_lsn.to_le_bytes());
+        buf.extend_from_slice(&(self.summaries.len() as u32).to_le_bytes());
+        for s in &self.summaries {
+            buf.extend_from_slice(&s.table_id.to_le_bytes());
+            buf.extend_from_slice(&s.segment_count.to_le_bytes());
+            buf.extend_from_slice(&s.segment_root);
+            buf.extend_from_slice(&s.lsn_watermark.to_le_bytes());
+            buf.extend_from_slice(&s.hmac);
+        }
+        buf
+    }
+
+    /// Decode from binary wire format.
+    pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
+        if data.len() < 8 {
+            return Err(SyncError::BackendNotReady(
+                "SummaryResponse too short".into(),
+            ));
+        }
+        let mut off = 0;
+        let writer_lsn = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        off += 8;
+        let count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        let mut summaries = Vec::with_capacity(count);
+        for _ in 0..count {
+            if off + 52 > data.len() {
+                return Err(SyncError::BackendNotReady(
+                    "SummaryResponse truncated".into(),
+                ));
+            }
+            let table_id = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+            off += 4;
+            let segment_count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+            off += 4;
+            let mut segment_root = [0u8; 32];
+            segment_root.copy_from_slice(&data[off..off + 32]);
+            off += 32;
+            let lsn_watermark = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+            off += 8;
+            let mut hmac = [0u8; 32];
+            hmac.copy_from_slice(&data[off..off + 32]);
+            off += 32;
+            summaries.push(crate::summary::SyncSummary {
+                table_id,
+                segment_count,
+                segment_root,
+                lsn_watermark,
+                hmac,
+            });
+        }
+        Ok(SummaryResponse {
+            writer_lsn,
+            summaries,
+        })
+    }
 }
 
 /// A `SegmentRequest` envelope payload (RFC-0862 §4.3.4, type 0xA2).
@@ -264,5 +381,78 @@ mod tests {
     fn lsn_ack_construction() {
         let ack = LsnAck { applied_lsn: 42 };
         assert_eq!(ack.applied_lsn, 42);
+    }
+
+    #[test]
+    fn wal_tail_chunk_encode_decode_roundtrip() {
+        let chunk = WalTailChunk {
+            from_lsn: 10,
+            to_lsn: 20,
+            entries: vec![vec![1, 2, 3], vec![4, 5, 6, 7]],
+            is_last: true,
+        };
+        let encoded = chunk.encode();
+        let decoded = WalTailChunk::decode(&encoded).unwrap();
+        assert_eq!(chunk, decoded);
+    }
+
+    #[test]
+    fn wal_tail_chunk_encode_decode_empty_entries() {
+        let chunk = WalTailChunk {
+            from_lsn: 0,
+            to_lsn: 0,
+            entries: vec![],
+            is_last: false,
+        };
+        let encoded = chunk.encode();
+        let decoded = WalTailChunk::decode(&encoded).unwrap();
+        assert_eq!(chunk, decoded);
+    }
+
+    #[test]
+    fn wal_tail_chunk_decode_too_short() {
+        let err = WalTailChunk::decode(&[0u8; 5]).unwrap_err();
+        assert!(matches!(err, SyncError::BackendNotReady(_)));
+    }
+
+    #[test]
+    fn wal_tail_chunk_decode_truncated_entry() {
+        let mut data = vec![0u8; 21]; // header only
+        data[20] = 1; // is_last
+                      // count = 0 (from bytes 17-20)
+                      // Add count=1 but no entry data
+        data.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        let err = WalTailChunk::decode(&data).unwrap_err();
+        assert!(matches!(err, SyncError::BackendNotReady(_)));
+    }
+
+    #[test]
+    fn summary_response_encode_decode_roundtrip() {
+        let response = SummaryResponse {
+            writer_lsn: 42,
+            summaries: vec![crate::summary::SyncSummary {
+                table_id: 1,
+                segment_count: 3,
+                segment_root: [0xAAu8; 32],
+                lsn_watermark: 40,
+                hmac: [0xBBu8; 32],
+            }],
+        };
+        let encoded = response.encode();
+        let decoded = SummaryResponse::decode(&encoded).unwrap();
+        assert_eq!(response.writer_lsn, decoded.writer_lsn);
+        assert_eq!(response.summaries.len(), decoded.summaries.len());
+        assert_eq!(response.summaries[0], decoded.summaries[0]);
+    }
+
+    #[test]
+    fn summary_response_encode_decode_empty() {
+        let response = SummaryResponse {
+            writer_lsn: 0,
+            summaries: vec![],
+        };
+        let encoded = response.encode();
+        let decoded = SummaryResponse::decode(&encoded).unwrap();
+        assert_eq!(response, decoded);
     }
 }

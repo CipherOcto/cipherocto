@@ -24,6 +24,8 @@
 use std::sync::Arc;
 
 use octo_sync::dgp_bridge::SyncHandler;
+use octo_sync::envelope::WalTailChunk;
+use octo_sync::identity::SyncPeerId;
 use octo_sync::session::SyncSessionManager;
 
 use crate::dgp::domain::{GossipDomainId, GossipScope};
@@ -85,21 +87,82 @@ impl SyncDgpHandler {
 
 impl SyncHandler for SyncDgpHandler {
     fn on_summary(&self, peer_id: [u8; 32], payload: Vec<u8>) {
-        // TODO: decode the SyncSummary and apply it (RFC-0862 §Anti-Entropy).
-        // For now, store raw bytes for the sync engine to process.
-        self.inbound_summaries.lock().push((peer_id, payload));
+        // Decode the SummaryResponse and store for the sync engine to compare.
+        // The sync engine uses summaries for anti-entropy: comparing remote
+        // summaries against local state to determine which segments to request.
+        match octo_sync::envelope::SummaryResponse::decode(&payload) {
+            Ok(response) => {
+                // Log for diagnostics; store raw bytes for drain_inbound.
+                tracing::debug!(
+                    peer = ?peer_id,
+                    writer_lsn = response.writer_lsn,
+                    summary_count = response.summaries.len(),
+                    "decoded SummaryResponse"
+                );
+                self.inbound_summaries.lock().push((peer_id, payload));
+            }
+            Err(e) => {
+                // Decode failure — store raw bytes anyway for diagnostics.
+                tracing::warn!(
+                    peer = ?peer_id,
+                    error = %e,
+                    "failed to decode SummaryResponse, storing raw bytes"
+                );
+                self.inbound_summaries.lock().push((peer_id, payload));
+            }
+        }
     }
 
     fn on_segment(&self, peer_id: [u8; 32], payload: Vec<u8>) {
-        // TODO: decode the SyncSegment and apply snapshot data (RFC-0862 §Snapshot).
+        // Store the raw segment payload for the sync engine to process.
+        // The sync engine's SegmentIndexer handles segment validation
+        // (BLAKE3 root check, CRC32, LZ4 decompression) and database writes.
+        tracing::debug!(
+            peer = ?peer_id,
+            payload_len = payload.len(),
+            "received segment response"
+        );
         self.inbound_segments.lock().push((peer_id, payload));
     }
 
     fn on_wal_tail(&self, peer_id: [u8; 32], payload: Vec<u8>) {
-        // TODO: decode WalTailChunk and call session.apply_wal_tail().
-        // The challenge: WalTailChunk is an octo-sync type, not raw bytes.
-        // The bridge delivers raw bytes; the handler must decode.
-        self.inbound_wal_tails.lock().push((peer_id, payload));
+        // Decode the WalTailChunk and apply entries to the local database.
+        // This is the core sync path: remote WAL entries → local database.
+        match WalTailChunk::decode(&payload) {
+            Ok(chunk) => {
+                let sync_peer = SyncPeerId(peer_id);
+                match self.session.apply_wal_tail(sync_peer, &chunk) {
+                    Ok(applied) => {
+                        tracing::debug!(
+                            peer = ?peer_id,
+                            from_lsn = chunk.from_lsn,
+                            to_lsn = chunk.to_lsn,
+                            entries = chunk.entries.len(),
+                            applied,
+                            "applied WAL tail chunk"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            peer = ?peer_id,
+                            error = %e,
+                            "failed to apply WAL tail chunk"
+                        );
+                        // Store raw bytes as fallback for drain_inbound.
+                        self.inbound_wal_tails.lock().push((peer_id, payload));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    peer = ?peer_id,
+                    error = %e,
+                    "failed to decode WalTailChunk"
+                );
+                // Store raw bytes for diagnostics.
+                self.inbound_wal_tails.lock().push((peer_id, payload));
+            }
+        }
     }
 }
 

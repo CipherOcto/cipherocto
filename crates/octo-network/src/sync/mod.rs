@@ -114,9 +114,12 @@ mod tests {
         mission_id[0] = 0xAB;
         let config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x01; 32]);
         let adapter = Arc::new(MockAdapter::new(mission_id, [0x02; 32]));
-        let session =
-            SyncSessionManager::new(adapter as Arc<dyn octo_sync::adapter::DatabaseSyncAdapter>, config, &[0x42u8; 32])
-                .unwrap();
+        let session = SyncSessionManager::new(
+            adapter as Arc<dyn octo_sync::adapter::DatabaseSyncAdapter>,
+            config,
+            &[0x42u8; 32],
+        )
+        .unwrap();
         SyncNode::new(session, Arc::new(TestSyncHandler))
     }
 

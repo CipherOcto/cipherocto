@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use clap::Parser;
+use octo_network::dot::PlatformType;
 use octo_sync::adapter::DatabaseSyncAdapter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -26,6 +27,12 @@ struct Args {
     /// Artificial delay (ms) when applying each WAL entry (for backpressure testing).
     #[arg(long, default_value = "0")]
     slow_apply_ms: u64,
+    /// Platform adapter to load (e.g., "p2p", "webhook", "quic"). Can be repeated.
+    #[arg(long = "adapter")]
+    adapters: Vec<String>,
+    /// Directories to scan for adapter plugin `.so` files.
+    #[arg(long = "adapter-dir")]
+    adapter_dirs: Vec<String>,
 }
 
 fn parse_hex32(s: &str) -> [u8; 32] {
@@ -34,6 +41,59 @@ fn parse_hex32(s: &str) -> [u8; 32] {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     arr
+}
+
+fn adapter_name_to_platform_type(name: &str) -> Option<PlatformType> {
+    match name.to_lowercase().as_str() {
+        "telegram" => Some(PlatformType::Telegram),
+        "discord" => Some(PlatformType::Discord),
+        "matrix" => Some(PlatformType::Matrix),
+        "whatsapp" => Some(PlatformType::WhatsApp),
+        "webhook" => Some(PlatformType::Webhook),
+        "p2p" | "nativep2p" => Some(PlatformType::NativeP2P),
+        "quic" => Some(PlatformType::Quic),
+        "signal" => Some(PlatformType::Signal),
+        "irc" => Some(PlatformType::IRC),
+        "slack" => Some(PlatformType::Slack),
+        "nostr" => Some(PlatformType::Nostr),
+        "bluesky" => Some(PlatformType::Bluesky),
+        "twitter" => Some(PlatformType::Twitter),
+        "reddit" => Some(PlatformType::Reddit),
+        "wechat" => Some(PlatformType::WeChat),
+        "dingtalk" => Some(PlatformType::DingTalk),
+        "lark" => Some(PlatformType::Lark),
+        "qq" => Some(PlatformType::QQ),
+        "bluetooth" => Some(PlatformType::Bluetooth),
+        "lora" => Some(PlatformType::LoRa),
+        "webrtc" => Some(PlatformType::WebRTC),
+        _ => None,
+    }
+}
+
+fn adapter_platform_name(pt: PlatformType) -> &'static str {
+    match pt {
+        PlatformType::Telegram => "telegram",
+        PlatformType::Discord => "discord",
+        PlatformType::Matrix => "matrix",
+        PlatformType::Nostr => "nostr",
+        PlatformType::Signal => "signal",
+        PlatformType::IRC => "irc",
+        PlatformType::Slack => "slack",
+        PlatformType::WhatsApp => "whatsapp",
+        PlatformType::Webhook => "webhook",
+        PlatformType::NativeP2P => "native-p2p",
+        PlatformType::Bluetooth => "bluetooth",
+        PlatformType::LoRa => "lora",
+        PlatformType::WebRTC => "webrtc",
+        PlatformType::Bluesky => "bluesky",
+        PlatformType::Twitter => "twitter",
+        PlatformType::Reddit => "reddit",
+        PlatformType::WeChat => "wechat",
+        PlatformType::DingTalk => "dingtalk",
+        PlatformType::Lark => "lark",
+        PlatformType::QQ => "qq",
+        PlatformType::Quic => "quic",
+    }
 }
 
 #[tokio::main]
@@ -66,6 +126,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(listen = %args.listen, peers = ?args.peers, "stoolap-node starting");
 
     let adapter_arc: Arc<dyn DatabaseSyncAdapter> = adapter;
+
+    // Load platform adapters from --adapter flags if provided
+    if !args.adapters.is_empty() {
+        let plugin_dirs: Vec<std::path::PathBuf> = args.adapter_dirs.iter().map(std::path::PathBuf::from).collect();
+        let mut registry = octo_network::dot::adapters::registry::AdapterRegistry::new(plugin_dirs);
+        if let Err(e) = registry.discover_and_load() {
+            tracing::warn!(errors = ?e, "adapter plugin load errors (continuing with built-in adapters)");
+        }
+
+        let requested: Vec<PlatformType> = args.adapters.iter()
+            .filter_map(|name| adapter_name_to_platform_type(name))
+            .collect();
+
+        let domain = octo_network::dot::BroadcastDomainId::new(
+            octo_network::dot::PlatformType::NativeP2P,
+            &args.node_id,
+        );
+        let all_senders = octo_transport::AdapterFactory::from_registry(registry, domain);
+
+        let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = all_senders
+            .into_iter()
+            .filter(|s| requested.iter().any(|pt| s.name() == adapter_platform_name(*pt)))
+            .collect();
+
+        let transport = octo_transport::NodeTransport::new(senders);
+        tracing::info!(
+            adapters = ?args.adapters,
+            transport_count = transport.transport_count(),
+            healthy = transport.healthy_transports().len(),
+            "NodeTransport initialized"
+        );
+    }
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.listen)).await?;
     let adapter_for_accept = adapter_arc.clone();

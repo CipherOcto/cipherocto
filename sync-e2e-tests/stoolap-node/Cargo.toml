@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap", features = ["sync"] }
 octo-sync = { path = "/home/mmacedoeu/_w/ai/cipherocto/octo-sync" }
+octo-network = { path = "/home/mmacedoeu/_w/ai/cipherocto/crates/octo-network" }
+octo-transport = { path = "/home/mmacedoeu/_w/ai/cipherocto/octo-transport" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "time", "sync", "fs", "signal"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"

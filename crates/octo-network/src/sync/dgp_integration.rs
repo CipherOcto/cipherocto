@@ -338,6 +338,86 @@ mod tests {
     }
 
     #[test]
+    fn on_wal_tail_decodes_and_applies() {
+        use octo_sync::envelope::WalTailChunk;
+
+        let (handler, bridge) = make_handler_and_bridge();
+
+        // Encode a valid WalTailChunk with one entry
+        let chunk = WalTailChunk {
+            from_lsn: 1,
+            to_lsn: 1,
+            entries: vec![b"test-wal-entry".to_vec()],
+            is_last: true,
+        };
+        let encoded = chunk.encode();
+
+        // Send through the bridge — should decode and apply via session
+        bridge
+            .on_dgp_object(0xB1, [5u8; 32], encoded)
+            .unwrap();
+
+        // The handler should NOT store raw bytes (decode succeeded, apply succeeded)
+        let (summaries, segments, wal_tails) = handler.drain_inbound();
+        assert!(summaries.is_empty());
+        assert!(segments.is_empty());
+        assert!(
+            wal_tails.is_empty(),
+            "wal_tails should be empty after successful decode+apply"
+        );
+
+        // Verify the adapter received the entry (MockAdapter tracks applied entries)
+        // The MockAdapter stores entries; verify by checking the session accepted the
+        // apply call without error (the LSN only advances on the writer side).
+        // The key assertion is that drain_inbound is EMPTY — meaning the handler
+        // decoded, applied, and did NOT fall back to storing raw bytes.
+    }
+
+    #[test]
+    fn on_wal_tail_decode_failure_stores_raw() {
+        let (handler, bridge) = make_handler_and_bridge();
+
+        // Send garbage bytes — decode fails, raw bytes stored for diagnostics
+        bridge
+            .on_dgp_object(0xB1, [6u8; 32], vec![0xFF, 0xFE])
+            .unwrap();
+
+        let (_summaries, _segments, wal_tails) = handler.drain_inbound();
+        assert_eq!(wal_tails.len(), 1, "raw bytes stored on decode failure");
+        assert_eq!(wal_tails[0].1, vec![0xFF, 0xFE]);
+    }
+
+    #[test]
+    fn on_summary_decodes_and_stores() {
+        use octo_sync::envelope::SummaryResponse;
+
+        let (handler, bridge) = make_handler_and_bridge();
+
+        // Encode a valid SummaryResponse
+        let response = SummaryResponse {
+            writer_lsn: 42,
+            summaries: vec![octo_sync::summary::SyncSummary {
+                table_id: 1,
+                segment_count: 3,
+                segment_root: [0xAAu8; 32],
+                lsn_watermark: 40,
+                hmac: [0xBBu8; 32],
+            }],
+        };
+        let encoded = response.encode();
+
+        bridge
+            .on_dgp_object(0xA1, [7u8; 32], encoded)
+            .unwrap();
+
+        let (summaries, segments, wal_tails) = handler.drain_inbound();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].0, [7u8; 32]);
+        assert!(segments.is_empty());
+        assert!(wal_tails.is_empty());
+    }
+
+    #[test]
     fn bridge_rejects_unknown_subtype() {
         let (_, bridge) = make_handler_and_bridge();
         let err = bridge.on_dgp_object(0x99, [2u8; 32], vec![]).unwrap_err();

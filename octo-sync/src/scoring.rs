@@ -35,6 +35,9 @@ pub struct ScoringWeights {
     /// Weight for heartbeat reliability (recent heartbeat = more reliable).
     /// Higher weight = prefer peers with recent heartbeats.
     pub reliability: u64,
+    /// Weight for PoRelay trust score (0-10,000 from trust registry).
+    /// Higher weight = prefer peers with proven relay reliability.
+    pub trust: u64,
     /// Weight for diversity penalty (same node_id prefix = penalty).
     /// Higher weight = stronger diversity enforcement.
     pub diversity: u64,
@@ -43,15 +46,17 @@ pub struct ScoringWeights {
 impl ScoringWeights {
     /// Default balanced weights (sum = 1,000,000).
     ///
-    /// - freshness: 400,000 — primary signal for catch-up gossip
-    /// - liveness: 300,000 — strong preference for active peers
-    /// - reliability: 200,000 — moderate preference for reliable peers
+    /// - freshness: 350,000 — primary signal for catch-up gossip
+    /// - liveness: 250,000 — strong preference for active peers
+    /// - reliability: 150,000 — moderate preference for reliable peers
+    /// - trust: 150,000 — PoRelay trust score influence
     /// - diversity: 100,000 — light diversity enforcement
     pub fn balanced() -> Self {
         Self {
-            freshness: 400_000,
-            liveness: 300_000,
-            reliability: 200_000,
+            freshness: 350_000,
+            liveness: 250_000,
+            reliability: 150_000,
+            trust: 150_000,
             diversity: 100_000,
         }
     }
@@ -61,6 +66,7 @@ impl ScoringWeights {
         self.freshness
             .saturating_add(self.liveness)
             .saturating_add(self.reliability)
+            .saturating_add(self.trust)
             .saturating_add(self.diversity)
     }
 }
@@ -130,6 +136,27 @@ pub fn reliability_score(
     ((remaining as u128) * 1_000_000u128 / (heartbeat_window_secs as u128)) as u64
 }
 
+/// Trust score from PoRelay (RFC-0860).
+///
+/// Maps the PoRelay trust factor (0-10,000 range from
+/// `relay_score_to_trust_factor()`) to the 0-1M scoring range.
+///
+/// - `None` = not yet scored → returns 0 (neutral, no trust signal)
+/// - `Some(0)` = minimum trust → returns 0
+/// - `Some(10_000)` = maximum trust → returns 1,000,000
+///
+/// The mapping is linear: `score = trust_factor × 100`.
+pub fn trust_score(trust_factor: Option<u64>) -> u64 {
+    match trust_factor {
+        None => 0,
+        Some(f) => {
+            // Scale 0-10,000 → 0-1M (multiply by 100)
+            // Clamp to 1M to handle any overflow
+            f.saturating_mul(100).min(1_000_000)
+        }
+    }
+}
+
 /// Compute a composite peer score.
 ///
 /// Returns a u64 score in the 0-1M range. Higher = better gossip target.
@@ -139,6 +166,7 @@ pub fn compute_score(
     state: SyncLifecycle,
     last_heartbeat_unix: u64,
     now_unix_secs: u64,
+    trust_factor: Option<u64>,
     weights: &ScoringWeights,
 ) -> u64 {
     let fresh = freshness_score(peer_lsn, local_lsn);
@@ -148,12 +176,14 @@ pub fn compute_score(
         now_unix_secs,
         weights.heartbeat_window_secs(),
     );
+    let trust = trust_score(trust_factor);
 
     // Composite score (all terms are 0-1M, weights sum to 1M)
     // Result is in 0-1M range (u64 saturating)
     let score = (fresh.saturating_mul(weights.freshness) / 1_000_000)
         .saturating_add(live.saturating_mul(weights.liveness) / 1_000_000)
-        .saturating_add(rel.saturating_mul(weights.reliability) / 1_000_000);
+        .saturating_add(rel.saturating_mul(weights.reliability) / 1_000_000)
+        .saturating_add(trust.saturating_mul(weights.trust) / 1_000_000);
 
     score.min(1_000_000)
 }
@@ -224,6 +254,33 @@ mod tests {
     }
 
     #[test]
+    fn trust_score_none_is_zero() {
+        assert_eq!(trust_score(None), 0);
+    }
+
+    #[test]
+    fn trust_score_zero_is_zero() {
+        assert_eq!(trust_score(Some(0)), 0);
+    }
+
+    #[test]
+    fn trust_score_max_is_1m() {
+        assert_eq!(trust_score(Some(10_000)), 1_000_000);
+    }
+
+    #[test]
+    fn trust_score_half_is_half() {
+        let score = trust_score(Some(5_000));
+        assert!((490_000..=510_000).contains(&score), "got {}", score);
+    }
+
+    #[test]
+    fn trust_score_overflows_clamped() {
+        // Even if trust_factor > 10,000 (shouldn't happen, but defensive)
+        assert_eq!(trust_score(Some(u64::MAX)), 1_000_000);
+    }
+
+    #[test]
     fn compute_score_streaming_behind_is_high() {
         let score = compute_score(
             10,
@@ -231,9 +288,10 @@ mod tests {
             SyncLifecycle::Streaming,
             95,
             100,
+            None,
             &ScoringWeights::balanced(),
         );
-        assert!(score > 500_000, "got {}", score);
+        assert!(score > 400_000, "got {}", score);
     }
 
     #[test]
@@ -244,22 +302,42 @@ mod tests {
             SyncLifecycle::Terminated,
             0,
             100,
+            None,
             &ScoringWeights::balanced(),
         );
         assert_eq!(score, 0);
     }
 
     #[test]
+    fn compute_score_trust_increases_score() {
+        let w = ScoringWeights {
+            freshness: 0,
+            liveness: 0,
+            reliability: 0,
+            trust: 1_000_000,
+            diversity: 0,
+        };
+        let score_no_trust = compute_score(50, 100, SyncLifecycle::Streaming, 95, 100, None, &w);
+        let score_with_trust =
+            compute_score(50, 100, SyncLifecycle::Streaming, 95, 100, Some(5_000), &w);
+        assert!(
+            score_with_trust > score_no_trust,
+            "trust should increase score: {} vs {}",
+            score_with_trust,
+            score_no_trust
+        );
+    }
+
+    #[test]
     fn compute_score_respects_weights() {
-        // All weight on freshness
         let w = ScoringWeights {
             freshness: 1_000_000,
             liveness: 0,
             reliability: 0,
+            trust: 0,
             diversity: 0,
         };
-        let score = compute_score(0, 100, SyncLifecycle::Terminated, 0, 100, &w);
-        // Only freshness contributes (Terminated has liveness=0)
+        let score = compute_score(0, 100, SyncLifecycle::Terminated, 0, 100, None, &w);
         assert!(score > 900_000, "got {}", score);
     }
 }

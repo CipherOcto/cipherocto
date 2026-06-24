@@ -41,6 +41,10 @@ pub struct PeerSession {
     pub lsn_tracker: LsnTracker,
     /// Replay cache for this peer (envelope dedup).
     pub replay_cache: crate::replay_cache::ReplayCache,
+    /// PoRelay trust score (0-10,000 range from `relay_score_to_trust_factor()`).
+    /// `None` = not yet known (peer hasn't been scored by PoRelay).
+    /// Set by the network layer when the peer registers in the TrustRegistry.
+    pub relay_score: Option<u64>,
 }
 
 /// The sync session manager.
@@ -160,6 +164,7 @@ impl SyncSessionManager {
             peer,
             lsn_tracker: LsnTracker::new(),
             replay_cache: crate::replay_cache::ReplayCache::default(),
+            relay_score: None,
         };
         self.peers.lock().insert(peer_id, session);
         Ok(())
@@ -461,6 +466,7 @@ impl SyncSessionManager {
                     session.peer.state,
                     session.peer.last_heartbeat_unix,
                     now,
+                    session.relay_score,
                     &weights,
                 );
                 let prefix: [u8; 4] = peer_id.0[0..4].try_into().unwrap_or([0; 4]);
@@ -492,6 +498,27 @@ impl SyncSessionManager {
             .lock()
             .get(&peer_id)
             .map(|s| s.lsn_tracker.watermark())
+    }
+
+    /// Update the PoRelay trust score for a peer.
+    ///
+    /// The network layer calls this when a peer's trust score changes
+    /// (e.g., after a PoRelay scoring round). The score is the output of
+    /// `relay_score_to_trust_factor()` from `octo-network/src/porelay/score.rs`
+    /// (0-10,000 range).
+    ///
+    /// `None` means the peer hasn't been scored yet (default).
+    pub fn update_relay_score(&self, peer_id: SyncPeerId, score: u64) {
+        if let Some(session) = self.peers.lock().get_mut(&peer_id) {
+            session.relay_score = Some(score);
+        }
+    }
+
+    /// Return the PoRelay trust score for a peer.
+    ///
+    /// Returns `None` if the peer hasn't been scored yet.
+    pub fn peer_relay_score(&self, peer_id: SyncPeerId) -> Option<u64> {
+        self.peers.lock().get(&peer_id).and_then(|s| s.relay_score)
     }
 
     /// Return the list of all subscribed peers and their states.

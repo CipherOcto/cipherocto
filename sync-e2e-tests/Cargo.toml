@@ -16,3 +16,5 @@ stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
 blake3 = "1.5"
 parking_lot = "0.12"
 async-trait = "0.1"
+octo-network = { path = "../crates/octo-network" }
+octo-transport = { path = "../octo-transport" }

@@ -372,6 +372,18 @@ impl GovernedTransport {
     /// Skips adapters whose domain is decommissioned or where the
     /// node has been kicked.
     pub async fn receive(&self) -> Vec<ReceivedMessage> { ... }
+
+/// A message received from a platform adapter.
+pub struct ReceivedMessage {
+    /// The platform adapter that received the message.
+    pub platform: PlatformType,
+    /// The source peer identifier (platform-native).
+    pub source_peer: Vec<u8>,
+    /// The raw message payload.
+    pub payload: Vec<u8>,
+    /// The domain this message was received from (if any).
+    pub domain_ref: Option<String>,
+}
 }
 ```
 

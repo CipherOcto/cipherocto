@@ -103,7 +103,7 @@ DotDomain is the natural bootstrap path for mission-centric deployments where th
 - **Authority scope**: `attest_bootstrap` (sign attestations that bind a group to a mission for discovery purposes)
 - **Who can assume**: platform-admin of the bound group (per RFC-0855p-c §"Roles and Authorities")
 - **Who can revoke**: platform admin transfer, slashing (per RFC-0855p-c)
-- **Lifecycle**: `DomainCoordinatorLifecycle` (8 states, per RFC-0855p-b) — attestation validity is tied to DC liveness
+- **Lifecycle**: `CoordinatorLifecycle` (8 states, per RFC-0855p-b; DC reuses this lifecycle) — attestation validity is tied to DC liveness
 
 ### 3. GroupRegistry (shared state)
 

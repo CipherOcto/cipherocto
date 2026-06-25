@@ -215,57 +215,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "built GDP advertisement"
             );
 
-            // --- Bootstrap: run BootstrapOrchestrator if --seed-list provided and no --peer ---
-            if let Some(seed_list_path) = &args.seed_list {
-                if args.peers.is_empty() {
-                    use octo_transport::bootstrap::{BootstrapConfig, BootstrapOrchestrator};
-                    use octo_network::mon::bootstrap::SeedListAuthority;
-                    use octo_network::gdp::discovery::{BootstrapMethod, DiscoveryState};
-
-                    let authority = match args.seed_authority.as_str() {
-                        "dao" => SeedListAuthority::Dao,
-                        _ => SeedListAuthority::Foundation,
-                    };
-
-                    let seed_json = match std::fs::read_to_string(seed_list_path) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            tracing::error!(path = %seed_list_path, error = %e, "failed to read seed list");
-                            std::process::exit(1);
-                        }
-                    };
-                    let seed_envelope: octo_network::mon::bootstrap::SeedListEnvelope =
-                        match serde_json::from_str(&seed_json) {
-                            Ok(env) => env,
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to parse seed list");
-                                std::process::exit(1);
-                            }
-                        };
-
-                    let bootstrap_config = BootstrapConfig {
-                        authority,
-                        current_epoch: now,
-                        node_id,
-                        node_pubkey: node_id, // Same as node_id for now
-                        ..BootstrapConfig::default()
-                    };
-
-                    let mut orch = BootstrapOrchestrator::new(seed_envelope, bootstrap_config);
-                    let mut disc_state = DiscoveryState::new(BootstrapMethod::Static);
-
-                    match orch.run(&transport, &discovery.lock().unwrap(), &mut disc_state).await {
-                        Ok(count) => {
-                            tracing::info!(peers = count, "bootstrap complete");
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "bootstrap failed");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-            }
-
             // --- Outbound: subscribe transport peer, spawn drain task ---
             session.subscribe_peer(transport_peer).unwrap();
             let session_clone = session.clone();
@@ -431,6 +380,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+
+    // --- Bootstrap: run BootstrapOrchestrator if --seed-list provided and no --peer ---
+    if let Some(seed_list_path) = &args.seed_list {
+        if args.peers.is_empty() {
+            use octo_network::mon::bootstrap::SeedListAuthority;
+            use octo_transport::bootstrap::{BootstrapConfig, BootstrapOrchestrator};
+            use octo_network::gdp::discovery::{BootstrapMethod, DiscoveryState};
+
+            // Use existing transport if adapters loaded, otherwise create minimal one
+            let bootstrap_transport = transport_opt.clone().unwrap_or_else(|| {
+                Arc::new(octo_transport::NodeTransport::new(vec![]))
+            });
+
+            let authority = match args.seed_authority.as_str() {
+                "dao" => SeedListAuthority::Dao,
+                _ => SeedListAuthority::Foundation,
+            };
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let seed_json = match std::fs::read_to_string(seed_list_path) {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!(path = %seed_list_path, error = %e, "failed to read seed list");
+                    std::process::exit(1);
+                }
+            };
+            let seed_envelope: octo_network::mon::bootstrap::SeedListEnvelope =
+                match serde_json::from_str(&seed_json) {
+                    Ok(env) => env,
+                    Err(e) => {
+                        tracing::error!(error = %e, "failed to parse seed list");
+                        std::process::exit(1);
+                    }
+                };
+
+            let bootstrap_config = BootstrapConfig {
+                authority,
+                current_epoch: now,
+                node_id,
+                node_pubkey: node_id,
+                ..BootstrapConfig::default()
+            };
+
+            let mut orch = BootstrapOrchestrator::new(seed_envelope, bootstrap_config);
+            let mut disc_state = DiscoveryState::new(BootstrapMethod::Static);
+
+            match orch.run(&bootstrap_transport, &discovery.lock().unwrap(), &mut disc_state).await {
+                Ok(count) => {
+                    tracing::info!(peers = count, "bootstrap complete");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "bootstrap failed");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 
     // TCP sync path (default, backward-compatible)
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.listen)).await?;

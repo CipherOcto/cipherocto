@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): added the `DatabaseSyncAdapter` trait boundary and the `octo-sync` leaf-workspace architecture per the Phase 1 + Phase 2 dep-avoidance research.
+Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): added the `DatabaseSyncAdapter` trait boundary and the `octo-sync` leaf-workspace architecture per the Phase 1 + Phase 2 dep-avoidance research. Updated v1.2.0 (2026-06-25): clarified bootstrap integration path via RFC-0863 `BootstrapOrchestrator` (Phase 4 mission 0851p-a-base).
 
 ## Authors
 
@@ -528,7 +528,7 @@ The 5-Question Adversary Test is applied per row in the table below. Q1 = "Who b
 - v1 single-leader: writer is **trusted by configuration**, not by election. Operator supplies `writer_node_id` at mission init.
 - Readers are **untrusted by default** (they can lie about their LSN). The writer keeps no state about readers.
 - Peers are **authenticated by mission key** (RFC-0853). They are not trusted to behave correctly — the protocol assumes Byzantine peers and detects misbehavior via heartbeat + LSN-watermark probes.
-- The trust anchor is `GatewayAdvertisement.trust_root` from RFC-0851, bootstrapped via RFC-0851p-a Mode A or C.
+- The trust anchor is `GatewayAdvertisement.trust_root` from RFC-0851, bootstrapped via RFC-0851p-a Mode A or C. The `BootstrapOrchestrator` (RFC-0863 Phase 4, mission `0851p-a-base-bootstrap-orchestrator.md`) automates Mode A bootstrap: it loads the signed seed list, verifies `SeedListAuthority`, filters slashed seeds, sends `BOOTSTRAP_REQ` to bootstrap nodes, validates `BOOTSTRAP_RESP` signatures, computes peer-list intersection (80% Sybil defense), and populates `TransportDiscovery` with verified peers before sync begins.
 
 ## Compatibility
 
@@ -649,6 +649,7 @@ Phase 1–4 below are unchanged in scope; they are now implemented *on top of* t
 - **F8 — Writer election / auto-failover.** v1 has no failover (operator must reconfigure `writer_node_id` on reader). F8 adds automatic failover via the `DomainCoordinator` handover protocol (RFC-0855p-c).
 - **F9 — Schema migration protocol.** v1 aborts on schema-version mismatch. F9 specifies a coordinated migration protocol (e.g., reader rejects write that introduces a new column not in reader's schema; operator must run a separate migration tool first).
 - **F10 — Reed-Solomon erasure coding for first-time sync.** RFC-0742 already specifies Reed-Solomon for data availability. F10 investigates whether RS chunks across multiple peers can speed up first-time snapshot sync (e.g., 10 peers each hold 1/10 of the encoded data, reader fetches 6-of-10 to reconstruct). **v1 uses per-segment download only.**
+- **F11 — Bootstrap-orchestrated peer discovery for sync.** The `stoolap-node` currently accepts `--peer` CLI args for manual peer configuration. F11 wires the RFC-0863 `BootstrapOrchestrator` (mission `0851p-a-base-bootstrap-orchestrator.md`) into the sync startup path so that nodes discover peers via the RFC-0851p-a Mode A bootstrap protocol (seed list → BOOTSTRAP_REQ → peer-list intersection → `TransportDiscovery` cache). This eliminates the need for operators to manually specify peer addresses. The `--peer` path remains as a development/testing shortcut. Deadline: pre-public-launch (bootstrap is a prerequisite for production sync).
 
 ## Rationale
 

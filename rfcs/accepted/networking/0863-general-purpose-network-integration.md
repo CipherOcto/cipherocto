@@ -210,13 +210,65 @@ Node Startup:
   2. For each loaded adapter:
      a. Create PlatformAdapterBridge wrapper
      b. Add to NodeTransport
-  3. NodeTransport is now available to any consumer:
+  3. BootstrapOrchestrator::run() — acquire first peers:
+     a. Load SeedListEnvelope (from config or embedded genesis)
+     b. SeedHealth::check() — reject stale seeds
+     c. SeedListAuthority::verify_authority() — gate on epoch
+     d. Send BOOTSTRAP_REQ to each bootstrap node via NodeTransport
+     e. Collect BOOTSTRAP_RESP, validate signatures, compute peer-list intersection
+     f. Populate TransportDiscovery cache
+     g. Hand off to DiscoveryLifecycle::Bootstrap → Expansion
+  4. NodeTransport is now available to any consumer:
      - Sync engine calls node_transport.broadcast(wal_chunks)
      - Agent runtime calls node_transport.send_best(task_data)
      - Marketplace calls node_transport.broadcast(settlement)
      - Proof distributor calls node_transport.send_best(proof)
-  4. DotGateway fan-out routes inbound envelopes to handlers
+  5. DotGateway fan-out routes inbound envelopes to handlers
 ```
+
+### `BootstrapOrchestrator` (RFC-0851p-a Integration)
+
+The `BootstrapOrchestrator` bridges RFC-0851p-a's bootstrap protocol into the `octo-transport` startup path. It is the **first thing a node runs** after loading adapters — without bootstrap, no peer exists to send to.
+
+```rust
+/// Drives the RFC-0851p-a Mode A bootstrap protocol.
+///
+/// Consumes `SeedListEnvelope`, `SeedHealth`, `SeedListAuthority`,
+/// `BootstrapMode`, and `SlashedSeedBlacklist` from `octo-network::mon::bootstrap`.
+/// Produces peer entries in `TransportDiscovery`.
+pub struct BootstrapOrchestrator {
+    seed_list: SeedListEnvelope,
+    blacklist: SlashedSeedBlacklist,
+    state: BootstrapClientLifecycle,
+    mode: BootstrapMode,
+    config: BootstrapConfig,
+}
+
+impl BootstrapOrchestrator {
+    /// Run the bootstrap protocol to completion.
+    ///
+    /// Returns the number of peers acquired, or an error if all modes fail.
+    /// On success, `discovery` is populated with bootstrapped peer entries.
+    pub async fn run(
+        &mut self,
+        transport: &NodeTransport,
+        discovery: &TransportDiscovery,
+    ) -> Result<u32, BootstrapError>;
+}
+```
+
+**State machine:** `BootstrapClientLifecycle` (Init → Connecting → Validating → Cached → Done, with FallbackB/FallbackC/Failed terminals). Full transitions in RFC-0851p-a §3.
+
+**Integration with existing modules:**
+- `octo-network::mon::bootstrap::SeedListEnvelope` — seed list loading
+- `octo-network::mon::bootstrap::SeedHealth` — staleness check at load
+- `octo-network::mon::bootstrap::SeedListAuthority` — authority gate (Foundation vs DAO)
+- `octo-network::mon::bootstrap::SlashedSeedBlacklist` — filter slashed seeds
+- `octo-network::mon::slash::BootstrapMisbehavior` — slash sub-codes
+- `octo-transport::discovery::TransportDiscovery::cache_insert()` — peer cache handoff
+- `octo-network::gdp::discovery::DiscoveryLifecycle` — Bootstrap → Expansion transition
+
+**Mission:** `0851p-a-base-bootstrap-orchestrator.md` (Phase 1 Mode A). Mode B (DHT fallback) and Mode C (invite link) are separate missions.
 
 ## Performance Targets
 
@@ -325,17 +377,32 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 - [ ] Wire marketplace to `NodeTransport` (deferred — marketplace not implemented)
 - [x] Add general-purpose transport tests
 
+### Phase 4: Bootstrap Integration (RFC-0851p-a)
+
+- [ ] Create `octo-transport/src/bootstrap.rs` module
+- [ ] Implement `BootstrapOrchestrator` with `BootstrapClientLifecycle` state machine
+- [ ] Implement `BootstrapRequest` / `BootstrapResponse` wire types
+- [ ] Integrate `SeedListEnvelope` loading + `SeedHealth::check()`
+- [ ] Integrate `SeedListAuthority::verify_authority()` gate
+- [ ] Integrate `SlashedSeedBlacklist::filter()`
+- [ ] Implement peer-list intersection (BLAKE3, 80% threshold)
+- [ ] Wire `TransportDiscovery::cache_insert()` handoff
+- [ ] Add retry with exponential backoff (RFC-0851p-a §3)
+- [ ] Add unit tests (12+ scenarios from RFC-0851p-a test vectors)
+- [ ] Wire into `stoolap-node` as default bootstrap path (RFC-0862 update)
+
 ## Key Files to Modify
 
-| File                                     | Change                         |
-| ---------------------------------------- | ------------------------------ |
-| `octo-transport/Cargo.toml`              | New crate manifest             |
-| `octo-transport/src/lib.rs`              | New crate root                 |
-| `octo-transport/src/sender.rs`           | `NetworkSender` trait          |
-| `octo-transport/src/adapter_bridge.rs`   | `PlatformAdapterBridge`        |
-| `octo-transport/src/node_transport.rs`   | `NodeTransport` config         |
-| `crates/octo-network/src/dot/mod.rs:175` | DotGateway fan-out (Phase 3)   |
-| `crates/octo-network/src/lib.rs`         | Export `sync` module (Phase 2) |
+| File                                     | Change                                    |
+| ---------------------------------------- | ----------------------------------------- |
+| `octo-transport/Cargo.toml`              | New crate manifest                        |
+| `octo-transport/src/lib.rs`              | New crate root                            |
+| `octo-transport/src/sender.rs`           | `NetworkSender` trait                     |
+| `octo-transport/src/adapter_bridge.rs`   | `PlatformAdapterBridge`                   |
+| `octo-transport/src/node_transport.rs`   | `NodeTransport` config                    |
+| `octo-transport/src/bootstrap.rs`        | **New:** `BootstrapOrchestrator`, `BootstrapConfig`, `BootstrapClientLifecycle`, `BootstrapRequest`, `BootstrapResponse` (Phase 4) |
+| `crates/octo-network/src/dot/mod.rs:175` | DotGateway fan-out (Phase 3)              |
+| `crates/octo-network/src/lib.rs`         | Export `sync` module (Phase 2)            |
 
 ## Future Work
 
@@ -344,6 +411,8 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 - F3: WASM plugin runtime integration (mission 0850i)
 - F4: Transport-level encryption abstraction (beyond adapter-native encryption)
 - F5: `AdapterFactory` hot-reload (add/remove adapters at runtime without restart)
+- F6: Mode B bootstrap — DHT fallback (RFC-0851p-a §4, requires RFC-0843 Kademlia integration)
+- F7: Mode C bootstrap — invite link (RFC-0851p-a §5, requires invite URL parser + web-of-trust)
 
 ## Rationale
 
@@ -357,6 +426,7 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 | 1.1     | 2026-06-24 | Round 1 review: 11 fixes (roles, cross-refs, adversary analysis, terminology) |
 | 1.2     | 2026-06-24 | Round 2 review: 1 fix (typo) — 0 findings, loop closed                        |
 | 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met |
+| 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path. |
 
 ## Related RFCs
 

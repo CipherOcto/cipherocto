@@ -476,7 +476,7 @@ The DC lifecycle state (RFC-0855p-b `CoordinatorLifecycle`) affects the trust le
 | `Handover` | `Blocked` | Entry not used for routing until handover completes |
 | `Demoting` / `Resigned` / `Inactive` | `Untrusted` | Entry evicted from cache |
 
-The trust level is stored in `GatewayCacheEntry.trust_level` (new field, additive). Existing cache entries without a trust level default to `Trusted`.
+The trust level is stored in `GatewayCacheEntry.trust_level: DcTrustLevel` (new field, additive; `DcTrustLevel` is defined in RFC-0851p-b §Data Structures). Existing cache entries without a trust level default to `DcTrustLevel::Trusted`.
 
 #### Scope Mapping for Domain-Discovered Peers
 
@@ -499,6 +499,19 @@ Per §13, the gossip mode for domain-discovered peers follows the lifecycle stat
 | Degraded (DC Suspect) | Anti-Entropy | 5 (Mission) |
 
 Domain discovery uses `GossipScope::MISSION` (not `LOCAL` or `GLOBAL`) because the domain is mission-scoped.
+
+#### Bootstrap → Post-Bootstrap Gossip Transition
+
+During DotDomain bootstrap, the initial `GADV_REQUEST` uses `GossipScope::LOCAL` (TTL=3) because the node does not yet know the mission scope. After the `GroupRegistry` lookup confirms the `mission_id`, subsequent gossip switches to `GossipScope::MISSION` (TTL=5). The transition happens at the point where `binding.mission_id` is confirmed (§14 Scope Mapping).
+
+```text
+// Bootstrap start: LOCAL scope
+scope = DiscoveryScope::Local  // TTL=3
+
+// After GroupRegistry confirms mission_id: MISSION scope
+scope = DiscoveryScope::Mission  // TTL=5
+scope_filter = ScopeFilter::mission(binding.mission_id)
+```
 
 ## Performance Targets
 

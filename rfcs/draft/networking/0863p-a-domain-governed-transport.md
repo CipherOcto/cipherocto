@@ -226,6 +226,9 @@ pub enum Credentials {
     Cert(Vec<u8>, Vec<u8>),
     ApiKey(String),
     UsernamePassword(String, String),
+    /// Adapter-specific credential format.
+    /// The string is passed verbatim to the adapter's `authenticate()` method.
+    /// Format is adapter-defined (see per-adapter documentation).
     Custom(String),
 }
 ```
@@ -274,6 +277,160 @@ pub enum GovernedTransportLifecycle {
     Degraded = 0x03,
     /// Rebooting: re-running bootstrap after domain loss.
     Rebooting = 0x04,
+}
+
+impl GovernedTransportLifecycle {
+    /// Derive lifecycle from aggregate domain trust.
+    /// If all domains are Trusted → Ready.
+    /// If any domain is Degraded → Degraded.
+    /// If all domains are Untrusted or no domains → Rebooting.
+    pub fn from_domain_trust(levels: &[DcTrustLevel]) -> Self {
+        if levels.is_empty() {
+            return Self::Ready; // PTP-only; no governance
+        }
+        if levels.iter().all(|l| *l == DcTrustLevel::Trusted) {
+            Self::Ready
+        } else if levels.iter().any(|l| *l == DcTrustLevel::Degraded) {
+            Self::Degraded
+        } else {
+            Self::Rebooting
+        }
+    }
+}
+```
+
+#### `GovernedTransport`
+
+The central type that wraps `NodeTransport` with governance awareness.
+
+```rust
+/// Constants for governance-gated send path.
+/// Flag indicating the message is being sent through a degraded domain.
+pub const FLAG_DEGRADED_DOMAIN: u64 = 0x0001;
+
+/// Governance-aware transport wrapper.
+///
+/// Canonical definition of `BroadcastDomainHint` is in RFC-0851p-b §Data Structures.
+/// This RFC re-exports it for developer convenience.
+pub struct GovernedTransport {
+    /// The underlying transport layer.
+    inner: NodeTransport,
+    /// Shared group registry (read-only during transport operations).
+    group_registry: Arc<Mutex<GroupRegistry>>,
+    /// DC lifecycle store (read-only; populated by DC heartbeat monitor).
+    dc_store: Arc<Mutex<BTreeMap<[u8; 32], DomainCoordinatorRecord>>>,
+    /// Transport discovery (GDP cache + advertisement builder).
+    discovery: Arc<Mutex<TransportDiscovery>>,
+    /// Current lifecycle state.
+    lifecycle: GovernedTransportLifecycle,
+    /// Mission ID this transport is bound to.
+    mission_id: [u8; 32],
+    /// Adapter configs (for domain-to-adapter mapping).
+    adapter_domains: Vec<(PlatformType, String, DomainRole)>,
+    /// DC lifecycle event channel (for domain loss detection).
+    dc_events: tokio::sync::broadcast::Sender<DcLifecycleEvent>,
+}
+
+/// DC lifecycle event for domain loss detection.
+#[derive(Clone, Debug)]
+pub struct DcLifecycleEvent {
+    pub dc_id: [u8; 32],
+    pub previous_state: CoordinatorLifecycle,
+    pub new_state: CoordinatorLifecycle,
+    pub epoch: u64,
+}
+
+impl GovernedTransport {
+    /// Returns true if the transport is ready to send/receive.
+    /// Ready means: bootstrap complete, at least one domain is Trusted or
+    /// at least one PTP adapter is available.
+    pub fn ready(&self) -> bool {
+        matches!(self.lifecycle,
+            GovernedTransportLifecycle::Ready
+            | GovernedTransportLifecycle::Degraded
+        )
+    }
+
+    /// Current lifecycle state.
+    pub fn lifecycle(&self) -> GovernedTransportLifecycle {
+        self.lifecycle
+    }
+
+    /// Send payload via the best available adapter, respecting governance.
+    ///
+    /// Governance checks (per send):
+    /// 1. GroupRegistry state == Bound
+    /// 2. DC lifecycle != Inactive/Demoting/Resigned
+    /// 3. Not kicked from domain
+    ///
+    /// Retry: tries each healthy adapter in priority order.
+    /// Returns AllTransportsFailed only if all adapters fail or are
+    /// governance-blocked. Caller should retry after a backoff interval.
+    pub async fn send_best(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError> { ... }
+
+    /// Receive messages from all governance-approved adapters.
+    /// Skips adapters whose domain is decommissioned or where the
+    /// node has been kicked.
+    pub async fn receive(&self) -> Vec<ReceivedMessage> { ... }
+}
+```
+
+#### Helper Functions
+
+```rust
+/// Map a NetworkSender back to its broadcast domain.
+/// Returns None for PTP adapters (no domain binding).
+fn find_domain_for_sender(
+    sender: &dyn NetworkSender,
+    adapter_domains: &[(PlatformType, String, DomainRole)],
+    group_registry: &GroupRegistry,
+) -> Option<GroupBinding> {
+    let platform = PlatformType::from_name(sender.name())?;
+    let (_, domain_ref, role) = adapter_domains.iter()
+        .find(|(pt, _, _)| *pt == platform)?;
+    if *role == DomainRole::None {
+        return None; // PTP adapter
+    }
+    group_registry.lookup(&platform.name().to_string(), domain_ref)
+}
+
+/// Map a PlatformAdapter back to its broadcast domain.
+fn find_domain_for_adapter(
+    adapter: &dyn PlatformAdapter,
+    adapter_domains: &[(PlatformType, String, DomainRole)],
+    group_registry: &GroupRegistry,
+) -> Option<GroupBinding> {
+    let platform = adapter.platform_type();
+    let (_, domain_ref, role) = adapter_domains.iter()
+        .find(|(pt, _, _)| *pt == platform)?;
+    if *role == DomainRole::None {
+        return None;
+    }
+    group_registry.lookup(&platform.name().to_string(), domain_ref)
+}
+
+/// Domain loss detection:
+/// A domain is considered lost when:
+/// 1. DC lifecycle transitions to Demoting/Resigned/Inactive, OR
+/// 2. GroupState transitions to UnboundAllDone (decommission), OR
+/// 3. Platform kick detection (adapter-level event)
+///
+/// The GovernedTransport subscribes to DcLifecycleEvent broadcasts
+/// and GroupRegistry state changes. On domain loss, it:
+/// 1. Evicts the domain's peers from GatewayCache (per RFC-0851 §14)
+/// 2. Transitions lifecycle to Rebooting
+/// 3. Re-runs DotDomain bootstrap if another domain is configured
+fn on_domain_loss(transport: &mut GovernedTransport, event: DcLifecycleEvent) {
+    if matches!(event.new_state,
+        CoordinatorLifecycle::Demoting
+        | CoordinatorLifecycle::Resigned
+        | CoordinatorLifecycle::Inactive
+    ) {
+        transport.lifecycle = GovernedTransportLifecycle::Rebooting;
+        // Evict domain from cache (RFC-0851 §14)
+        let mut discovery = transport.discovery.lock().unwrap();
+        // ... evict peers from the affected domain ...
+    }
 }
 ```
 
@@ -641,6 +798,7 @@ The `NodeTransport::builder()` pattern mirrors the established builder pattern i
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-25 | Initial draft |
+| 0.1.1 | 2026-06-25 | Adversarial review R1: 10 findings fixed (2H, 6M, 2L). Added `GovernedTransport` struct definition, `FLAG_DEGRADED_DOMAIN` constant, helper functions (`find_domain_for_sender`, `find_domain_for_adapter`, `on_domain_loss`), `DcLifecycleEvent` type, `transport.ready()` method, `Credentials::Custom` format clarification, `DcTrustLevel` cross-ref to 0851p-b, domain loss detection trigger. |
 
 ## Related RFCs
 

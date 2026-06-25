@@ -210,12 +210,51 @@ pub struct DotDomainBootstrapConfig {
 Result of a DotDomain bootstrap attempt:
 
 ```rust
+/// Trust level derived from DC lifecycle state (RFC-0855p-b).
+///
+/// Canonical definition — referenced by RFC-0851 §14 and RFC-0863p-a.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum DcTrustLevel {
+    /// DC is Active; full trust.
+    Trusted = 0x00,
+    /// DC is Elected or Designated; not yet proven.
+    Provisional = 0x01,
+    /// DC is Suspect (missed heartbeats); degraded trust.
+    Degraded = 0x02,
+    /// DC is in Handover; not usable until successor is Active.
+    Blocked = 0x03,
+    /// DC is Demoting, Resigned, or Inactive; domain not usable.
+    Untrusted = 0x04,
+}
+
+impl DcTrustLevel {
+    /// Derive trust level from a DC lifecycle state.
+    pub fn from_dc_lifecycle(lifecycle: CoordinatorLifecycle) -> Self {
+        match lifecycle {
+            CoordinatorLifecycle::Active => Self::Trusted,
+            CoordinatorLifecycle::Elected | CoordinatorLifecycle::Designated => Self::Provisional,
+            CoordinatorLifecycle::Suspect => Self::Degraded,
+            CoordinatorLifecycle::Handover => Self::Blocked,
+            CoordinatorLifecycle::Demoting
+            | CoordinatorLifecycle::Resigned
+            | CoordinatorLifecycle::Inactive => Self::Untrusted,
+        }
+    }
+}
+
+/// Result of a DotDomain bootstrap attempt.
+
+```rust
 /// Result of a DotDomain bootstrap attempt.
 #[derive(Clone, Debug)]
 pub struct DomainBootstrapResult {
     /// Number of peers discovered and cached.
     pub peers_discovered: u32,
     /// The DC attestation (if verified).
+    /// Type defined in RFC-0855p-c §admin_attest:
+    /// fields: dc_id, mission_id, signature, dc_pubkey, signed_at_epoch,
+    /// signing_bytes().
     pub dc_attestation: Option<PlatformAdminAttest>,
     /// The mission_id this domain is bound to.
     pub bound_mission_id: Option<[u8; 32]>,
@@ -266,6 +305,8 @@ function dotdomain_bootstrap(config, adapter, group_registry, discovery):
             return Error(MissionMismatch)
     
     // Step 3: Verify DC attestation (if required)
+    // PlatformAdminAttest is received via the adapter's attestation channel.
+    // New methods: PlatformAdapter::receive_attestation() (see §Adapter Extensions)
     if config.require_dc_attestation:
         attest = adapter.receive_attestation(timeout=config.discovery_timeout)
         if attest is None:
@@ -279,6 +320,9 @@ function dotdomain_bootstrap(config, adapter, group_registry, discovery):
     adapter.send_envelope(config.domain_hint.domain_ref, gadv_request)
     
     // Step 5: Collect GADV responses
+    // GADV_REQUEST is a DOT/1/GADV_REQ envelope (subtype b"GDRQ").
+    // Responses arrive as DOT/1/GADV envelopes (RFC-0851 §4).
+    // New method: PlatformAdapter::receive_gadv_responses() (see §Adapter Extensions)
     responses = adapter.receive_gadv_responses(
         timeout=config.discovery_timeout,
         min_count=config.min_gadv_responses,
@@ -297,6 +341,14 @@ function dotdomain_bootstrap(config, adapter, group_registry, discovery):
 ```
 
 #### DC Attestation Verification
+
+> `PlatformAdminAttest` is defined in RFC-0855p-c §admin_attest. Its fields are:
+> `dc_id: [u8; 32]`, `mission_id: [u8; 32]`, `signature: [u8; 64]` (Ed25519),
+> `dc_pubkey: [u8; 32]`, `signed_at_epoch: u64`. The `signing_bytes()` method
+> produces the canonical byte sequence for signature verification.
+>
+> `MAX_ATTEST_AGE_EPOCHS = 100` (~100 minutes at 1-min epochs).
+> Defined in `octo-network/src/dc/admin_attest.rs`.
 
 ```
 function verify_attestation(attest, expected_dc_id):
@@ -418,7 +470,7 @@ sequenceDiagram
 
 | Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
 |------------|-------------------|----------------------|---------------------|
-| The platform adapter supports `join_domain()` or equivalent | §Algorithm Step 1 | DotDomain bootstrap fails entirely for that platform | Mitigation: check `CoordinatorAdmin::admin_capabilities().can_join` at config time; fallback to Mode A. **ACCEPTED RISK** — not all 20 adapters support group join; Telegram, Discord, Matrix, IRC do. |
+| The platform adapter supports `join_domain()` or equivalent | §Algorithm Step 1 | DotDomain bootstrap fails entirely for that platform | Mitigation: check `PlatformAdapterDotDomain::join_domain()` capability at config time via `PlatformAdapterError::Unimplemented`; fallback to Mode A. **ACCEPTED RISK** — not all 20 adapters support group join; Telegram, Discord, Matrix, IRC do. |
 | The DC's `PlatformAdminAttest` is current (within `MAX_ATTEST_AGE_EPOCHS`) | §Algorithm Step 3 | Stale attestation accepted; DC may have changed | Mitigation: freshness check per RFC-0855p-c §admin_attest. |
 | The `GroupRegistry` is synchronized across the mesh | §Algorithm Step 2 | Node may see `Bound` while the group is actually `UnboundQuarantined` | Mitigation: GroupRegistry updates propagate via DOT/1/BIND/UNBIND envelopes; eventual consistency with bounded delay. **ACCEPTED RISK** — transient inconsistency window is <5s per RFC-0850p-c G1. |
 | Platform group membership is stable during bootstrap | §Algorithm Steps 4-5 | Node kicked mid-bootstrap; GADV responses lost | Mitigation: adapter detects kick event; bootstrap retries or falls back to Mode A. |
@@ -479,17 +531,25 @@ Expected:
   DiscoveryState: { peer_count: 3, phase: Bootstrap }
 ```
 
-### TV-DD-2: DC Attestation Failure
+### TV-DD-2: DC Attestation Failure (Signature Invalid)
 
 ```
 Input:
   domain_hint: { platform: Telegram, domain_ref: "-1001234567890" }
-  DC attestation: { signature: INVALID }
+  GroupRegistry: { state: Bound, dc_id: 0xAA.. }
+  DC attestation: { dc_id: 0xAA.., signature: INVALID, signed_at_epoch: 50 }
 
 Expected:
-  result: Err(DcAttestationTimeout or DcNotAttested)
+  result: Err(DcAttestationTimeout)
   GatewayCache: empty
 ```
+
+> Note: when `require_dc_attestation = true` and the attestation signature
+> is invalid, the algorithm rejects at the verification step. If no valid
+> attestation arrives within `discovery_timeout`, the error is
+> `DcAttestationTimeout`. If an attestation arrives but fails signature
+> verification, the error is `DcNotAttested` (the specific rejection reason
+> is logged but the caller sees the same top-level error).
 
 ### TV-DD-3: Group Not Bound
 
@@ -523,7 +583,12 @@ Input:
 
 Expected:
   result: Ok(DomainBootstrapResult { peers_discovered: 2, high_confidence: false })
-  GatewayCache: [Peer_A(degraded), Peer_B(degraded)]
+  GatewayCache: [Peer_A(trust_level=Degraded), Peer_B(trust_level=Degraded)]
+  DiscoveryState: { peer_count: 2, phase: Bootstrap }
+
+Note: GatewayCacheEntry.trust_level is set to DcTrustLevel::Degraded.
+The `Peer_A(trust_level=Degraded)` notation indicates the cache entry's
+trust_level field, not a separate annotation.
 ```
 
 ## Alternatives Considered
@@ -541,7 +606,7 @@ Expected:
 
 - [ ] Define `BroadcastDomainHint`, `DotDomainBootstrapConfig`, `DomainBootstrapResult` types in `octo-transport`
 - [ ] Implement `dotdomain_bootstrap()` algorithm in `BootstrapOrchestrator`
-- [ ] Wire `CoordinatorAdmin::join_domain()` call (adapters that support it)
+- [ ] Wire platform group-join via `PlatformAdapter::join_domain()` (adapters that support it; see Appendix A for the `PlatformAdapterDotDomain` trait)
 - [ ] DC attestation verification (structural + signature)
 - [ ] GroupRegistry state check
 - [ ] GatewayCache population with per-domain cap
@@ -606,6 +671,7 @@ The per-domain peer cap (`max_peers_per_domain`, default 64) prevents a single c
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-25 | Initial draft |
+| 0.1.1 | 2026-06-25 | Adversarial review R1: 11 findings fixed (3H, 6M, 2L). Added `DcTrustLevel` enum, `PlatformAdminAttest` cross-ref, `MAX_ATTEST_AGE_EPOCHS` value, `PlatformAdapterDotDomain` trait extension, fixed test vectors, Nostr join_domain support clarification. |
 
 ## Related RFCs
 
@@ -624,7 +690,42 @@ The per-domain peer cap (`max_peers_per_domain`, default 64) prevents a single c
 
 ## Appendices
 
-### A. Adapter `join_domain()` Support Matrix
+### A. Adapter Extensions for DotDomain Bootstrap
+
+The DotDomain bootstrap algorithm calls three new methods that are added to the `PlatformAdapter` trait with default `Unimplemented` implementations (same pattern as `upload_media` / `download_media`):
+
+```rust
+/// Extension methods for adapters that support DotDomain bootstrap.
+/// All methods have default implementations that return Unimplemented.
+trait PlatformAdapterDotDomain: PlatformAdapter {
+    /// Join a broadcast domain (group, room, relay).
+    /// Returns Ok(()) once the adapter has joined and can receive messages.
+    async fn join_domain(&self, domain_ref: &str) -> Result<(), PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented { method: "join_domain" })
+    }
+
+    /// Receive a DC attestation from the domain.
+    /// Blocks until an attestation is received or timeout.
+    async fn receive_attestation(
+        &self,
+        timeout: Duration,
+    ) -> Result<Option<PlatformAdminAttest>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented { method: "receive_attestation" })
+    }
+
+    /// Receive GADV responses from domain members.
+    /// Returns up to max_count responses within timeout.
+    async fn receive_gadv_responses(
+        &self,
+        timeout: Duration,
+        max_count: usize,
+    ) -> Result<Vec<GatewayAdvertisement>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented { method: "receive_gadv_responses" })
+    }
+}
+```
+
+### B. Adapter `join_domain()` Support Matrix
 
 | Platform | `join_domain()` Support | Notes |
 |----------|------------------------|-------|
@@ -633,7 +734,7 @@ The per-domain peer cap (`max_peers_per_domain`, default 64) prevents a single c
 | Matrix | Yes | `join_room(room_id_or_alias)` |
 | WhatsApp | Partial | Requires invite link; no direct join |
 | IRC | Yes | `JOIN #channel` |
-| Nostr | Yes | Subscribe to relay |
+| Nostr | Partial | Relay subscription is not group-join; works for event discovery but no membership semantics. Suitable for GADV exchange only. |
 | Signal | No | No group join API |
 | QUIC | N/A | Point-to-point; no broadcast domain |
 | Webhook | N/A | Point-to-point; no broadcast domain |

@@ -103,13 +103,13 @@ impl GovernedTransportLifecycle {
         // Rebooting: ALL domains untrusted (no way to recover)
         if levels.iter().all(|l| *l == DcTrustLevel::Untrusted) {
             Self::Rebooting
-        // Degraded: any domain is Degraded or Blocked
+        // Degraded: any domain is Degraded, Blocked, or Untrusted
         } else if levels.iter().any(|l| {
-            matches!(l, DcTrustLevel::Degraded | DcTrustLevel::Blocked)
+            matches!(
+                l,
+                DcTrustLevel::Degraded | DcTrustLevel::Blocked | DcTrustLevel::Untrusted
+            )
         }) {
-            Self::Degraded
-        // Degraded: mix of Untrusted + other (some domains lost)
-        } else if levels.iter().any(|l| *l == DcTrustLevel::Untrusted) {
             Self::Degraded
         } else {
             // All Trusted or Provisional
@@ -137,7 +137,7 @@ impl DcLifecycleEvent {
     /// Returns true if this event represents domain loss.
     pub fn is_domain_loss(&self) -> bool {
         // Domain loss: DC transitions to Demoting (0x05), Resigned (0x06), or Inactive (0x07)
-        matches!(self.new_state, 0x05 | 0x06 | 0x07)
+        matches!(self.new_state, 0x05..=0x07)
     }
 
     /// Returns the trust level for the new state.
@@ -319,9 +319,9 @@ pub fn derive_trust_levels(lifecycle_bytes: &[u8]) -> Vec<DcTrustLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::sender::NetworkSender;
     use async_trait::async_trait;
+    use std::sync::Arc;
 
     // ── GovernedTransportLifecycle tests ────────────────────────
 
@@ -396,7 +396,7 @@ mod tests {
         let event = DcLifecycleEvent {
             dc_id: [0xAA; 32],
             previous_state: 0x02, // Active
-            new_state: 0x05,     // Demoting
+            new_state: 0x05,      // Demoting
             epoch: 100,
         };
         assert!(event.is_domain_loss());
@@ -408,7 +408,7 @@ mod tests {
         let event = DcLifecycleEvent {
             dc_id: [0xAA; 32],
             previous_state: 0x02, // Active
-            new_state: 0x03,     // Suspect
+            new_state: 0x03,      // Suspect
             epoch: 100,
         };
         assert!(!event.is_domain_loss());
@@ -420,8 +420,16 @@ mod tests {
     #[test]
     fn find_domain_for_platform_hit() {
         let domains = vec![
-            (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-            (octo_network::dot::PlatformType::Quic, "".to_string(), DomainRole::None),
+            (
+                octo_network::dot::PlatformType::Telegram,
+                "-100".to_string(),
+                DomainRole::Joiner,
+            ),
+            (
+                octo_network::dot::PlatformType::Quic,
+                "".to_string(),
+                DomainRole::None,
+            ),
         ];
 
         let result = find_domain_for_platform(octo_network::dot::PlatformType::Telegram, &domains);
@@ -433,9 +441,11 @@ mod tests {
 
     #[test]
     fn find_domain_for_platform_ptp() {
-        let domains = vec![
-            (octo_network::dot::PlatformType::Quic, "".to_string(), DomainRole::None),
-        ];
+        let domains = vec![(
+            octo_network::dot::PlatformType::Quic,
+            "".to_string(),
+            DomainRole::None,
+        )];
 
         let result = find_domain_for_platform(octo_network::dot::PlatformType::Quic, &domains);
         assert!(result.is_none());
@@ -443,9 +453,11 @@ mod tests {
 
     #[test]
     fn find_domain_for_platform_miss() {
-        let domains = vec![
-            (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-        ];
+        let domains = vec![(
+            octo_network::dot::PlatformType::Telegram,
+            "-100".to_string(),
+            DomainRole::Joiner,
+        )];
 
         let result = find_domain_for_platform(octo_network::dot::PlatformType::Discord, &domains);
         assert!(result.is_none());
@@ -455,12 +467,15 @@ mod tests {
     fn derive_trust_levels_test() {
         let bytes = vec![0x02, 0x03, 0x05, 0x00];
         let levels = derive_trust_levels(&bytes);
-        assert_eq!(levels, vec![
-            DcTrustLevel::Trusted,
-            DcTrustLevel::Degraded,
-            DcTrustLevel::Untrusted,
-            DcTrustLevel::Provisional,
-        ]);
+        assert_eq!(
+            levels,
+            vec![
+                DcTrustLevel::Trusted,
+                DcTrustLevel::Degraded,
+                DcTrustLevel::Untrusted,
+                DcTrustLevel::Provisional,
+            ]
+        );
     }
 
     // ── GovernedTransport tests ─────────────────────────────────
@@ -486,9 +501,11 @@ mod tests {
         GovernedTransport::new(
             inner,
             [0x42u8; 32],
-            vec![
-                (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-            ],
+            vec![(
+                octo_network::dot::PlatformType::Telegram,
+                "-100".to_string(),
+                DomainRole::Joiner,
+            )],
         )
     }
 
@@ -598,7 +615,10 @@ mod tests {
 
         let result = gt.send_best(b"hello", &test_ctx()).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TransportError::AllTransportsFailed));
+        assert!(matches!(
+            result.unwrap_err(),
+            TransportError::AllTransportsFailed
+        ));
     }
 
     // ── AdapterConfig / Credentials tests ───────────────────────

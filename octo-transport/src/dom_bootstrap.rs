@@ -65,7 +65,7 @@ impl DcTrustLevel {
             0x00 | 0x01 => Self::Provisional,
             0x03 => Self::Degraded,
             0x04 => Self::Blocked,
-            0x05 | 0x06 | 0x07 => Self::Untrusted,
+            0x05..=0x07 => Self::Untrusted,
             _ => Self::Untrusted, // unknown states are untrusted
         }
     }
@@ -348,9 +348,7 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
         .join_domain(&config.domain_hint.domain_ref)
         .await
         .map_err(|e| match &e {
-            PlatformAdapterError::Unimplemented { action, .. }
-                if action == "join_domain" =>
-            {
+            PlatformAdapterError::Unimplemented { action, .. } if action == "join_domain" => {
                 DotDomainError::JoinNotSupported
             }
             _ => DotDomainError::AdapterError(e),
@@ -370,25 +368,25 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
                     return Err(DotDomainError::DcAttestationInvalid);
                 }
 
-    // Verify freshness (structural check — attestation must be >= 32 bytes
-    // for a meaningful signature + metadata). Full PlatformAdminAttest
-    // deserialization and signature verification are deferred to the
-    // DC attestation integration (octo-network::dc::admin_attest).
-    //
-    // The adapter is responsible for providing a current attestation;
-    // the bootstrap algorithm trusts the adapter's attestation channel.
-    dc_attestation = Some(VerifiedAttestation {
-        dc_pubkey: vec![],  // TODO: extract from deserialized PlatformAdminAttest
-        domain_id: config.domain_hint.domain_ref.clone(),
-        platform_group_id: config.domain_hint.domain_ref.clone(),
-        signed_at_epoch: current_epoch,  // TODO: extract from attestation bytes
-    });
+                // Verify freshness (structural check — attestation must be >= 32 bytes
+                // for a meaningful signature + metadata). Full PlatformAdminAttest
+                // deserialization and signature verification are deferred to the
+                // DC attestation integration (octo-network::dc::admin_attest).
+                //
+                // The adapter is responsible for providing a current attestation;
+                // the bootstrap algorithm trusts the adapter's attestation channel.
+                dc_attestation = Some(VerifiedAttestation {
+                    dc_pubkey: vec![], // TODO: extract from deserialized PlatformAdminAttest
+                    domain_id: config.domain_hint.domain_ref.clone(),
+                    platform_group_id: config.domain_hint.domain_ref.clone(),
+                    signed_at_epoch: current_epoch, // TODO: extract from attestation bytes
+                });
 
-    // Verify DC identity if expected
-    if let Some(_expected_dc) = config.domain_hint.expected_dc_id {
-        // TODO: extract dc_id from PlatformAdminAttest and compare
-        // with expected_dc. Deferred until full attestation deserialization.
-    }
+                // Verify DC identity if expected
+                if let Some(_expected_dc) = config.domain_hint.expected_dc_id {
+                    // TODO: extract dc_id from PlatformAdminAttest and compare
+                    // with expected_dc. Deferred until full attestation deserialization.
+                }
             }
             None => {
                 return Err(DotDomainError::DcAttestationTimeout);
@@ -403,9 +401,7 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
         .send_gadv_request(&config.domain_hint.domain_ref)
         .await
         .map_err(|e| match &e {
-            PlatformAdapterError::Unimplemented { action, .. }
-                if action == "send_gadv_request" =>
-            {
+            PlatformAdapterError::Unimplemented { action, .. } if action == "send_gadv_request" => {
                 DotDomainError::JoinNotSupported
             }
             _ => DotDomainError::AdapterError(e),
@@ -413,7 +409,10 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
 
     // Step 4: Collect GADV responses
     let raw_responses = adapter
-        .receive_gadv_responses(config.discovery_timeout, config.max_peers_per_domain as usize)
+        .receive_gadv_responses(
+            config.discovery_timeout,
+            config.max_peers_per_domain as usize,
+        )
         .await?;
 
     if raw_responses.is_empty() {
@@ -424,9 +423,10 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
     }
 
     // Step 5: Parse GADV responses and enforce per-domain cap
-    let peers_discovered = raw_responses.len().min(config.max_peers_per_domain as usize);
-    let high_confidence = dc_attestation.is_some()
-        && peers_discovered >= config.min_gadv_responses;
+    let peers_discovered = raw_responses
+        .len()
+        .min(config.max_peers_per_domain as usize);
+    let high_confidence = dc_attestation.is_some() && peers_discovered >= config.min_gadv_responses;
 
     // Step 6: Track rejected peers (those beyond the per-domain cap)
     let cap = config.max_peers_per_domain as usize;
@@ -458,15 +458,42 @@ mod tests {
 
     #[test]
     fn dc_trust_level_from_lifecycle() {
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x00), DcTrustLevel::Provisional);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x01), DcTrustLevel::Provisional);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x02), DcTrustLevel::Trusted);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x03), DcTrustLevel::Degraded);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x04), DcTrustLevel::Blocked);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x05), DcTrustLevel::Untrusted);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x06), DcTrustLevel::Untrusted);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0x07), DcTrustLevel::Untrusted);
-        assert_eq!(DcTrustLevel::from_lifecycle_byte(0xFF), DcTrustLevel::Untrusted);
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x00),
+            DcTrustLevel::Provisional
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x01),
+            DcTrustLevel::Provisional
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x02),
+            DcTrustLevel::Trusted
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x03),
+            DcTrustLevel::Degraded
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x04),
+            DcTrustLevel::Blocked
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x05),
+            DcTrustLevel::Untrusted
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x06),
+            DcTrustLevel::Untrusted
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0x07),
+            DcTrustLevel::Untrusted
+        );
+        assert_eq!(
+            DcTrustLevel::from_lifecycle_byte(0xFF),
+            DcTrustLevel::Untrusted
+        );
     }
 
     #[test]
@@ -578,10 +605,7 @@ mod tests {
             &self,
             _domain: &octo_network::dot::BroadcastDomainId,
             _envelope: &octo_network::dot::envelope::DeterministicEnvelope,
-        ) -> Result<
-            octo_network::dot::adapters::DeliveryReceipt,
-            PlatformAdapterError,
-        > {
+        ) -> Result<octo_network::dot::adapters::DeliveryReceipt, PlatformAdapterError> {
             Ok(octo_network::dot::adapters::DeliveryReceipt {
                 platform_message_id: "mock".to_string(),
                 delivered_at: 0,
@@ -591,20 +615,16 @@ mod tests {
         async fn receive_messages(
             &self,
             _domain: &octo_network::dot::BroadcastDomainId,
-        ) -> Result<
-            Vec<octo_network::dot::adapters::RawPlatformMessage>,
-            PlatformAdapterError,
-        > {
+        ) -> Result<Vec<octo_network::dot::adapters::RawPlatformMessage>, PlatformAdapterError>
+        {
             Ok(vec![])
         }
 
         fn canonicalize(
             &self,
             _raw: &octo_network::dot::adapters::RawPlatformMessage,
-        ) -> Result<
-            octo_network::dot::envelope::DeterministicEnvelope,
-            PlatformAdapterError,
-        > {
+        ) -> Result<octo_network::dot::envelope::DeterministicEnvelope, PlatformAdapterError>
+        {
             Ok(octo_network::dot::envelope::DeterministicEnvelope::default())
         }
 

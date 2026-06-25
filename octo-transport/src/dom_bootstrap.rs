@@ -241,6 +241,15 @@ pub trait PlatformAdapterDotDomain: PlatformAdapter {
         })
     }
 
+    /// Send a GADV_REQUEST into the domain to request peer advertisements.
+    /// The adapter constructs the platform-native message with the DOT/1/GADV_REQ payload.
+    async fn send_gadv_request(&self, _domain_ref: &str) -> Result<(), PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "adapter".to_string(),
+            action: "send_gadv_request".to_string(),
+        })
+    }
+
     /// Receive a DC attestation from the domain.
     /// Blocks until an attestation is received or timeout.
     async fn receive_attestation(
@@ -361,26 +370,25 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
                     return Err(DotDomainError::DcAttestationInvalid);
                 }
 
-                // Verify freshness (attestation bytes contain signed_at_epoch
-                // at a known offset; for now we trust the adapter to provide
-                // a current attestation — full deserialization is deferred to
-                // the PlatformAdminAttest integration).
-                //
-                // TODO: deserialize PlatformAdminAttest from bytes and verify
-                // signature + freshness. For now, accept any non-empty response.
-                dc_attestation = Some(VerifiedAttestation {
-                    dc_pubkey: vec![],
-                    domain_id: config.domain_hint.domain_ref.clone(),
-                    platform_group_id: config.domain_hint.domain_ref.clone(),
-                    signed_at_epoch: current_epoch,
-                });
+    // Verify freshness (structural check — attestation must be >= 32 bytes
+    // for a meaningful signature + metadata). Full PlatformAdminAttest
+    // deserialization and signature verification are deferred to the
+    // DC attestation integration (octo-network::dc::admin_attest).
+    //
+    // The adapter is responsible for providing a current attestation;
+    // the bootstrap algorithm trusts the adapter's attestation channel.
+    dc_attestation = Some(VerifiedAttestation {
+        dc_pubkey: vec![],  // TODO: extract from deserialized PlatformAdminAttest
+        domain_id: config.domain_hint.domain_ref.clone(),
+        platform_group_id: config.domain_hint.domain_ref.clone(),
+        signed_at_epoch: current_epoch,  // TODO: extract from attestation bytes
+    });
 
-                // Verify DC identity if expected
-                if let Some(expected_dc) = config.domain_hint.expected_dc_id {
-                    // TODO: extract dc_id from attestation and compare
-                    // For now, accept if attestation is present
-                    let _ = expected_dc;
-                }
+    // Verify DC identity if expected
+    if let Some(_expected_dc) = config.domain_hint.expected_dc_id {
+        // TODO: extract dc_id from PlatformAdminAttest and compare
+        // with expected_dc. Deferred until full attestation deserialization.
+    }
             }
             None => {
                 return Err(DotDomainError::DcAttestationTimeout);
@@ -389,8 +397,20 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
     }
 
     // Step 3: Send GADV_REQUEST into the domain
-    // (the adapter handles the actual envelope construction)
-    //
+    // DOT/1/GADV_REQ envelope (subtype b"GDRQ") — the adapter
+    // constructs the platform-native message with the GADV_REQ payload.
+    adapter
+        .send_gadv_request(&config.domain_hint.domain_ref)
+        .await
+        .map_err(|e| match &e {
+            PlatformAdapterError::Unimplemented { action, .. }
+                if action == "send_gadv_request" =>
+            {
+                DotDomainError::JoinNotSupported
+            }
+            _ => DotDomainError::AdapterError(e),
+        })?;
+
     // Step 4: Collect GADV responses
     let raw_responses = adapter
         .receive_gadv_responses(config.discovery_timeout, config.max_peers_per_domain as usize)
@@ -408,13 +428,23 @@ pub async fn dotdomain_bootstrap<A: PlatformAdapterDotDomain>(
     let high_confidence = dc_attestation.is_some()
         && peers_discovered >= config.min_gadv_responses;
 
-    // Step 6: Build result
+    // Step 6: Track rejected peers (those beyond the per-domain cap)
+    let cap = config.max_peers_per_domain as usize;
+    let rejected_count = raw_responses.len().saturating_sub(cap);
+    let rejected_peers: Vec<RejectedPeer> = (0..rejected_count)
+        .map(|_i| RejectedPeer {
+            peer_id: [0u8; 32], // peer_id not available from raw bytes; placeholder
+            reason: RejectionReason::DomainPeerCapExceeded,
+        })
+        .collect();
+
+    // Step 7: Build result
     Ok(DomainBootstrapResult {
         peers_discovered: peers_discovered as u32,
         dc_attestation,
         bound_mission_id: config.domain_hint.expected_mission_id,
         high_confidence,
-        rejected_peers: vec![],
+        rejected_peers,
     })
 }
 
@@ -607,6 +637,17 @@ mod tests {
                 Err(PlatformAdapterError::Unreachable {
                     platform: "mock".to_string(),
                     reason: "join failed".to_string(),
+                })
+            }
+        }
+
+        async fn send_gadv_request(&self, _domain_ref: &str) -> Result<(), PlatformAdapterError> {
+            if self.join_ok {
+                Ok(())
+            } else {
+                Err(PlatformAdapterError::Unreachable {
+                    platform: "mock".to_string(),
+                    reason: "send failed".to_string(),
                 })
             }
         }

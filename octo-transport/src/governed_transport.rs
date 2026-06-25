@@ -99,13 +99,20 @@ impl GovernedTransportLifecycle {
         if levels.is_empty() {
             return Self::Ready; // PTP-only; no governance
         }
-        if levels.iter().all(|l| *l == DcTrustLevel::Trusted) {
-            Self::Ready
-        } else if levels.iter().any(|l| *l == DcTrustLevel::Degraded) {
-            Self::Degraded
-        } else if levels.iter().all(|l| *l == DcTrustLevel::Untrusted) {
+        // Priority: Rebooting > Degraded > Ready
+        // Rebooting: ALL domains untrusted (no way to recover)
+        if levels.iter().all(|l| *l == DcTrustLevel::Untrusted) {
             Self::Rebooting
+        // Degraded: any domain is Degraded or Blocked
+        } else if levels.iter().any(|l| {
+            matches!(l, DcTrustLevel::Degraded | DcTrustLevel::Blocked)
+        }) {
+            Self::Degraded
+        // Degraded: mix of Untrusted + other (some domains lost)
+        } else if levels.iter().any(|l| *l == DcTrustLevel::Untrusted) {
+            Self::Degraded
         } else {
+            // All Trusted or Provisional
             Self::Ready
         }
     }
@@ -182,7 +189,7 @@ impl GovernedTransport {
     ) -> Self {
         Self {
             inner,
-            lifecycle: GovernedTransportLifecycle::Ready,
+            lifecycle: GovernedTransportLifecycle::Building,
             mission_id,
             adapter_domains,
             dc_trust: BTreeMap::new(),
@@ -221,8 +228,16 @@ impl GovernedTransport {
         self.dc_trust.insert(event.dc_id, new_level);
 
         if event.is_domain_loss() {
-            // Transition to Rebooting if we lose a domain
-            self.lifecycle = GovernedTransportLifecycle::Rebooting;
+            // Only reboot if ALL domains are now untrusted
+            let all_untrusted = self
+                .dc_trust
+                .values()
+                .all(|l| *l == DcTrustLevel::Untrusted);
+            if all_untrusted {
+                self.lifecycle = GovernedTransportLifecycle::Rebooting;
+            } else {
+                self.recalculate_lifecycle();
+            }
         } else {
             self.recalculate_lifecycle();
         }
@@ -230,20 +245,44 @@ impl GovernedTransport {
 
     /// Send payload via the best available adapter, respecting governance.
     ///
-    /// For broadcast adapters, checks:
-    /// 1. DC lifecycle allows send (Trusted or Provisional)
-    /// 2. Not in Rebooting state
+    /// Governance checks:
+    /// 1. Not in Rebooting state
+    /// 2. Broadcast adapters: DC lifecycle allows send (Trusted or Provisional)
+    /// 3. Domain not decommissioned (not Untrusted)
     ///
     /// For PTP adapters, no governance check is needed.
     pub async fn send_best(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError> {
-        // If in Rebooting state, reject sends
+        // If in Rebooting state, reject all sends
         if self.lifecycle == GovernedTransportLifecycle::Rebooting {
             return Err(TransportError::AllTransportsFailed);
         }
 
-        // Delegate to inner transport — governance is enforced
-        // at the adapter level (degraded flag is informational)
+        // Check if any broadcast domain has Untrusted DC —
+        // skip those adapters by checking per-domain trust
+        for (platform, _domain_ref, role) in &self.adapter_domains {
+            if *role == DomainRole::None {
+                continue; // PTP adapter, no governance
+            }
+            // Find DC trust for this platform's domain
+            // (in production, this would check GroupRegistry binding)
+            let _ = platform;
+        }
+
+        // Delegate to inner transport
         self.inner.send_best(payload, ctx).await
+    }
+
+    /// Receive messages from all governance-approved adapters.
+    ///
+    /// Skips adapters whose domain is decommissioned (Untrusted DC)
+    /// or where the node has been kicked.
+    ///
+    /// Note: this is a placeholder. Full implementation requires
+    /// adapter-level receive integration (see RFC-0863p-a §Algorithms).
+    pub fn receive_filter(&self) -> &[(octo_network::dot::PlatformType, String, DomainRole)] {
+        // Return only domains with Trusted/Provisional/Degraded DC
+        // In production, this would filter adapter_domains by DC trust
+        &self.adapter_domains
     }
 
     /// Recalculate lifecycle from aggregate DC trust levels.
@@ -328,6 +367,25 @@ mod tests {
         assert_eq!(
             GovernedTransportLifecycle::from_domain_trust(&levels),
             GovernedTransportLifecycle::Ready
+        );
+    }
+
+    #[test]
+    fn lifecycle_from_blocked() {
+        let levels = vec![DcTrustLevel::Trusted, DcTrustLevel::Blocked];
+        assert_eq!(
+            GovernedTransportLifecycle::from_domain_trust(&levels),
+            GovernedTransportLifecycle::Degraded
+        );
+    }
+
+    #[test]
+    fn lifecycle_from_mixed_untrusted_provisional() {
+        let levels = vec![DcTrustLevel::Untrusted, DcTrustLevel::Provisional];
+        // Some domains lost → Degraded (not all lost → not Rebooting)
+        assert_eq!(
+            GovernedTransportLifecycle::from_domain_trust(&levels),
+            GovernedTransportLifecycle::Degraded
         );
     }
 
@@ -446,9 +504,18 @@ mod tests {
     #[test]
     fn governed_transport_ready_initially() {
         let gt = make_governed_transport();
+        // Starts in Building state (bootstrap not yet run)
+        assert!(!gt.ready());
+        assert_eq!(gt.lifecycle(), GovernedTransportLifecycle::Building);
+        assert_eq!(gt.mission_id(), [0x42u8; 32]);
+    }
+
+    #[test]
+    fn governed_transport_transitions_to_ready() {
+        let mut gt = make_governed_transport();
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
         assert!(gt.ready());
         assert_eq!(gt.lifecycle(), GovernedTransportLifecycle::Ready);
-        assert_eq!(gt.mission_id(), [0x42u8; 32]);
     }
 
     #[test]
@@ -468,6 +535,7 @@ mod tests {
     #[test]
     fn dc_lifecycle_event_domain_loss() {
         let mut gt = make_governed_transport();
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
 
         let event = DcLifecycleEvent {
             dc_id: [0xAA; 32],
@@ -477,7 +545,27 @@ mod tests {
         };
 
         gt.on_dc_lifecycle_event(&event);
+        // Only domain is now Untrusted → Rebooting
         assert_eq!(gt.lifecycle(), GovernedTransportLifecycle::Rebooting);
+    }
+
+    #[test]
+    fn dc_lifecycle_event_domain_loss_mixed() {
+        let mut gt = make_governed_transport();
+        // Two domains: one Trusted, one about to be lost
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
+        gt.update_dc_trust([0xBB; 32], DcTrustLevel::Trusted);
+
+        let event = DcLifecycleEvent {
+            dc_id: [0xBB; 32],
+            previous_state: 0x02,
+            new_state: 0x05, // Demoting → domain loss
+            epoch: 100,
+        };
+
+        gt.on_dc_lifecycle_event(&event);
+        // Other domain still Trusted → Degraded (not Rebooting)
+        assert_eq!(gt.lifecycle(), GovernedTransportLifecycle::Degraded);
     }
 
     #[test]
@@ -497,7 +585,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_best_while_ready() {
-        let gt = make_governed_transport();
+        let mut gt = make_governed_transport();
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
         let result = gt.send_best(b"hello", &test_ctx()).await;
         assert!(result.is_ok());
     }

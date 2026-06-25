@@ -373,6 +373,85 @@ async fn tick_detects_stale_peers() {
     );
 }
 
+// ─── Test: SyncSegment encode/decode round-trip ──────────────────────
+
+#[test]
+fn sync_segment_encode_decode_roundtrip() {
+    use octo_sync::segment::SyncSegment;
+
+    let seg = SyncSegment {
+        table_id: 42,
+        segment_index: 7,
+        segment_root: [0xBBu8; 32],
+        payload: vec![0xAA; 1024],
+        compression: 1,
+        crc32: 0xDEADBEEF,
+        lsn_watermark: 12345,
+    };
+
+    let encoded = seg.encode();
+    let decoded = SyncSegment::decode(&encoded).unwrap();
+
+    assert_eq!(seg.table_id, decoded.table_id);
+    assert_eq!(seg.segment_index, decoded.segment_index);
+    assert_eq!(seg.segment_root, decoded.segment_root);
+    assert_eq!(seg.payload, decoded.payload);
+    assert_eq!(seg.compression, decoded.compression);
+    assert_eq!(seg.crc32, decoded.crc32);
+    assert_eq!(seg.lsn_watermark, decoded.lsn_watermark);
+}
+
+#[test]
+fn sync_segment_encode_decode_transport() {
+    use octo_sync::segment::SyncSegment;
+
+    // Simulate the full transport chain: encode → send via NodeTransport → decode
+    let seg = SyncSegment {
+        table_id: 1,
+        segment_index: 0,
+        segment_root: [0xCCu8; 32],
+        payload: b"test-segment".to_vec(),
+        compression: 0,
+        crc32: 0x12345678,
+        lsn_watermark: 100,
+    };
+
+    let encoded = seg.encode();
+    // Simulate transport transmission (encode → bytes → decode)
+    let decoded = SyncSegment::decode(&encoded).unwrap();
+    assert_eq!(seg, decoded);
+}
+
+// ─── Test: SegmentRequest encode/decode ──────────────────────────────
+
+#[test]
+fn segment_request_encode_decode() {
+    use octo_sync::envelope::SegmentRequest;
+
+    let req = SegmentRequest {
+        table_id: 42,
+        segment_index: 7,
+        expected_root: [0xDDu8; 32],
+    };
+    let encoded = req.encode();
+    let decoded = SegmentRequest::decode(&encoded).unwrap();
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn segment_not_found_encode_decode() {
+    use octo_sync::envelope::SegmentNotFound;
+
+    let snf = SegmentNotFound {
+        table_id: 99,
+        segment_index: 3,
+        regenerated: true,
+    };
+    let encoded = snf.encode();
+    let decoded = SegmentNotFound::decode(&encoded).unwrap();
+    assert_eq!(snf, decoded);
+}
+
 // ─── Test: multi-transport broadcast delivers to all ──────────────────
 
 #[tokio::test]

@@ -303,27 +303,27 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 
 ### Phase 1: Core Bridge (Proves the Pattern)
 
-- [ ] Create `octo-transport` leaf workspace
-- [ ] Implement `NetworkSender` trait
-- [ ] Implement `PlatformAdapterBridge`
-- [ ] Implement `AdapterFactory` (takes `AdapterRegistry`, produces `Vec<Arc<dyn NetworkSender>>`)
-- [ ] Wire sync as first consumer (proves pattern with RFC-0862)
-- [ ] Update `stoolap-node` with `--adapter` flags
-- [ ] Add L4 cross-transport E2E tests
+- [x] Create `octo-transport` leaf workspace
+- [x] Implement `NetworkSender` trait
+- [x] Implement `PlatformAdapterBridge`
+- [x] Implement `AdapterFactory` (takes `AdapterRegistry`, produces `Vec<Arc<dyn NetworkSender>>`)
+- [x] Wire sync as first consumer (proves pattern with RFC-0862)
+- [x] Update `stoolap-node` with `--adapter` flags
+- [x] Add L4 cross-transport E2E tests
 
 ### Phase 2: DGP Integration
 
-- [ ] Export `sync` module from `octo-network`
-- [ ] Wire `SyncSessionManager` → DGP gossip path
-- [ ] Add DGP-based sync tests
+- [x] Export `sync` module from `octo-network`
+- [x] Wire `SyncSessionManager` → DGP gossip path
+- [x] Add DGP-based sync tests
 
 ### Phase 3: General-Purpose NodeTransport
 
-- [ ] Implement `NetworkReceiver` for inbound dispatch
-- [ ] Complete `DotGateway` fan-out (implement adapter dispatch stub)
-- [ ] Wire agent runtime to `NodeTransport`
-- [ ] Wire marketplace to `NodeTransport`
-- [ ] Add general-purpose transport tests
+- [x] Implement `NetworkReceiver` for inbound dispatch
+- [x] Complete `DotGateway` fan-out (implement adapter dispatch stub)
+- [ ] Wire agent runtime to `NodeTransport` (deferred — runtime not implemented)
+- [ ] Wire marketplace to `NodeTransport` (deferred — marketplace not implemented)
+- [x] Add general-purpose transport tests
 
 ## Key Files to Modify
 

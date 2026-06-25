@@ -51,6 +51,61 @@ pub struct SyncSegment {
     pub lsn_watermark: Lsn,
 }
 
+impl SyncSegment {
+    /// Encode to binary wire format (little-endian, length-prefixed payload).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.table_id.to_le_bytes());
+        buf.extend_from_slice(&self.segment_index.to_le_bytes());
+        buf.extend_from_slice(&self.segment_root);
+        buf.push(self.compression);
+        buf.extend_from_slice(&self.crc32.to_le_bytes());
+        buf.extend_from_slice(&self.lsn_watermark.to_le_bytes());
+        buf.extend_from_slice(&(self.payload.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&self.payload);
+        buf
+    }
+
+    /// Decode from binary wire format.
+    pub fn decode(data: &[u8]) -> Result<Self, crate::error::SyncError> {
+        if data.len() < 57 {
+            return Err(crate::error::SyncError::BackendNotReady(
+                "SyncSegment too short".into(),
+            ));
+        }
+        let mut off = 0;
+        let table_id = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        off += 4;
+        let segment_index = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        off += 4;
+        let mut segment_root = [0u8; 32];
+        segment_root.copy_from_slice(&data[off..off + 32]);
+        off += 32;
+        let compression = data[off];
+        off += 1;
+        let crc32 = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        off += 4;
+        let lsn_watermark = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        off += 8;
+        let payload_len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        if off + payload_len > data.len() {
+            return Err(crate::error::SyncError::BackendNotReady(
+                "SyncSegment payload truncated".into(),
+            ));
+        }
+        Ok(SyncSegment {
+            table_id,
+            segment_index,
+            segment_root,
+            payload: data[off..off + payload_len].to_vec(),
+            compression,
+            crc32,
+            lsn_watermark,
+        })
+    }
+}
+
 /// The snapshot segment indexer.
 ///
 /// Holds the `DatabaseSyncAdapter` trait object (per RFC-0862 v1.1.0).
@@ -257,5 +312,52 @@ mod tests {
     fn crc32_known_value() {
         // Known CRC32 of "123456789" is 0xCBF43926
         assert_eq!(crc32(b"123456789"), 0xCBF43926);
+    }
+
+    #[test]
+    fn sync_segment_encode_decode_roundtrip() {
+        let seg = SyncSegment {
+            table_id: 42,
+            segment_index: 7,
+            segment_root: [0xBBu8; 32],
+            payload: b"test-segment-data".to_vec(),
+            compression: 0,
+            crc32: 0xDEADBEEF,
+            lsn_watermark: 12345,
+        };
+        let encoded = seg.encode();
+        let decoded = SyncSegment::decode(&encoded).unwrap();
+        assert_eq!(seg, decoded);
+    }
+
+    #[test]
+    fn sync_segment_encode_decode_with_compression() {
+        let seg = SyncSegment {
+            table_id: 1,
+            segment_index: 0,
+            segment_root: [0x55u8; 32],
+            payload: vec![0xFF; 2048],
+            compression: 1,
+            crc32: 0x12345678,
+            lsn_watermark: 999999,
+        };
+        let encoded = seg.encode();
+        let decoded = SyncSegment::decode(&encoded).unwrap();
+        assert_eq!(seg, decoded);
+        assert_eq!(decoded.compression, 1);
+    }
+
+    #[test]
+    fn sync_segment_decode_too_short() {
+        let err = SyncSegment::decode(&[0u8; 10]).unwrap_err();
+        assert!(matches!(err, SyncError::BackendNotReady(_)));
+    }
+
+    #[test]
+    fn sync_segment_decode_truncated_payload() {
+        let mut data = vec![0u8; 57]; // header only, payload_len=0 in header but we override
+        data[53..57].copy_from_slice(&100u32.to_le_bytes()); // payload_len=100
+        let err = SyncSegment::decode(&data).unwrap_err();
+        assert!(matches!(err, SyncError::BackendNotReady(_)));
     }
 }

@@ -233,6 +233,33 @@ pub struct SegmentRequest {
     pub expected_root: [u8; 32],
 }
 
+impl SegmentRequest {
+    /// Encode to binary wire format (little-endian).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.table_id.to_le_bytes());
+        buf.extend_from_slice(&self.segment_index.to_le_bytes());
+        buf.extend_from_slice(&self.expected_root);
+        buf
+    }
+
+    /// Decode from binary wire format.
+    pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
+        if data.len() < 40 {
+            return Err(SyncError::BackendNotReady("SegmentRequest too short".into()));
+        }
+        let table_id = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        let segment_index = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let mut expected_root = [0u8; 32];
+        expected_root.copy_from_slice(&data[8..40]);
+        Ok(SegmentRequest {
+            table_id,
+            segment_index,
+            expected_root,
+        })
+    }
+}
+
 /// A `SegmentNotFound` envelope payload (RFC-0862 §4.3.4, type 0xA4).
 ///
 /// Sent by the writer when the requested segment is missing OR has a stale
@@ -247,6 +274,32 @@ pub struct SegmentNotFound {
     pub segment_index: u32,
     /// Whether the writer has already triggered a regeneration.
     pub regenerated: bool,
+}
+
+impl SegmentNotFound {
+    /// Encode to binary wire format (little-endian).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.table_id.to_le_bytes());
+        buf.extend_from_slice(&self.segment_index.to_le_bytes());
+        buf.push(self.regenerated as u8);
+        buf
+    }
+
+    /// Decode from binary wire format.
+    pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
+        if data.len() < 9 {
+            return Err(SyncError::BackendNotReady("SegmentNotFound too short".into()));
+        }
+        let table_id = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        let segment_index = u32::from_le_bytes(data[4..8].try_into().unwrap());
+        let regenerated = data[8] != 0;
+        Ok(SegmentNotFound {
+            table_id,
+            segment_index,
+            regenerated,
+        })
+    }
 }
 
 /// A `NodeStatus` envelope payload (RFC-0862 §4.3, type 0xA5).
@@ -454,5 +507,39 @@ mod tests {
         let encoded = response.encode();
         let decoded = SummaryResponse::decode(&encoded).unwrap();
         assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn segment_request_encode_decode_roundtrip() {
+        let req = SegmentRequest {
+            table_id: 42,
+            segment_index: 7,
+            expected_root: [0xCCu8; 32],
+        };
+        let encoded = req.encode();
+        let decoded = SegmentRequest::decode(&encoded).unwrap();
+        assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn segment_request_decode_too_short() {
+        assert!(SegmentRequest::decode(&[0u8; 10]).is_err());
+    }
+
+    #[test]
+    fn segment_not_found_encode_decode_roundtrip() {
+        let snf = SegmentNotFound {
+            table_id: 99,
+            segment_index: 3,
+            regenerated: true,
+        };
+        let encoded = snf.encode();
+        let decoded = SegmentNotFound::decode(&encoded).unwrap();
+        assert_eq!(snf, decoded);
+    }
+
+    #[test]
+    fn segment_not_found_decode_too_short() {
+        assert!(SegmentNotFound::decode(&[0u8; 5]).is_err());
     }
 }

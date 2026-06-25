@@ -1,16 +1,25 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use octo_network::dot::adapters::PlatformAdapter;
+use octo_network::dot::gateway::{GatewayClass, GatewayIdentity};
 use octo_network::dot::{BroadcastDomainId, PlatformType};
-use octo_network::sync::{GossipDispatcher, SyncDgpHandler, SyncNetworkBridge, TransportBroadcaster};
+use octo_network::gdp::identity::GdpGatewayIdentity;
+use octo_network::gdp::overlay_endpoint::OverlayEndpoint;
+use octo_network::gdp::types::GatewayCapability;
+use octo_network::sync::{
+    GossipDispatcher, SyncDgpHandler, SyncNetworkBridge, TransportBroadcaster,
+    SYNC_SNAPSHOT_OBJECT_TYPE,
+};
 use octo_sync::adapter::DatabaseSyncAdapter;
 use octo_sync::config::{SyncConfig, SyncRole};
-use octo_sync::dgp_bridge::SyncHandler;
 use octo_sync::identity::SyncPeerId;
 use octo_sync::session::SyncSessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+use octo_transport::discovery::TransportDiscovery;
 
 #[derive(Parser)]
 #[command(name = "stoolap-node")]
@@ -22,9 +31,15 @@ struct Args {
     listen: u16,
     #[arg(short = 'p', long = "peer")]
     peers: Vec<String>,
-    #[arg(long, default_value = "abcd000000000000000000000000000000000000000000000000000000000000")]
+    #[arg(
+        long,
+        default_value = "abcd000000000000000000000000000000000000000000000000000000000000"
+    )]
     mission_id: String,
-    #[arg(long, default_value = "0100000000000000000000000000000000000000000000000000000000000000")]
+    #[arg(
+        long,
+        default_value = "0100000000000000000000000000000000000000000000000000000000000000"
+    )]
     node_id: String,
     #[arg(long, default_value = "0")]
     commit: usize,
@@ -56,6 +71,11 @@ fn adapter_name_to_platform_type(name: &str) -> Option<PlatformType> {
 /// Peer ID sentinel for the transport-based outbound subscriber.
 const TRANSPORT_PEER_ID: [u8; 32] = [0xFE; 32];
 
+fn make_gdp_identity(node_id: [u8; 32], network_id: u32) -> GdpGatewayIdentity {
+    let base = GatewayIdentity::new(node_id, network_id, GatewayClass::Edge, 1);
+    GdpGatewayIdentity::new(base)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -74,13 +94,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.commit > 0 {
         tracing::info!(count = args.commit, "committing rows on startup");
-        db.execute("CREATE TABLE IF NOT EXISTS sync_test (id INTEGER PRIMARY KEY, data TEXT)", ())
-            .expect("failed to create table");
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS sync_test (id INTEGER PRIMARY KEY, data TEXT)",
+            (),
+        )
+        .expect("failed to create table");
         for i in 0..args.commit {
-            let sql = format!("INSERT INTO sync_test (id, data) VALUES ({}, 'row-{}')", i, i);
+            let sql = format!(
+                "INSERT INTO sync_test (id, data) VALUES ({}, 'row-{}')",
+                i, i
+            );
             db.execute(&sql, ()).expect("failed to insert row");
         }
-        tracing::info!(lsn = adapter.current_lsn().unwrap_or(0), "committed rows");
+        tracing::info!(
+            lsn = adapter.current_lsn().unwrap_or(0),
+            "committed rows"
+        );
     }
 
     tracing::info!(listen = %args.listen, peers = ?args.peers, "stoolap-node starting");
@@ -95,27 +124,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &node_id,
     )?);
 
+    // Shared discovery state for TCP advertisement exchange
+    let gdp_identity = make_gdp_identity(node_id, 1);
+    let discovery = Arc::new(Mutex::new(TransportDiscovery::new(
+        gdp_identity,
+        mission_id,
+        256,
+    )));
+    // Track whether transport adapters were loaded (controls TCP handshake)
+    let mut has_transport = false;
+
     // Load platform adapters and wire transport when --adapter is provided
     let transport_peer = SyncPeerId(TRANSPORT_PEER_ID);
-    if !args.adapters.is_empty() {
-        let plugin_dirs: Vec<std::path::PathBuf> = args.adapter_dirs.iter().map(std::path::PathBuf::from).collect();
-        let mut registry = octo_network::dot::adapters::registry::AdapterRegistry::new(plugin_dirs);
+    let transport_opt: Option<Arc<octo_transport::NodeTransport>> = if !args.adapters.is_empty() {
+        let plugin_dirs: Vec<std::path::PathBuf> = args
+            .adapter_dirs
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let mut registry =
+            octo_network::dot::adapters::registry::AdapterRegistry::new(plugin_dirs);
         if let Err(e) = registry.discover_and_load() {
-            tracing::warn!(errors = ?e, "adapter plugin load errors (continuing with built-in adapters)");
+            tracing::warn!(
+                errors = ?e,
+                "adapter plugin load errors (continuing with built-in adapters)"
+            );
         }
 
-        let requested: Vec<PlatformType> = args.adapters.iter()
+        let requested: Vec<PlatformType> = args
+            .adapters
+            .iter()
             .filter_map(|name| adapter_name_to_platform_type(name))
             .collect();
 
         let domain = BroadcastDomainId::new(PlatformType::NativeP2P, &args.node_id);
 
-        // Drain registry into Arc refs — keep for both sending and receiving
         let adapter_refs: Vec<(Arc<dyn PlatformAdapter>, BroadcastDomainId)> = registry
             .drain()
             .into_iter()
             .filter(|(_, entry)| {
-                entry.health != octo_network::dot::adapters::registry::AdapterHealth::Unhealthy
+                entry.health
+                    != octo_network::dot::adapters::registry::AdapterHealth::Unhealthy
             })
             .filter(|(pt, _)| {
                 if let Some(platform_type) = PlatformType::from_u16(*pt) {
@@ -133,7 +182,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !adapter_refs.is_empty() {
             tracing::info!(adapters = adapter_refs.len(), "transport adapters loaded");
 
-            // Create outbound bridges (PlatformAdapterBridge for each adapter)
             let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = adapter_refs
                 .iter()
                 .map(|(adapter, domain)| {
@@ -147,7 +195,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let transport = Arc::new(octo_transport::NodeTransport::new(senders));
             let broadcaster = Arc::new(
                 octo_transport::NodeTransportBroadcaster::new(transport.clone())
-                    .with_identity(node_id, node_id)
+                    .with_identity(node_id, node_id),
+            );
+
+            // Build local GDP advertisement from transport capabilities
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let adv = {
+                let disc = discovery.lock().unwrap();
+                disc.build_advertisement(&transport, 1, now)
+            };
+            tracing::info!(
+                gateway_id = hex::encode(adv.gateway_id),
+                endpoints = adv.overlay_endpoints.len(),
+                "built GDP advertisement"
             );
 
             // --- Outbound: subscribe transport peer, spawn drain task ---
@@ -155,7 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let session_clone = session.clone();
             let broadcaster_clone = broadcaster;
             let mission_id_clone = mission_id;
-            let drain_handle = tokio::spawn(async move {
+            let _drain_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
                 loop {
                     interval.tick().await;
@@ -178,17 +241,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
-            drop(drain_handle);
 
-            // --- Inbound: GossipDispatcher → SyncNetworkBridge → session ---
+            // --- Inbound: GossipDispatcher -> SyncNetworkBridge -> session ---
             let handler = Arc::new(SyncDgpHandler::new(session.clone()));
             let sync_bridge = SyncNetworkBridge::new(mission_id, handler.clone());
-            let dispatcher = GossipDispatcher::new().with_sync(sync_bridge);
+            let dispatcher = Arc::new(GossipDispatcher::new().with_sync(sync_bridge));
 
-            // Spawn inbound receive task: polls adapters for incoming messages
             let adapters_for_receive: Vec<Arc<dyn PlatformAdapter>> =
                 adapter_refs.iter().map(|(a, _)| a.clone()).collect();
-            let _dispatcher_clone = dispatcher;
+            let dispatcher_clone = dispatcher;
             let _receive_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
@@ -199,57 +260,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match adapter.receive_messages(&domain).await {
                             Ok(messages) => {
                                 for msg in messages {
-                                    // Canonicalize to DOT envelope
                                     match adapter.canonicalize(&msg) {
-                                        Ok(envelope) => {
-                                            // Route sync envelopes (object_type 0x0008) through dispatcher
-                                            // For now, the adapter's raw payload is a WalTailChunk-encoded blob
-                                            // dispatched to the sync engine via the handler
-                                            handler.on_wal_tail(
-                                                node_id,
+                                        Ok(_envelope) => {
+                                            let peer_id: [u8; 32] = {
+                                                let mut id = [0u8; 32];
+                                                let src = msg.platform_id.as_bytes();
+                                                let len = src.len().min(32);
+                                                id[..len].copy_from_slice(&src[..len]);
+                                                id
+                                            };
+                                            match dispatcher_clone.on_gossip_object(
+                                                SYNC_SNAPSHOT_OBJECT_TYPE,
+                                                0xB1,
+                                                peer_id,
                                                 msg.payload,
-                                            );
-                                            tracing::debug!(
-                                                peer = ?msg.platform_id,
-                                                "inbound transport: dispatched WAL payload"
-                                            );
-                                            let _ = envelope;
+                                            ) {
+                                                Ok(()) => {
+                                                    tracing::debug!(
+                                                        peer = ?peer_id,
+                                                        "inbound: dispatched through GossipDispatcher"
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    tracing::debug!(
+                                                        peer = ?peer_id,
+                                                        error = %e,
+                                                        "inbound: dispatch failed"
+                                                    );
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::debug!(
                                                 peer = ?msg.platform_id,
                                                 error = %e,
-                                                "inbound transport: canonicalize failed"
+                                                "inbound: canonicalize failed"
                                             );
                                         }
                                     }
                                 }
                             }
-                            Err(_e) => {
-                                // Adapter has no messages — normal for adapters not yet configured
-                            }
+                            Err(_e) => {}
                         }
                     }
                 }
             });
-            // _receive_handle is intentionally kept alive for the task lifetime
             std::mem::forget(_receive_handle);
 
-            tracing::info!("transport inbound receive loop started");
+            // --- Periodic tick: heartbeat timeouts, peer state transitions ---
+            let session_tick = session.clone();
+            let _tick_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let actions = session_tick.tick(now);
+                    for action in actions {
+                        tracing::debug!(?action, "tick action");
+                    }
+                }
+            });
+
+            tracing::info!("transport inbound receive loop + tick started");
+            has_transport = true;
+            Some(transport)
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     // TCP sync path (default, backward-compatible)
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.listen)).await?;
     let adapter_for_accept = adapter_arc.clone();
+    let discovery_for_accept = discovery.clone();
     let accept_handle = tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     tracing::info!(peer = %addr, "accepted connection");
                     let adapter = adapter_for_accept.clone();
+                    let disc = discovery_for_accept.clone();
+                    let ht = has_transport;
                     tokio::spawn(async move {
-                        if let Err(e) = serve_writer(stream, adapter).await {
+                        if let Err(e) =
+                            serve_writer(stream, adapter, disc, ht).await
+                        {
                             tracing::error!(peer = %addr, error = %e, "connection error");
                         }
                     });
@@ -266,11 +366,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let db_ref = db.clone();
         let status_file = args.status_file.clone();
         let slow_apply_ms = args.slow_apply_ms;
+        let disc = discovery.clone();
+        let sess = session.clone();
+        let ht = has_transport;
         let handle = tokio::spawn(async move {
             match TcpStream::connect(&peer).await {
                 Ok(stream) => {
                     tracing::info!(peer = %peer, "connected to peer");
-                    if let Err(e) = serve_reader(stream, adapter, db_ref, status_file, slow_apply_ms).await {
+                    if let Err(e) =
+                        serve_reader(stream, adapter, db_ref, status_file, slow_apply_ms, disc, sess, ht)
+                            .await
+                    {
                         tracing::error!(peer = %peer, error = %e, "peer error");
                     }
                 }
@@ -280,17 +386,136 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         peer_handles.push(handle);
     }
 
+    let _ = transport_opt;
+
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutting down");
     accept_handle.abort();
-    for h in peer_handles { h.abort(); }
+    for h in peer_handles {
+        h.abort();
+    }
+    Ok(())
+}
+
+/// Wire protocol handshake: exchange peer identities and transport capabilities.
+///
+/// Format: `[32-byte gateway_id][2-byte num_transport_types][transport_types...][2-byte num_capabilities][capabilities...]`
+/// Length-prefixed with a 4-byte LE u32. Length=0 means no transport configured.
+async fn exchange_advertisements(
+    stream: &mut TcpStream,
+    discovery: &Arc<Mutex<TransportDiscovery>>,
+    now: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let local_adv = {
+        let disc = discovery.lock().unwrap();
+        disc.build_advertisement_from_identity(now)
+    };
+
+    let mut local_buf = Vec::new();
+    local_buf.extend_from_slice(&local_adv.gateway_id);
+    let transport_types: Vec<u16> = local_adv
+        .overlay_endpoints
+        .iter()
+        .map(|ep| ep.transport_type)
+        .collect();
+    local_buf.extend_from_slice(&(transport_types.len() as u16).to_le_bytes());
+    for tt in &transport_types {
+        local_buf.extend_from_slice(&tt.to_le_bytes());
+    }
+    let capabilities: Vec<u16> = local_adv
+        .overlay_endpoints
+        .iter()
+        .map(|ep| ep.flags as u16)
+        .collect();
+    local_buf.extend_from_slice(&(capabilities.len() as u16).to_le_bytes());
+    for cap in &capabilities {
+        local_buf.extend_from_slice(&cap.to_le_bytes());
+    }
+
+    let len = local_buf.len() as u32;
+    stream.write_all(&len.to_le_bytes()).await?;
+    stream.write_all(&local_buf).await?;
+    stream.flush().await?;
+
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let peer_len = u32::from_le_bytes(len_buf) as usize;
+    if peer_len >= 34 {
+        let mut peer_bytes = vec![0u8; peer_len];
+        stream.read_exact(&mut peer_bytes).await?;
+
+        let mut peer_gw_id = [0u8; 32];
+        peer_gw_id.copy_from_slice(&peer_bytes[..32]);
+        let mut off = 32;
+
+        let num_tt = u16::from_le_bytes(peer_bytes[off..off + 2].try_into().unwrap()) as usize;
+        off += 2;
+        let mut endpoints = Vec::new();
+        for _ in 0..num_tt {
+            if off + 2 > peer_len {
+                break;
+            }
+            let tt = u16::from_le_bytes(peer_bytes[off..off + 2].try_into().unwrap());
+            off += 2;
+            endpoints.push(OverlayEndpoint {
+                transport_type: tt,
+                endpoint_hash: [0u8; 32],
+                priority: 100,
+                bandwidth_class: 0,
+                flags: 0,
+            });
+        }
+
+        let num_caps = if off + 2 <= peer_len {
+            u16::from_le_bytes(peer_bytes[off..off + 2].try_into().unwrap()) as usize
+        } else {
+            0
+        };
+
+        let caps: Vec<GatewayCapability> = (0..num_caps).map(|_| GatewayCapability::Relay).collect();
+
+        let entry = octo_network::gdp::cache::GatewayCacheEntry {
+            advertisement_hash: blake3::hash(&peer_bytes).into(),
+            first_seen: now,
+            last_seen: now,
+            trust_score: 500,
+            identity: octo_network::dot::gateway::GatewayIdentity {
+                gateway_id: peer_gw_id,
+                public_key: peer_gw_id,
+                network_id: 1,
+                gateway_class: GatewayClass::Edge,
+                creation_epoch: now,
+                supported_platforms: 0,
+                capabilities: 0,
+            },
+            capabilities: caps,
+            endpoints,
+        };
+        discovery.lock().unwrap().cache_insert(entry, now);
+        tracing::info!(
+            peer_gateway = hex::encode(peer_gw_id),
+            "registered peer via TCP advertisement exchange"
+        );
+    }
     Ok(())
 }
 
 async fn serve_writer(
     mut stream: TcpStream,
     adapter: Arc<dyn DatabaseSyncAdapter>,
+    discovery: Arc<Mutex<TransportDiscovery>>,
+    has_transport: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Handshake: exchange advertisements before reading request_lsn
+    if has_transport {
+        exchange_advertisements(&mut stream, &discovery, now).await?;
+    }
+
     let mut lsn_buf = [0u8; 8];
     stream.read_exact(&mut lsn_buf).await?;
     let request_lsn = u64::from_le_bytes(lsn_buf);
@@ -299,7 +524,12 @@ async fn serve_writer(
     let current = adapter.current_lsn()?;
     if current > request_lsn {
         let entries = adapter.read_wal_range(request_lsn + 1, current)?;
-        tracing::info!(from = request_lsn + 1, to = current, count = entries.len(), "sending initial WAL batch");
+        tracing::info!(
+            from = request_lsn + 1,
+            to = current,
+            count = entries.len(),
+            "sending initial WAL batch"
+        );
         for entry in &entries {
             let mut frame = Vec::with_capacity(1 + entry.len());
             frame.push(0x01);
@@ -313,9 +543,16 @@ async fn serve_writer(
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let current = adapter.current_lsn()?;
-        if current <= last_lsn { continue; }
+        if current <= last_lsn {
+            continue;
+        }
         let entries = adapter.read_wal_range(last_lsn + 1, current)?;
-        tracing::debug!(from = last_lsn + 1, to = current, count = entries.len(), "sending incremental WAL");
+        tracing::debug!(
+            from = last_lsn + 1,
+            to = current,
+            count = entries.len(),
+            "sending incremental WAL"
+        );
         for entry in &entries {
             let mut frame = Vec::with_capacity(1 + entry.len());
             frame.push(0x01);
@@ -333,18 +570,50 @@ async fn serve_reader(
     db: stoolap::Database,
     status_file: Option<String>,
     slow_apply_ms: u64,
+    discovery: Arc<Mutex<TransportDiscovery>>,
+    session: Arc<SyncSessionManager>,
+    has_transport: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut last_lsn = adapter.current_lsn()?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Exchange advertisements before sending request_lsn
+    if has_transport {
+        exchange_advertisements(&mut stream, &discovery, now).await?;
+    }
+
     stream.write_all(&last_lsn.to_le_bytes()).await?;
     stream.flush().await?;
     tracing::info!(last_lsn, "sent request_lsn to writer");
 
+    // Auto-subscribe the writer peer for WAL tail streaming
+    {
+        let disc = discovery.lock().unwrap();
+        for (gw_id, entry) in disc.cache_entries() {
+            let _ = session.subscribe_peer(SyncPeerId(gw_id));
+            tracing::debug!(
+                peer = hex::encode(gw_id),
+                endpoints = entry.endpoints.len(),
+                "auto-subscribed discovered peer"
+            );
+        }
+    }
+
     loop {
         let len = match read_u32(&mut stream).await {
             Some(l) => l as usize,
-            None => { tracing::info!("writer closed connection"); break; }
+            None => {
+                tracing::info!("writer closed connection");
+                break;
+            }
         };
-        if len == 0 || len > 16 * 1024 * 1024 { break; }
+        if len == 0 || len > 16 * 1024 * 1024 {
+            break;
+        }
 
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload).await?;
@@ -363,13 +632,16 @@ async fn serve_reader(
                 last_lsn = adapter.current_lsn()?;
                 tracing::debug!(last_lsn, "batch complete");
                 if let Some(ref path) = status_file {
-                    let count: i64 = db.query_one("SELECT COUNT(*) FROM sync_test", ())
+                    let count: i64 = db
+                        .query_one("SELECT COUNT(*) FROM sync_test", ())
                         .unwrap_or(-1);
                     let _ = std::fs::write(path, count.to_string());
                     tracing::info!(count, "wrote status file");
                 }
             }
-            other => { tracing::warn!(msg_type = other, "unknown message type"); }
+            other => {
+                tracing::warn!(msg_type = other, "unknown message type");
+            }
         }
     }
     Ok(())

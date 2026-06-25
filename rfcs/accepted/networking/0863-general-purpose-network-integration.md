@@ -423,7 +423,7 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 - [ ] Wire `TransportDiscovery::cache_insert()` handoff
 - [ ] Add retry with exponential backoff (RFC-0851p-a §3)
 - [ ] Add unit tests (12+ scenarios from RFC-0851p-a test vectors)
-- [ ] Wire into `stoolap-node` as default bootstrap path (RFC-0862 update)
+- [ ] Wire into `stoolap-node` as default bootstrap path (mission `0863e-stoolap-node-bootstrap-wiring.md`)
 
 ## Key Files to Modify
 

@@ -42,16 +42,16 @@ use crate::node_transport::NodeTransport;
 /// - Query peer transport capabilities for routing decisions
 pub struct TransportDiscovery {
     identity: GdpGatewayIdentity,
-    _mission_id: [u8; 32],
     cache: Mutex<GatewayCache>,
     sequence: Mutex<u64>,
 }
 
 impl TransportDiscovery {
+    /// Create a new `TransportDiscovery` instance.
     pub fn new(identity: GdpGatewayIdentity, mission_id: [u8; 32], cache_size: u32) -> Self {
+        let _ = mission_id; // reserved for future GDP scope filtering
         Self {
             identity,
-            _mission_id: mission_id,
             cache: Mutex::new(GatewayCache::new(cache_size)),
             sequence: Mutex::new(0),
         }

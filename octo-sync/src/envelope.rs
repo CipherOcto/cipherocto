@@ -188,7 +188,7 @@ impl SummaryResponse {
         off += 4;
         let mut summaries = Vec::with_capacity(count);
         for _ in 0..count {
-            if off + 52 > data.len() {
+            if off + 80 > data.len() {
                 return Err(SyncError::BackendNotReady(
                     "SummaryResponse truncated".into(),
                 ));

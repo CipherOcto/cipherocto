@@ -134,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load platform adapters and wire transport when --adapter is provided
     let transport_peer = SyncPeerId(TRANSPORT_PEER_ID);
+    let mut bg_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let transport_opt: Option<Arc<octo_transport::NodeTransport>> = if !args.adapters.is_empty() {
         let plugin_dirs: Vec<std::path::PathBuf> = args
             .adapter_dirs
@@ -212,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let session_clone = session.clone();
             let transport_clone = transport.clone();
             let mission_id_clone = mission_id;
-            let _drain_handle = tokio::spawn(async move {
+            let drain_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
                 let send_ctx = octo_transport::sender::SendContext {
                     mission_id: mission_id_clone,
@@ -241,6 +242,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
+
+            bg_handles.push(drain_handle);
 
             // --- Inbound: GossipDispatcher -> SyncNetworkBridge -> session ---
             let handler = Arc::new(SyncDgpHandler::new(session.clone()));
@@ -305,11 +308,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
-            std::mem::forget(_receive_handle);
+            bg_handles.push(_receive_handle);
 
             // --- Periodic tick: heartbeat timeouts, peer state transitions ---
             let session_tick = session.clone();
-            let _tick_handle = tokio::spawn(async move {
+            let tick_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                 loop {
                     interval.tick().await;
@@ -323,6 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
+            bg_handles.push(tick_handle);
 
             // --- PoRelay trust score feed: registry → sync peer scoring ---
             use octo_network::porelay::registry::TrustRegistry;
@@ -348,7 +352,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let session_porelay = session.clone();
             let registry_porelay = trust_registry.clone();
-            let _porelay_handle = tokio::spawn(async move {
+            let porelay_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
                 loop {
                     interval.tick().await;
@@ -359,6 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
+            bg_handles.push(porelay_handle);
 
             tracing::info!("transport inbound receive loop + tick + porelay feed started");
             Some(transport)
@@ -423,6 +428,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutting down");
+    for h in bg_handles {
+        h.abort();
+    }
     accept_handle.abort();
     for h in peer_handles {
         h.abort();
@@ -501,7 +509,14 @@ async fn exchange_advertisements(
         }
 
         let num_caps = if off + 2 <= peer_len {
-            u16::from_le_bytes(peer_bytes[off..off + 2].try_into().unwrap()) as usize
+            let n = u16::from_le_bytes(peer_bytes[off..off + 2].try_into().unwrap()) as usize;
+            off += 2;
+            // Validate: num_caps u16 values require num_caps * 2 bytes
+            if off + n * 2 <= peer_len {
+                n
+            } else {
+                0
+            }
         } else {
             0
         };

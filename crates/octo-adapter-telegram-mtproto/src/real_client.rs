@@ -1065,13 +1065,66 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     .set_identity(info.user_id, info.username.clone());
                 Ok(())
             }
-            tl::enums::auth::LoginToken::MigrateTo(_) => {
-                // Not implemented in Phase 2.5. Roll back
-                // to NoCredentials.
-                *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
-                Err(MtprotoTelegramError::Internal(
-                    "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
-                ))
+            tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                // DC migration: the account lives on a
+                // different DC. Re-invoke exportLoginToken on
+                // the target DC via invoke_in_dc.
+                let target_dc = migrate.dc_id;
+                tracing::info!(
+                    target_dc,
+                    "exportLoginToken: MigrateTo DC {}; reconnecting",
+                    target_dc
+                );
+                let request_on_target = tl::functions::auth::ExportLoginToken {
+                    api_id,
+                    api_hash: api_hash.to_string(),
+                    except_ids: Vec::new(),
+                };
+                let response_on_target: tl::enums::auth::LoginToken = self
+                    .client
+                    .invoke_in_dc(target_dc, &request_on_target)
+                    .await
+                    .map_err(|e| {
+                        MtprotoTelegramError::Auth(format!(
+                            "auth.exportLoginToken on DC {}: {}",
+                            target_dc,
+                            crate::error::redact_credentials(&e.to_string())
+                        ))
+                    })?;
+                match response_on_target {
+                    tl::enums::auth::LoginToken::Token(t) => {
+                        *self.qr_api_id.lock() = Some(api_id);
+                        *self.qr_api_hash.lock() =
+                            Some(zeroize::Zeroizing::new(api_hash.to_string()));
+                        *self.qr_token.lock() = Some(t.token.clone());
+                        let url = build_qr_url(&t.token);
+                        Err(MtprotoTelegramError::QrLoginHandle {
+                            token: t.token,
+                            url,
+                        })
+                    }
+                    tl::enums::auth::LoginToken::Success(login_token_success) => {
+                        let new_state = {
+                            let current = *self.user_auth_state.lock();
+                            next_user_auth_state_server(
+                                UserAuthServerEvent::SignInSucceeded,
+                                current,
+                            )?
+                        };
+                        *self.user_auth_state.lock() = new_state;
+                        let info = extract_self_user_info(login_token_success.authorization);
+                        self.self_handle
+                            .set_identity(info.user_id, info.username.clone());
+                        Ok(())
+                    }
+                    tl::enums::auth::LoginToken::MigrateTo(_) => {
+                        *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+                        Err(MtprotoTelegramError::Internal(format!(
+                            "auth.exportLoginToken on DC {} also returned MigrateTo",
+                            target_dc
+                        )))
+                    }
+                }
             }
         }
     }
@@ -1144,9 +1197,65 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     .set_identity(info.user_id, info.username.clone());
                 Ok(info)
             }
-            tl::enums::auth::LoginToken::MigrateTo(_) => Err(MtprotoTelegramError::Internal(
-                "auth.exportLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
-            )),
+            tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                let target_dc = migrate.dc_id;
+                tracing::info!(
+                    target_dc,
+                    "poll_qr_login: MigrateTo DC {}; reconnecting",
+                    target_dc
+                );
+                let request_on_target = tl::functions::auth::ExportLoginToken {
+                    api_id,
+                    api_hash: api_hash.as_str().to_string(),
+                    except_ids: Vec::new(),
+                };
+                let response_on_target: tl::enums::auth::LoginToken = self
+                    .client
+                    .invoke_in_dc(target_dc, &request_on_target)
+                    .await
+                    .map_err(|e| {
+                        MtprotoTelegramError::Auth(format!(
+                            "auth.exportLoginToken on DC {}: {}",
+                            target_dc,
+                            crate::error::redact_credentials(&e.to_string())
+                        ))
+                    })?;
+                match response_on_target {
+                    tl::enums::auth::LoginToken::Token(t) => {
+                        *self.qr_token.lock() = Some(t.token.clone());
+                        let url = build_qr_url(&t.token);
+                        Err(MtprotoTelegramError::QrLoginHandle {
+                            token: t.token,
+                            url,
+                        })
+                    }
+                    tl::enums::auth::LoginToken::Success(login_token_success) => {
+                        let new_state = {
+                            let current = *self.user_auth_state.lock();
+                            next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
+                        };
+                        *self.user_auth_state.lock() = new_state;
+                        let new_state = {
+                            let current = *self.user_auth_state.lock();
+                            next_user_auth_state_server(
+                                UserAuthServerEvent::SignInSucceeded,
+                                current,
+                            )?
+                        };
+                        *self.user_auth_state.lock() = new_state;
+                        let info = extract_self_user_info(login_token_success.authorization);
+                        self.self_handle
+                            .set_identity(info.user_id, info.username.clone());
+                        Ok(info)
+                    }
+                    tl::enums::auth::LoginToken::MigrateTo(_) => {
+                        Err(MtprotoTelegramError::Internal(format!(
+                            "poll on DC {} also returned MigrateTo",
+                            target_dc
+                        )))
+                    }
+                }
+            }
         }
     }
 
@@ -1199,11 +1308,57 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     "auth.importLoginToken returned a new token; re-poll required".into(),
                 ))
             }
-            tl::enums::auth::LoginToken::MigrateTo(_) => {
-                *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
-                Err(MtprotoTelegramError::Internal(
-                    "auth.importLoginToken returned MigrateTo; not implemented in Phase 2.5".into(),
-                ))
+            tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                let target_dc = migrate.dc_id;
+                tracing::info!(
+                    target_dc,
+                    "import_login_token: MigrateTo DC {}; reconnecting",
+                    target_dc
+                );
+                let request_on_target = tl::functions::auth::ImportLoginToken {
+                    token: token.to_vec(),
+                };
+                let response_on_target: tl::enums::auth::LoginToken = self
+                    .client
+                    .invoke_in_dc(target_dc, &request_on_target)
+                    .await
+                    .map_err(|e| {
+                        MtprotoTelegramError::Auth(format!(
+                            "auth.importLoginToken on DC {}: {}",
+                            target_dc,
+                            crate::error::redact_credentials(&e.to_string())
+                        ))
+                    })?;
+                match response_on_target {
+                    tl::enums::auth::LoginToken::Success(login_token_success) => {
+                        let new_state = {
+                            let current = *self.user_auth_state.lock();
+                            next_user_auth_state_server(
+                                UserAuthServerEvent::SignInSucceeded,
+                                current,
+                            )?
+                        };
+                        *self.user_auth_state.lock() = new_state;
+                        let info = extract_self_user_info(login_token_success.authorization);
+                        self.self_handle
+                            .set_identity(info.user_id, info.username.clone());
+                        Ok(info)
+                    }
+                    tl::enums::auth::LoginToken::Token(_) => {
+                        *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
+                        Err(MtprotoTelegramError::Auth(
+                            "auth.importLoginToken on DC returned a new token; re-poll required"
+                                .into(),
+                        ))
+                    }
+                    tl::enums::auth::LoginToken::MigrateTo(_) => {
+                        *self.user_auth_state.lock() = UserAuthLifecycle::QrLoginPending;
+                        Err(MtprotoTelegramError::Internal(format!(
+                            "import on DC {} also returned MigrateTo",
+                            target_dc
+                        )))
+                    }
+                }
             }
         }
     }

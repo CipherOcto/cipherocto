@@ -10,9 +10,13 @@ description = "CLI binary for MTProto-backed Telegram auth onboarding (Mission 0
 name = "octo-telegram-mtproto-onboard"
 path = "src/main.rs"
 
+[features]
+default = ["real-network"]
+real-network = ["octo-adapter-telegram-mtproto/real-network", "octo-telegram-mtproto-onboard-core/real-network"]
+
 [dependencies]
-octo-adapter-telegram-mtproto = { path = "../octo-adapter-telegram-mtproto" }
-octo-telegram-mtproto-onboard-core = { path = "../octo-telegram-mtproto-onboard-core" }
+octo-adapter-telegram-mtproto = { path = "../octo-adapter-telegram-mtproto", default-features = false }
+octo-telegram-mtproto-onboard-core = { path = "../octo-telegram-mtproto-onboard-core", default-features = false }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

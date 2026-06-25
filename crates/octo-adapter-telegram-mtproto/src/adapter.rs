@@ -883,25 +883,44 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
                     if let Some(did) = nm.document_id {
                         metadata.insert("document_id".into(), did);
                     }
+                    // DOT/2 path: the caption carries the
+                    // DOT/1 text. Use it as the payload so the
+                    // gateway can canonicalize it. The
+                    // document_id in metadata lets the caller
+                    // fetch the document body separately via
+                    // download_media if needed.
+                    let payload_text = nm.caption.as_deref().unwrap_or(&nm.message);
                     Some(RawPlatformMessage {
                         platform_id: nm.message_id.to_string(),
-                        payload: nm.message.into_bytes(),
+                        payload: payload_text.as_bytes().to_vec(),
                         metadata,
                     })
                 }
                 crate::client::MtprotoTelegramUpdate::MessageEdited(me) => {
-                    tracing::debug!(
-                        chat_id = me.chat_id,
-                        message_id = me.message_id,
-                        "receive_messages: dropping MessageEdited (not yet handled)"
-                    );
-                    None
+                    // MessageEdited: the edited text may
+                    // contain a new DOT envelope. Process it
+                    // the same as NewMessage so the gateway
+                    // can canonicalize and re-process.
+                    let chat_id_str = me.chat_id.to_string();
+                    let msg_domain = BroadcastDomainId::new(PlatformType::Telegram, &chat_id_str);
+                    if msg_domain.domain_hash != domain_hash {
+                        return None;
+                    }
+                    let mut metadata = BTreeMap::new();
+                    metadata.insert("chat_id".into(), me.chat_id.to_string());
+                    metadata.insert("message_id".into(), me.message_id.to_string());
+                    metadata.insert("edited".into(), "true".into());
+                    Some(RawPlatformMessage {
+                        platform_id: format!("{}:edited", me.message_id),
+                        payload: me.new_text.into_bytes(),
+                        metadata,
+                    })
                 }
                 crate::client::MtprotoTelegramUpdate::FileDownloaded(fd) => {
                     tracing::debug!(
                         file_id = %fd.file_id,
                         size = fd.size,
-                        "receive_messages: dropping FileDownloaded (not yet handled)"
+                        "receive_messages: dropping FileDownloaded (not surfaced to gateway)"
                     );
                     None
                 }
@@ -1073,18 +1092,70 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
     async fn download_media(&self, message_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         // The MTProto adapter's `download_media` accepts a
         // *message_id* (the Telegram `id` field of the
-        // message) and resolves it to a file_id via the
-        // client. The TDLib adapter takes a file_id
-        // directly; the difference is that the MTProto
-        // path needs the message lookup because grammers
-        // does not surface file_id in the inbound
-        // `NewMessage` (the document is in a separate
-        // field). Phase 1 stub: returns the documented
-        // "not yet implemented" error.
-        let _ = message_id;
+        // message). We need to know the chat_id to resolve
+        // the message, but PlatformAdapter::download_media
+        // only gives us message_id. We scan registered
+        // domains and try each one.
+        //
+        // Alternatively, if `message_id` is already a hex-
+        // encoded file_id (from the metadata path), try
+        // download_file directly.
+        //
+        // Step 1: Try as hex-encoded file_id (DOT/2 metadata path).
+        // The `receive_messages` method stores the hex-encoded
+        // InputFileLocation in metadata["document_id"]. If the
+        // caller passes that directly, this path succeeds.
+        if message_id.len() > 10 && !message_id.chars().any(|c| !c.is_ascii_hexdigit()) {
+            if let Ok(bytes) = self.client.download_file(message_id).await {
+                return Ok(bytes);
+            }
+        }
+
+        // Step 2: Try as a numeric message_id across all
+        // registered domains.
+        let msg_id: i64 = message_id
+            .parse()
+            .map_err(|_| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "download_media: message_id is not valid hex or i64: {}",
+                    message_id
+                ),
+            })?;
+
+        let domains: Vec<([u8; 32], String)> = self
+            .domain_chat_ids
+            .read()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+
+        for (_hash, chat_id_str) in &domains {
+            let chat_id: i64 =
+                chat_id_str
+                    .parse()
+                    .map_err(|_| PlatformAdapterError::Unreachable {
+                        platform: "telegram-mtproto".into(),
+                        reason: format!("chat_id not a valid i64: {}", chat_id_str),
+                    })?;
+            match self.client.get_file_id_for_message(chat_id, msg_id).await {
+                Ok(file_id) => {
+                    return self
+                        .client
+                        .download_file(&file_id)
+                        .await
+                        .map_err(PlatformAdapterError::from);
+                }
+                Err(_) => continue, // try next domain
+            }
+        }
+
         Err(PlatformAdapterError::Unreachable {
             platform: "telegram-mtproto".into(),
-            reason: "download_media: not yet implemented (Phase 1 stub)".into(),
+            reason: format!(
+                "download_media: message {} not found in any registered domain",
+                message_id
+            ),
         })
     }
 
@@ -1241,6 +1312,7 @@ mod tests {
             from_id: Some(100),
             message_id: 1,
             document_id: None,
+            caption: None,
             timestamp: 0,
         }));
         // 2. Target chat, from other (should be returned)
@@ -1250,6 +1322,7 @@ mod tests {
             from_id: Some(200),
             message_id: 2,
             document_id: None,
+            caption: None,
             timestamp: 0,
         }));
         // 3. Other chat, from other (should be dropped —
@@ -1260,6 +1333,7 @@ mod tests {
             from_id: Some(200),
             message_id: 3,
             document_id: None,
+            caption: None,
             timestamp: 0,
         }));
         let domain = a.domain_id(&target_chat.to_string());

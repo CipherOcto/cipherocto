@@ -216,6 +216,14 @@ pub struct NewMessage {
     /// `document_id` is the grammers file_id used to download
     /// it. `None` for plain text messages.
     pub document_id: Option<String>,
+    /// Document caption. For DOT/2 messages, this carries the
+    /// DOT/1 text (`DOT/1/{b64}`) that the sender embedded as
+    /// the document caption. `None` for plain text messages.
+    /// Telegram's `Message::text()` returns the caption for
+    /// media messages, so for DOT/2 this is typically the same
+    /// as `message`; this field exists for the case where we
+    /// want to distinguish the caption from the document body.
+    pub caption: Option<String>,
     /// Timestamp (Unix seconds).
     pub timestamp: i64,
 }
@@ -282,6 +290,28 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// Download a file by grammers file_id. Returns the
     /// raw bytes.
     async fn download_file(&self, file_id: &str) -> Result<Vec<u8>, MtprotoTelegramError>;
+
+    /// Download a file by grammers file_id, streaming
+    /// chunks to `writer`. Returns the total bytes written.
+    /// This avoids buffering the entire file in memory for
+    /// large uploads (up to 2 GB on MTProto).
+    ///
+    /// Default implementation falls back to `download_file`
+    /// and writes the entire buffer at once. The real client
+    /// overrides this with chunked streaming.
+    async fn download_file_to_writer(
+        &self,
+        file_id: &str,
+        writer: &mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> Result<u64, MtprotoTelegramError> {
+        let bytes = self.download_file(file_id).await?;
+        use tokio::io::AsyncWriteExt;
+        writer
+            .write_all(&bytes)
+            .await
+            .map_err(|e| MtprotoTelegramError::Network(format!("write: {}", e)))?;
+        Ok(bytes.len() as u64)
+    }
 
     /// Receive pending updates. Yields all queued updates.
     /// Takes `&self`; interior mutability is the impl's
@@ -614,6 +644,7 @@ impl MockTelegramMtprotoClient {
                 from_id,
                 message_id: mid,
                 document_id: None,
+                caption: None,
                 timestamp: 0,
             }));
     }

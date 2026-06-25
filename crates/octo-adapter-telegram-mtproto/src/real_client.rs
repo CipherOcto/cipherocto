@@ -288,6 +288,12 @@ pub struct RealTelegramMtprotoClient {
     /// (the user scanned) and by `import_login_token`
     /// to finalize the import.
     qr_token: parking_lot::Mutex<Option<Vec<u8>>>,
+    /// Update channel from SenderPool. The SenderPool's
+    /// `updates` receiver is captured at connect time and
+    /// drained by `receive_updates()`. Wrapped in an async
+    /// Mutex for interior mutability (the trait method takes
+    /// `&self`).
+    updates_rx: tokio::sync::Mutex<Option<grammers_client::client::UpdateStream>>,
 }
 
 impl RealTelegramMtprotoClient {
@@ -312,11 +318,25 @@ impl RealTelegramMtprotoClient {
         // straightforward.
         let SenderPool {
             runner,
-            handle: _handle,
-            ..
+            updates,
+            handle,
         } = SenderPool::new(session.clone(), api_id);
-        let client = Arc::new(grammers_client::Client::new(_handle));
+        let client = Arc::new(grammers_client::Client::new(handle.clone()));
         let runner_task = tokio::spawn(runner.run());
+
+        // Create the update stream from the SenderPool's
+        // update channel. The stream handles gap resolution,
+        // channel differences, and ordered delivery.
+        let update_stream = client
+            .stream_updates(
+                updates,
+                grammers_client::client::UpdatesConfiguration {
+                    catch_up: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+
         Ok(Arc::new(Self {
             client,
             runner: parking_lot::Mutex::new(Some(runner_task)),
@@ -328,6 +348,7 @@ impl RealTelegramMtprotoClient {
             qr_api_id: parking_lot::Mutex::new(None),
             qr_api_hash: parking_lot::Mutex::new(None),
             qr_token: parking_lot::Mutex::new(None),
+            updates_rx: tokio::sync::Mutex::new(Some(update_stream)),
         }))
     }
 
@@ -553,10 +574,126 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         Ok(out)
     }
 
+    async fn download_file_to_writer(
+        &self,
+        file_id: &str,
+        writer: &mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> Result<u64, MtprotoTelegramError> {
+        let prefix = "download_file_to_writer";
+        let bytes = hex_decode(file_id).ok_or_else(|| MtprotoTelegramError::Rpc {
+            code: 400,
+            message: format!("{prefix}: file_id is not valid hex ({file_id:?})"),
+        })?;
+        let location: tl::enums::InputFileLocation =
+            tl::enums::InputFileLocation::from_bytes(&bytes).map_err(|e| {
+                MtprotoTelegramError::Rpc {
+                    code: 400,
+                    message: format!("{prefix}: deserialize InputFileLocation: {e}"),
+                }
+            })?;
+        let downloadable = InputFileLocationDownloadable { location };
+        let mut download = self.client.iter_download(&downloadable);
+        let mut total: u64 = 0;
+        use tokio::io::AsyncWriteExt;
+        loop {
+            match download.next().await {
+                Ok(Some(chunk)) => {
+                    writer.write_all(&chunk).await.map_err(|e| {
+                        MtprotoTelegramError::Network(format!("{prefix}: write: {e}"))
+                    })?;
+                    total += chunk.len() as u64;
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    return Err(crate::peer_resolve::map_invoke_err(prefix, e));
+                }
+            }
+        }
+        Ok(total)
+    }
+
     async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError> {
-        // Phase 1 stub: real impl drains the SenderPool's
-        // update channel and converts via `convert_update`.
-        Ok(Vec::new())
+        use grammers_client::update::Update as GUpdate;
+
+        let mut stream_guard = self.updates_rx.lock().await;
+        let stream = match stream_guard.as_mut() {
+            Some(s) => s,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut result = Vec::new();
+        // Drain all currently-available updates. We use a
+        // short timeout so we don't block indefinitely if no
+        // updates are pending.
+        loop {
+            let update =
+                match tokio::time::timeout(std::time::Duration::from_millis(50), stream.next())
+                    .await
+                {
+                    Ok(Ok(update)) => update,
+                    Ok(Err(e)) => {
+                        warn!("receive_updates: stream error: {}", e);
+                        break;
+                    }
+                    Err(_) => break, // timeout — no more pending
+                };
+
+            match update {
+                GUpdate::NewMessage(msg) => {
+                    let peer_id = msg.peer_id();
+                    let chat_id = peer_id.bare_id();
+                    let from_id = msg.sender_id().map(|id| id.bare_id());
+                    let document_id = msg.media().and_then(|media| {
+                        if let grammers_client::media::Media::Document(doc) = media {
+                            let location = doc.to_raw_input_location()?;
+                            let bytes = location.to_bytes();
+                            Some(
+                                bytes
+                                    .iter()
+                                    .map(|b| format!("{:02x}", b))
+                                    .collect::<String>(),
+                            )
+                        } else {
+                            None
+                        }
+                    });
+                    let caption = if document_id.is_some() {
+                        Some(msg.text().to_string())
+                    } else {
+                        None
+                    };
+                    result.push(MtprotoTelegramUpdate::NewMessage(
+                        crate::client::NewMessage {
+                            chat_id,
+                            message: msg.text().to_string(),
+                            from_id,
+                            message_id: msg.id() as i64,
+                            document_id,
+                            caption,
+                            timestamp: msg.date_timestamp(),
+                        },
+                    ));
+                }
+                GUpdate::MessageEdited(msg) => {
+                    let peer_id = msg.peer_id();
+                    let chat_id = peer_id.bare_id();
+                    result.push(MtprotoTelegramUpdate::MessageEdited(
+                        crate::client::MessageEdited {
+                            chat_id,
+                            message_id: msg.id() as i64,
+                            new_text: msg.text().to_string(),
+                            timestamp: msg.date_timestamp(),
+                        },
+                    ));
+                }
+                // CallbackQuery, InlineQuery, InlineSend,
+                // MessageDeleted, Raw — not surfaced to the
+                // adapter's receive path.
+                _ => {}
+            }
+        }
+
+        Ok(result)
     }
 
     async fn sign_in_bot(
@@ -1072,15 +1209,69 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
 
     async fn get_file_id_for_message(
         &self,
-        _chat_id: i64,
-        _message_id: i64,
+        chat_id: i64,
+        message_id: i64,
     ) -> Result<String, MtprotoTelegramError> {
-        // Real impl: use grammers' get_messages_by_id to
-        // resolve the message, then return its
-        // document.file_id. Stubbed in Phase 1.
-        Err(MtprotoTelegramError::NotReady(
-            "get_file_id_for_message: not yet implemented (Phase 1 stub)".into(),
-        ))
+        // Resolve the chat to a PeerRef so we can call
+        // get_messages_by_id.
+        let peer_kind = chat_id_kind(chat_id);
+        let chat_peer = resolve_chat(
+            &self.client,
+            chat_id,
+            peer_kind == PeerKindChoice::Supergroup,
+        )
+        .await?;
+
+        let messages = self
+            .client
+            .get_messages_by_id(chat_peer, &[message_id as i32])
+            .await
+            .map_err(|e| MtprotoTelegramError::Rpc {
+                code: 500,
+                message: format!("get_file_id_for_message: {}", e),
+            })?;
+
+        let message =
+            messages
+                .into_iter()
+                .flatten()
+                .next()
+                .ok_or_else(|| MtprotoTelegramError::Rpc {
+                    code: 404,
+                    message: format!("message {} not found in chat {}", message_id, chat_id),
+                })?;
+
+        let media = message.media().ok_or_else(|| MtprotoTelegramError::Rpc {
+            code: 404,
+            message: format!("message {} has no media (not a document)", message_id),
+        })?;
+
+        match media {
+            grammers_client::media::Media::Document(doc) => {
+                let location =
+                    doc.to_raw_input_location()
+                        .ok_or_else(|| MtprotoTelegramError::Rpc {
+                            code: 404,
+                            message: format!(
+                                "document in message {} has no file location",
+                                message_id
+                            ),
+                        })?;
+                let bytes = location.to_bytes();
+                Ok(bytes
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>())
+            }
+            _ => Err(MtprotoTelegramError::Rpc {
+                code: 404,
+                message: format!(
+                    "message {} media is not a document ({:?})",
+                    message_id,
+                    std::mem::discriminant(&media)
+                ),
+            }),
+        }
     }
 
     // ── Real group / Coordinator operations (RFC-0850 §8) ─────────

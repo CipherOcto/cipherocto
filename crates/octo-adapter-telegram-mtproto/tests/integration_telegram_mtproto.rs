@@ -136,6 +136,7 @@ async fn tv8_receive_drops_self_authored() {
         from_id: Some(100),
         message_id: 1,
         document_id: None,
+        caption: None,
         timestamp: 0,
     }));
     // 2. From other (should be returned).
@@ -145,6 +146,7 @@ async fn tv8_receive_drops_self_authored() {
         from_id: Some(200),
         message_id: 2,
         document_id: None,
+        caption: None,
         timestamp: 0,
     }));
     // 3. From other (should be returned).
@@ -154,6 +156,7 @@ async fn tv8_receive_drops_self_authored() {
         from_id: Some(201),
         message_id: 3,
         document_id: None,
+        caption: None,
         timestamp: 0,
     }));
 
@@ -321,6 +324,7 @@ async fn round_trip_send_receive() {
         from_id: Some(200),
         message_id: 1,
         document_id: None,
+        caption: None,
         timestamp: 0,
     }));
     let msgs = adapter

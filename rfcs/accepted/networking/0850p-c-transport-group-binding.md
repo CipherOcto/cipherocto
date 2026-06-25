@@ -30,6 +30,7 @@ Specifies the protocol that turns a raw physical broadcast domain (WhatsApp grou
 **Optional:**
 
 - RFC-0855p-c (Networking): DomainCoordinator Role — fills the F1 specialization; this RFC is a prerequisite for that specialization
+- RFC-0851p-b (Networking): DotDomain Bootstrap Mode — bootstrap through a bound domain; this RFC's GroupRegistry is read during DotDomain bootstrap
 - RFC-0853 (Networking): Overlay Cryptography — for mission-scoped signing keys
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 

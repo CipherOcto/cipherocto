@@ -441,12 +441,13 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 ## Future Work
 
 - F1: Priority routing in `NodeTransport` (QUIC for large payloads, Webhook for small)
-- F2: Transport capability advertisement via GDP discovery
+- F2: Transport capability advertisement via GDP discovery — specified in RFC-0863p-a (Domain-Governed Transport)
 - F3: WASM plugin runtime integration (mission 0850i)
 - F4: Transport-level encryption abstraction (beyond adapter-native encryption)
 - F5: `AdapterFactory` hot-reload (add/remove adapters at runtime without restart)
 - F6: Mode B bootstrap — DHT fallback (RFC-0851p-a §4, requires RFC-0843 Kademlia integration)
 - F7: Mode C bootstrap — invite link (RFC-0851p-a §5, requires invite URL parser + web-of-trust)
+- F8: Domain-governed transport — specified in RFC-0863p-a. Wraps `NodeTransport` with DC/group governance awareness, auto-bootstrap pipeline, and governance-gated send/receive.
 
 ## Rationale
 
@@ -465,6 +466,9 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 ## Related RFCs
 
 - RFC-0850: Deterministic Overlay Transport (DOT) — defines `PlatformAdapter`, `DeterministicEnvelope`
+- RFC-0851p-a: Network Bootstrap Protocol — bootstrap orchestrator wired into transport startup
+- RFC-0851p-b: DotDomain Bootstrap Mode — DotDomain discovery via social adapters
+- RFC-0863p-a: Domain-Governed Transport — governance-aware `NodeTransport` wrapper
 - RFC-0852: Deterministic Gossip Protocol — Phase 2 integration target
 - RFC-0862: Stoolap Data Sync — first consumer, validates the pattern
 

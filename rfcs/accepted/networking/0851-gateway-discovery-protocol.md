@@ -446,6 +446,60 @@ Lower eviction_score → evicted first. Ties broken by lexicographic `gateway_id
 
 `OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication. |
 
+### 14. Discovery-DC Integration
+
+> **Added by RFC-0851p-b / RFC-0863p-a update (v1.1.0).** This section specifies how the discovery plane interacts with the Domain Governance plane — specifically, how `GatewayCache` entries are affected by DC lifecycle transitions and group decommission events.
+
+#### Cache Invalidation on Group Decommission
+
+When a DomainCoordinator issues `DOT/1/UNBIND_ALL` (RFC-0850p-f) and the `GroupState` transitions to `UnboundAllDone`, all `GatewayCache` entries that were discovered through that domain MUST be evicted. The eviction is scoped to the `OverlayEndpoint`s whose `transport_type` matches the decommissioned domain's `PlatformType` and whose `endpoint_hash` was derived from that domain's `BroadcastDomainId`.
+
+```text
+function on_domain_decommissioned(domain: BroadcastDomainId, cache: GatewayCache):
+    for (gateway_id, entry) in cache.entries():
+        entry.endpoints.retain(|ep| ep.endpoint_hash != domain_hash(domain))
+        if entry.endpoints.is_empty():
+            cache.remove(gateway_id)
+```
+
+This ensures that a decommissioned social group does not leave stale peers in the discovery cache.
+
+#### DC Lifecycle → Cache Trust Level
+
+The DC lifecycle state (RFC-0855p-b `CoordinatorLifecycle`) affects the trust level of cache entries discovered through the DC's domain:
+
+| DC Lifecycle State | Cache Entry Trust Level | Action |
+|---|---|---|
+| `Active` | `Trusted` | Normal; entry participates in routing |
+| `Elected` / `Designated` | `Provisional` | Entry participates but not preferred |
+| `Suspect` | `Degraded` | Entry used only as last resort |
+| `Handover` | `Blocked` | Entry not used for routing until handover completes |
+| `Demoting` / `Resigned` / `Inactive` | `Untrusted` | Entry evicted from cache |
+
+The trust level is stored in `GatewayCacheEntry.trust_level` (new field, additive). Existing cache entries without a trust level default to `Trusted`.
+
+#### Scope Mapping for Domain-Discovered Peers
+
+Peers discovered through a DC-managed domain use `DiscoveryScope::Mission` (not `Global` or `Regional`), because the domain is bound to a specific `mission_id` via the BIND ceremony (RFC-0850p-c). This ensures that domain-discovered peers are only visible within their mission's discovery scope.
+
+```text
+scope = DiscoveryScope::Mission
+scope_filter = ScopeFilter::mission(binding.mission_id)
+```
+
+#### Gossip Mode for Domain Discovery
+
+Per §13, the gossip mode for domain-discovered peers follows the lifecycle state:
+
+| Lifecycle | Gossip Mode | TTL |
+|---|---|---|
+| Bootstrap (domain join) | Flood | 3 (Local) |
+| Expansion | Incremental | 5 (Mission) |
+| Stabilization | Incremental | 5 (Mission) |
+| Degraded (DC Suspect) | Anti-Entropy | 5 (Mission) |
+
+Domain discovery uses `GossipScope::MISSION` (not `LOCAL` or `GLOBAL`) because the domain is mission-scoped.
+
 ## Performance Targets
 
 | Metric | Target |
@@ -793,6 +847,7 @@ Deterministic eviction by (trust, utility, age) ensures convergence.
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
+| 1.1.0 | 2026-06-25 | Added §14 "Discovery-DC Integration" (cache invalidation on decommission, DC lifecycle → trust level, scope mapping, gossip mode for domain discovery). Referenced by RFC-0851p-b and RFC-0863p-a. |
 
 ## Related RFCs
 
@@ -800,6 +855,13 @@ Deterministic eviction by (trust, utility, age) ensures convergence.
 - RFC-0843 (Networking): OCTO-Network Protocol — base peer discovery
 - RFC-0852 (Networking): DGP — gossip propagation
 - RFC-0855 (Networking): MON — mission overlay networks consuming GDP discovery
+- RFC-0855p-b (Networking): Mission Coordinator Lifecycle — DC lifecycle → cache trust level (§14)
+- RFC-0855p-c (Networking): DomainCoordinator Role — DC authority for domain discovery
+- RFC-0850p-c (Networking): Transport Group Binding — BIND/UNBIND → cache invalidation (§14)
+- RFC-0850p-f (Networking): Group Decommission — UNBIND_ALL → cache eviction (§14)
+- RFC-0851p-a (Networking): Network Bootstrap Protocol — BootstrapMethod enum
+- RFC-0851p-b (Networking): DotDomain Bootstrap Mode — DotDomain discovery via social adapters
+- RFC-0863p-a (Networking): Domain-Governed Transport — consumes §14 trust levels
 - RFC-0856 (Networking): DRS — route selection
 - RFC-0860 (Networking): PoRelay — trust scoring
 

@@ -724,6 +724,7 @@ Per the **deferred vs unspecified rule**, every future-work item MUST have a spe
 | F4 | Trust UX (web-of-trust visualization) | MEDIUM | Post-launch | Mission: a `dot-trust graph` CLI command that renders the web-of-trust graph (signed_by relationships) as ASCII art or DOT format for operator inspection. | `missions/open/0851p-a-trust-ux.md` |
 | F5 | Mode D = NIP-05 / Nostr pubkey bootstrap | LOW | Future | Mission: a new `bootstrap_mode = Nostr` config; the bootstrap adapter resolves a NIP-05 identifier to a Nostr pubkey, fetches the user's contact list, and treats each contact as a potential bootstrap peer (verifying the contact's `DOT capability` claim). | `missions/open/0851p-a-nostr-mode-d.md` |
 | F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch | Mission: extend slash reason codes with `0x000D` = `bootstrap_node_misbehavior` (defined in RFC-0855p-b §B "Slash Offense Codes" range allocation); slashed nodes are removed from the seed list. | `missions/open/0851p-a-bootstrap-slashing.md` |
+| F7 | DotDomain bootstrap mode (Mode D) | HIGH | Pre-launch | Specified in RFC-0851p-b. Bootstraps a node by joining a DC-managed broadcast domain. The DotDomain mode is the keystone that connects social adapters to peer discovery. | RFC-0851p-b missions |
 
 ## Rationale
 
@@ -759,10 +760,13 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 ## Related RFCs
 
 - RFC-0851 (Networking): Gateway Discovery Protocol — extends with BootstrapNode, Done → DiscoveryLifecycle::Bootstrap
+- RFC-0851p-b (Networking): DotDomain Bootstrap Mode — Mode D specification (patch to this RFC)
 - RFC-0850 (Networking): Deterministic Overlay Transport — uses DeterministicEnvelope
 - RFC-0843 (Networking): OCTO-Network Protocol — Kademlia base (Mode B)
 - RFC-0860 (Networking): Proof of Relay — trust scores for Sybil defense
 - RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.1 "Governance Flexibility" (Dao governance model) and §11.2 "Governance Policies"
+- RFC-0850p-c (Networking): Transport Group Binding — GroupRegistry used by DotDomain bootstrap
+- RFC-0855p-c (Networking): DomainCoordinator Role — DC attestation used by DotDomain bootstrap
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 - RFC-0000-template v1.3 — Roles, Lifecycle, Implicit Assumptions, Adversary Analysis sections
 

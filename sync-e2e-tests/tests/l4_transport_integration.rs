@@ -11,8 +11,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use octo_network::sync::{
-    GossipDispatcher, SyncDgpHandler, SyncNetworkBridge,
-    SYNC_SNAPSHOT_OBJECT_TYPE,
+    GossipDispatcher, SyncDgpHandler, SyncNetworkBridge, SYNC_SNAPSHOT_OBJECT_TYPE,
 };
 use octo_sync::adapter::DatabaseSyncAdapter;
 use octo_sync::config::{SyncConfig, SyncRole};
@@ -91,7 +90,14 @@ impl NetworkSender for FailingSender {
 fn make_session(mission_id: [u8; 32]) -> (Arc<SyncSessionManager>, Arc<MockAdapter>) {
     let config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x02; 32]);
     let adapter = Arc::new(MockAdapter::new(mission_id, [0x01; 32]));
-    let session = Arc::new(SyncSessionManager::new(adapter.clone() as Arc<dyn DatabaseSyncAdapter>, config, &[0x42u8; 32]).unwrap());
+    let session = Arc::new(
+        SyncSessionManager::new(
+            adapter.clone() as Arc<dyn DatabaseSyncAdapter>,
+            config,
+            &[0x42u8; 32],
+        )
+        .unwrap(),
+    );
     (session, adapter)
 }
 
@@ -108,7 +114,7 @@ async fn drain_outbox_delivers_via_send_best() {
     let (session, adapter) = make_session(mission_id);
     let sender = Arc::new(RecordingSender::new("webhook"));
     let transport = Arc::new(NodeTransport::new(vec![
-        sender.clone() as Arc<dyn NetworkSender>,
+        sender.clone() as Arc<dyn NetworkSender>
     ]));
 
     let peer_id = SyncPeerId([0x03u8; 32]);
@@ -160,7 +166,7 @@ async fn full_chain_commit_to_transport() {
     let (session, adapter) = make_session(mission_id);
     let sender = Arc::new(RecordingSender::new("quic"));
     let transport = Arc::new(NodeTransport::new(vec![
-        sender.clone() as Arc<dyn NetworkSender>,
+        sender.clone() as Arc<dyn NetworkSender>
     ]));
 
     let peer_id = SyncPeerId([0x04u8; 32]);
@@ -208,7 +214,9 @@ async fn send_best_failover_skips_unhealthy() {
     let mission_id = [0xCCu8; 32];
 
     let healthy_sender = Arc::new(RecordingSender::new("webhook"));
-    let failing_sender = Arc::new(FailingSender { name: "quic".into() });
+    let failing_sender = Arc::new(FailingSender {
+        name: "quic".into(),
+    });
 
     let transport = Arc::new(NodeTransport::new(vec![
         failing_sender as Arc<dyn NetworkSender>,

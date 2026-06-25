@@ -155,15 +155,18 @@ fn test_domain() -> BroadcastDomainId {
 async fn l4_transport_chain_commit_to_adapter() {
     // Create adapter, hold reference for inspection, pass to bridge
     let adapter = RecordingAdapter::new(PlatformType::Webhook);
-    let bridge = PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
+    let bridge =
+        PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
 
     let transport = Arc::new(NodeTransport::new(vec![
-        Arc::new(bridge) as Arc<dyn NetworkSender>,
+        Arc::new(bridge) as Arc<dyn NetworkSender>
     ]));
     let broadcaster = NodeTransportBroadcaster::new(transport);
 
     let mission_id = [0xABu8; 32];
-    let result = broadcaster.broadcast(b"sync-wal-chunk-data", &mission_id).await;
+    let result = broadcaster
+        .broadcast(b"sync-wal-chunk-data", &mission_id)
+        .await;
     assert!(result.is_ok(), "broadcast should succeed");
 
     assert_eq!(
@@ -178,8 +181,10 @@ async fn l4_multi_transport_broadcast() {
     let adapter1 = RecordingAdapter::new(PlatformType::Webhook);
     let adapter2 = RecordingAdapter::new(PlatformType::Quic);
 
-    let bridge1 = PlatformAdapterBridge::new(adapter1.clone() as Arc<dyn PlatformAdapter>, test_domain());
-    let bridge2 = PlatformAdapterBridge::new(adapter2.clone() as Arc<dyn PlatformAdapter>, test_domain());
+    let bridge1 =
+        PlatformAdapterBridge::new(adapter1.clone() as Arc<dyn PlatformAdapter>, test_domain());
+    let bridge2 =
+        PlatformAdapterBridge::new(adapter2.clone() as Arc<dyn PlatformAdapter>, test_domain());
 
     let transport = Arc::new(NodeTransport::new(vec![
         Arc::new(bridge1) as Arc<dyn NetworkSender>,
@@ -212,7 +217,8 @@ async fn l4_failover_skips_unhealthy_adapter() {
     }
 
     let adapter = RecordingAdapter::new(PlatformType::Webhook);
-    let bridge = PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
+    let bridge =
+        PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
 
     let transport = Arc::new(NodeTransport::new(vec![
         Arc::new(UnhealthySender) as Arc<dyn NetworkSender>,
@@ -220,11 +226,13 @@ async fn l4_failover_skips_unhealthy_adapter() {
     ]));
     let broadcaster = NodeTransportBroadcaster::new(transport);
 
-    let result = broadcaster
-        .broadcast(b"failover-test", &[0xEFu8; 32])
-        .await;
+    let result = broadcaster.broadcast(b"failover-test", &[0xEFu8; 32]).await;
     assert!(result.is_ok(), "should succeed via healthy adapter");
-    assert_eq!(adapter.captured_count(), 1, "healthy adapter should receive the payload");
+    assert_eq!(
+        adapter.captured_count(),
+        1,
+        "healthy adapter should receive the payload"
+    );
 }
 
 #[tokio::test]
@@ -244,7 +252,8 @@ async fn l4_broadcast_count_matches_healthy_senders() {
     }
 
     let adapter = RecordingAdapter::new(PlatformType::Webhook);
-    let bridge = PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
+    let bridge =
+        PlatformAdapterBridge::new(adapter.clone() as Arc<dyn PlatformAdapter>, test_domain());
 
     let transport = Arc::new(NodeTransport::new(vec![
         Arc::new(FailingSender) as Arc<dyn NetworkSender>,

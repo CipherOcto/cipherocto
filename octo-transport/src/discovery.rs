@@ -110,8 +110,7 @@ impl TransportDiscovery {
                 *h.finalize().as_bytes()
             })
             .collect();
-        let transport_root =
-            GatewayAdvertisement::compute_merkle_root(&transport_items);
+        let transport_root = GatewayAdvertisement::compute_merkle_root(&transport_items);
 
         let cap_items: Vec<[u8; 32]> = caps
             .iter()
@@ -121,8 +120,7 @@ impl TransportDiscovery {
                 *h.finalize().as_bytes()
             })
             .collect();
-        let capabilities_root =
-            GatewayAdvertisement::compute_merkle_root(&cap_items);
+        let capabilities_root = GatewayAdvertisement::compute_merkle_root(&cap_items);
 
         GatewayAdvertisement {
             version: 1,
@@ -183,7 +181,11 @@ impl TransportDiscovery {
             .lock()
             .unwrap()
             .get(peer_id)
-            .map(|e| e.endpoints.iter().any(|ep| ep.transport_type == transport_type))
+            .map(|e| {
+                e.endpoints
+                    .iter()
+                    .any(|ep| ep.transport_type == transport_type)
+            })
             .unwrap_or(false)
     }
 
@@ -192,7 +194,11 @@ impl TransportDiscovery {
         let cache = self.cache.lock().unwrap();
         cache
             .iter()
-            .filter(|(_, e)| e.endpoints.iter().any(|ep| ep.transport_type == transport_type))
+            .filter(|(_, e)| {
+                e.endpoints
+                    .iter()
+                    .any(|ep| ep.transport_type == transport_type)
+            })
             .map(|(id, _)| *id)
             .collect()
     }
@@ -211,10 +217,7 @@ impl TransportDiscovery {
     ///
     /// Used for TCP handshake exchange when no NodeTransport is available.
     /// Returns a GatewayAdvertisement with the node's identity and empty endpoints.
-    pub fn build_advertisement_from_identity(
-        &self,
-        current_epoch: u64,
-    ) -> GatewayAdvertisement {
+    pub fn build_advertisement_from_identity(&self, current_epoch: u64) -> GatewayAdvertisement {
         let seq = {
             let mut s = self.sequence.lock().unwrap();
             *s += 1;
@@ -288,9 +291,9 @@ fn name_to_transport_type(name: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::sender::{NetworkSender, SendContext, TransportError};
     use async_trait::async_trait;
+    use std::sync::Arc;
 
     struct MockSender {
         name: String,
@@ -361,18 +364,19 @@ mod tests {
 
         let adv = discovery.build_advertisement(&transport, 1, 1000);
         assert_eq!(adv.overlay_endpoints.len(), 1);
-        assert_eq!(adv.overlay_endpoints[0].transport_type, PlatformType::Webhook as u16);
+        assert_eq!(
+            adv.overlay_endpoints[0].transport_type,
+            PlatformType::Webhook as u16
+        );
     }
 
     #[test]
     fn register_and_query_peer() {
         let discovery = TransportDiscovery::new(make_identity(), [0xABu8; 32], 100);
-        let transport = NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "webhook".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]);
+        let transport = NodeTransport::new(vec![Arc::new(MockSender {
+            name: "webhook".into(),
+            healthy: true,
+        }) as Arc<dyn NetworkSender>]);
 
         let adv = discovery.build_advertisement(&transport, 1, 1000);
         discovery.register_peer(&adv, 1000);
@@ -394,18 +398,14 @@ mod tests {
         ));
         let discovery2 = TransportDiscovery::new(identity2, [0xCDu8; 32], 100);
 
-        let t1 = NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "webhook".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]);
-        let t2 = NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "quic".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]);
+        let t1 = NodeTransport::new(vec![Arc::new(MockSender {
+            name: "webhook".into(),
+            healthy: true,
+        }) as Arc<dyn NetworkSender>]);
+        let t2 = NodeTransport::new(vec![Arc::new(MockSender {
+            name: "quic".into(),
+            healthy: true,
+        }) as Arc<dyn NetworkSender>]);
         let adv1 = discovery.build_advertisement(&t1, 1, 1000);
         let adv2 = discovery2.build_advertisement(&t2, 1, 1001);
         discovery.register_peer(&adv1, 1000);
@@ -426,10 +426,7 @@ mod tests {
             name_to_transport_type("webhook"),
             PlatformType::Webhook as u16
         );
-        assert_eq!(
-            name_to_transport_type("quic"),
-            PlatformType::Quic as u16
-        );
+        assert_eq!(name_to_transport_type("quic"), PlatformType::Quic as u16);
         assert_eq!(
             name_to_transport_type("native-p2p"),
             PlatformType::NativeP2P as u16
@@ -440,12 +437,10 @@ mod tests {
     #[test]
     fn sequence_increments() {
         let discovery = TransportDiscovery::new(make_identity(), [0xABu8; 32], 100);
-        let transport = NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "webhook".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]);
+        let transport = NodeTransport::new(vec![Arc::new(MockSender {
+            name: "webhook".into(),
+            healthy: true,
+        }) as Arc<dyn NetworkSender>]);
 
         let adv1 = discovery.build_advertisement(&transport, 1, 1000);
         let adv2 = discovery.build_advertisement(&transport, 1, 1001);

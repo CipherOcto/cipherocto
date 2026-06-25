@@ -4,17 +4,17 @@
 //! `DotDomainBootstrapConfig`, `dotdomain_bootstrap()` algorithm,
 //! `PlatformAdapterDotDomain` trait, and error paths.
 
-use octo_transport::dom_bootstrap::{
-    dotdomain_bootstrap, BroadcastDomainHint, DcTrustLevel, DotDomainBootstrapConfig,
-    DotDomainError, PlatformAdapterDotDomain, MAX_ATTEST_AGE_EPOCHS, GADV_REQ_SUBTYPE,
-};
 use octo_network::dot::adapters::{
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
-use octo_network::dot::PlatformType;
 use octo_network::dot::BroadcastDomainId;
+use octo_network::dot::PlatformType;
+use octo_transport::dom_bootstrap::{
+    dotdomain_bootstrap, BroadcastDomainHint, DcTrustLevel, DotDomainBootstrapConfig,
+    DotDomainError, PlatformAdapterDotDomain, GADV_REQ_SUBTYPE, MAX_ATTEST_AGE_EPOCHS,
+};
 use std::time::Duration;
 
 // ── Mock adapter ─────────────────────────────────────────────────
@@ -176,21 +176,54 @@ impl PlatformAdapterDotDomain for MockDomainAdapter {
 #[test]
 fn d01_dc_trust_level_all_lifecycle_states() {
     // All 8 RFC-0855p-b states
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x00), DcTrustLevel::Provisional); // Designated
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x01), DcTrustLevel::Provisional); // Elected
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x02), DcTrustLevel::Trusted);     // Active
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x03), DcTrustLevel::Degraded);    // Suspect
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x04), DcTrustLevel::Blocked);     // Handover
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x05), DcTrustLevel::Untrusted);   // Demoting
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x06), DcTrustLevel::Untrusted);   // Resigned
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x07), DcTrustLevel::Untrusted);   // Inactive
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x00),
+        DcTrustLevel::Provisional
+    ); // Designated
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x01),
+        DcTrustLevel::Provisional
+    ); // Elected
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x02),
+        DcTrustLevel::Trusted
+    ); // Active
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x03),
+        DcTrustLevel::Degraded
+    ); // Suspect
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x04),
+        DcTrustLevel::Blocked
+    ); // Handover
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x05),
+        DcTrustLevel::Untrusted
+    ); // Demoting
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x06),
+        DcTrustLevel::Untrusted
+    ); // Resigned
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x07),
+        DcTrustLevel::Untrusted
+    ); // Inactive
 }
 
 #[test]
 fn d02_dc_trust_level_unknown_state_is_untrusted() {
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0x08), DcTrustLevel::Untrusted);
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0xFF), DcTrustLevel::Untrusted);
-    assert_eq!(DcTrustLevel::from_lifecycle_byte(0xFE), DcTrustLevel::Untrusted);
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0x08),
+        DcTrustLevel::Untrusted
+    );
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0xFF),
+        DcTrustLevel::Untrusted
+    );
+    assert_eq!(
+        DcTrustLevel::from_lifecycle_byte(0xFE),
+        DcTrustLevel::Untrusted
+    );
 }
 
 #[test]

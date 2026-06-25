@@ -22,7 +22,10 @@ pub struct OrrTransportBridge {
 impl OrrTransportBridge {
     /// Create a new ORR transport bridge.
     pub fn new(transport: Arc<NodeTransport>, discovery: Arc<Mutex<TransportDiscovery>>) -> Self {
-        Self { transport, discovery }
+        Self {
+            transport,
+            discovery,
+        }
     }
 
     /// Forward a peeled onion hop to the next relay.
@@ -40,9 +43,7 @@ impl OrrTransportBridge {
             source_peer: peeled.next_gateway,
             origin_gateway: [0u8; 32],
         };
-        self.transport
-            .send_best(&peeled.inner_payload, &ctx)
-            .await
+        self.transport.send_best(&peeled.inner_payload, &ctx).await
     }
 
     /// Check if a specific transport type is supported for routing.
@@ -79,12 +80,11 @@ mod tests {
     }
 
     fn make_bridge() -> OrrTransportBridge {
-        let transport = Arc::new(NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "webhook".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]));
+        let transport = Arc::new(NodeTransport::new(vec![Arc::new(MockSender {
+            name: "webhook".into(),
+            healthy: true,
+        })
+            as Arc<dyn NetworkSender>]));
         let identity = GdpGatewayIdentity::new(GatewayIdentity::new(
             [0x42u8; 32],
             1,

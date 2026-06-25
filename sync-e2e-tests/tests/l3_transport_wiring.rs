@@ -61,13 +61,14 @@ async fn sync_commit_broadcasts_via_node_transport() {
 
     // Create a recording sender wired into NodeTransport
     let sender = Arc::new(RecordingSender::new("test-transport"));
-    let transport = Arc::new(NodeTransport::new(vec![sender.clone() as Arc<dyn NetworkSender>]));
+    let transport = Arc::new(NodeTransport::new(vec![
+        sender.clone() as Arc<dyn NetworkSender>
+    ]));
 
     // Create the broadcaster bridge
-    let _broadcaster = Arc::new(NodeTransportBroadcaster::new(transport).with_identity(
-        [0xAAu8; 32],
-        [0xBBu8; 32],
-    )) as Arc<dyn TransportBroadcaster>;
+    let _broadcaster = Arc::new(
+        NodeTransportBroadcaster::new(transport).with_identity([0xAAu8; 32], [0xBBu8; 32]),
+    ) as Arc<dyn TransportBroadcaster>;
 
     // Subscribe a peer to the session
     let peer_id = octo_sync::SyncPeerId([0x03u8; 32]);
@@ -90,7 +91,9 @@ async fn sync_commit_broadcasts_via_node_transport() {
 #[tokio::test]
 async fn node_transport_broadcaster_integration() {
     let sender = Arc::new(RecordingSender::new("test-broadcaster"));
-    let transport = Arc::new(NodeTransport::new(vec![sender.clone() as Arc<dyn NetworkSender>]));
+    let transport = Arc::new(NodeTransport::new(vec![
+        sender.clone() as Arc<dyn NetworkSender>
+    ]));
 
     let broadcaster = NodeTransportBroadcaster::new(transport);
     let mission_id = [0xABu8; 32];

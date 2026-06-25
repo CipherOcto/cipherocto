@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use parking_lot::Mutex as PMutex;
 
-use octo_network::dot::gateway::{GatewayClass, GatewayIdentity};
 use octo_network::dom::OverlayIntent;
+use octo_network::dot::gateway::{GatewayClass, GatewayIdentity};
 use octo_network::drs::DeterministicRoute;
 use octo_network::gdp::identity::GdpGatewayIdentity;
 use octo_network::gdp::overlay_endpoint::OverlayEndpoint;
@@ -158,7 +158,10 @@ async fn drs_resolve_and_send_delivers_to_recording_sender() {
     let ctx = make_ctx(0xAA);
     let payload = b"drs-route-payload";
 
-    bridge.resolve_and_send(&route, payload, &ctx).await.unwrap();
+    bridge
+        .resolve_and_send(&route, payload, &ctx)
+        .await
+        .unwrap();
 
     // send_best picks first healthy sender — verify it received the exact payload
     let received = records[0].last_payload().unwrap();
@@ -230,8 +233,12 @@ async fn drs_failover_skips_unhealthy_sender() {
         async fn send(&self, _: &[u8], _: &SendContext) -> Result<(), TransportError> {
             Err(TransportError::Unhealthy)
         }
-        fn name(&self) -> &str { "unhealthy" }
-        fn is_healthy(&self) -> bool { false }
+        fn name(&self) -> &str {
+            "unhealthy"
+        }
+        fn is_healthy(&self) -> bool {
+            false
+        }
     }
 
     let healthy = Arc::new(RecordingSender::new("backup"));
@@ -242,7 +249,9 @@ async fn drs_failover_skips_unhealthy_sender() {
     let bridge = DrsTransportBridge::new(transport, make_discovery());
     let ctx = make_ctx(0xCC);
 
-    let result = bridge.resolve_and_send(&make_route(), b"failover-data", &ctx).await;
+    let result = bridge
+        .resolve_and_send(&make_route(), b"failover-data", &ctx)
+        .await;
     assert!(result.is_ok());
     assert_eq!(healthy.last_payload().unwrap(), b"failover-data");
 }
@@ -291,7 +300,10 @@ async fn dom_broadcast_propagation_failure() {
     #[async_trait]
     impl TransportBroadcaster for FailBroadcaster {
         async fn broadcast(&self, _: &[u8], _: &[u8; 32]) -> Result<(), std::io::Error> {
-            Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "mock"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "mock",
+            ))
         }
     }
 
@@ -428,12 +440,16 @@ async fn orr_forward_hop_all_senders_unhealthy() {
         async fn send(&self, _: &[u8], _: &SendContext) -> Result<(), TransportError> {
             Err(TransportError::Unhealthy)
         }
-        fn name(&self) -> &str { "dead" }
-        fn is_healthy(&self) -> bool { false }
+        fn name(&self) -> &str {
+            "dead"
+        }
+        fn is_healthy(&self) -> bool {
+            false
+        }
     }
 
     let transport = Arc::new(NodeTransport::new(vec![
-        Arc::new(UnhealthySender) as Arc<dyn NetworkSender>,
+        Arc::new(UnhealthySender) as Arc<dyn NetworkSender>
     ]));
     let bridge = OrrTransportBridge::new(transport, make_discovery());
 

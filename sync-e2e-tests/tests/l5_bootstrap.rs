@@ -129,7 +129,9 @@ fn full_cleanup(test_prefix: &str, container_names: &[&str]) {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             if !line.is_empty() {
-                let _ = Command::new("docker").args(["network", "rm", line]).output();
+                let _ = Command::new("docker")
+                    .args(["network", "rm", line])
+                    .output();
             }
         }
     }
@@ -249,10 +251,7 @@ async fn lb07_container_starts_with_seed_list_flag() {
     let reader_status = reader.try_wait().unwrap();
     if let Some(exit) = reader_status {
         // Exit is expected — bootstrap fails
-        assert!(
-            !exit.success(),
-            "reader should exit with bootstrap failure"
-        );
+        assert!(!exit.success(), "reader should exit with bootstrap failure");
     }
     // If still running, that's OK too (node continues with TCP listener)
 

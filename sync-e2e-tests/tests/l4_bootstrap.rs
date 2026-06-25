@@ -139,7 +139,10 @@ async fn lb01_node_starts_with_seed_list_flag() {
     // or may still be running (TCP listener continues). Either is acceptable.
     let status = child.try_wait().unwrap();
     if let Some(exit) = status {
-        assert!(!exit.success(), "should exit with error on bootstrap failure");
+        assert!(
+            !exit.success(),
+            "should exit with error on bootstrap failure"
+        );
     }
     // If still running, that's OK — node continues with TCP listener
 
@@ -279,21 +282,18 @@ async fn lb04_peer_flag_takes_precedence() {
         .expect("failed to spawn reader");
 
     // If --peer takes precedence, reader syncs via TCP
-    let count = tokio::time::timeout(
-        Duration::from_secs(8),
-        async {
-            loop {
-                if let Ok(content) = std::fs::read_to_string(&status_path) {
-                    if let Ok(n) = content.trim().parse::<i64>() {
-                        if n > 0 {
-                            return n;
-                        }
+    let count = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Ok(content) = std::fs::read_to_string(&status_path) {
+                if let Ok(n) = content.trim().parse::<i64>() {
+                    if n > 0 {
+                        return n;
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        },
-    )
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
     .await;
 
     assert!(

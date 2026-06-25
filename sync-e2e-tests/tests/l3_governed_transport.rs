@@ -4,15 +4,15 @@
 //! `GovernedTransportLifecycle`, `AdapterConfig`, `DomainRole`,
 //! `DcLifecycleEvent`, `find_domain_for_platform`, `derive_trust_levels`.
 
-use octo_transport::governed_transport::{
-    AdapterConfig, Credentials, DcLifecycleEvent, DomainRole, FLAG_DEGRADED_DOMAIN,
-    GovernedTransport, GovernedTransportLifecycle, ReceivedMessage,
-    derive_trust_levels, find_domain_for_platform,
-};
+use async_trait::async_trait;
 use octo_transport::dom_bootstrap::{BroadcastDomainHint, DcTrustLevel};
+use octo_transport::governed_transport::{
+    derive_trust_levels, find_domain_for_platform, AdapterConfig, Credentials, DcLifecycleEvent,
+    DomainRole, GovernedTransport, GovernedTransportLifecycle, ReceivedMessage,
+    FLAG_DEGRADED_DOMAIN,
+};
 use octo_transport::node_transport::NodeTransport;
 use octo_transport::sender::{NetworkSender, SendContext, TransportError};
-use async_trait::async_trait;
 use std::sync::Arc;
 
 // ── Mock sender ──────────────────────────────────────────────────
@@ -37,9 +37,11 @@ fn make_transport() -> GovernedTransport {
     GovernedTransport::new(
         inner,
         [0x42u8; 32],
-        vec![
-            (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-        ],
+        vec![(
+            octo_network::dot::PlatformType::Telegram,
+            "-100".to_string(),
+            DomainRole::Joiner,
+        )],
     )
 }
 
@@ -65,7 +67,10 @@ fn gt01_lifecycle_empty_trust_is_ready() {
 #[test]
 fn gt02_lifecycle_all_trusted() {
     assert_eq!(
-        GovernedTransportLifecycle::from_domain_trust(&[DcTrustLevel::Trusted, DcTrustLevel::Trusted]),
+        GovernedTransportLifecycle::from_domain_trust(&[
+            DcTrustLevel::Trusted,
+            DcTrustLevel::Trusted
+        ]),
         GovernedTransportLifecycle::Ready
     );
 }
@@ -73,7 +78,10 @@ fn gt02_lifecycle_all_trusted() {
 #[test]
 fn gt03_lifecycle_degraded() {
     assert_eq!(
-        GovernedTransportLifecycle::from_domain_trust(&[DcTrustLevel::Trusted, DcTrustLevel::Degraded]),
+        GovernedTransportLifecycle::from_domain_trust(&[
+            DcTrustLevel::Trusted,
+            DcTrustLevel::Degraded
+        ]),
         GovernedTransportLifecycle::Degraded
     );
 }
@@ -81,7 +89,10 @@ fn gt03_lifecycle_degraded() {
 #[test]
 fn gt04_lifecycle_all_untrusted_is_rebooting() {
     assert_eq!(
-        GovernedTransportLifecycle::from_domain_trust(&[DcTrustLevel::Untrusted, DcTrustLevel::Untrusted]),
+        GovernedTransportLifecycle::from_domain_trust(&[
+            DcTrustLevel::Untrusted,
+            DcTrustLevel::Untrusted
+        ]),
         GovernedTransportLifecycle::Rebooting
     );
 }
@@ -97,7 +108,10 @@ fn gt05_lifecycle_provisional_is_ready() {
 #[test]
 fn gt06_lifecycle_blocked_is_degraded() {
     assert_eq!(
-        GovernedTransportLifecycle::from_domain_trust(&[DcTrustLevel::Trusted, DcTrustLevel::Blocked]),
+        GovernedTransportLifecycle::from_domain_trust(&[
+            DcTrustLevel::Trusted,
+            DcTrustLevel::Blocked
+        ]),
         GovernedTransportLifecycle::Degraded
     );
 }
@@ -105,7 +119,10 @@ fn gt06_lifecycle_blocked_is_degraded() {
 #[test]
 fn gt07_lifecycle_mixed_untrusted_is_degraded() {
     assert_eq!(
-        GovernedTransportLifecycle::from_domain_trust(&[DcTrustLevel::Untrusted, DcTrustLevel::Provisional]),
+        GovernedTransportLifecycle::from_domain_trust(&[
+            DcTrustLevel::Untrusted,
+            DcTrustLevel::Provisional
+        ]),
         GovernedTransportLifecycle::Degraded
     );
 }
@@ -282,8 +299,16 @@ fn gt23_inactive_is_domain_loss() {
 #[test]
 fn gt24_find_domain_hit() {
     let domains = vec![
-        (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-        (octo_network::dot::PlatformType::Quic, "".to_string(), DomainRole::None),
+        (
+            octo_network::dot::PlatformType::Telegram,
+            "-100".to_string(),
+            DomainRole::Joiner,
+        ),
+        (
+            octo_network::dot::PlatformType::Quic,
+            "".to_string(),
+            DomainRole::None,
+        ),
     ];
     let result = find_domain_for_platform(octo_network::dot::PlatformType::Telegram, &domains);
     assert_eq!(result, Some(("-100".to_string(), DomainRole::Joiner)));
@@ -291,29 +316,36 @@ fn gt24_find_domain_hit() {
 
 #[test]
 fn gt25_find_domain_ptp_returns_none() {
-    let domains = vec![
-        (octo_network::dot::PlatformType::Quic, "".to_string(), DomainRole::None),
-    ];
+    let domains = vec![(
+        octo_network::dot::PlatformType::Quic,
+        "".to_string(),
+        DomainRole::None,
+    )];
     assert!(find_domain_for_platform(octo_network::dot::PlatformType::Quic, &domains).is_none());
 }
 
 #[test]
 fn gt26_find_domain_miss() {
-    let domains = vec![
-        (octo_network::dot::PlatformType::Telegram, "-100".to_string(), DomainRole::Joiner),
-    ];
+    let domains = vec![(
+        octo_network::dot::PlatformType::Telegram,
+        "-100".to_string(),
+        DomainRole::Joiner,
+    )];
     assert!(find_domain_for_platform(octo_network::dot::PlatformType::Discord, &domains).is_none());
 }
 
 #[test]
 fn gt27_derive_trust_levels() {
     let levels = derive_trust_levels(&[0x02, 0x03, 0x05, 0x00]);
-    assert_eq!(levels, vec![
-        DcTrustLevel::Trusted,
-        DcTrustLevel::Degraded,
-        DcTrustLevel::Untrusted,
-        DcTrustLevel::Provisional,
-    ]);
+    assert_eq!(
+        levels,
+        vec![
+            DcTrustLevel::Trusted,
+            DcTrustLevel::Degraded,
+            DcTrustLevel::Untrusted,
+            DcTrustLevel::Provisional,
+        ]
+    );
 }
 
 #[test]

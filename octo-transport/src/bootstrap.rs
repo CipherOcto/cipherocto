@@ -271,9 +271,7 @@ impl BootstrapOrchestrator {
         let mut attempt = 0u32;
 
         while attempt < self.config.max_retries {
-            let responses = self
-                .send_bootstrap_requests(transport, &filtered)
-                .await;
+            let responses = self.send_bootstrap_requests(transport, &filtered).await;
 
             if responses.len() >= self.config.min_responses {
                 // Step 7: Validate (signatures deferred — stub mode)
@@ -301,11 +299,8 @@ impl BootstrapOrchestrator {
                 if agreement >= self.config.intersection_threshold {
                     // Step 9: Merge into TransportDiscovery
                     self.state = BootstrapClientLifecycle::Cached;
-                    let peer_count = self.populate_discovery(
-                        &intersection,
-                        discovery,
-                        discovery_state,
-                    );
+                    let peer_count =
+                        self.populate_discovery(&intersection, discovery, discovery_state);
                     self.state = BootstrapClientLifecycle::Done;
                     return Ok(peer_count);
                 }
@@ -424,8 +419,7 @@ impl BootstrapOrchestrator {
         discovery_state.peer_count += count;
 
         // Attempt transition to Expansion if >= 5 peers
-        if discovery_state.peer_count >= 5
-            && discovery_state.phase == DiscoveryLifecycle::Bootstrap
+        if discovery_state.peer_count >= 5 && discovery_state.phase == DiscoveryLifecycle::Bootstrap
         {
             let _ = discovery_state.start_expansion();
         }
@@ -449,8 +443,7 @@ fn compute_intersection(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
     }
 
     // Build a frequency map (deduplicate within each set first)
-    let mut freq: std::collections::BTreeMap<[u8; 32], usize> =
-        std::collections::BTreeMap::new();
+    let mut freq: std::collections::BTreeMap<[u8; 32], usize> = std::collections::BTreeMap::new();
     for set in sets {
         let unique: std::collections::HashSet<[u8; 32]> = set.iter().copied().collect();
         for peer in unique {
@@ -542,14 +535,12 @@ mod tests {
     }
 
     fn make_discovery() -> (TransportDiscovery, DiscoveryState) {
-        let identity = GdpGatewayIdentity::new(
-            octo_network::dot::gateway::GatewayIdentity::new(
-                [0x42u8; 32],
-                1,
-                octo_network::dot::gateway::GatewayClass::Edge,
-                100,
-            ),
-        );
+        let identity = GdpGatewayIdentity::new(octo_network::dot::gateway::GatewayIdentity::new(
+            [0x42u8; 32],
+            1,
+            octo_network::dot::gateway::GatewayClass::Edge,
+            100,
+        ));
         let disc = TransportDiscovery::new(identity, [0xABu8; 32], 256);
         let state = DiscoveryState::new(BootstrapMethod::Static);
         (disc, state)
@@ -567,10 +558,7 @@ mod tests {
 
     #[test]
     fn fresh_seeds_pass_health_check() {
-        let env = make_envelope(vec![
-            make_seed_entry("a", 100),
-            make_seed_entry("b", 100),
-        ]);
+        let env = make_envelope(vec![make_seed_entry("a", 100), make_seed_entry("b", 100)]);
         let health = SeedHealth::check(&env, 105);
         assert!(matches!(health, SeedHealth::Fresh { fresh_count: 2 }));
         assert!(!health.refuses_start());
@@ -578,10 +566,7 @@ mod tests {
 
     #[test]
     fn fully_stale_refuses() {
-        let env = make_envelope(vec![
-            make_seed_entry("a", 50),
-            make_seed_entry("b", 50),
-        ]);
+        let env = make_envelope(vec![make_seed_entry("a", 50), make_seed_entry("b", 50)]);
         let health = SeedHealth::check(&env, 105);
         assert!(health.refuses_start());
     }
@@ -590,10 +575,8 @@ mod tests {
 
     #[test]
     fn authority_foundation_accepted_before_fork() {
-        let result = octo_network::mon::bootstrap::verify_authority(
-            SeedListAuthority::Foundation,
-            0,
-        );
+        let result =
+            octo_network::mon::bootstrap::verify_authority(SeedListAuthority::Foundation, 0);
         assert!(result.is_ok());
     }
 
@@ -709,10 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_fails_with_stale_seeds() {
-        let env = make_envelope(vec![
-            make_seed_entry("a", 50),
-            make_seed_entry("b", 50),
-        ]);
+        let env = make_envelope(vec![make_seed_entry("a", 50), make_seed_entry("b", 50)]);
         let config = BootstrapConfig {
             current_epoch: 105,
             ..make_config()

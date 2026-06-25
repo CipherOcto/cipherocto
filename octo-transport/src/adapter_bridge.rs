@@ -138,6 +138,7 @@ mod tests {
                 supports_raw_binary: true,
                 rate_limit_per_second: 100,
                 media_capabilities: None,
+                ..Default::default()
             }
         }
 
@@ -188,6 +189,7 @@ mod tests {
                 supports_raw_binary: true,
                 rate_limit_per_second: 100,
                 media_capabilities: None,
+                ..Default::default()
             }
         }
 

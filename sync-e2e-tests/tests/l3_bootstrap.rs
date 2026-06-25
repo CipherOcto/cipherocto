@@ -148,9 +148,7 @@ impl NetworkSender for RespondingSender {
     }
 }
 
-fn make_responding_transport(
-    sender: Arc<RespondingSender>,
-) -> NodeTransport {
+fn make_responding_transport(sender: Arc<RespondingSender>) -> NodeTransport {
     NodeTransport::new(vec![sender as Arc<dyn NetworkSender>])
 }
 

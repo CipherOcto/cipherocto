@@ -23,7 +23,10 @@ pub struct DrsTransportBridge {
 impl DrsTransportBridge {
     /// Create a new DRS transport bridge.
     pub fn new(transport: Arc<NodeTransport>, discovery: Arc<Mutex<TransportDiscovery>>) -> Self {
-        Self { transport, discovery }
+        Self {
+            transport,
+            discovery,
+        }
     }
 
     /// Resolve a route and send a payload through the best available transport.
@@ -48,11 +51,7 @@ impl DrsTransportBridge {
     /// Broadcast a payload through all healthy transports, ignoring route specifics.
     ///
     /// Use when route-specific resolution is not needed (e.g., broadcast announcements).
-    pub async fn broadcast(
-        &self,
-        payload: &[u8],
-        ctx: &SendContext,
-    ) -> usize {
+    pub async fn broadcast(&self, payload: &[u8], ctx: &SendContext) -> usize {
         self.transport.broadcast(payload, ctx).await
     }
 
@@ -101,12 +100,11 @@ mod tests {
     }
 
     fn make_bridge() -> DrsTransportBridge {
-        let transport = Arc::new(NodeTransport::new(vec![
-            Arc::new(MockSender {
-                name: "webhook".into(),
-                healthy: true,
-            }) as Arc<dyn NetworkSender>,
-        ]));
+        let transport = Arc::new(NodeTransport::new(vec![Arc::new(MockSender {
+            name: "webhook".into(),
+            healthy: true,
+        })
+            as Arc<dyn NetworkSender>]));
         let identity = GdpGatewayIdentity::new(GatewayIdentity::new(
             [0x42u8; 32],
             1,

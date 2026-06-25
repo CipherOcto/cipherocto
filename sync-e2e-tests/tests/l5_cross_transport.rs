@@ -119,13 +119,22 @@ fn cleanup_containers(names: &[&str]) {
 
 fn cleanup_networks(prefix: &str) {
     if let Ok(output) = Command::new("docker")
-        .args(["network", "ls", "--filter", &format!("name={prefix}"), "--format", "{{.Name}}"])
+        .args([
+            "network",
+            "ls",
+            "--filter",
+            &format!("name={prefix}"),
+            "--format",
+            "{{.Name}}",
+        ])
         .output()
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             if !line.is_empty() {
-                let _ = Command::new("docker").args(["network", "rm", line]).output();
+                let _ = Command::new("docker")
+                    .args(["network", "rm", line])
+                    .output();
             }
         }
     }

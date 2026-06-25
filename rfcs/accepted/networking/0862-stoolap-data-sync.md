@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): added the `DatabaseSyncAdapter` trait boundary and the `octo-sync` leaf-workspace architecture per the Phase 1 + Phase 2 dep-avoidance research. Updated v1.2.0 (2026-06-25): clarified bootstrap integration path via RFC-0863 `BootstrapOrchestrator` (Phase 4 mission 0851p-a-base).
+Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): added the `DatabaseSyncAdapter` trait boundary and the `octo-sync` leaf-workspace architecture per the Phase 1 + Phase 2 dep-avoidance research. Updated v1.2.0 (2026-06-25): clarified bootstrap integration path via RFC-0863 `BootstrapOrchestrator` (RFC-0863 Phase 4 mission 0851p-a-base).
 
 ## Authors
 

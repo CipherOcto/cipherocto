@@ -244,15 +244,43 @@ pub struct BootstrapOrchestrator {
     config: BootstrapConfig,
 }
 
+/// Configuration for the bootstrap protocol.
+pub struct BootstrapConfig {
+    /// Max time to wait for bootstrap responses (default: 60s).
+    pub bootstrap_timeout: Duration,
+    /// Minimum responses for high-confidence bootstrap (default: 3).
+    pub min_responses: usize,
+    /// Peer-list intersection threshold (default: 0.80).
+    pub intersection_threshold: f64,
+    /// Max retries before fallback (default: 5).
+    pub max_retries: u32,
+    /// Initial retry backoff (default: 1s).
+    pub initial_backoff: Duration,
+    /// The seed list authority type (Foundation or Dao).
+    /// Operator configuration; not embedded in the envelope.
+    pub authority: SeedListAuthority,
+}
+
+/// Bootstrap protocol error.
+pub enum BootstrapError {
+    SeedListStale,
+    AuthorityError(SeedAuthorityError),
+    NoResponses,
+    IntersectionBelowThreshold,
+    AllTransportsFailed,
+    SignatureInvalid,
+}
+
 impl BootstrapOrchestrator {
     /// Run the bootstrap protocol to completion.
     ///
     /// Returns the number of peers acquired, or an error if all modes fail.
-    /// On success, `discovery` is populated with bootstrapped peer entries.
+    /// On success, `discovery` cache and `discovery_state` lifecycle are updated.
     pub async fn run(
         &mut self,
         transport: &NodeTransport,
         discovery: &TransportDiscovery,
+        discovery_state: &mut DiscoveryState,
     ) -> Result<u32, BootstrapError>;
 }
 ```
@@ -278,6 +306,9 @@ impl BootstrapOrchestrator {
 | Fan-out to N transports | <2x single | Concurrent broadcast should not exceed 2x single-transport latency |
 | Plugin load time        | <100ms     | `.so` loading via `libloading`                                     |
 | Failover time           | <100ms     | Skip unhealthy, try next                                           |
+| Mode A first peer (warm cache) | <2s  | BootstrapOrchestrator with cached seed list (RFC-0851p-a §Performance) |
+| Mode A first peer (cold cache) | <5s  | BootstrapOrchestrator from disk seed list (RFC-0851p-a §Performance) |
+| Seed list verify (5 entries) | <10ms | Ed25519 signature verification (RFC-0851p-a §Performance)         |
 
 ## Implicit Assumptions Audit
 
@@ -288,6 +319,9 @@ impl BootstrapOrchestrator {
 | AdapterRegistry returns valid adapters                  | §Specification §Dynamic Loading Flow  | Bridge wraps null/broken adapters | `AdapterRegistry::get()` returns `None` for unhealthy adapters        |
 | BroadcastDomainId is stable across restarts             | §Specification §PlatformAdapterBridge | Envelopes routed to wrong domains | BLAKE3-hashed, deterministic per RFC-0850 §5                          |
 | Leaf workspace isolation is maintained                  | §Rationale                            | Circular dependencies break build | `octo-transport` depends on both; neither depends on it               |
+| Seed list file is available at node startup             | §Dynamic Loading Flow step 3a         | Node cannot bootstrap; enters Failed state | Embedded genesis list as fallback; operator guide for config path |
+| Node has Ed25519 signing key for BOOTSTRAP_REQ          | §Dynamic Loading Flow step 3d         | Cannot sign requests; rejected by bootstrap nodes | Key derived from node identity (RFC-0851p-a §2)              |
+| Epoch is synchronized within ±1 of bootstrap nodes      | §Dynamic Loading Flow step 3c/3e      | Stale-response rejection; authority gate fails | RFC-0850 §5 logical timestamp; ±1 tolerance per RFC-0851p-a IA-NB-6 |
 
 ### Categories to Audit
 

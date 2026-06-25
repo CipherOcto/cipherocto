@@ -74,22 +74,24 @@ pub enum BootstrapClientLifecycle {
 1. load_seed_list(config_path) → SeedListEnvelope
 2. blacklist.filter(seed_list) → filtered SeedListEnvelope
 3. SeedHealth::check(&seed_list, current_epoch) → reject if FullyStale
-4. verify_authority(seed_list.authority, current_epoch) → reject if wrong phase
+4. verify_authority(configured_authority, current_epoch) → reject if wrong phase
+   (SeedListAuthority is operator config, not embedded in the envelope)
 5. For each seed in seed_list:
      send BOOTSTRAP_REQ via adapter (QUIC/TCP/Webhook)
 6. Collect BOOTSTRAP_RESP (min_responses within bootstrap_timeout)
 7. Validate signatures (Ed25519)
 8. Compute peer-list intersection (≥80% agreement)
 9. Merge into TransportDiscovery cache
-10. Hand off to DiscoveryLifecycle::Bootstrap → Expansion
+10. Transition DiscoveryState to Expansion
 ```
 
 ### 5. Integration points
 
-- **`octo-transport/src/discovery.rs`** — `TransportDiscovery::cache_insert()` is the handoff target
+- **`octo-transport/src/discovery.rs`** — `TransportDiscovery::cache_insert()` is the peer cache handoff target
 - **`octo-network/src/mon/bootstrap.rs`** — Consumes `SeedListEnvelope`, `SeedHealth`, `SeedListAuthority`, `BootstrapMode`, `SlashedSeedBlacklist`
 - **`octo-network/src/mon/slash.rs`** — Consumes `BootstrapMisbehavior` sub-codes for blacklist filtering
-- **`octo-network/src/gdp/discovery.rs`** — Transitions `DiscoveryState` from Bootstrap to Expansion
+- **`octo-network/src/gdp/discovery.rs`** — `DiscoveryState` lifecycle transition (Bootstrap → Expansion)
+- **Config** — `SeedListAuthority` (Foundation/Dao) is operator configuration, not embedded in the envelope. The authority's public key is in `SeedListEnvelope.authority_pubkey`.
 
 ### 6. Envelope types (from RFC-0851p-a §2)
 
@@ -124,6 +126,9 @@ pub struct BootstrapResponse {
 - [ ] `BootstrapConfig` with all RFC-0851p-a constants
 - [ ] `BootstrapRequest` / `BootstrapResponse` wire types with canonical serialization (RFC-0126)
 - [ ] `BootstrapClientLifecycle` state machine with all transitions from RFC-0851p-a §3
+  (Note: `Failed = 0x08` extends the RFC's 7-state machine with a terminal error state
+  for the implementation-only case where all modes exhaust retries. Not a protocol state;
+  does not appear on the wire.)
 - [ ] Seed list loading + `SeedHealth::check()` integration
 - [ ] `SeedListAuthority::verify_authority()` integration
 - [ ] `SlashedSeedBlacklist::filter()` integration

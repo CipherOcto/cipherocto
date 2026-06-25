@@ -321,6 +321,9 @@ impl PlatformAdapter for NativeP2PAdapter {
             supports_raw_binary: true, // gossipsub carries Vec<u8> natively
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
+
+        ..Default::default()
+
         }
     }
 

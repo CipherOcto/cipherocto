@@ -1265,6 +1265,7 @@ impl PlatformAdapter for IrcAdapter {
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
+            ..Default::default()
         }
     }
 
@@ -1476,6 +1477,9 @@ impl CoordinatorAdmin for IrcAdapter {
 
             // ── E. Handoff ────────────────────────────────────
             can_transfer_ownership: false, // no transfer primitive
+
+        ..Default::default()
+
         }
     }
 

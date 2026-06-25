@@ -408,6 +408,9 @@ impl PlatformAdapter for DiscordAdapter {
                     "application/octet-stream".into(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

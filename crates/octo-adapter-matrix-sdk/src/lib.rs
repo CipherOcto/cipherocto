@@ -1066,6 +1066,9 @@ impl PlatformAdapter for MatrixAdapter {
                     "application/octet-stream".into(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

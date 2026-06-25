@@ -578,6 +578,7 @@ fn test_payload_too_large_error_display() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
     let err = select_mode(5000, &caps).unwrap_err();
     let msg = format!("{}", err);
@@ -595,6 +596,7 @@ fn test_payload_too_large_is_error() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
     let err = select_mode(5000, &caps).unwrap_err();
     let _: &dyn std::error::Error = &err;

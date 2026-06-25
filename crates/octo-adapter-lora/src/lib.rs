@@ -310,6 +310,9 @@ impl PlatformAdapter for LoraAdapter {
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
+
+        ..Default::default()
+
         }
     }
 

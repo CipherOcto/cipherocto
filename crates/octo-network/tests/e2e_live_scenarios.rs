@@ -949,6 +949,7 @@ async fn scenario_transport_mode_and_wire_round_trip() {
         supports_raw_binary: true,
         rate_limit_per_second: 1000,
         media_capabilities: None,
+        ..Default::default()
     };
     let mode = select_mode(1000, &cap).unwrap();
     assert_eq!(mode, TransportMode::Raw);
@@ -957,6 +958,7 @@ async fn scenario_transport_mode_and_wire_round_trip() {
     let cap_text = octo_network::dot::adapters::CapabilityReport {
         supports_raw_binary: false,
         ..cap
+        ..Default::default()
     };
     let mode = select_mode(1000, &cap_text).unwrap();
     assert_eq!(mode, TransportMode::Text);
@@ -967,6 +969,7 @@ async fn scenario_transport_mode_and_wire_round_trip() {
         supports_fragmentation: true,
         media_capabilities: None,
         ..cap
+        ..Default::default()
     };
     let mode = select_mode(10_000, &cap_frag).unwrap();
     assert_eq!(mode, TransportMode::Fragment);

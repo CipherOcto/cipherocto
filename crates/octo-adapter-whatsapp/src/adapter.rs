@@ -2053,6 +2053,7 @@ impl PlatformAdapter for WhatsAppWebAdapter {
                 max_upload_bytes: Self::MAX_UPLOAD_BYTES,
                 supported_mime_types: vec!["application/octet-stream".to_string()],
             }),
+            ..Default::default()
         }
     }
 

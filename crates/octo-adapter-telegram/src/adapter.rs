@@ -494,6 +494,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                     "audio/*".into(),
                 ],
             }),
+            ..Default::default()
         }
     }
 

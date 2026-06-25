@@ -251,6 +251,9 @@ impl PlatformAdapter for LarkAdapter {
                     "application/pdf".into(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

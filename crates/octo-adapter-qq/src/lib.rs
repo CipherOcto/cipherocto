@@ -238,6 +238,9 @@ impl PlatformAdapter for QQAdapter {
                     "image/gif".into(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

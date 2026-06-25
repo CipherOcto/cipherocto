@@ -232,6 +232,9 @@ impl PlatformAdapter for TwitterAdapter {
                     "image/webp".to_string(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

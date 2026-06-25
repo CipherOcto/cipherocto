@@ -319,6 +319,7 @@ fn test_transport_mode_raw_binary() {
         supports_raw_binary: true,
         rate_limit_per_second: 1000,
         media_capabilities: None,
+        ..Default::default()
     };
 
     assert_eq!(select_mode(100, &caps).unwrap(), TransportMode::Raw);
@@ -334,6 +335,7 @@ fn test_transport_mode_text_small() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
 
     assert_eq!(select_mode(100, &caps).unwrap(), TransportMode::Text);
@@ -351,6 +353,7 @@ fn test_transport_mode_native_with_media() {
             max_upload_bytes: 50_000_000,
             supported_mime_types: vec![],
         }),
+        ..Default::default()
     };
 
     assert_eq!(select_mode(5000, &caps).unwrap(), TransportMode::Native);
@@ -365,6 +368,7 @@ fn test_transport_mode_fragment() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
 
     assert_eq!(select_mode(5000, &caps).unwrap(), TransportMode::Fragment);
@@ -379,6 +383,7 @@ fn test_transport_mode_too_large_no_fragment() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
 
     let result = select_mode(5000, &caps);
@@ -394,6 +399,7 @@ fn test_transport_mode_custom_max_text() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
 
     // With custom max_text_bytes = 100, a 50-byte payload fits in text

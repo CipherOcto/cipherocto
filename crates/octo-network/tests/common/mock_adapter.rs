@@ -280,8 +280,9 @@ impl PlatformAdapter for MockPlatformAdapter {
             supports_raw_binary: true,
             rate_limit_per_second: 10000,
             media_capabilities: None,
+        ..Default::default()
+
         }
-    }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
         BroadcastDomainId::new(self.platform, platform_id)
@@ -338,8 +339,9 @@ impl CoordinatorAdmin for MockPlatformAdapter {
             can_create: scripted.create_group.is_some(),
             can_add_member: scripted.add_member.is_some(),
             ..AdminCapabilityReport::default()
+        ..Default::default()
+
         }
-    }
 
     async fn create_group(
         &self,

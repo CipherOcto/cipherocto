@@ -274,6 +274,9 @@ impl PlatformAdapter for BlueskyAdapter {
                     "image/webp".to_string(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

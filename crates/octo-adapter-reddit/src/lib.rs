@@ -288,6 +288,9 @@ impl PlatformAdapter for RedditAdapter {
                     "image/gif".to_string(),
                 ],
             }),
+
+        ..Default::default()
+
         }
     }
 

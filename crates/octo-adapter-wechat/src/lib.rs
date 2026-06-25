@@ -240,6 +240,9 @@ impl PlatformAdapter for WeChatAdapter {
                 max_upload_bytes: 10_485_760,
                 supported_mime_types: vec!["image/jpeg".into(), "image/png".into()],
             }),
+
+        ..Default::default()
+
         }
     }
 

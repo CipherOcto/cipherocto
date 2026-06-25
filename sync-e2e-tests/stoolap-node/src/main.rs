@@ -324,7 +324,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
 
-            tracing::info!("transport inbound receive loop + tick started");
+            // --- PoRelay trust score feed: registry → sync peer scoring ---
+            use octo_network::porelay::registry::TrustRegistry;
+            use octo_network::porelay::score::RelayScore;
+            let trust_registry = Arc::new(Mutex::new(TrustRegistry::new(100)));
+            {
+                // Bootstrap: register any currently-known peers with default scores
+                let mut reg = trust_registry.lock().unwrap();
+                for (peer_id, _state) in session.peer_states() {
+                    reg.update_score(RelayScore {
+                        gateway_id: peer_id.0,
+                        epoch: 1,
+                        forwarding_score: 500,
+                        availability_score: 500,
+                        bandwidth_score: 500,
+                        uptime_score: 500,
+                        diversity_bonus: 0,
+                        stake_multiplier: 1000,
+                        composite: 0,
+                    });
+                    reg.scores.get_mut(&peer_id.0).unwrap().compute_composite();
+                }
+            }
+            let session_porelay = session.clone();
+            let registry_porelay = trust_registry.clone();
+            let _porelay_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let reg = registry_porelay.lock().unwrap();
+                    let updated = reg.feed_sync_session(&session_porelay);
+                    if updated > 0 {
+                        tracing::debug!(updated, "PoRelay trust scores synced to session");
+                    }
+                }
+            });
+
+            tracing::info!("transport inbound receive loop + tick + porelay feed started");
             Some(transport)
         } else {
             None

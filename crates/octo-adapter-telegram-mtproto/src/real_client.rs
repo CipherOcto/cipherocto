@@ -1073,38 +1073,37 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 Ok(())
             }
             tl::enums::auth::LoginToken::MigrateTo(migrate) => {
-                // DC migration: the account lives on a
-                // different DC. Re-invoke exportLoginToken on
-                // the target DC via invoke_in_dc.
+                // DC migration (TDesktop pattern: importTo).
+                // Import the MigrateTo token on the target DC.
+                // If the user already scanned, import returns
+                // Success. If not, it returns a Token for QR
+                // display. The token is valid on the target DC.
                 let target_dc = migrate.dc_id;
                 tracing::info!(
                     target_dc,
-                    "exportLoginToken: MigrateTo DC {}; reconnecting",
+                    "exportLoginToken: MigrateTo DC {}; importing token",
                     target_dc
                 );
-                // Cache the target DC for subsequent poll/import.
                 *self.qr_dc_id.lock() = Some(target_dc);
-                let request_on_target = tl::functions::auth::ExportLoginToken {
-                    api_id,
-                    api_hash: api_hash.to_string(),
-                    except_ids: Vec::new(),
+                // Stash credentials for poll/import.
+                *self.qr_api_id.lock() = Some(api_id);
+                *self.qr_api_hash.lock() = Some(zeroize::Zeroizing::new(api_hash.to_string()));
+                let import_req = tl::functions::auth::ImportLoginToken {
+                    token: migrate.token,
                 };
-                let response_on_target: tl::enums::auth::LoginToken = self
+                let import_resp: tl::enums::auth::LoginToken = self
                     .client
-                    .invoke_in_dc(target_dc, &request_on_target)
+                    .invoke_in_dc(target_dc, &import_req)
                     .await
                     .map_err(|e| {
                         MtprotoTelegramError::Auth(format!(
-                            "auth.exportLoginToken on DC {}: {}",
+                            "auth.importLoginToken on DC {}: {}",
                             target_dc,
                             crate::error::redact_credentials(&e.to_string())
                         ))
                     })?;
-                match response_on_target {
+                match import_resp {
                     tl::enums::auth::LoginToken::Token(t) => {
-                        *self.qr_api_id.lock() = Some(api_id);
-                        *self.qr_api_hash.lock() =
-                            Some(zeroize::Zeroizing::new(api_hash.to_string()));
                         *self.qr_token.lock() = Some(t.token.clone());
                         let url = build_qr_url(&t.token);
                         Err(MtprotoTelegramError::QrLoginHandle {
@@ -1126,12 +1125,57 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                             .set_identity(info.user_id, info.username.clone());
                         Ok(())
                     }
-                    tl::enums::auth::LoginToken::MigrateTo(_) => {
-                        *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
-                        Err(MtprotoTelegramError::Internal(format!(
-                            "auth.exportLoginToken on DC {} also returned MigrateTo",
-                            target_dc
-                        )))
+                    tl::enums::auth::LoginToken::MigrateTo(migrate2) => {
+                        // Double migration: follow the chain.
+                        tracing::info!(
+                            target_dc2 = migrate2.dc_id,
+                            "importLoginToken: second MigrateTo"
+                        );
+                        *self.qr_dc_id.lock() = Some(migrate2.dc_id);
+                        let import_req2 = tl::functions::auth::ImportLoginToken {
+                            token: migrate2.token,
+                        };
+                        let import_resp2: tl::enums::auth::LoginToken = self
+                            .client
+                            .invoke_in_dc(migrate2.dc_id, &import_req2)
+                            .await
+                            .map_err(|e| {
+                                MtprotoTelegramError::Auth(format!(
+                                    "auth.importLoginToken on DC {}: {}",
+                                    migrate2.dc_id,
+                                    crate::error::redact_credentials(&e.to_string())
+                                ))
+                            })?;
+                        match import_resp2 {
+                            tl::enums::auth::LoginToken::Token(t) => {
+                                *self.qr_token.lock() = Some(t.token.clone());
+                                let url = build_qr_url(&t.token);
+                                Err(MtprotoTelegramError::QrLoginHandle {
+                                    token: t.token,
+                                    url,
+                                })
+                            }
+                            tl::enums::auth::LoginToken::Success(s) => {
+                                let new_state = {
+                                    let current = *self.user_auth_state.lock();
+                                    next_user_auth_state_server(
+                                        UserAuthServerEvent::SignInSucceeded,
+                                        current,
+                                    )?
+                                };
+                                *self.user_auth_state.lock() = new_state;
+                                let info = extract_self_user_info(s.authorization);
+                                self.self_handle
+                                    .set_identity(info.user_id, info.username.clone());
+                                Ok(())
+                            }
+                            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                                *self.user_auth_state.lock() = UserAuthLifecycle::NoCredentials;
+                                Err(MtprotoTelegramError::Internal(
+                                    "triple MigrateTo; giving up".into(),
+                                ))
+                            }
+                        }
                     }
                 }
             }
@@ -1205,67 +1249,26 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 Ok(info)
             }
             tl::enums::auth::LoginToken::MigrateTo(migrate) => {
-                // MigrateTo during poll: the account lives on a
-                // different DC. The user may have already
-                // scanned the token on the original DC — try
-                // importing it on the target DC first. If that
-                // fails, return the new DC's token to the
-                // caller (requires a second scan).
+                // MigrateTo during poll (TDesktop pattern: importTo).
+                // Import the MigrateTo token on the target DC.
                 let target_dc = migrate.dc_id;
                 tracing::info!(target_dc, "poll_qr_login: MigrateTo DC {}", target_dc);
                 *self.qr_dc_id.lock() = Some(target_dc);
-
-                // Try importing the original token on the
-                // target DC. If the user already scanned the
-                // QR on the original DC, the auth may have
-                // propagated to the target DC.
-                let orig_token = self.qr_token.lock().clone();
-                if let Some(orig_token) = orig_token {
-                    let import_req = tl::functions::auth::ImportLoginToken {
-                        token: orig_token.clone(),
-                    };
-                    if let Ok(import_resp) = self.client.invoke_in_dc(target_dc, &import_req).await
-                    {
-                        if let tl::enums::auth::LoginToken::Success(login_token_success) =
-                            import_resp
-                        {
-                            tracing::info!("import on DC {} succeeded (single scan)", target_dc);
-                            let new_state = {
-                                let current = *self.user_auth_state.lock();
-                                next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
-                            };
-                            *self.user_auth_state.lock() = new_state;
-                            let new_state = {
-                                let current = *self.user_auth_state.lock();
-                                next_user_auth_state_server(
-                                    UserAuthServerEvent::SignInSucceeded,
-                                    current,
-                                )?
-                            };
-                            *self.user_auth_state.lock() = new_state;
-                            let info = extract_self_user_info(login_token_success.authorization);
-                            self.self_handle
-                                .set_identity(info.user_id, info.username.clone());
-                            return Ok(info);
-                        }
-                    }
-                }
-
-                // Import didn't work (user hasn't scanned yet
-                // or auth hasn't propagated). Return the new
-                // DC's token for the caller to display.
-                let r: tl::enums::auth::LoginToken = self
+                let import_req = tl::functions::auth::ImportLoginToken {
+                    token: migrate.token,
+                };
+                let import_resp: tl::enums::auth::LoginToken = self
                     .client
-                    .invoke_in_dc(target_dc, &request)
+                    .invoke_in_dc(target_dc, &import_req)
                     .await
                     .map_err(|e| {
                         MtprotoTelegramError::Auth(format!(
-                            "auth.exportLoginToken on DC {}: {}",
+                            "auth.importLoginToken on DC {}: {}",
                             target_dc,
                             crate::error::redact_credentials(&e.to_string())
                         ))
                     })?;
-                match r {
+                match import_resp {
                     tl::enums::auth::LoginToken::Token(t) => {
                         *self.qr_token.lock() = Some(t.token.clone());
                         let url = build_qr_url(&t.token);
@@ -1293,11 +1296,58 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                             .set_identity(info.user_id, info.username.clone());
                         Ok(info)
                     }
-                    tl::enums::auth::LoginToken::MigrateTo(_) => {
-                        Err(MtprotoTelegramError::Internal(format!(
-                            "poll on DC {} also returned MigrateTo",
-                            target_dc
-                        )))
+                    tl::enums::auth::LoginToken::MigrateTo(migrate2) => {
+                        // Double migration: follow chain.
+                        tracing::info!(target_dc2 = migrate2.dc_id, "poll: second MigrateTo");
+                        *self.qr_dc_id.lock() = Some(migrate2.dc_id);
+                        let import_req2 = tl::functions::auth::ImportLoginToken {
+                            token: migrate2.token,
+                        };
+                        let import_resp2: tl::enums::auth::LoginToken = self
+                            .client
+                            .invoke_in_dc(migrate2.dc_id, &import_req2)
+                            .await
+                            .map_err(|e| {
+                                MtprotoTelegramError::Auth(format!(
+                                    "auth.importLoginToken on DC {}: {}",
+                                    migrate2.dc_id,
+                                    crate::error::redact_credentials(&e.to_string())
+                                ))
+                            })?;
+                        match import_resp2 {
+                            tl::enums::auth::LoginToken::Token(t) => {
+                                *self.qr_token.lock() = Some(t.token.clone());
+                                let url = build_qr_url(&t.token);
+                                Err(MtprotoTelegramError::QrLoginHandle {
+                                    token: t.token,
+                                    url,
+                                })
+                            }
+                            tl::enums::auth::LoginToken::Success(s) => {
+                                let new_state = {
+                                    let current = *self.user_auth_state.lock();
+                                    next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
+                                };
+                                *self.user_auth_state.lock() = new_state;
+                                let new_state = {
+                                    let current = *self.user_auth_state.lock();
+                                    next_user_auth_state_server(
+                                        UserAuthServerEvent::SignInSucceeded,
+                                        current,
+                                    )?
+                                };
+                                *self.user_auth_state.lock() = new_state;
+                                let info = extract_self_user_info(s.authorization);
+                                self.self_handle
+                                    .set_identity(info.user_id, info.username.clone());
+                                Ok(info)
+                            }
+                            tl::enums::auth::LoginToken::MigrateTo(_) => {
+                                Err(MtprotoTelegramError::Internal(
+                                    "triple MigrateTo in poll; giving up".into(),
+                                ))
+                            }
+                        }
                     }
                 }
             }

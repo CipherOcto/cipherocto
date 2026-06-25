@@ -289,6 +289,12 @@ pub struct RealTelegramMtprotoClient {
     /// (the user scanned) and by `import_login_token`
     /// to finalize the import.
     qr_token: parking_lot::Mutex<Option<Vec<u8>>>,
+    /// Target DC for QR login. Set when the first
+    /// `exportLoginToken` returns `MigrateTo`. Subsequent
+    /// poll/import calls use `invoke_in_dc` on this DC
+    /// instead of the home DC, avoiding repeated MigrateTo
+    /// cycles and token rotation.
+    qr_dc_id: parking_lot::Mutex<Option<i32>>,
     /// Update channel from SenderPool. The SenderPool's
     /// `updates` receiver is captured at connect time and
     /// drained by `receive_updates()`. Wrapped in an async
@@ -349,6 +355,7 @@ impl RealTelegramMtprotoClient {
             qr_api_id: parking_lot::Mutex::new(None),
             qr_api_hash: parking_lot::Mutex::new(None),
             qr_token: parking_lot::Mutex::new(None),
+            qr_dc_id: parking_lot::Mutex::new(None),
             updates_rx: tokio::sync::Mutex::new(Some(update_stream)),
         }))
     }
@@ -1075,6 +1082,8 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     "exportLoginToken: MigrateTo DC {}; reconnecting",
                     target_dc
                 );
+                // Cache the target DC for subsequent poll/import.
+                *self.qr_dc_id.lock() = Some(target_dc);
                 let request_on_target = tl::functions::auth::ExportLoginToken {
                     api_id,
                     api_hash: api_hash.to_string(),
@@ -1130,9 +1139,6 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
     }
 
     async fn poll_qr_login(&self) -> Result<SelfUserInfo, MtprotoTelegramError> {
-        // 1. Re-invoke `auth.exportLoginToken` with the
-        //    same api_id / api_hash as the initial
-        //    `qr_login` call.
         let (api_id, api_hash) = {
             let id = self.qr_api_id.lock();
             let hash = self.qr_api_hash.lock();
@@ -1147,30 +1153,34 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         };
         let request = tl::functions::auth::ExportLoginToken {
             api_id,
-            // The TL layer takes a `String`; we have a
-            // `Zeroizing<String>`. Clone-into-`String` keeps
-            // the in-cache copy zeroized while handing a
-            // transient plaintext copy to the TL stack
-            // (which the TL layer copies internally and
-            // drops; the transient String on this stack
-            // is a one-shot use so it doesn't need to be
-            // zeroized explicitly).
             api_hash: api_hash.as_str().to_string(),
             except_ids: Vec::new(),
         };
-        let response: tl::enums::auth::LoginToken =
+        // If the initial qr_login migrated to a different DC,
+        // invoke directly on that DC to avoid repeated MigrateTo
+        // cycles and token rotation.
+        let cached_dc = *self.qr_dc_id.lock();
+        let response: tl::enums::auth::LoginToken = if let Some(dc_id) = cached_dc {
+            self.client
+                .invoke_in_dc(dc_id, &request)
+                .await
+                .map_err(|e| {
+                    MtprotoTelegramError::Auth(format!(
+                        "auth.exportLoginToken on DC {}: {}",
+                        dc_id,
+                        crate::error::redact_credentials(&e.to_string())
+                    ))
+                })?
+        } else {
             self.client.invoke(&request).await.map_err(|e| {
                 MtprotoTelegramError::Auth(format!(
                     "auth.exportLoginToken: {}",
                     crate::error::redact_credentials(&e.to_string())
                 ))
-            })?;
+            })?
+        };
         match response {
             tl::enums::auth::LoginToken::Token(t) => {
-                // No scan yet (token unchanged), or scan
-                // happened but import not ready (new
-                // token). Either way, return the handle
-                // for the caller to re-display.
                 *self.qr_token.lock() = Some(t.token.clone());
                 let url = build_qr_url(&t.token);
                 Err(MtprotoTelegramError::QrLoginHandle {
@@ -1179,9 +1189,6 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 })
             }
             tl::enums::auth::LoginToken::Success(login_token_success) => {
-                // Final import succeeded. Drive the state
-                // machine: QrLoginPending → QrLoginConfirmed
-                // (client) then → SignedIn (server).
                 let new_state = {
                     let current = *self.user_auth_state.lock();
                     next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
@@ -1198,20 +1205,18 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 Ok(info)
             }
             tl::enums::auth::LoginToken::MigrateTo(migrate) => {
+                // First time seeing MigrateTo during poll:
+                // cache the DC and retry immediately.
                 let target_dc = migrate.dc_id;
                 tracing::info!(
                     target_dc,
-                    "poll_qr_login: MigrateTo DC {}; reconnecting",
+                    "poll_qr_login: MigrateTo DC {}; caching and retrying",
                     target_dc
                 );
-                let request_on_target = tl::functions::auth::ExportLoginToken {
-                    api_id,
-                    api_hash: api_hash.as_str().to_string(),
-                    except_ids: Vec::new(),
-                };
+                *self.qr_dc_id.lock() = Some(target_dc);
                 let response_on_target: tl::enums::auth::LoginToken = self
                     .client
-                    .invoke_in_dc(target_dc, &request_on_target)
+                    .invoke_in_dc(target_dc, &request)
                     .await
                     .map_err(|e| {
                         MtprotoTelegramError::Auth(format!(
@@ -1280,13 +1285,26 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         let request = tl::functions::auth::ImportLoginToken {
             token: token.to_vec(),
         };
-        let response: tl::enums::auth::LoginToken =
+        let cached_dc = *self.qr_dc_id.lock();
+        let response: tl::enums::auth::LoginToken = if let Some(dc_id) = cached_dc {
+            self.client
+                .invoke_in_dc(dc_id, &request)
+                .await
+                .map_err(|e| {
+                    MtprotoTelegramError::Auth(format!(
+                        "auth.importLoginToken on DC {}: {}",
+                        dc_id,
+                        crate::error::redact_credentials(&e.to_string())
+                    ))
+                })?
+        } else {
             self.client.invoke(&request).await.map_err(|e| {
                 MtprotoTelegramError::Auth(format!(
                     "auth.importLoginToken: {}",
                     crate::error::redact_credentials(&e.to_string())
                 ))
-            })?;
+            })?
+        };
         match response {
             tl::enums::auth::LoginToken::Success(login_token_success) => {
                 let new_state = {

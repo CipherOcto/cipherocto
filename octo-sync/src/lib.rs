@@ -96,6 +96,7 @@ pub mod types;
 pub mod test_util;
 
 pub use adapter::DatabaseSyncAdapter;
+#[allow(deprecated)]
 pub use carrier::MultiCarrierSync;
 pub use config::{SyncConfig, SyncRole};
 pub use dgp_bridge::{DgpSyncBridge, GossipSnapshotFragment};

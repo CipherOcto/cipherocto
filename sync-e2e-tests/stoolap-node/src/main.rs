@@ -9,7 +9,7 @@ use octo_network::gdp::identity::GdpGatewayIdentity;
 use octo_network::gdp::overlay_endpoint::OverlayEndpoint;
 use octo_network::gdp::types::GatewayCapability;
 use octo_network::sync::{
-    GossipDispatcher, SyncDgpHandler, SyncNetworkBridge, TransportBroadcaster,
+    GossipDispatcher, SyncDgpHandler, SyncNetworkBridge,
     SYNC_SNAPSHOT_OBJECT_TYPE,
 };
 use octo_sync::adapter::DatabaseSyncAdapter;
@@ -193,10 +193,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
 
             let transport = Arc::new(octo_transport::NodeTransport::new(senders));
-            let broadcaster = Arc::new(
-                octo_transport::NodeTransportBroadcaster::new(transport.clone())
-                    .with_identity(node_id, node_id),
-            );
 
             // Build local GDP advertisement from transport capabilities
             let now = SystemTime::now()
@@ -216,26 +212,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // --- Outbound: subscribe transport peer, spawn drain task ---
             session.subscribe_peer(transport_peer).unwrap();
             let session_clone = session.clone();
-            let broadcaster_clone = broadcaster;
+            let transport_clone = transport.clone();
             let mission_id_clone = mission_id;
             let _drain_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+                let send_ctx = octo_transport::sender::SendContext {
+                    mission_id: mission_id_clone,
+                    priority: 0,
+                    source_peer: node_id,
+                    origin_gateway: node_id,
+                };
                 loop {
                     interval.tick().await;
                     let chunks = session_clone.streamer().drain_outbox(&transport_peer);
                     for chunk in &chunks {
                         let encoded = chunk.encode();
-                        match broadcaster_clone.broadcast(&encoded, &mission_id_clone).await {
+                        match transport_clone.send_best(&encoded, &send_ctx).await {
                             Ok(()) => {
                                 tracing::debug!(
                                     from = chunk.from_lsn,
                                     to = chunk.to_lsn,
                                     entries = chunk.entries.len(),
-                                    "transport broadcast WAL chunk"
+                                    "transport send_best WAL chunk"
                                 );
                             }
                             Err(e) => {
-                                tracing::warn!(error = %e, "transport broadcast failed");
+                                tracing::warn!(error = %e, "transport send_best failed");
                             }
                         }
                     }

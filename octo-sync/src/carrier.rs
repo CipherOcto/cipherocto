@@ -133,6 +133,14 @@ impl CarrierHealth {
 ///
 /// Optionally holds a `MissionCrypto` for per-mission key isolation.
 /// When present, PRIVATE mission payloads are encrypted before sending.
+///
+/// **Deprecated:** Use `octo_transport::NodeTransport` instead for
+/// general-purpose transport. `NodeTransport` provides fan-out, failover,
+/// and health tracking via the `NetworkSender` trait.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use octo_transport::NodeTransport instead"
+)]
 pub struct MultiCarrierSync {
     /// The carriers (primary + secondaries).
     carriers: Vec<Arc<dyn Carrier>>,
@@ -142,6 +150,7 @@ pub struct MultiCarrierSync {
     crypto: Option<Arc<crate::mission_crypto::MissionCrypto>>,
 }
 
+#[allow(deprecated)]
 impl MultiCarrierSync {
     /// Create a new `MultiCarrierSync` with the given carriers.
     pub fn new(carriers: Vec<Arc<dyn Carrier>>) -> Self {
@@ -277,6 +286,7 @@ fn now_unix_secs() -> u64 {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

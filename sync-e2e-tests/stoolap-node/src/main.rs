@@ -253,7 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let adapters_for_receive: Vec<Arc<dyn PlatformAdapter>> =
                 adapter_refs.iter().map(|(a, _)| a.clone()).collect();
             let dispatcher_clone = dispatcher;
-            let _receive_handle = tokio::spawn(async move {
+            let receive_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
                 loop {
                     interval.tick().await;
@@ -308,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
-            bg_handles.push(_receive_handle);
+            bg_handles.push(receive_handle);
 
             // --- Periodic tick: heartbeat timeouts, peer state transitions ---
             let session_tick = session.clone();
@@ -482,7 +482,8 @@ async fn exchange_advertisements(
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
     let peer_len = u32::from_le_bytes(len_buf) as usize;
-    if peer_len >= 34 {
+    const MAX_ADVERTISEMENT_SIZE: usize = 4096;
+    if peer_len >= 34 && peer_len <= MAX_ADVERTISEMENT_SIZE {
         let mut peer_bytes = vec![0u8; peer_len];
         stream.read_exact(&mut peer_bytes).await?;
 

@@ -120,6 +120,9 @@ impl WalTailChunk {
         off += 1;
         let count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
+        // Cap count against available bytes to prevent OOM from malicious input
+        let max_possible = (data.len().saturating_sub(off)) / 4; // min 4 bytes per entry header
+        let count = count.min(max_possible);
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             if off + 4 > data.len() {
@@ -186,6 +189,9 @@ impl SummaryResponse {
         off += 8;
         let count = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
         off += 4;
+        // Cap count against available bytes to prevent OOM from malicious input
+        let max_possible = data.len().saturating_sub(off) / 80; // 80 bytes per SyncSummary
+        let count = count.min(max_possible);
         let mut summaries = Vec::with_capacity(count);
         for _ in 0..count {
             if off + 80 > data.len() {

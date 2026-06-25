@@ -46,10 +46,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use grammers_client::client::{LoginToken, PasswordToken};
+use grammers_client::media::Downloadable;
 use grammers_client::sender::SenderPool;
 use grammers_client::SignInError;
 use grammers_tl_types as tl;
-use grammers_tl_types::Deserializable;
+use grammers_tl_types::{Deserializable, Serializable};
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
@@ -670,7 +671,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                             message_id: msg.id() as i64,
                             document_id,
                             caption,
-                            timestamp: msg.date_timestamp(),
+                            timestamp: msg.date().timestamp(),
                         },
                     ));
                 }
@@ -682,7 +683,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                             chat_id,
                             message_id: msg.id() as i64,
                             new_text: msg.text().to_string(),
-                            timestamp: msg.date_timestamp(),
+                            timestamp: msg.date().timestamp(),
                         },
                     ));
                 }
@@ -1222,9 +1223,11 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         )
         .await?;
 
+        let peer_ref = crate::peer_resolve::peer_to_ref(&chat_peer).await?;
+
         let messages = self
             .client
-            .get_messages_by_id(chat_peer, &[message_id as i32])
+            .get_messages_by_id(peer_ref, &[message_id as i32])
             .await
             .map_err(|e| MtprotoTelegramError::Rpc {
                 code: 500,

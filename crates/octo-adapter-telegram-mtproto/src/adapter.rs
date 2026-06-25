@@ -995,6 +995,16 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
                     "audio/*".into(),
                 ],
             }),
+            // DOT/2 receive: the adapter surfaces documents
+            // with caption=DOT/1 text and document_id in
+            // metadata for download_media.
+            supports_receive_fragments: true,
+            // MessageEdited updates are surfaced as
+            // RawPlatformMessage with edited=true metadata.
+            supports_edited_messages: true,
+            // Maximum fragment size = upload limit (same
+            // constraint as send_document).
+            max_fragment_size: Some(max_upload_bytes),
         }
     }
 

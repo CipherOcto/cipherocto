@@ -198,7 +198,7 @@ pub(super) async fn resolve_user(
 /// `Peer::to_ref().await` to obtain a `PeerRef` with the
 /// real `access_hash`. This is the canonical way to build
 /// TL inputs that need an access_hash.
-async fn peer_to_ref(peer: &Peer) -> Result<PeerRef, MtprotoTelegramError> {
+pub(super) async fn peer_to_ref(peer: &Peer) -> Result<PeerRef, MtprotoTelegramError> {
     peer.to_ref()
         .await
         .ok_or_else(|| MtprotoTelegramError::Rpc {

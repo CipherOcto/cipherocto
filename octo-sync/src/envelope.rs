@@ -176,7 +176,7 @@ impl SummaryResponse {
 
     /// Decode from binary wire format.
     pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
-        if data.len() < 8 {
+        if data.len() < 12 {
             return Err(SyncError::BackendNotReady(
                 "SummaryResponse too short".into(),
             ));

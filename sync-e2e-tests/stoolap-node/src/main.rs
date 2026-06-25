@@ -131,8 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mission_id,
         256,
     )));
-    // Track whether transport adapters were loaded (controls TCP handshake)
-    let mut has_transport = false;
 
     // Load platform adapters and wire transport when --adapter is provided
     let transport_peer = SyncPeerId(TRANSPORT_PEER_ID);
@@ -327,7 +325,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             tracing::info!("transport inbound receive loop + tick started");
-            has_transport = true;
             Some(transport)
         } else {
             None
@@ -347,10 +344,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tracing::info!(peer = %addr, "accepted connection");
                     let adapter = adapter_for_accept.clone();
                     let disc = discovery_for_accept.clone();
-                    let ht = has_transport;
                     tokio::spawn(async move {
                         if let Err(e) =
-                            serve_writer(stream, adapter, disc, ht).await
+                            serve_writer(stream, adapter, disc).await
                         {
                             tracing::error!(peer = %addr, error = %e, "connection error");
                         }
@@ -370,13 +366,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let slow_apply_ms = args.slow_apply_ms;
         let disc = discovery.clone();
         let sess = session.clone();
-        let ht = has_transport;
         let handle = tokio::spawn(async move {
             match TcpStream::connect(&peer).await {
                 Ok(stream) => {
                     tracing::info!(peer = %peer, "connected to peer");
                     if let Err(e) =
-                        serve_reader(stream, adapter, db_ref, status_file, slow_apply_ms, disc, sess, ht)
+                        serve_reader(stream, adapter, db_ref, status_file, slow_apply_ms, disc, sess)
                             .await
                     {
                         tracing::error!(peer = %peer, error = %e, "peer error");
@@ -403,6 +398,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Format: `[32-byte gateway_id][2-byte num_transport_types][transport_types...][2-byte num_capabilities][capabilities...]`
 /// Length-prefixed with a 4-byte LE u32. Length=0 means no transport configured.
+/// This handshake is ALWAYS exchanged (both sides), even when no transport is loaded.
 async fn exchange_advertisements(
     stream: &mut TcpStream,
     discovery: &Arc<Mutex<TransportDiscovery>>,
@@ -506,17 +502,14 @@ async fn serve_writer(
     mut stream: TcpStream,
     adapter: Arc<dyn DatabaseSyncAdapter>,
     discovery: Arc<Mutex<TransportDiscovery>>,
-    has_transport: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    // Handshake: exchange advertisements before reading request_lsn
-    if has_transport {
-        exchange_advertisements(&mut stream, &discovery, now).await?;
-    }
+    // Handshake: always exchange advertisements (mandatory, prevents protocol desync)
+    exchange_advertisements(&mut stream, &discovery, now).await?;
 
     let mut lsn_buf = [0u8; 8];
     stream.read_exact(&mut lsn_buf).await?;
@@ -574,7 +567,6 @@ async fn serve_reader(
     slow_apply_ms: u64,
     discovery: Arc<Mutex<TransportDiscovery>>,
     session: Arc<SyncSessionManager>,
-    has_transport: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut last_lsn = adapter.current_lsn()?;
 
@@ -583,10 +575,8 @@ async fn serve_reader(
         .unwrap_or_default()
         .as_secs();
 
-    // Exchange advertisements before sending request_lsn
-    if has_transport {
-        exchange_advertisements(&mut stream, &discovery, now).await?;
-    }
+    // Handshake: always exchange advertisements (mandatory, prevents protocol desync)
+    exchange_advertisements(&mut stream, &discovery, now).await?;
 
     stream.write_all(&last_lsn.to_le_bytes()).await?;
     stream.flush().await?;

@@ -1205,59 +1205,63 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 Ok(info)
             }
             tl::enums::auth::LoginToken::MigrateTo(migrate) => {
-                // First time seeing MigrateTo during poll:
-                // cache the DC and retry immediately.
+                // MigrateTo during poll: the account lives on a
+                // different DC. Cache it and poll silently — do
+                // NOT return a new token to the caller (that
+                // would cause a QR re-display and force a second
+                // scan). Loop internally until Success.
                 let target_dc = migrate.dc_id;
                 tracing::info!(
                     target_dc,
-                    "poll_qr_login: MigrateTo DC {}; caching and retrying",
+                    "poll_qr_login: MigrateTo DC {}; polling silently",
                     target_dc
                 );
                 *self.qr_dc_id.lock() = Some(target_dc);
-                let response_on_target: tl::enums::auth::LoginToken = self
-                    .client
-                    .invoke_in_dc(target_dc, &request)
-                    .await
-                    .map_err(|e| {
-                        MtprotoTelegramError::Auth(format!(
-                            "auth.exportLoginToken on DC {}: {}",
-                            target_dc,
-                            crate::error::redact_credentials(&e.to_string())
-                        ))
-                    })?;
-                match response_on_target {
-                    tl::enums::auth::LoginToken::Token(t) => {
-                        *self.qr_token.lock() = Some(t.token.clone());
-                        let url = build_qr_url(&t.token);
-                        Err(MtprotoTelegramError::QrLoginHandle {
-                            token: t.token,
-                            url,
-                        })
-                    }
-                    tl::enums::auth::LoginToken::Success(login_token_success) => {
-                        let new_state = {
-                            let current = *self.user_auth_state.lock();
-                            next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
-                        };
-                        *self.user_auth_state.lock() = new_state;
-                        let new_state = {
-                            let current = *self.user_auth_state.lock();
-                            next_user_auth_state_server(
-                                UserAuthServerEvent::SignInSucceeded,
-                                current,
-                            )?
-                        };
-                        *self.user_auth_state.lock() = new_state;
-                        let info = extract_self_user_info(login_token_success.authorization);
-                        self.self_handle
-                            .set_identity(info.user_id, info.username.clone());
-                        Ok(info)
-                    }
-                    tl::enums::auth::LoginToken::MigrateTo(_) => {
-                        Err(MtprotoTelegramError::Internal(format!(
-                            "poll on DC {} also returned MigrateTo",
-                            target_dc
-                        )))
+                loop {
+                    let r: tl::enums::auth::LoginToken = self
+                        .client
+                        .invoke_in_dc(target_dc, &request)
+                        .await
+                        .map_err(|e| {
+                            MtprotoTelegramError::Auth(format!(
+                                "auth.exportLoginToken on DC {}: {}",
+                                target_dc,
+                                crate::error::redact_credentials(&e.to_string())
+                            ))
+                        })?;
+                    match r {
+                        tl::enums::auth::LoginToken::Token(t) => {
+                            // Not scanned yet on target DC.
+                            // Update the cached token silently
+                            // and re-poll.
+                            *self.qr_token.lock() = Some(t.token.clone());
+                            tracing::debug!("poll on DC {}: still waiting for scan", target_dc);
+                        }
+                        tl::enums::auth::LoginToken::Success(login_token_success) => {
+                            let new_state = {
+                                let current = *self.user_auth_state.lock();
+                                next_user_auth_state(UserAuthAction::QrLoginConfirm, current)?
+                            };
+                            *self.user_auth_state.lock() = new_state;
+                            let new_state = {
+                                let current = *self.user_auth_state.lock();
+                                next_user_auth_state_server(
+                                    UserAuthServerEvent::SignInSucceeded,
+                                    current,
+                                )?
+                            };
+                            *self.user_auth_state.lock() = new_state;
+                            let info = extract_self_user_info(login_token_success.authorization);
+                            self.self_handle
+                                .set_identity(info.user_id, info.username.clone());
+                            return Ok(info);
+                        }
+                        tl::enums::auth::LoginToken::MigrateTo(_) => {
+                            return Err(MtprotoTelegramError::Internal(format!(
+                                "poll on DC {} also returned MigrateTo",
+                                target_dc
+                            )));
+                        }
                     }
                 }
             }

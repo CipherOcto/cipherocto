@@ -264,7 +264,7 @@ pub struct BootstrapConfig {
 /// Bootstrap protocol error.
 pub enum BootstrapError {
     SeedListStale,
-    AuthorityError(SeedAuthorityError),
+    AuthorityError(SeedAuthorityError),  // from octo-network::mon::bootstrap
     NoResponses,
     IntersectionBelowThreshold,
     AllTransportsFailed,
@@ -291,10 +291,9 @@ impl BootstrapOrchestrator {
 - `octo-network::mon::bootstrap::SeedListEnvelope` — seed list loading
 - `octo-network::mon::bootstrap::SeedHealth` — staleness check at load
 - `octo-network::mon::bootstrap::SeedListAuthority` — authority gate (Foundation vs DAO)
-- `octo-network::mon::bootstrap::SlashedSeedBlacklist` — filter slashed seeds
-- `octo-network::mon::slash::BootstrapMisbehavior` — slash sub-codes
+- `octo-network::mon::bootstrap::SlashedSeedBlacklist` — filter slashed seeds (uses `BootstrapMisbehavior` sub-codes internally)
 - `octo-transport::discovery::TransportDiscovery::cache_insert()` — peer cache handoff
-- `octo-network::gdp::discovery::DiscoveryLifecycle` — Bootstrap → Expansion transition
+- `octo-network::gdp::discovery::DiscoveryState` — lifecycle transition (Bootstrap → Expansion)
 
 **Mission:** `0851p-a-base-bootstrap-orchestrator.md` (Phase 1 Mode A). Mode B (DHT fallback) and Mode C (invite link) are separate missions.
 
@@ -329,6 +328,7 @@ impl BootstrapOrchestrator {
 - **Network partition:** During partitions, `NetworkSender::send()` returns errors. Consumers must handle retries.
 - **Upgrade safety:** New adapters can be loaded at runtime via `.so` plugins without restart. ABI version check prevents incompatible adapters.
 - **Configuration:** Adapter configs are passed at construction time. Misconfigured adapters fail health checks and are skipped.
+- **Bootstrap trust:** The seed list authority (Foundation at launch, DAO post-F1) is the highest-trust role. Key compromise allows attacker-chosen bootstrap nodes. Mitigated by: multi-sig (3-of-5), seed list rotation (90 days), slashing (0x000D). **ACCEPTED RISK** — F1 deadline for DAO transition.
 
 ## Security Considerations
 

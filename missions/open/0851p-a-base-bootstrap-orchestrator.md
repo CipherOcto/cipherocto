@@ -61,12 +61,14 @@ pub enum BootstrapClientLifecycle {
     Connecting = 0x02,
     Validating = 0x03,
     Cached = 0x04,
-    FallbackB = 0x05,
-    FallbackC = 0x06,
+    FallbackB = 0x05,  // Terminal placeholder; Mode B not in this mission
+    FallbackC = 0x06,  // Terminal placeholder; Mode C not in this mission
     Done = 0x07,
-    Failed = 0x08,
+    Failed = 0x08,     // Implementation-only; all modes exhausted
 }
 ```
+
+Note: `FallbackB` and `FallbackC` are terminal states in this mission's state machine. They are placeholders for future Mode B (DHT fallback, Phase 2) and Mode C (invite link, Phase 3) implementations. In this mission, reaching either state produces `BootstrapError::AllTransportsFailed`. The `Failed` state extends the RFC's 7-state machine with a terminal error state for the case where all retry attempts are exhausted.
 
 ### 4. Core flow
 
@@ -215,6 +217,13 @@ The `--peer` CLI path (raw `TcpStream::connect`) remains as a development/testin
 ## Mitigates
 
 RFC-0851p-a §"Implementation Phases" Phase 1 — the entire bootstrap protocol specification has no implementation path without this mission.
+
+## Security Notes
+
+- **Seed list trust**: The seed list is the highest-trust artifact in bootstrap. A compromised seed list directs new nodes to attacker-controlled bootstrap nodes. Mitigated by Ed25519 signature verification + multi-sig authority (3-of-5 foundation at launch).
+- **Sybil defense**: The 80% peer-list intersection requirement ensures that a minority of colluding bootstrap nodes cannot eclipse a new node. See RFC-0851p-a §6.
+- **Replay defense**: `BootstrapRequest` includes a nonce + epoch. `BootstrapResponse` echoes the nonce. Expired responses (>1 epoch) are rejected.
+- **Slashed seed filtering**: `SlashedSeedBlacklist` removes known-misbehaving bootstrap nodes from the seed list before contact.
 
 ## Deadline
 

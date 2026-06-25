@@ -662,9 +662,10 @@ mod tests {
         async fn receive_gadv_responses(
             &self,
             _timeout: Duration,
-            max_count: usize,
+            _max_count: usize,
         ) -> Result<Vec<Vec<u8>>, PlatformAdapterError> {
-            Ok(self.gadv_responses[..max_count.min(self.gadv_responses.len())].to_vec())
+            // Return ALL responses — the algorithm enforces the per-domain cap
+            Ok(self.gadv_responses.clone())
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted (2026-06-25) — Implemented v1.3: all 4 missions complete (0863a-d), 3 adversarial review rounds converged, 313 tests passing, 13/15 goals met.
 
 ## Authors
 
@@ -356,6 +356,7 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 | 1.0     | 2026-06-24 | Initial draft                                                                 |
 | 1.1     | 2026-06-24 | Round 1 review: 11 fixes (roles, cross-refs, adversary analysis, terminology) |
 | 1.2     | 2026-06-24 | Round 2 review: 1 fix (typo) — 0 findings, loop closed                        |
+| 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met |
 
 ## Related RFCs
 
@@ -375,15 +376,15 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 
 ### A. Production Call Path Audit
 
-The following components exist but have no production callers or are dead code:
+The following components were identified as dead code or stubs during analysis. All are now resolved:
 
-| Component                                | Location                                          | Status               |
-| ---------------------------------------- | ------------------------------------------------- | -------------------- |
-| `DotGateway::process_envelope()` fan-out | `crates/octo-network/src/dot/mod.rs:175`          | STUB                 |
-| `PlatformAdapter::send_envelope()`       | 23 implementations                                | NO PRODUCTION CALLER |
-| `SyncNode`                               | `crates/octo-network/src/sync/mod.rs`             | DEAD CODE            |
-| `SyncNetworkBridge`                      | `crates/octo-network/src/sync/dgp_integration.rs` | DEAD CODE            |
-| `MultiCarrierSync`                       | `octo-sync/src/carrier.rs`                        | UNUSED by consumers  |
+| Component                                | Location                                          | Original Status      | Current Status         |
+| ---------------------------------------- | ------------------------------------------------- | -------------------- | ---------------------- |
+| `DotGateway::process_envelope()` fan-out | `crates/octo-network/src/dot/mod.rs:175`          | STUB                 | ✅ Implemented (0863d) |
+| `PlatformAdapter::send_envelope()`       | 23 implementations                                | NO PRODUCTION CALLER | ✅ Called via bridge    |
+| `SyncNode`                               | `crates/octo-network/src/sync/mod.rs`             | DEAD CODE            | ✅ Exported + wired    |
+| `SyncNetworkBridge`                      | `crates/octo-network/src/sync/dgp_integration.rs` | DEAD CODE            | ✅ Exported + wired    |
+| `MultiCarrierSync`                       | `octo-sync/src/carrier.rs`                        | UNUSED by consumers  | ⚠️ Deprecated (NodeTransport replaces) |
 
 ### B. Adapter Transport Summary (Representative)
 

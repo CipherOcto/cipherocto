@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use clap::Parser;
-use octo_network::dot::PlatformType;
-use octo_network::sync::TransportBroadcaster;
+use octo_network::dot::adapters::PlatformAdapter;
+use octo_network::dot::{BroadcastDomainId, PlatformType};
+use octo_network::sync::{GossipDispatcher, SyncDgpHandler, SyncNetworkBridge, TransportBroadcaster};
 use octo_sync::adapter::DatabaseSyncAdapter;
 use octo_sync::config::{SyncConfig, SyncRole};
+use octo_sync::dgp_bridge::SyncHandler;
 use octo_sync::identity::SyncPeerId;
 use octo_sync::session::SyncSessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -93,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &node_id,
     )?);
 
-    // Load platform adapters and create NodeTransport when --adapter is provided
+    // Load platform adapters and wire transport when --adapter is provided
     let transport_peer = SyncPeerId(TRANSPORT_PEER_ID);
     if !args.adapters.is_empty() {
         let plugin_dirs: Vec<std::path::PathBuf> = args.adapter_dirs.iter().map(std::path::PathBuf::from).collect();
@@ -106,32 +108,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .filter_map(|name| adapter_name_to_platform_type(name))
             .collect();
 
-        let domain = octo_network::dot::BroadcastDomainId::new(
-            octo_network::dot::PlatformType::NativeP2P,
-            &args.node_id,
-        );
-        let all_senders = octo_transport::AdapterFactory::from_registry(registry, domain);
+        let domain = BroadcastDomainId::new(PlatformType::NativeP2P, &args.node_id);
 
-        let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = all_senders
+        // Drain registry into Arc refs — keep for both sending and receiving
+        let adapter_refs: Vec<(Arc<dyn PlatformAdapter>, BroadcastDomainId)> = registry
+            .drain()
             .into_iter()
-            .filter(|s| requested.iter().any(|pt| s.name() == pt.name()))
+            .filter(|(_, entry)| {
+                entry.health != octo_network::dot::adapters::registry::AdapterHealth::Unhealthy
+            })
+            .filter(|(pt, _)| {
+                if let Some(platform_type) = PlatformType::from_u16(*pt) {
+                    requested.iter().any(|r| r.name() == platform_type.name())
+                } else {
+                    false
+                }
+            })
+            .map(|(_pt, entry)| {
+                let adapter: Arc<dyn PlatformAdapter> = Arc::from(entry.adapter);
+                (adapter, domain)
+            })
             .collect();
 
-        if !senders.is_empty() {
+        if !adapter_refs.is_empty() {
+            tracing::info!(adapters = adapter_refs.len(), "transport adapters loaded");
+
+            // Create outbound bridges (PlatformAdapterBridge for each adapter)
+            let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = adapter_refs
+                .iter()
+                .map(|(adapter, domain)| {
+                    Arc::new(octo_transport::adapter_bridge::PlatformAdapterBridge::new(
+                        adapter.clone(),
+                        *domain,
+                    )) as Arc<dyn octo_transport::sender::NetworkSender>
+                })
+                .collect();
+
             let transport = Arc::new(octo_transport::NodeTransport::new(senders));
-            tracing::info!(
-                transports = transport.transport_count(),
-                "NodeTransport wired"
-            );
             let broadcaster = Arc::new(
                 octo_transport::NodeTransportBroadcaster::new(transport.clone())
                     .with_identity(node_id, node_id)
             );
 
-            // Subscribe the transport peer to the session's outbox
+            // --- Outbound: subscribe transport peer, spawn drain task ---
             session.subscribe_peer(transport_peer).unwrap();
-
-            // Spawn the outbox drain task: polls outbox, broadcasts via NodeTransport
             let session_clone = session.clone();
             let broadcaster_clone = broadcaster;
             let mission_id_clone = mission_id;
@@ -158,8 +178,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             });
-            // Store handle to abort on shutdown
             drop(drain_handle);
+
+            // --- Inbound: GossipDispatcher → SyncNetworkBridge → session ---
+            let handler = Arc::new(SyncDgpHandler::new(session.clone()));
+            let sync_bridge = SyncNetworkBridge::new(mission_id, handler.clone());
+            let dispatcher = GossipDispatcher::new().with_sync(sync_bridge);
+
+            // Spawn inbound receive task: polls adapters for incoming messages
+            let adapters_for_receive: Vec<Arc<dyn PlatformAdapter>> =
+                adapter_refs.iter().map(|(a, _)| a.clone()).collect();
+            let _dispatcher_clone = dispatcher;
+            let _receive_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+                loop {
+                    interval.tick().await;
+                    for adapter in &adapters_for_receive {
+                        let pt = adapter.platform_type();
+                        let domain = BroadcastDomainId::new(pt, &hex::encode(node_id));
+                        match adapter.receive_messages(&domain).await {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    // Canonicalize to DOT envelope
+                                    match adapter.canonicalize(&msg) {
+                                        Ok(envelope) => {
+                                            // Route sync envelopes (object_type 0x0008) through dispatcher
+                                            // For now, the adapter's raw payload is a WalTailChunk-encoded blob
+                                            // dispatched to the sync engine via the handler
+                                            handler.on_wal_tail(
+                                                node_id,
+                                                msg.payload,
+                                            );
+                                            tracing::debug!(
+                                                peer = ?msg.platform_id,
+                                                "inbound transport: dispatched WAL payload"
+                                            );
+                                            let _ = envelope;
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                peer = ?msg.platform_id,
+                                                error = %e,
+                                                "inbound transport: canonicalize failed"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(_e) => {
+                                // Adapter has no messages — normal for adapters not yet configured
+                            }
+                        }
+                    }
+                }
+            });
+            // _receive_handle is intentionally kept alive for the task lifetime
+            std::mem::forget(_receive_handle);
+
+            tracing::info!("transport inbound receive loop started");
         }
     }
 

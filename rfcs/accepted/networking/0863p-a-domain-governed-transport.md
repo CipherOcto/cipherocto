@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-06-25)
+Accepted (2026-06-25)
 
 > **Patch RFC for RFC-0863 (General-Purpose Network Integration).** Specifies how `NodeTransport` integrates with DC/group governance — the `BroadcastDomainHint` config type, `DomainRole` enum, `GovernedTransport` wrapper, the `NodeTransport::builder()` pattern, auto-bootstrap pipeline (classify adapters → DotDomain discovery → seed list fallback → GDP expansion), and governance-aware send/receive paths. This is the developer-facing layer that makes domain governance invisible to the average node operator.
 >

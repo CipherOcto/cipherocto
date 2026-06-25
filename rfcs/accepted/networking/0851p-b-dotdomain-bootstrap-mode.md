@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-06-25)
+Accepted (2026-06-25)
 
 > **Patch RFC for RFC-0851p-a (Network Bootstrap Protocol).** Specifies `BootstrapMethod::DotDomain` (0x0004) — bootstrapping a node into the mesh by joining a DC-managed broadcast domain (Telegram group, Matrix room, WhatsApp group, etc.) rather than contacting static seed nodes. Closes the gap where `DotDomain` existed as an enum variant in RFC-0851 §8.1 with zero specification.
 >

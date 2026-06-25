@@ -448,12 +448,13 @@ fn compute_intersection(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
         return sets[0].clone();
     }
 
-    // Build a frequency map
+    // Build a frequency map (deduplicate within each set first)
     let mut freq: std::collections::BTreeMap<[u8; 32], usize> =
         std::collections::BTreeMap::new();
     for set in sets {
-        for peer in set {
-            *freq.entry(*peer).or_insert(0) += 1;
+        let unique: std::collections::HashSet<[u8; 32]> = set.iter().copied().collect();
+        for peer in unique {
+            *freq.entry(peer).or_insert(0) += 1;
         }
     }
 
@@ -462,6 +463,27 @@ fn compute_intersection(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
         .filter(|(_, count)| *count == n)
         .map(|(peer, _)| peer)
         .collect()
+}
+
+// ── Test-only public API (for E2E tests in sync-e2e-tests) ───────
+
+/// Expose `compute_intersection` for E2E tests.
+#[doc(hidden)]
+pub fn compute_intersection_for_test(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
+    compute_intersection(sets)
+}
+
+impl BootstrapOrchestrator {
+    /// Expose `populate_discovery` for E2E tests.
+    #[doc(hidden)]
+    pub fn populate_discovery_for_test(
+        &self,
+        peer_ids: &[[u8; 32]],
+        discovery: &TransportDiscovery,
+        discovery_state: &mut DiscoveryState,
+    ) -> u32 {
+        self.populate_discovery(peer_ids, discovery, discovery_state)
+    }
 }
 
 #[cfg(test)]

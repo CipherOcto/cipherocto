@@ -246,6 +246,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let bootstrap_config = BootstrapConfig {
                         authority,
                         current_epoch: now,
+                        node_id,
+                        node_pubkey: node_id, // Same as node_id for now
                         ..BootstrapConfig::default()
                     };
 

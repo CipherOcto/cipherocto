@@ -2,6 +2,17 @@
 //! `octo-transport` startup path.
 //!
 //! Mission `0851p-a-base-bootstrap-orchestrator`.
+//!
+//! ## Status: Stub — Response Collection Not Yet Implemented
+//!
+//! The `send_bootstrap_requests` method sends BOOTSTRAP_REQ to each
+//! seed but does **not** yet collect BOOTSTRAP_RESP. Real responses
+//! arrive asynchronously via the `NetworkReceiver` inbound path,
+//! which is not wired into this module yet. As a result, `run()`
+//! will always return `NoResponses` when responses are required
+//! (min_responses > 0). The validation, intersection, and cache
+//! population logic is complete and tested via unit tests with
+//! direct `compute_intersection` calls.
 
 use std::time::Duration;
 
@@ -9,8 +20,7 @@ use octo_network::gdp::cache::GatewayCacheEntry;
 use octo_network::gdp::discovery::DiscoveryState;
 use octo_network::gdp::types::DiscoveryLifecycle;
 use octo_network::mon::bootstrap::{
-    BootstrapMode, SeedAuthorityError, SeedHealth, SeedListAuthority, SeedListEnvelope,
-    SlashedSeedBlacklist,
+    SeedAuthorityError, SeedHealth, SeedListAuthority, SeedListEnvelope, SlashedSeedBlacklist,
 };
 
 use crate::discovery::TransportDiscovery;
@@ -81,8 +91,10 @@ pub struct BootstrapConfig {
     pub authority: SeedListAuthority,
     /// Current epoch (for staleness and authority checks).
     pub current_epoch: u64,
-    /// Bootstrap mode.
-    pub mode: BootstrapMode,
+    /// The bootstrapping node's identity (32-byte PeerId).
+    pub node_id: [u8; 32],
+    /// The bootstrapping node's public key (Ed25519).
+    pub node_pubkey: [u8; 32],
 }
 
 impl Default for BootstrapConfig {
@@ -95,7 +107,8 @@ impl Default for BootstrapConfig {
             initial_backoff: DEFAULT_INITIAL_BACKOFF,
             authority: SeedListAuthority::Foundation,
             current_epoch: 0,
-            mode: BootstrapMode::Direct,
+            node_id: [0u8; 32],
+            node_pubkey: [0u8; 32],
         }
     }
 }
@@ -168,9 +181,16 @@ pub struct BootstrapPeerEntry {
 /// Drives the RFC-0851p-a Mode A bootstrap protocol.
 ///
 /// Consumes [`SeedListEnvelope`], [`SeedHealth`], [`SeedListAuthority`],
-/// [`BootstrapMode`], and [`SlashedSeedBlacklist`] from
-/// `octo-network::mon::bootstrap`.  Produces peer entries in
-/// [`TransportDiscovery`].
+/// and [`SlashedSeedBlacklist`] from `octo-network::mon::bootstrap`.
+/// Produces peer entries in [`TransportDiscovery`].
+///
+/// ## Limitation
+///
+/// Response collection (`send_bootstrap_requests`) is a stub — it
+/// sends BOOTSTRAP_REQ but cannot collect BOOTSTRAP_RESP because the
+/// `NetworkReceiver` inbound path is not wired into this module.
+/// `run()` will return `NoResponses` when `min_responses > 0` and no
+/// external response injection mechanism exists.
 pub struct BootstrapOrchestrator {
     seed_list: SeedListEnvelope,
     blacklist: SlashedSeedBlacklist,
@@ -211,7 +231,7 @@ impl BootstrapOrchestrator {
     /// Run the bootstrap protocol to completion.
     ///
     /// Returns the number of peers acquired, or an error if all modes
-    /// fail.  On success, `discovery` cache and `discovery_state`
+    /// fail. On success, `discovery` cache and `discovery_state`
     /// lifecycle are updated.
     pub async fn run(
         &mut self,
@@ -248,7 +268,6 @@ impl BootstrapOrchestrator {
         // Step 4-6: Send BOOTSTRAP_REQ, collect responses
         self.state = BootstrapClientLifecycle::Connecting;
 
-        let mut all_peer_sets: Vec<Vec<[u8; 32]>> = Vec::new();
         let mut attempt = 0u32;
 
         while attempt < self.config.max_retries {
@@ -261,19 +280,19 @@ impl BootstrapOrchestrator {
                 // Step 8: Compute peer-list intersection
                 self.state = BootstrapClientLifecycle::Validating;
 
-                for resp in &responses {
-                    let peer_set: Vec<[u8; 32]> =
-                        resp.peer_entries.iter().map(|p| p.peer_id).collect();
-                    all_peer_sets.push(peer_set);
-                }
+                let peer_sets: Vec<Vec<[u8; 32]>> = responses
+                    .iter()
+                    .map(|r| {
+                        let mut ids: Vec<[u8; 32]> =
+                            r.peer_entries.iter().map(|p| p.peer_id).collect();
+                        ids.sort();
+                        ids
+                    })
+                    .collect();
 
-                let intersection = compute_intersection(&all_peer_sets);
-                let agreement = if !all_peer_sets.is_empty() {
-                    let max_peers = all_peer_sets
-                        .iter()
-                        .map(|s| s.len())
-                        .max()
-                        .unwrap_or(1);
+                let intersection = compute_intersection(&peer_sets);
+                let agreement = if !peer_sets.is_empty() {
+                    let max_peers = peer_sets.iter().map(|s| s.len()).max().unwrap_or(1);
                     intersection.len() as f64 / max_peers as f64
                 } else {
                     0.0
@@ -291,7 +310,6 @@ impl BootstrapOrchestrator {
                     return Ok(peer_count);
                 }
                 // Intersection below threshold — retry
-                all_peer_sets.clear();
             }
 
             attempt += 1;
@@ -312,6 +330,10 @@ impl BootstrapOrchestrator {
     }
 
     /// Send BOOTSTRAP_REQ to each seed and collect responses.
+    ///
+    /// **Stub**: sends requests but does not collect responses.
+    /// Real response collection requires wiring the `NetworkReceiver`
+    /// inbound path. Returns an empty Vec until that wiring exists.
     async fn send_bootstrap_requests(
         &self,
         transport: &NodeTransport,
@@ -319,16 +341,14 @@ impl BootstrapOrchestrator {
     ) -> Vec<BootstrapResponse> {
         use rand::Rng;
 
-        let responses = Vec::new();
+        let mut sent_count = 0u32;
 
         for _seed in &seed_list.peers {
             let nonce: [u8; 16] = rand::thread_rng().gen();
 
             let req = BootstrapRequest {
-                requester_id: [0u8; 32], // Would be node identity
-                requester_pubkey: seed_list.authority_pubkey[..32]
-                    .try_into()
-                    .unwrap_or([0u8; 32]),
+                requester_id: self.config.node_id,
+                requester_pubkey: self.config.node_pubkey,
                 nonce,
                 epoch: self.config.current_epoch,
                 capability_filter: 0xFFFF,
@@ -343,8 +363,8 @@ impl BootstrapOrchestrator {
             let ctx = SendContext {
                 mission_id: [0u8; 32],
                 priority: 255, // Bootstrap is highest priority
-                source_peer: req.requester_id,
-                origin_gateway: req.requester_id,
+                source_peer: self.config.node_id,
+                origin_gateway: self.config.node_id,
             };
 
             // Send via transport (best available)
@@ -355,17 +375,19 @@ impl BootstrapOrchestrator {
             .await
             {
                 Ok(Ok(())) => {
-                    // In a real implementation, we'd wait for a response
-                    // on the receiver channel. For now, the response
-                    // would come through the NetworkReceiver path.
-                    // This is a placeholder — real responses arrive
-                    // asynchronously via the inbound receive loop.
+                    sent_count += 1;
                 }
                 _ => continue,
             }
         }
 
-        responses
+        // Log sent count (tracing not available in this crate;
+        // caller should instrument via the stoolap-node tracing layer).
+        let _ = sent_count;
+
+        // Stub: response collection not yet implemented.
+        // Real responses arrive asynchronously via NetworkReceiver.
+        Vec::new()
     }
 
     /// Populate the discovery cache with bootstrapped peers.
@@ -414,9 +436,10 @@ impl BootstrapOrchestrator {
 
 /// Compute the intersection of multiple peer sets.
 ///
-/// Returns peer IDs that appear in ALL sets (unanimous agreement).
-/// For the Sybil defense threshold (RFC-0851p-a §6), the intersection
-/// must represent ≥80% of the largest set.
+/// Returns peer IDs that appear in ALL sets (unanimous agreement),
+/// sorted deterministically. For the Sybil defense threshold
+/// (RFC-0851p-a §6), the intersection must represent ≥80% of the
+/// largest set.
 fn compute_intersection(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
     if sets.is_empty() {
         return Vec::new();
@@ -426,8 +449,8 @@ fn compute_intersection(sets: &[Vec<[u8; 32]>]) -> Vec<[u8; 32]> {
     }
 
     // Build a frequency map
-    let mut freq: std::collections::HashMap<[u8; 32], usize> =
-        std::collections::HashMap::new();
+    let mut freq: std::collections::BTreeMap<[u8; 32], usize> =
+        std::collections::BTreeMap::new();
     for set in sets {
         for peer in set {
             *freq.entry(*peer).or_insert(0) += 1;
@@ -510,6 +533,16 @@ mod tests {
         (disc, state)
     }
 
+    fn make_config() -> BootstrapConfig {
+        BootstrapConfig {
+            node_id: [0x42u8; 32],
+            node_pubkey: [0x43u8; 32],
+            ..BootstrapConfig::default()
+        }
+    }
+
+    // ── Health check tests ────────────────────────────────────────
+
     #[test]
     fn fresh_seeds_pass_health_check() {
         let env = make_envelope(vec![
@@ -531,6 +564,8 @@ mod tests {
         assert!(health.refuses_start());
     }
 
+    // ── Authority tests ───────────────────────────────────────────
+
     #[test]
     fn authority_foundation_accepted_before_fork() {
         let result = octo_network::mon::bootstrap::verify_authority(
@@ -539,6 +574,8 @@ mod tests {
         );
         assert!(result.is_ok());
     }
+
+    // ── Blacklist tests ───────────────────────────────────────────
 
     #[test]
     fn slashed_seeds_filtered() {
@@ -552,6 +589,8 @@ mod tests {
         assert_eq!(filtered.peers.len(), 1);
         assert_eq!(filtered.peers[0].peer_id, "good");
     }
+
+    // ── Intersection tests ────────────────────────────────────────
 
     #[test]
     fn intersection_unanimous() {
@@ -590,9 +629,25 @@ mod tests {
     }
 
     #[test]
+    fn intersection_deterministic_order() {
+        // BTreeMap ensures sorted output
+        let sets = vec![
+            vec![[3u8; 32], [1u8; 32], [2u8; 32]],
+            vec![[1u8; 32], [3u8; 32], [2u8; 32]],
+        ];
+        let result = compute_intersection(&sets);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], [1u8; 32]);
+        assert_eq!(result[1], [2u8; 32]);
+        assert_eq!(result[2], [3u8; 32]);
+    }
+
+    // ── Config / lifecycle tests ──────────────────────────────────
+
+    #[test]
     fn lifecycle_state_transitions() {
         let env = make_envelope(vec![make_seed_entry("a", 100)]);
-        let config = BootstrapConfig::default();
+        let config = make_config();
         let orch = BootstrapOrchestrator::new(env, config);
         assert_eq!(orch.state(), BootstrapClientLifecycle::Init);
     }
@@ -608,10 +663,19 @@ mod tests {
         assert_eq!(config.authority, SeedListAuthority::Foundation);
     }
 
+    #[test]
+    fn config_node_identity_fields() {
+        let config = make_config();
+        assert_eq!(config.node_id, [0x42u8; 32]);
+        assert_eq!(config.node_pubkey, [0x43u8; 32]);
+    }
+
+    // ── run() failure path tests ──────────────────────────────────
+
     #[tokio::test]
     async fn run_fails_with_empty_seed_list() {
         let env = make_envelope(vec![]);
-        let config = BootstrapConfig::default();
+        let config = make_config();
         let mut orch = BootstrapOrchestrator::new(env, config);
         let transport = make_transport();
         let (discovery, mut state) = make_discovery();
@@ -629,7 +693,7 @@ mod tests {
         ]);
         let config = BootstrapConfig {
             current_epoch: 105,
-            ..BootstrapConfig::default()
+            ..make_config()
         };
         let mut orch = BootstrapOrchestrator::new(env, config);
         let transport = make_transport();
@@ -646,7 +710,7 @@ mod tests {
         let config = BootstrapConfig {
             authority: SeedListAuthority::Dao,
             current_epoch: 0, // Before DAO is active
-            ..BootstrapConfig::default()
+            ..make_config()
         };
         let mut orch = BootstrapOrchestrator::new(env, config);
         let transport = make_transport();
@@ -661,7 +725,7 @@ mod tests {
         let env = make_envelope(vec![make_seed_entry("a", 100)]);
         let mut blacklist = SlashedSeedBlacklist::new();
         blacklist.slash("a");
-        let config = BootstrapConfig::default();
+        let config = make_config();
         let mut orch = BootstrapOrchestrator::with_blacklist(env, blacklist, config);
         let transport = make_transport();
         let (discovery, mut state) = make_discovery();
@@ -670,9 +734,29 @@ mod tests {
         assert!(matches!(result, Err(BootstrapError::NoResponses)));
     }
 
+    #[tokio::test]
+    async fn run_no_responses_when_stub_returns_empty() {
+        // send_bootstrap_requests is a stub that returns empty.
+        // With min_responses=1, run() exhausts retries and fails.
+        let env = make_envelope(vec![make_seed_entry("a", 100)]);
+        let config = BootstrapConfig {
+            min_responses: 1,
+            max_retries: 1, // Fast fail
+            ..make_config()
+        };
+        let mut orch = BootstrapOrchestrator::new(env, config);
+        let transport = make_transport();
+        let (discovery, mut state) = make_discovery();
+
+        let result = orch.run(&transport, &discovery, &mut state).await;
+        assert!(matches!(result, Err(BootstrapError::NoResponses)));
+        assert_eq!(orch.state(), BootstrapClientLifecycle::Failed);
+    }
+
+    // ── Sybil defense tests ───────────────────────────────────────
+
     #[test]
     fn sybil_detection_3_of_5_colluding() {
-        // 3 of 5 bootstrap nodes return a colluding peer list
         let honest = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]];
         let sybil = vec![[5u8; 32], [6u8; 32], [7u8; 32], [8u8; 32]];
 
@@ -685,24 +769,61 @@ mod tests {
         ];
 
         let intersection = compute_intersection(&sets);
-        // No peer is in ALL 5 sets
         assert!(intersection.is_empty());
     }
 
     #[test]
     fn low_confidence_2_of_5() {
-        // 2 of 5 respond with ≥80% overlap
         let peers = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]];
         let mut peers2 = peers.clone();
         peers2[4] = [6u8; 32]; // 80% overlap (4/5)
 
         let sets = vec![peers, peers2];
         let intersection = compute_intersection(&sets);
-        // 4 peers in intersection
         assert_eq!(intersection.len(), 4);
 
         let max_peers = 5;
         let agreement = intersection.len() as f64 / max_peers as f64;
         assert!(agreement >= 0.80);
+    }
+
+    // ── Populate discovery tests ──────────────────────────────────
+
+    #[test]
+    fn populate_discovery_adds_to_cache() {
+        let env = make_envelope(vec![make_seed_entry("a", 100)]);
+        let config = make_config();
+        let orch = BootstrapOrchestrator::new(env, config);
+        let (discovery, mut state) = make_discovery();
+
+        let peer_ids = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        let count = orch.populate_discovery(&peer_ids, &discovery, &mut state);
+        assert_eq!(count, 3);
+        assert_eq!(discovery.peer_count(), 3);
+        assert_eq!(state.peer_count, 3);
+    }
+
+    #[test]
+    fn populate_discovery_transitions_to_expansion_at_5() {
+        let env = make_envelope(vec![make_seed_entry("a", 100)]);
+        let config = make_config();
+        let orch = BootstrapOrchestrator::new(env, config);
+        let (discovery, mut state) = make_discovery();
+
+        let peer_ids: Vec<[u8; 32]> = (0..5).map(|i| [i as u8; 32]).collect();
+        orch.populate_discovery(&peer_ids, &discovery, &mut state);
+        assert_eq!(state.phase, DiscoveryLifecycle::Expansion);
+    }
+
+    #[test]
+    fn populate_discovery_stays_bootstrap_below_5() {
+        let env = make_envelope(vec![make_seed_entry("a", 100)]);
+        let config = make_config();
+        let orch = BootstrapOrchestrator::new(env, config);
+        let (discovery, mut state) = make_discovery();
+
+        let peer_ids: Vec<[u8; 32]> = (0..3).map(|i| [i as u8; 32]).collect();
+        orch.populate_discovery(&peer_ids, &discovery, &mut state);
+        assert_eq!(state.phase, DiscoveryLifecycle::Bootstrap);
     }
 }

@@ -89,7 +89,7 @@ async fn main() {
     let mut deleted_count = 0u32;
     let mut failed_count = 0u32;
 
-    let test_prefixes = ["OCTO_LIVE_", "LT-", "LT_", "octo_test_", "DOT/1/", "test "];
+    let test_prefixes = ["OCTO_LIVE_", "LT-", "LT_", "octo_test_", "DOT/1/", "test ", "lt4", "lt5"];
 
     // Saved Messages = InputPeerSelf. Use raw TL getHistory.
     let self_peer = tl::enums::InputPeer::PeerSelf;

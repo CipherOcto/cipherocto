@@ -180,7 +180,7 @@ async fn lt04_connect_and_get_me() {
     );
     tracing::info!(user_id = identity.user_id, username = ?identity.username, "LT-04 PASSED");
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 #[tokio::test]
@@ -191,7 +191,7 @@ async fn lt05_health_check() {
     adapter.health_check().await.expect("health_check OK");
     tracing::info!("LT-05 PASSED");
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 #[tokio::test]
@@ -205,7 +205,7 @@ async fn lt06_self_handle_format() {
     assert!(uid > 0);
     tracing::info!(handle = %h, "LT-06 PASSED");
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 #[tokio::test]
@@ -218,7 +218,7 @@ async fn lt07_platform_type_is_telegram() {
         octo_network::dot::domain::PlatformType::Telegram
     );
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -246,7 +246,7 @@ async fn lt08_capabilities_full_report() {
 
     tracing::info!(?cap, "LT-08 PASSED");
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -267,7 +267,7 @@ async fn lt09_domain_id_deterministic() {
     assert_ne!(a, c, "different input → different hash");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 #[tokio::test]
@@ -286,7 +286,7 @@ async fn lt10_domain_id_normalizes() {
     );
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 #[tokio::test]
@@ -301,7 +301,7 @@ async fn lt11_register_domain_round_trip() {
     assert_eq!(chat_id.as_deref(), Some("-1001234567890"));
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -318,7 +318,7 @@ async fn lt12_receive_updates_drains_cleanly() {
     // We don't assert count == 0 because there might be pending updates.
     // The test verifies it doesn't error or hang.
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// receive_messages on a registered domain returns without error.
@@ -339,7 +339,7 @@ async fn lt13_receive_messages_on_registered_domain() {
     // Don't assert empty — there may be real messages in Saved Messages.
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -353,6 +353,9 @@ async fn lt14_send_message_to_saved_messages() {
     let (client, self_handle) = live_client_and_handle().await;
     let user_id = self_handle.get().unwrap().user_id;
     let marker = test_marker("lt14");
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let sent = client
         .send_message(user_id, &marker)
@@ -369,7 +372,7 @@ async fn lt14_send_message_to_saved_messages() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// send_document to Saved Messages succeeds (DOT/2 path).
@@ -380,6 +383,10 @@ async fn lt15_send_document_to_saved_messages() {
     let user_id = self_handle.get().unwrap().user_id;
 
     let data = vec![0xAB_u8; 1024]; // 1 KB document
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client
         .send_document(user_id, "LT-15 test caption", "lt15_test.bin", &data)
         .await
@@ -390,7 +397,7 @@ async fn lt15_send_document_to_saved_messages() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// send_envelope through the adapter to a registered domain.
@@ -409,6 +416,10 @@ async fn lt16_send_envelope_via_adapter() {
     adapter.register_domain(&domain, &user_id).unwrap();
 
     let envelope = DeterministicEnvelope::default();
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let result = adapter.send_envelope(&domain, &envelope).await;
     // send_envelope may fail if the DOT/1 text encoding exceeds limits
     // or the chat doesn't accept messages. We verify it doesn't panic.
@@ -423,7 +434,7 @@ async fn lt16_send_envelope_via_adapter() {
     }
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -440,6 +451,9 @@ async fn lt17_send_receive_round_trip() {
     let (client, self_handle) = live_client_and_handle().await;
     let user_id = self_handle.get().unwrap().user_id;
     let marker = test_marker("lt17");
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Send a message with a unique marker.
     let sent = client
@@ -474,7 +488,7 @@ async fn lt17_send_receive_round_trip() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -496,6 +510,10 @@ async fn lt18_self_loop_prevention() {
 
     // Send a message first so there's something to filter.
     let client_ref = adapter.client.clone();
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client_ref
         .send_message(user_id.parse().unwrap(), "LT-18 self-loop test")
         .await;
@@ -519,7 +537,7 @@ async fn lt18_self_loop_prevention() {
         cleanup_message(&client_ref, uid, s.id).await;
     }
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -573,7 +591,7 @@ async fn lt21_canonicalize_valid_dot1() {
     assert_eq!(decoded.to_wire_bytes(), env.to_wire_bytes());
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// canonicalize rejects non-DOT text.
@@ -592,7 +610,7 @@ async fn lt22_canonicalize_rejects_plain_text() {
     assert!(result.is_err(), "plain text should be rejected");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// canonicalize rejects DOT/2 inline (requires download).
@@ -611,7 +629,7 @@ async fn lt23_canonicalize_rejects_dot2_inline() {
     assert!(result.is_err(), "DOT/2 should be rejected by canonicalize");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -625,7 +643,7 @@ async fn lt24_coordinator_admin_available() {
     let adapter = live_adapter(client, self_handle);
     assert!(adapter.as_coordinator_admin().is_some());
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// list_own_groups returns the groups the bot/user is in.
@@ -652,7 +670,7 @@ async fn lt25_list_own_groups() {
     }
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// admin_capabilities returns a truthful report.
@@ -675,7 +693,7 @@ async fn lt26_admin_capabilities_report() {
 
     tracing::info!(?caps, "LT-26 PASSED");
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -709,11 +727,15 @@ async fn lt28_send_envelope_unregistered_domain() {
         "-999999999",
     );
     let envelope = DeterministicEnvelope::default();
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let result = adapter.send_envelope(&domain, &envelope).await;
     assert!(result.is_err(), "unregistered domain should fail");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// upload_media with zero domains fails.
@@ -726,13 +748,16 @@ async fn lt29_upload_media_zero_domains() {
         MtprotoTelegramAdapter::with_self_handle(config, client, MtprotoSelfHandle::new());
     adapter.mark_ready_for_test();
 
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let result = adapter
         .upload_media("test.bin", b"data", "application/octet-stream")
         .await;
     assert!(result.is_err(), "zero domains should fail");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// upload_media with multiple domains fails (ambiguous routing).
@@ -744,13 +769,16 @@ async fn lt30_upload_media_multiple_domains() {
     adapter.domain_id("-1001111111111");
     adapter.domain_id("-1002222222222");
 
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let result = adapter
         .upload_media("test.bin", b"data", "application/octet-stream")
         .await;
     assert!(result.is_err(), "multiple domains should fail");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -917,6 +945,10 @@ async fn lt42_download_file_after_send() {
     let user_id = self_handle.get().unwrap().user_id;
 
     let payload = b"LT-42 download test payload bytes";
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client
         .send_document(user_id, "lt42", "lt42.bin", payload)
         .await
@@ -941,7 +973,7 @@ async fn lt42_download_file_after_send() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// download_file_to_writer streams to a writer.
@@ -952,6 +984,10 @@ async fn lt43_download_file_to_writer() {
     let user_id = self_handle.get().unwrap().user_id;
 
     let payload = b"LT-43 streaming download test";
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client
         .send_document(user_id, "lt43", "lt43.bin", payload)
         .await
@@ -977,7 +1013,7 @@ async fn lt43_download_file_to_writer() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(client);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// download_media via the adapter.
@@ -992,6 +1028,10 @@ async fn lt44_download_media_via_adapter() {
     adapter.register_domain(&domain, &uid_str).unwrap();
 
     let payload = b"LT-44 download_media test";
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client
         .send_document(user_id, "lt44", "lt44.bin", payload)
         .await
@@ -1012,7 +1052,7 @@ async fn lt44_download_media_via_adapter() {
 
     cleanup_message(&client, user_id, sent.id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// upload_media via the adapter.
@@ -1029,6 +1069,10 @@ async fn lt45_upload_media_via_adapter() {
     adapter.register_domain(&domain, &uid).unwrap();
 
     let payload = b"LT-45 upload_media test payload";
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let result = adapter
         .upload_media("lt45.bin", payload, "application/octet-stream")
         .await;
@@ -1046,7 +1090,7 @@ async fn lt45_upload_media_via_adapter() {
         cleanup_message(adapter.client(), chat_id, numeric_id).await;
     }
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1182,7 +1226,7 @@ async fn lt46_create_group() {
     assert!(handle.subject.is_some());
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::get_group_metadata on a freshly created group.
@@ -1201,7 +1245,7 @@ async fn lt47_get_group_metadata() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::rename_group changes the group title.
@@ -1222,7 +1266,7 @@ async fn lt48_rename_group() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::set_group_description changes the about text.
@@ -1240,7 +1284,7 @@ async fn lt49_set_group_description() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::leave_group leaves a group.
@@ -1262,9 +1306,10 @@ async fn lt50_leave_group() {
 
     // Destroy the group to clean up (creator can still delete
     // even after leaving).
+    tokio::time::sleep(Duration::from_secs(5)).await;
     let _ = admin.destroy_group(&group_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::destroy_group deletes a group.
@@ -1276,15 +1321,19 @@ async fn lt51_destroy_group() {
     let group_id =
         octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
 
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
     let result = admin.destroy_group(&group_id).await;
     assert!(result.is_ok(), "destroy_group: {:?}", result.err());
 
     // After destroying, get_group_metadata should fail.
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let meta = admin.get_group_metadata(&group_id).await;
     assert!(meta.is_err(), "metadata should fail after destroy");
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1305,7 +1354,7 @@ async fn lt52_get_chat() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// list_dialog_ids returns at least the test group we just created.
@@ -1325,7 +1374,7 @@ async fn lt53_list_dialog_ids() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// CoordinatorAdmin::list_own_groups returns the test group.
@@ -1343,7 +1392,7 @@ async fn lt54_list_own_groups_includes_test_group() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1387,7 +1436,7 @@ async fn lt55_check_invite() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1404,6 +1453,10 @@ async fn lt56_send_receive_in_real_group() {
     adapter.register_domain(&domain, &uid_str).unwrap();
 
     let marker = test_marker("lt56");
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = adapter.client().send_message(chat_id, &marker).await;
     assert!(sent.is_ok(), "send_message to group: {:?}", sent.err());
 
@@ -1419,7 +1472,7 @@ async fn lt56_send_receive_in_real_group() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// send_document to a real group.
@@ -1429,6 +1482,10 @@ async fn lt57_send_document_to_real_group() {
     let (adapter, chat_id, _handle) = create_test_group("lt57").await;
 
     let payload = b"LT-57 document in group";
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = adapter
         .client()
         .send_document(chat_id, "lt57 caption", "lt57.bin", payload)
@@ -1440,7 +1497,7 @@ async fn lt57_send_document_to_real_group() {
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1456,13 +1513,16 @@ async fn lt58_edit_creator_on_basic_group_fails() {
     let (adapter, chat_id, _handle) = create_test_group("lt58").await;
     let self_uid = adapter.self_handle_ref().get().unwrap().user_id;
 
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     // edit_creator on a basic group should fail (requires supergroup).
     let result = adapter.client().edit_creator(chat_id, self_uid, None).await;
     assert!(result.is_err(), "edit_creator on basic group should fail");
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1499,6 +1559,10 @@ async fn lt60_canonicalize_real_sent_envelope() {
     // Send a real DOT/1 message.
     let env = DeterministicEnvelope::default();
     let encoded = octo_adapter_telegram_mtproto::envelope::wire_encode(&env).unwrap();
+
+    // Proactive delay to avoid FLOOD_WAIT.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     let sent = client.send_message(uid, &encoded).await;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1526,7 +1590,7 @@ async fn lt60_canonicalize_real_sent_envelope() {
                     cleanup_message(&client, uid, s.id).await;
                 }
                 drop(adapter);
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 return;
             }
         }
@@ -1537,7 +1601,7 @@ async fn lt60_canonicalize_real_sent_envelope() {
         cleanup_message(&client, uid, s.id).await;
     }
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 // =============================================================================
@@ -1556,5 +1620,5 @@ async fn lt61_replay_protection_live() {
     assert!(adapter.replay_protection(&[1u8; 32]));
 
     drop(adapter);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 }

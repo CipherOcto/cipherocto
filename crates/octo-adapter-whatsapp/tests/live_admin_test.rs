@@ -133,12 +133,6 @@ async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
             if pid.contains(&self_phone) || pid == "80836284174444@lid" {
                 continue;
             }
-            // LID-based removal often fails with server 500. Only try
-            // phone-based JIDs.
-            if !pid.ends_with("@s.whatsapp.net") {
-                tracing::info!(member = %pid, "skipping non-phone member (LID)");
-                continue;
-            }
             if let Err(e) = admin.remove_member(&group_id, participant).await {
                 tracing::warn!(
                     error = %e,

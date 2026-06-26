@@ -1505,12 +1505,20 @@ impl WhatsAppWebAdapter {
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
 
         let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
-        for phone in participants {
-            let digits = Self::normalize_phone(phone);
-            if digits.is_empty() {
-                return Err(format!("participant {phone:?} has no digits"));
+        for participant in participants {
+            // Accept raw JIDs (e.g. "265716875980991@lid") directly.
+            if participant.contains('@') {
+                let parsed: wacore_binary::Jid = participant
+                    .parse()
+                    .map_err(|e| format!("invalid JID {participant:?}: {e}"))?;
+                jids.push(parsed);
+            } else {
+                let digits = Self::normalize_phone(participant);
+                if digits.is_empty() {
+                    return Err(format!("participant {participant:?} has no digits"));
+                }
+                jids.push(wacore_binary::Jid::pn(digits));
             }
-            jids.push(wacore_binary::Jid::pn(digits));
         }
 
         let responses = client

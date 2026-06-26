@@ -49,6 +49,7 @@ use grammers_client::client::{LoginToken, PasswordToken};
 use grammers_client::media::Downloadable;
 use grammers_client::sender::SenderPool;
 use grammers_client::SignInError;
+use grammers_session::Session as _;
 use grammers_tl_types as tl;
 use grammers_tl_types::{Deserializable, Serializable};
 use tokio::task::JoinHandle;
@@ -1085,6 +1086,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     target_dc
                 );
                 *self.qr_dc_id.lock() = Some(target_dc);
+                self.session.set_home_dc_id(target_dc).await;
                 // Stash credentials for poll/import.
                 *self.qr_api_id.lock() = Some(api_id);
                 *self.qr_api_hash.lock() = Some(zeroize::Zeroizing::new(api_hash.to_string()));
@@ -1132,6 +1134,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                             "importLoginToken: second MigrateTo"
                         );
                         *self.qr_dc_id.lock() = Some(migrate2.dc_id);
+                        self.session.set_home_dc_id(migrate2.dc_id).await;
                         let import_req2 = tl::functions::auth::ImportLoginToken {
                             token: migrate2.token,
                         };
@@ -1254,6 +1257,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 let target_dc = migrate.dc_id;
                 tracing::info!(target_dc, "poll_qr_login: MigrateTo DC {}", target_dc);
                 *self.qr_dc_id.lock() = Some(target_dc);
+                self.session.set_home_dc_id(target_dc).await;
                 let import_req = tl::functions::auth::ImportLoginToken {
                     token: migrate.token,
                 };
@@ -1300,6 +1304,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                         // Double migration: follow chain.
                         tracing::info!(target_dc2 = migrate2.dc_id, "poll: second MigrateTo");
                         *self.qr_dc_id.lock() = Some(migrate2.dc_id);
+                        self.session.set_home_dc_id(migrate2.dc_id).await;
                         let import_req2 = tl::functions::auth::ImportLoginToken {
                             token: migrate2.token,
                         };

@@ -11,6 +11,7 @@
 //! env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity.
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_network::dot::adapters::PlatformAdapter;
 
 use crate::error::{CoreError, Result};
 use crate::output::PairLinkArgs;
@@ -63,6 +64,10 @@ pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
 
     // R5-M2: sidecar first, before any config write.
     write_sidecar(&args.session_path, &session, SidecarMode::PairLink)?;
+
+    // Shut down the adapter to close the WebSocket and stop
+    // background tasks so the CLI process can exit cleanly.
+    let _ = adapter.shutdown().await;
 
     Ok(session)
 }

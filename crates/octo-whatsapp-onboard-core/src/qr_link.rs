@@ -9,7 +9,7 @@
 //! `ws://` or `wss://`.
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
-
+use octo_network::dot::adapters::PlatformAdapter;
 use crate::error::{CoreError, Result};
 use crate::output::QrLinkArgs;
 use crate::output::WhatsAppSession;
@@ -71,6 +71,10 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
 
     // R5-M2: sidecar first, before any config write.
     write_sidecar(&args.session_path, &session, SidecarMode::QrLink)?;
+
+    // Shut down the adapter to close the WebSocket and stop
+    // background tasks so the CLI process can exit cleanly.
+    let _ = adapter.shutdown().await;
 
     Ok(session)
 }

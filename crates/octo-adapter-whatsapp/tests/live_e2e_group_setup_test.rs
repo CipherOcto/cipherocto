@@ -285,18 +285,26 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     tracing::info!(subject = %subject, bot_phone = %bot_phone, "creating broadcast group");
 
     let members_to_invite = test_members();
-    let member_refs: Vec<&str> = members_to_invite.iter().map(|s| s.as_str()).collect();
+    let member_specs: Vec<octo_network::dot::adapters::coordinator_admin::GroupMemberSpec> = members_to_invite
+        .iter()
+        .map(|phone| octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+            handle: phone.clone(),
+            display_name: None,
+            is_admin: false,
+        })
+        .collect();
 
     let created = adapter
-        .create_group(&subject, &member_refs)
+        .as_coordinator_admin()
+        .unwrap()
+        .create_group(&subject, &member_specs)
         .await
         .unwrap_or_else(|e| panic!("create_group failed: {e}"));
 
-    let group_jid = created.group_jid.clone();
+    let group_jid = created.id.as_str().to_string();
     tracing::info!(
         group_jid = %group_jid,
         subject = %subject,
-        participants = created.metadata.participants.len(),
         "group created"
     );
 
@@ -313,12 +321,15 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     //      the creator's user-part is a non-empty digit string (LID
     //      match — LID JIDs are opaque identifiers, so we can't
     //      compare them to the phone number directly).
+    // Fetch metadata to verify participants.
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id = octo_network::dot::adapters::coordinator_admin::GroupId::new(group_jid.clone());
+    let meta = admin.get_group_metadata(&group_id).await.expect("get_group_metadata");
     let bot_digits: String = bot_phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    let participant_jids: Vec<String> = created
-        .metadata
-        .participants
+    let participant_jids: Vec<String> = meta
+        .members
         .iter()
-        .map(|p| p.jid.to_string())
+        .map(|p| p.0.clone())
         .collect();
     let creator_in_list = !participant_jids.is_empty()
         && participant_jids.iter().any(|p_str| {
@@ -369,8 +380,9 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     // `add_members` API call below exercises the "invite post-creation"
     // path explicitly. If the env var is empty this is a no-op.
     if !members_to_invite.is_empty() {
+        let member_phone_refs: Vec<&str> = members_to_invite.iter().map(|s| s.as_str()).collect();
         let responses = adapter
-            .add_members(&group_jid, &member_refs)
+            .add_members(&group_jid, &member_phone_refs)
             .await
             .unwrap_or_else(|e| panic!("add_members failed: {e}"));
         tracing::info!(

@@ -111,8 +111,8 @@ fn test_marker(test_name: &str) -> String {
 }
 
 /// Delete a message from a chat (best-effort cleanup).
-async fn cleanup_message(client: &Arc<RealTelegramMtprotoClient>, chat_id: i64, msg_id: i32) {
-    if let Err(e) = client.delete_messages(chat_id, &[msg_id], true).await {
+async fn cleanup_message(client: &Arc<RealTelegramMtprotoClient>, chat_id: i64, msg_id: i64) {
+    if let Err(e) = client.delete_messages(chat_id, &[msg_id as i32], true).await {
         tracing::warn!(error = %e, msg_id, chat_id, "cleanup_message failed (best-effort)");
     } else {
         tracing::info!(msg_id, chat_id, "cleaned up message");

@@ -595,7 +595,8 @@ impl WhatsAppWebAdapter {
     ///   and converted to `Jid::pn()`.
     fn peer_to_jid(peer: &str) -> wacore_binary::Jid {
         if peer.contains('@') {
-            peer.parse().unwrap_or_else(|_| wacore_binary::Jid::pn(Self::normalize_phone(peer)))
+            peer.parse()
+                .unwrap_or_else(|_| wacore_binary::Jid::pn(Self::normalize_phone(peer)))
         } else {
             wacore_binary::Jid::pn(Self::normalize_phone(peer))
         }
@@ -2431,16 +2432,14 @@ impl WhatsAppWebAdapter {
         )
         .await?;
         let media_ref = MediaRef::from_upload_response(&upload, filename);
-        let token = encode_base64url(&media_ref).map_err(|e| {
-            PlatformAdapterError::Unreachable {
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "whatsapp".into(),
                 reason: format!("encode MediaRef failed: {e}"),
-            }
-        })?;
+            })?;
 
-        let jid: wacore_binary::Jid = to_jid
-            .parse()
-            .map_err(|e| PlatformAdapterError::ApiError {
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("invalid JID {to_jid:?}: {e}"),
             })?;
@@ -2856,21 +2855,20 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             let guard = self.client.lock();
             guard
                 .clone()
-                .ok_or_else(|| {
-                    PlatformAdapterError::ApiError {
-                        code: 500,
-                        message: "WhatsApp Web client not connected".into(),
-                    }
+                .ok_or_else(|| PlatformAdapterError::ApiError {
+                    code: 500,
+                    message: "WhatsApp Web client not connected".into(),
                 })?
         };
 
-        let group_jid: wacore_binary::Jid = group_id
-            .as_str()
-            .parse()
-            .map_err(|e| PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("invalid group JID: {e}"),
-            })?;
+        let group_jid: wacore_binary::Jid =
+            group_id
+                .as_str()
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid group JID: {e}"),
+                })?;
 
         let requester_jid = Self::peer_to_jid(requester.as_str());
 
@@ -4233,7 +4231,10 @@ mod tests {
         // Membership
         assert!(caps.can_add_member);
         assert!(caps.can_remove_member);
-        assert!(caps.can_ban, "can_ban (implemented as remove + revoke_invite)");
+        assert!(
+            caps.can_ban,
+            "can_ban (implemented as remove + revoke_invite)"
+        );
         assert!(caps.can_promote);
         assert!(caps.can_demote);
         assert!(caps.can_approve_join, "can_approve_join");

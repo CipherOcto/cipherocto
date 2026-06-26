@@ -284,14 +284,17 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     tracing::info!(subject = %subject, bot_phone = %bot_phone, "creating broadcast group");
 
     let members_to_invite = test_members();
-    let member_specs: Vec<octo_network::dot::adapters::coordinator_admin::GroupMemberSpec> = members_to_invite
-        .iter()
-        .map(|phone| octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
-            handle: phone.clone(),
-            display_name: None,
-            is_admin: false,
-        })
-        .collect();
+    let member_specs: Vec<octo_network::dot::adapters::coordinator_admin::GroupMemberSpec> =
+        members_to_invite
+            .iter()
+            .map(
+                |phone| octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+                    handle: phone.clone(),
+                    display_name: None,
+                    is_admin: false,
+                },
+            )
+            .collect();
 
     let created = adapter
         .as_coordinator_admin()
@@ -323,13 +326,12 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     // Fetch metadata to verify participants.
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id = octo_network::dot::adapters::coordinator_admin::GroupId::new(group_jid.clone());
-    let meta = admin.get_group_metadata(&group_id).await.expect("get_group_metadata");
+    let meta = admin
+        .get_group_metadata(&group_id)
+        .await
+        .expect("get_group_metadata");
     let bot_digits: String = bot_phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    let participant_jids: Vec<String> = meta
-        .members
-        .iter()
-        .map(|p| p.0.clone())
-        .collect();
+    let participant_jids: Vec<String> = meta.members.iter().map(|p| p.0.clone()).collect();
     let creator_in_list = !participant_jids.is_empty()
         && participant_jids.iter().any(|p_str| {
             // PN match: participant JID contains the bot's phone digits.

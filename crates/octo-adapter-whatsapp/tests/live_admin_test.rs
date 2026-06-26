@@ -370,9 +370,8 @@ async fn wa21_join_by_invite() {
 
     // Rejoin via invite link.
     tokio::time::sleep(Duration::from_secs(3)).await;
-    let invite_ref = octo_network::dot::adapters::coordinator_admin::InviteRef::new(
-        invite_url.clone(),
-    );
+    let invite_ref =
+        octo_network::dot::adapters::coordinator_admin::InviteRef::new(invite_url.clone());
     let result = admin.join_by_invite(&invite_ref).await;
     assert!(result.is_ok(), "join_by_invite: {:?}", result.err());
     let handle = result.unwrap();
@@ -421,7 +420,11 @@ async fn wa03_04_12_15_settings_fixture() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     let desc = format!("test description {}", timestamp());
     let result = admin.set_group_description(&group_id, &desc).await;
-    assert!(result.is_ok(), "wa04 set_group_description: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa04 set_group_description: {:?}",
+        result.err()
+    );
     tracing::info!("WA-04: set_group_description OK");
 
     // Clear description.
@@ -441,11 +444,19 @@ async fn wa03_04_12_15_settings_fixture() {
     // ── wa13: set_announce ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_announce(&group_id, true).await;
-    assert!(result.is_ok(), "wa13 set_announce(true): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa13 set_announce(true): {:?}",
+        result.err()
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_announce(&group_id, false).await;
-    assert!(result.is_ok(), "wa13 set_announce(false): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa13 set_announce(false): {:?}",
+        result.err()
+    );
     tracing::info!("WA-13: set_announce OK");
 
     // ── wa14: set_ephemeral ──
@@ -453,21 +464,37 @@ async fn wa03_04_12_15_settings_fixture() {
     let result = admin
         .set_ephemeral(&group_id, Some(Duration::from_secs(86400)))
         .await;
-    assert!(result.is_ok(), "wa14 set_ephemeral(86400): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa14 set_ephemeral(86400): {:?}",
+        result.err()
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_ephemeral(&group_id, None).await;
-    assert!(result.is_ok(), "wa14 set_ephemeral(None): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa14 set_ephemeral(None): {:?}",
+        result.err()
+    );
     tracing::info!("WA-14: set_ephemeral OK");
 
     // ── wa15: set_require_approval ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, true).await;
-    assert!(result.is_ok(), "wa15 set_require_approval(true): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa15 set_require_approval(true): {:?}",
+        result.err()
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, false).await;
-    assert!(result.is_ok(), "wa15 set_require_approval(false): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa15 set_require_approval(false): {:?}",
+        result.err()
+    );
     tracing::info!("WA-15: set_require_approval OK");
 
     // Cleanup: destroy the shared group.
@@ -594,7 +621,11 @@ async fn wa07_11_18_19_member_fixture() {
     let result = admin
         .transfer_ownership(&group_id, &PeerId::new(phone.clone()))
         .await;
-    assert!(result.is_ok(), "wa19 transfer_ownership: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "wa19 transfer_ownership: {:?}",
+        result.err()
+    );
     tracing::info!("WA-19: transfer_ownership OK");
 
     // ── wa18: approve_join_request (no pending request — may succeed as no-op) ──

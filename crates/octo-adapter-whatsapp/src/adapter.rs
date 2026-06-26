@@ -587,6 +587,20 @@ impl WhatsAppWebAdapter {
         phone.chars().filter(|c| c.is_ascii_digit()).collect()
     }
 
+    /// Convert a `PeerId` string (phone number or raw JID) to a `Jid`.
+    ///
+    /// - Raw JIDs like `"5521995544743@s.whatsapp.net"` or `"265716875980991@lid"`
+    ///   are parsed directly.
+    /// - Phone numbers like `"+5521995544743"` are normalized to digits
+    ///   and converted to `Jid::pn()`.
+    fn peer_to_jid(peer: &str) -> wacore_binary::Jid {
+        if peer.contains('@') {
+            peer.parse().unwrap_or_else(|_| wacore_binary::Jid::pn(Self::normalize_phone(peer)))
+        } else {
+            wacore_binary::Jid::pn(Self::normalize_phone(peer))
+        }
+    }
+
     /// Convert a group ID to a WhatsApp group JID.
     ///
     /// RFC-0861 §2 M16: appends `@g.us` to bare digits, or passes
@@ -2525,10 +2539,10 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             // Membership
             can_add_member: true,
             can_remove_member: true,
-            can_ban: false, // WhatsApp has no ban primitive
+            can_ban: true, // Implemented as remove + revoke_invite
             can_promote: true,
             can_demote: true,
-            can_approve_join: false, // Not exposed in whatsapp-rust's typed API
+            can_approve_join: true,
             // Mode
             can_rename: true,
             can_describe: true,
@@ -2541,7 +2555,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             can_get_metadata: true,
             can_resolve_invite: true,
             // Handoff
-            can_transfer_ownership: false,
+            can_transfer_ownership: true,
         }
     }
 
@@ -2764,18 +2778,37 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn approve_join_request(
         &self,
-        _group_id: &GroupId,
-        _requester: &PeerId,
+        group_id: &GroupId,
+        requester: &PeerId,
     ) -> Result<(), PlatformAdapterError> {
-        // whatsapp-rust's typed API doesn't expose approve-membership-
-        // requests at the moment. Returning Unimplemented signals
-        // "fall back to manual approval in the WhatsApp client" to
-        // the caller, which is the right thing for an R-series
-        // rollout.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "approve_join_request".into(),
-        })
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| {
+                    PlatformAdapterError::ApiError {
+                        code: 500,
+                        message: "WhatsApp Web client not connected".into(),
+                    }
+                })?
+        };
+
+        let group_jid: wacore_binary::Jid = group_id
+            .as_str()
+            .parse()
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid group JID: {e}"),
+            })?;
+
+        let requester_jid = Self::peer_to_jid(requester.as_str());
+
+        client
+            .groups()
+            .approve_membership_requests(&group_jid, &[requester_jid])
+            .await
+            .map_err(|e| api_err("approve_join_request", e.to_string()))?;
+        Ok(())
     }
 
     async fn rename_group(
@@ -2986,18 +3019,13 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn transfer_ownership(
         &self,
-        _group_id: &GroupId,
-        _new_owner: &PeerId,
+        group_id: &GroupId,
+        new_owner: &PeerId,
     ) -> Result<(), PlatformAdapterError> {
-        // WhatsApp has no first-class "transfer ownership" primitive.
-        // The standard pattern is: promote the new owner, demote the
-        // old owner, and have the old owner leave. That is a
-        // multi-step sequence the caller can drive via
-        // `promote_to_admin` + `demote_from_admin` + `leave_group`.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "transfer_ownership".into(),
-        })
+        // WhatsApp has no native "transfer ownership" primitive.
+        // The equivalent is: promote the new owner to admin.
+        // The caller can optionally demote the old owner afterwards.
+        self.promote_to_admin(group_id, new_owner).await
     }
 }
 
@@ -4121,10 +4149,10 @@ mod tests {
         // Membership
         assert!(caps.can_add_member);
         assert!(caps.can_remove_member);
-        assert!(!caps.can_ban, "can_ban (always false on WhatsApp)");
+        assert!(caps.can_ban, "can_ban (implemented as remove + revoke_invite)");
         assert!(caps.can_promote);
         assert!(caps.can_demote);
-        assert!(!caps.can_approve_join, "can_approve_join");
+        assert!(caps.can_approve_join, "can_approve_join");
         // Mode
         assert!(caps.can_rename);
         assert!(caps.can_describe);
@@ -4137,7 +4165,7 @@ mod tests {
         assert!(caps.can_get_metadata);
         assert!(caps.can_resolve_invite);
         // Handoff
-        assert!(!caps.can_transfer_ownership);
+        assert!(caps.can_transfer_ownership);
         // Platform name
         assert_eq!(adapter.platform_name(), "whatsapp");
     }
@@ -4157,54 +4185,47 @@ mod tests {
 
     #[test]
     fn unimplemented_actions_return_unimplemented_error() {
-        // Methods we deliberately don't implement (ban_member,
-        // approve_join_request, transfer_ownership) must return
-        // `PlatformAdapterError::Unimplemented` with the correct
-        // platform name and action label.
+        // All previously-unimplemented methods (ban_member, approve_join_request,
+        // transfer_ownership) are now implemented. They fail with ApiError
+        // when called offline (no client connected), not Unimplemented.
         //
-        // `join_by_invite` is no longer in this list: RFC-0861 §3
-        // H1 implemented it via `client.groups().join_with_invite_code`.
-        // An offline adapter short-circuits with
-        // `api_err("join_by_invite", "WhatsApp Web client not connected")`
-        // (an `ApiError`, not `Unimplemented`); a separate test
-        // `join_by_invite_fails_when_not_connected` covers that path.
+        // This test is kept as a placeholder. If any new methods are added
+        // as Unimplemented, add them here.
         let adapter = offline_adapter();
         let g = GroupId::new("120363012345678901@g.us");
         let p = PeerId::new("+15551234567");
 
-        // We can't `.await` inside `#[test]`, so we use a small
-        // blocking helper instead.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime");
 
-        let check = |label: &'static str, result: PlatformAdapterError| match result {
-            PlatformAdapterError::Unimplemented { platform, action } => {
-                assert_eq!(platform, "whatsapp", "{label}: platform");
-                assert_eq!(action, label, "{label}: action");
-            }
-            other => panic!("{label}: expected Unimplemented, got {other:?}"),
-        };
-
         rt.block_on(async {
-            check(
-                "ban_member",
-                CoordinatorAdmin::ban_member(&adapter, &g, &p, None)
-                    .await
-                    .expect_err("ban_member must be Unimplemented"),
+            // ban_member: now implemented (remove + revoke invite)
+            let err = CoordinatorAdmin::ban_member(&adapter, &g, &p, None)
+                .await
+                .expect_err("ban_member must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "ban_member: expected ApiError (not connected), got {err:?}"
             );
-            check(
-                "approve_join_request",
-                CoordinatorAdmin::approve_join_request(&adapter, &g, &p)
-                    .await
-                    .expect_err("approve_join_request must be Unimplemented"),
+
+            // approve_join_request: now implemented (approve_membership_requests)
+            let err = CoordinatorAdmin::approve_join_request(&adapter, &g, &p)
+                .await
+                .expect_err("approve_join_request must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "approve_join_request: expected ApiError (not connected), got {err:?}"
             );
-            check(
-                "transfer_ownership",
-                CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
-                    .await
-                    .expect_err("transfer_ownership must be Unimplemented"),
+
+            // transfer_ownership: now implemented (promote_to_admin)
+            let err = CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
+                .await
+                .expect_err("transfer_ownership must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "transfer_ownership: expected ApiError (not connected), got {err:?}"
             );
         });
     }

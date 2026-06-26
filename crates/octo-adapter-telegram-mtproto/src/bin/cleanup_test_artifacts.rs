@@ -3,14 +3,16 @@
 /// Usage:
 ///   cargo run -p octo-adapter-telegram-mtproto --features real-network --bin cleanup_test_artifacts -- --dry-run
 ///   cargo run -p octo-adapter-telegram-mtproto --features real-network --bin cleanup_test_artifacts
+///   cargo run -p octo-adapter-telegram-mtproto --features real-network --bin cleanup_test_artifacts -- --all  (delete ALL messages in Saved Messages)
 ///
 /// Cleans:
-///   1. Messages in Saved Messages matching OCTO_LIVE_* test markers
+///   1. Messages in Saved Messages (full history via messages.getHistory)
 ///   2. Groups with title prefix "octo_test_" (test groups)
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use grammers_tl_types as tl;
 use octo_adapter_telegram_mtproto::client::MtprotoTelegramClient;
 use octo_adapter_telegram_mtproto::config::MtprotoTelegramConfig;
 use octo_adapter_telegram_mtproto::real_client::RealTelegramMtprotoClient;
@@ -38,6 +40,7 @@ fn live_config() -> MtprotoTelegramConfig {
 #[tokio::main]
 async fn main() {
     let dry_run = std::env::args().any(|a| a == "--dry-run");
+    let clear_all = std::env::args().any(|a| a == "--all");
 
     let config = live_config();
     let api_id = config.api_id.expect("api_id required");
@@ -48,9 +51,10 @@ async fn main() {
         .unwrap_or_else(|e| panic!("failed to open session: {e}"));
 
     let self_handle = MtprotoSelfHandle::new();
-    let client = RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
-        .await
-        .expect("connect failed -- is the session valid?");
+    let client =
+        RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
+            .await
+            .expect("connect failed -- is the session valid?");
 
     match client.grammers_client().get_me().await {
         Ok(me) => {
@@ -76,71 +80,118 @@ async fn main() {
     );
 
     // =========================================================================
-    // Phase 1: Clean up test messages in Saved Messages
+    // Phase 1: Clean up messages in Saved Messages via getHistory
     // =========================================================================
-    println!("\n=== Phase 1: Cleaning test messages in Saved Messages ===");
+    if clear_all {
+        println!("\n=== Phase 1: Clearing ALL messages in Saved Messages ===");
+    } else {
+        println!("\n=== Phase 1: Cleaning test messages in Saved Messages ===");
+    }
     let mut deleted_count = 0u32;
     let mut failed_count = 0u32;
 
-    let test_prefixes = ["OCTO_LIVE_", "LT-", "LT_", "octo_test_", "DOT/1/"];
+    let test_prefixes = ["OCTO_LIVE_", "LT-", "LT_", "octo_test_", "DOT/1/", "test "];
 
-    for pass in 0..10 {
-        eprintln!("[pass {}] draining updates...", pass);
-        let updates = match client.receive_updates().await {
-            Ok(u) => u,
+    // Saved Messages = InputPeerSelf. Use raw TL getHistory.
+    let self_peer = tl::enums::InputPeer::PeerSelf;
+
+    let mut offset_id = 0i32;
+    let mut total_scanned = 0u32;
+    let mut consecutive_empty = 0u32;
+    let limit = 100i32;
+
+    loop {
+        let req = tl::functions::messages::GetHistory {
+            peer: self_peer.clone(),
+            offset_id,
+            offset_date: 0,
+            add_offset: 0,
+            limit,
+            max_id: 0,
+            min_id: 0,
+            hash: 0,
+        };
+
+        let response = match client.grammers_client().invoke(&req).await {
+            Ok(r) => r,
             Err(e) => {
-                eprintln!("receive_updates failed: {e}");
+                eprintln!("getHistory failed: {e}");
                 break;
             }
         };
 
-        if updates.is_empty() {
-            eprintln!("[pass {}] no more updates", pass);
+        // Extract messages from the response.
+        let messages = match &response {
+            tl::enums::messages::Messages::Messages(msgs) => &msgs.messages,
+            tl::enums::messages::Messages::Slice(slice) => &slice.messages,
+            tl::enums::messages::Messages::ChannelMessages(cm) => &cm.messages,
+            tl::enums::messages::Messages::NotModified(_) => {
+                eprintln!("getHistory returned NotModified, stopping");
+                break;
+            }
+        };
+
+        if messages.is_empty() {
+            consecutive_empty += 1;
+            if consecutive_empty >= 2 {
+                break;
+            }
+            continue;
+        }
+        consecutive_empty = 0;
+
+        let mut batch_ids = Vec::new();
+        for msg in messages {
+            total_scanned += 1;
+            // Update offset_id for next page.
+            if let tl::enums::Message::Message(m) = msg {
+                offset_id = offset_id.max(m.id);
+                let text = m.message.as_str();
+                let is_test = clear_all || test_prefixes.iter().any(|p| text.starts_with(p));
+                if is_test {
+                    batch_ids.push(m.id);
+                    if batch_ids.len() <= 20 {
+                        eprintln!(
+                            "  [found] msg_id={} msg={}",
+                            m.id,
+                            &text[..text.len().min(60)]
+                        );
+                    }
+                }
+            }
+        }
+
+        if !batch_ids.is_empty() {
+            if dry_run {
+                println!(
+                    "[dry-run] Would delete {} messages",
+                    batch_ids.len(),
+                );
+            } else {
+                match client.delete_messages(user_id, &batch_ids, true).await {
+                    Ok(()) => {
+                        deleted_count += batch_ids.len() as u32;
+                        println!("Deleted {} messages", batch_ids.len());
+                    }
+                    Err(e) => {
+                        failed_count += batch_ids.len() as u32;
+                        eprintln!("delete_messages batch failed: {e}");
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // If we got fewer than `limit` messages, we've reached the end.
+        if (messages.len() as i32) < limit {
             break;
         }
 
-        let mut msg_ids_to_delete = Vec::new();
-        for u in &updates {
-            if let octo_adapter_telegram_mtproto::client::MtprotoTelegramUpdate::NewMessage(nm) = u
-            {
-                let is_test = test_prefixes.iter().any(|p| nm.message.starts_with(p));
-                if is_test && nm.chat_id == user_id {
-                    msg_ids_to_delete.push(nm.message_id as i32);
-                    eprintln!(
-                        "  [found] msg_id={} msg={}",
-                        nm.message_id,
-                        &nm.message[..nm.message.len().min(60)]
-                    );
-                }
-            }
-        }
-
-        if !msg_ids_to_delete.is_empty() {
-            if dry_run {
-                println!(
-                    "[dry-run] Would delete {} messages: {:?}",
-                    msg_ids_to_delete.len(),
-                    msg_ids_to_delete
-                );
-            } else {
-                match client
-                    .delete_messages(user_id, &msg_ids_to_delete, true)
-                    .await
-                {
-                    Ok(()) => {
-                        deleted_count += msg_ids_to_delete.len() as u32;
-                        println!("Deleted {} messages", msg_ids_to_delete.len());
-                    }
-                    Err(e) => {
-                        failed_count += msg_ids_to_delete.len() as u32;
-                        eprintln!("delete_messages failed: {e}");
-                    }
-                }
-            }
-        }
-
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // offset_id is already set to the last message ID we saw.
+        // getHistory returns messages BEFORE offset_id, so we're good.
     }
+
+    eprintln!("Phase 1: scanned {} messages total", total_scanned);
 
     // =========================================================================
     // Phase 2: Clean up test groups
@@ -164,9 +215,11 @@ async fn main() {
                     if dry_run {
                         println!("[dry-run] Would delete group: {}", title);
                     } else {
-                        // Try delete_chat first (owner), then leave_chat (fallback)
                         if let Err(e) = client.delete_chat(chat_id).await {
-                            eprintln!("delete_chat failed for {}: {e}, trying leave_chat", title);
+                            eprintln!(
+                                "delete_chat failed for {}: {e}, trying leave_chat",
+                                title
+                            );
                             if let Err(e2) = client.leave_chat(chat_id).await {
                                 eprintln!("leave_chat also failed for {}: {e2}", title);
                                 groups_failed += 1;

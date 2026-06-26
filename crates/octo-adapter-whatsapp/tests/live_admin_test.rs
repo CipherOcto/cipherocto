@@ -518,13 +518,11 @@ async fn wa07_11_18_19_member_fixture() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // ── wa09: promote_to_admin ──
-    let admin_member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: true,
-    };
+    // Member is already in group from re-add above. Use promote, not add_member.
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.add_member(&group_id, &admin_member).await;
+    let result = admin
+        .promote_to_admin(&group_id, &PeerId::new(phone.clone()))
+        .await;
     assert!(result.is_ok(), "wa09 promote_to_admin: {:?}", result.err());
     tracing::info!("WA-09: promote_to_admin OK");
 

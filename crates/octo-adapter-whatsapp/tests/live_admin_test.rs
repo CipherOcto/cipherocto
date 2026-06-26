@@ -124,17 +124,25 @@ async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Remove all non-bot members before leaving.
+    // The bot may appear as phone JID or LID, so filter both.
     if let Ok(meta) = admin.get_group_metadata(&group_id).await {
         let self_phone = adapter.self_handle().unwrap_or_default();
         for participant in &meta.members {
-            // Skip the bot itself.
-            if participant.0.contains(&self_phone) {
+            let pid = &participant.0;
+            // Skip the bot itself (match phone or known LID patterns).
+            if pid.contains(&self_phone) || pid == "80836284174444@lid" {
+                continue;
+            }
+            // LID-based removal often fails with server 500. Only try
+            // phone-based JIDs.
+            if !pid.ends_with("@s.whatsapp.net") {
+                tracing::info!(member = %pid, "skipping non-phone member (LID)");
                 continue;
             }
             if let Err(e) = admin.remove_member(&group_id, participant).await {
                 tracing::warn!(
                     error = %e,
-                    member = %participant.0,
+                    member = %pid,
                     group_jid = %group_jid,
                     "cleanup: remove_member failed (best-effort)"
                 );

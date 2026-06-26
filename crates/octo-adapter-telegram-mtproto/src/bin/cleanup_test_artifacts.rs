@@ -228,7 +228,7 @@ async fn main() {
                 eprintln!("get_chat({}) failed (skipping): {e}", chat_id);
             }
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 
     // =========================================================================

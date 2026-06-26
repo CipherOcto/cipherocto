@@ -2724,19 +2724,18 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn ban_member(
         &self,
-        _group_id: &GroupId,
-        _member: &PeerId,
+        group_id: &GroupId,
+        member: &PeerId,
         _duration: Option<std::time::Duration>,
     ) -> Result<(), PlatformAdapterError> {
-        // WhatsApp has no ban primitive. The recommended pattern
-        // (per `docs/research/coordinator-admin-actions.md`) is:
-        // remove the member, then revoke the invite link. Returning
-        // `Unimplemented` here tells the caller to use that
-        // fallback rather than expecting a real ban.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "ban_member".into(),
-        })
+        // WhatsApp has no native ban primitive. The equivalent is:
+        // 1. Remove the member from the group
+        // 2. Revoke the invite link so they cannot rejoin
+        self.remove_member(group_id, member).await?;
+        // Revoke invite link by resetting it. Failure is non-fatal
+        // (the member is already removed).
+        let _ = self.get_invite_link(group_id.as_str(), true).await;
+        Ok(())
     }
 
     async fn promote_to_admin(

@@ -550,22 +550,13 @@ async fn wa07_11_18_19_member_fixture() {
         .await;
     tracing::info!(?result, "WA-18: approve_join_request");
 
-    // ── wa11: ban_member (WhatsApp has no ban primitive — expected Unimplemented) ──
+    // ── wa11: ban_member (remove + revoke invite) ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin
         .ban_member(&group_id, &PeerId::new(phone.clone()), None)
         .await;
-    match &result {
-        Err(e) if e.to_string().contains("Unimplemented") => {
-            tracing::info!("WA-11: ban_member correctly returns Unimplemented (WhatsApp has no ban primitive)");
-        }
-        Ok(()) => {
-            tracing::info!("WA-11: ban_member unexpectedly succeeded (may have been implemented)");
-        }
-        Err(e) => {
-            panic!("wa11 ban_member: unexpected error: {:?}", e);
-        }
-    }
+    assert!(result.is_ok(), "wa11 ban_member: {:?}", result.err());
+    tracing::info!("WA-11: ban_member OK");
 
     // Cleanup.
     tokio::time::sleep(Duration::from_secs(2)).await;

@@ -332,6 +332,61 @@ async fn wa20_shutdown() {
     tracing::info!("WA-20: shutdown OK");
 }
 
+/// wa21: join_by_invite — create group, get invite, leave, rejoin via invite.
+/// Requires OCTO_WHATSAPP_TEST_MEMBER to keep the group alive after leaving.
+#[tokio::test]
+#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
+async fn wa21_join_by_invite() {
+    init_tracing();
+    let (adapter, group_jid, _handle) = create_test_group("wa21").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id = GroupId::new(group_jid.clone());
+    let phone = test_member_phone();
+
+    // Add a member so the group survives when we leave.
+    let member = GroupMemberSpec {
+        handle: phone.clone(),
+        display_name: None,
+        is_admin: false,
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.add_member(&group_id, &member).await;
+    assert!(result.is_ok(), "add_member: {:?}", result.err());
+
+    // Get invite link while we're still admin.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let invite_url = adapter
+        .get_invite_link(&group_jid, false)
+        .await
+        .expect("get_invite_link");
+    assert!(invite_url.starts_with("https://chat.whatsapp.com/"));
+    tracing::info!(url = %invite_url, "WA-21: got invite link");
+
+    // Leave the group (group stays alive because test member is still in).
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.leave_group(&group_id).await;
+    assert!(result.is_ok(), "leave_group: {:?}", result.err());
+    tracing::info!("WA-21: left group");
+
+    // Rejoin via invite link.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let invite_ref = octo_network::dot::adapters::coordinator_admin::InviteRef::new(
+        invite_url.clone(),
+    );
+    let result = admin.join_by_invite(&invite_ref).await;
+    assert!(result.is_ok(), "join_by_invite: {:?}", result.err());
+    let handle = result.unwrap();
+    tracing::info!(
+        joined_jid = %handle.id.as_str(),
+        "WA-21: join_by_invite OK"
+    );
+
+    // Cleanup: remove test member and destroy.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    cleanup_test_group(&adapter, &group_jid).await;
+    tracing::info!("WA-21: cleanup done");
+}
+
 // ── Settings Fixture (wa03,wa04,wa12-wa15) ──────────────────────
 // Creates ONE group, runs all settings tests, restores state after each, then destroys.
 

@@ -1450,13 +1450,9 @@ impl WhatsAppWebAdapter {
 
         // Delete/clear the chat entry BEFORE leaving. After leaving, the server
         // rejects sync mutations for groups we're no longer in.
-        // Try clearChat first (ClearChatAction), then deleteChat (DeleteChatAction).
-        if let Err(e) = client.chat_actions().clear_chat(&jid, None).await {
-            tracing::warn!(group_jid = %group_jid, error = %e, "clear_chat before leave failed (best-effort)");
-        }
-        if let Err(e) = client.chat_actions().delete_chat(&jid, false, None).await {
-            tracing::warn!(group_jid = %group_jid, error = %e, "delete_chat before leave failed (best-effort)");
-        }
+        // Match the official app's behavior: delete_media=true, with message_range.
+        let _ = client.chat_actions().clear_chat(&jid, None).await;
+        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
 
         client
             .groups()
@@ -3002,10 +2998,9 @@ impl WhatsAppWebAdapter {
         let jid: wacore_binary::Jid = group_jid
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
-        // Clear/delete chat BEFORE leaving. After leaving, the server
-        // rejects sync mutations for groups we're no longer in.
+        // Clear/delete chat BEFORE leaving. Match official app behavior.
         let _ = client.chat_actions().clear_chat(&jid, None).await;
-        let _ = client.chat_actions().delete_chat(&jid, false, None).await;
+        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
         match client.groups().leave(&jid).await {
             Ok(()) => Ok(()),
             Err(e) => {

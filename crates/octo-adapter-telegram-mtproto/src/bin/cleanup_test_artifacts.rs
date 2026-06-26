@@ -307,6 +307,14 @@ async fn delete_with_flood_wait(
             Err(e) => {
                 let err_str = e.to_string();
                 if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                    if wait_secs > FLOOD_WAIT_CAP_SECS {
+                        eprintln!(
+                            "FLOOD_WAIT {}s exceeds cap {}s on delete_chat for {}: giving up",
+                            wait_secs, FLOOD_WAIT_CAP_SECS, title
+                        );
+                        last_delete_err = Some(err_str);
+                        break;
+                    }
                     let sleep_secs = flood_wait_sleep_secs(wait_secs);
                     eprintln!(
                         "FLOOD_WAIT on delete_chat for {}: attempt {}/{}, sleeping {}s (requested {}s)",
@@ -331,6 +339,14 @@ async fn delete_with_flood_wait(
             Err(e2) => {
                 let err2_str = e2.to_string();
                 if let Some(wait_secs) = parse_flood_wait(&err2_str) {
+                    if wait_secs > FLOOD_WAIT_CAP_SECS {
+                        eprintln!(
+                            "FLOOD_WAIT {}s exceeds cap on leave_chat for {}: giving up",
+                            wait_secs, title
+                        );
+                        last_leave_err = Some(err2_str);
+                        break;
+                    }
                     let sleep_secs = flood_wait_sleep_secs(wait_secs);
                     eprintln!(
                         "FLOOD_WAIT on leave_chat for {}: attempt {}/{}, sleeping {}s",

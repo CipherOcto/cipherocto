@@ -1200,6 +1200,17 @@ where
             Err(e) => {
                 let err_str = e.to_string();
                 if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                    // If the server says wait longer than our cap,
+                    // retrying is futile — bail immediately.
+                    if wait_secs > FLOOD_WAIT_CAP_SECS {
+                        tracing::warn!(
+                            wait_secs,
+                            cap = FLOOD_WAIT_CAP_SECS,
+                            label,
+                            "FLOOD_WAIT exceeds cap, giving up immediately"
+                        );
+                        return Err(e);
+                    }
                     let sleep_secs = flood_wait_sleep_secs(wait_secs);
                     tracing::warn!(
                         attempt,

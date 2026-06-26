@@ -62,8 +62,8 @@ pub struct OutputArgs {
     /// Write JSON to stdout instead of a file.
     #[arg(long)]
     pub stdout: bool,
-    /// Overwrite existing output file. Only meaningful with `--out`.
-    #[arg(long, requires = "out")]
+    /// Overwrite existing output file.
+    #[arg(long)]
     pub force: bool,
 }
 

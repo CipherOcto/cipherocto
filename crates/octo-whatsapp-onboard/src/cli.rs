@@ -86,10 +86,25 @@ fn parse_groups(s: &str) -> std::result::Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Default session path: $OCTO_WHATSAPP_SESSION_PATH or
+/// ~/.local/share/octo/whatsapp/default.session.db
+fn default_session_path() -> PathBuf {
+    if let Ok(p) = std::env::var("OCTO_WHATSAPP_SESSION_PATH") {
+        return PathBuf::from(p);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("octo")
+        .join("whatsapp")
+        .join("default.session.db")
+}
+
 #[derive(Args, Debug)]
 pub struct QrLinkArgs {
     /// Path to stoolap session database (default: ~/.local/share/octo/whatsapp/default.session.db).
-    #[arg(long)]
+    #[arg(long, default_value_os_t = default_session_path())]
     pub session_path: PathBuf,
     /// Initial group IDs to monitor (comma-separated, accepts digits-only
     /// or full JID like `120363012345678901@g.us`).
@@ -115,7 +130,7 @@ pub struct QrLinkArgs {
 
 #[derive(Args, Debug)]
 pub struct PairLinkArgs {
-    #[arg(long)]
+    #[arg(long, default_value_os_t = default_session_path())]
     pub session_path: PathBuf,
     /// Phone number in E.164 (e.g., +15551234567). Or $OCTO_WHATSAPP_PHONE.
     #[arg(long)]

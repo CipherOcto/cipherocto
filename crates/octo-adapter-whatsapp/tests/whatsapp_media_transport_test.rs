@@ -41,7 +41,6 @@ use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
 use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::error::PlatformAdapterError;
-use std::sync::Arc;
 use std::time::Duration;
 
 fn default_persist_dir() -> std::path::PathBuf {
@@ -123,24 +122,6 @@ async fn cleanup_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     }
 }
 
-/// RAII guard: spawns full cleanup on drop so panics still clean up.
-struct GroupCleanupGuard {
-    adapter: Arc<WhatsAppWebAdapter>,
-    group_jid: String,
-}
-
-impl Drop for GroupCleanupGuard {
-    fn drop(&mut self) {
-        let adapter = Arc::clone(&self.adapter);
-        let group_jid = self.group_jid.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                cleanup_group(&adapter, &group_jid).await;
-            });
-        }
-    }
-}
-
 // ── Test 2: pre-flight 100 MiB + 1 byte ──────────────────────────
 
 /// Capabilities report must match the documented 100 MiB upload ceiling,
@@ -206,7 +187,7 @@ async fn upload_then_download_roundtrip() {
         }
     };
 
-    let adapter = Arc::new(WhatsAppWebAdapter::new(cfg));
+    let adapter = WhatsAppWebAdapter::new(cfg);
 
     // Start bot and wait for connection.
     let connected = adapter.connected();
@@ -235,12 +216,6 @@ async fn upload_then_download_roundtrip() {
         .expect("register_group_at_runtime");
     tracing::info!(group_jid = %group_jid, subject = %subject, "group created");
 
-    // RAII guard: cleans up group even if test panics.
-    let _guard = GroupCleanupGuard {
-        adapter: Arc::clone(&adapter),
-        group_jid: group_jid.clone(),
-    };
-
     // Build a 64 KiB deterministic payload.
     let mut original = vec![0u8; 64 * 1024];
     for (i, b) in original.iter_mut().enumerate() {
@@ -257,6 +232,7 @@ async fn upload_then_download_roundtrip() {
         Ok(result) => result,
         Err(e) => {
             tracing::warn!("send_document failed: {e}; skipping round-trip test");
+            cleanup_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -273,6 +249,7 @@ async fn upload_then_download_roundtrip() {
         Ok(bytes) => bytes,
         Err(e) => {
             tracing::warn!("download_media failed: {e}; skipping round-trip test");
+            cleanup_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -291,5 +268,6 @@ async fn upload_then_download_roundtrip() {
         "upload→download round-trip verified: bytes match exactly"
     );
 
-    // _guard drops here, cleaning up the group.
+    // Cleanup: destroy group + clearChat + deleteChat.
+    cleanup_group(&adapter, &group_jid).await;
 }

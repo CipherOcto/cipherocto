@@ -1675,7 +1675,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             .unwrap_or(0);
         let _ = timestamp;
         Ok(GroupInfo {
-            chat_id: channel_id,
+            chat_id: crate::peer_resolve::channel_id_to_chat_id(channel_id),
             title: title.to_string(),
             member_count: None,
             is_admin: Some(true), // creator is always admin

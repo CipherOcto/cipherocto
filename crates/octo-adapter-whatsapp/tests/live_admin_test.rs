@@ -534,19 +534,23 @@ async fn wa07_11_18_19_member_fixture() {
     assert!(result.is_ok(), "wa10 demote_from_admin: {:?}", result.err());
     tracing::info!("WA-10: demote_from_admin OK");
 
-    // ── wa19: transfer_ownership (member is currently in group) ──
+    // ── wa19: transfer_ownership (promotes member to admin) ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin
         .transfer_ownership(&group_id, &PeerId::new(phone.clone()))
         .await;
-    tracing::info!(?result, "WA-19: transfer_ownership");
+    assert!(result.is_ok(), "wa19 transfer_ownership: {:?}", result.err());
+    tracing::info!("WA-19: transfer_ownership OK");
 
-    // ── wa18: approve_join_request (no pending request — tests error path) ──
+    // ── wa18: approve_join_request (no pending request — may succeed as no-op) ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin
         .approve_join_request(&group_id, &PeerId::new(phone.clone()))
         .await;
-    tracing::info!(?result, "WA-18: approve_join_request");
+    match &result {
+        Ok(()) => tracing::info!("WA-18: approve_join_request OK (no-op)"),
+        Err(e) => tracing::info!(error = %e, "WA-18: approve_join_request (no pending request)"),
+    }
 
     // ── wa11: ban_member (remove + revoke invite) ──
     tokio::time::sleep(Duration::from_secs(2)).await;

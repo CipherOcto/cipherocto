@@ -286,6 +286,7 @@ fn to_core_qr(args: &QrLinkArgs) -> CoreQrLinkArgs {
         groups: args.groups.clone(),
         ws_url,
         timeout_secs: args.timeout,
+        wait_sync: args.wait_sync,
     }
 }
 

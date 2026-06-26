@@ -52,6 +52,16 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
     )
     .await?;
 
+    if args.wait_sync {
+        eprintln!("Waiting for initial history sync (OfflineSyncCompleted)...");
+        crate::session::wait_for_synced(
+            &adapter,
+            std::time::Duration::from_secs(args.timeout_secs),
+        )
+        .await?;
+        eprintln!("History sync complete.");
+    }
+
     let session = WhatsAppSession {
         self_phone: Some(phone),
         session_path: args.session_path.clone(),

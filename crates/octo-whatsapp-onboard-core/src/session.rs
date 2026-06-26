@@ -136,6 +136,19 @@ pub async fn wait_for_health(adapter: &WhatsAppWebAdapter, timeout: Duration) ->
     }
 }
 
+/// Wait for `Event::OfflineSyncCompleted` with a timeout.
+/// This ensures the initial history sync is done and the client
+/// is fully synchronized with WhatsApp servers before proceeding.
+pub async fn wait_for_synced(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<()> {
+    let notify = adapter.synced();
+    match tokio::time::timeout(timeout, notify.notified()).await {
+        Ok(()) => Ok(()),
+        Err(_) => Err(CoreError::Timeout {
+            secs: timeout.as_secs(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

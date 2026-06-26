@@ -260,6 +260,9 @@ pub struct WhatsAppWebAdapter {
     /// 0850p-a-notify-event-connected). Wrapped in an `Arc` because
     /// `Notify` is not `Clone`.
     connected_notify: Arc<tokio::sync::Notify>,
+    /// Fires on `Event::OfflineSyncCompleted` — the initial history
+    /// sync is done and the client is fully synchronized.
+    synced_notify: Arc<tokio::sync::Notify>,
     /// Runtime-mutable group list, consulted alongside `config.groups`
     /// by both `send_envelope`'s domain→JID lookup and the inbound
     /// `accept_message` filter. Coordinators that create groups at
@@ -364,6 +367,7 @@ impl WhatsAppWebAdapter {
             // `wait_for_connected`) `notified().await` on a clone of
             // the Arc.
             connected_notify: Arc::new(tokio::sync::Notify::new()),
+            synced_notify: Arc::new(tokio::sync::Notify::new()),
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
             // Mission 0850: download_tx is None until start_bot populates
             // it. The channel is created INSIDE start_bot (not here) so
@@ -382,6 +386,13 @@ impl WhatsAppWebAdapter {
     /// the same underlying `Notify`.
     pub fn connected(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.connected_notify)
+    }
+
+    /// Returns a clonable handle to the `Notify` that fires on
+    /// `Event::OfflineSyncCompleted` — the initial history sync is
+    /// done and the client is fully synchronized with the server.
+    pub fn synced(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.synced_notify)
     }
 
     /// R12-M1 fix: returns the cumulative number of inbound
@@ -732,6 +743,7 @@ impl WhatsAppWebAdapter {
         // into the closure so the Event::Connected handler can
         // wake up `wait_for_connected` callers.
         let connected_notify = Arc::clone(&self.connected_notify);
+        let synced_notify = Arc::clone(&self.synced_notify);
         // Mission 0850 (RFC-0850 §8.6/§9.4): clone the `download_tx`
         // Arc BEFORE the `on_event(move ...)` closure so the closure
         // doesn't have to capture `&self` (the closure must be
@@ -875,6 +887,7 @@ impl WhatsAppWebAdapter {
                 let runtime_groups = Arc::clone(&runtime_groups);
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
+                let synced_notify = synced_notify.clone();
                 // `download_tx` is cloned in the outer scope (above
                 // the `on_event(move |...| { ... })` closure) so the
                 // closure doesn't need to capture `&self` and can
@@ -1049,6 +1062,13 @@ impl WhatsAppWebAdapter {
                             connected_notify.notify_waiters();
                         }
                         Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
+                        Event::OfflineSyncCompleted(info) => {
+                            tracing::info!(
+                                messages = info.count,
+                                "offline sync completed, client is fully synchronized"
+                            );
+                            synced_notify.notify_waiters();
+                        }
                         Event::PairingQrCode { code, .. } => {
                             match qrcode::QrCode::new(code.as_bytes()) {
                                 Ok(qr) => {

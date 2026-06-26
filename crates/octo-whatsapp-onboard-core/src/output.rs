@@ -99,6 +99,7 @@ pub struct QrLinkArgs {
     pub groups: Vec<String>,
     pub ws_url: Option<String>,
     pub timeout_secs: u64,
+    pub wait_sync: bool,
 }
 
 /// CLI input for `pair-link`.

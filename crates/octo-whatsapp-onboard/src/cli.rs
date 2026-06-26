@@ -125,6 +125,11 @@ pub struct QrLinkArgs {
     /// Timeout in seconds (default: 300, how long to wait for Event::Connected).
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    /// Wait for the initial history sync (OfflineSyncCompleted) before
+    /// exiting. The server expects the client to be fully synchronized
+    /// before performing operations like creating groups.
+    #[arg(long)]
+    pub wait_sync: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 

@@ -1331,7 +1331,13 @@ impl DeviceStore for StoolapStore {
                 cert_chain.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
             ])?;
-        tx.commit().map_err(to_store_err)
+        match tx.commit() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::error!(error = %e, "StoolapStore::save commit failed");
+                Err(to_store_err(e))
+            }
+        }
     }
 
     async fn load(&self) -> wacore::store::error::Result<Option<CoreDevice>> {

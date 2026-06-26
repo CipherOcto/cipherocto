@@ -2383,14 +2383,18 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             });
         }
         let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
-        let input_channel = peer_to_input_channel(&chat_peer).await?;
-        // Set default banned rights for all non-admin members.
-        let req = tl::functions::channels::EditBanned {
-            channel: input_channel,
-            participant: tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
-                channel_id: 0,
-                access_hash: 0,
-            }), // affects everyone (default rights)
+        let peer = tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
+            channel_id: chat_peer.id().bare_id(),
+            access_hash: chat_peer
+                .to_ref()
+                .await
+                .map(|r| r.auth.hash())
+                .unwrap_or(0),
+        });
+        // Use messages.editChatDefaultBannedRights to set default
+        // permissions for all non-admin members.
+        let req = tl::functions::messages::EditChatDefaultBannedRights {
+            peer,
             banned_rights: tl::enums::ChatBannedRights::Rights(
                 tl::types::ChatBannedRights {
                     view_messages: false,

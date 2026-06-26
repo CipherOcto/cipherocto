@@ -38,8 +38,10 @@
 #![cfg(feature = "live-whatsapp")]
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::error::PlatformAdapterError;
+use std::sync::Arc;
 use std::time::Duration;
 
 fn default_persist_dir() -> std::path::PathBuf {
@@ -100,11 +102,8 @@ fn timestamp() -> u64 {
 
 async fn cleanup_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = octo_network::dot::adapters::coordinator_admin::GroupId::new(
-        group_jid.to_string(),
-    );
+    let group_id = GroupId::new(group_jid.to_string());
     tokio::time::sleep(Duration::from_secs(2)).await;
-    // Remove non-bot members.
     if let Ok(meta) = admin.get_group_metadata(&group_id).await {
         let self_phone = adapter.self_handle().unwrap_or_default();
         for p in &meta.members {
@@ -120,6 +119,24 @@ async fn cleanup_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
         Err(e) => {
             tracing::warn!(error = %e, group_jid, "cleanup: destroy failed, trying leave");
             let _ = admin.leave_group(&group_id).await;
+        }
+    }
+}
+
+/// RAII guard: spawns full cleanup on drop so panics still clean up.
+struct GroupCleanupGuard {
+    adapter: Arc<WhatsAppWebAdapter>,
+    group_jid: String,
+}
+
+impl Drop for GroupCleanupGuard {
+    fn drop(&mut self) {
+        let adapter = Arc::clone(&self.adapter);
+        let group_jid = self.group_jid.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                cleanup_group(&adapter, &group_jid).await;
+            });
         }
     }
 }
@@ -189,7 +206,7 @@ async fn upload_then_download_roundtrip() {
         }
     };
 
-    let adapter = WhatsAppWebAdapter::new(cfg);
+    let adapter = Arc::new(WhatsAppWebAdapter::new(cfg));
 
     // Start bot and wait for connection.
     let connected = adapter.connected();
@@ -218,6 +235,12 @@ async fn upload_then_download_roundtrip() {
         .expect("register_group_at_runtime");
     tracing::info!(group_jid = %group_jid, subject = %subject, "group created");
 
+    // RAII guard: cleans up group even if test panics.
+    let _guard = GroupCleanupGuard {
+        adapter: Arc::clone(&adapter),
+        group_jid: group_jid.clone(),
+    };
+
     // Build a 64 KiB deterministic payload.
     let mut original = vec![0u8; 64 * 1024];
     for (i, b) in original.iter_mut().enumerate() {
@@ -234,7 +257,6 @@ async fn upload_then_download_roundtrip() {
         Ok(result) => result,
         Err(e) => {
             tracing::warn!("send_document failed: {e}; skipping round-trip test");
-            cleanup_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -251,7 +273,6 @@ async fn upload_then_download_roundtrip() {
         Ok(bytes) => bytes,
         Err(e) => {
             tracing::warn!("download_media failed: {e}; skipping round-trip test");
-            cleanup_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -270,6 +291,5 @@ async fn upload_then_download_roundtrip() {
         "upload→download round-trip verified: bytes match exactly"
     );
 
-    // Cleanup.
-    cleanup_group(&adapter, &group_jid).await;
+    // _guard drops here, cleaning up the group.
 }

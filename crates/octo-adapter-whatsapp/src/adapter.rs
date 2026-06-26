@@ -1062,7 +1062,7 @@ impl WhatsAppWebAdapter {
                             connected_notify.notify_waiters();
                         }
                         Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
-                        Event::HistorySync(_) => {
+                        Event::HistorySync(ref lazy) => {
                             // History sync requires an active authenticated
                             // connection. Signal connected_notify as a
                             // fallback in case Event::Connected was missed.
@@ -1079,8 +1079,21 @@ impl WhatsAppWebAdapter {
                                     }
                                 }
                             }
-                            tracing::debug!("HistorySync received (connection is alive)");
+                            // Check if this is a 0-conversation sync (final).
+                            let conv_count = lazy.get()
+                                .map(|hs| hs.conversations.len())
+                                .unwrap_or(0);
+                            tracing::debug!(
+                                conversations = conv_count,
+                                "HistorySync received (connection is alive)"
+                            );
                             connected_notify.notify_waiters();
+                            // A 0-conversation HistorySync means the sync is
+                            // done — OfflineSyncCompleted may not fire.
+                            if conv_count == 0 {
+                                tracing::info!("HistorySync with 0 conversations — sync complete");
+                                synced_notify.notify_waiters();
+                            }
                         }
                         Event::OfflineSyncCompleted(info) => {
                             tracing::info!(

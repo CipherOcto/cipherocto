@@ -218,14 +218,14 @@ fn chat_enum_to_group_info(chat: &tl::enums::Chat) -> Option<GroupInfo> {
     use tl::enums::Chat as ChatEnum;
     match chat {
         ChatEnum::Chat(c) => Some(GroupInfo {
-            chat_id: c.id,
+            chat_id: -c.id, // basic groups: chat_id = -(bare_id)
             title: c.title.clone(),
             member_count: u32::try_from(c.participants_count.max(0)).ok(),
             is_admin: c.admin_rights.as_ref().map(|_| true),
             about: None,
         }),
         ChatEnum::Channel(c) => Some(GroupInfo {
-            chat_id: c.id,
+            chat_id: crate::peer_resolve::channel_id_to_chat_id(c.id),
             title: c.title.clone(),
             member_count: c
                 .participants_count

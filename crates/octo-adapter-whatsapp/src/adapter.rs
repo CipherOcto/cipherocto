@@ -1456,8 +1456,24 @@ impl WhatsAppWebAdapter {
 
         // Delete chat AFTER leaving. Matches official app flow:
         // 1. GroupUpdate Remove (leave)
-        // 2. DeleteChatUpdate (delete_media=true)
-        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
+        // 2. Wait for server to process the leave
+        // 3. DeleteChatUpdate (delete_media=true, message_range)
+        use waproto::whatsapp::sync_action_value::SyncActionMessageRange;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let message_range = SyncActionMessageRange {
+            last_message_timestamp: None,
+            last_system_message_timestamp: Some(now_secs),
+            messages: vec![],
+        };
+        let result = client
+            .chat_actions()
+            .delete_chat(&jid, true, Some(message_range))
+            .await;
+        tracing::info!(group_jid = %group_jid, ?result, "delete_chat after leave");
 
         tracing::info!(group_jid = %group_jid, "WhatsApp group left");
         Ok(())
@@ -3000,7 +3016,20 @@ impl WhatsAppWebAdapter {
         match client.groups().leave(&jid).await {
             Ok(()) => {
                 // Delete chat AFTER leaving. Matches official app flow.
-                let _ = client.chat_actions().delete_chat(&jid, true, None).await;
+                use waproto::whatsapp::sync_action_value::SyncActionMessageRange;
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let message_range = SyncActionMessageRange {
+                    last_message_timestamp: None,
+                    last_system_message_timestamp: Some(now_secs),
+                    messages: vec![],
+                };
+                let _ = client
+                    .chat_actions()
+                    .delete_chat(&jid, true, Some(message_range))
+                    .await;
                 Ok(())
             }
             Err(e) => {

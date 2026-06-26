@@ -185,6 +185,7 @@ async fn mtproto_live_register_and_send_envelope() {
     adapter.mark_ready_for_test();
 
     let domain = adapter.domain_id("-1001234567890");
+    adapter.register_domain(&domain, "-1001234567890").unwrap();
     let envelope = DeterministicEnvelope::default();
     // send_envelope will succeed with the mock client (records the send).
     let result = adapter.send_envelope(&domain, &envelope).await;

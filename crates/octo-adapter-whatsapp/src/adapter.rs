@@ -1062,11 +1062,34 @@ impl WhatsAppWebAdapter {
                             connected_notify.notify_waiters();
                         }
                         Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
+                        Event::HistorySync(_) => {
+                            // History sync requires an active authenticated
+                            // connection. Signal connected_notify as a
+                            // fallback in case Event::Connected was missed.
+                            // Also resolve phone if not yet set.
+                            if self_phone.lock().is_none() {
+                                let device = client.persistence_manager().get_device_snapshot().await;
+                                if let Some(ref pn) = device.pn {
+                                    let pn_str = pn.to_string();
+                                    let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
+                                    let digits = Self::normalize_phone(user_part);
+                                    if !digits.is_empty() {
+                                        *self_phone.lock() = Some(digits);
+                                        tracing::info!("resolved bot identity from HistorySync: +{user_part}");
+                                    }
+                                }
+                            }
+                            tracing::debug!("HistorySync received (connection is alive)");
+                            connected_notify.notify_waiters();
+                        }
                         Event::OfflineSyncCompleted(info) => {
                             tracing::info!(
                                 messages = info.count,
                                 "offline sync completed, client is fully synchronized"
                             );
+                            // Also signal connected (definitive proof of
+                            // an authenticated connection).
+                            connected_notify.notify_waiters();
                             synced_notify.notify_waiters();
                         }
                         Event::PairingQrCode { code, .. } => {

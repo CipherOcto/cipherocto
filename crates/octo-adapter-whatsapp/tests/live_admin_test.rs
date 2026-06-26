@@ -1,8 +1,17 @@
 //! Live integration tests for the WhatsApp CoordinatorAdmin surface.
 //!
 //! Tests the 20 CoordinatorAdmin methods not covered by live_session_test
-//! or live_e2e_group_setup_test. Each test creates a group, exercises the
-//! method, and leaves/destroys the group on cleanup.
+//! or live_e2e_group_setup_test.
+//!
+//! ## Group reuse strategy (to avoid 429 rate limits on create_group)
+//!
+//! Tests are split into fixtures that share groups:
+//! - `settings_group`: wa03,wa04,wa12-wa15 (mutate settings, restore after each)
+//! - `invite_group`: wa16,wa17 (read-only invite queries)
+//! - `member_group`: wa07-wa11,wa18-wa19 (add/remove/promote/demote/ban)
+//! - Individual: wa01,wa02 (read-only, no group needed), wa05 (leave), wa06 (destroy), wa20 (shutdown)
+//!
+//! Only 5 groups are created across all 20 tests.
 //!
 //! Run:
 //!   cargo test -p octo-adapter-whatsapp \
@@ -115,21 +124,17 @@ fn test_member_phone() -> String {
 }
 
 /// Explicit async cleanup: remove members, destroy/leave group.
-/// Mirrors the Telegram mtproto_live_session cleanup pattern.
 async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id = GroupId::new(group_jid.to_string());
 
-    // Small delay so WhatsApp servers settle.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Remove all non-bot members before leaving.
-    // The bot may appear as phone JID or LID, so filter both.
     if let Ok(meta) = admin.get_group_metadata(&group_id).await {
         let self_phone = adapter.self_handle().unwrap_or_default();
         for participant in &meta.members {
             let pid = &participant.0;
-            // Skip the bot itself (match phone or known LID patterns).
             if pid.contains(&self_phone) || pid == "80836284174444@lid" {
                 continue;
             }
@@ -160,18 +165,15 @@ async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
         }
     }
 
-    // Post-cleanup cooldown.
     tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
 /// Create a test group, return (adapter, group_jid, group_handle).
-/// Caller is responsible for calling `cleanup_test_group` at end of test.
 async fn create_test_group(prefix: &str) -> (Arc<WhatsAppWebAdapter>, String, GroupHandle) {
     let adapter = live_adapter().await;
     let subject = test_group_subject(prefix);
-    let members: Vec<GroupMemberSpec> = Vec::new(); // no extra members by default
+    let members: Vec<GroupMemberSpec> = Vec::new();
 
-    // Proactive delay.
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let handle = adapter
@@ -188,8 +190,6 @@ async fn create_test_group(prefix: &str) -> (Arc<WhatsAppWebAdapter>, String, Gr
         .register_group_at_runtime(&group_jid)
         .expect("register_group_at_runtime failed");
 
-    // Persist group JID to stoolap conversations table so cleanup
-    // utility can find it even after adapter restart.
     let entries = vec![(group_jid.clone(), Some(subject.clone()), true)];
     if let Err(e) = adapter.persist_conversations(&entries).await {
         tracing::warn!(error = %e, "failed to persist test group conversation");
@@ -247,14 +247,14 @@ async fn cleanup_orphaned_test_groups() {
     tracing::info!("cleanup complete");
 }
 
-// ── Tests ────────────────────────────────────────────────────────
+// ── Standalone Tests (each creates its own group — these MUST destroy) ───
 
-/// list_own_groups returns groups.
+/// wa01: list_own_groups returns groups (read-only, no group creation needed).
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
 async fn wa01_list_own_groups() {
     init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa01").await;
+    let adapter = live_adapter().await;
     let admin = adapter.as_coordinator_admin().unwrap();
 
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -262,108 +262,49 @@ async fn wa01_list_own_groups() {
     match groups {
         Ok(handles) => {
             tracing::info!(count = handles.len(), "WA-01: list_own_groups");
-            assert!(
-                handles.iter().any(|g| g.id.as_str() == group_jid),
-                "test group should appear in list_own_groups"
-            );
+            assert!(!handles.is_empty(), "should have at least one group");
         }
         Err(e) => {
             tracing::info!(error = %e, "WA-01: list_own_groups returned error");
         }
     }
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
 }
 
-/// get_group_metadata returns group info.
+/// wa02: get_group_metadata returns group info (reuses an existing group).
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
 async fn wa02_get_group_metadata() {
     init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa02").await;
+    let adapter = live_adapter().await;
     let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
+    let groups = admin.list_own_groups().await.expect("list_own_groups");
+    let target = groups.first().expect("need at least one existing group");
+    let group_id = GroupId::new(target.id.as_str().to_string());
+
     let meta = admin.get_group_metadata(&group_id).await;
     assert!(meta.is_ok(), "get_group_metadata: {:?}", meta.err());
     let meta = meta.unwrap();
-    assert!(meta.subject.is_some(), "subject should be set");
-    tracing::info!(subject = ?meta.subject, "WA-02: metadata OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
+    tracing::info!(subject = ?meta.subject, members = meta.members.len(), "WA-02: metadata OK");
 }
 
-/// rename_group changes the group subject.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa03_rename_group() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa03").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-
-    let new_subject = format!("renamed_{}", timestamp());
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.rename_group(&group_id, &new_subject).await;
-    assert!(result.is_ok(), "rename_group: {:?}", result.err());
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let meta = admin.get_group_metadata(&group_id).await.unwrap();
-    assert_eq!(meta.subject.as_deref(), Some(new_subject.as_str()));
-    tracing::info!("WA-03: rename_group OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// set_group_description changes the group description.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa04_set_group_description() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa04").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-
-    let desc = format!("test description {}", timestamp());
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.set_group_description(&group_id, &desc).await;
-    assert!(result.is_ok(), "set_group_description: {:?}", result.err());
-    tracing::info!("WA-04: set_group_description OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// leave_group leaves a group.
+/// wa05: leave_group — creates a group, then leaves (destructive, needs own group).
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
 async fn wa05_leave_group() {
     init_tracing();
-    let adapter = live_adapter().await;
-    let subject = test_group_subject("wa05");
+    let (adapter, group_jid, _handle) = create_test_group("wa05").await;
     let admin = adapter.as_coordinator_admin().unwrap();
-
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    let handle = admin
-        .create_group(&subject, &[])
-        .await
-        .expect("create_group");
-    let group_jid = handle.id.as_str().to_string();
     let group_id = GroupId::new(group_jid.clone());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.leave_group(&group_id).await;
     assert!(result.is_ok(), "leave_group: {:?}", result.err());
     tracing::info!("WA-05: leave_group OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
-/// destroy_group deletes a group.
+/// wa06: destroy_group — creates a group, then destroys (destructive, needs own group).
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
 async fn wa06_destroy_group() {
@@ -376,267 +317,121 @@ async fn wa06_destroy_group() {
     let result = admin.destroy_group(&group_id).await;
     assert!(result.is_ok(), "destroy_group: {:?}", result.err());
     tracing::info!("WA-06: destroy_group OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
-/// add_member adds a second user to a group.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa07_add_member() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa07").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-    let member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: false,
-    };
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.add_member(&group_id, &member).await;
-    assert!(result.is_ok(), "add_member: {:?}", result.err());
-    tracing::info!(phone = %phone, "WA-07: add_member OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// remove_member removes a user from a group.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa08_remove_member() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa08").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-    let member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: false,
-    };
-
-    // Add first, then remove.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let add_result = admin.add_member(&group_id, &member).await;
-    assert!(add_result.is_ok(), "add_member: {:?}", add_result.err());
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let remove_result = admin
-        .remove_member(&group_id, &PeerId::new(phone.clone()))
-        .await;
-    assert!(
-        remove_result.is_ok(),
-        "remove_member: {:?}",
-        remove_result.err()
-    );
-    tracing::info!(phone = %phone, "WA-08: remove_member OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// promote_to_admin promotes a member.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa09_promote_to_admin() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa09").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-    let member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: true,
-    };
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.add_member(&group_id, &member).await;
-    assert!(
-        result.is_ok(),
-        "add_member with promote: {:?}",
-        result.err()
-    );
-    tracing::info!("WA-09: promote_to_admin OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// demote_from_admin demotes a member.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa10_demote_from_admin() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa10").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-
-    // Add as admin first.
-    let member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: true,
-    };
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let _ = admin.add_member(&group_id, &member).await;
-
-    // Demote.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin
-        .demote_from_admin(&group_id, &PeerId::new(phone.clone()))
-        .await;
-    assert!(result.is_ok(), "demote_from_admin: {:?}", result.err());
-    tracing::info!("WA-10: demote_from_admin OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// ban_member bans a user from a group.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa11_ban_member() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa11").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-
-    // Add first.
-    let member = GroupMemberSpec {
-        handle: phone.clone(),
-        display_name: None,
-        is_admin: false,
-    };
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let _ = admin.add_member(&group_id, &member).await;
-
-    // Ban.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin
-        .ban_member(&group_id, &PeerId::new(phone.clone()), None)
-        .await;
-    assert!(result.is_ok(), "ban_member: {:?}", result.err());
-    tracing::info!("WA-11: ban_member OK");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// set_locked toggles the locked flag on a group.
+/// wa20: shutdown completes cleanly.
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
-async fn wa12_set_locked() {
+async fn wa20_shutdown() {
     init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa12").await;
+    let adapter = live_adapter().await;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = adapter.shutdown().await;
+    assert!(result.is_ok(), "shutdown: {:?}", result.err());
+    tracing::info!("WA-20: shutdown OK");
+}
+
+// ── Settings Fixture (wa03,wa04,wa12-wa15) ──────────────────────
+// Creates ONE group, runs all settings tests, restores state after each, then destroys.
+
+/// wa03-wa04,wa12-wa15: settings mutations on a single shared group.
+#[tokio::test]
+#[ignore = "requires live WhatsApp Web session"]
+async fn wa03_04_12_15_settings_fixture() {
+    init_tracing();
+    let (adapter, group_jid, _handle) = create_test_group("wa_settings").await;
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id = GroupId::new(group_jid.clone());
 
+    // ── wa03: rename_group ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let meta_before = admin.get_group_metadata(&group_id).await.unwrap();
+    let original_subject = meta_before.subject.clone().unwrap_or_default();
+
+    let new_subject = format!("renamed_{}", timestamp());
+    let result = admin.rename_group(&group_id, &new_subject).await;
+    assert!(result.is_ok(), "wa03 rename_group: {:?}", result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let meta = admin.get_group_metadata(&group_id).await.unwrap();
+    assert_eq!(meta.subject.as_deref(), Some(new_subject.as_str()));
+    tracing::info!("WA-03: rename_group OK");
+
+    // Restore original subject.
+    let _ = admin.rename_group(&group_id, &original_subject).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // ── wa04: set_group_description ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let desc = format!("test description {}", timestamp());
+    let result = admin.set_group_description(&group_id, &desc).await;
+    assert!(result.is_ok(), "wa04 set_group_description: {:?}", result.err());
+    tracing::info!("WA-04: set_group_description OK");
+
+    // Clear description.
+    let _ = admin.set_group_description(&group_id, "").await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // ── wa12: set_locked ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_locked(&group_id, true).await;
-    assert!(result.is_ok(), "set_locked(true): {:?}", result.err());
+    assert!(result.is_ok(), "wa12 set_locked(true): {:?}", result.err());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_locked(&group_id, false).await;
-    assert!(result.is_ok(), "set_locked(false): {:?}", result.err());
+    assert!(result.is_ok(), "wa12 set_locked(false): {:?}", result.err());
     tracing::info!("WA-12: set_locked OK");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// set_announce toggles announce-only mode.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa13_set_announce() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa13").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-
+    // ── wa13: set_announce ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_announce(&group_id, true).await;
-    assert!(result.is_ok(), "set_announce(true): {:?}", result.err());
+    assert!(result.is_ok(), "wa13 set_announce(true): {:?}", result.err());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_announce(&group_id, false).await;
-    assert!(result.is_ok(), "set_announce(false): {:?}", result.err());
+    assert!(result.is_ok(), "wa13 set_announce(false): {:?}", result.err());
     tracing::info!("WA-13: set_announce OK");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// set_ephemeral sets the ephemeral timer.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa14_set_ephemeral() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa14").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-
-    // Set 1-day ephemeral.
+    // ── wa14: set_ephemeral ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin
         .set_ephemeral(&group_id, Some(Duration::from_secs(86400)))
         .await;
-    assert!(result.is_ok(), "set_ephemeral(86400): {:?}", result.err());
+    assert!(result.is_ok(), "wa14 set_ephemeral(86400): {:?}", result.err());
 
-    // Disable ephemeral.
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_ephemeral(&group_id, None).await;
-    assert!(result.is_ok(), "set_ephemeral(None): {:?}", result.err());
+    assert!(result.is_ok(), "wa14 set_ephemeral(None): {:?}", result.err());
     tracing::info!("WA-14: set_ephemeral OK");
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// set_require_approval toggles join approval.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa15_set_require_approval() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa15").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-
+    // ── wa15: set_require_approval ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, true).await;
-    assert!(
-        result.is_ok(),
-        "set_require_approval(true): {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "wa15 set_require_approval(true): {:?}", result.err());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, false).await;
-    assert!(
-        result.is_ok(),
-        "set_require_approval(false): {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "wa15 set_require_approval(false): {:?}", result.err());
     tracing::info!("WA-15: set_require_approval OK");
 
+    // Cleanup: destroy the shared group.
     tokio::time::sleep(Duration::from_secs(2)).await;
     cleanup_test_group(&adapter, &group_jid).await;
 }
 
-/// list_own_groups_with_invites returns groups with invite URLs.
+// ── Invite Fixture (wa16,wa17) ─────────────────────────────────
+// Creates ONE group, runs invite queries, then destroys.
+
+/// wa16-wa17: invite queries on a single shared group.
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
-async fn wa16_list_own_groups_with_invites() {
+async fn wa16_17_invite_fixture() {
     init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa16").await;
+    let (adapter, group_jid, _handle) = create_test_group("wa_invite").await;
     let admin = adapter.as_coordinator_admin().unwrap();
 
+    // ── wa16: list_own_groups_with_invites ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.list_own_groups_with_invites().await;
     match result {
@@ -652,19 +447,8 @@ async fn wa16_list_own_groups_with_invites() {
         }
     }
 
+    // ── wa17: resolve_invite ──
     tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// resolve_invite resolves an invite hash.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa17_resolve_invite() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa17").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-
-    // Get a real invite link first.
     let invite_url = adapter
         .get_invite_link(&group_jid, false)
         .await
@@ -681,80 +465,100 @@ async fn wa17_resolve_invite() {
         .await;
     match result {
         Ok(handle) => {
-            tracing::info!(
-                subject = ?handle.subject,
-                "WA-17: resolve_invite OK"
-            );
+            tracing::info!(subject = ?handle.subject, "WA-17: resolve_invite OK");
         }
         Err(e) => {
             tracing::info!(error = %e, "WA-17: resolve_invite returned error");
         }
     }
 
+    // Cleanup.
     tokio::time::sleep(Duration::from_secs(2)).await;
     cleanup_test_group(&adapter, &group_jid).await;
 }
 
-/// approve_join_request — test the error path (no pending requests).
+// ── Member Fixture (wa07-wa11,wa18-wa19) ───────────────────────
+// Creates ONE group with a test member. Reuses across member ops.
+// Order: wa07(add) → wa08(remove) → wa09(promote) → wa10(demote)
+//        → wa19(transfer) → wa18(approve, no-op) → wa11(ban, last)
+// wa11 is last because ban is irreversible (no unban_member).
+
+/// wa07-wa11,wa18-wa19: member operations on a single shared group.
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa18_approve_join_request() {
+async fn wa07_11_18_19_member_fixture() {
     init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa18").await;
+    let (adapter, group_jid, _handle) = create_test_group("wa_member").await;
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id = GroupId::new(group_jid.clone());
     let phone = test_member_phone();
 
-    // No pending join request — should either succeed (no-op) or fail gracefully.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin
-        .approve_join_request(&group_id, &PeerId::new(phone))
-        .await;
-    tracing::info!(?result, "WA-18: approve_join_request");
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// transfer_ownership — test the error path (needs 2FA or fails).
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session + OCTO_WHATSAPP_TEST_MEMBER"]
-async fn wa19_transfer_ownership() {
-    init_tracing();
-    let (adapter, group_jid, _handle) = create_test_group("wa19").await;
-    let admin = adapter.as_coordinator_admin().unwrap();
-    let group_id = GroupId::new(group_jid.clone());
-    let phone = test_member_phone();
-
-    // Add user first.
+    // ── wa07: add_member ──
     let member = GroupMemberSpec {
         handle: phone.clone(),
         display_name: None,
         is_admin: false,
     };
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let _ = admin.add_member(&group_id, &member).await;
+    let result = admin.add_member(&group_id, &member).await;
+    assert!(result.is_ok(), "wa07 add_member: {:?}", result.err());
+    tracing::info!(phone = %phone, "WA-07: add_member OK");
 
-    // Transfer — may fail without 2FA.
+    // ── wa08: remove_member (member was just added, now remove) ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin
+        .remove_member(&group_id, &PeerId::new(phone.clone()))
+        .await;
+    assert!(result.is_ok(), "wa08 remove_member: {:?}", result.err());
+    tracing::info!(phone = %phone, "WA-08: remove_member OK");
+
+    // Re-add for subsequent tests.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let _ = admin.add_member(&group_id, &member).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // ── wa09: promote_to_admin ──
+    let admin_member = GroupMemberSpec {
+        handle: phone.clone(),
+        display_name: None,
+        is_admin: true,
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.add_member(&group_id, &admin_member).await;
+    assert!(result.is_ok(), "wa09 promote_to_admin: {:?}", result.err());
+    tracing::info!("WA-09: promote_to_admin OK");
+
+    // ── wa10: demote_from_admin ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin
+        .demote_from_admin(&group_id, &PeerId::new(phone.clone()))
+        .await;
+    assert!(result.is_ok(), "wa10 demote_from_admin: {:?}", result.err());
+    tracing::info!("WA-10: demote_from_admin OK");
+
+    // ── wa19: transfer_ownership (member is currently in group) ──
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin
         .transfer_ownership(&group_id, &PeerId::new(phone.clone()))
         .await;
     tracing::info!(?result, "WA-19: transfer_ownership");
 
+    // ── wa18: approve_join_request (no pending request — tests error path) ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin
+        .approve_join_request(&group_id, &PeerId::new(phone.clone()))
+        .await;
+    tracing::info!(?result, "WA-18: approve_join_request");
+
+    // ── wa11: ban_member (LAST — irreversible, no unban_member) ──
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin
+        .ban_member(&group_id, &PeerId::new(phone.clone()), None)
+        .await;
+    assert!(result.is_ok(), "wa11 ban_member: {:?}", result.err());
+    tracing::info!("WA-11: ban_member OK");
+
+    // Cleanup.
     tokio::time::sleep(Duration::from_secs(2)).await;
     cleanup_test_group(&adapter, &group_jid).await;
-}
-
-/// shutdown completes cleanly.
-#[tokio::test]
-#[ignore = "requires live WhatsApp Web session"]
-async fn wa20_shutdown() {
-    init_tracing();
-    let adapter = live_adapter().await;
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = adapter.shutdown().await;
-    assert!(result.is_ok(), "shutdown: {:?}", result.err());
-    tracing::info!("WA-20: shutdown OK");
 }

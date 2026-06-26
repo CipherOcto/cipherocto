@@ -99,25 +99,46 @@ fn timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-async fn cleanup_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
+/// Canonical cleanup: remove members, destroy/leave group.
+/// Mirrors `cleanup_test_group` in live_admin_test.rs.
+async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id = GroupId::new(group_jid.to_string());
+
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Remove all non-bot members before leaving.
     if let Ok(meta) = admin.get_group_metadata(&group_id).await {
         let self_phone = adapter.self_handle().unwrap_or_default();
-        for p in &meta.members {
-            if p.0.contains(&self_phone) || p.0 == "80836284174444@lid" {
+        for participant in &meta.members {
+            let pid = &participant.0;
+            if pid.contains(&self_phone) || pid == "80836284174444@lid" {
                 continue;
             }
-            let _ = admin.remove_member(&group_id, p).await;
+            if let Err(e) = admin.remove_member(&group_id, participant).await {
+                tracing::warn!(
+                    error = %e,
+                    member = %pid,
+                    group_jid = %group_jid,
+                    "cleanup: remove_member failed (best-effort)"
+                );
+            }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
+
     match admin.destroy_group(&group_id).await {
-        Ok(()) => tracing::info!(group_jid, "cleanup: destroyed group"),
+        Ok(()) => {
+            tracing::info!(group_jid = %group_jid, "cleanup: destroyed group");
+        }
         Err(e) => {
-            tracing::warn!(error = %e, group_jid, "cleanup: destroy failed, trying leave");
-            let _ = admin.leave_group(&group_id).await;
+            tracing::warn!(error = %e, group_jid = %group_jid, "cleanup: destroy failed, falling back to leave");
+            match admin.leave_group(&group_id).await {
+                Ok(()) => tracing::info!(group_jid = %group_jid, "cleanup: left group"),
+                Err(e2) => {
+                    tracing::warn!(error = %e2, group_jid = %group_jid, "cleanup: leave also failed")
+                }
+            }
         }
     }
 }
@@ -232,7 +253,7 @@ async fn upload_then_download_roundtrip() {
         Ok(result) => result,
         Err(e) => {
             tracing::warn!("send_document failed: {e}; skipping round-trip test");
-            cleanup_group(&adapter, &group_jid).await;
+            cleanup_test_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -249,7 +270,7 @@ async fn upload_then_download_roundtrip() {
         Ok(bytes) => bytes,
         Err(e) => {
             tracing::warn!("download_media failed: {e}; skipping round-trip test");
-            cleanup_group(&adapter, &group_jid).await;
+            cleanup_test_group(&adapter, &group_jid).await;
             return;
         }
     };
@@ -269,5 +290,5 @@ async fn upload_then_download_roundtrip() {
     );
 
     // Cleanup: destroy group + clearChat + deleteChat.
-    cleanup_group(&adapter, &group_jid).await;
+    cleanup_test_group(&adapter, &group_jid).await;
 }

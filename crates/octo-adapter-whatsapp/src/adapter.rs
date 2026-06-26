@@ -3132,14 +3132,27 @@ impl WhatsAppWebAdapter {
                     last_system_message_timestamp: Some(now_secs),
                     messages: vec![],
                 };
-                let _ = client
+                tracing::info!(
+                    group_jid,
+                    "calling clear_chat: delete_starred=false, delete_media=true, now_secs={}",
+                    now_secs
+                );
+                match client
                     .chat_actions()
                     .clear_chat(&jid, false, true, Some(message_range.clone()))
-                    .await;
-                let _ = client
+                    .await
+                {
+                    Ok(()) => tracing::info!(group_jid, "clear_chat succeeded"),
+                    Err(e) => tracing::warn!(error = %e, group_jid, "clear_chat failed"),
+                }
+                match client
                     .chat_actions()
                     .delete_chat(&jid, true, Some(message_range))
-                    .await;
+                    .await
+                {
+                    Ok(()) => tracing::info!(group_jid, "delete_chat succeeded"),
+                    Err(e) => tracing::warn!(error = %e, group_jid, "delete_chat failed"),
+                }
                 Ok(())
             }
             Err(e) => {

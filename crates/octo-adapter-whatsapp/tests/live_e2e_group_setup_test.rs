@@ -28,9 +28,9 @@
 //! 6. The bot re-queries `group_metadata` for the new group to confirm the
 //!    connection is still live and the bot is still an admin participant
 //!    after the test is "done sending".
-//! 7. Cleanup: the bot calls `leave_group` (RAII guard) so the test
-//!    doesn't leave ephemeral groups behind on the operator's WhatsApp
-//!    account even on a failed assertion.
+//! 7. Cleanup: the bot calls `cleanup_test_group` (remove members +
+//!    destroy_group / leave_group fallback) so the test doesn't leave
+//!    ephemeral groups behind on the operator's WhatsApp account.
 //!
 //! **Why no self-echo check:** WhatsApp multi-device does **not** deliver
 //! a sender's own message back to the sending device via `Event::Message`
@@ -83,6 +83,7 @@
 #![cfg(feature = "live-whatsapp")]
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::adapters::{PlatformAdapter, RawPlatformMessage};
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
 use octo_network::dot::CoordinatorAdmin;
@@ -160,9 +161,7 @@ fn test_members() -> Vec<String> {
 /// handler resolves the phone asynchronously after the device snapshot
 /// is loaded — the Notify fires before `self_phone` is set).
 ///
-/// Returns an `Arc<WhatsAppWebAdapter>` so the test's RAII cleanup guard
-/// can hold a `'static` reference to the same adapter for the
-/// `leave_group` background task.
+/// Returns an `Arc<WhatsAppWebAdapter>` for shared use across the test.
 async fn live_adapter() -> Arc<WhatsAppWebAdapter> {
     let config = live_config();
     if let Err(e) = config.validate() {
@@ -352,12 +351,6 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
          group's participant list; got {participant_jids:?}"
     );
 
-    // RAII guard: leave the group on scope exit (success or panic).
-    let _cleanup = GroupCleanup {
-        adapter: Arc::clone(&adapter),
-        group_jid: group_jid.clone(),
-    };
-
     // Register the freshly-created group at runtime so the inbound
     // `accept_message` filter and `send_envelope`'s domain→JID lookup
     // accept the group. Without this, the inbound event would be
@@ -506,41 +499,50 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
         platform_message_id = %receipt.platform_message_id,
         "live_e2e_coordinator_creates_group_sends_envelope_receives_self: PASSED"
     );
-    // _cleanup runs here on drop, calling `leave_group`.
+    cleanup_test_group(&adapter, &group_jid).await;
+    tracing::info!("live_e2e: cleanup done");
 }
 
-/// RAII guard: calls `leave_group` when the test scope exits, so a
-/// failed assertion still cleans up the group instead of leaving an
-/// orphaned test group on the operator's WhatsApp account.
-///
-/// Holds an `Arc<WhatsAppWebAdapter>` (the same one the test uses) so the
-/// spawned `leave_group` task can borrow it for `'static`.
-struct GroupCleanup {
-    adapter: Arc<WhatsAppWebAdapter>,
-    group_jid: String,
-}
+/// Canonical cleanup: remove members, destroy/leave group.
+/// Mirrors `cleanup_test_group` in live_admin_test.rs.
+async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id = GroupId::new(group_jid.to_string());
 
-impl Drop for GroupCleanup {
-    fn drop(&mut self) {
-        let adapter = Arc::clone(&self.adapter);
-        let group_jid = self.group_jid.clone();
-        // Best-effort: spawn the leave on the current runtime and
-        // ignore errors (group may already be gone or the runtime
-        // may be shutting down).
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                match adapter.leave_group(&group_jid).await {
-                    Ok(()) => tracing::info!(
-                        group_jid = %group_jid,
-                        "group left during cleanup"
-                    ),
-                    Err(e) => tracing::warn!(
-                        group_jid = %group_jid,
-                        error = %e,
-                        "leave_group cleanup failed (group may already be gone)"
-                    ),
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Remove all non-bot members before leaving.
+    if let Ok(meta) = admin.get_group_metadata(&group_id).await {
+        let self_phone = adapter.self_handle().unwrap_or_default();
+        for participant in &meta.members {
+            let pid = &participant.0;
+            if pid.contains(&self_phone) || pid == "80836284174444@lid" {
+                continue;
+            }
+            if let Err(e) = admin.remove_member(&group_id, participant).await {
+                tracing::warn!(
+                    error = %e,
+                    member = %pid,
+                    group_jid = %group_jid,
+                    "cleanup: remove_member failed (best-effort)"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    match admin.destroy_group(&group_id).await {
+        Ok(()) => {
+            tracing::info!(group_jid = %group_jid, "cleanup: destroyed group");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, group_jid = %group_jid, "cleanup: destroy failed, falling back to leave");
+            match admin.leave_group(&group_id).await {
+                Ok(()) => tracing::info!(group_jid = %group_jid, "cleanup: left group"),
+                Err(e2) => {
+                    tracing::warn!(error = %e2, group_jid = %group_jid, "cleanup: leave also failed")
                 }
-            });
+            }
         }
     }
 }

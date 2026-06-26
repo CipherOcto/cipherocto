@@ -280,6 +280,9 @@ pub struct WhatsAppWebAdapter {
     conversation_jids: Arc<Mutex<Vec<String>>>,
     /// StoolapStore reference for persisting conversations. Set in start_bot.
     store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
+    /// Raw event broadcast for debugging/monitoring. Every event from
+    /// wa-rs is stringified and sent here. Used by event_listener binary.
+    raw_event_tx: tokio::sync::broadcast::Sender<String>,
     /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
     /// `DOT/2/{token}` download requests from the sync on_event closure
     /// (which does NOT capture `&self`) to the async download_rx
@@ -377,6 +380,7 @@ impl WhatsAppWebAdapter {
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
             conversation_jids: Arc::new(Mutex::new(Vec::new())),
             store: Arc::new(Mutex::new(None)),
+            raw_event_tx: tokio::sync::broadcast::channel::<String>(1000).0,
             // Mission 0850: download_tx is None until start_bot populates
             // it. The channel is created INSIDE start_bot (not here) so
             // the receiver has an immediate owner — the consumer task.
@@ -489,6 +493,12 @@ impl WhatsAppWebAdapter {
     /// Includes groups we've already left (the chat entry persists).
     pub fn list_all_conversations(&self) -> Vec<String> {
         self.conversation_jids.lock().clone()
+    }
+
+    /// Subscribe to raw event descriptions from the wa-rs event handler.
+    /// Every event is stringified and broadcast. Useful for debugging.
+    pub fn subscribe_raw_events(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.raw_event_tx.subscribe()
     }
 
     /// Persist conversations to the stoolap `conversations` table.
@@ -783,6 +793,7 @@ impl WhatsAppWebAdapter {
         let runtime_groups = Arc::clone(&self.runtime_groups);
         let conversation_jids = Arc::clone(&self.conversation_jids);
         let conversation_store = Arc::clone(&backend);
+        let raw_event_tx = self.raw_event_tx.clone();
         let sender_allowlist = self.config.sender_allowlist.clone();
         // Mission 0850p-a-notify-event-connected: clone the Notify
         // into the closure so the Event::Connected handler can
@@ -932,6 +943,7 @@ impl WhatsAppWebAdapter {
                 let runtime_groups = Arc::clone(&runtime_groups);
                 let conversation_jids = conversation_jids.clone();
                 let conversation_store = conversation_store.clone();
+                let raw_event_tx = raw_event_tx.clone();
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
                 let synced_notify = synced_notify.clone();
@@ -951,6 +963,10 @@ impl WhatsAppWebAdapter {
                 async move {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
+
+                    // Broadcast raw event for debugging/monitoring.
+                    let event_desc = format!("{:?}", event);
+                    let _ = raw_event_tx.send(event_desc);
 
                     match &*event {
                         Event::Message(msg, info) => {

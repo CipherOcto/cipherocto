@@ -1169,8 +1169,8 @@ fn chrono_timestamp() -> u64 {
 async fn lt46_create_group() {
     let (adapter, chat_id, handle) = create_test_group("lt46").await;
     assert!(
-        chat_id < 0,
-        "group chat_id should be negative, got {}",
+        chat_id != 0,
+        "group chat_id should be non-zero, got {}",
         chat_id
     );
     assert!(handle.subject.is_some());

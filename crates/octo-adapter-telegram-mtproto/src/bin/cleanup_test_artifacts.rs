@@ -244,61 +244,111 @@ async fn main() {
     }
 }
 
+/// Maximum FLOOD_WAIT seconds we'll honor before giving up.
+const FLOOD_WAIT_CAP_SECS: u64 = 120;
+
+/// Maximum retries for any FLOOD_WAIT-triggering operation.
+const FLOOD_WAIT_MAX_RETRIES: u32 = 3;
+
 /// Extract FLOOD_WAIT seconds from an error message.
-/// e.g. "rpc error 420: FLOOD_WAIT caused by channels.deleteChannel (value: 882)"
+/// Handles both `(value: N)` and bare `FLOOD_WAIT N` patterns.
+/// Returns a conservative default (30s) if FLOOD_WAIT is detected
+/// but the value cannot be parsed.
 fn parse_flood_wait(err: &str) -> Option<u64> {
     if !err.contains("FLOOD_WAIT") {
         return None;
     }
-    // Find "(value: NNN)" pattern
+    // Pattern 1: "(value: N)" — standard Telegram format.
     let marker = "(value: ";
-    let start = err.find(marker)? + marker.len();
-    let end = err[start..].find(')')? + start;
-    err[start..end].trim().parse::<u64>().ok()
+    if let Some(start) = err.find(marker) {
+        let start = start + marker.len();
+        if let Some(end) = err[start..].find(')') {
+            if let Ok(n) = err[start..start + end].trim().parse::<u64>() {
+                if n > 0 {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    // Pattern 2: bare "FLOOD_WAIT N" — fallback.
+    if let Some(idx) = err.find("FLOOD_WAIT") {
+        let after = &err[idx + "FLOOD_WAIT".len()..];
+        let trimmed = after.trim_start_matches(|c: char| !c.is_ascii_digit());
+        if let Some(end_idx) = trimmed.find(|c: char| !c.is_ascii_digit()) {
+            if let Ok(n) = trimmed[..end_idx].parse::<u64>() {
+                if n > 0 {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    // FLOOD_WAIT detected but value unparseable — use conservative default.
+    eprintln!("FLOOD_WAIT detected but value unparseable from: {err}");
+    Some(30)
 }
 
-/// Try delete_chat, respecting FLOOD_WAIT. Falls back to leave_chat.
+/// Compute capped sleep duration for a FLOOD_WAIT value.
+fn flood_wait_sleep_secs(wait_secs: u64) -> u64 {
+    wait_secs.min(FLOOD_WAIT_CAP_SECS) + 5
+}
+
+/// Try delete_chat with FLOOD_WAIT retry (up to 3 times, capped).
+/// Falls back to leave_chat with same retry policy.
 async fn delete_with_flood_wait(
     client: &Arc<RealTelegramMtprotoClient>,
     chat_id: i64,
     title: &str,
 ) -> Result<String, String> {
-    match client.delete_chat(chat_id).await {
-        Ok(()) => Ok("Deleted".into()),
-        Err(e) => {
-            let err_str = e.to_string();
-            if let Some(wait_secs) = parse_flood_wait(&err_str) {
-                let wait = wait_secs + 5; // small buffer
-                eprintln!(
-                    "FLOOD_WAIT on delete_chat for {}: waiting {}s (requested {}s)",
-                    title, wait, wait_secs
-                );
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                // Retry once after waiting
-                match client.delete_chat(chat_id).await {
-                    Ok(()) => return Ok("Deleted (after wait)".into()),
-                    Err(e2) => {
-                        eprintln!("delete_chat retry failed for {}: {e2}", title);
-                    }
-                }
-            }
-            // Fallback: leave_chat
-            match client.leave_chat(chat_id).await {
-                Ok(()) => Ok("Left".into()),
-                Err(e2) => {
-                    let err2_str = e2.to_string();
-                    if let Some(wait_secs) = parse_flood_wait(&err2_str) {
-                        let wait = wait_secs + 5;
-                        eprintln!("FLOOD_WAIT on leave_chat for {}: waiting {}s", title, wait);
-                        tokio::time::sleep(Duration::from_secs(wait)).await;
-                        match client.leave_chat(chat_id).await {
-                            Ok(()) => return Ok("Left (after wait)".into()),
-                            Err(e3) => return Err(format!("leave_chat retry: {e3}")),
-                        }
-                    }
-                    Err(format!("delete_chat: {err_str}; leave_chat: {err2_str}"))
+    // Attempt delete_chat with retries.
+    let mut last_delete_err: Option<String> = None;
+    for attempt in 0..=FLOOD_WAIT_MAX_RETRIES {
+        match client.delete_chat(chat_id).await {
+            Ok(()) => return Ok(if attempt == 0 { "Deleted" } else { "Deleted (after wait)" }.into()),
+            Err(e) => {
+                let err_str = e.to_string();
+                if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                    let sleep_secs = flood_wait_sleep_secs(wait_secs);
+                    eprintln!(
+                        "FLOOD_WAIT on delete_chat for {}: attempt {}/{}, sleeping {}s (requested {}s)",
+                        title, attempt + 1, FLOOD_WAIT_MAX_RETRIES + 1, sleep_secs, wait_secs
+                    );
+                    tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+                    last_delete_err = Some(err_str);
+                } else {
+                    // Not a FLOOD_WAIT — record and break to fallback.
+                    last_delete_err = Some(err_str);
+                    break;
                 }
             }
         }
     }
+
+    // Fallback: leave_chat with retries.
+    let mut last_leave_err: Option<String> = None;
+    for attempt in 0..=FLOOD_WAIT_MAX_RETRIES {
+        match client.leave_chat(chat_id).await {
+            Ok(()) => return Ok(if attempt == 0 { "Left" } else { "Left (after wait)" }.into()),
+            Err(e2) => {
+                let err2_str = e2.to_string();
+                if let Some(wait_secs) = parse_flood_wait(&err2_str) {
+                    let sleep_secs = flood_wait_sleep_secs(wait_secs);
+                    eprintln!(
+                        "FLOOD_WAIT on leave_chat for {}: attempt {}/{}, sleeping {}s",
+                        title, attempt + 1, FLOOD_WAIT_MAX_RETRIES + 1, sleep_secs
+                    );
+                    tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+                    last_leave_err = Some(err2_str);
+                } else {
+                    last_leave_err = Some(err2_str);
+                    break;
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "delete_chat: {}; leave_chat: {}",
+        last_delete_err.unwrap_or_default(),
+        last_leave_err.unwrap_or_default()
+    ))
 }

@@ -1098,6 +1098,7 @@ async fn lt45_upload_media_via_adapter() {
 // =============================================================================
 
 /// Helper: create a test group, return (adapter, chat_id, group_handle).
+/// Retries on FLOOD_WAIT up to 3 times with capped backoff.
 async fn create_test_group(
     test_name: &str,
 ) -> (
@@ -1113,47 +1114,114 @@ async fn create_test_group(
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     let title = format!("octo_test_{}_{}", test_name, chrono_timestamp());
-    let handle = match admin.create_group(&title, &[]).await {
-        Ok(h) => h,
-        Err(e) => {
-            let err_str = e.to_string();
-            if let Some(wait_secs) = parse_flood_wait(&err_str) {
-                let wait = wait_secs + 5;
-                tracing::warn!(
-                    error = %err_str,
-                    test_name,
-                    wait_secs,
-                    "FLOOD_WAIT on create_group, waiting {}s then retrying",
-                    wait
-                );
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                admin
-                    .create_group(&title, &[])
-                    .await
-                    .unwrap_or_else(|e2| panic!("create_group retry '{}': {:?}", title, e2))
-            } else {
-                panic!("create_group '{}': {:?}", title, e);
-            }
-        }
-    };
+    let title_clone = title.clone();
+    let handle = with_flood_wait_retry("create_group", || {
+        admin.create_group(&title_clone, &[])
+    })
+    .await
+    .unwrap_or_else(|e| panic!("create_group '{}': {:?}", title, e));
 
     let chat_id: i64 = handle.id.as_str().parse().expect("chat_id parse");
     tracing::info!(chat_id, title = %handle.subject.as_deref().unwrap_or("?"), "created test group");
     (adapter, chat_id, handle)
 }
 
+/// Maximum FLOOD_WAIT seconds we'll honor before giving up.
+/// Telegram can request hours; we cap at 2 minutes for tests.
+const FLOOD_WAIT_CAP_SECS: u64 = 120;
+
+/// Maximum retries for any FLOOD_WAIT-triggering operation.
+const FLOOD_WAIT_MAX_RETRIES: u32 = 3;
+
 /// Helper: parse FLOOD_WAIT seconds from an error string.
+/// Handles both `(value: N)` and bare `FLOOD_WAIT N` patterns.
+/// Returns None if the error is not a FLOOD_WAIT at all.
 fn parse_flood_wait(err: &str) -> Option<u64> {
     if !err.contains("FLOOD_WAIT") {
         return None;
     }
+    // Pattern 1: "(value: N)" — standard Telegram format.
+    if let Some(wait) = parse_flood_wait_value(err) {
+        return Some(wait);
+    }
+    // Pattern 2: bare "FLOOD_WAIT N" — fallback.
+    if let Some(idx) = err.find("FLOOD_WAIT") {
+        let after = &err[idx + "FLOOD_WAIT".len()..];
+        let trimmed = after.trim_start_matches(|c: char| !c.is_ascii_digit());
+        if let Some(end) = trimmed.find(|c: char| !c.is_ascii_digit()) {
+            if let Ok(n) = trimmed[..end].parse::<u64>() {
+                if n > 0 {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    // We know it's a FLOOD_WAIT but couldn't parse the value.
+    // Return a conservative default rather than giving up.
+    tracing::warn!(error = %err, "FLOOD_WAIT detected but value unparseable, using 30s default");
+    Some(30)
+}
+
+/// Parse the `(value: N)` substring.
+fn parse_flood_wait_value(err: &str) -> Option<u64> {
     let marker = "(value: ";
     let start = err.find(marker)? + marker.len();
     let end = err[start..].find(')')? + start;
-    err[start..end].trim().parse::<u64>().ok()
+    let n = err[start..end].trim().parse::<u64>().ok()?;
+    if n == 0 {
+        return None; // 0 is not a valid FLOOD_WAIT value
+    }
+    Some(n)
+}
+
+/// Compute the actual sleep duration for a FLOOD_WAIT, capped.
+fn flood_wait_sleep_secs(wait_secs: u64) -> u64 {
+    let capped = wait_secs.min(FLOOD_WAIT_CAP_SECS);
+    capped + 5 // small buffer
+}
+
+/// Execute an async fallible operation with FLOOD_WAIT retry.
+/// Retries up to FLOOD_WAIT_MAX_RETRIES times, sleeping the
+/// requested duration (capped) between attempts. Returns the
+/// first Ok result, or the last Err.
+async fn with_flood_wait_retry<F, Fut, T, E>(
+    label: &str,
+    mut op: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut last_err: Option<E> = None;
+    for attempt in 0..=FLOOD_WAIT_MAX_RETRIES {
+        match op().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                let err_str = e.to_string();
+                if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                    let sleep_secs = flood_wait_sleep_secs(wait_secs);
+                    tracing::warn!(
+                        attempt,
+                        wait_secs,
+                        sleep_secs,
+                        label,
+                        "FLOOD_WAIT, sleeping then retrying"
+                    );
+                    tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+                    last_err = Some(e);
+                } else {
+                    // Not a FLOOD_WAIT — fail immediately.
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap())
 }
 
 /// Helper: destroy a test group (best-effort, respects FLOOD_WAIT).
+/// Retries up to 3 times, falls back to leave_chat.
 async fn destroy_test_group(
     adapter: &MtprotoTelegramAdapter<RealTelegramMtprotoClient>,
     chat_id: i64,
@@ -1164,43 +1232,32 @@ async fn destroy_test_group(
     // Proactive delay to avoid FLOOD_WAIT from rapid group destroys.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    match admin.destroy_group(&group_id).await {
+    // Try destroy_group with retries.
+    let destroy_result = with_flood_wait_retry("destroy_group", || {
+        admin.destroy_group(&group_id)
+    })
+    .await;
+
+    match destroy_result {
         Ok(()) => {
             tracing::info!(chat_id, "destroyed test group");
         }
         Err(e) => {
-            let err_str = e.to_string();
-            if let Some(wait_secs) = parse_flood_wait(&err_str) {
-                let wait = wait_secs + 5;
-                tracing::warn!(
-                    error = %err_str,
-                    chat_id,
-                    wait_secs,
-                    "FLOOD_WAIT on destroy_group, waiting {}s then retrying",
-                    wait
-                );
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                // Retry with leave_chat as fallback
-                match admin.destroy_group(&group_id).await {
-                    Ok(()) => {
-                        tracing::info!(chat_id, "destroyed test group (after FLOOD_WAIT)");
-                    }
-                    Err(e2) => {
-                        let group_id2 =
-                            octo_network::dot::adapters::coordinator_admin::GroupId::new(
-                                chat_id.to_string(),
-                            );
-                        if let Err(e3) = admin.leave_group(&group_id2).await {
-                            tracing::warn!(error = %e3, chat_id, "leave_group also failed after FLOOD_WAIT");
-                        } else {
-                            tracing::info!(chat_id, "left test group (after FLOOD_WAIT)");
-                        }
-                        // Suppress original error since we already logged.
-                        drop(e2);
-                    }
+            tracing::warn!(error = %e, chat_id, "destroy_group failed, falling back to leave_group");
+            // Fallback: leave_group with retries.
+            let group_id2 =
+                octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+            match with_flood_wait_retry("leave_group", || admin.leave_group(&group_id2)).await {
+                Ok(()) => {
+                    tracing::info!(chat_id, "left test group (fallback after destroy_group failed)");
                 }
-            } else {
-                tracing::warn!(error = %err_str, chat_id, "destroy_test_group failed (best-effort)");
+                Err(e2) => {
+                    tracing::warn!(
+                        error = %e2,
+                        chat_id,
+                        "leave_group also failed (best-effort cleanup)"
+                    );
+                }
             }
         }
     }
@@ -1297,7 +1354,7 @@ async fn lt50_leave_group() {
     let group_id =
         octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
 
-    let result = admin.leave_group(&group_id).await;
+    let result = with_flood_wait_retry("leave_group", || admin.leave_group(&group_id)).await;
     assert!(result.is_ok(), "leave_group: {:?}", result.err());
 
     // After leaving, the channel still exists -- Telegram allows
@@ -1307,7 +1364,10 @@ async fn lt50_leave_group() {
     // Destroy the group to clean up (creator can still delete
     // even after leaving).
     tokio::time::sleep(Duration::from_secs(5)).await;
-    let _ = admin.destroy_group(&group_id).await;
+    let _ = with_flood_wait_retry("destroy_group (lt50 cleanup)", || {
+        admin.destroy_group(&group_id)
+    })
+    .await;
     drop(adapter);
     tokio::time::sleep(Duration::from_secs(2)).await;
 }
@@ -1324,7 +1384,7 @@ async fn lt51_destroy_group() {
     // Proactive delay to avoid FLOOD_WAIT.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    let result = admin.destroy_group(&group_id).await;
+    let result = with_flood_wait_retry("destroy_group", || admin.destroy_group(&group_id)).await;
     assert!(result.is_ok(), "destroy_group: {:?}", result.err());
 
     // After destroying, get_group_metadata should fail.

@@ -114,7 +114,10 @@ impl StoolapStore {
         // "Invalid DSN format: expected scheme://path".
         let dsn = format!("file://{path}");
         let db = stoolap::Database::open(&dsn)?;
-        let store = Self { db: tokio::sync::Mutex::new(db), device_id: 1 };
+        let store = Self {
+            db: tokio::sync::Mutex::new(db),
+            device_id: 1,
+        };
         {
             let guard = store.db.try_lock().expect("fresh store has no contention");
             store.init_schema_with(&guard)?;
@@ -124,7 +127,10 @@ impl StoolapStore {
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let db = stoolap::Database::open_in_memory()?;
-        let store = Self { db: tokio::sync::Mutex::new(db), device_id: 1 };
+        let store = Self {
+            db: tokio::sync::Mutex::new(db),
+            device_id: 1,
+        };
         {
             let guard = store.db.try_lock().expect("fresh store has no contention");
             store.init_schema_with(&guard)?;
@@ -213,11 +219,66 @@ impl StoolapStore {
             "CREATE TABLE IF NOT EXISTS sent_messages (chat_jid TEXT NOT NULL, message_id TEXT NOT NULL, payload BLOB NOT NULL, device_id INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE (chat_jid, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS base_keys (address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS tc_tokens (jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
+            "CREATE TABLE IF NOT EXISTS conversations (jid TEXT NOT NULL, name TEXT, is_group INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, UNIQUE (jid))",
         ];
         for stmt in stmts {
             exec(db, stmt, vec![])?;
         }
         Ok(())
+    }
+
+    /// Upsert conversation JIDs from HistorySync. Called from the adapter's
+    /// Event::HistorySync handler. Uses DELETE+INSERT in a transaction.
+    pub async fn upsert_conversations(
+        &self,
+        entries: &[(String, Option<String>, bool)],
+    ) -> anyhow::Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let mut tx = self.db.lock().await.begin()?;
+        for (jid, name, is_group) in entries {
+            exec_tx(
+                &mut tx,
+                "DELETE FROM conversations WHERE jid = $1",
+                vec![jid.clone().into()],
+            )?;
+            exec_tx(
+                &mut tx,
+                "INSERT INTO conversations (jid, name, is_group, updated_at) VALUES ($1, $2, $3, $4)",
+                vec![
+                    jid.clone().into(),
+                    name.clone().unwrap_or_default().into(),
+                    (*is_group as i64).into(),
+                    now.into(),
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// List all conversation JIDs. Returns (jid, name, is_group).
+    pub async fn list_conversations(&self) -> anyhow::Result<Vec<(String, Option<String>, bool)>> {
+        let rows = query(
+            &*self.db.lock().await,
+            "SELECT jid, name, is_group FROM conversations",
+            vec![],
+        )?;
+        let mut result = Vec::new();
+        for row_result in rows {
+            let row = row_result?;
+            let jid: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let is_group: i64 = row.get(2)?;
+            result.push((
+                jid,
+                if name.is_empty() { None } else { Some(name) },
+                is_group != 0,
+            ));
+        }
+        Ok(result)
     }
 }
 
@@ -1169,7 +1230,9 @@ impl ProtocolStore for StoolapStore {
         // actual number of rows deleted. R13-M1 didn't audit this
         // pattern (only DELETE+INSERT); the R14 grep audit at
         // lines 1081-1101 found it.
-        self.db.lock().await
+        self.db
+            .lock()
+            .await
             .execute(
                 "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
                 vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
@@ -1256,7 +1319,9 @@ impl ProtocolStore for StoolapStore {
         // actual number of rows deleted. Single statement is atomic
         // by definition. R13-M1 didn't audit this pattern; the R14
         // grep audit at lines 1175-1193 found it.
-        self.db.lock().await
+        self.db
+            .lock()
+            .await
             .execute(
                 "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
                 vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
@@ -1340,7 +1405,14 @@ impl DeviceStore for StoolapStore {
                 cert_chain.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
             ]) {
-            tracing::error!(error = %e, "StoolapStore::save INSERT failed");
+            // Log the FULL error chain, not just the wrapper.
+            let mut detail = format!("{e}");
+            let mut source = std::error::Error::source(&e as &dyn std::error::Error);
+            while let Some(s) = source {
+                detail.push_str(&format!(" -> {s}"));
+                source = s.source();
+            }
+            tracing::error!(error = %detail, "StoolapStore::save INSERT failed with detail");
             return Err(e);
         }
         match tx.commit() {

@@ -274,6 +274,10 @@ pub struct WhatsAppWebAdapter {
     /// Backwards-compatible: when empty, behaviour is identical to the
     /// static-config-only path (the legacy default).
     runtime_groups: Arc<Mutex<Vec<String>>>,
+    /// All conversation JIDs received from HistorySync. Populated by the
+    /// Event::HistorySync handler. Used by the cleanup utility to find
+    /// chats from groups we already left.
+    conversation_jids: Arc<Mutex<Vec<String>>>,
     /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
     /// `DOT/2/{token}` download requests from the sync on_event closure
     /// (which does NOT capture `&self`) to the async download_rx
@@ -369,6 +373,7 @@ impl WhatsAppWebAdapter {
             connected_notify: Arc::new(tokio::sync::Notify::new()),
             synced_notify: Arc::new(tokio::sync::Notify::new()),
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
+            conversation_jids: Arc::new(Mutex::new(Vec::new())),
             // Mission 0850: download_tx is None until start_bot populates
             // it. The channel is created INSIDE start_bot (not here) so
             // the receiver has an immediate owner — the consumer task.
@@ -475,6 +480,22 @@ impl WhatsAppWebAdapter {
             guard.push(group_jid.to_string());
         }
         Ok(())
+    }
+
+    /// All conversation JIDs collected from HistorySync events.
+    /// Includes groups we've already left (the chat entry persists).
+    pub fn list_all_conversations(&self) -> Vec<String> {
+        self.conversation_jids.lock().clone()
+    }
+
+    /// Read persisted conversations from the stoolap `conversations` table.
+    /// These survive across adapter restarts. Returns (jid, name, is_group).
+    pub async fn list_persisted_conversations(
+        &self,
+    ) -> anyhow::Result<Vec<(String, Option<String>, bool)>> {
+        let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
+        let store = StoolapStore::new(&expanded_path)?;
+        store.list_conversations().await
     }
 
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
@@ -738,6 +759,8 @@ impl WhatsAppWebAdapter {
         // the Arc<Mutex<Vec>> below.
         let groups = self.config.groups.clone();
         let runtime_groups = Arc::clone(&self.runtime_groups);
+        let conversation_jids = Arc::clone(&self.conversation_jids);
+        let conversation_store = Arc::clone(&backend);
         let sender_allowlist = self.config.sender_allowlist.clone();
         // Mission 0850p-a-notify-event-connected: clone the Notify
         // into the closure so the Event::Connected handler can
@@ -885,6 +908,8 @@ impl WhatsAppWebAdapter {
                 let self_phone = self_phone.clone();
                 let groups = groups.clone();
                 let runtime_groups = Arc::clone(&runtime_groups);
+                let conversation_jids = conversation_jids.clone();
+                let conversation_store = conversation_store.clone();
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
                 let synced_notify = synced_notify.clone();
@@ -1083,6 +1108,35 @@ impl WhatsAppWebAdapter {
                             let conv_count = lazy.get()
                                 .map(|hs| hs.conversations.len())
                                 .unwrap_or(0);
+                            // Collect conversation JIDs for cleanup utility.
+                            if let Some(hs) = lazy.get() {
+                                let new_entries: Vec<(String, Option<String>, bool)> = {
+                                    let mut guard = conversation_jids.lock();
+                                    let before = guard.len();
+                                    let mut entries = Vec::new();
+                                    for conv in &hs.conversations {
+                                        if !guard.contains(&conv.id) {
+                                            guard.push(conv.id.clone());
+                                            let is_group = conv.id.ends_with("@g.us");
+                                            entries.push((conv.id.clone(), None, is_group));
+                                        }
+                                    }
+                                    tracing::info!(
+                                        before = before,
+                                        after = guard.len(),
+                                        new = entries.len(),
+                                        "conversation_jids updated from HistorySync"
+                                    );
+                                    entries
+                                };
+                                // Persist to stoolap so cleanup tool can find them later.
+                                if !new_entries.is_empty() {
+                                    let store = conversation_store.clone();
+                                    if let Err(e) = store.upsert_conversations(&new_entries).await {
+                                        tracing::warn!(error = %e, "failed to persist conversations");
+                                    }
+                                }
+                            }
                             tracing::debug!(
                                 conversations = conv_count,
                                 "HistorySync received (connection is alive)"
@@ -1361,6 +1415,11 @@ impl WhatsAppWebAdapter {
             .leave(&jid)
             .await
             .map_err(|e| format!("leave_group failed: {e:#}"))?;
+
+        // Delete the chat entry so it doesn't linger in the UI.
+        if let Err(e) = client.chat_actions().delete_chat(&jid, false, None).await {
+            tracing::warn!(group_jid = %group_jid, error = %e, "delete_chat after leave failed (best-effort)");
+        }
 
         tracing::info!(group_jid = %group_jid, "WhatsApp group left");
         Ok(())
@@ -2893,7 +2952,13 @@ impl WhatsAppWebAdapter {
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
         match client.groups().leave(&jid).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Delete the chat entry so it doesn't linger in the UI.
+                if let Err(e) = client.chat_actions().delete_chat(&jid, false, None).await {
+                    tracing::warn!(group_jid = %group_jid, error = %e, "delete_chat after leave failed (best-effort)");
+                }
+                Ok(())
+            }
             Err(e) => {
                 // `not a participant` / `not in group` are expected
                 // on idempotent leave — surface them as a specific

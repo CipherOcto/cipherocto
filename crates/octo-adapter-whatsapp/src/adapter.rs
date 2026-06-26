@@ -2978,14 +2978,12 @@ impl WhatsAppWebAdapter {
         let jid: wacore_binary::Jid = group_jid
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
+        // Clear/delete chat BEFORE leaving. After leaving, the server
+        // rejects sync mutations for groups we're no longer in.
+        let _ = client.chat_actions().clear_chat(&jid, None).await;
+        let _ = client.chat_actions().delete_chat(&jid, false, None).await;
         match client.groups().leave(&jid).await {
-            Ok(()) => {
-                // Delete the chat entry so it doesn't linger in the UI.
-                if let Err(e) = client.chat_actions().delete_chat(&jid, false, None).await {
-                    tracing::warn!(group_jid = %group_jid, error = %e, "delete_chat after leave failed (best-effort)");
-                }
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(e) => {
                 // `not a participant` / `not in group` are expected
                 // on idempotent leave — surface them as a specific

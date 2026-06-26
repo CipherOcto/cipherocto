@@ -114,7 +114,7 @@ fn test_member_phone() -> String {
     )
 }
 
-/// Explicit async cleanup: try destroy_group first, fall back to leave_group.
+/// Explicit async cleanup: remove members, destroy/leave group.
 /// Mirrors the Telegram mtproto_live_session cleanup pattern.
 async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
     let admin = adapter.as_coordinator_admin().unwrap();
@@ -122,6 +122,26 @@ async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
 
     // Small delay so WhatsApp servers settle.
     tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Remove all non-bot members before leaving.
+    if let Ok(meta) = admin.get_group_metadata(&group_id).await {
+        let self_phone = adapter.self_handle().unwrap_or_default();
+        for participant in &meta.members {
+            // Skip the bot itself.
+            if participant.0.contains(&self_phone) {
+                continue;
+            }
+            if let Err(e) = admin.remove_member(&group_id, participant).await {
+                tracing::warn!(
+                    error = %e,
+                    member = %participant.0,
+                    group_jid = %group_jid,
+                    "cleanup: remove_member failed (best-effort)"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
 
     match admin.destroy_group(&group_id).await {
         Ok(()) => {

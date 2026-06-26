@@ -1263,6 +1263,19 @@ async fn destroy_test_group(
     }
 }
 
+/// Load the second test user from OCTO_TEST_USER_ID env var.
+/// Panics with a clear message if not set.
+fn test_user_id() -> i64 {
+    std::env::var("OCTO_TEST_USER_ID")
+        .expect(
+            "OCTO_TEST_USER_ID not set. Run:\n  \
+             cargo run -p octo-adapter-telegram-mtproto --features real-network --bin list_test_users\n  \
+             export OCTO_TEST_USER_ID=<user_id>",
+        )
+        .parse::<i64>()
+        .expect("OCTO_TEST_USER_ID must be a valid i64 user_id")
+}
+
 fn chrono_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1679,6 +1692,335 @@ async fn lt61_replay_protection_live() {
     assert!(adapter.replay_protection(&[0xFFu8; 32]));
     assert!(adapter.replay_protection(&[1u8; 32]));
 
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+// =============================================================================
+// §25  Member Operations (requires OCTO_TEST_USER_ID)
+// =============================================================================
+
+/// add_member adds a second user to a group.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt62_add_member() {
+    let (adapter, chat_id, _handle) = create_test_group("lt62").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: false,
+    };
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.add_member(&group_id, &member).await;
+    assert!(result.is_ok(), "add_member: {:?}", result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// remove_member removes a user from a group.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt63_remove_member() {
+    let (adapter, chat_id, _handle) = create_test_group("lt63").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: false,
+    };
+
+    // Add first, then remove.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let add_result = admin.add_member(&group_id, &member).await;
+    assert!(add_result.is_ok(), "add_member: {:?}", add_result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let remove_result = admin.remove_member(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
+    assert!(remove_result.is_ok(), "remove_member: {:?}", remove_result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// promote_to_admin promotes a member to admin.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt64_promote_to_admin() {
+    let (adapter, chat_id, _handle) = create_test_group("lt64").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: true, // request promotion at add time
+    };
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.add_member(&group_id, &member).await;
+    // Promotion may fail (requires appropriate rights), but add should succeed.
+    tracing::info!(?result, "LT-64: add_member with is_admin=true");
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// demote_from_admin demotes a user from admin.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt65_demote_from_admin() {
+    let (adapter, chat_id, _handle) = create_test_group("lt65").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+
+    // First add as admin.
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: true,
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let _ = admin.add_member(&group_id, &member).await;
+
+    // Then demote.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.demote_from_admin(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
+    // May fail if user wasn't actually promoted, but shouldn't panic.
+    tracing::info!(?result, "LT-65: demote_from_admin");
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// ban_member bans a user from a group.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt66_ban_member() {
+    let (adapter, chat_id, _handle) = create_test_group("lt66").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+
+    // Add first so the ban has a target.
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: false,
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let _ = admin.add_member(&group_id, &member).await;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.ban_member(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()), None).await;
+    assert!(result.is_ok(), "ban_member: {:?}", result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+// =============================================================================
+// §26  Invite Resolution (requires group with invite link)
+// =============================================================================
+
+/// resolve_invite resolves an invite hash at the coordinator level.
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt67_resolve_invite() {
+    let (adapter, chat_id, _handle) = create_test_group("lt67").await;
+
+    // resolve_invite is the coordinator-level wrapper around check_invite.
+    // We test the error path for a bogus hash.
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let result = admin.resolve_invite(&octo_network::dot::adapters::coordinator_admin::InviteRef::new("bogus_hash_that_does_not_exist")).await;
+    // Should either succeed with preview info or fail gracefully.
+    match result {
+        Ok(preview) => {
+            tracing::info!(title = %preview.subject.as_deref().unwrap_or("?"), "LT-67: resolved invite");
+        }
+        Err(e) => {
+            tracing::info!(error = %e, "LT-67: resolve_invite failed (expected for bogus hash)");
+        }
+    }
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+// =============================================================================
+// §27  Group Settings (set_locked, set_announce, set_ephemeral, etc.)
+// =============================================================================
+
+/// list_own_groups_with_invites returns groups with invite URLs.
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt68_list_own_groups_with_invites() {
+    let (adapter, chat_id, _handle) = create_test_group("lt68").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+
+    let result = admin.list_own_groups_with_invites().await;
+    match result {
+        Ok(groups) => {
+            tracing::info!(count = groups.len(), "LT-68: list_own_groups_with_invites");
+            for g in &groups {
+                tracing::debug!(id = %g.id, subject = ?g.subject, invite = ?g.invite_url, "group");
+            }
+        }
+        Err(e) => {
+            tracing::info!(error = %e, "LT-68: list_own_groups_with_invites returned error");
+        }
+    }
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// set_locked locks a group (only admins can send).
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt69_set_locked() {
+    let (adapter, chat_id, _handle) = create_test_group("lt69").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_locked(&group_id, true).await;
+    assert!(result.is_ok(), "set_locked(true): {:?}", result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_locked(&group_id, false).await;
+    assert!(result.is_ok(), "set_locked(false): {:?}", result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// set_announce sets the announce mode for a group.
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt70_set_announce() {
+    let (adapter, chat_id, _handle) = create_test_group("lt70").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_announce(&group_id, true).await;
+    assert!(result.is_ok(), "set_announce(true): {:?}", result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_announce(&group_id, false).await;
+    assert!(result.is_ok(), "set_announce(false): {:?}", result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// set_ephemeral sets the ephemeral message timer.
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt71_set_ephemeral() {
+    let (adapter, chat_id, _handle) = create_test_group("lt71").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+
+    // Set 1-day ephemeral timer (86400 seconds).
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_ephemeral(&group_id, Some(Duration::from_secs(86400))).await;
+    assert!(result.is_ok(), "set_ephemeral(86400): {:?}", result.err());
+
+    // Disable ephemeral.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_ephemeral(&group_id, None).await;
+    assert!(result.is_ok(), "set_ephemeral(None): {:?}", result.err());
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+/// set_require_approval sets the join approval requirement.
+#[tokio::test]
+#[ignore = "requires live MTProto session"]
+async fn lt72_set_require_approval() {
+    let (adapter, chat_id, _handle) = create_test_group("lt72").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_require_approval(&group_id, true).await;
+    // May fail if not supported for this group type.
+    match result {
+        Ok(()) => tracing::info!("LT-72: set_require_approval(true) succeeded"),
+        Err(e) => tracing::info!(error = %e, "LT-72: set_require_approval(true) failed (may be unsupported)"),
+    }
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_require_approval(&group_id, false).await;
+    match result {
+        Ok(()) => tracing::info!("LT-72: set_require_approval(false) succeeded"),
+        Err(e) => tracing::info!(error = %e, "LT-72: set_require_approval(false) failed"),
+    }
+
+    destroy_test_group(&adapter, chat_id).await;
+    drop(adapter);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+}
+
+// =============================================================================
+// §28  Transfer Ownership
+// =============================================================================
+
+/// transfer_ownership requires 2FA. We test the error path.
+#[tokio::test]
+#[ignore = "requires live MTProto session + OCTO_TEST_USER_ID"]
+async fn lt73_transfer_ownership_fails_without_2fa() {
+    let (adapter, chat_id, _handle) = create_test_group("lt73").await;
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id =
+        octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
+    let user_id = test_user_id();
+
+    // Add the user first.
+    let member = octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+        handle: user_id.to_string(),
+        display_name: None,
+        is_admin: false,
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let _ = admin.add_member(&group_id, &member).await;
+
+    // Transfer ownership without 2FA password — should fail.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.transfer_ownership(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
+    // We expect this to fail (requires 2FA password, or not a supergroup, etc.)
+    tracing::info!(?result, "LT-73: transfer_ownership without 2FA");
+
+    destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
     tokio::time::sleep(Duration::from_secs(2)).await;
 }

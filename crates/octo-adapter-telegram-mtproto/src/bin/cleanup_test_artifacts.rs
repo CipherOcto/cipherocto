@@ -51,10 +51,9 @@ async fn main() {
         .unwrap_or_else(|e| panic!("failed to open session: {e}"));
 
     let self_handle = MtprotoSelfHandle::new();
-    let client =
-        RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
-            .await
-            .expect("connect failed -- is the session valid?");
+    let client = RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
+        .await
+        .expect("connect failed -- is the session valid?");
 
     match client.grammers_client().get_me().await {
         Ok(me) => {
@@ -163,10 +162,7 @@ async fn main() {
 
         if !batch_ids.is_empty() {
             if dry_run {
-                println!(
-                    "[dry-run] Would delete {} messages",
-                    batch_ids.len(),
-                );
+                println!("[dry-run] Would delete {} messages", batch_ids.len(),);
             } else {
                 match client.delete_messages(user_id, &batch_ids, true).await {
                     Ok(()) => {
@@ -215,21 +211,15 @@ async fn main() {
                     if dry_run {
                         println!("[dry-run] Would delete group: {}", title);
                     } else {
-                        if let Err(e) = client.delete_chat(chat_id).await {
-                            eprintln!(
-                                "delete_chat failed for {}: {e}, trying leave_chat",
-                                title
-                            );
-                            if let Err(e2) = client.leave_chat(chat_id).await {
-                                eprintln!("leave_chat also failed for {}: {e2}", title);
-                                groups_failed += 1;
-                            } else {
+                        match delete_with_flood_wait(&client, chat_id, title).await {
+                            Ok(action) => {
                                 groups_deleted += 1;
-                                println!("Left group: {}", title);
+                                println!("{} group: {}", action, title);
                             }
-                        } else {
-                            groups_deleted += 1;
-                            println!("Deleted group: {}", title);
+                            Err(e) => {
+                                eprintln!("Failed to delete/leave {}: {e}", title);
+                                groups_failed += 1;
+                            }
                         }
                     }
                 }
@@ -251,5 +241,64 @@ async fn main() {
     println!("Groups failed:    {}", groups_failed);
     if dry_run {
         println!("\n(dry-run mode, nothing was actually deleted)");
+    }
+}
+
+/// Extract FLOOD_WAIT seconds from an error message.
+/// e.g. "rpc error 420: FLOOD_WAIT caused by channels.deleteChannel (value: 882)"
+fn parse_flood_wait(err: &str) -> Option<u64> {
+    if !err.contains("FLOOD_WAIT") {
+        return None;
+    }
+    // Find "(value: NNN)" pattern
+    let marker = "(value: ";
+    let start = err.find(marker)? + marker.len();
+    let end = err[start..].find(')')? + start;
+    err[start..end].trim().parse::<u64>().ok()
+}
+
+/// Try delete_chat, respecting FLOOD_WAIT. Falls back to leave_chat.
+async fn delete_with_flood_wait(
+    client: &Arc<RealTelegramMtprotoClient>,
+    chat_id: i64,
+    title: &str,
+) -> Result<String, String> {
+    match client.delete_chat(chat_id).await {
+        Ok(()) => Ok("Deleted".into()),
+        Err(e) => {
+            let err_str = e.to_string();
+            if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                let wait = wait_secs + 5; // small buffer
+                eprintln!(
+                    "FLOOD_WAIT on delete_chat for {}: waiting {}s (requested {}s)",
+                    title, wait, wait_secs
+                );
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                // Retry once after waiting
+                match client.delete_chat(chat_id).await {
+                    Ok(()) => return Ok("Deleted (after wait)".into()),
+                    Err(e2) => {
+                        eprintln!("delete_chat retry failed for {}: {e2}", title);
+                    }
+                }
+            }
+            // Fallback: leave_chat
+            match client.leave_chat(chat_id).await {
+                Ok(()) => Ok("Left".into()),
+                Err(e2) => {
+                    let err2_str = e2.to_string();
+                    if let Some(wait_secs) = parse_flood_wait(&err2_str) {
+                        let wait = wait_secs + 5;
+                        eprintln!("FLOOD_WAIT on leave_chat for {}: waiting {}s", title, wait);
+                        tokio::time::sleep(Duration::from_secs(wait)).await;
+                        match client.leave_chat(chat_id).await {
+                            Ok(()) => return Ok("Left (after wait)".into()),
+                            Err(e3) => return Err(format!("leave_chat retry: {e3}")),
+                        }
+                    }
+                    Err(format!("delete_chat: {err_str}; leave_chat: {err2_str}"))
+                }
+            }
+        }
     }
 }

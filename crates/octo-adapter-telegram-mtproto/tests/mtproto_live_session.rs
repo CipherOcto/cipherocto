@@ -112,7 +112,10 @@ fn test_marker(test_name: &str) -> String {
 
 /// Delete a message from a chat (best-effort cleanup).
 async fn cleanup_message(client: &Arc<RealTelegramMtprotoClient>, chat_id: i64, msg_id: i64) {
-    if let Err(e) = client.delete_messages(chat_id, &[msg_id as i32], true).await {
+    if let Err(e) = client
+        .delete_messages(chat_id, &[msg_id as i32], true)
+        .await
+    {
         tracing::warn!(error = %e, msg_id, chat_id, "cleanup_message failed (best-effort)");
     } else {
         tracing::info!(msg_id, chat_id, "cleaned up message");
@@ -1037,6 +1040,11 @@ async fn lt45_upload_media_via_adapter() {
     let msg_id = result.unwrap();
     assert!(!msg_id.is_empty());
 
+    // Clean up the sent message.
+    if let Ok(numeric_id) = msg_id.parse::<i64>() {
+        let chat_id: i64 = uid.parse().unwrap();
+        cleanup_message(adapter.client(), chat_id, numeric_id).await;
+    }
     drop(adapter);
     tokio::time::sleep(Duration::from_millis(500)).await;
 }
@@ -1058,17 +1066,47 @@ async fn create_test_group(
     let admin = adapter.as_coordinator_admin().expect("CoordinatorAdmin");
 
     let title = format!("octo_test_{}_{}", test_name, chrono_timestamp());
-    let handle = admin
-        .create_group(&title, &[])
-        .await
-        .unwrap_or_else(|e| panic!("create_group '{}': {:?}", title, e));
+    let handle = match admin.create_group(&title, &[]).await {
+        Ok(h) => h,
+        Err(e) => {
+            let err_str = e.to_string();
+            if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                let wait = wait_secs + 5;
+                tracing::warn!(
+                    error = %err_str,
+                    test_name,
+                    wait_secs,
+                    "FLOOD_WAIT on create_group, waiting {}s then retrying",
+                    wait
+                );
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                admin
+                    .create_group(&title, &[])
+                    .await
+                    .unwrap_or_else(|e2| panic!("create_group retry '{}': {:?}", title, e2))
+            } else {
+                panic!("create_group '{}': {:?}", title, e);
+            }
+        }
+    };
 
     let chat_id: i64 = handle.id.as_str().parse().expect("chat_id parse");
     tracing::info!(chat_id, title = %handle.subject.as_deref().unwrap_or("?"), "created test group");
     (adapter, chat_id, handle)
 }
 
-/// Helper: destroy a test group (best-effort).
+/// Helper: parse FLOOD_WAIT seconds from an error string.
+fn parse_flood_wait(err: &str) -> Option<u64> {
+    if !err.contains("FLOOD_WAIT") {
+        return None;
+    }
+    let marker = "(value: ";
+    let start = err.find(marker)? + marker.len();
+    let end = err[start..].find(')')? + start;
+    err[start..end].trim().parse::<u64>().ok()
+}
+
+/// Helper: destroy a test group (best-effort, respects FLOOD_WAIT).
 async fn destroy_test_group(
     adapter: &MtprotoTelegramAdapter<RealTelegramMtprotoClient>,
     chat_id: i64,
@@ -1076,10 +1114,45 @@ async fn destroy_test_group(
     let admin = adapter.as_coordinator_admin().unwrap();
     let group_id =
         octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
-    if let Err(e) = admin.destroy_group(&group_id).await {
-        tracing::warn!(error = %e, chat_id, "destroy_test_group failed (best-effort)");
-    } else {
-        tracing::info!(chat_id, "destroyed test group");
+    match admin.destroy_group(&group_id).await {
+        Ok(()) => {
+            tracing::info!(chat_id, "destroyed test group");
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if let Some(wait_secs) = parse_flood_wait(&err_str) {
+                let wait = wait_secs + 5;
+                tracing::warn!(
+                    error = %err_str,
+                    chat_id,
+                    wait_secs,
+                    "FLOOD_WAIT on destroy_group, waiting {}s then retrying",
+                    wait
+                );
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                // Retry with leave_chat as fallback
+                match admin.destroy_group(&group_id).await {
+                    Ok(()) => {
+                        tracing::info!(chat_id, "destroyed test group (after FLOOD_WAIT)");
+                    }
+                    Err(e2) => {
+                        let group_id2 =
+                            octo_network::dot::adapters::coordinator_admin::GroupId::new(
+                                chat_id.to_string(),
+                            );
+                        if let Err(e3) = admin.leave_group(&group_id2).await {
+                            tracing::warn!(error = %e3, chat_id, "leave_group also failed after FLOOD_WAIT");
+                        } else {
+                            tracing::info!(chat_id, "left test group (after FLOOD_WAIT)");
+                        }
+                        // Suppress original error since we already logged.
+                        drop(e2);
+                    }
+                }
+            } else {
+                tracing::warn!(error = %err_str, chat_id, "destroy_test_group failed (best-effort)");
+            }
+        }
     }
 }
 

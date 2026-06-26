@@ -2396,6 +2396,77 @@ impl PlatformAdapter for WhatsAppWebAdapter {
 // ── Inherent send_envelope helpers (Mission 0850) ──────────────────
 
 impl WhatsAppWebAdapter {
+    /// Upload a document to CDN and send it as a visible DocumentMessage
+    /// to the given JID. Returns (message_id, media_ref_token).
+    /// The message_id identifies the sent message; the media_ref_token
+    /// can be passed to `download_media` to verify the CDN round-trip.
+    pub async fn send_document(
+        &self,
+        to_jid: &str,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<(String, String), PlatformAdapterError> {
+        if data.len() > Self::MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: data.len(),
+                max: Self::MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token = encode_base64url(&media_ref).map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            }
+        })?;
+
+        let jid: wacore_binary::Jid = to_jid
+            .parse()
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+
+        let doc_msg = waproto::whatsapp::message::DocumentMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime_type.to_string()),
+            file_name: Some(filename.to_string()),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            document_message: Some(Box::new(doc_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+
+        Ok((send_result.message_id, token))
+    }
+
     /// Text-mode send path used by [`PlatformAdapter::send_envelope`]
     /// after `select_mode_with_max_text` returns `TransportMode::Text`.
     /// Encodes the envelope as `DOT/1/{base64}` and sends via the

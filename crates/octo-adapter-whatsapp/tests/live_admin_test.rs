@@ -166,6 +166,13 @@ async fn create_test_group(prefix: &str) -> (Arc<WhatsAppWebAdapter>, String, Gr
         .register_group_at_runtime(&group_jid)
         .expect("register_group_at_runtime failed");
 
+    // Persist group JID to stoolap conversations table so cleanup
+    // utility can find it even after adapter restart.
+    let entries = vec![(group_jid.clone(), Some(subject.clone()), true)];
+    if let Err(e) = adapter.persist_conversations(&entries).await {
+        tracing::warn!(error = %e, "failed to persist test group conversation");
+    }
+
     (adapter, group_jid, handle)
 }
 

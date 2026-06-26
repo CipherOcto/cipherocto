@@ -278,6 +278,8 @@ pub struct WhatsAppWebAdapter {
     /// Event::HistorySync handler. Used by the cleanup utility to find
     /// chats from groups we already left.
     conversation_jids: Arc<Mutex<Vec<String>>>,
+    /// StoolapStore reference for persisting conversations. Set in start_bot.
+    store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
     /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
     /// `DOT/2/{token}` download requests from the sync on_event closure
     /// (which does NOT capture `&self`) to the async download_rx
@@ -374,6 +376,7 @@ impl WhatsAppWebAdapter {
             synced_notify: Arc::new(tokio::sync::Notify::new()),
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
             conversation_jids: Arc::new(Mutex::new(Vec::new())),
+            store: Arc::new(Mutex::new(None)),
             // Mission 0850: download_tx is None until start_bot populates
             // it. The channel is created INSIDE start_bot (not here) so
             // the receiver has an immediate owner — the consumer task.
@@ -488,13 +491,30 @@ impl WhatsAppWebAdapter {
         self.conversation_jids.lock().clone()
     }
 
+    /// Persist conversations to the stoolap `conversations` table.
+    /// Each entry is (jid, name, is_group).
+    pub async fn persist_conversations(
+        &self,
+        entries: &[(String, Option<String>, bool)],
+    ) -> anyhow::Result<()> {
+        let store = self
+            .store
+            .lock()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("store not initialized (call start_bot first)"))?;
+        store.upsert_conversations(entries).await
+    }
+
     /// Read persisted conversations from the stoolap `conversations` table.
     /// These survive across adapter restarts. Returns (jid, name, is_group).
     pub async fn list_persisted_conversations(
         &self,
     ) -> anyhow::Result<Vec<(String, Option<String>, bool)>> {
-        let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
-        let store = StoolapStore::new(&expanded_path)?;
+        let store = self
+            .store
+            .lock()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("store not initialized (call start_bot first)"))?;
         store.list_conversations().await
     }
 
@@ -740,6 +760,8 @@ impl WhatsAppWebAdapter {
         let storage = StoolapStore::new(&expanded_path)
             .map_err(|e| anyhow::anyhow!("stoolap store init at {expanded_path:?}: {e:#}"))?;
         let backend = Arc::new(storage);
+        // Save store reference for later use (persist_conversations, etc.)
+        *self.store.lock() = Some(Arc::clone(&backend));
 
         // Create transport factory
         let mut transport_factory =

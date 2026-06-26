@@ -1974,6 +1974,24 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         Ok(())
     }
 
+    async fn delete_messages(
+        &self,
+        _chat_id: i64,
+        message_ids: &[i32],
+        revoke: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "delete_messages";
+        let req = tl::functions::messages::DeleteMessages {
+            revoke,
+            id: message_ids.to_vec(),
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
+    }
+
     async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError> {
         let prefix = "leave_chat";
         let peer_kind = chat_id_kind(chat_id);

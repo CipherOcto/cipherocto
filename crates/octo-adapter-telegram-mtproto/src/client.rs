@@ -478,6 +478,16 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// `channels.leaveChannel` for supergroups).
     async fn leave_chat(&self, chat_id: i64) -> Result<(), MtprotoTelegramError>;
 
+    /// Delete messages by id. Uses `messages.deleteMessages`
+    /// (user-side) or `channels.deleteMessages` (channel-side).
+    /// Revoke=true means delete for everyone.
+    async fn delete_messages(
+        &self,
+        chat_id: i64,
+        message_ids: &[i32],
+        revoke: bool,
+    ) -> Result<(), MtprotoTelegramError>;
+
     /// Fetch the full `GroupInfo` for a chat. Returns
     /// `Err(NotFound)` if the chat does not exist or the
     /// bot is not a member.
@@ -1054,6 +1064,16 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         let mut g = self.state.lock();
         g.groups.remove(&chat_id);
         g.group_members.remove(&chat_id);
+        Ok(())
+    }
+
+    async fn delete_messages(
+        &self,
+        _chat_id: i64,
+        _message_ids: &[i32],
+        _revoke: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        // Mock: no-op, messages are not persisted.
         Ok(())
     }
 

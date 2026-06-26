@@ -136,12 +136,39 @@ pub async fn wait_for_health(adapter: &WhatsAppWebAdapter, timeout: Duration) ->
     }
 }
 
-/// Wait for `Event::OfflineSyncCompleted` with a timeout.
-/// This ensures the initial history sync is done and the client
-/// is fully synchronized with WhatsApp servers before proceeding.
+/// Wait for the initial history sync to complete with a timeout.
+/// Races both `synced_notify` (fires on `Event::OfflineSyncCompleted`)
+/// and `connected_notify` (fires on `Event::HistorySync` which is
+/// definitive proof the connection is alive and sync is progressing).
+/// For a 0-conversation sync, `OfflineSyncCompleted` may not fire,
+/// but the `HistorySync` event itself proves the sync is done.
 pub async fn wait_for_synced(adapter: &WhatsAppWebAdapter, timeout: Duration) -> Result<()> {
-    let notify = adapter.synced();
-    match tokio::time::timeout(timeout, notify.notified()).await {
+    let synced = adapter.synced();
+    let connected = adapter.connected();
+    let check = async {
+        // Race synced (OfflineSyncCompleted) vs connected (HistorySync).
+        // Either one means the connection is alive and syncing.
+        tokio::select! {
+            _ = synced.notified() => {
+                tracing::debug!("wait_for_synced: OfflineSyncCompleted received");
+            }
+            _ = connected.notified() => {
+                tracing::debug!("wait_for_synced: connected/HistorySync received");
+            }
+        }
+        // Give a brief window for OfflineSyncCompleted to arrive
+        // after the first HistorySync. If it doesn't come, the
+        // 0-conversation case is still valid.
+        tokio::select! {
+            _ = synced.notified() => {
+                tracing::debug!("wait_for_synced: OfflineSyncCompleted received (second)");
+            }
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                tracing::debug!("wait_for_synced: no further sync events in 10s, assuming done");
+            }
+        }
+    };
+    match tokio::time::timeout(timeout, check).await {
         Ok(()) => Ok(()),
         Err(_) => Err(CoreError::Timeout {
             secs: timeout.as_secs(),

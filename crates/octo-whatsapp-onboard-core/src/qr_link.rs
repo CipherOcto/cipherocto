@@ -46,39 +46,68 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         .await
         .map_err(|e| CoreError::Adapter(anyhow::anyhow!("start_bot: {e}")))?;
 
-    let phone = crate::session::wait_for_connected(
-        &adapter,
-        std::time::Duration::from_secs(args.timeout_secs),
-    )
-    .await?;
+    let timeout = std::time::Duration::from_secs(args.timeout_secs);
 
     if args.wait_sync {
-        eprintln!("Waiting for initial history sync (OfflineSyncCompleted)...");
-        crate::session::wait_for_synced(
-            &adapter,
-            std::time::Duration::from_secs(args.timeout_secs),
-        )
-        .await?;
+        // --wait-sync mode: wait for the full history sync to complete.
+        // This is the most reliable connection signal — Event::Connected
+        // sometimes doesn't fire after pairing, but HistorySync and
+        // OfflineSyncCompleted always do when the connection is alive.
+        eprintln!("Waiting for initial history sync...");
+        crate::session::wait_for_synced(&adapter, timeout).await?;
         eprintln!("History sync complete.");
+
+        // The sync proved the connection is alive. Now resolve the
+        // phone from the device snapshot (which was populated during
+        // the sync and pairing flow).
+        let phone = resolve_phone_from_adapter(&adapter)
+            .await
+            .ok_or(crate::error::CoreError::SessionExpired)?;
+        let session = WhatsAppSession {
+            self_phone: Some(phone),
+            session_path: args.session_path.clone(),
+            groups: args.groups.clone(),
+            pair_phone: None,
+        };
+        write_sidecar(&args.session_path, &session, SidecarMode::QrLink)?;
+        let _ = adapter.shutdown().await;
+        Ok(session)
+    } else {
+        // Standard mode: wait for Event::Connected (or HistorySync fallback).
+        let phone = crate::session::wait_for_connected(&adapter, timeout).await?;
+        let session = WhatsAppSession {
+            self_phone: Some(phone),
+            session_path: args.session_path.clone(),
+            groups: args.groups.clone(),
+            pair_phone: None,
+        };
+        write_sidecar(&args.session_path, &session, SidecarMode::QrLink)?;
+        let _ = adapter.shutdown().await;
+        Ok(session)
     }
-
-    let session = WhatsAppSession {
-        self_phone: Some(phone),
-        session_path: args.session_path.clone(),
-        groups: args.groups.clone(),
-        pair_phone: None,
-    };
-
-    // R5-M2: sidecar first, before any config write.
-    write_sidecar(&args.session_path, &session, SidecarMode::QrLink)?;
-
-    // Shut down the adapter to close the WebSocket and stop
-    // background tasks so the CLI process can exit cleanly.
-    let _ = adapter.shutdown().await;
-
-    Ok(session)
 }
 
 fn validate_qr_link_args(args: &QrLinkArgs) -> Result<()> {
     crate::validate_session_args(&args.session_path)
+}
+
+/// Try to resolve the phone number from the adapter's self_handle
+/// or by polling the device snapshot. Returns None if unresolvable.
+async fn resolve_phone_from_adapter(
+    adapter: &WhatsAppWebAdapter,
+) -> Option<String> {
+    // Fast path: already resolved by the Event::Connected or
+    // Event::HistorySync handler.
+    if let Some(phone) = adapter.self_handle() {
+        return Some(phone);
+    }
+    // Slow path: poll for a few seconds.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if let Some(phone) = adapter.self_handle() {
+            return Some(phone);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    None
 }

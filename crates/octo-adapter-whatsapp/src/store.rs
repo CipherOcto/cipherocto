@@ -1305,13 +1305,22 @@ impl DeviceStore for StoolapStore {
         // scratch — a complete session-loss event, not a temporary
         // outage. The transaction makes the operation atomic
         // w.r.t. crashes and panics.
-        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
-        exec_tx(
+        let mut tx = match self.db.lock().await.begin() {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!(error = %e, "StoolapStore::save begin() failed");
+                return Err(to_store_err(e));
+            }
+        };
+        if let Err(e) = exec_tx(
             &mut tx,
             "DELETE FROM device WHERE id = $1",
             vec![(self.device_id as i64).into()],
-        )?;
-        exec_tx(&mut tx, "INSERT INTO device (id, lid, pn, registration_id, noise_key, identity_key, signed_pre_key, signed_pre_key_id, signed_pre_key_signature, adv_secret_key, account, push_name, app_version_primary, app_version_secondary, app_version_tertiary, app_version_last_fetched_ms, edge_routing_info, props_hash, next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)",
+        ) {
+            tracing::error!(error = %e, "StoolapStore::save DELETE failed");
+            return Err(e);
+        }
+        if let Err(e) = exec_tx(&mut tx, "INSERT INTO device (id, lid, pn, registration_id, noise_key, identity_key, signed_pre_key, signed_pre_key_id, signed_pre_key_signature, adv_secret_key, account, push_name, app_version_primary, app_version_secondary, app_version_tertiary, app_version_last_fetched_ms, edge_routing_info, props_hash, next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)",
             vec![
                 (self.device_id as i64).into(),
                 device.lid.as_ref().map(|j| j.to_string()).unwrap_or_default().into(),
@@ -1330,7 +1339,10 @@ impl DeviceStore for StoolapStore {
                 device.nct_salt.clone().map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 cert_chain.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
-            ])?;
+            ]) {
+            tracing::error!(error = %e, "StoolapStore::save INSERT failed");
+            return Err(e);
+        }
         match tx.commit() {
             Ok(()) => Ok(()),
             Err(e) => {

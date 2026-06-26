@@ -2286,6 +2286,268 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
         Ok(())
     }
+
+    async fn ban_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        duration_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "ban_participant";
+        let peer_kind = chat_id_kind(chat_id);
+        let user_peer = resolve_user(&self.client, user_id).await?;
+        let input_user = peer_to_input_user(&user_peer).await?;
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                // Basic groups: ban = kick (no ban rights concept).
+                let req = tl::functions::messages::DeleteChatUser {
+                    revoke_history: false,
+                    chat_id,
+                    user_id: input_user,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let input_channel = peer_to_input_channel(&chat_peer).await?;
+                let until = duration_secs
+                    .map(|d| {
+                        (std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            + d as u64) as i32
+                    })
+                    .unwrap_or(0);
+                let req = tl::functions::channels::EditBanned {
+                    channel: input_channel,
+                    participant: tl::enums::InputPeer::User(tl::types::InputPeerUser {
+                        user_id: user_peer.id().bare_id(),
+                        access_hash: user_peer
+                            .to_ref()
+                            .await
+                            .map(|r| r.auth.hash())
+                            .unwrap_or(0),
+                    }),
+                    banned_rights: tl::enums::ChatBannedRights::Rights(
+                        tl::types::ChatBannedRights {
+                            view_messages: true,
+                            send_messages: true,
+                            send_media: true,
+                            send_stickers: true,
+                            send_gifs: true,
+                            send_games: true,
+                            send_inline: true,
+                            embed_links: true,
+                            send_polls: true,
+                            change_info: true,
+                            invite_users: true,
+                            pin_messages: true,
+                            manage_topics: true,
+                            send_photos: true,
+                            send_videos: true,
+                            send_roundvideos: true,
+                            send_audios: true,
+                            send_voices: true,
+                            send_docs: true,
+                            send_plain: true,
+                            until_date: until,
+                        },
+                    ),
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn set_chat_locked(
+        &self,
+        chat_id: i64,
+        locked: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "set_chat_locked";
+        let peer_kind = chat_id_kind(chat_id);
+        if peer_kind != PeerKindChoice::Supergroup {
+            return Err(MtprotoTelegramError::Rpc {
+                code: 400,
+                message: format!(
+                    "{prefix}: set_chat_locked requires supergroup; chat_id={chat_id}"
+                ),
+            });
+        }
+        let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+        let input_channel = peer_to_input_channel(&chat_peer).await?;
+        // Set default banned rights for all non-admin members.
+        let req = tl::functions::channels::EditBanned {
+            channel: input_channel,
+            participant: tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
+                channel_id: 0,
+                access_hash: 0,
+            }), // affects everyone (default rights)
+            banned_rights: tl::enums::ChatBannedRights::Rights(
+                tl::types::ChatBannedRights {
+                    view_messages: false,
+                    send_messages: locked,
+                    send_media: locked,
+                    send_stickers: locked,
+                    send_gifs: locked,
+                    send_games: locked,
+                    send_inline: locked,
+                    embed_links: false,
+                    send_polls: locked,
+                    change_info: locked,
+                    invite_users: false,
+                    pin_messages: locked,
+                    manage_topics: false,
+                    send_photos: locked,
+                    send_videos: locked,
+                    send_roundvideos: locked,
+                    send_audios: locked,
+                    send_voices: locked,
+                    send_docs: locked,
+                    send_plain: locked,
+                    until_date: 0,
+                },
+            ),
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
+    }
+
+    async fn set_chat_announce(
+        &self,
+        chat_id: i64,
+        announce: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "set_chat_announce";
+        let peer_kind = chat_id_kind(chat_id);
+        if peer_kind != PeerKindChoice::Supergroup {
+            return Err(MtprotoTelegramError::Rpc {
+                code: 400,
+                message: format!(
+                    "{prefix}: set_chat_announce requires supergroup; chat_id={chat_id}"
+                ),
+            });
+        }
+        let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+        let input_channel = peer_to_input_channel(&chat_peer).await?;
+        let req = tl::functions::channels::ToggleSignatures {
+            channel: input_channel,
+            signatures_enabled: announce,
+            profiles_enabled: false,
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
+    }
+
+    async fn set_chat_ephemeral(
+        &self,
+        chat_id: i64,
+        ttl_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "set_chat_ephemeral";
+        let peer_kind = chat_id_kind(chat_id);
+        let ttl_period = ttl_secs.unwrap_or(0) as i32;
+        match peer_kind {
+            PeerKindChoice::Basic => {
+                let req = tl::functions::messages::SetHistoryTtl {
+                    peer: tl::enums::InputPeer::Chat(tl::types::InputPeerChat {
+                        chat_id: chat_id.unsigned_abs() as i64,
+                    }),
+                    period: ttl_period,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                let peer = tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
+                    channel_id: chat_peer.id().bare_id(),
+                    access_hash: chat_peer
+                        .to_ref()
+                        .await
+                        .map(|r| r.auth.hash())
+                        .unwrap_or(0),
+                });
+                let req = tl::functions::messages::SetHistoryTtl {
+                    peer,
+                    period: ttl_period,
+                };
+                self.client
+                    .invoke(&req)
+                    .await
+                    .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn export_chat_invite(
+        &self,
+        chat_id: i64,
+    ) -> Result<String, MtprotoTelegramError> {
+        let prefix = "export_chat_invite";
+        let peer_kind = chat_id_kind(chat_id);
+        let peer = match peer_kind {
+            PeerKindChoice::Basic => {
+                tl::enums::InputPeer::Chat(tl::types::InputPeerChat {
+                    chat_id: chat_id.unsigned_abs() as i64,
+                })
+            }
+            PeerKindChoice::Supergroup => {
+                let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+                tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
+                    channel_id: chat_peer.id().bare_id(),
+                    access_hash: chat_peer
+                        .to_ref()
+                        .await
+                        .map(|r| r.auth.hash())
+                        .unwrap_or(0),
+                })
+            }
+        };
+        let req = tl::functions::messages::ExportChatInvite {
+            legacy_revoke_permanent: false,
+            request_needed: false,
+            peer,
+            expire_date: None,
+            usage_limit: None,
+            title: None,
+            subscription_pricing: None,
+        };
+        let response = self
+            .client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        // Extract the invite link from the response.
+        match response {
+            tl::enums::ExportedChatInvite::ChatInviteExported(invite) => Ok(invite.link),
+            tl::enums::ExportedChatInvite::ChatInvitePublicJoinRequests => {
+                Err(MtprotoTelegramError::Rpc {
+                    code: 500,
+                    message: format!(
+                        "{prefix}: unexpected ChatInvitePublicJoinRequests response"
+                    ),
+                })
+            }
+        }
+    }
 }
 
 // ── Helpers for send_message / send_document / download_file ───────

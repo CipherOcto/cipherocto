@@ -39,6 +39,7 @@
 //!   in the TDLib adapter and the WhatsApp adapter).
 
 use async_trait::async_trait;
+use std::time::Duration;
 
 use octo_network::dot::adapters::coordinator_admin::{
     AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
@@ -731,6 +732,106 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
             .await
             .map_err(map_err)?;
         Ok(())
+    }
+
+    async fn ban_member(
+        &self,
+        group_id: &GroupId,
+        member: &PeerId,
+        duration: Option<Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        let chat_id = parse_chat_id(group_id)?;
+        let user_id =
+            member
+                .as_str()
+                .parse::<i64>()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid user_id {:?}: {}", member.as_str(), e),
+                })?;
+        let duration_secs = duration.map(|d| d.as_secs() as u32);
+        self.client
+            .ban_participant(chat_id, user_id, duration_secs)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn set_locked(
+        &self,
+        group_id: &GroupId,
+        locked: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let chat_id = parse_chat_id(group_id)?;
+        if !is_supergroup(chat_id) {
+            return Err(PlatformAdapterError::Unimplemented {
+                platform: self.platform_name(),
+                action: format!(
+                    "set_locked: chat_id {chat_id} is a basic group (no locked concept)"
+                ),
+            });
+        }
+        self.client
+            .set_chat_locked(chat_id, locked)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn set_announce(
+        &self,
+        group_id: &GroupId,
+        announce: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let chat_id = parse_chat_id(group_id)?;
+        if !is_supergroup(chat_id) {
+            return Err(PlatformAdapterError::Unimplemented {
+                platform: self.platform_name(),
+                action: format!(
+                    "set_announce: chat_id {chat_id} is a basic group (no announce concept)"
+                ),
+            });
+        }
+        self.client
+            .set_chat_announce(chat_id, announce)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn set_ephemeral(
+        &self,
+        group_id: &GroupId,
+        ttl: Option<Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        let chat_id = parse_chat_id(group_id)?;
+        let ttl_secs = ttl.map(|d| d.as_secs() as u32);
+        self.client
+            .set_chat_ephemeral(chat_id, ttl_secs)
+            .await
+            .map_err(map_err)
+    }
+
+    async fn list_own_groups_with_invites(
+        &self,
+    ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        // Get base groups list.
+        let mut groups = self.list_own_groups().await?;
+        // Fetch invite links for each group.
+        for g in &mut groups {
+            let chat_id: i64 = g.id.as_str().parse().unwrap_or(0);
+            if chat_id == 0 {
+                continue;
+            }
+            match self.client.export_chat_invite(chat_id).await {
+                Ok(url) => g.invite_url = Some(url),
+                Err(e) => {
+                    tracing::debug!(
+                        error = %e,
+                        chat_id,
+                        "list_own_groups_with_invites: export_chat_invite failed"
+                    );
+                }
+            }
+        }
+        Ok(groups)
     }
 }
 

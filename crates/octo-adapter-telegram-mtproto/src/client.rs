@@ -528,6 +528,49 @@ pub trait MtprotoTelegramClient: Send + Sync {
         new_owner_user_id: i64,
         password: Option<&str>,
     ) -> Result<(), MtprotoTelegramError>;
+
+    /// Ban a user from a supergroup (`channels.editBanned`
+    /// with `view_messages: true`). For basic groups, this
+    /// is equivalent to kick_participant.
+    /// `duration_secs` is `None` for permanent ban, or
+    /// `Some(secs)` for a temporary ban.
+    async fn ban_participant(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        duration_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Lock a group so only admins can send messages
+    /// (`channels.editBanned` with `send_plain: true` on
+    /// the default banned rights). Only works on supergroups.
+    async fn set_chat_locked(&self, chat_id: i64, locked: bool)
+        -> Result<(), MtprotoTelegramError>;
+
+    /// Toggle announce mode (signatures) on a supergroup
+    /// (`channels.toggleSignatures`). When enabled, the
+    /// admin's name is shown on messages.
+    async fn set_chat_announce(
+        &self,
+        chat_id: i64,
+        announce: bool,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Set the ephemeral message timer for a chat
+    /// (`messages.setHistoryTTL`). `None` disables
+    /// ephemeral messages; `Some(secs)` sets the
+    /// auto-delete period.
+    async fn set_chat_ephemeral(
+        &self,
+        chat_id: i64,
+        ttl_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError>;
+
+    /// Export an invite link for a chat
+    /// (`messages.exportChatInvite`). Returns the
+    /// invite URL string.
+    async fn export_chat_invite(&self, chat_id: i64)
+        -> Result<String, MtprotoTelegramError>;
 }
 
 /// Preview of a chat invite returned by
@@ -1137,6 +1180,46 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         let mut s = self.state.lock();
         s.last_transferred_to = Some((chat_id, new_owner_user_id));
         Ok(())
+    }
+
+    async fn ban_participant(
+        &self,
+        _chat_id: i64,
+        _user_id: i64,
+        _duration_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
+    }
+
+    async fn set_chat_locked(
+        &self,
+        _chat_id: i64,
+        _locked: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
+    }
+
+    async fn set_chat_announce(
+        &self,
+        _chat_id: i64,
+        _announce: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
+    }
+
+    async fn set_chat_ephemeral(
+        &self,
+        _chat_id: i64,
+        _ttl_secs: Option<u32>,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
+    }
+
+    async fn export_chat_invite(
+        &self,
+        _chat_id: i64,
+    ) -> Result<String, MtprotoTelegramError> {
+        Ok("https://t.me/+mock_invite_hash".into())
     }
 }
 

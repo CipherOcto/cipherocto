@@ -1829,11 +1829,7 @@ async fn lt66_ban_member() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.ban_member(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()), None).await;
-    // ban_member may be unimplemented in the adapter.
-    match result {
-        Ok(()) => tracing::info!("LT-66: ban_member succeeded"),
-        Err(e) => tracing::info!(error = %e, "LT-66: ban_member returned error (may be unimplemented)"),
-    }
+    assert!(result.is_ok(), "ban_member: {:?}", result.err());
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
@@ -1909,15 +1905,11 @@ async fn lt69_set_locked() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_locked(&group_id, true).await;
-    match result {
-        Ok(()) => {
-            tracing::info!("LT-69: set_locked(true) succeeded");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            let result = admin.set_locked(&group_id, false).await;
-            assert!(result.is_ok(), "set_locked(false): {:?}", result.err());
-        }
-        Err(e) => tracing::info!(error = %e, "LT-69: set_locked returned error (may be unimplemented)"),
-    }
+    assert!(result.is_ok(), "set_locked(true): {:?}", result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_locked(&group_id, false).await;
+    assert!(result.is_ok(), "set_locked(false): {:?}", result.err());
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
@@ -1935,15 +1927,11 @@ async fn lt70_set_announce() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_announce(&group_id, true).await;
-    match result {
-        Ok(()) => {
-            tracing::info!("LT-70: set_announce(true) succeeded");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            let result = admin.set_announce(&group_id, false).await;
-            assert!(result.is_ok(), "set_announce(false): {:?}", result.err());
-        }
-        Err(e) => tracing::info!(error = %e, "LT-70: set_announce returned error (may be unimplemented)"),
-    }
+    assert!(result.is_ok(), "set_announce(true): {:?}", result.err());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_announce(&group_id, false).await;
+    assert!(result.is_ok(), "set_announce(false): {:?}", result.err());
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
@@ -1962,15 +1950,12 @@ async fn lt71_set_ephemeral() {
     // Set 1-day ephemeral timer (86400 seconds).
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_ephemeral(&group_id, Some(Duration::from_secs(86400))).await;
-    match result {
-        Ok(()) => {
-            tracing::info!("LT-71: set_ephemeral(86400) succeeded");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            let result = admin.set_ephemeral(&group_id, None).await;
-            assert!(result.is_ok(), "set_ephemeral(None): {:?}", result.err());
-        }
-        Err(e) => tracing::info!(error = %e, "LT-71: set_ephemeral returned error (may be unimplemented)"),
-    }
+    assert!(result.is_ok(), "set_ephemeral(86400): {:?}", result.err());
+
+    // Disable ephemeral.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let result = admin.set_ephemeral(&group_id, None).await;
+    assert!(result.is_ok(), "set_ephemeral(None): {:?}", result.err());
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);

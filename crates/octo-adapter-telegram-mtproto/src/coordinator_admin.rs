@@ -809,6 +809,26 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
             .map_err(map_err)
     }
 
+    async fn set_require_approval(
+        &self,
+        group_id: &GroupId,
+        require_approval: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let chat_id = parse_chat_id(group_id)?;
+        if !is_supergroup(chat_id) {
+            return Err(PlatformAdapterError::Unimplemented {
+                platform: self.platform_name(),
+                action: format!(
+                    "set_require_approval: chat_id {chat_id} is a basic group"
+                ),
+            });
+        }
+        self.client
+            .set_chat_require_approval(chat_id, require_approval)
+            .await
+            .map_err(map_err)
+    }
+
     async fn list_own_groups_with_invites(
         &self,
     ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {

@@ -571,6 +571,14 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// invite URL string.
     async fn export_chat_invite(&self, chat_id: i64)
         -> Result<String, MtprotoTelegramError>;
+
+    /// Toggle whether new members need admin approval to join
+    /// (`channels.toggleJoinRequest`). Only works on supergroups.
+    async fn set_chat_require_approval(
+        &self,
+        chat_id: i64,
+        require_approval: bool,
+    ) -> Result<(), MtprotoTelegramError>;
 }
 
 /// Preview of a chat invite returned by
@@ -1220,6 +1228,14 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         _chat_id: i64,
     ) -> Result<String, MtprotoTelegramError> {
         Ok("https://t.me/+mock_invite_hash".into())
+    }
+
+    async fn set_chat_require_approval(
+        &self,
+        _chat_id: i64,
+        _require_approval: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        Ok(())
     }
 }
 

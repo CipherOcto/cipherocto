@@ -2552,6 +2552,34 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             }
         }
     }
+
+    async fn set_chat_require_approval(
+        &self,
+        chat_id: i64,
+        require_approval: bool,
+    ) -> Result<(), MtprotoTelegramError> {
+        let prefix = "set_chat_require_approval";
+        let peer_kind = chat_id_kind(chat_id);
+        if peer_kind != PeerKindChoice::Supergroup {
+            return Err(MtprotoTelegramError::Rpc {
+                code: 400,
+                message: format!(
+                    "{prefix}: set_chat_require_approval requires supergroup; chat_id={chat_id}"
+                ),
+            });
+        }
+        let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
+        let input_channel = peer_to_input_channel(&chat_peer).await?;
+        let req = tl::functions::channels::ToggleJoinRequest {
+            channel: input_channel,
+            enabled: require_approval,
+        };
+        self.client
+            .invoke(&req)
+            .await
+            .map_err(|e| crate::peer_resolve::map_invoke_err(prefix, e))?;
+        Ok(())
+    }
 }
 
 // ── Helpers for send_message / send_document / download_file ───────

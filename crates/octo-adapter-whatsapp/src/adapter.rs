@@ -1448,17 +1448,16 @@ impl WhatsAppWebAdapter {
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
 
-        // Delete/clear the chat entry BEFORE leaving. After leaving, the server
-        // rejects sync mutations for groups we're no longer in.
-        // Match the official app's behavior: delete_media=true, with message_range.
-        let _ = client.chat_actions().clear_chat(&jid, None).await;
-        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
-
         client
             .groups()
             .leave(&jid)
             .await
             .map_err(|e| format!("leave_group failed: {e:#}"))?;
+
+        // Delete chat AFTER leaving. Matches official app flow:
+        // 1. GroupUpdate Remove (leave)
+        // 2. DeleteChatUpdate (delete_media=true)
+        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
 
         tracing::info!(group_jid = %group_jid, "WhatsApp group left");
         Ok(())
@@ -2998,11 +2997,12 @@ impl WhatsAppWebAdapter {
         let jid: wacore_binary::Jid = group_jid
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
-        // Clear/delete chat BEFORE leaving. Match official app behavior.
-        let _ = client.chat_actions().clear_chat(&jid, None).await;
-        let _ = client.chat_actions().delete_chat(&jid, true, None).await;
         match client.groups().leave(&jid).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Delete chat AFTER leaving. Matches official app flow.
+                let _ = client.chat_actions().delete_chat(&jid, true, None).await;
+                Ok(())
+            }
             Err(e) => {
                 // `not a participant` / `not in group` are expected
                 // on idempotent leave — surface them as a specific

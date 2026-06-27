@@ -80,6 +80,79 @@ async fn build_session_client(session: &serde_json::Value) -> Client {
     client
 }
 
+/// Pre-scan guard: leave any pre-existing `octo-test-mx-*` rooms
+/// before the caller creates its own test room. Makes mx04_05_06
+/// and mx07 self-healing — if a previous run panicked before
+/// cleanup, the next run cleans up here instead of failing on a
+/// stale `room_id` left in the session file's `rooms[]` array
+/// (mission 0850h-b §Live-Test Cleanup Infrastructure).
+///
+/// Returns the number of rooms that were left. Logs each left room
+/// at INFO so the operator can see what was cleaned up.
+async fn leave_stale_test_rooms(client: &Client, prefix: &str) -> u32 {
+    use matrix_sdk::config::SyncSettings;
+
+    // Sync once with the same 5 s timeout the live tests use
+    // elsewhere — this is a warm-up sync, the rooms we're leaving
+    // are already known. If the sync fails we return 0 and let
+    // the test body handle the error; the pre-scan is best-effort.
+    if let Err(e) = client
+        .sync_once(SyncSettings::default().timeout(Duration::from_secs(5)))
+        .await
+    {
+        tracing::warn!(error = %e, "pre-scan guard: warm-up sync failed, skipping stale-room sweep");
+        return 0;
+    }
+
+    let stale: Vec<_> = client
+        .joined_rooms()
+        .into_iter()
+        .filter_map(|room| {
+            let name = room.name()?;
+            if name.starts_with(prefix) {
+                Some((room.room_id().to_owned(), name))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut left = 0u32;
+    for (rid, name) in &stale {
+        // Re-look up after the filter (filter already saw the
+        // joined_rooms() snapshot, but be defensive).
+        if let Some(room) = client.get_room(rid.as_ref()) {
+            match room.leave().await {
+                Ok(()) => {
+                    left += 1;
+                    tracing::info!(
+                        room_id = %rid,
+                        room_name = %name,
+                        "pre-scan guard: left stale test room",
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        room_id = %rid,
+                        room_name = %name,
+                        error = %e,
+                        "pre-scan guard: leave failed",
+                    );
+                }
+            }
+        }
+    }
+
+    if left > 0 {
+        tracing::info!(
+            count = left,
+            prefix,
+            "pre-scan guard: cleaned up stale test rooms"
+        );
+    }
+    left
+}
+
 /// Build a MatrixAdapter on a dedicated thread (MatrixAdapter::new()
 /// creates its own tokio runtime internally — cannot nest runtimes).
 fn build_adapter(cfg_json: &[u8]) -> MatrixAdapter {
@@ -244,6 +317,15 @@ fn mx04_05_06_envelope_round_trip() {
     let session = load_session();
     let rt = make_runtime();
 
+    // Pre-scan guard (mission 0850h-b §Live-Test Cleanup): clean
+    // up any stale `octo-test-mx-*` rooms before creating the new
+    // one. Idempotent self-healing — protects against a previous
+    // run that panicked before its cleanup block.
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
     // Create a test room.
     let room_id = rt.block_on(async {
         let client = build_session_client(&session).await;
@@ -334,6 +416,14 @@ fn mx07_media_round_trip() {
     let session = load_session();
     let rt = make_runtime();
 
+    // Pre-scan guard (mission 0850h-b §Live-Test Cleanup): clean
+    // up any stale `octo-test-mx-*` rooms before creating the new
+    // one.
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
     let room_id = rt.block_on(async {
         let client = build_session_client(&session).await;
         client
@@ -409,4 +499,33 @@ fn mx08_shutdown() {
         "self_handle should be None after shutdown"
     );
     tracing::info!("MX-08: shutdown OK");
+}
+
+// ── Cleanup helper test (mission 0850h-b §Live-Test Cleanup) ────
+//
+// Runs the same stale-room sweep as `src/bin/cleanup_test_rooms.rs`
+// inline (no subprocess), for CI environments that prefer
+// `cargo test -- --include-ignored` over a separate binary step.
+//
+// Run:
+//   cargo test -p octo-adapter-matrix-sdk --features live-matrix \
+//       --test live_matrix_test cleanup_stale_test_rooms \
+//       -- --include-ignored --nocapture
+
+#[test]
+#[ignore = "requires live Matrix session; leaves stale rooms; run with --features live-matrix -- --include-ignored"]
+fn cleanup_stale_test_rooms() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        let left = leave_stale_test_rooms(&client, "octo-test-mx-").await;
+        assert!(
+            left <= u32::MAX,
+            "left count overflowed (sanity check, should never trigger)"
+        );
+        tracing::info!(rooms_left = left, "cleanup_stale_test_rooms complete");
+    });
 }

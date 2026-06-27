@@ -81,6 +81,12 @@ tracing = { workspace = true }
 # `octo_matrix_session_store::StoolapSessionStore::new(path)` and
 # queried by `(user_id, device_id)`.
 octo-matrix-session-store = { path = "../octo-matrix-session-store" }
+# Config dir resolution for the cleanup_test_rooms binary
+# (`~/.config/octo/matrix.json` on Unix, `%APPDATA%\octo\matrix.json`
+# on Windows). Same dep as the live tests use; moved here from
+# `[dev-dependencies]` in the 0850h-b Live-Test Cleanup extension
+# because binaries cannot see dev-deps.
+dirs = "5"
 
 [dev-dependencies]
 # Integration test (gated by `integration-matrix` feature) needs a
@@ -91,4 +97,3 @@ tempfile = "3.8"
 matrix-sdk = { version = "=0.18.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
 # Live test helpers
 tracing-subscriber = { workspace = true }
-dirs = "5"

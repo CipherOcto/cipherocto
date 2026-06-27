@@ -297,6 +297,46 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
       extension, or CLI subcommands).
 - [x] `Cargo.lock` regenerates cleanly; no manual edits.
 
+- [x] `Cargo.lock` regenerates cleanly; no manual edits.
+
+### Live-Test Cleanup acceptance
+
+- [ ] `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+      exists, builds under `cargo build --bins`, and
+      implements the 5-phase plan (read session, build +
+      restore + sync, enumerate stale rooms, leave /
+      report, optional `--update-config` rewrite).
+- [ ] The binary's `--dry-run` flag prints the would-be
+      plan without mutating state (verified against
+      matrix.org with the existing stale room
+      `!YqeNMmiscHcRbQNsUE:matrix.org`).
+- [ ] After a non-dry-run against matrix.org, a follow-up
+      `--dry-run` reports zero `octo-test-mx-*` rooms and
+      zero orphaned `rooms[]` entries.
+- [ ] `cargo run -p octo-adapter-matrix-sdk --bin cleanup_test_rooms -- --update-config`
+      rewrites `~/.config/octo/matrix.json` so the
+      `rooms[]` array contains only rooms that the SDK
+      still resolves via `client.get_room(&rid)`.
+- [ ] `tests/live_matrix_test.rs` gains an `#[ignore]`
+      test `cleanup_stale_test_rooms` that runs the same
+      logic inline (no subprocess) and passes against
+      matrix.org via
+      `cargo test --features live-matrix --test live_matrix_test cleanup_stale_test_rooms -- --include-ignored --nocapture`.
+- [ ] `mx04_05_06_envelope_round_trip` and
+      `mx07_media_round_trip` gain a pre-scan guard at the
+      top of their room-creation block that leaves any
+      pre-existing `octo-test-mx-*` rooms before creating
+      the new one (idempotent self-healing).
+- [ ] After the cleanup infrastructure is in place,
+      `mx04_05_06_envelope_round_trip` passes reliably on
+      a fresh session (the previous failure mode
+      "Room not found in joined rooms" no longer occurs).
+- [ ] The pre-scan guard does NOT change the room
+      name prefix or the room-creation pattern used by
+      the tests — the prefix `octo-test-mx-mx04-{ts}` /
+      `octo-test-mx-mx07-{ts}` is preserved as the
+      cleanup scan's target.
+
 **Plan-vs-actual delta.** The original plan
 (`/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`)
 predicted ~5–15 compile errors from `SyncSettings::token`,
@@ -307,6 +347,114 @@ breaking change that touched the cipherocto API surface has a
 forward-compat shim. The Cargo.toml version bump alone is
 sufficient. The pin policy (`=0.18.0`) is preserved per the
 SDK Risk note rationale.
+
+### Live-Test Cleanup Infrastructure
+
+The live integration suite (`mx01`–`mx08`) creates
+short-lived test rooms whose names follow the prefix
+`octo-test-mx-*` (mx04 uses `octo-test-mx-mx04-{ts}`, mx07
+uses `octo-test-mx-mx07-{ts}`). When a test panics before
+its cleanup block runs (lines 313–325 of
+`tests/live_matrix_test.rs`), the room it created is left
+orphaned on the homeserver, and the next test run picks up
+the stale `room_id` from `~/.config/octo/matrix.json`'s
+`rooms[]` array. The adapter then fails with
+`Room <id> not found in joined rooms`. The pattern that
+prevents this for WhatsApp and Telegram (MTProto) is a
+**standalone cleanup binary** under `src/bin/` plus a
+matching `#[ignore]` test inside the live suite. This
+extension of 0850h-b replicates that pattern for Matrix.
+
+**Design.**
+
+- `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+  — standalone binary (auto-discovered by Cargo in
+  `src/bin/`). Five phases:
+  1. Read `~/.config/octo/matrix.json` (override via
+     `--config <path>`). Parse the session JSON for
+     `access_token`, `refresh_token`, `user_id`, `device_id`,
+     `homeserver_url`, and `rooms[]`.
+  2. Build a raw `matrix_sdk::Client`, restore the session
+     via `client.restore_session(MatrixSession { meta, tokens })`,
+     then `client.sync_once(SyncSettings::default()
+       .timeout(Duration::from_secs(60)))`. The 60 s window
+     is generous enough for E2EE bootstrap (one-time key
+     upload + crypto-store init) on a fresh session —
+     the 5 s timeout used in the live tests themselves is
+     too tight for first sync, see mx01 follow-up below.
+  3. Iterate `client.rooms()` and `client.invited_rooms()`;
+     collect a `Vec<(OwnedRoomId, room_name)>` for any room
+     whose name starts with `octo-test-mx-`. Also collect
+     a separate list of `room_id`s whose IDs appear in
+     the session file's `rooms[]` array but are NOT in
+     `client.get_room(&rid)` (the exact failure mode of
+     `mx04_05_06`).
+  4. If `--dry-run`, print the would-be cleanup plan
+     (prefixed-name rooms + orphaned session-file rooms)
+     and exit without state change. Otherwise:
+       a. For each prefix-match room, `room.leave().await`
+          and log success/failure.
+       b. For each orphaned session-file room, attempt
+          `client.get_room(&rid)` (already established to
+          return None in phase 3 — leave is impossible, so
+          we just record that it's orphaned).
+       c. If `--update-config` was passed, rewrite
+          `~/.config/octo/matrix.json` with the `rooms[]`
+          array containing only the rooms that the SDK
+          still knows about (intersection of the original
+          array with the joined-rooms set). This is the
+          "self-healing" mode that fixes the `mx04_05_06`
+          failure without manual `--config` editing.
+  5. Print a summary (`X left, Y orphaned in session file,
+     Z session-file rooms pruned`) and exit.
+
+  Flags:
+    - `--dry-run` — scan only, no leaves, no writes
+    - `--config <path>` — override session path
+    - `--update-config` — prune `rooms[]` in the session
+       file (off by default; off is safer)
+    - `--verbose` — INFO-level tracing for the SDK calls
+
+  Usage:
+    ```bash
+    cargo run -p octo-adapter-matrix-sdk \
+      --bin cleanup_test_rooms -- --dry-run
+    cargo run -p octo-adapter-matrix-sdk \
+      --bin cleanup_test_rooms -- --update-config
+    ```
+
+- `crates/octo-adapter-matrix-sdk/tests/live_matrix_test.rs`
+  gets two additions:
+  1. `#[ignore]` test `cleanup_stale_test_rooms` —
+     runs the same logic as the binary inline
+     (no subprocess). Callable via
+     `cargo test -- --include-ignored cleanup_stale_test_rooms`.
+     Useful for CI that doesn't want a separate binary step.
+  2. **Pre-scan guard** inside `mx04_05_06` and `mx07`:
+     before creating the test room, do a one-shot
+     `sync_once` (5 s timeout, matches the existing
+     pattern) and `room.leave()` any joined room whose
+     name starts with `octo-test-mx-`. This makes each
+     test run self-healing — even if a previous run
+     panicked at line 280 and skipped cleanup, the next
+     run cleans up before creating its own room.
+
+**Out of scope for this extension.**
+
+- Cleaning up media uploads (`mxc://` URIs from `mx07`).
+  matrix.org has no API to delete uploaded media — the
+  user's media quota grows monotonically. This is
+  matrix-wide behavior, not cipherocto-specific.
+- Cleaning up Olm/Megolm sessions. The SDK's crypto
+  store is the source of truth; if a stale room is
+  left behind, its Megolm sessions naturally expire
+  via the SDK's rotation policy.
+- The mx01 sync-timeout follow-up (5 s too tight for
+  first sync on a fresh E2EE session). Tracked
+  separately as a follow-up mission; the cleanup
+  binary uses 60 s as a stopgap.
+
+## Acceptance Criteria
 
 ## Location
 

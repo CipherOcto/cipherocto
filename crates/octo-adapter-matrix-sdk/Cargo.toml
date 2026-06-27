@@ -12,6 +12,10 @@ crate-type = ["cdylib", "rlib"]
 # `scripts/integration-matrix.sh up`). The feature is OFF by default
 # so `cargo test` on a clean tree doesn't try to hit a homeserver.
 integration-matrix = ["dep:octo-matrix-onboard-core"]
+# Live test against real Matrix homeserver (matrix.org). Requires a
+# session at ~/.config/octo/matrix.json (from `octo-matrix-onboard login oidc`).
+# Run: `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+live-matrix = []
 
 [dependencies]
 # Matrix SDK (E2EE + SQLite crypto store, exact pin per 0850h-a SDK Risk note).
@@ -70,3 +74,9 @@ octo-matrix-session-store = { path = "../octo-matrix-session-store" }
 # Integration test (gated by `integration-matrix` feature) needs a
 # tempdir for the on-disk config writeback fixture.
 tempfile = "3.8"
+# Live tests need the matrix-sdk client directly for room setup/teardown.
+# Pin to the same version as the production dep.
+matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
+# Live test helpers
+tracing-subscriber = { workspace = true }
+dirs = "5"

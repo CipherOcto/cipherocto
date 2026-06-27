@@ -1067,8 +1067,7 @@ impl PlatformAdapter for MatrixAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

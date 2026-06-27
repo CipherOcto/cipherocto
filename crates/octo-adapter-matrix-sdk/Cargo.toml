@@ -19,16 +19,28 @@ live-matrix = []
 
 [dependencies]
 # Matrix SDK (E2EE + SQLite crypto store, exact pin per 0850h-a SDK Risk note).
-# R1-M18 corrections vs. the mission 0850h-b spec:
-#   - `rustls-tls` is NOT a valid 0.17.0 feature; TLS uses the
+# Upgraded from 0.17.0 → 0.18.0 in the 0850h-b SDK 0.18 extension
+# (see mission file §SDK 0.18.0 Upgrade). The version-bump-only
+# upgrade turned out to be backward-compatible at the cipherocto
+# API surface — `Client::builder()`, `Client::restore_session()`,
+# `Client::session()`, `Client::session_tokens()`, and
+# `Client::sync_once(SyncSettings::default().timeout(...))` all
+# resolve unchanged against 0.18.0. The `SyncToken` enum (new
+# default `ReusePrevious`) is consumed transparently by the
+# existing `.token(token: String)` chain at lib.rs:957-959 via
+# `impl Into<SyncToken>`.
+#
+# Historical corrections vs. the mission 0850h-b spec (preserved
+# for traceability — these still apply in 0.18.0):
+#   - `rustls-tls` is NOT a valid 0.x feature; TLS uses the
 #     embedded reqwest's default backend (native-tls on Linux).
-#   - `sqlite-cryptostore` does not exist on 0.17.0; the SQLite crypto
-#     store is enabled implicitly when both `e2e-encryption` and
-#     `sqlite` are set.
-#   - `indexeddb-cryptostore` does not exist on 0.17.0; the web-only
-#     state/event-cache store is the `indexeddb` feature (not used
-#     here — headless CLI).
-matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
+#   - `sqlite-cryptostore` does not exist as a separate feature;
+#     the SQLite crypto store is enabled implicitly when both
+#     `e2e-encryption` and `sqlite` are set.
+#   - `indexeddb-cryptostore` does not exist as a separate
+#     feature; the web-only state/event-cache store is the
+#     `indexeddb` feature (not used here — headless CLI).
+matrix-sdk = { version = "=0.18.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
 # Async runtime (embedded for cdylib compatibility). R1-L13:
 # use the workspace dep so the version stays in sync with the
 # rest of the workspace. The workspace's tokio uses `features =
@@ -76,7 +88,7 @@ octo-matrix-session-store = { path = "../octo-matrix-session-store" }
 tempfile = "3.8"
 # Live tests need the matrix-sdk client directly for room setup/teardown.
 # Pin to the same version as the production dep.
-matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
+matrix-sdk = { version = "=0.18.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
 # Live test helpers
 tracing-subscriber = { workspace = true }
 dirs = "5"

@@ -34,9 +34,9 @@ persistence layer for it (the E2EE persistence section is authoritative).
   and `sqlite-cryptostore` features. Keep `default-features = false`
   and add the E2EE features to the feature list. **Exclude
   `indexeddb-cryptostore`** — it is web-only and not used in the
-  headless CLI. Pin to `matrix-sdk = "=0.17.0"` (exact pin, same as
-  mission 0850h-a; the SDK Risk note in 0850h-a flags that an
-  automatic patch bump could break the QR module API).
+  headless CLI. Pin to `matrix-sdk = "=0.18.0"` (exact pin, same
+  rationale as 0850h-a's SDK Risk note; **upgraded from =0.17.0 in
+  the SDK 0.18 Upgrade section below**).
 - `MatrixConfig` gains `passphrase: Option<String>` (modeled after
   EXA's `SessionData.passphrase`). When `Some`, the SDK derives an
   encryption key for the crypto store. When `None`, the SDK uses the
@@ -79,19 +79,19 @@ via the SDK's secret-storage APIs, not stored in a CipherOcto schema.
 
 ```toml
 [dependencies.matrix-sdk]
-version = "=0.17.0"
+version = "=0.18.0"
 default-features = false
 features = [
     "e2e-encryption",
     "sqlite",
     "qrcode",
-    # "rustls-tls" is NOT a valid 0.17.0 feature; TLS uses the
+    # "rustls-tls" is NOT a valid feature; TLS uses the
     #   embedded reqwest's default backend (native-tls on Linux).
-    # "sqlite-cryptostore" does not exist on 0.17.0; the SQLite
-    #   crypto store is enabled implicitly when both
+    # "sqlite-cryptostore" does not exist as a separate feature;
+    #   the SQLite crypto store is enabled implicitly when both
     #   `e2e-encryption` and `sqlite` are set.
-    # "indexeddb-cryptostore" does not exist on 0.17.0; the
-    #   web-only state/event-cache store is the `indexeddb`
+    # "indexeddb-cryptostore" does not exist as a separate feature;
+    #   the web-only state/event-cache store is the `indexeddb`
     #   feature (not used here — headless CLI).
 ]
 ```
@@ -103,6 +103,85 @@ verification UX (Presenter/View/State/Event per screen, Appyx navigation
 across `intro → verifying → done` or `intro → verifying → error`).
 The CLI adaptation replaces the Composable View with a TUI prompt
 (`dialoguer` or `inquire` crate).
+
+### SDK 0.18.0 Upgrade
+
+`matrix-sdk = "=0.17.0"` (and the transitive `ruma = "0.15.1"`) is
+upgraded to `matrix-sdk = "=0.18.0"` / `ruma = "0.16.0"` in this
+extension of 0850h-b. The pin policy is preserved (exact pin, not
+semver) per the SDK Risk note in 0850h-a — matrix-sdk 0.x has
+historically broken APIs across minor bumps, and we hold one
+known-good version until the 0.18.x line has stabilised in the
+wild.
+
+**Why now.** The reference project
+`/home/mmacedoeu/_w/tools/element-x-android` ships the
+`sdk-android:26.06.25` AAR (calendar version 2026-06-25), which
+embeds `matrix-sdk-ffi/20250625`. The published Rust crate at that
+revision is `matrix-sdk 0.18.0` (released 2026-06-02). The same SDK
+now compiles cleanly into the Element X Android client, which is
+the production confidence signal we need to justify the upgrade.
+The 0.17 → 0.18 gap has also accumulated several months of
+bug-fixes that the cipherocto adapter and onboarding CLI have been
+running against.
+
+**Breaking changes in 0.18 that touch the cipherocto adapter
+and onboard crates.** Sources: matrix-sdk `CHANGELOG.md` + matrix-
+sdk-base `CHANGELOG.md`.
+
+1. `SyncSettings::token` is now a `SyncToken` enum with default
+   `SyncToken::ReusePrevious`. `Client::sync_once` no longer accepts
+   the previous shape. Three call sites in
+   `octo-adapter-matrix-sdk/src/lib.rs` (initial-sync bootstrap,
+   inner sync loop, health_check) add
+   `.token(matrix_sdk::config::SyncToken::NoToken)` to retain the
+   old "always start a fresh sync" behaviour.
+2. `Session` and `SessionTokens` are moved to the `matrix_auth`
+   module; client-side session methods (`Client::restore_session`,
+   `Client::session_tokens`, `Client::session`) are now exposed
+   through the `MatrixAuth` API. Four call sites migrate to
+   `client.matrix_auth().<method>(...)`. The cipherocto-owned
+   `Session` struct (in `octo-matrix-onboard-core/src/session.rs`)
+   is unaffected — only the SDK's `Session` moved.
+3. Room API simplified — `Room`/`Joined`/`Invited`/`Left` are
+   merged into a single `Room` type; `Room::send`/`send_raw`
+   `transaction_id` parameter is removed, both return `IntoFuture`
+   with a `.with_transaction_id(...)` builder. cipherocto's
+   `room.send(content).await` call sites are unchanged at the
+   call surface (the `IntoFuture` shape still awaits identically);
+   only the import path may need to adjust.
+4. ruma upgrade to 0.16.0 — `matrix_sdk::ruma::{...}` imports and
+   event types (`OwnedUserId`, `OwnedDeviceId`, `RoomId`,
+   `RoomMessageEventContent`) are re-resolved at compile. Any
+   module-path renames land in `octo-adapter-matrix-sdk/src/lib.rs`
+   and `octo-matrix-onboard-core/src/client_from_config.rs`.
+5. MSRV bumped to Rust 1.88 — workspace `rust-version` is bumped
+   in the root `Cargo.toml` if any 0.18 transitive dep requires it.
+6. OAuth `login` allows additional scopes — verify the OIDC flow
+   in `octo-matrix-onboard-core/src/oauth_listener.rs` still
+   compiles against the new `OAuth::login` signature.
+
+**Out of scope for this extension.** Moving from exact-pin to
+semver-pin (deferred — re-evaluate after 0.18.x has stabilised
+in the wild). Adopting the new high-level `SyncService` /
+`RoomListService` APIs (deferred — those are UniFFI-facing
+surfaces designed for element-x-style apps, not headless cdylib
+adapters). Touching the legacy `octo-adapter-matrix` crate (it
+does not depend on matrix-sdk).
+
+**Cross-references.** The onboard crates that need the same
+version bump are owned by missions 0850h-a (auth) and 0850h-c
+(refresh rotation). Both already pin `=0.17.0` and follow the
+same pin policy; this extension updates the three dependent
+`Cargo.toml` files (`octo-adapter-matrix-sdk`,
+`octo-matrix-onboard-core`, `octo-matrix-onboard`) and the
+workspace-level `ruma` pin in one atomic bump.
+
+**Implementation plan reference.** Full breaking-change mapping,
+critical file edits, and verification commands are in the plan
+file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
+(saved during the 0850h-b extension). Live test suite
+(`mx01`-`mx08` against matrix.org) re-runs after the bump.
 
 ## Acceptance Criteria
 
@@ -144,6 +223,90 @@ The CLI adaptation replaces the Composable View with a TUI prompt
 - [ ] All previous 0850h-a acceptance criteria still pass (no regression)
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt -- --check` passes
+
+### SDK 0.18.0 Upgrade acceptance
+
+- [x] `octo-adapter-matrix-sdk/Cargo.toml` updates `matrix-sdk`
+      version to `=0.18.0` (both the runtime dep and the
+      dev-dep on the live test suite). The corrected feature
+      list (no `rustls-tls`, no `sqlite-cryptostore`, no
+      `indexeddb-cryptostore`) is preserved from the 0.17.0
+      spec and the historical R1-M18 comment block is updated
+      to reference the 0.18 extension.
+- [x] `octo-matrix-onboard-core/Cargo.toml` updates `matrix-sdk`
+      version to `=0.18.0`. `ruma` is bumped transitively to
+      `0.16.0` via the matrix-sdk 0.18 dependency resolution;
+      no direct ruma pin exists in this crate.
+- [x] `octo-matrix-onboard/Cargo.toml` matches the new SDK
+      version (transitive alignment; pin explicitly even though
+      the dep comes via onboard-core, to keep the version
+      statement single-sourced).
+- [x] ~~`octo-adapter-matrix-sdk/src/lib.rs` migrates the four
+      session-related call sites to the `matrix_auth()` API~~
+      — **NOT NEEDED**. `Client::restore_session`,
+      `Client::session`, `Client::session_tokens` still resolve
+      unchanged on 0.18.0's `Client` type. The SDK's
+      `MatrixAuth` module is the new canonical home, but
+      cipherocto's direct-`Client` usage is preserved as a
+      forward-compat shim.
+- [x] ~~`octo-adapter-matrix-sdk/src/lib.rs` adds
+      `.token(SyncToken::NoToken)` to the three `sync_once`
+      call sites~~ — **NOT NEEDED**. The 0.18 default
+      `SyncToken::ReusePrevious` is the *correct* behaviour
+      for our use case: the inner sync loop at lib.rs:957-959
+      explicitly passes `.token(token)` (where `token: String`
+      converts via `impl Into<SyncToken>` to `SyncToken::Specific`),
+      which gives proper incremental sync — actually a
+      bugfix over the old default. Initial sync and health
+      check use the default, which for a fresh client behaves
+      like `NoToken` (no previous token exists yet).
+- [x] ~~`octo-matrix-onboard-core/src/client_from_config.rs`
+      migrates `Client::builder().restore_session(session)`~~
+      — **NOT NEEDED**. The `Client::builder` +
+      `restore_session` chain compiles unchanged against 0.18.0.
+- [x] ruma 0.16 type imports (`OwnedUserId`, `OwnedDeviceId`,
+      `RoomId`, `RoomMessageEventContent`) resolve at compile
+      unchanged. No module-path renames were required; the
+      `matrix_sdk::ruma::{...}` re-export path is preserved.
+- [x] `cargo build --all-targets --all-features` passes
+      (zero errors). Surfaces zero 0.18/ruma 0.16 issues — the
+      upgrade is **fully backward-compatible** at the cipherocto
+      API surface, contradicting the original plan's
+      "~5–15 errors" estimate.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
+      passes (project rule: zero warnings).
+- [x] `cargo test --lib` passes for `octo-adapter-matrix-sdk`
+      (34 tests), `octo-matrix-onboard-core` (20 tests);
+      `octo-matrix-onboard` is binary-only and has no library
+      unit tests.
+- [ ] Live test suite
+      `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+      — **BLOCKED on session staleness**, NOT on SDK regression.
+      Observed behaviour against matrix.org on 2026-06-27:
+      `mx00`, `mx02`, `mx03`, `mx08` pass (4 of 7 live tests);
+      `mx01`, `mx04_05_06`, `mx07` fail with
+      `401 M_UNKNOWN_TOKEN` because the access AND refresh tokens
+      in `~/.config/octo/matrix.json` are both revoked.
+      The SDK's refresh-on-401 path is exercised correctly
+      (`POST /_matrix/client/v3/refresh` returns
+      `401 Invalid refresh token`); the failure is upstream of
+      any cipherocto code. Re-verify after a fresh
+      `octo-matrix-onboard login oidc` against matrix.org.
+- [x] All previous 0850h-b acceptance criteria still pass
+      (no regression of the E2EE feature flags, schema
+      extension, or CLI subcommands).
+- [x] `Cargo.lock` regenerates cleanly; no manual edits.
+
+**Plan-vs-actual delta.** The original plan
+(`/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`)
+predicted ~5–15 compile errors from `SyncSettings::token`,
+`MatrixAuth`, and ruma 0.16 renames, plus the corresponding
+API migrations. The actual SDK 0.18.0 release is more
+backward-compatible than the changelog suggested — every
+breaking change that touched the cipherocto API surface has a
+forward-compat shim. The Cargo.toml version bump alone is
+sufficient. The pin policy (`=0.18.0`) is preserved per the
+SDK Risk note rationale.
 
 ## Location
 

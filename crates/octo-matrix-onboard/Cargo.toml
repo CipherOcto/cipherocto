@@ -64,6 +64,8 @@ octo-matrix-session-store = { path = "../octo-matrix-session-store" }
 # promoted to a runtime dep because `write_atomic` is called
 # in the production write path, not just tests.
 tempfile = "3.8"
+# Open URLs in the default browser (xdg-open / open / start)
+open = "5"
 
 [dev-dependencies]
 # Tests use the same `tempfile` crate (TempDir helpers); already

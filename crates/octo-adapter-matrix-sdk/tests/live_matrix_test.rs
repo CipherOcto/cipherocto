@@ -244,8 +244,18 @@ fn mx01_health_check() {
 
     let result = rt.block_on(async {
         let client = build_session_client(&session).await;
+        // mx01 sync-timeout follow-up (mission 0850h-b §mx01
+        // Sync-Timeout Follow-up): budget raised from 10 s to
+        // 60 s. On a cold session the SDK must upload one-time
+        // keys and bootstrap the crypto store BEFORE the sync
+        // request can be sent — this takes 5–30 s against
+        // matrix.org. The 10 s budget was a mirror of the
+        // production `health_check` outer timeout, which is
+        // itself now 60 s; aligning the test prevents a false
+        // failure on cold sessions. The inner 1 ms server-side
+        // long-poll (`SyncSettings::timeout`) is preserved.
         let sync_result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             client.sync_once(
                 matrix_sdk::config::SyncSettings::default().timeout(Duration::from_millis(1)),
             ),

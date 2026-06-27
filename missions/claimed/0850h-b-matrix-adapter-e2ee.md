@@ -337,6 +337,44 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
       `octo-test-mx-mx07-{ts}` is preserved as the
       cleanup scan's target.
 
+### mx01 Sync-Timeout acceptance
+
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+      changes `Duration::from_secs(5)` to
+      `Duration::from_secs(60)` in the `send_envelope`
+      initial-sync path. The 5 s → 60 s bump is justified
+      by the cold-session E2EE bootstrap cost; the
+      comment above the call site is updated to explain
+      the budget.
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+      changes the `tokio::time::timeout` argument from
+      `Duration::from_secs(5)` to
+      `Duration::from_secs(60)` in `health_check`.
+      The 1 ms `SyncSettings::timeout` (server-side
+      long-poll) is preserved — only the outer tokio
+      budget changes.
+- [ ] The inner sync loop at `lib.rs:957` is **NOT**
+      touched. It carries an explicit since-token and
+      is incremental on warm sessions; the 5 s budget
+      is correct for that path.
+- [ ] `cargo build --all-targets` passes with zero
+      errors.
+- [ ] `cargo clippy --all-targets -- -D warnings`
+      passes with zero warnings.
+- [ ] `cargo fmt --check` on the matrix crate is clean.
+- [ ] `cargo test --lib -p octo-adapter-matrix-sdk`
+      still passes (34 tests, no regression).
+- [ ] Live test suite
+      `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+      passes all 8 tests against matrix.org:
+      `mx00`, `mx01`, `mx02`, `mx03`, `mx04_05_06`,
+      `mx07`, `mx08`, `cleanup_stale_test_rooms`.
+      Pre-fix: `mx01` failed with
+      `"Health check timed out after 5s"` and
+      `mx04_05_06` failed with
+      `"Room <id> not found in joined rooms"` on cold
+      sessions.
+
 **Plan-vs-actual delta.** The original plan
 (`/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`)
 predicted ~5–15 compile errors from `SyncSettings::token`,
@@ -449,10 +487,87 @@ extension of 0850h-b replicates that pattern for Matrix.
   store is the source of truth; if a stale room is
   left behind, its Megolm sessions naturally expire
   via the SDK's rotation policy.
-- The mx01 sync-timeout follow-up (5 s too tight for
-  first sync on a fresh E2EE session). Tracked
-  separately as a follow-up mission; the cleanup
-  binary uses 60 s as a stopgap.
+- The mx01 sync-timeout follow-up. Tracked as a
+  separate §mx01 Sync-Timeout Follow-up section
+  below.
+
+### mx01 Sync-Timeout Follow-up
+
+The cleanup infrastructure reveals a deeper issue: the
+production `sync_once` callsites are budgeted too tight for
+a fresh E2EE-enabled session. On a cold session (first sync
+after `restore_session`), the SDK must upload one-time keys,
+initialise the crypto store, and run the first sync — this
+takes 5–30 s against matrix.org. The previous budget of 5 s
+causes:
+
+- `mx01_health_check` to fail with
+  `"Health check timed out after 5s"` on every cold call.
+- `mx04_05_06_envelope_round_trip` to fail with
+  `"Room <id> not found in joined rooms"` because the
+  one-shot sync in `send_envelope` (lib.rs:858) times out
+  before the freshly-created room is indexed by the SDK's
+  in-memory room map.
+
+This is a follow-up mission because the fix is a real
+production-code change (not test infrastructure) and has
+operational implications: every `health_check` on a cold
+session can now take up to 60 s instead of 5 s. The hot
+path is unaffected — after the first successful sync,
+`client.get_room(&rid)` returns `Some` for any known
+room, so the 60 s sync code path doesn't execute.
+
+**Two sync_once callsites are touched:**
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+  (initial sync in `send_envelope`):
+  - **Before:** `SyncSettings::default().timeout(Duration::from_secs(5))`
+  - **After:** `SyncSettings::default().timeout(Duration::from_secs(60))`
+  - **Why:** This is the one-shot recovery sync when the
+    SDK's room map doesn't know about `room_id` yet.
+    Triggered after `client.get_room(&room_id).is_none()`,
+    which is exactly the cold-session path. Cost paid
+    once per process for cold sessions; never paid on
+    warm sessions.
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+  (tokio outer timeout around the health-check sync):
+  - **Before:** `tokio::time::timeout(Duration::from_secs(5), self.client.sync_once(sync_settings))`
+  - **After:** `tokio::time::timeout(Duration::from_secs(60), self.client.sync_once(sync_settings))`
+  - **Why:** `health_check` is a periodic liveness probe.
+    On a cold session the SDK needs 5–30 s for E2EE
+    bootstrap; the 5 s budget fails every cold call.
+    The inner sync uses a 1 ms server-side long-poll
+    (the previous comment said "lightweight liveness
+    probe"), so the 60 s outer is only hit when E2EE
+    bootstrap is the bottleneck.
+
+**Two callsites are intentionally NOT touched:**
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:957`
+  (inner sync loop):
+  - The sync here carries an explicit since-token
+    (`.token(token)` where `token: String` → `SyncToken::Specific`
+    via `impl Into<SyncToken>` on matrix-sdk 0.18).
+    Incremental sync with a token is fast (sub-second)
+    on warm sessions; 5 s server-side long-poll is the
+    correct budget. Changing this to 60 s would make
+    the loop sleep for 60 s on each quiet iteration.
+
+- `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+  already uses 60 s × 2 syncs. No change needed.
+
+**Verification.**
+
+- `cargo build --all-targets` (zero errors)
+- `cargo clippy --all-targets -- -D warnings` (zero)
+- `cargo fmt --check` (clean on the matrix crate)
+- `cargo test --lib -p octo-adapter-matrix-sdk` (still 34 pass)
+- `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+  — **all 8 tests pass**: `mx00`, `mx01`, `mx02`, `mx03`,
+  `mx04_05_06`, `mx07`, `mx08`, `cleanup_stale_test_rooms`.
+  Previously: `mx01` and `mx04_05_06` failed with
+  sync-timeout / room-not-found.
 
 ## Acceptance Criteria
 

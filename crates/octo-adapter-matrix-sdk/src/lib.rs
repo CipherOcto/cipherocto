@@ -847,15 +847,30 @@ impl PlatformAdapter for MatrixAdapter {
         // (the post-sync state) but has not yet been indexed by
         // the SDK's internal room map. The fix is to drive a
         // bounded initial sync (idempotent if sync already
-        // completed) before looking up the room. We bound the
-        // wait at 5s — the initial sync against a quiet
-        // homeserver is typically <1s.
+        // completed) before looking up the room.
+        //
+        // mx01 sync-timeout follow-up (mission 0850h-b
+        // §mx01 Sync-Timeout Follow-up): budget raised from 5 s
+        // to 60 s, and the sync result is now propagated
+        // (previously discarded via `let _ =`) so a sync
+        // failure surfaces as `"initial sync before send: …"`
+        // instead of being masked by the subsequent
+        // `"Room <id> not found in joined rooms"` error.
+        // On a cold session (first sync after
+        // `restore_session`), the SDK must upload one-time keys,
+        // initialise the crypto store, and run the first sync —
+        // this takes 5–30 s against matrix.org. The 5 s budget
+        // caused `mx04_05_06` to fail with
+        // `"Room <id> not found in joined rooms"` because the
+        // sync timed out before the freshly-created room was
+        // indexed. On warm sessions the cost is paid once at
+        // startup, then `client.get_room(&rid).is_none()` returns
+        // false and this code path doesn't execute.
         if self.client.get_room(&room_id).is_none() {
             use matrix_sdk::config::SyncSettings;
             use std::time::Duration;
-            let _ = self
-                .client
-                .sync_once(SyncSettings::default().timeout(Duration::from_secs(5)))
+            self.client
+                .sync_once(SyncSettings::default().timeout(Duration::from_secs(60)))
                 .await
                 .map_err(|e| transport_err(format!("initial sync before send: {}", e)))?;
         }
@@ -1093,11 +1108,32 @@ impl PlatformAdapter for MatrixAdapter {
         use matrix_sdk::config::SyncSettings;
         use std::time::Duration;
 
-        // Lightweight liveness probe: sync_once with zero timeout
+        // Lightweight liveness probe: sync_once with a 1 ms
+        // server-side long-poll (the SDK's `SyncSettings::timeout`
+        // sets `?timeout=N` on the sync endpoint, so 1 ms means
+        // "respond immediately if there's nothing new").
+        //
+        // mx01 sync-timeout follow-up (mission 0850h-b
+        // §mx01 Sync-Timeout Follow-up): the outer
+        // `tokio::time::timeout` is bumped from 5 s to 60 s.
+        // On a cold session the SDK must upload one-time keys
+        // and bootstrap the crypto store BEFORE the sync
+        // request can be sent — this takes 5–30 s against
+        // matrix.org. The previous 5 s outer budget failed
+        // every cold-session health check with
+        // `"Health check timed out after 5s"`.
+        //
+        // The inner 1 ms server-side long-poll is preserved —
+        // it's the correct behaviour for an incremental sync
+        // on a warm session. Only the client-side outer
+        // budget changes.
         let sync_settings = SyncSettings::default().timeout(Duration::from_millis(1));
 
-        match tokio::time::timeout(Duration::from_secs(5), self.client.sync_once(sync_settings))
-            .await
+        match tokio::time::timeout(
+            Duration::from_secs(60),
+            self.client.sync_once(sync_settings),
+        )
+        .await
         {
             Ok(Ok(_)) => {
                 // Resolve and cache user_id
@@ -1111,7 +1147,7 @@ impl PlatformAdapter for MatrixAdapter {
                 }
             }
             Ok(Err(e)) => Err(transport_err(format!("Health check failed: {}", e))),
-            Err(_) => Err(transport_err("Health check timed out after 5s")),
+            Err(_) => Err(transport_err("Health check timed out after 60s")),
         }
     }
 

@@ -58,14 +58,16 @@ pub async fn run(args: OidcArgs) -> Result<()> {
         .await
         .map_err(|e| classify_sdk_err("OAuth::login.build()", &e))?;
 
+    let login_url = auth_data.url.to_string();
+
     // Auto-open the authorization URL in the user's default browser.
     // `open::that` is a no-op on failure (e.g. headless server without a
     // browser) — the URL is always printed below as a fallback.
-    let _ = open::that(auth_data.url.as_str());
+    let _ = open::that(&login_url);
 
     eprintln!("Opening browser for authentication...");
     eprintln!("  If the browser did not open, visit this URL:");
-    eprintln!("  {}", auth_data.url);
+    eprintln!("  {login_url}");
     eprintln!();
     eprintln!("Waiting for callback on {}...", redirect_uri);
 

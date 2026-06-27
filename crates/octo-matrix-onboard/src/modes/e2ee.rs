@@ -152,9 +152,22 @@ pub async fn verify_session(_args: E2eeVerifySessionArgs) -> Result<()> {
 /// cleanup even if the user hits Ctrl-C mid-input.
 fn read_recovery_key_from_stdin() -> Result<zeroize::Zeroizing<String>> {
     use zeroize::Zeroizing;
-    let raw =
-        rpassword::prompt_password("Paste the 4S recovery key and press Enter (input is hidden): ")
-            .map_err(|e| OnboardError::Generic(anyhow::anyhow!("read recovery key: {}", e)))?;
+    // Try /dev/tty first (hidden input). Fall back to actual stdin
+    // when /dev/tty is unavailable (piped input, CI, non-interactive).
+    let raw = match rpassword::prompt_password(
+        "Paste the 4S recovery key and press Enter (input is hidden): ",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            // /dev/tty failed (ENXERROR, ENOTTY, etc.) — read from stdin.
+            tracing::debug!(error = %e, "/dev/tty unavailable, falling back to stdin");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map_err(|e| {
+                OnboardError::Generic(anyhow::anyhow!("read recovery key from stdin: {}", e))
+            })?;
+            line
+        }
+    };
     // Move into a `Zeroizing` wrapper immediately so the heap
     // buffer is zeroed on drop. `rpassword` returns a plain
     // `String`; the original allocation goes out of scope at the

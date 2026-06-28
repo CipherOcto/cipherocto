@@ -487,11 +487,25 @@ The matrix-sdk 0.18 docs:
 <https://docs.rs/matrix-sdk/0.18.0/matrix_sdk/struct.Room.html>
 
 The adapter's `promote_to_admin` maps to "set user's power level to
-100" — this is matrix's "admin" threshold and matches the
-`GroupModeFlags.announce_only` semantics on other platforms
-(`GroupModeFlags` has `locked`, `announce_only`, `ephemeral_ttl`,
-`requires_approval` per
-`crates/octo-network/src/dot/adapters/coordinator_admin.rs:325-340`).
+100" -- this is matrix's per-user admin threshold. **NOTE:** the
+value 100 also appears in matrix's `set_announce` (which sets the
+*room-wide* `events_default` to 100 so only admins can post), but
+these are two distinct semantics that happen to share the same
+numeric value:
+
+- `promote_to_admin` -> per-user power level = 100 (gives that
+  user the admin role; recorded in `RoomPowerLevels.users` map)
+- `set_announce` -> room-wide `events_default` = 100 (restricts
+  message sending to admins; recorded in
+  `RoomPowerLevels.events_default`)
+
+They are NOT the same operation. The `GroupModeFlags` struct
+(`crates/octo-network/src/dot/adapters/coordinator_admin.rs:325-340`)
+captures the announce_only semantics, not the promote-to-admin
+semantics: `GroupModeFlags` has `locked`, `announce_only`,
+`ephemeral_ttl`, `requires_approval`. `announce_only` on matrix
+maps to `events_default = 100`; `promote_to_admin` is a separate
+user-role operation that happens to use the same numeric level.
 
 ### Power level defaults (matrix spec v1.13)
 

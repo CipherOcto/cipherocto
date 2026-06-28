@@ -23,8 +23,8 @@ Implement the `QuotaRouterNode::route()` public API, `QuotaRouterHandler` (full 
 
 ### Files to implement
 
-- `octo-transport/src/quota_router/handler.rs` — full `QuotaRouterHandler` with all 7 envelope handlers
-- `octo-transport/src/quota_router/mod.rs` — `QuotaRouterNode::route()`, `build_with_bootstrap()`
+- `quota-router/src/handler.rs` — full `QuotaRouterHandler` with all 7 envelope handlers
+- `quota-router/src/mod.rs` — `QuotaRouterNode::route()`, `build_with_bootstrap()`
 
 ### Methods to implement
 

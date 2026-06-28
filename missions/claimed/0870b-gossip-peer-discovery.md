@@ -22,9 +22,9 @@ Implement the capacity gossip protocol, `GossipCache` with staleness eviction, `
 
 ### Files to implement
 
-- `octo-transport/src/quota_router/gossip.rs` — fill in `GossipCache` methods, `CapacityGossipPayload` with `known_peers` field
-- `octo-transport/src/quota_router/announce.rs` — `RouterAnnouncePayload`, `RouterWithdrawPayload`, `SignedPayload` trait
-- `octo-transport/src/quota_router/mod.rs` — add `broadcast_gossip`, `broadcast_announce`, `build_capacity_gossip`, `request_capacity_from`, `monotonic_now`
+- `quota-router/src/gossip.rs` — fill in `GossipCache` methods, `CapacityGossipPayload` with `known_peers` field
+- `quota-router/src/announce.rs` — `RouterAnnouncePayload`, `RouterWithdrawPayload`, `SignedPayload` trait
+- `quota-router/src/mod.rs` — add `broadcast_gossip`, `broadcast_announce`, `build_capacity_gossip`, `request_capacity_from`, `monotonic_now`
 
 ### Types to implement
 

@@ -18,14 +18,14 @@ Missions that must be completed before this one:
 
 ## Summary
 
-Create the `quota_router/` module tree under `octo-transport/src/` and implement all core types, the `QuotaRouterNode` struct with its builder, the two-phase destination selection algorithm, `ForwardRequest`/`ForwardResponse`/`ForwardReject` envelope types, and the `LocalProvider` trait with `HttpLocalProvider`. This is the foundation — all subsequent 0870 missions depend on it.
+Create the `quota-router/` standalone crate (leaf workspace) and implement all core types, the `QuotaRouterNode` struct with its builder, the two-phase destination selection algorithm, `ForwardRequest`/`ForwardResponse`/`ForwardReject` envelope types, and the `LocalProvider` trait with `HttpLocalProvider`. This is the foundation — all subsequent 0870 missions depend on it.
 
 ## Design
 
 ### Module layout
 
 ```
-octo-transport/src/quota_router/
+quota-router/src/
 ├── mod.rs          — QuotaRouterNode, RouterNodeConfig, lifecycle, builder
 ├── provider.rs     — LocalProvider trait, ProviderCapacity, HttpLocalProvider
 ├── scorer.rs       — select_destinations algorithm, Destination enum
@@ -122,16 +122,16 @@ pub struct ForwardingConfig { ... }
 
 ## Acceptance Criteria
 
-- [ ] `octo-transport/src/quota_router/mod.rs` exists with `QuotaRouterNode`, `RouterNodeConfig`, `RouterNodeLifecycle` (7 states), `QuotaRouterNodeBuilder`
-- [ ] `octo-transport/src/quota_router/provider.rs` exists with `LocalProvider` trait, `ProviderCapacity`, `ProviderCapacity::from_config`, `HttpLocalProvider`, `ProviderHealth`
-- [ ] `octo-transport/src/quota_router/scorer.rs` exists with `select_destinations` implementing 3-phase algorithm (hard filters → soft scoring → ranking), `Destination` enum
-- [ ] `octo-transport/src/quota_router/forward.rs` exists with `ForwardRequestPayload`, `ForwardResponsePayload`, `ForwardRejectPayload`, `PendingRequests`, `ForwardOutcome`, `ForwardRejectReason`
-- [ ] `octo-transport/src/quota_router/request.rs` exists with `RequestContext` (14 fields), `RoutingPolicy` (6 variants), `CustomPolicy`, `ForwardingConfig`
+- [ ] `quota-router/src/mod.rs` exists with `QuotaRouterNode`, `RouterNodeConfig`, `RouterNodeLifecycle` (7 states), `QuotaRouterNodeBuilder`
+- [ ] `quota-router/src/provider.rs` exists with `LocalProvider` trait, `ProviderCapacity`, `ProviderCapacity::from_config`, `HttpLocalProvider`, `ProviderHealth`
+- [ ] `quota-router/src/scorer.rs` exists with `select_destinations` implementing 3-phase algorithm (hard filters → soft scoring → ranking), `Destination` enum
+- [ ] `quota-router/src/forward.rs` exists with `ForwardRequestPayload`, `ForwardResponsePayload`, `ForwardRejectPayload`, `PendingRequests`, `ForwardOutcome`, `ForwardRejectReason`
+- [ ] `quota-router/src/request.rs` exists with `RequestContext` (14 fields), `RoutingPolicy` (6 variants), `CustomPolicy`, `ForwardingConfig`
 - [ ] `QuotaRouterNodeBuilder::build()` returns `Result<QuotaRouterNode, RouterNodeError>` (handler creation deferred to 0870c)
 - [ ] `QuotaRouterNodeBuilder` has setters for all config fields: `node_id`, `network_id`, `provider`, `peer`, `policy`, `forwarding`, `gossip_interval`
 - [ ] Scoring function uses `ProviderHealth::` and `RoutingPolicy::` prefixes (compiles)
 - [ ] All types have `#[derive(serde::Serialize, serde::Deserialize)]` where needed for wire format
-- [ ] Unit tests pass: `cargo test -p octo-transport -- quota_router`
+- [ ] Unit tests pass: `cargo test -p quota-router`
 - [ ] Clippy clean: `cargo clippy -p octo-transport -- -D warnings`
 - [ ] `cargo fmt --check` passes
 

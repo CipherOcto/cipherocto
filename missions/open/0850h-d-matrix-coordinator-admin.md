@@ -247,17 +247,18 @@ contract), but it must explicitly note:
 
 > **Coverage gap to call out before scoping.** The trait has 24
 > methods across 5 sections (A. Lifecycle = 3, B. Membership = 6, C.
-> Mode = 6, D. Discovery = 6, E. Handoff = 1). The six new live
-> tests below cover at most 14 of those 24 methods (C is fully
-> covered; A covers 1/3; B covers 4/6 -- missing `add_member` and
-> `approve_join_request`; D covers 2/6 -- missing
-> `list_own_groups_with_invites`, `resolve_invite`, `join_by_invite`,
-> `join_by_id`; E covers 0/1). The full-coverage live suite would
-> need **12 tests, not 6** -- mx09–mx14 are the **first 6** of that
-> 12-test plan. The remaining 6 (mx15–mx20) are explicitly listed
-> below as a follow-on mission, NOT part of this mission's
-> acceptance gate. Phase 1's unit tests in `mod tests` cover the
-> uncovered-method error paths at the adapter layer.
+> Mode = 6, D. Discovery = 6, E. Handoff = 1; the 2 sync fns
+> `admin_capabilities` and `platform_name` are not section-allocated).
+> The six new live tests below cover at most 13 of those 24 methods
+> (C is fully covered across mx12 + mx14; A covers 1/3; B covers
+> 4/6 -- missing `add_member` and `approve_join_request`; D covers
+> 2/6 -- missing `list_own_groups_with_invites`, `resolve_invite`,
+> `join_by_invite`, `join_by_id`; E covers 0/1). The full-coverage
+> live suite would need **12 tests, not 6** -- mx09–mx14 are the
+> **first 6** of that 12-test plan. The remaining 6 (mx15–mx20)
+> are explicitly listed below as a follow-on mission, NOT part of
+> this mission's acceptance gate. Phase 1's unit tests in `mod tests`
+> cover the uncovered-method error paths at the adapter layer.
 
 - [ ] `tests/live_matrix_test.rs` gains six new tests:
       `mx09_create_group`, `mx10_ban_kick`, `mx11_promote_demote`,
@@ -270,11 +271,13 @@ contract), but it must explicitly note:
       Lifecycle [partial: `create_group` only]; mx10 → B. Membership
       [partial: `remove_member` + `ban_member`]; mx11 → B. Membership
       continues [partial: `promote_to_admin` + `demote_from_admin`];
-      mx12 → C. Mode [full: rename, describe, lock, announce,
-      ephemeral]; mx13 → D. Discovery [partial: `list_own_groups` +
-      `get_group_metadata`]; mx14 → C. Mode continues [full:
-      `set_require_approval`]). Section coverage is NOT 1:1 -- see
-      the coverage-gap note above for the full 24-method breakdown
+      mx12 → C. Mode [partial: `rename_group`, `set_group_description`,
+      `set_locked`, `set_announce`, `set_ephemeral` (5 of 6)]; mx13
+      → D. Discovery [partial: `list_own_groups` + `get_group_metadata`];
+      mx14 → C. Mode continues [partial: `set_require_approval` --
+      the 6th C method, so C is fully covered across mx12 + mx14]).
+      Section coverage is NOT 1:1 -- see the coverage-gap note above
+      for the full 24-method breakdown
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
       --test live_matrix_test -- --ignored --nocapture` — all 13
       tests pass when run with `--test-threads=1` (live tests must

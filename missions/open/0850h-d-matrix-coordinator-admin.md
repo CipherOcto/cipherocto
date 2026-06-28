@@ -177,15 +177,32 @@ octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test
 ### Documentation update (RFC-0861 §1 M10 follow-on)
 
 The per-platform capability matrix in
-`docs/research/coordinator-admin-actions.md` §3 currently lists
-`octo-adapter-matrix-sdk` as "the SDK exposes the calls; the adapter
-just doesn't use them — the upgrade is small". That row updates to:
+`docs/research/coordinator-admin-actions.md` §3 currently has this
+row (verbatim, line 200):
 
-> ❌ nothing (the SDK exposes the calls; the adapter just doesn't use them) | Same as matrix HTTP, but already wired through SDK — the upgrade is small
+> `octo-adapter-matrix-sdk` | matrix-sdk Rust crate | ❌ nothing (the SDK exposes the calls; the adapter just doesn't use them) | Same as matrix HTTP, but already wired through SDK — the upgrade is small
 
-to a truthful list of supported methods, with a note that
-`can_destroy: false`, `can_transfer_ownership: false`, and the
-`set_require_approval` homeserver caveat are matrix-specific.
+After this mission lands, that row's "Real admin surface today"
+column updates to a truthful ✅ row enumerating the methods this
+mission implements. The exact new cell text is left to the
+implementer (it's a research-doc prose update, not a code-affecting
+contract), but it must explicitly note:
+
+- `can_create`, `can_join_by_id`, `can_join_by_invite`, `can_leave`,
+  `can_add_member`, `can_remove_member`, `can_ban`, `can_promote`,
+  `can_demote`, `can_rename`, `can_describe`, `can_lock`,
+  `can_announce`, `can_set_ephemeral`, `can_require_approval`,
+  `can_list_own_groups`, `can_list_own_groups_with_invites`,
+  `can_get_metadata`, `can_resolve_invite` are `true`.
+- `can_destroy` and `can_transfer_ownership` are `false` (matrix
+  has no first-class primitive for either).
+- `can_approve_join` is `true` **with a caveat**: 0.18 has no
+  `Room::accept_invite`; the adapter implements `approve_join_request`
+  via `client.join_room_by_id` on behalf of the joiner after the
+  `m.room.member` knock event.
+- `can_require_approval` is `true` **with a caveat**:
+  homeserver-dependent (`m.room.join_rules: knock` support varies —
+  e.g., older Synapse configs may lack it).
 
 ## Acceptance Criteria
 
@@ -277,16 +294,19 @@ to a truthful list of supported methods, with a note that
 
 ### Phase 3 — cross-adapter integration
 
-- [ ] Add `mx-cross-coord-admin` smoke test that loads both the
-      matrix adapter and a `MockPlatformAdapter` (from
-      `crates/octo-network/tests/common/mock_adapter.rs`) via
-      `DotGateway`, exercises the same admin operation through both
-      adapters, and verifies `as_coordinator_admin()` returns
-      `Some(self)` for matrix and the mock, and `None` for the
-      non-admin platforms in the registry
+- [ ] Add `mx-cross-coord-admin` smoke test in
+      `crates/octo-adapter-matrix-sdk/tests/cross_coordinator_admin.rs`
+      that loads both the matrix adapter and a `MockPlatformAdapter`
+      (from `crates/octo-network/tests/common/mock_adapter.rs`) via
+      `DotGateway::add_adapter` (`crates/octo-network/src/dot/mod.rs:114`),
+      exercises the same admin operation through both adapters, and
+      verifies `as_coordinator_admin()` returns `Some(self)` for
+      matrix and the mock, and `None` for the non-admin platforms in
+      the registry
 - [ ] `cargo test --lib -p octo-network` — existing tests still pass
       (this is the cross-adapter smoke; it lives in the matrix
-      adapter crate because it's a Matrix-side acceptance check)
+      adapter crate because the matrix side is what this mission
+      brings online, so the test asserts matrix-from-the-outside)
 
 ## Location
 
@@ -295,7 +315,11 @@ CoordinatorAdmin for MatrixAdapter` + `as_coordinator_admin`
   override
 - `crates/octo-adapter-matrix-sdk/tests/live_matrix_test.rs` — six
   new live tests (mx09-mx14)
+- `crates/octo-adapter-matrix-sdk/tests/cross_coordinator_admin.rs`
+  — `mx-cross-coord-admin` smoke test (new file; Phase 3)
 - `docs/research/coordinator-admin-actions.md` — §3 table update
+- `missions/open/0850h-e-matrix-coordinator-admin-coverage.md` —
+  follow-on mission stub for mx15-mx20 live tests
 
 ## Complexity
 
@@ -379,21 +403,21 @@ WhatsAppWebAdapter` block in
   in `tests/live_matrix_test.rs` already sweeps `octo-test-mx-*`
   rooms, so the new mx09-mx14 tests compose with the existing
   mx04-mx07 tests without changes to the test harness. The room
-  naming convention `octo-test-mx-mx{nn}-{ts}` (per-test prefix
-  suffix) keeps the sweep scoped to each test's own rooms.
+  naming convention `octo-test-mx-mx{nn}-{ts}` (per-test `mx{nn}`
+  prefix + Unix-ms `ts` suffix) keeps the sweep scoped to each
+  test's own rooms.
 
 ## Cross-references
 
 - `crates/octo-network/src/dot/adapters/coordinator_admin.rs` —
-  trait definition (the surface this mission implements against)
+  trait definition and module-level doc-block listing the platforms
+  expected to support the trait; this mission closes the matrix
+  gap in that doc-block
 - `crates/octo-adapter-whatsapp/src/adapter.rs` — `impl
 CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
   (full impl inline in adapter file)
 - `crates/octo-adapter-telegram-mtproto/src/adapter.rs` —
   `as_coordinator_admin` override pattern (4 lines)
-- `crates/octo-network/src/dot/adapters/coordinator_admin.rs` —
-  module-level doc-block listing the platforms expected to support
-  the trait; this mission closes the matrix gap in that doc-block
 - `docs/research/coordinator-admin-actions.md` §3 — per-platform
   capability matrix that this mission updates
 - `missions/claimed/0850h-b-matrix-adapter-e2ee.md` — parent mission
@@ -437,7 +461,7 @@ cleanly.
 
 `0850h-c-file-based-refresh-rotation.md` (Claimed) is taken by
 the file-based OAuth refresh-token rotation work. This mission is
-in the same `0850h-*` matrix-adapter series (a/d/b/c/d) so the
+in the same `0850h-*` matrix-adapter series (a/b/c/d) so the
 ordering matches: a (auth) → b (E2EE) → c (refresh rotation) → d
 (admin trait). Using a number from a different series would break
 the alphabet ordering readers expect from the directory listing.

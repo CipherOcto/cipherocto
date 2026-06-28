@@ -255,15 +255,28 @@ contract), but it must explicitly note:
 > Mode = 6, D. Discovery = 6, E. Handoff = 1; the 2 sync fns
 > `admin_capabilities` and `platform_name` are not section-allocated).
 > The six new live tests below cover at most 13 of those 24 methods
-> (C is fully covered across mx12 + mx14; A covers 1/3; B covers
-> 4/6 -- missing `add_member` and `approve_join_request`; D covers
-> 2/6 -- missing `list_own_groups_with_invites`, `resolve_invite`,
-> `join_by_invite`, `join_by_id`; E covers 0/1). The full-coverage
-> live suite would need **12 tests, not 6** -- mx09–mx14 are the
-> **first 6** of that 12-test plan. The remaining 6 (mx15–mx20)
-> are explicitly listed below as a follow-on mission, NOT part of
-> this mission's acceptance gate. Phase 1's unit tests in `mod tests`
-> cover the uncovered-method error paths at the adapter layer.
+> (C is fully covered across mx12 + mx14; A covers 1/3 -- missing
+> `leave_group` and `destroy_group`; B covers 4/6 -- missing
+> `add_member` and `approve_join_request`; D covers 2/6 -- missing
+> `list_own_groups_with_invites`, `resolve_invite`, `join_by_invite`,
+> `join_by_id`; E covers 0/1). After the follow-on mission's 6
+> additional tests (mx15-mx20, listed below), 20 of the 24 methods
+> are covered -- **A's `leave_group` and `destroy_group` remain
+> uncovered even after the follow-on**, since the follow-on doesn't
+> address them either. So the "full-coverage live suite" actually
+> needs 14 tests, not 12 (mx09-mx20 plus mx21_leave_group and
+> mx22_destroy_group -- or merge them into existing tests like
+> mx09 or mx13). mx09-mx14 are the **first 6** of that 14-test
+> plan; mx15-mx20 are the next 6; mx21-mx22 are an additional 2
+> that this mission does NOT file a follow-on for and that
+> `Phase 1`'s unit tests in `mod tests` only partially cover at
+> the adapter layer (the matrix `room.leave()` idempotency and
+> `destroy_group` semantics are tested in unit tests but not in
+> a live test). The remaining 6 tests listed in this mission's
+> follow-on (mx15-mx20) are explicitly listed below as a
+> follow-on mission, NOT part of this mission's acceptance gate.
+> Phase 1's unit tests in `mod tests` cover the uncovered-method
+> error paths at the adapter layer.
 
 - [ ] `tests/live_matrix_test.rs` gains six new tests:
       `mx09_create_group`, `mx10_ban_kick`, `mx11_promote_demote`,

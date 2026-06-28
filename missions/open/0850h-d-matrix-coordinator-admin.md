@@ -98,7 +98,7 @@ the relevant `m.room.*` state event content, or to
 | `ban_member`                   | `room.ban_user(user_id, reason)`                                                                                                                                                      | SDK signature is `Room::ban_user(&UserId, Option<&str>) -> Result<()>` -- no `duration` parameter (matrix-sdk-0.18.0/src/room/mod.rs:1973). The indefinite-only check is enforced at the adapter layer: if `duration: Some(_)`, return `Err(ApiError { code: 400, message: "matrix ban is indefinite-only" })` without calling the SDK (RFC-0861 §3 M1). The wire-format reason is that `m.room.banned` has no expiry field.                                                                                                                                                                                                                                                                       |
 | `promote_to_admin`             | `room.update_power_levels(vec![(user_id, 100)])`                                                                                                                                      | Power level `100` is the matrix "admin" level (matches `users_default` for admin-only rooms). The SDK handles reading the current `RoomPowerLevels`, mutating `users`, and sending `m.room.power_levels` atomically (matrix-sdk-0.18.0/src/room/mod.rs:2884-2894).                                                                                                                                          |
 | `demote_from_admin`            | `room.update_power_levels(vec![(user_id, users_default)])`                                                                                                                            | The SDK auto-removes the user's per-user override when the new level equals `users_default` (matrix-sdk-0.18.0/src/room/mod.rs:2887-2893). Caller must read `users_default` first via `room.power_levels().await?.users_default`.                                                                                                                                                                                  |
-| `approve_join_request`         | For invite-only rooms: `room.invite_user_by_id(user_id)` (SDK's invite flow auto-accepts). For `JoinRule::Knock` rooms: **`Room::accept_invite` does not exist in 0.18**; admin acceptance goes through `client.join_room_by_id(room_id)` on behalf of the joiner (post `m.room.member` knock event) | Document the SDK gap (no `Room::accept_invite`) in the impl doc-comment.                                                                                                                                                                                                       |
+| `approve_join_request`         | `room.invite_user_by_id(user_id)` — this IS the SDK's accept path. `KnockRequest::accept` (matrix-sdk-0.18.0/src/room/knock_requests.rs:65-68) delegates to `room.invite_user_by_id(&self.member_info.user_id)` internally. For richer per-request semantics (event id, timestamp, reason), use `room.subscribe_to_knock_requests()` and call `.accept()` on the matching `KnockRequest`. | The SDK has no `Room::accept_invite` method, but `KnockRequest::accept` is the canonical accept path. The trait's `approve_join_request` doc-comment says "Only meaningful on groups with `requires_approval = true`" — i.e., `JoinRule::Knock`. |
 | `rename_group`                 | `room.set_name(name).await`                                                                                                                                                           | Sends `m.room.name` state event                                                                                                                                                                                                                                                                                                                    |
 | `set_group_description`        | `room.set_room_topic(topic).await`                                                                                                                                                    | Sends `m.room.topic` state event                                                                                                                                                                                                                                                                                                                   |
 | `set_locked`                   | `room.send_state_event(JoinRulesEventContent::new(JoinRule::Invite))` (true) / `JoinRule::Public` (false). **No `set_join_rule` method exists in 0.18.**                                              | "Locked" = invite-only on matrix; sets `m.room.join_rules` state event. Use `ruma::events::room::join_rules::{JoinRule, JoinRulesEventContent}` (re-exported via `matrix_sdk::ruma::events::room::join_rules`).                                                                                                                                                  |
@@ -134,7 +134,7 @@ AdminCapabilityReport {
     can_ban: true,               // m.room.banned state event
     can_promote: true,           // via per-user power level override
     can_demote: true,
-    can_approve_join: true,      // JoinRule::Knock; client.join_room_by_id on behalf of joiner
+    can_approve_join: true,      // KnockRequest::accept (matrix-sdk 0.18) -- delegates to invite_user_by_id
     // C. Mode
     can_rename: true,
     can_describe: true,
@@ -196,10 +196,14 @@ contract), but it must explicitly note:
   `can_get_metadata`, `can_resolve_invite` are `true`.
 - `can_destroy` and `can_transfer_ownership` are `false` (matrix
   has no first-class primitive for either).
-- `can_approve_join` is `true` **with a caveat**: 0.18 has no
-  `Room::accept_invite`; the adapter implements `approve_join_request`
-  via `client.join_room_by_id` on behalf of the joiner after the
-  `m.room.member` knock event.
+- `can_approve_join` is `true` **with a caveat**: the adapter
+  implements `approve_join_request` via `room.invite_user_by_id(user_id)`,
+  which matches what `KnockRequest::accept`
+  (`matrix-sdk-0.18.0/src/room/knock_requests.rs:65-68`) does
+  internally. The SDK has no `Room::accept_invite` method, but it
+  does expose the event-driven `room.subscribe_to_knock_requests()`
+  stream for richer per-request semantics (event id, timestamp,
+  reason) — the impl chooses the simpler path.
 - `can_require_approval` is `true` **with a caveat**:
   homeserver-dependent (`m.room.join_rules: knock` support varies —
   e.g., older Synapse configs may lack it).
@@ -437,10 +441,8 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
   and RFC-0855p-c (all Accepted) claim matrix implements
   `CoordinatorAdmin` but the adapter doesn't bind the trait
 - Unblocks `missions/open/0855p-c-admin-attestation.md` for Matrix
-- Unblocks `rfcs/draft/networking/0850p-d-dc-initiated-group-
-creation.md` Matrix section
-- Unblocks `rfcs/draft/networking/0850p-e-kick-detection.md` Matrix
-  event mapping (needs `remove_member` / `ban_member` on the trait)
+- Unblocks `rfcs/draft/networking/0850p-d-dc-initiated-group-creation.md` Matrix section
+- Unblocks `rfcs/draft/networking/0850p-e-kick-detection.md` Matrix event mapping (needs `remove_member` / `ban_member` on the trait)
 
 ## Notes
 

@@ -430,10 +430,14 @@ WhatsAppWebAdapter` block in
 - **No-op update for the existing live tests.** The pre-scan guard
   in `tests/live_matrix_test.rs` already sweeps `octo-test-mx-*`
   rooms, so the new mx09-mx14 tests compose with the existing
-  mx04-mx07 tests without changes to the test harness. The room
-  naming convention `octo-test-mx-mx{nn}-{ts}` (per-test `mx{nn}`
-  prefix + Unix-ms `ts` suffix) keeps the sweep scoped to each
-  test's own rooms.
+  mx04_05_06_envelope_round_trip, mx07, and mx08 tests (which all
+  use the `octo-test-mx-mx{nn}-{ts}` naming convention) without
+  changes to the test harness. The room naming convention
+  `octo-test-mx-mx{nn}-{ts}` (per-test `mx{nn}` prefix + Unix-ms
+  `ts` suffix) keeps the sweep scoped to each test's own rooms.
+  The earlier mx00-mx03 tests don't use this naming convention
+  (they're sanity/build tests that don't create rooms) so they're
+  not in scope for the pre-scan guard.
 
 ## Cross-references
 

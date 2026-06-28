@@ -233,8 +233,7 @@ impl PlatformAdapter for TwitterAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

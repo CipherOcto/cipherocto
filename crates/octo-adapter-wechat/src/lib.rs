@@ -241,8 +241,7 @@ impl PlatformAdapter for WeChatAdapter {
                 supported_mime_types: vec!["image/jpeg".into(), "image/png".into()],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

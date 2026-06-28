@@ -275,8 +275,7 @@ impl PlatformAdapter for BlueskyAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

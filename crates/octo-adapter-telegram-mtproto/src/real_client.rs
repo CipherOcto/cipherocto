@@ -2326,11 +2326,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                     channel: input_channel,
                     participant: tl::enums::InputPeer::User(tl::types::InputPeerUser {
                         user_id: user_peer.id().bare_id(),
-                        access_hash: user_peer
-                            .to_ref()
-                            .await
-                            .map(|r| r.auth.hash())
-                            .unwrap_or(0),
+                        access_hash: user_peer.to_ref().await.map(|r| r.auth.hash()).unwrap_or(0),
                     }),
                     banned_rights: tl::enums::ChatBannedRights::Rights(
                         tl::types::ChatBannedRights {
@@ -2385,41 +2381,35 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
         let peer = tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
             channel_id: chat_peer.id().bare_id(),
-            access_hash: chat_peer
-                .to_ref()
-                .await
-                .map(|r| r.auth.hash())
-                .unwrap_or(0),
+            access_hash: chat_peer.to_ref().await.map(|r| r.auth.hash()).unwrap_or(0),
         });
         // Use messages.editChatDefaultBannedRights to set default
         // permissions for all non-admin members.
         let req = tl::functions::messages::EditChatDefaultBannedRights {
             peer,
-            banned_rights: tl::enums::ChatBannedRights::Rights(
-                tl::types::ChatBannedRights {
-                    view_messages: false,
-                    send_messages: locked,
-                    send_media: locked,
-                    send_stickers: locked,
-                    send_gifs: locked,
-                    send_games: locked,
-                    send_inline: locked,
-                    embed_links: false,
-                    send_polls: locked,
-                    change_info: locked,
-                    invite_users: false,
-                    pin_messages: locked,
-                    manage_topics: false,
-                    send_photos: locked,
-                    send_videos: locked,
-                    send_roundvideos: locked,
-                    send_audios: locked,
-                    send_voices: locked,
-                    send_docs: locked,
-                    send_plain: locked,
-                    until_date: 0,
-                },
-            ),
+            banned_rights: tl::enums::ChatBannedRights::Rights(tl::types::ChatBannedRights {
+                view_messages: false,
+                send_messages: locked,
+                send_media: locked,
+                send_stickers: locked,
+                send_gifs: locked,
+                send_games: locked,
+                send_inline: locked,
+                embed_links: false,
+                send_polls: locked,
+                change_info: locked,
+                invite_users: false,
+                pin_messages: locked,
+                manage_topics: false,
+                send_photos: locked,
+                send_videos: locked,
+                send_roundvideos: locked,
+                send_audios: locked,
+                send_voices: locked,
+                send_docs: locked,
+                send_plain: locked,
+                until_date: 0,
+            }),
         };
         self.client
             .invoke(&req)
@@ -2482,11 +2472,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
                 let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
                 let peer = tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
                     channel_id: chat_peer.id().bare_id(),
-                    access_hash: chat_peer
-                        .to_ref()
-                        .await
-                        .map(|r| r.auth.hash())
-                        .unwrap_or(0),
+                    access_hash: chat_peer.to_ref().await.map(|r| r.auth.hash()).unwrap_or(0),
                 });
                 let req = tl::functions::messages::SetHistoryTtl {
                     peer,
@@ -2501,27 +2487,18 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         Ok(())
     }
 
-    async fn export_chat_invite(
-        &self,
-        chat_id: i64,
-    ) -> Result<String, MtprotoTelegramError> {
+    async fn export_chat_invite(&self, chat_id: i64) -> Result<String, MtprotoTelegramError> {
         let prefix = "export_chat_invite";
         let peer_kind = chat_id_kind(chat_id);
         let peer = match peer_kind {
-            PeerKindChoice::Basic => {
-                tl::enums::InputPeer::Chat(tl::types::InputPeerChat {
-                    chat_id: chat_id.unsigned_abs() as i64,
-                })
-            }
+            PeerKindChoice::Basic => tl::enums::InputPeer::Chat(tl::types::InputPeerChat {
+                chat_id: chat_id.unsigned_abs() as i64,
+            }),
             PeerKindChoice::Supergroup => {
                 let chat_peer = resolve_chat(&self.client, chat_id, true).await?;
                 tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
                     channel_id: chat_peer.id().bare_id(),
-                    access_hash: chat_peer
-                        .to_ref()
-                        .await
-                        .map(|r| r.auth.hash())
-                        .unwrap_or(0),
+                    access_hash: chat_peer.to_ref().await.map(|r| r.auth.hash()).unwrap_or(0),
                 })
             }
         };
@@ -2545,9 +2522,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
             tl::enums::ExportedChatInvite::ChatInvitePublicJoinRequests => {
                 Err(MtprotoTelegramError::Rpc {
                     code: 500,
-                    message: format!(
-                        "{prefix}: unexpected ChatInvitePublicJoinRequests response"
-                    ),
+                    message: format!("{prefix}: unexpected ChatInvitePublicJoinRequests response"),
                 })
             }
         }

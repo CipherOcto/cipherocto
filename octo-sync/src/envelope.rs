@@ -252,7 +252,9 @@ impl SegmentRequest {
     /// Decode from binary wire format.
     pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
         if data.len() < 40 {
-            return Err(SyncError::BackendNotReady("SegmentRequest too short".into()));
+            return Err(SyncError::BackendNotReady(
+                "SegmentRequest too short".into(),
+            ));
         }
         let table_id = u32::from_le_bytes(data[0..4].try_into().unwrap());
         let segment_index = u32::from_le_bytes(data[4..8].try_into().unwrap());
@@ -295,7 +297,9 @@ impl SegmentNotFound {
     /// Decode from binary wire format.
     pub fn decode(data: &[u8]) -> Result<Self, SyncError> {
         if data.len() < 9 {
-            return Err(SyncError::BackendNotReady("SegmentNotFound too short".into()));
+            return Err(SyncError::BackendNotReady(
+                "SegmentNotFound too short".into(),
+            ));
         }
         let table_id = u32::from_le_bytes(data[0..4].try_into().unwrap());
         let segment_index = u32::from_le_bytes(data[4..8].try_into().unwrap());

@@ -8,12 +8,12 @@
 //! creatable, `groups` non-empty strings, `ws_url` starts with
 //! `ws://` or `wss://`.
 
-use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
-use octo_network::dot::adapters::PlatformAdapter;
 use crate::error::{CoreError, Result};
 use crate::output::QrLinkArgs;
 use crate::output::WhatsAppSession;
 use crate::sidecar::{write_sidecar, SidecarMode};
+use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_network::dot::adapters::PlatformAdapter;
 
 /// Run the qr-link flow: build adapter, start bot, wait for
 /// `Event::Connected`, write sidecar + session (the binary writes
@@ -93,9 +93,7 @@ fn validate_qr_link_args(args: &QrLinkArgs) -> Result<()> {
 
 /// Try to resolve the phone number from the adapter's self_handle
 /// or by polling the device snapshot. Returns None if unresolvable.
-async fn resolve_phone_from_adapter(
-    adapter: &WhatsAppWebAdapter,
-) -> Option<String> {
+async fn resolve_phone_from_adapter(adapter: &WhatsAppWebAdapter) -> Option<String> {
     // Fast path: already resolved by the Event::Connected or
     // Event::HistorySync handler.
     if let Some(phone) = adapter.self_handle() {

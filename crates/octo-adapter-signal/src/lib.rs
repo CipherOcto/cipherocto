@@ -273,8 +273,7 @@ impl PlatformAdapter for SignalAdapter {
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

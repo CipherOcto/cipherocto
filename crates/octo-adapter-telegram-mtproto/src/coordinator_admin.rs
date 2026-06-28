@@ -818,9 +818,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
         if !is_supergroup(chat_id) {
             return Err(PlatformAdapterError::Unimplemented {
                 platform: self.platform_name(),
-                action: format!(
-                    "set_require_approval: chat_id {chat_id} is a basic group"
-                ),
+                action: format!("set_require_approval: chat_id {chat_id} is a basic group"),
             });
         }
         self.client
@@ -829,9 +827,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
             .map_err(map_err)
     }
 
-    async fn list_own_groups_with_invites(
-        &self,
-    ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+    async fn list_own_groups_with_invites(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
         // Get base groups list.
         let mut groups = self.list_own_groups().await?;
         // Fetch invite links for each group.

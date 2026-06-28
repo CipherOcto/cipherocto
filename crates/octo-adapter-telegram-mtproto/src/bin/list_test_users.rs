@@ -1,3 +1,8 @@
+use grammers_tl_types as tl;
+use octo_adapter_telegram_mtproto::config::MtprotoTelegramConfig;
+use octo_adapter_telegram_mtproto::real_client::RealTelegramMtprotoClient;
+use octo_adapter_telegram_mtproto::self_handle::MtprotoSelfHandle;
+use octo_adapter_telegram_mtproto::session::StoolapSession;
 /// Standalone utility to list contacts/users for live test configuration.
 ///
 /// Lists all user dialogs with their user_id, username, display name,
@@ -7,11 +12,6 @@
 /// Usage:
 ///   cargo run -p octo-adapter-telegram-mtproto --features real-network --bin list_test_users
 use std::path::PathBuf;
-use grammers_tl_types as tl;
-use octo_adapter_telegram_mtproto::config::MtprotoTelegramConfig;
-use octo_adapter_telegram_mtproto::real_client::RealTelegramMtprotoClient;
-use octo_adapter_telegram_mtproto::self_handle::MtprotoSelfHandle;
-use octo_adapter_telegram_mtproto::session::StoolapSession;
 
 fn live_config() -> MtprotoTelegramConfig {
     let data_dir = std::env::var("TELEGRAM_DATA_DIR")
@@ -53,10 +53,9 @@ async fn main() {
         .unwrap_or_else(|e| panic!("failed to open session: {e}"));
 
     let self_handle = MtprotoSelfHandle::new();
-    let client =
-        RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
-            .await
-            .expect("connect failed -- is the session valid?");
+    let client = RealTelegramMtprotoClient::connect(api_id, api_hash, session, self_handle.clone())
+        .await
+        .expect("connect failed -- is the session valid?");
 
     let me = match client.grammers_client().get_me().await {
         Ok(me) => {
@@ -74,7 +73,11 @@ async fn main() {
     };
 
     let self_id = me.id().bare_id();
-    println!("Logged in as: {} (user_id: {})\n", me.username().unwrap_or("?"), self_id);
+    println!(
+        "Logged in as: {} (user_id: {})\n",
+        me.username().unwrap_or("?"),
+        self_id
+    );
 
     // Step 1: Collect user peer IDs from dialogs.
     println!("Scanning dialogs...");
@@ -111,7 +114,11 @@ async fn main() {
         user_peer_ids.push(bare_id);
     }
 
-    println!("Found {} user dialogs out of {} total.\n", user_peer_ids.len(), total_dialogs);
+    println!(
+        "Found {} user dialogs out of {} total.\n",
+        user_peer_ids.len(),
+        total_dialogs
+    );
 
     if user_peer_ids.is_empty() {
         println!("No user dialogs found. Start a chat with someone first.");
@@ -198,19 +205,47 @@ async fn main() {
 
     for (i, u) in users.iter().enumerate() {
         let mut flags = Vec::new();
-        if u.is_bot { flags.push("bot"); }
-        if u.is_contact { flags.push("contact"); }
-        if u.is_mutual_contact { flags.push("mutual"); }
+        if u.is_bot {
+            flags.push("bot");
+        }
+        if u.is_contact {
+            flags.push("contact");
+        }
+        if u.is_mutual_contact {
+            flags.push("mutual");
+        }
 
-        let first = if u.first_name.is_empty() { "-" } else { &u.first_name };
-        let last = if u.last_name.is_empty() { "-" } else { &u.last_name };
-        let uname = if u.username.is_empty() { String::from("-") } else { format!("@{}", u.username) };
+        let first = if u.first_name.is_empty() {
+            "-"
+        } else {
+            &u.first_name
+        };
+        let last = if u.last_name.is_empty() {
+            "-"
+        } else {
+            &u.last_name
+        };
+        let uname = if u.username.is_empty() {
+            String::from("-")
+        } else {
+            format!("@{}", u.username)
+        };
         let phone = if u.phone.is_empty() { "-" } else { &u.phone };
-        let flag_str = if flags.is_empty() { String::new() } else { flags.join(", ") };
+        let flag_str = if flags.is_empty() {
+            String::new()
+        } else {
+            flags.join(", ")
+        };
 
         println!(
             "{:<4} {:<12} {:<20} {:<20} {:<16} {:<6} {}",
-            i + 1, u.user_id, first, last, uname, phone, flag_str,
+            i + 1,
+            u.user_id,
+            first,
+            last,
+            uname,
+            phone,
+            flag_str,
         );
     }
 

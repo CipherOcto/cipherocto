@@ -239,8 +239,7 @@ impl PlatformAdapter for QQAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

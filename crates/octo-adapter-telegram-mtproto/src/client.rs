@@ -569,8 +569,7 @@ pub trait MtprotoTelegramClient: Send + Sync {
     /// Export an invite link for a chat
     /// (`messages.exportChatInvite`). Returns the
     /// invite URL string.
-    async fn export_chat_invite(&self, chat_id: i64)
-        -> Result<String, MtprotoTelegramError>;
+    async fn export_chat_invite(&self, chat_id: i64) -> Result<String, MtprotoTelegramError>;
 
     /// Toggle whether new members need admin approval to join
     /// (`channels.toggleJoinRequest`). Only works on supergroups.
@@ -1223,10 +1222,7 @@ impl MtprotoTelegramClient for MockTelegramMtprotoClient {
         Ok(())
     }
 
-    async fn export_chat_invite(
-        &self,
-        _chat_id: i64,
-    ) -> Result<String, MtprotoTelegramError> {
+    async fn export_chat_invite(&self, _chat_id: i64) -> Result<String, MtprotoTelegramError> {
         Ok("https://t.me/+mock_invite_hash".into())
     }
 

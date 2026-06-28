@@ -353,9 +353,7 @@ mod tests {
         let encoded = chunk.encode();
 
         // Send through the bridge — should decode and apply via session
-        bridge
-            .on_dgp_object(0xB1, [5u8; 32], encoded)
-            .unwrap();
+        bridge.on_dgp_object(0xB1, [5u8; 32], encoded).unwrap();
 
         // The handler should NOT store raw bytes (decode succeeded, apply succeeded)
         let (summaries, segments, wal_tails) = handler.drain_inbound();
@@ -406,9 +404,7 @@ mod tests {
         };
         let encoded = response.encode();
 
-        bridge
-            .on_dgp_object(0xA1, [7u8; 32], encoded)
-            .unwrap();
+        bridge.on_dgp_object(0xA1, [7u8; 32], encoded).unwrap();
 
         let (summaries, segments, wal_tails) = handler.drain_inbound();
         assert_eq!(summaries.len(), 1);

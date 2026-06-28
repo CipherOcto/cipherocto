@@ -409,8 +409,7 @@ impl PlatformAdapter for DiscordAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

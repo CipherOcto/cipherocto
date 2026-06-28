@@ -252,8 +252,7 @@ impl PlatformAdapter for LarkAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

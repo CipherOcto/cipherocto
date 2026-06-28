@@ -1115,11 +1115,9 @@ async fn create_test_group(
 
     let title = format!("octo_test_{}_{}", test_name, chrono_timestamp());
     let title_clone = title.clone();
-    let handle = with_flood_wait_retry("create_group", || {
-        admin.create_group(&title_clone, &[])
-    })
-    .await
-    .unwrap_or_else(|e| panic!("create_group '{}': {:?}", title, e));
+    let handle = with_flood_wait_retry("create_group", || admin.create_group(&title_clone, &[]))
+        .await
+        .unwrap_or_else(|e| panic!("create_group '{}': {:?}", title, e));
 
     let chat_id: i64 = handle.id.as_str().parse().expect("chat_id parse");
     tracing::info!(chat_id, title = %handle.subject.as_deref().unwrap_or("?"), "created test group");
@@ -1184,10 +1182,7 @@ fn flood_wait_sleep_secs(wait_secs: u64) -> u64 {
 /// Retries up to FLOOD_WAIT_MAX_RETRIES times, sleeping the
 /// requested duration (capped) between attempts. Returns the
 /// first Ok result, or the last Err.
-async fn with_flood_wait_retry<F, Fut, T, E>(
-    label: &str,
-    mut op: F,
-) -> Result<T, E>
+async fn with_flood_wait_retry<F, Fut, T, E>(label: &str, mut op: F) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
@@ -1244,10 +1239,8 @@ async fn destroy_test_group(
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Try destroy_group with retries.
-    let destroy_result = with_flood_wait_retry("destroy_group", || {
-        admin.destroy_group(&group_id)
-    })
-    .await;
+    let destroy_result =
+        with_flood_wait_retry("destroy_group", || admin.destroy_group(&group_id)).await;
 
     match destroy_result {
         Ok(()) => {
@@ -1260,7 +1253,10 @@ async fn destroy_test_group(
                 octo_network::dot::adapters::coordinator_admin::GroupId::new(chat_id.to_string());
             match with_flood_wait_retry("leave_group", || admin.leave_group(&group_id2)).await {
                 Ok(()) => {
-                    tracing::info!(chat_id, "left test group (fallback after destroy_group failed)");
+                    tracing::info!(
+                        chat_id,
+                        "left test group (fallback after destroy_group failed)"
+                    );
                 }
                 Err(e2) => {
                     tracing::warn!(
@@ -1756,8 +1752,17 @@ async fn lt63_remove_member() {
     assert!(add_result.is_ok(), "add_member: {:?}", add_result.err());
 
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let remove_result = admin.remove_member(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
-    assert!(remove_result.is_ok(), "remove_member: {:?}", remove_result.err());
+    let remove_result = admin
+        .remove_member(
+            &group_id,
+            &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()),
+        )
+        .await;
+    assert!(
+        remove_result.is_ok(),
+        "remove_member: {:?}",
+        remove_result.err()
+    );
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
@@ -1810,7 +1815,12 @@ async fn lt65_demote_from_admin() {
 
     // Then demote.
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.demote_from_admin(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
+    let result = admin
+        .demote_from_admin(
+            &group_id,
+            &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()),
+        )
+        .await;
     // May fail if user wasn't actually promoted, but shouldn't panic.
     tracing::info!(?result, "LT-65: demote_from_admin");
 
@@ -1839,7 +1849,13 @@ async fn lt66_ban_member() {
     let _ = admin.add_member(&group_id, &member).await;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.ban_member(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()), None).await;
+    let result = admin
+        .ban_member(
+            &group_id,
+            &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()),
+            None,
+        )
+        .await;
     assert!(result.is_ok(), "ban_member: {:?}", result.err());
 
     destroy_test_group(&adapter, chat_id).await;
@@ -1860,7 +1876,13 @@ async fn lt67_resolve_invite() {
     // resolve_invite is the coordinator-level wrapper around check_invite.
     // We test the error path for a bogus hash.
     let admin = adapter.as_coordinator_admin().unwrap();
-    let result = admin.resolve_invite(&octo_network::dot::adapters::coordinator_admin::InviteRef::new("bogus_hash_that_does_not_exist")).await;
+    let result = admin
+        .resolve_invite(
+            &octo_network::dot::adapters::coordinator_admin::InviteRef::new(
+                "bogus_hash_that_does_not_exist",
+            ),
+        )
+        .await;
     // Should either succeed with preview info or fail gracefully.
     match result {
         Ok(preview) => {
@@ -1967,7 +1989,9 @@ async fn lt71_set_ephemeral() {
 
     // Set 1-day ephemeral timer (86400 seconds).
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.set_ephemeral(&group_id, Some(Duration::from_secs(86400))).await;
+    let result = admin
+        .set_ephemeral(&group_id, Some(Duration::from_secs(86400)))
+        .await;
     assert!(result.is_ok(), "set_ephemeral(86400): {:?}", result.err());
 
     // Disable ephemeral.
@@ -1991,11 +2015,19 @@ async fn lt72_set_require_approval() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, true).await;
-    assert!(result.is_ok(), "set_require_approval(true): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "set_require_approval(true): {:?}",
+        result.err()
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     let result = admin.set_require_approval(&group_id, false).await;
-    assert!(result.is_ok(), "set_require_approval(false): {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "set_require_approval(false): {:?}",
+        result.err()
+    );
 
     destroy_test_group(&adapter, chat_id).await;
     drop(adapter);
@@ -2027,7 +2059,12 @@ async fn lt73_transfer_ownership_fails_without_2fa() {
 
     // Transfer ownership without 2FA password — should fail.
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let result = admin.transfer_ownership(&group_id, &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string())).await;
+    let result = admin
+        .transfer_ownership(
+            &group_id,
+            &octo_network::dot::adapters::coordinator_admin::PeerId::new(user_id.to_string()),
+        )
+        .await;
     // We expect this to fail (requires 2FA password, or not a supergroup, etc.)
     tracing::info!(?result, "LT-73: transfer_ownership without 2FA");
 

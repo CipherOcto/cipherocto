@@ -89,7 +89,16 @@ async fn main() {
     let mut deleted_count = 0u32;
     let mut failed_count = 0u32;
 
-    let test_prefixes = ["OCTO_LIVE_", "LT-", "LT_", "octo_test_", "DOT/1/", "test ", "lt4", "lt5"];
+    let test_prefixes = [
+        "OCTO_LIVE_",
+        "LT-",
+        "LT_",
+        "octo_test_",
+        "DOT/1/",
+        "test ",
+        "lt4",
+        "lt5",
+    ];
 
     // Saved Messages = InputPeerSelf. Use raw TL getHistory.
     let self_peer = tl::enums::InputPeer::PeerSelf;
@@ -303,7 +312,14 @@ async fn delete_with_flood_wait(
     let mut last_delete_err: Option<String> = None;
     for attempt in 0..=FLOOD_WAIT_MAX_RETRIES {
         match client.delete_chat(chat_id).await {
-            Ok(()) => return Ok(if attempt == 0 { "Deleted" } else { "Deleted (after wait)" }.into()),
+            Ok(()) => {
+                return Ok(if attempt == 0 {
+                    "Deleted"
+                } else {
+                    "Deleted (after wait)"
+                }
+                .into())
+            }
             Err(e) => {
                 let err_str = e.to_string();
                 if let Some(wait_secs) = parse_flood_wait(&err_str) {
@@ -335,7 +351,14 @@ async fn delete_with_flood_wait(
     let mut last_leave_err: Option<String> = None;
     for attempt in 0..=FLOOD_WAIT_MAX_RETRIES {
         match client.leave_chat(chat_id).await {
-            Ok(()) => return Ok(if attempt == 0 { "Left" } else { "Left (after wait)" }.into()),
+            Ok(()) => {
+                return Ok(if attempt == 0 {
+                    "Left"
+                } else {
+                    "Left (after wait)"
+                }
+                .into())
+            }
             Err(e2) => {
                 let err2_str = e2.to_string();
                 if let Some(wait_secs) = parse_flood_wait(&err2_str) {
@@ -350,7 +373,10 @@ async fn delete_with_flood_wait(
                     let sleep_secs = flood_wait_sleep_secs(wait_secs);
                     eprintln!(
                         "FLOOD_WAIT on leave_chat for {}: attempt {}/{}, sleeping {}s",
-                        title, attempt + 1, FLOOD_WAIT_MAX_RETRIES + 1, sleep_secs
+                        title,
+                        attempt + 1,
+                        FLOOD_WAIT_MAX_RETRIES + 1,
+                        sleep_secs
                     );
                     tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
                     last_leave_err = Some(err2_str);

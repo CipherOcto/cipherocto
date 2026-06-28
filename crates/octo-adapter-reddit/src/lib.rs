@@ -289,8 +289,7 @@ impl PlatformAdapter for RedditAdapter {
                 ],
             }),
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

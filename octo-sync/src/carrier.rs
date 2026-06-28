@@ -137,10 +137,7 @@ impl CarrierHealth {
 /// **Deprecated:** Use `octo_transport::NodeTransport` instead for
 /// general-purpose transport. `NodeTransport` provides fan-out, failover,
 /// and health tracking via the `NetworkSender` trait.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use octo_transport::NodeTransport instead"
-)]
+#[deprecated(since = "0.2.0", note = "Use octo_transport::NodeTransport instead")]
 pub struct MultiCarrierSync {
     /// The carriers (primary + secondaries).
     carriers: Vec<Arc<dyn Carrier>>,

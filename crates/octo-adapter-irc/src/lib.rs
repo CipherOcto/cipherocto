@@ -1478,8 +1478,7 @@ impl CoordinatorAdmin for IrcAdapter {
             // ── E. Handoff ────────────────────────────────────
             can_transfer_ownership: false, // no transfer primitive
 
-        ..Default::default()
-
+            ..Default::default()
         }
     }
 

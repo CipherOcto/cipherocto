@@ -32,8 +32,8 @@ implementation. Closing this gap is the prerequisite for
 RFC-0855p-c-admin-attestation (mission `0855p-c-admin-attestation.md`,
 Open) to use Matrix in its `PlatformAdminAttest` envelope source set,
 and for RFC-0850p-d (DC-initiated group creation, Draft) to rely on
-Matrix as one of the six Tier-1 platforms that can self-bootstrap a
-DOT group.
+Matrix as one of the natively broadcast-capable platforms that can
+self-bootstrap a DOT group.
 
 ## Design
 
@@ -505,8 +505,9 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
 - `missions/open/0855p-c-admin-attestation.md` — downstream mission
   that will use Matrix admin via the trait once this mission lands
 - `rfcs/draft/networking/0850p-d-dc-initiated-group-creation.md` —
-  downstream RFC that lists matrix as one of the six Tier-1
-  platforms that should self-bootstrap a DOT group via the trait
+  downstream RFC that lists matrix as one of the natively
+  broadcast-capable platforms that should self-bootstrap a DOT
+  group via the trait
 - `rfcs/draft/networking/0850p-e-kick-detection.md` — downstream RFC
   that maps matrix `m.room.member` ban/leave events; depends on the
   matrix adapter being wired up end-to-end (the trait's
@@ -600,6 +601,17 @@ The matrix spec defaults that the impl needs to honor (per
 
 ## Deadline
 
-Pre-public-launch (this is part of the "six Tier-1 broadcast
-platforms" claim in RFC-0863p-a; the documentation already commits
-to it).
+Pre-public-launch (matrix is one of the natively broadcast-capable
+platforms listed by RFC-0851p-b §2.1: "CipherOcto has 20 platform
+adapters, of which at least 6 are natively broadcast-capable
+(Telegram groups, Discord servers, Matrix rooms, Nostr relays, IRC
+channels, Bluesky threads)"; the documentation already commits to
+matrix being one of these six). Note: the actual "six" enumeration
+comes from RFC-0851p-b, NOT RFC-0863p-a — RFC-0863p-a line 633
+explicitly lists only FIVE platforms as implementing
+`CoordinatorAdmin` (Telegram, Discord, Matrix, IRC, WhatsApp), and
+its list differs from 0851p-b's (0851p-b lists Nostr + Bluesky but
+not WhatsApp; 0863p-a lists WhatsApp but not Nostr + Bluesky). Both
+lists include Matrix, so this mission's matrix-adapter-impl work is
+on the critical path for either list — but the "six Tier-1" framing
+is 0851p-b's claim, not 0863p-a's.

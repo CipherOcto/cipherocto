@@ -351,10 +351,16 @@ CoordinatorAdmin for MatrixAdapter` + `as_coordinator_admin`
 ## Complexity
 
 Medium (~400 lines of impl in `lib.rs` + 6 live tests + 1 cross-
-adapter smoke). Smaller than the WhatsApp R19/R20 set (which is
-~280 lines of impl but on a more platform-restricted surface) and
-larger than the IRC set (which has fewer true platform primitives
-to map). Phase 1 is the critical path; Phase 2-3 are verification.
+adapter smoke). Comparable in size to the WhatsApp CoordinatorAdmin
+impl (`crates/octo-adapter-whatsapp/src/adapter.rs:2597-3099`, ~503
+total lines / ~475 non-blank non-doc lines) and the IRC impl
+(`crates/octo-adapter-irc/src/lib.rs:1441-1962`, ~522 total / ~489
+non-blank non-doc lines). The matrix adapter fits in the same size
+range as the WhatsApp and IRC implementations despite matrix-sdk
+0.18 having more first-class primitives (the matrix per-method
+table has more nuance per row, balancing out the larger WhatsApp
+`promote_participants`/kick-detection code paths). Phase 1 is the
+critical path; Phase 2-3 are verification.
 
 ## Prerequisites
 

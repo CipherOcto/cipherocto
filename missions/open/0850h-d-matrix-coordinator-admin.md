@@ -105,7 +105,7 @@ the relevant `m.room.*` state event content, or to
 | `set_announce`                 | Read `room.power_levels().await?`, set `pl.events_default = 100` (true) / `0` (false), then `room.send_state_event(RoomPowerLevelsEventContent::try_from(pl)?).await?`. **Do not use `update_power_levels`** (which is per-user only).            | Sends `m.room.power_levels` state event with mutated `events_default` field. Field name on the `RoomPowerLevels` wrapper struct is `events_default`, not `events.default`.                                                                                                                                                                                |
 | `set_ephemeral`                | `room.send_state_event_raw(...)` for `m.room.retention` state event                                                                                                                   | TTL is `state_default` (ms); `None` = clear the state event entirely (matrix can disable retention once enabled, so the trait contract's "soft disable" precedent on `set_ephemeral` holds). Clamp `as_millis() > i64::MAX` to `ApiError { code: 400, ... }` per RFC-0861 §3 M1                                                                    |
 | `set_require_approval`         | `room.send_state_event(JoinRulesEventContent::new(JoinRule::Knock))` (true) / `JoinRule::Invite` or `Public` (false)                                                                 | Matrix's "knock" join rule is the closest mapping -- joiners send `m.room.member` with `membership: knock`, admins accept them. **Truthful capability caveat:** `can_require_approval` is `true` on rooms where the homeserver supports `m.room.join_rules: knock`; report `false` on homeservers that don't (e.g., older Synapse configs) |
-| `list_own_groups`              | `client.joined_rooms()` + per-room `room.name()` and `room.members(RoomMemberships::JOIN).await?.len()` (no `member_count` / `joined_members_count` method exists)                       | Returns `Vec<GroupHandle>` with `is_admin = (own power_level >= 100)`. **No `own_user_power_level` method exists** -- read own power via `room.get_user_power_level(&client.session_meta().user_id).await?` (matrix-sdk-0.18.0/src/room/mod.rs:2939) and unwrap the `UserPowerLevel::Int(_)` arm.                                                                                                                                                |
+| `list_own_groups`              | `client.joined_rooms()` + per-room `room.name()` and `room.members(RoomMemberships::JOIN).await?.len()` (no `member_count` / `joined_members_count` method exists)                       | Returns `Vec<GroupHandle>` with `is_admin = (own power_level >= 100)`. **No `own_user_power_level` method exists** -- read own power via `room.get_user_power_level(&client.session_meta().expect("authenticated").user_id).await?` (matrix-sdk-0.18.0/src/room/mod.rs:2939) and unwrap the `UserPowerLevel::Int(_)` arm. (For room-creator accounts with room v12+, the result is `UserPowerLevel::Infinite` -- treat as ≥100.)                                                                                                                                                |
 | `list_own_groups_with_invites` | Default impl delegates to `list_own_groups` + per-group `room.canonical_alias()` (most useful invite ref on matrix)                                                                   | Override the trait's default `list_own_groups_with_invites` to populate `invite_url` with `#alias:server`                                                                                                                                                                                                                                          |
 | `get_group_metadata`           | `room.name()`, `room.topic()`, `room.power_levels()`, `room.members(RoomMemberships::JOIN).await?.len()` (no `joined_members_count` method), `room.canonical_alias()`                       | Map `room.power_levels().await?` to `admins: Vec<PeerId>` (filter members where power level >= 100); full member list via `room.members(RoomMemberships::JOIN)`                                                                                                                                                                                                  |
 | `resolve_invite`               | `client.resolve_room_alias(alias).await`                                                                                                                                              | For `#alias:server`; for `mxc://` or `matrix.to` URLs, parse first                                                                                                                                                                                                                                                                                 |
@@ -390,8 +390,9 @@ WhatsAppWebAdapter` block in
 - **Power-level write gate:** matrix enforces that the caller can
   only set power levels ≤ their own. The matrix adapter needs to
   read the caller's own power level first via
-  `room.get_user_power_level(&client.session_meta().user_id).await?`
-  (matrix-sdk-0.18.0/src/room/mod.rs:2939; **not** `own_user_power_level`,
+  `room.get_user_power_level(&client.session_meta().expect("authenticated").user_id).await?`
+  (`session_meta()` returns `Option<&SessionMeta>` — see
+  `matrix-sdk-0.18.0/src/client/mod.rs:683`; **not** `own_user_power_level`,
   which does not exist as a 0.18 method) and fail with
   `ApiError { code: 403, message: "caller power level too low" }` if
   the requested level exceeds the caller's. This mirrors the IRC
@@ -485,8 +486,32 @@ The power levels for the relevant actions on matrix are:
 - Send m.room.retention: 100 (typically restricted to admins)
 
 The adapter's `promote_to_admin` maps to "set user's power level to
-100" — this is matrix's "admin" threshold and matches
-`GroupModeFlags.only_admins_change_info` semantics on other platforms.
+100" — this is matrix's "admin" threshold and matches the
+`GroupModeFlags.announce_only` semantics on other platforms
+(`GroupModeFlags` has `locked`, `announce_only`, `ephemeral_ttl`,
+`requires_approval` per
+`crates/octo-network/src/dot/adapters/coordinator_admin.rs:325-340`).
+
+### Power level defaults (matrix spec v1.13)
+
+The matrix spec defaults that the impl needs to honor (per
+[spec §4.6](https://spec.matrix.org/v1.13/client-server-api/#mroompower_levels)):
+
+- `ban`: 50 (default threshold)
+- `invite`: 0 (default threshold per matrix spec and ruma-events
+  `RoomPowerLevels::default()`)
+- `kick`: 50 (default threshold)
+- `events_default`: 0 (message events follow this unless overridden)
+- `state_default`: 50 (rename/topic/`m.room.join_rules` follow
+  this unless overridden per-event)
+- `users_default`: 0 (default power for non-explicit users)
+- `m.room.power_levels` itself is NOT covered by `state_default`;
+  it must be explicitly overridden in the `events` map. Typical
+  room creators set this to `100`, which is what makes
+  "promote to admin = power level 100" semantically meaningful.
+- `m.room.retention` is also a state event and follows
+  `state_default: 50` by default; rooms that want retention
+  restricted to admins add an `events` override of `100`.
 
 ## Deadline
 

@@ -6,10 +6,21 @@ Open (2026-06-27)
 
 ## RFC
 
-RFC-0850: Deterministic Overlay Transport (DOT) — §8 (CoordinatorAdmin
-extension); RFC-0861 (CoordinatorAdmin Adapter Contract Refinements,
-Accepted 2026-06-19) — refines the trait surface this mission
-implements against.
+RFC-0861 (CoordinatorAdmin Adapter Contract Refinements, Accepted
+2026-06-19) — the authoritative spec for the trait surface this
+mission implements against. The `CoordinatorAdmin` trait itself is
+defined in cipherocto's
+`crates/octo-network/src/dot/adapters/coordinator_admin.rs` (RFC-0861
+line 42: "Refines / Extends the `CoordinatorAdmin` trait defined in
+`crates/octo-network/src/dot/adapters/coordinator_admin.rs`"). The
+trait is NOT defined in RFC-0850 — RFC-0850's §8 is "Platform
+Translation Layer (PTL)" (verified by `grep -nE "^### 8"`: `### 8.
+Platform Translation Layer (PTL)` at line 645 of
+`rfcs/accepted/networking/0850-deterministic-overlay-transport.md`).
+RFC-0850 is not a parent of this mission's trait work; the only
+relevant 0850-series dependencies referenced elsewhere in this
+mission are 0850p-d (DC-Initiated Transport Group Creation) and
+0850p-e (kick detection), both of which assume the trait exists.
 
 ## Summary
 

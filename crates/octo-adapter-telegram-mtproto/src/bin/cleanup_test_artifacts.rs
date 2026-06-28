@@ -1,3 +1,4 @@
+#![cfg(feature = "real-network")]
 /// Standalone cleanup utility for MTProto live test artifacts.
 ///
 /// Usage:

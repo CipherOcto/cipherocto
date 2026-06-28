@@ -1,3 +1,4 @@
+#![cfg(feature = "real-network")]
 use grammers_tl_types as tl;
 use octo_adapter_telegram_mtproto::config::MtprotoTelegramConfig;
 use octo_adapter_telegram_mtproto::real_client::RealTelegramMtprotoClient;

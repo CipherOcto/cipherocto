@@ -27,8 +27,9 @@ use octo_adapter_telegram_mtproto::client::{
     MockTelegramMtprotoClient, MtprotoTelegramUpdate, NewMessage,
 };
 use octo_adapter_telegram_mtproto::{
-    AdapterLifecycle, AuthStateKey, MtprotoTelegramAdapter, MtprotoTelegramConfig,
+    AdapterLifecycle, MtprotoTelegramAdapter, MtprotoTelegramConfig,
 };
+use octo_adapter_telegram_mtproto::auth::AuthStateKey;
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::domain::BroadcastDomainId;
 use octo_network::dot::envelope::DeterministicEnvelope;

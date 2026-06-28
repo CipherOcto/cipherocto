@@ -460,8 +460,13 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
   downstream RFC that lists matrix as one of the six Tier-1
   platforms that should self-bootstrap a DOT group via the trait
 - `rfcs/draft/networking/0850p-e-kick-detection.md` — downstream RFC
-  that maps matrix `m.room.member` ban/leave events; depends on
-  `remove_member` and `ban_member` being available on the trait
+  that maps matrix `m.room.member` ban/leave events; depends on the
+  matrix adapter being wired up end-to-end (the trait's
+  `remove_member`/`ban_member` are NOT what this RFC needs — it
+  observes platform-side `m.room.member` state events directly via
+  the adapter's existing event pipeline, not via the trait). Listed
+  here because it's a sibling matrix-adapter concern that ships in
+  parallel with this mission.
 
 ## Mitigates
 
@@ -470,7 +475,7 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
   `CoordinatorAdmin` but the adapter doesn't bind the trait
 - Unblocks `missions/open/0855p-c-admin-attestation.md` for Matrix
 - Unblocks `rfcs/draft/networking/0850p-d-dc-initiated-group-creation.md` Matrix section
-- Unblocks `rfcs/draft/networking/0850p-e-kick-detection.md` Matrix event mapping (needs `remove_member` / `ban_member` on the trait)
+- Unblocks `rfcs/draft/networking/0850p-e-kick-detection.md` Matrix event mapping -- the kick-detection RFC itself does NOT need the trait (it observes `m.room.member` events directly), but ships in parallel and benefits from the matrix adapter being fully wired up.
 
 ## Notes
 

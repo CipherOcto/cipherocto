@@ -504,31 +504,29 @@ sequenceDiagram
 //   QuotaRouterNode.route() → destination selection → local dispatch or inner.send_best()
 ```
 
-**Module layout in octo-transport:**
+**Module layout — standalone `quota-router/` crate (leaf workspace):**
 
 ```text
-octo-transport/src/
-├── lib.rs                    # Export new modules
-├── node_transport.rs         # NodeTransport (existing, unchanged)
-├── governed_transport.rs     # GovernedTransport (existing, unchanged)
-├── bootstrap.rs              # BootstrapOrchestrator (existing, stub)
-├── discovery.rs              # TransportDiscovery (existing, unchanged)
-├── sender.rs                 # NetworkSender trait (existing, unchanged)
-├── receiver.rs               # NetworkReceiver trait (existing, unchanged)
-├── quota_router/
-│   ├── mod.rs                # QuotaRouterNode, RouterNodeConfig, lifecycle
+quota-router/                            # standalone crate, depends on octo-transport
+├── Cargo.toml
+├── src/
+│   ├── lib.rs                # QuotaRouterNode, RouterNodeConfig, lifecycle, builder
 │   ├── handler.rs            # QuotaRouterHandler (NetworkReceiver impl)
 │   ├── provider.rs           # ProviderCapacity, local provider dispatch
 │   ├── scorer.rs             # DestinationScorer, scoring function
 │   ├── gossip.rs             # CapacityGossipPayload, gossip cache
 │   ├── announce.rs           # RouterAnnouncePayload, lifecycle broadcast
 │   ├── forward.rs            # ForwardRequestPayload, ForwardResponsePayload
-│   └── request.rs            # RequestContext, Destination
+│   ├── request.rs            # RequestContext, Destination
+│   ├── metrics.rs            # QuotaRouterMetrics (Prometheus)
+│   └── ratelimit.rs          # RateLimiter, TokenBucket
+└── tests/
+    └── quota_router_adversarial.rs
 ```
 
-**Why a subdirectory, not flat files:**
+**Why a separate crate, not a module inside octo-transport:**
 
-The quota router has 8+ modules with clear cohesion (all related to mesh routing). A subdirectory groups them logically without polluting the `octo-transport` root namespace. This follows the pattern of `octo-network/src/sync/` (RFC-0862) where a subsystem gets its own module tree.
+`octo-transport` is a reusable library (RFC-0863) that provides general-purpose abstractions (`NetworkSender`, `NodeTransport`). Consumers like `quota-router`, `octo-sync`, and `octo-determin` are separate leaf-workspace crates that depend on it. This follows the established project pattern and avoids polluting the transport library with domain-specific routing logic.
 
 ### Inbound Path: QuotaRouterHandler (NetworkReceiver)
 
@@ -541,7 +539,7 @@ use crate::sender::TransportError;
 /// Convenience wrapper for envelope (de)serialization — uses `bincode` for
 /// compactness (HMAC inputs use `serde_json` per the `SignedPayload` trait impls
 /// so signatures remain stable across bincode layout changes). The choice of
-/// bincode here is internal to `octo-transport/quota_router` and not part of
+/// bincode here is internal to `quota-router` and not part of
 /// the wire protocol (the wire protocol uses DCS per RFC-0126 — see §Wire
 /// Format).
 fn serialize<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, TransportError> {
@@ -2672,17 +2670,19 @@ Expected:
 
 | File | Change |
 |------|--------|
-| `octo-transport/src/quota_router/mod.rs` | **New:** `QuotaRouterNode`, `RouterNodeConfig`, `QuotaRouterNodeBuilder`, lifecycle |
-| `octo-transport/src/quota_router/handler.rs` | **New:** `QuotaRouterHandler` — `NetworkReceiver` impl for inbound dispatch |
-| `octo-transport/src/quota_router/provider.rs` | **New:** `LocalProvider` trait, `ProviderCapacity`, `HttpLocalProvider`, `PyO3LocalProvider` |
-| `octo-transport/src/quota_router/scorer.rs` | **New:** `DestinationScorer`, `Destination`, two-phase scoring algorithm |
-| `octo-transport/src/quota_router/gossip.rs` | **New:** `CapacityGossipPayload`, `GossipCache`, gossip protocol |
-| `octo-transport/src/quota_router/announce.rs` | **New:** `RouterAnnouncePayload`, `RouterWithdrawPayload`, lifecycle broadcast |
-| `octo-transport/src/quota_router/forward.rs` | **New:** `ForwardRequestPayload`, `ForwardResponsePayload`, forwarding logic |
-| `octo-transport/src/quota_router/request.rs` | **New:** `RequestContext`, `RoutingPolicy`, `ForwardingConfig` |
+| `quota-router/Cargo.toml` | **New:** standalone crate manifest (depends on `octo-transport`) |
+| `quota-router/src/lib.rs` | **New:** `QuotaRouterNode`, `RouterNodeConfig`, `RouterNodeBuilder`, lifecycle, `QuotaRouterBootstrap` |
+| `quota-router/src/handler.rs` | **New:** `QuotaRouterHandler` — `NetworkReceiver` impl for inbound dispatch |
+| `quota-router/src/provider.rs` | **New:** `LocalProvider` trait, `ProviderCapacity`, `HttpLocalProvider`, `PyO3LocalProvider` |
+| `quota-router/src/scorer.rs` | **New:** `DestinationScorer`, `Destination`, two-phase scoring algorithm |
+| `quota-router/src/gossip.rs` | **New:** `CapacityGossipPayload`, `GossipCache`, gossip protocol |
+| `quota-router/src/announce.rs` | **New:** `RouterAnnouncePayload`, `RouterWithdrawPayload`, lifecycle broadcast |
+| `quota-router/src/forward.rs` | **New:** `ForwardRequestPayload`, `ForwardResponsePayload`, forwarding logic |
+| `quota-router/src/request.rs` | **New:** `RequestContext`, `RoutingPolicy`, `ForwardingConfig` |
+| `quota-router/src/metrics.rs` | **New:** `QuotaRouterMetrics` (Prometheus collectors) |
+| `quota-router/src/ratelimit.rs` | **New:** `RateLimiter`, `TokenBucket` |
+| `quota-router/tests/quota_router_adversarial.rs` | **New:** adversarial tests (TTL, HMAC, amplification, LRU) |
 | `octo-transport/src/bootstrap.rs` | **Fix stub:** Wire `NetworkReceiver` to collect `BOOTSTRAP_RESP` (prerequisite for Phase 3 bootstrap integration) |
-| `octo-transport/src/lib.rs` | Export `quota_router` module |
-| `octo-transport/Cargo.toml` | Add `serde` for gossip/announce serialization (if not present) |
 
 ## Future Work
 

@@ -12,16 +12,16 @@
 
 use std::sync::Arc;
 
-use octo_transport::quota_router::announce::{
+use quota_router::announce::{
     RouterAnnouncePayload, RouterWithdrawPayload, SignedPayload, WithdrawReason,
 };
-use octo_transport::quota_router::forward::{ForwardRejectReason, ForwardRequestPayload};
-use octo_transport::quota_router::gossip::CapacityGossipPayload;
-use octo_transport::quota_router::provider::{
+use quota_router::forward::{ForwardRejectReason, ForwardRequestPayload};
+use quota_router::gossip::CapacityGossipPayload;
+use quota_router::provider::{
     NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderCapacity, ProviderConfig,
     ProviderHealth, ProviderId, RouterNodeId,
 };
-use octo_transport::quota_router::PeerCache;
+use quota_router::PeerCache;
 
 // ── Test 1: TTL exhaustion ───────────────────────────────────────────
 
@@ -33,7 +33,7 @@ fn ttl_exhaustion_request_with_zero_ttl_is_marked_expired() {
     let req = ForwardRequestPayload {
         request_id: [1u8; 32],
         network_id: NetworkId([2u8; 32]),
-        context: octo_transport::quota_router::request::RequestContext {
+        context: quota_router::request::RequestContext {
             model: "gpt-4o".into(),
             preferred_provider: None,
             model_group: None,
@@ -76,8 +76,8 @@ fn ttl_exhaustion_request_with_zero_ttl_is_marked_expired() {
 /// peers are mitigated via HMAC (Test 4) + rate limiting (Test 3).
 #[test]
 fn capacity_manipulation_does_not_panic_scorer() {
-    use octo_transport::quota_router::request::{RequestContext, RoutingPolicy};
-    use octo_transport::quota_router::scorer::{select_destinations, Destination};
+    use quota_router::request::{RequestContext, RoutingPolicy};
+    use quota_router::scorer::{select_destinations, Destination};
 
     let fake = ProviderCapacity {
         provider_id: ProviderId([1u8; 32]),
@@ -130,7 +130,7 @@ fn capacity_manipulation_does_not_panic_scorer() {
 /// rate limiting.)
 #[test]
 fn amplification_capped_by_rate_limiter() {
-    use octo_transport::quota_router::ratelimit::RateLimiter;
+    use quota_router::ratelimit::RateLimiter;
 
     let rl = RateLimiter::new(10, 10);
     let mut allowed = 0;
@@ -222,7 +222,7 @@ fn hmac_forgery_rejected_on_withdraw() {
 
 #[test]
 fn hmac_forgery_rejected_on_forward_request() {
-    use octo_transport::quota_router::request::RequestContext;
+    use quota_router::request::RequestContext;
 
     let key = [42u8; 32];
     let mut fwd = ForwardRequestPayload {
@@ -312,8 +312,8 @@ fn peer_cache_overflow_lru_eviction() {
 /// providers even if their gossip claims say otherwise.
 #[test]
 fn unhealthy_provider_excluded_by_filter() {
-    use octo_transport::quota_router::request::{RequestContext, RoutingPolicy};
-    use octo_transport::quota_router::scorer::select_destinations;
+    use quota_router::request::{RequestContext, RoutingPolicy};
+    use quota_router::scorer::select_destinations;
 
     let mut sick = ProviderCapacity {
         provider_id: ProviderId([1u8; 32]),

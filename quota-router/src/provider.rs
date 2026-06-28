@@ -202,12 +202,12 @@ pub enum PeerTrust {
 pub struct LocalProviderSender;
 
 #[async_trait]
-impl crate::sender::NetworkSender for LocalProviderSender {
+impl octo_transport::sender::NetworkSender for LocalProviderSender {
     async fn send(
         &self,
         _payload: &[u8],
-        _ctx: &crate::sender::SendContext,
-    ) -> Result<(), crate::sender::TransportError> {
+        _ctx: &octo_transport::sender::SendContext,
+    ) -> Result<(), octo_transport::sender::TransportError> {
         Ok(())
     }
     fn name(&self) -> &str {

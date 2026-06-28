@@ -20,6 +20,7 @@ exclude = [
     "determin",
     "octo-sync",
     "octo-transport",
+    "quota-router",
     "sync-e2e-tests",
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",

@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::receiver::{NetworkReceiver, ReceiveContext};
-use crate::sender::{SendContext, TransportError};
+use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
+use octo_transport::sender::{SendContext, TransportError};
 
 use super::announce::{RouterAnnouncePayload, RouterWithdrawPayload, SignedPayload};
 use super::forward::{
@@ -26,7 +26,7 @@ pub struct QuotaRouterHandler {
     pub(crate) node: Arc<Mutex<QuotaRouterNode>>,
     pub(crate) provider: Arc<dyn LocalProvider>,
     pub(crate) network_key: [u8; 32],
-    pub(crate) transport: Arc<crate::node_transport::NodeTransport>,
+    pub(crate) transport: Arc<octo_transport::node_transport::NodeTransport>,
 }
 
 enum DropAction {

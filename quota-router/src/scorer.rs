@@ -185,7 +185,7 @@ fn score_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quota_router::provider::{ModelPricing, ProviderHealth, ProviderId, RouterNodeId};
+    use crate::provider::{ModelPricing, ProviderHealth, ProviderId, RouterNodeId};
 
     fn make_provider(
         name: &str,

@@ -9,7 +9,6 @@ pub mod drs_bridge;
 pub mod governed_transport;
 pub mod node_transport;
 pub mod orr_bridge;
-pub mod quota_router;
 pub mod receiver;
 pub mod sender;
 

@@ -14,13 +14,14 @@ implements against.
 ## Summary
 
 Implement `CoordinatorAdmin` for `MatrixAdapter` in
-`crates/octo-adapter-matrix-sdk`. The matrix-sdk 0.18 API exposes every
-primitive the trait needs (`room.ban_user`, `room.kick_user`,
-`room.set_power_levels`, `room.redact`, `client.create_room`,
-`room.invite_user`, `room.leave`, `room.set_join_rule`, etc.) but the
+`crates/octo-adapter-matrix-sdk`. The matrix-sdk 0.18 API exposes
+most of the primitives the trait needs (`room.ban_user`,
+`room.kick_user`, `room.update_power_levels`, `client.create_room`,
+`room.invite_user_by_id`, `room.leave`, plus state-event helpers
+`room.send_state_event` / `send_state_event_raw` for the rest) but the
 adapter currently doesn't bind any of them to the cipherocto
 admin-trait surface, so `as_coordinator_admin()` returns the default
-`None` and all 25 methods return `Err(Unimplemented)`.
+`None` and all 24 trait methods return `Err(Unimplemented)`.
 
 Today only `WhatsAppWebAdapter`, `MtprotoTelegramAdapter`, and
 `IrcAdapter` implement `CoordinatorAdmin`. RFC-0863p-a, RFC-0851p-b,
@@ -68,37 +69,49 @@ DOT group.
 
 ### Per-method mapping (Matrix SDK 0.18 → trait method)
 
-Every mapping below is a real matrix-sdk API confirmed against the
-0.18 docs; the third column lists the cipherocto-side translation.
-The matrix adapter operates against `Room` (the unified `Room` type
-post-0.18 — `Joined`/`Invited`/`Left` were merged).
+Every mapping below is a real matrix-sdk API verified against the
+vendored 0.18 sources at
+`~/.cargo/registry/src/.../matrix-sdk-0.18.0/src/room/mod.rs`,
+`matrix-sdk-base-0.18.0/src/room/mod.rs`, and the ruma-* 0.18
+crates. The third column lists the cipherocto-side translation.
+The matrix adapter operates against the unified `Room` type
+post-0.18 (`Joined`/`Invited`/`Left` were merged). `Room` derefs
+to `BaseRoom`, so getters like `name()`, `topic()`,
+`canonical_alias()`, `join_rule()`, `power_levels()` resolve
+through that deref.
+
+Where the SDK has no first-class method (join rules, member counts,
+topic read), the adapter drops to
+`room.send_state_event(...)` / `send_state_event_raw(...)` with
+the relevant `m.room.*` state event content, or to
+`room.members(RoomMemberships::JOIN).await?.len()` for counts.
 
 | Trait method                   | matrix-sdk 0.18 API                                                                                                                                                                   | Translation notes                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin_capabilities`           | (static, no SDK call)                                                                                                                                                                 | Returns truthful 22-flag report per the table below                                                                                                                                                                                                                                                                                                |
+| `admin_capabilities`           | (static, no SDK call)                                                                                                                                                                 | Returns truthful 21-flag report per the table below (one flag per trait method, matching the `Default` impl's all-false shape verified in `coordinator_admin.rs:826-849`)                                                                                                                                                                                       |
 | `platform_name`                | (static)                                                                                                                                                                              | `"matrix"`                                                                                                                                                                                                                                                                                                                                         |
-| `create_group`                 | `client.create_room(req)` with `RoomPreset::PrivateChat` + `Visibility::Private`                                                                                                      | Initial members invited via `room.invite_user_by_id`; `is_admin = true` honored via post-create `room.set_power_levels` per-user override (see M4 note below)                                                                                                                                                                                      |
+| `create_group`                 | `client.create_room(req)` with `preset: Some(RoomPreset::PrivateChat)` + `visibility: Visibility::Private` — both re-exported from `matrix_sdk::ruma::api::client::room::create_room::v3`                                                          | Initial members invited via `room.invite_user_by_id(user_id)`; `is_admin = true` honored via post-create `room.update_power_levels(vec![(user_id, 100)])` (see M4 note below)                                                                                                                                                                            |
 | `leave_group`                  | `room.leave().await`                                                                                                                                                                  | Idempotent — SDK returns `Err(WrongRoomState)` if already left; treat as `Ok(())` per the trait's `leave_group` doc-comment                                                                                                                                                                                                                        |
-| `destroy_group`                | `room.leave().await` then `room.disable_encryption().await` (matrix best-effort "destroy" — rooms persist server-side)                                                                | Follow the trait's `destroy_group` doc-comment: "leave the group and revoke the invite link; the group ID may still be queryable after `destroy_group` returns `Ok(())`"                                                                                                                                                                           |
-| `add_member`                   | `room.invite_user_by_id(user_id).await` then conditional `room.set_power_levels` for `is_admin = true`                                                                                | `AddMemberOutput { added, promoted }` partial-success per RFC-0861 H6: `added` from invite result, `promoted` from optional set_power_levels                                                                                                                                                                                                       |
+| `destroy_group`                | `room.leave().await` (matrix has no "destroy room" primitive and no `disable_encryption` API — only `enable_encryption` exists at `matrix-sdk-0.18.0/src/room/mod.rs:2344`)              | Follow the trait's `destroy_group` doc-comment: "leave the group and revoke the invite link; the group ID may still be queryable after `destroy_group` returns `Ok(())`". `can_destroy: false` in the capability report — the SDK provides no tear-down primitive.                                                                                                                                                |
+| `add_member`                   | `room.invite_user_by_id(user_id).await` then conditional `room.update_power_levels(vec![(user_id, 100)])` for `is_admin = true`                                                       | `AddMemberOutput { added, promoted }` partial-success per RFC-0861 H6: `added` from invite result, `promoted` from optional update_power_levels                                                                                                                                                                                                                                                                    |
 | `remove_member`                | `room.kick_user(user_id, reason)`                                                                                                                                                     | SDK requires the caller to have power level ≥ kick threshold                                                                                                                                                                                                                                                                                       |
-| `ban_member`                   | `room.ban_user(user_id, reason)`                                                                                                                                                      | Indefinite (`duration: None`) is the matrix default — `m.room.banned` state event has no expiry field; `duration: Some(_)` returns `Err(ApiError { code: 400, message: "matrix ban is indefinite-only" })` per the trait's "TTL bounds" precedent (RFC-0861 §3 M1)                                                                                 |
-| `promote_to_admin`             | `room.set_power_levels` with per-user override                                                                                                                                        | Power level `100` is the matrix "admin" level (matches `users_default` for admin-only rooms); get current `PowerLevelsEventContent` via `room.power_levels().await?`, mutate, send                                                                                                                                                                 |
-| `demote_from_admin`            | `room.set_power_levels` with per-user override removed                                                                                                                                | Drop the user's specific entry from `users` map; fall back to `users_default`                                                                                                                                                                                                                                                                      |
-| `approve_join_request`         | `room.invite_user_by_id` for invite-only rooms; `room.accept_invite` for `m.room.member` with `membership: invite` events                                                             | For invite-only rooms, the SDK's invite flow auto-accepts; for restricted rooms, use `room.accept_invite()` on the pending `m.room.member` event                                                                                                                                                                                                   |
+| `ban_member`                   | `room.ban_user(user_id, reason)`                                                                                                                                                      | SDK signature is `Room::ban_user(&UserId, Option<&str>) -> Result<()>` -- no `duration` parameter (matrix-sdk-0.18.0/src/room/mod.rs:1973). The indefinite-only check is enforced at the adapter layer: if `duration: Some(_)`, return `Err(ApiError { code: 400, message: "matrix ban is indefinite-only" })` without calling the SDK (RFC-0861 §3 M1). The wire-format reason is that `m.room.banned` has no expiry field.                                                                                                                                                                                                                                                                       |
+| `promote_to_admin`             | `room.update_power_levels(vec![(user_id, 100)])`                                                                                                                                      | Power level `100` is the matrix "admin" level (matches `users_default` for admin-only rooms). The SDK handles reading the current `RoomPowerLevels`, mutating `users`, and sending `m.room.power_levels` atomically (matrix-sdk-0.18.0/src/room/mod.rs:2884-2894).                                                                                                                                          |
+| `demote_from_admin`            | `room.update_power_levels(vec![(user_id, users_default)])`                                                                                                                            | The SDK auto-removes the user's per-user override when the new level equals `users_default` (matrix-sdk-0.18.0/src/room/mod.rs:2887-2893). Caller must read `users_default` first via `room.power_levels().await?.users_default`.                                                                                                                                                                                  |
+| `approve_join_request`         | For invite-only rooms: `room.invite_user_by_id(user_id)` (SDK's invite flow auto-accepts). For `JoinRule::Knock` rooms: **`Room::accept_invite` does not exist in 0.18**; admin acceptance goes through `client.join_room_by_id(room_id)` on behalf of the joiner (post `m.room.member` knock event) | Document the SDK gap (no `Room::accept_invite`) in the impl doc-comment.                                                                                                                                                                                                       |
 | `rename_group`                 | `room.set_name(name).await`                                                                                                                                                           | Sends `m.room.name` state event                                                                                                                                                                                                                                                                                                                    |
-| `set_group_description`        | `room.set_topic(topic).await`                                                                                                                                                         | Sends `m.room.topic` state event                                                                                                                                                                                                                                                                                                                   |
-| `set_locked`                   | `room.set_join_rule(JoinRule::Invite)` (true) / `JoinRule::Public` (false)                                                                                                            | "Locked" = invite-only on matrix; sets `m.room.join_rules` state event                                                                                                                                                                                                                                                                             |
-| `set_announce`                 | `room.set_power_levels` with `events.default = 100` (true) / `0` (false)                                                                                                              | Sends `m.room.power_levels` state event with mutated `events_default`                                                                                                                                                                                                                                                                              |
+| `set_group_description`        | `room.set_room_topic(topic).await`                                                                                                                                                    | Sends `m.room.topic` state event                                                                                                                                                                                                                                                                                                                   |
+| `set_locked`                   | `room.send_state_event(JoinRulesEventContent::new(JoinRule::Invite))` (true) / `JoinRule::Public` (false). **No `set_join_rule` method exists in 0.18.**                                              | "Locked" = invite-only on matrix; sets `m.room.join_rules` state event. Use `ruma::events::room::join_rules::{JoinRule, JoinRulesEventContent}` (re-exported via `matrix_sdk::ruma::events::room::join_rules`).                                                                                                                                                  |
+| `set_announce`                 | Read `room.power_levels().await?`, set `pl.events_default = 100` (true) / `0` (false), then `room.send_state_event(RoomPowerLevelsEventContent::try_from(pl)?).await?`. **Do not use `update_power_levels`** (which is per-user only).            | Sends `m.room.power_levels` state event with mutated `events_default` field. Field name on the `RoomPowerLevels` wrapper struct is `events_default`, not `events.default`.                                                                                                                                                                                |
 | `set_ephemeral`                | `room.send_state_event_raw(...)` for `m.room.retention` state event                                                                                                                   | TTL is `state_default` (ms); `None` = clear the state event entirely (matrix can disable retention once enabled, so the trait contract's "soft disable" precedent on `set_ephemeral` holds). Clamp `as_millis() > i64::MAX` to `ApiError { code: 400, ... }` per RFC-0861 §3 M1                                                                    |
-| `set_require_approval`         | `room.set_join_rule(JoinRule::Knock)` (true) / `JoinRule::Invite` or `Public` (false)                                                                                                 | Matrix's "knock" join rule is the closest mapping — joiners send `m.room.member` with `membership: knock`, admins `accept_invite` them. **Truthful capability caveat:** `can_require_approval` is `true` on rooms where the homeserver supports `m.room.join_rules: knock`; report `false` on homeservers that don't (e.g., older Synapse configs) |
-| `list_own_groups`              | `client.joined_rooms()` + per-room `room.name()` and `room.member_count()`                                                                                                            | Returns `Vec<GroupHandle>` with `is_admin = (own power_level >= 100)` per `room.own_user_power_level().await`                                                                                                                                                                                                                                      |
+| `set_require_approval`         | `room.send_state_event(JoinRulesEventContent::new(JoinRule::Knock))` (true) / `JoinRule::Invite` or `Public` (false)                                                                 | Matrix's "knock" join rule is the closest mapping -- joiners send `m.room.member` with `membership: knock`, admins accept them. **Truthful capability caveat:** `can_require_approval` is `true` on rooms where the homeserver supports `m.room.join_rules: knock`; report `false` on homeservers that don't (e.g., older Synapse configs) |
+| `list_own_groups`              | `client.joined_rooms()` + per-room `room.name()` and `room.members(RoomMemberships::JOIN).await?.len()` (no `member_count` / `joined_members_count` method exists)                       | Returns `Vec<GroupHandle>` with `is_admin = (own power_level >= 100)`. **No `own_user_power_level` method exists** -- read own power via `room.get_user_power_level(&client.session_meta().user_id).await?` (matrix-sdk-0.18.0/src/room/mod.rs:2939) and unwrap the `UserPowerLevel::Int(_)` arm.                                                                                                                                                |
 | `list_own_groups_with_invites` | Default impl delegates to `list_own_groups` + per-group `room.canonical_alias()` (most useful invite ref on matrix)                                                                   | Override the trait's default `list_own_groups_with_invites` to populate `invite_url` with `#alias:server`                                                                                                                                                                                                                                          |
-| `get_group_metadata`           | `room.name()`, `room.topic()`, `room.power_levels()`, `room.joined_members_count()`, `room.canonical_alias()`                                                                         | Map `room.power_levels().await?` → `admins: Vec<PeerId>` (filter members where power level ≥ 100); full member list via `room.members(...)`                                                                                                                                                                                                        |
+| `get_group_metadata`           | `room.name()`, `room.topic()`, `room.power_levels()`, `room.members(RoomMemberships::JOIN).await?.len()` (no `joined_members_count` method), `room.canonical_alias()`                       | Map `room.power_levels().await?` to `admins: Vec<PeerId>` (filter members where power level >= 100); full member list via `room.members(RoomMemberships::JOIN)`                                                                                                                                                                                                  |
 | `resolve_invite`               | `client.resolve_room_alias(alias).await`                                                                                                                                              | For `#alias:server`; for `mxc://` or `matrix.to` URLs, parse first                                                                                                                                                                                                                                                                                 |
 | `join_by_invite`               | `client.join_room_by_id(room_id).await` (room_id from alias resolution)                                                                                                               | Distinct from `join_by_id` because the SDK has a first-class join path; the alias-resolution + join is the matrix "join via invite" flow                                                                                                                                                                                                           |
 | `join_by_id`                   | `client.join_room_by_id(room_id).await`                                                                                                                                               | Matrix aliases are first-class — `!roomid:server` is joinable by ID; `#alias:server` resolves to a room_id and joins. Distinct from `join_by_invite` (which uses `JoinRule::Knock` semantics)                                                                                                                                                      |
-| `transfer_ownership`           | Multi-step dance (matrix has no atomic transfer): `room.set_power_levels` setting new owner to 100, then `room.set_power_levels` setting self to `users_default`, then `room.leave()` | `can_transfer_ownership = false` (matrix has no first-class transfer, per the trait's `transfer_ownership` doc-comment)                                                                                                                                                                                                                            |
+| `transfer_ownership`           | Multi-step dance (matrix has no atomic transfer): `room.update_power_levels(vec![(new_owner, 100)])`, then `room.update_power_levels(vec![(self, users_default)])`, then `room.leave()` | `can_transfer_ownership = false` (matrix has no first-class transfer, per the trait's `transfer_ownership` doc-comment)                                                                                                                                                                                                                            |
 
 ### Truthful `admin_capabilities()` report
 
@@ -121,7 +134,7 @@ AdminCapabilityReport {
     can_ban: true,               // m.room.banned state event
     can_promote: true,           // via per-user power level override
     can_demote: true,
-    can_approve_join: true,      // KnockRule + accept_invite
+    can_approve_join: true,      // JoinRule::Knock; client.join_room_by_id on behalf of joiner
     // C. Mode
     can_rename: true,
     can_describe: true,
@@ -179,9 +192,11 @@ to a truthful list of supported methods, with a note that
 ### Phase 1 — impl + unit tests
 
 - [ ] `octo-adapter-matrix-sdk/src/lib.rs` gains an `impl
-    CoordinatorAdmin for MatrixAdapter` block with all 25 methods
-      overridden (using the per-method table above as the
-      authoritative spec)
+    CoordinatorAdmin for MatrixAdapter` block with all 24 trait
+      methods overridden (22 `async fn` + 2 sync `fn`
+      `admin_capabilities` and `platform_name`; per the trait body in
+      `crates/octo-network/src/dot/adapters/coordinator_admin.rs:428-776`,
+      using the per-method table above as the authoritative spec)
 - [ ] `as_coordinator_admin` is overridden in the existing
       `PlatformAdapter` impl to return `Some(self)`; the override
       mirrors the 4-line pattern on `MtprotoTelegramAdapter`
@@ -204,9 +219,24 @@ to a truthful list of supported methods, with a note that
     octo-adapter-matrix-sdk` — zero warnings
 - [ ] `cargo fmt --check` — clean
 - [ ] `cargo test --lib -p octo-adapter-matrix-sdk` — all existing
-      34 unit tests still pass; new admin unit tests pass
+      19 unit tests still pass (18 `#[test]` + 1 `#[tokio::test]` in
+      `mod tests` at `lib.rs:1406`); new admin unit tests pass
 
 ### Phase 2 — live tests
+
+> **Coverage gap to call out before scoping.** The trait has 24
+> methods across 5 sections (A. Lifecycle = 3, B. Membership = 6, C.
+> Mode = 6, D. Discovery = 6, E. Handoff = 1). The six new live
+> tests below cover at most 14 of those 24 methods (C is fully
+> covered; A covers 1/3; B covers 4/6 -- missing `add_member` and
+> `approve_join_request`; D covers 2/6 -- missing
+> `list_own_groups_with_invites`, `resolve_invite`, `join_by_invite`,
+> `join_by_id`; E covers 0/1). The full-coverage live suite would
+> need **12 tests, not 6** -- mx09–mx14 are the **first 6** of that
+> 12-test plan. The remaining 6 (mx15–mx20) are explicitly listed
+> below as a follow-on mission, NOT part of this mission's
+> acceptance gate. Phase 1's unit tests in `mod tests` cover the
+> uncovered-method error paths at the adapter layer.
 
 - [ ] `tests/live_matrix_test.rs` gains six new tests:
       `mx09_create_group`, `mx10_ban_kick`, `mx11_promote_demote`,
@@ -216,19 +246,34 @@ to a truthful list of supported methods, with a note that
       uses the `octo-test-mx-mx{nn}-{ts}` room-naming convention so
       the pre-scan guard sweeps stale rooms on the next run
 - [ ] Each live test exercises one section of the trait (mx09 → A.
-      Lifecycle; mx10 → B. Membership; mx11 → B. Membership continues;
-      mx12 → C. Mode; mx13 → D. Discovery; mx14 → C. Mode continues).
-      The trait doc-block on `CoordinatorAdmin`'s module header lists
-      the trait's section coverage, and these tests map 1:1 to those
-      sections
+      Lifecycle [partial: `create_group` only]; mx10 → B. Membership
+      [partial: `remove_member` + `ban_member`]; mx11 → B. Membership
+      continues [partial: `promote_to_admin` + `demote_from_admin`];
+      mx12 → C. Mode [full: rename, describe, lock, announce,
+      ephemeral]; mx13 → D. Discovery [partial: `list_own_groups` +
+      `get_group_metadata`]; mx14 → C. Mode continues [full:
+      `set_require_approval`]). Section coverage is NOT 1:1 -- see
+      the coverage-gap note above for the full 24-method breakdown
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
-    --test live_matrix_test -- --ignored --nocapture` — all 14
+      --test live_matrix_test -- --ignored --nocapture` — all 14
       tests pass when run with `--test-threads=1` (live tests must
-      run serially; matrix.org session is shared). Acceptance: mx01
+      run serially; matrix.org session is shared). Acceptance: mx00
       through mx14 all green; no flake across 3 consecutive full-suite
-      runs
+      runs. **Sync timeouts**: new mx09–mx14 tests use the 60s cold-sync
+      budget (per commit `9c5c4ee1`'s production fix), not the 5s
+      budget the pre-scan guard still uses -- the pre-scan is a
+      best-effort warm-up only
 - [ ] `docs/research/coordinator-admin-actions.md` §3 table updated
       per the M10 follow-on doc above
+- [ ] **Follow-on mission `0850h-e` is filed** at
+      `missions/open/0850h-e-matrix-coordinator-admin-coverage.md`
+      (or similar) for the remaining 6 live tests:
+      `mx15_add_member`, `mx16_approve_join_request`,
+      `mx17_list_own_groups_with_invites`, `mx18_resolve_invite`,
+      `mx19_join_by_invite_and_id`, `mx20_transfer_ownership`. This
+      mission creates that follow-on file as a stub with the same
+      pre-scan + naming-convention pattern, but does NOT block on
+      implementing it
 
 ### Phase 3 — cross-adapter integration
 
@@ -293,22 +338,36 @@ WhatsAppWebAdapter` block in
   `PlatformAdapterError::Unreachable { platform: "matrix", reason:
 "room not in joined_rooms" }`. This pattern is already used in the
   live tests' cleanup blocks.
-- **Power-level read pattern:** `room.power_levels().await?` returns
-  the current `PowerLevelsEventContent`. To mutate, clone and edit:
+- **Power-level read pattern:** `room.power_levels().await?`
+  returns `RoomPowerLevels` (the wrapper struct in
+  `ruma_events::room::power_levels`, NOT `RoomPowerLevelsEventContent`).
+  To read per-user overrides directly, use
+  `room.get_user_power_level(user_id).await?` which returns
+  `UserPowerLevel` (the `Int(_)` arm is the level; `Infinite` means
+  room creator). For per-user overrides use the SDK helper
+  ```rust
+  room.update_power_levels(vec![(user_id, 100)]).await?;
+  ```
+  which handles reading the current state, mutating the `users`
+  map, and sending the `m.room.power_levels` state event atomically
+  (matrix-sdk-0.18.0/src/room/mod.rs:2884-2894). For
+  `events_default` mutations (used by `set_announce`), do NOT use
+  `update_power_levels` -- instead mutate the wrapper struct
+  directly and send via `send_state_event`:
   ```rust
   let mut pl = room.power_levels().await?;
-  pl.users.insert(user_id, 100);
-  room.set_power_levels(pl).await?;
+  pl.events_default = 100; // announce_only = true
+  room.send_state_event(RoomPowerLevelsEventContent::try_from(pl)?).await?;
   ```
-  The `room.set_power_levels` call takes the new content and sends
-  the state event.
 - **Power-level write gate:** matrix enforces that the caller can
   only set power levels ≤ their own. The matrix adapter needs to
-  read the caller's own power level first (`room.own_user_power_level
-.await`) and fail with `ApiError { code: 403, message: "caller power
-level too low" }` if the requested level exceeds the caller's.
-  This mirrors the IRC `ERR_CHANOPRIVSNEEDED` handling at RFC-0861
-  M7.
+  read the caller's own power level first via
+  `room.get_user_power_level(&client.session_meta().user_id).await?`
+  (matrix-sdk-0.18.0/src/room/mod.rs:2939; **not** `own_user_power_level`,
+  which does not exist as a 0.18 method) and fail with
+  `ApiError { code: 403, message: "caller power level too low" }` if
+  the requested level exceeds the caller's. This mirrors the IRC
+  `ERR_CHANOPRIVSNEEDED` handling at RFC-0861 M7.
 - **H4 — redaction is not in the trait.** Note: `room.redact()` is
   a matrix-sdk API but is NOT a `CoordinatorAdmin` method — it's
   per-message operation, not group-management. Any caller needing

@@ -468,14 +468,24 @@ WhatsAppWebAdapter` block in
 - **No-op update for the existing live tests.** The pre-scan guard
   in `tests/live_matrix_test.rs` already sweeps `octo-test-mx-*`
   rooms, so the new mx09-mx14 tests compose with the existing
-  mx04_05_06_envelope_round_trip, mx07, and mx08 tests (which all
-  use the `octo-test-mx-mx{nn}-{ts}` naming convention) without
-  changes to the test harness. The room naming convention
+  mx04_05_06_envelope_round_trip (line 350: `format!("octo-test-mx-mx04-{ts}")`),
+  mx07_media_round_trip (line 447: `format!("octo-test-mx-mx07-{ts}")`),
+  and mx08_shutdown tests without changes to the test harness.
+  Only mx04_05_06 and mx07 actually use the
+  `octo-test-mx-mx{nn}-{ts}` naming convention -- mx08_shutdown does
+  NOT create a room (it exercises `adapter.shutdown()` and
+  asserts `self_handle()` returns `None` post-shutdown, per the
+  function body at lines 493-516), so the pre-scan guard has
+  nothing to clean up after it. The room naming convention
   `octo-test-mx-mx{nn}-{ts}` (per-test `mx{nn}` prefix + Unix-ms
   `ts` suffix) keeps the sweep scoped to each test's own rooms.
   The earlier mx00-mx03 tests don't use this naming convention
   (they're sanity/build tests that don't create rooms) so they're
-  not in scope for the pre-scan guard.
+  not in scope for the pre-scan guard. Note: the unrelated
+  `cleanup_stale_test_rooms` helper test at line 526 calls
+  `leave_stale_test_rooms(&client, "octo-test-mx-")` (the prefix
+  sweep itself, line 534) -- this is the cleanup caller, not a
+  test that creates `octo-test-mx-mx{nn}-{ts}` rooms.
 
 ## Cross-references
 

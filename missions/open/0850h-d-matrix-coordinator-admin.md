@@ -190,10 +190,15 @@ contract), but it must explicitly note:
 
 - `can_create`, `can_join_by_id`, `can_join_by_invite`, `can_leave`,
   `can_add_member`, `can_remove_member`, `can_ban`, `can_promote`,
-  `can_demote`, `can_rename`, `can_describe`, `can_lock`,
-  `can_announce`, `can_set_ephemeral`, `can_require_approval`,
-  `can_list_own_groups`, `can_list_own_groups_with_invites`,
-  `can_get_metadata`, `can_resolve_invite` are `true`.
+  `can_demote`, `can_approve_join`, `can_rename`, `can_describe`,
+  `can_lock`, `can_announce`, `can_set_ephemeral`,
+  `can_require_approval`, `can_list_own_groups`, `can_get_metadata`,
+  `can_resolve_invite` are `true` (19 flags). NOTE: there is NO
+  `can_list_own_groups_with_invites` flag in the
+  `AdminCapabilityReport` struct -- the `list_own_groups_with_invites`
+  trait method shares the `list_own_groups` capability, since the
+  trait's default impl delegates to `list_own_groups` (see
+  `coordinator_admin.rs:684-690`).
 - `can_destroy` and `can_transfer_ownership` are `false` (matrix
   has no first-class primitive for either).
 - `can_approve_join` is `true` **with a caveat**: the adapter

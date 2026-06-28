@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 /// Context for sending a payload through the transport layer.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SendContext {
     /// Mission-scoped identifier (zero if not mission-scoped).
     pub mission_id: [u8; 32],

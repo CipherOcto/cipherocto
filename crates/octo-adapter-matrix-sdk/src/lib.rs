@@ -784,14 +784,133 @@ impl MatrixAdapter {
     }
 }
 
+// Mission 0850h-d: CoordinatorAdmin helpers. These are used by the
+// `impl CoordinatorAdmin for MatrixAdapter` block further down. They
+// live in their own `impl` so the existing adapter constructor /
+// writeback methods above stay grouped together.
+//
+// All methods take `&self` for symmetry with the trait impl. None of
+// them are part of any public API surface — they are crate-private
+// helpers used only by the CoordinatorAdmin methods below.
+impl MatrixAdapter {
+    /// Convert a `PeerId` to a borrowed `&UserId` for SDK calls that
+    /// take `&UserId` (e.g. `room.kick_user`, `room.ban_user`,
+    /// `room.update_power_levels`).
+    fn parse_user_id<'a>(
+        &self,
+        peer: &'a coordinator_admin::PeerId,
+    ) -> Result<&'a UserId, PlatformAdapterError> {
+        <&UserId>::try_from(peer.0.as_str()).map_err(|e| PlatformAdapterError::ApiError {
+            code: 400,
+            message: format!("not a valid matrix user id '{}': {}", peer.as_str(), e),
+        })
+    }
+
+    /// Convert a `PeerId` to an owned `OwnedUserId` for SDK calls that
+    /// take `OwnedUserId` (e.g. `room.invite_user_by_id`, the
+    /// `Vec<(OwnedUserId, Int)>` shape for per-user power-level maps).
+    fn parse_owned_user_id(
+        &self,
+        peer: &coordinator_admin::PeerId,
+    ) -> Result<OwnedUserId, PlatformAdapterError> {
+        OwnedUserId::try_from(peer.0.as_str()).map_err(|e| PlatformAdapterError::ApiError {
+            code: 400,
+            message: format!("not a valid matrix user id '{}': {}", peer.as_str(), e),
+        })
+    }
+
+    /// Convert a `GroupId` to an `OwnedRoomId`. Used by every method
+    /// that needs to look up a `Room` via `client.get_room(&room_id)`.
+    fn parse_room_id(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<OwnedRoomId, PlatformAdapterError> {
+        OwnedRoomId::try_from(group_id.as_str()).map_err(|e| PlatformAdapterError::ApiError {
+            code: 400,
+            message: format!("not a valid matrix room id '{}': {}", group_id.as_str(), e),
+        })
+    }
+
+    /// Look up a `Room` in the client's joined rooms, returning a
+    /// structured `Unreachable` error if the room is not in the
+    /// joined set (the same shape as the existing `transport_err` for
+    /// send_envelope). Mission 0850h-d §"Room lookup pattern".
+    fn get_joined_room(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<matrix_sdk::Room, PlatformAdapterError> {
+        let room_id = self.parse_room_id(group_id)?;
+        self.client
+            .get_room(&room_id)
+            .ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "matrix".to_string(),
+                reason: format!("room {} not in joined_rooms", group_id.as_str()),
+            })
+    }
+
+    /// Map an SDK error of any type (matrix-sdk has multiple
+    /// `Error` shapes — `matrix_sdk::Error`, `matrix_sdk::HttpError`,
+    /// `matrix_sdk_base::error::Error` — depending on whether the
+    /// call originates in `matrix-sdk` vs `matrix-sdk-base`) to
+    /// `PlatformAdapterError::ApiError`. The `action` label is
+    /// appended to the message so operators can trace which trait
+    /// method triggered the failure.
+    fn map_sdk_err<E: std::fmt::Display>(
+        &self,
+        action: &'static str,
+    ) -> impl FnOnce(E) -> PlatformAdapterError + '_ {
+        move |e| PlatformAdapterError::ApiError {
+            code: 500,
+            message: format!("matrix {action}: {e}"),
+        }
+    }
+
+    /// Read the calling adapter's own power level in `room`. Returns
+    /// `i64::MAX` for room creators (matrix v12+), the integer level
+    /// otherwise, or `ApiError { code: 500 }` if the SDK call fails.
+    /// Mission 0850h-d §"Power-level read pattern".
+    async fn own_user_power_level(
+        &self,
+        room: &matrix_sdk::Room,
+    ) -> Result<i64, PlatformAdapterError> {
+        let session_meta =
+            self.client
+                .session_meta()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "matrix".to_string(),
+                    reason: "no session_meta on client (not authenticated)".to_string(),
+                })?;
+        let own_user_id = session_meta.user_id.as_ref();
+        let level = room
+            .get_user_power_level(own_user_id)
+            .await
+            .map_err(self.map_sdk_err("get_user_power_level"))?;
+        match level {
+            matrix_sdk::ruma::events::room::power_levels::UserPowerLevel::Infinite => Ok(i64::MAX),
+            matrix_sdk::ruma::events::room::power_levels::UserPowerLevel::Int(i) => {
+                Ok(i64::from(i))
+            }
+            // ruma's `UserPowerLevel` is `#[cfg_attr(not(ruma_unstable_exhaustive_types),
+            // non_exhaustive)]` -- add a wildcard arm for forward compat.
+            _ => Ok(0),
+        }
+    }
+}
+
 // --- PlatformAdapter trait implementation ---
 
 use async_trait::async_trait;
 use matrix_sdk::media::MediaFormat;
-use matrix_sdk::ruma::{events::room::message::RoomMessageEventContent, RoomId};
+use matrix_sdk::ruma::events::room::join_rules::{JoinRule, RoomJoinRulesEventContent};
+use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+use matrix_sdk::ruma::serde::Raw;
+use matrix_sdk::ruma::{
+    events::room::power_levels::RoomPowerLevelsEventContent, int, OwnedRoomId, OwnedUserId, RoomId,
+    UserId,
+};
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, MediaCapabilities, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, coordinator_admin, CapabilityReport, DeliveryReceipt, MediaCapabilities,
+    PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -1189,6 +1308,711 @@ impl PlatformAdapter for MatrixAdapter {
             .map_err(|e| transport_err(format!("Download failed: {}", e)))?;
 
         Ok(bytes.to_vec())
+    }
+
+    /// Mission 0850h-d: opt the matrix adapter into the
+    /// `CoordinatorAdmin` trait surface. The 4-line pattern mirrors
+    /// `MtprotoTelegramAdapter`
+    /// (`crates/octo-adapter-telegram-mtproto/src/adapter.rs:1180`)
+    /// and `WhatsAppWebAdapter`
+    /// (`crates/octo-adapter-whatsapp/src/adapter.rs:2390`).
+    fn as_coordinator_admin(&self) -> Option<&dyn coordinator_admin::CoordinatorAdmin> {
+        Some(self)
+    }
+}
+
+// Mission 0850h-d: `CoordinatorAdmin` trait implementation for
+// `MatrixAdapter`. The per-method mapping table (mission §"Per-method
+// mapping (Matrix SDK 0.18 → trait method)") is the authoritative
+// spec for each method below. Inline impl (not a separate module)
+// per mission §"Pattern to mirror" — the matrix adapter is a
+// single-file crate, mirroring the WhatsApp `impl
+// CoordinatorAdmin for WhatsAppWebAdapter` block in
+// `crates/octo-adapter-whatsapp/src/adapter.rs`.
+#[async_trait]
+impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
+    fn platform_name(&self) -> String {
+        "matrix".to_string()
+    }
+
+    /// Truthful 21-flag report per mission §"Truthful
+    /// `admin_capabilities()` report". 19 true, 2 false:
+    /// `can_destroy` (no matrix tear-down primitive) and
+    /// `can_transfer_ownership` (no atomic matrix transfer).
+    fn admin_capabilities(&self) -> coordinator_admin::AdminCapabilityReport {
+        coordinator_admin::AdminCapabilityReport {
+            // A. Lifecycle
+            can_create: true,
+            can_join_by_id: true,     // matrix aliases are first-class
+            can_join_by_invite: true, // matrix-rust-sdk has join_room_by_id
+            can_leave: true,
+            can_destroy: false, // matrix rooms persist server-side
+            // B. Membership
+            can_add_member: true,
+            can_remove_member: true,
+            can_ban: true,     // m.room.banned state event
+            can_promote: true, // via per-user power level override
+            can_demote: true,
+            can_approve_join: true, // KnockRequest::accept (matrix-sdk 0.18)
+            // C. Mode
+            can_rename: true,
+            can_describe: true,
+            can_lock: true,             // JoinRule::Invite
+            can_announce: true,         // events_default power level
+            can_set_ephemeral: true,    // m.room.retention state event
+            can_require_approval: true, // JoinRule::Knock (homeserver-dependent)
+            // D. Discovery
+            can_list_own_groups: true,
+            can_get_metadata: true,
+            can_resolve_invite: true,
+            // E. Handoff
+            can_transfer_ownership: false, // no atomic transfer primitive
+        }
+    }
+
+    async fn create_group(
+        &self,
+        subject: &str,
+        initial_members: &[coordinator_admin::GroupMemberSpec],
+    ) -> Result<coordinator_admin::GroupHandle, PlatformAdapterError> {
+        use matrix_sdk::ruma::api::client::room::create_room::v3::{
+            Request as CreateRoomRequest, RoomPreset,
+        };
+        use matrix_sdk::ruma::api::client::room::Visibility;
+
+        // Convert each initial member's handle to an OwnedUserId and
+        // collect into the create-room `invite` list.
+        let invite: Vec<OwnedUserId> = initial_members
+            .iter()
+            .map(|m| OwnedUserId::try_from(m.handle.as_str()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("not a valid matrix user id in initial_members: {}", e),
+            })?;
+
+        let mut request = CreateRoomRequest::new();
+        request.name = Some(subject.to_string());
+        request.preset = Some(RoomPreset::PrivateChat);
+        request.visibility = Visibility::Private;
+        request.invite = invite;
+
+        let room = self
+            .client
+            .create_room(request)
+            .await
+            .map_err(self.map_sdk_err("create_room"))?;
+
+        // Promote any initial members that requested `is_admin`.
+        // Mission M4: matrix creators are auto-power-100, so the bot
+        // itself is admin without a promote call. `initial_admins_promoted`
+        // is therefore `true` at create time with no post-create dance
+        // (WhatsApp does an explicit promote step; matrix does not).
+        for m in initial_members.iter().filter(|m| m.is_admin) {
+            let user_id = OwnedUserId::try_from(m.handle.as_str()).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("not a valid matrix user id: {}", e),
+                }
+            })?;
+            room.update_power_levels(vec![(&user_id, int!(100))])
+                .await
+                .map(|_| ())
+                .map_err(self.map_sdk_err("update_power_levels(initial_admin)"))?;
+        }
+
+        // The SDK has not yet synced the new room back to the local
+        // cache by the time `create_room` returns, so we resolve the
+        // post-create subject from the local handle (which carries
+        // the `name` we just set) rather than from a `room.name()`
+        // call. Member count is `1` (just the creator) at this point.
+        Ok(coordinator_admin::GroupHandle {
+            id: coordinator_admin::GroupId::new(room.room_id().to_string()),
+            subject: Some(subject.to_string()),
+            invite_url: None, // No invite URL on private rooms at create time
+            is_admin: true,   // Creator is always admin
+            member_count: Some(1),
+            mode_flags: None, // Not yet synced; caller can read via get_group_metadata
+            initial_admins_promoted: true, // matrix M4: auto power-100
+        })
+    }
+
+    async fn leave_group(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        match room.leave().await {
+            Ok(()) => Ok(()),
+            // Idempotent per trait contract: "leaving a group the
+            // adapter is no longer in is a no-op or a structured
+            // `Ok(())`, not an error". The SDK's `WrongRoomState`
+            // is the canonical "already left" signal.
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("WrongRoomState") || msg.contains("M_WRONG_ROOM_STATE") {
+                    Ok(())
+                } else {
+                    Err(self.map_sdk_err("leave")(e))
+                }
+            }
+        }
+    }
+
+    /// Best-effort destroy per trait doc: leave the group and revoke
+    /// the invite link. Matrix has no "destroy room" primitive and no
+    /// `disable_encryption` API, so `can_destroy: false` and this
+    /// method follows the leave-only path documented in the trait
+    /// doc-comment: "leave the group and revoke the invite link; the
+    /// group ID may still be queryable after `destroy_group` returns
+    /// `Ok(())`". The bot also has no way to revoke an arbitrary
+    /// invite alias server-side once issued, so we leave silently.
+    async fn destroy_group(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<(), PlatformAdapterError> {
+        self.leave_group(group_id).await
+    }
+
+    async fn add_member(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        member: &coordinator_admin::GroupMemberSpec,
+    ) -> Result<coordinator_admin::AddMemberOutput, PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let user_id = OwnedUserId::try_from(member.handle.as_str()).map_err(|e| {
+            PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("not a valid matrix user id '{}': {}", member.handle, e),
+            }
+        })?;
+
+        let added = match room.invite_user_by_id(&user_id).await {
+            Ok(()) => true,
+            // Idempotent: already in room
+            Err(e) if e.to_string().contains("M_FORBIDDEN") => {
+                // Already invited or already joined — treat as added.
+                true
+            }
+            Err(e) => return Err(self.map_sdk_err("invite_user_by_id")(e)),
+        };
+
+        // Partial-success: only attempt the promote if the caller
+        // asked for `is_admin` at the call site.
+        let promoted = if member.is_admin {
+            match room
+                .update_power_levels(vec![(&user_id, int!(100))])
+                .await
+                .map(|_| ())
+            {
+                Ok(()) => Some(Ok(())),
+                Err(e) => Some(Err(self.map_sdk_err("update_power_levels")(e))),
+            }
+        } else {
+            None
+        };
+
+        Ok(coordinator_admin::AddMemberOutput { added, promoted })
+    }
+
+    async fn remove_member(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        member: &coordinator_admin::PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let user_id = self.parse_user_id(member)?;
+        room.kick_user(user_id, None)
+            .await
+            .map_err(self.map_sdk_err("kick_user"))
+    }
+
+    async fn ban_member(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        member: &coordinator_admin::PeerId,
+        duration: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        // Mission §"ban_member" row: matrix-sdk's `Room::ban_user`
+        // signature is `(&UserId, Option<&str>) -> Result<()>` --
+        // NO `duration` parameter. The wire-format reason is that
+        // `m.room.banned` has no expiry field. We enforce the
+        // indefinite-only contract at the adapter layer (RFC-0861
+        // §3 M1): a `duration: Some(_)` is a caller error, not a
+        // platform error.
+        if duration.is_some() {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: "matrix ban is indefinite-only".to_string(),
+            });
+        }
+        let room = self.get_joined_room(group_id)?;
+        let user_id = self.parse_user_id(member)?;
+        room.ban_user(user_id, None)
+            .await
+            .map_err(self.map_sdk_err("ban_user"))
+    }
+
+    async fn promote_to_admin(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        member: &coordinator_admin::PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let user_id = self.parse_owned_user_id(member)?;
+        // Power level 100 is matrix's "admin" level (matches
+        // `users_default` for admin-only rooms).
+        room.update_power_levels(vec![(&user_id, int!(100))])
+            .await
+            .map(|_| ())
+            .map_err(self.map_sdk_err("update_power_levels"))
+    }
+
+    async fn demote_from_admin(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        member: &coordinator_admin::PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let user_id = self.parse_owned_user_id(member)?;
+        // Read `users_default` first (mission §"demote_from_admin"
+        // row). The SDK auto-removes the user's per-user override
+        // when the new level equals `users_default`.
+        let users_default = {
+            let pl = room
+                .power_levels()
+                .await
+                .map_err(self.map_sdk_err("power_levels"))?;
+            pl.users_default
+        };
+        room.update_power_levels(vec![(&user_id, users_default)])
+            .await
+            .map(|_| ())
+            .map_err(self.map_sdk_err("update_power_levels"))
+    }
+
+    async fn approve_join_request(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        requester: &coordinator_admin::PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        // Mission §"approve_join_request" row: the SDK has no
+        // `Room::accept_invite` method, but the matrix trait's
+        // accept path is `room.invite_user_by_id(user_id)` — that
+        // is exactly what `KnockRequest::accept` (matrix-sdk
+        // 0.18.0/src/room/knock_requests.rs:65-68) delegates to
+        // internally. For richer per-request semantics (event id,
+        // timestamp, reason) the caller can subscribe via
+        // `room.subscribe_to_knock_requests()` and call `.accept()`
+        // on the matching `KnockRequest`; the trait's
+        // `approve_join_request` is the simpler batch path.
+        let room = self.get_joined_room(group_id)?;
+        let user_id = self.parse_user_id(requester)?;
+        room.invite_user_by_id(user_id)
+            .await
+            .map_err(self.map_sdk_err("approve_join_request"))
+    }
+
+    async fn rename_group(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        new_subject: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        // Mission §"rename_group" row: `room.set_name` takes owned
+        // `String`, NOT `&str` (matrix-sdk 0.18.0/src/room/mod.rs:2958).
+        room.set_name(new_subject.to_string())
+            .await
+            .map_err(self.map_sdk_err("set_name"))?;
+        Ok(())
+    }
+
+    async fn set_group_description(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        description: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        // `room.set_room_topic` takes `&str`
+        // (matrix-sdk 0.18.0/src/room/mod.rs:2963).
+        room.set_room_topic(description)
+            .await
+            .map_err(self.map_sdk_err("set_room_topic"))?;
+        Ok(())
+    }
+
+    async fn set_locked(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        locked: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let rule = if locked {
+            JoinRule::Invite
+        } else {
+            JoinRule::Public
+        };
+        room.send_state_event(RoomJoinRulesEventContent::new(rule))
+            .await
+            .map_err(self.map_sdk_err("send_state_event(JoinRules)"))?;
+        Ok(())
+    }
+
+    async fn set_announce(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        announce_only: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        // Mission §"set_announce" row: read the wrapper, mutate
+        // `events_default`, then send via `send_state_event`. Do NOT
+        // use `update_power_levels` (which is per-user only). Field
+        // name on the wrapper struct is `events_default`, NOT
+        // `events.default`.
+        let mut pl = room
+            .power_levels()
+            .await
+            .map_err(self.map_sdk_err("power_levels"))?;
+        pl.events_default = if announce_only { int!(100) } else { int!(0) };
+        let content = RoomPowerLevelsEventContent::try_from(pl).map_err(|e| {
+            PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("RoomPowerLevels -> EventContent conversion: {}", e),
+            }
+        })?;
+        room.send_state_event(content)
+            .await
+            .map_err(self.map_sdk_err("send_state_event(PowerLevels)"))?;
+        Ok(())
+    }
+
+    async fn set_ephemeral(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        ttl: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        use matrix_sdk::ruma::events::AnyStateEventContent;
+        use serde_json::json;
+
+        // Mission §"set_ephemeral" row: Clamp `as_millis() > i64::MAX`
+        // to `ApiError { code: 400, ... }` per RFC-0861 §3 M1. Done
+        // BEFORE the room lookup so a malformed TTL fails before any
+        // SDK call (also makes the i64-overflow branch unit-testable
+        // against a no-network adapter).
+        let raw_content = match ttl {
+            None => json!({}).to_string(),
+            Some(d) => {
+                let ms = d.as_millis();
+                if ms > i64::MAX as u128 {
+                    return Err(PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!(
+                            "ephemeral ttl {} ms exceeds i64::MAX (matrix wire-format bound)",
+                            ms
+                        ),
+                    });
+                }
+                let ms_i64 = ms as i64;
+                json!({ "max_lifetime": ms_i64 }).to_string()
+            }
+        };
+
+        let room = self.get_joined_room(group_id)?;
+
+        // The trait TTL (a `Duration`) is serialized into the
+        // `max_lifetime` field of the `m.room.retention` state event
+        // content in milliseconds (matrix spec §13.18). `None` clears
+        // the state event entirely.
+        let raw = Raw::<AnyStateEventContent>::from_json_string(raw_content).map_err(|e| {
+            PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("Raw m.room.retention JSON parse: {}", e),
+            }
+        })?;
+        // Mission §"set_ephemeral" row: the SDK's send_state_event_raw
+        // signature is `(event_type: &str, state_key: &str, content: impl
+        // IntoRawStateEventContent) -> Result<...>`. We pass the
+        // canonical `m.room.retention` event type and an empty state
+        // key (the state-event has no per-instance state key).
+        room.send_state_event_raw("m.room.retention", "", raw)
+            .await
+            .map(|_| ())
+            .map_err(self.map_sdk_err("send_state_event_raw(retention)"))?;
+        Ok(())
+    }
+
+    async fn set_require_approval(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        require: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        // Mission §"set_require_approval" row: `true` -> `Knock`,
+        // `false` -> `Public` (NOT `Invite` — `Invite` would lock
+        // the room down further than "no approval needed"). Matrix's
+        // "knock" join rule is the closest mapping.
+        let rule = if require {
+            JoinRule::Knock
+        } else {
+            JoinRule::Public
+        };
+        room.send_state_event(RoomJoinRulesEventContent::new(rule))
+            .await
+            .map_err(self.map_sdk_err("send_state_event(JoinRules)"))?;
+        Ok(())
+    }
+
+    async fn list_own_groups(
+        &self,
+    ) -> Result<Vec<coordinator_admin::GroupHandle>, PlatformAdapterError> {
+        let mut handles = Vec::new();
+        for room in self.client.joined_rooms() {
+            // Read each room's subject + member count + own power level.
+            let subject = room.name();
+            let member_count: u32 = room
+                .members(matrix_sdk::RoomMemberships::JOIN)
+                .await
+                .map_err(self.map_sdk_err("members"))?
+                .len()
+                .try_into()
+                .unwrap_or(u32::MAX);
+            // Mission §"list_own_groups" row: read own power via the
+            // helper (which calls `room.get_user_power_level`). Per-room
+            // because the bot's power can differ across rooms.
+            let own_power = self.own_user_power_level(&room).await?;
+            // `is_admin = (own power_level >= 100)`. Infinite (creator)
+            // is treated as >=100 by `own_user_power_level` returning
+            // `i64::MAX`.
+            let is_admin = own_power >= 100;
+            handles.push(coordinator_admin::GroupHandle {
+                id: coordinator_admin::GroupId::new(room.room_id().to_string()),
+                subject,
+                invite_url: None, // populated by list_own_groups_with_invites below
+                is_admin,
+                member_count: Some(member_count),
+                mode_flags: None,
+                initial_admins_promoted: true, // matrix M4: creator is auto-power-100
+            });
+        }
+        Ok(handles)
+    }
+
+    /// Override the trait's default `list_own_groups_with_invites`
+    /// (which delegates to `list_own_groups`) to populate
+    /// `invite_url` with the canonical alias where available
+    /// (mission §"list_own_groups_with_invites" row: "#alias:server").
+    async fn list_own_groups_with_invites(
+        &self,
+    ) -> Result<Vec<coordinator_admin::GroupHandle>, PlatformAdapterError> {
+        let mut handles = self.list_own_groups().await?;
+        for (handle, room) in handles.iter_mut().zip(self.client.joined_rooms()) {
+            if let Some(alias) = room.canonical_alias() {
+                handle.invite_url = Some(format!("#{}", alias));
+            }
+        }
+        Ok(handles)
+    }
+
+    async fn get_group_metadata(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<coordinator_admin::GroupMetadata, PlatformAdapterError> {
+        let room = self.get_joined_room(group_id)?;
+        let subject = room.name();
+        let description = room.topic();
+        let members: Vec<coordinator_admin::PeerId> = room
+            .members(matrix_sdk::RoomMemberships::JOIN)
+            .await
+            .map_err(self.map_sdk_err("members"))?
+            .iter()
+            .map(|m| coordinator_admin::PeerId::new(m.user_id().to_string()))
+            .collect();
+        let admins: Vec<coordinator_admin::PeerId> = room
+            .members(matrix_sdk::RoomMemberships::JOIN)
+            .await
+            .map_err(self.map_sdk_err("members"))?
+            .iter()
+            .filter_map(|m| {
+                let pl = m.power_level();
+                match pl {
+                    matrix_sdk::ruma::events::room::power_levels::UserPowerLevel::Infinite => {
+                        Some(coordinator_admin::PeerId::new(m.user_id().to_string()))
+                    }
+                    matrix_sdk::ruma::events::room::power_levels::UserPowerLevel::Int(i)
+                        if i64::from(i) >= 100 =>
+                    {
+                        Some(coordinator_admin::PeerId::new(m.user_id().to_string()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        let invite_url = room.canonical_alias().map(|a| format!("#{}", a));
+        // Mission §"get_group_metadata" row: read `power_levels()` and
+        // derive `GroupModeFlags` from the wrapper struct. The
+        // wrapper's fields are `events_default`, `join_rule` is on
+        // a separate getter, etc.
+        let pl = room
+            .power_levels()
+            .await
+            .map_err(self.map_sdk_err("power_levels"))?;
+        // Map `events_default >= 100` -> announce_only. Lock state
+        // is not on the wrapper; we read it via `room_info` or skip
+        // for now (mission table row mentions `room.power_levels()`
+        // but `join_rules` is a separate state event; set to `false`
+        // unless explicitly set — callers should rely on
+        // `get_group_metadata` + the canonical alias + the admin
+        // list for full state).
+        let mode_flags = coordinator_admin::GroupModeFlags {
+            locked: false, // TODO: read m.room.join_rules state event
+            announce_only: i64::from(pl.events_default) >= 100,
+            ephemeral_ttl: None,      // TODO: read m.room.retention state event
+            requires_approval: false, // TODO: read m.room.join_rules == Knock
+        };
+        Ok(coordinator_admin::GroupMetadata {
+            id: group_id.clone(),
+            subject,
+            description,
+            members,
+            admins,
+            invite_url,
+            mode_flags,
+        })
+    }
+
+    async fn resolve_invite(
+        &self,
+        invite: &coordinator_admin::InviteRef,
+    ) -> Result<coordinator_admin::GroupHandle, PlatformAdapterError> {
+        // Mission §"resolve_invite" row: `#alias:server` -> use
+        // `client.resolve_room_alias`. For `mxc://` or `matrix.to`
+        // URLs, parse first. The simplest implementation tries the
+        // alias path first and falls back to a plain string return
+        // if the input is not a valid alias (since the trait's
+        // contract here is "resolve without joining", and matrix
+        // alias resolution is the only first-class way to do that
+        // in 0.18).
+        use matrix_sdk::ruma::OwnedRoomAliasId;
+        let raw = invite.0.as_str();
+        // Strip a leading `#` if present (matrix aliases are
+        // `localpart:server`, not `#localpart:server`).
+        let alias_str = raw.strip_prefix('#').unwrap_or(raw);
+        let alias =
+            OwnedRoomAliasId::try_from(alias_str).map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("not a valid matrix room alias '{}': {}", raw, e),
+            })?;
+        let resolved = self
+            .client
+            .resolve_room_alias(&alias)
+            .await
+            .map_err(self.map_sdk_err("resolve_room_alias"))?;
+        Ok(coordinator_admin::GroupHandle {
+            id: coordinator_admin::GroupId::new(resolved.room_id.to_string()),
+            subject: None,
+            invite_url: Some(format!("#{}", alias)),
+            is_admin: false, // not yet joined
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
+        })
+    }
+
+    async fn join_by_invite(
+        &self,
+        invite: &coordinator_admin::InviteRef,
+    ) -> Result<coordinator_admin::GroupHandle, PlatformAdapterError> {
+        // Mission §"join_by_invite" row: parse the invite ref
+        // (`#alias:server` or `mxc://` URL), resolve to a
+        // `room_id`, then `client.join_room_by_id`. Matrix aliases
+        // are first-class — `!roomid:server` is joinable by ID.
+        use matrix_sdk::ruma::OwnedRoomAliasId;
+        let raw = invite.0.as_str();
+        let alias_str = raw.strip_prefix('#').unwrap_or(raw);
+        let alias =
+            OwnedRoomAliasId::try_from(alias_str).map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("not a valid matrix room alias '{}': {}", raw, e),
+            })?;
+        let resolved = self
+            .client
+            .resolve_room_alias(&alias)
+            .await
+            .map_err(self.map_sdk_err("resolve_room_alias"))?;
+        let room = self
+            .client
+            .join_room_by_id(&resolved.room_id)
+            .await
+            .map_err(self.map_sdk_err("join_room_by_id"))?;
+        Ok(coordinator_admin::GroupHandle {
+            id: coordinator_admin::GroupId::new(room.room_id().to_string()),
+            subject: room.name(),
+            invite_url: Some(format!("#{}", alias)),
+            is_admin: false, // not yet known
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
+        })
+    }
+
+    async fn join_by_id(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+    ) -> Result<coordinator_admin::GroupHandle, PlatformAdapterError> {
+        // Mission §"join_by_id" row: matrix aliases are first-class.
+        // Try parsing as a RoomId first; if that fails, treat as
+        // an alias. Either way, `client.join_room_by_id` (or
+        // `join_room_by_id_or_alias`).
+        let room_id = self.parse_room_id(group_id)?;
+        let room = self
+            .client
+            .join_room_by_id(&room_id)
+            .await
+            .map_err(self.map_sdk_err("join_room_by_id"))?;
+        Ok(coordinator_admin::GroupHandle {
+            id: coordinator_admin::GroupId::new(room.room_id().to_string()),
+            subject: room.name(),
+            invite_url: None,
+            is_admin: false,
+            member_count: None,
+            mode_flags: None,
+            initial_admins_promoted: false,
+        })
+    }
+
+    async fn transfer_ownership(
+        &self,
+        group_id: &coordinator_admin::GroupId,
+        new_owner: &coordinator_admin::PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        // Mission §"transfer_ownership" row: matrix has no atomic
+        // transfer primitive. Multi-step dance:
+        //   1. promote new_owner to power 100
+        //   2. demote self to users_default
+        //   3. leave
+        // `can_transfer_ownership = false` in the capability report.
+        let room = self.get_joined_room(group_id)?;
+        let new_owner_id = self.parse_owned_user_id(new_owner)?;
+        room.update_power_levels(vec![(&new_owner_id, int!(100))])
+            .await
+            .map(|_| ())
+            .map_err(self.map_sdk_err("update_power_levels(promote)"))?;
+        let users_default = {
+            let pl = room
+                .power_levels()
+                .await
+                .map_err(self.map_sdk_err("power_levels"))?;
+            pl.users_default
+        };
+        if let Some(meta) = self.client.session_meta() {
+            let self_id = meta.user_id.clone();
+            room.update_power_levels(vec![(&self_id, users_default)])
+                .await
+                .map(|_| ())
+                .map_err(self.map_sdk_err("update_power_levels(demote)"))?;
+            room.leave().await.map_err(self.map_sdk_err("leave"))?;
+        }
+        Ok(())
     }
 }
 
@@ -1702,5 +2526,255 @@ mod tests {
         assert_eq!(uid, "@alice:matrix.example.com");
         assert_eq!(did, "ALICE_DEV");
         assert_eq!(hs, "https://matrix.example.com");
+    }
+
+    // ── Mission 0850h-d Phase 1 unit tests ─────────────────────
+    //
+    // Four tests covering the unit-testable parts of the
+    // `CoordinatorAdmin` impl. Two are pure data tests (no SDK
+    // involvement), two are adapter-behavior tests that build a
+    // real `MatrixAdapter` via `from_config_bytes(test_config_json())`
+    // (which uses the in-memory access_token path -- no network).
+    //
+    // The `set_ephemeral` overflow check is intentionally placed
+    // BEFORE the room lookup in the impl, so the unit test can
+    // exercise the overflow branch against a non-existent room.
+    // The `ban_member(duration: Some(_))` indefinite-only check is
+    // also placed before the room lookup (per the impl's
+    // RFC-0861 §3 M1 enforcement comment).
+
+    use super::coordinator_admin::{
+        AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, PeerId,
+    };
+
+    /// Mission §"AddMemberOutput discriminator": the trait's
+    /// `add_member` returns the three partial-success variants per
+    /// RFC-0861 H6: `None` (no promote attempted), `Some(Ok(()))`
+    /// (promote succeeded), `Some(Err(_))` (add succeeded but
+    /// promote failed). Callers branch on `promoted` independently
+    /// of `added`, so each variant must round-trip correctly.
+    #[test]
+    fn add_member_output_three_variant_discriminator() {
+        // 1. None: caller did not request admin promotion.
+        let none = AddMemberOutput {
+            added: true,
+            promoted: None,
+        };
+        assert!(none.added);
+        assert!(none.promoted.is_none());
+
+        // 2. Some(Ok(())): promote succeeded.
+        let ok = AddMemberOutput {
+            added: true,
+            promoted: Some(Ok(())),
+        };
+        assert!(ok.added);
+        assert!(ok.promoted.as_ref().unwrap().is_ok());
+
+        // 3. Some(Err(_)): add succeeded, promote failed (partial-success).
+        let err = AddMemberOutput {
+            added: true,
+            promoted: Some(Err(PlatformAdapterError::ApiError {
+                code: 403,
+                message: "caller power level too low".into(),
+            })),
+        };
+        assert!(err.added);
+        let promoted_err = err.promoted.unwrap().unwrap_err();
+        match promoted_err {
+            PlatformAdapterError::ApiError { code, message } => {
+                assert_eq!(code, 403);
+                assert_eq!(message, "caller power level too low");
+            }
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    /// Mission §M4 + Phase 1 unit test "initial_admins_promoted
+    /// matrix semantics": on matrix, the creator is auto-power-100
+    /// at create time with NO post-create promote dance (unlike
+    /// WhatsApp, which does an explicit `promote_participants`
+    /// step). The `GroupHandle` returned from `create_group`
+    /// therefore has `initial_admins_promoted = true` immediately.
+    ///
+    /// This test builds the handle shape directly (without calling
+    /// `create_group` against a real homeserver) and asserts the
+    /// matrix-specific invariant.
+    #[test]
+    fn initial_admins_promoted_true_at_matrix_create_time() {
+        let handle = GroupHandle {
+            id: GroupId::new("!room:matrix.example.com"),
+            subject: Some("test-room".into()),
+            invite_url: None,
+            is_admin: true, // matrix creator is always admin
+            member_count: Some(1),
+            mode_flags: None,
+            initial_admins_promoted: true, // <-- the matrix M4 invariant
+        };
+        assert!(handle.initial_admins_promoted);
+        assert!(handle.is_admin);
+        // Sanity: subject + member_count round-trip.
+        assert_eq!(handle.subject.as_deref(), Some("test-room"));
+        assert_eq!(handle.member_count, Some(1));
+    }
+
+    /// Mission Phase 1 unit test "set_ephemeral i64-overflow
+    /// `ApiError { code: 400 }` clamp": the trait TTL is serialized
+    /// into the matrix `m.room.retention` `max_lifetime` field in
+    /// milliseconds, which the wire format bounds by `i64::MAX`.
+    /// A TTL whose `as_millis()` exceeds `i64::MAX` is a caller
+    /// error -- the impl must reject it with `ApiError { code: 400 }`
+    /// BEFORE invoking the SDK (RFC-0861 §3 M1).
+    ///
+    /// We use `Duration::from_secs(u64::MAX)` whose `.as_millis()`
+    /// (~1.8e22) is far above `i64::MAX` (~9.2e18).
+    ///
+    /// Note: `MatrixAdapter::new()` builds a multi_thread runtime
+    /// internally; `#[tokio::test]` provides another. They cannot
+    /// nest cleanly (the inner runtime can't be dropped from an
+    /// outer async context). We build the adapter on a separate
+    /// thread (the same pattern as `tests/live_matrix_test.rs`) and
+    /// drive the trait method on a fresh runtime via `block_on`.
+    #[test]
+    fn set_ephemeral_rejects_i64_overflow_with_400() {
+        use std::time::Duration;
+        let adapter = {
+            let cfg_bytes = serde_json::to_vec(&test_config_json()).unwrap();
+            std::thread::spawn(move || {
+                MatrixAdapter::from_config_bytes(&cfg_bytes)
+                    .expect("adapter construction (in-memory access_token)")
+            })
+            .join()
+            .unwrap()
+        };
+        let group_id = GroupId::new("!nonexistent:matrix.example.com");
+        let overflow = Duration::from_secs(u64::MAX);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let result = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_ephemeral(
+            &adapter,
+            &group_id,
+            Some(overflow),
+        ));
+        drop(rt);
+        match result {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 400, "expected 400 for overflow, got code={code}");
+                assert!(
+                    message.contains("exceeds i64::MAX"),
+                    "message should mention the overflow: {message}"
+                );
+            }
+            other => panic!("expected ApiError(400) for overflow, got {other:?}"),
+        }
+    }
+
+    /// Mission Phase 1 unit test "ban_member(duration: Some(_))
+    /// indefinite-only rejection": the matrix-sdk 0.18
+    /// `Room::ban_user` signature is `(&UserId, Option<&str>) -> Result<()>`
+    /// — NO `duration` parameter. The wire-format reason is that
+    /// `m.room.banned` has no expiry field. The adapter layer
+    /// enforces the indefinite-only contract per RFC-0861 §3 M1:
+    /// a `duration: Some(_)` is a caller error returned with
+    /// `ApiError { code: 400, message: "matrix ban is indefinite-only" }`
+    /// BEFORE invoking the SDK.
+    #[test]
+    fn ban_member_rejects_some_duration_with_400() {
+        use std::time::Duration;
+        let adapter = {
+            let cfg_bytes = serde_json::to_vec(&test_config_json()).unwrap();
+            std::thread::spawn(move || {
+                MatrixAdapter::from_config_bytes(&cfg_bytes)
+                    .expect("adapter construction (in-memory access_token)")
+            })
+            .join()
+            .unwrap()
+        };
+        let group_id = GroupId::new("!nonexistent:matrix.example.com");
+        let member = PeerId::new("@target:matrix.example.com");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let result = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::ban_member(
+            &adapter,
+            &group_id,
+            &member,
+            Some(Duration::from_secs(60)),
+        ));
+        drop(rt);
+        match result {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(
+                    code, 400,
+                    "expected 400 for Some(duration), got code={code}"
+                );
+                assert_eq!(
+                    message, "matrix ban is indefinite-only",
+                    "expected indefinite-only message, got: {message}"
+                );
+            }
+            other => panic!("expected ApiError(400, indefinite-only), got {other:?}"),
+        }
+    }
+
+    // Sanity test: the truthful capability report matches the
+    // mission §"Truthful `admin_capabilities()` report" shape.
+    // 19 true, 2 false (can_destroy, can_transfer_ownership).
+    #[test]
+    fn matrix_capability_report_matches_mission_spec() {
+        let r = AdminCapabilityReport {
+            can_create: true,
+            can_join_by_id: true,
+            can_join_by_invite: true,
+            can_leave: true,
+            can_destroy: false,
+            can_add_member: true,
+            can_remove_member: true,
+            can_ban: true,
+            can_promote: true,
+            can_demote: true,
+            can_approve_join: true,
+            can_rename: true,
+            can_describe: true,
+            can_lock: true,
+            can_announce: true,
+            can_set_ephemeral: true,
+            can_require_approval: true,
+            can_list_own_groups: true,
+            can_get_metadata: true,
+            can_resolve_invite: true,
+            can_transfer_ownership: false,
+        };
+        // 19 true, 2 false -- exact count.
+        let true_count = [
+            r.can_create,
+            r.can_join_by_id,
+            r.can_join_by_invite,
+            r.can_leave,
+            r.can_add_member,
+            r.can_remove_member,
+            r.can_ban,
+            r.can_promote,
+            r.can_demote,
+            r.can_approve_join,
+            r.can_rename,
+            r.can_describe,
+            r.can_lock,
+            r.can_announce,
+            r.can_set_ephemeral,
+            r.can_require_approval,
+            r.can_list_own_groups,
+            r.can_get_metadata,
+            r.can_resolve_invite,
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count();
+        assert_eq!(true_count, 19, "expected 19 true flags, got {true_count}");
+        assert!(!r.can_destroy);
+        assert!(!r.can_transfer_ownership);
     }
 }

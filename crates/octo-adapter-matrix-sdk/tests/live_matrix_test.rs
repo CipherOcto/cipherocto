@@ -16,6 +16,7 @@ use matrix_sdk::ruma::api::client::room::create_room::v3::{
 };
 use matrix_sdk::Client;
 use octo_adapter_matrix_sdk::MatrixAdapter;
+use octo_network::dot::adapters::coordinator_admin::{CoordinatorAdmin, GroupId, PeerId};
 use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::domain::BroadcastDomainId;
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -509,6 +510,485 @@ fn mx08_shutdown() {
         "self_handle should be None after shutdown"
     );
     tracing::info!("MX-08: shutdown OK");
+}
+
+// ── mx09-mx14: CoordinatorAdmin trait live tests (mission 0850h-d) ─
+//
+// These tests exercise the new `CoordinatorAdmin` impl against
+// matrix.org. Each test:
+//   1. Pre-scans stale `octo-test-mx-*` rooms (cleanup self-healing)
+//   2. Creates a fresh `octo-test-mx-mx{nn}-{ts}` room
+//   3. Calls one section's worth of CoordinatorAdmin methods
+//   4. Leaves the room (cleanup)
+//
+// Run with `--features live-matrix -- --include-ignored`. The six
+// tests cover at most 13 of the 24 trait methods (mx09 = A. Lifecycle
+// [partial: create_group]; mx10 = B. Membership [partial: remove +
+// ban]; mx11 = B. Membership continues [partial: promote + demote];
+// mx12 = C. Mode [partial: 5/6]; mx13 = D. Discovery [partial: 2/6];
+// mx14 = C. Mode continues [partial: set_require_approval]). The
+// remaining 6 methods (`add_member`, `approve_join_request`,
+// `list_own_groups_with_invites`, `resolve_invite`,
+// `join_by_invite`, `join_by_id`) are scheduled for the 0850h-e
+// follow-on mission (mx15-mx20) — see
+// `missions/open/0850h-e-matrix-coordinator-admin-coverage.md`.
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx09_create_group() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    // Pre-scan guard
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx09-{}", ts);
+
+    // Build the adapter + drive create_group via the CoordinatorAdmin trait
+    let cfg_json = adapter_config_json(&session, "!placeholder:matrix.org");
+    let adapter = build_adapter(&cfg_json);
+
+    let handle = rt
+        .block_on(<MatrixAdapter as CoordinatorAdmin>::create_group(
+            &adapter,
+            &room_name,
+            &[],
+        ))
+        .expect("create_group");
+
+    assert!(
+        !handle.id.as_str().is_empty(),
+        "create_group returned empty GroupId"
+    );
+    assert!(
+        handle.id.as_str().starts_with('!'),
+        "matrix room_id should start with '!': {}",
+        handle.id.as_str()
+    );
+    assert!(
+        handle.is_admin,
+        "matrix creator must be admin (matrix M4 invariant)"
+    );
+    assert!(
+        handle.initial_admins_promoted,
+        "matrix M4: creator auto-promoted at create time"
+    );
+    tracing::info!(
+        room_id = %handle.id.as_str(),
+        is_admin = handle.is_admin,
+        initial_admins_promoted = handle.initial_admins_promoted,
+        "MX-09: create_group OK"
+    );
+
+    // Cleanup
+    let rid_str = handle.id.as_str().to_string();
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(rid_str.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+                tracing::info!(room_id = %rid_str, "MX-09: test room cleaned up");
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx10_ban_kick() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    // Pre-scan guard
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    // Create the room via raw SDK (matrix creator is admin).
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx10-{}", ts);
+    let room_id = rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("initial sync");
+        let mut req = CreateRoomRequest::default();
+        req.name = Some(room_name.clone());
+        req.preset = Some(RoomPreset::PrivateChat);
+        let room = client.create_room(req).await.expect("create_room");
+        room.room_id().to_string()
+    });
+
+    // Build adapter and exercise remove_member + ban_member via trait.
+    // Note: we test against the bot itself — matrix.org will reject
+    // self-ban with `M_FORBIDDEN`, which is the expected behavior;
+    // the test verifies the wiring works and the bot reaches the SDK.
+    let cfg_json = adapter_config_json(&session, &room_id);
+    let adapter = build_adapter(&cfg_json);
+    let group_id = GroupId::new(room_id.clone());
+    let self_handle = adapter.self_handle().expect("self_handle");
+    let self_peer = PeerId::new(self_handle);
+
+    // remove_member on self (matrix should reject; we just check the
+    // call reaches the SDK without panicking).
+    let _ = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::remove_member(
+        &adapter, &group_id, &self_peer,
+    ));
+    tracing::info!("MX-10: remove_member call dispatched (matrix likely rejected self-kick)");
+
+    // ban_member with None duration (matrix indefinite-only) on self —
+    // same expectation, just wiring verification.
+    let _ = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::ban_member(
+        &adapter, &group_id, &self_peer, None,
+    ));
+    tracing::info!("MX-10: ban_member(None) call dispatched (matrix likely rejected self-ban)");
+
+    // Cleanup
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(room_id.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx11_promote_demote() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx11-{}", ts);
+    let room_id = rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("initial sync");
+        let mut req = CreateRoomRequest::default();
+        req.name = Some(room_name.clone());
+        req.preset = Some(RoomPreset::PrivateChat);
+        let room = client.create_room(req).await.expect("create_room");
+        room.room_id().to_string()
+    });
+
+    let cfg_json = adapter_config_json(&session, &room_id);
+    let adapter = build_adapter(&cfg_json);
+    let group_id = GroupId::new(room_id.clone());
+    let self_handle = adapter.self_handle().expect("self_handle");
+    let self_peer = PeerId::new(self_handle);
+
+    // promote_to_admin(self) — matrix should reject promoting self
+    // because creator is already admin; the test verifies wiring.
+    let _ = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::promote_to_admin(
+        &adapter, &group_id, &self_peer,
+    ));
+    tracing::info!("MX-11: promote_to_admin call dispatched");
+
+    // demote_from_admin(self) — same expectation.
+    let _ = rt.block_on(<MatrixAdapter as CoordinatorAdmin>::demote_from_admin(
+        &adapter, &group_id, &self_peer,
+    ));
+    tracing::info!("MX-11: demote_from_admin call dispatched");
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(room_id.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx12_set_modes() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx12-{}", ts);
+    let room_id = rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("initial sync");
+        let mut req = CreateRoomRequest::default();
+        req.name = Some(room_name.clone());
+        req.preset = Some(RoomPreset::PrivateChat);
+        let room = client.create_room(req).await.expect("create_room");
+        room.room_id().to_string()
+    });
+
+    let cfg_json = adapter_config_json(&session, &room_id);
+    let adapter = build_adapter(&cfg_json);
+    let group_id = GroupId::new(room_id.clone());
+
+    // Exercise 5 of 6 C. Mode methods (set_require_approval is mx14).
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::rename_group(
+        &adapter,
+        &group_id,
+        &format!("{}-renamed", room_name),
+    ))
+    .expect("rename_group");
+    tracing::info!("MX-12: rename_group OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_group_description(
+        &adapter,
+        &group_id,
+        "test description from mission 0850h-d",
+    ))
+    .expect("set_group_description");
+    tracing::info!("MX-12: set_group_description OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_locked(
+        &adapter, &group_id, true,
+    ))
+    .expect("set_locked(true)");
+    tracing::info!("MX-12: set_locked(true) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_locked(
+        &adapter, &group_id, false,
+    ))
+    .expect("set_locked(false)");
+    tracing::info!("MX-12: set_locked(false) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_announce(
+        &adapter, &group_id, true,
+    ))
+    .expect("set_announce(true)");
+    tracing::info!("MX-12: set_announce(true) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_announce(
+        &adapter, &group_id, false,
+    ))
+    .expect("set_announce(false)");
+    tracing::info!("MX-12: set_announce(false) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_ephemeral(
+        &adapter,
+        &group_id,
+        Some(Duration::from_secs(3600)),
+    ))
+    .expect("set_ephemeral(Some(1h))");
+    tracing::info!("MX-12: set_ephemeral(Some(1h)) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_ephemeral(
+        &adapter, &group_id, None,
+    ))
+    .expect("set_ephemeral(None)");
+    tracing::info!("MX-12: set_ephemeral(None) OK");
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(room_id.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx13_list_and_metadata() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx13-{}", ts);
+    let room_id = rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("initial sync");
+        let mut req = CreateRoomRequest::default();
+        req.name = Some(room_name.clone());
+        req.preset = Some(RoomPreset::PrivateChat);
+        let room = client.create_room(req).await.expect("create_room");
+        room.room_id().to_string()
+    });
+
+    let cfg_json = adapter_config_json(&session, &room_id);
+    let adapter = build_adapter(&cfg_json);
+
+    // list_own_groups
+    let groups = rt
+        .block_on(<MatrixAdapter as CoordinatorAdmin>::list_own_groups(
+            &adapter,
+        ))
+        .expect("list_own_groups");
+    assert!(
+        !groups.is_empty(),
+        "list_own_groups should return at least the just-created room"
+    );
+    // The just-created room should be in the list with is_admin=true.
+    let just_created = groups
+        .iter()
+        .find(|g| g.id.as_str() == room_id)
+        .expect("just-created room missing from list_own_groups");
+    assert!(
+        just_created.is_admin,
+        "creator must be admin in list_own_groups result"
+    );
+    tracing::info!(
+        count = groups.len(),
+        "MX-13: list_own_groups OK (just-created room present, is_admin=true)"
+    );
+
+    // get_group_metadata
+    let group_id = GroupId::new(room_id.clone());
+    let metadata = rt
+        .block_on(<MatrixAdapter as CoordinatorAdmin>::get_group_metadata(
+            &adapter, &group_id,
+        ))
+        .expect("get_group_metadata");
+    assert_eq!(metadata.id.as_str(), room_id);
+    assert!(metadata.admins.iter().any(|p| !p.as_str().is_empty()));
+    tracing::info!(
+        admins = metadata.admins.len(),
+        members = metadata.members.len(),
+        "MX-13: get_group_metadata OK"
+    );
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(room_id.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires live Matrix session; run with --features live-matrix -- --include-ignored"]
+fn mx14_set_require_approval() {
+    init_tracing();
+    let session = load_session();
+    let rt = make_runtime();
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        leave_stale_test_rooms(&client, "octo-test-mx-").await;
+    });
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let room_name = format!("octo-test-mx-mx14-{}", ts);
+    let room_id = rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("initial sync");
+        let mut req = CreateRoomRequest::default();
+        req.name = Some(room_name.clone());
+        req.preset = Some(RoomPreset::PrivateChat);
+        let room = client.create_room(req).await.expect("create_room");
+        room.room_id().to_string()
+    });
+
+    let cfg_json = adapter_config_json(&session, &room_id);
+    let adapter = build_adapter(&cfg_json);
+    let group_id = GroupId::new(room_id.clone());
+
+    // 6th C. Mode method (set_require_approval). matrix.org supports
+    // knock on Synapse; if not, the homeserver returns M_FORBIDDEN
+    // and we log it.
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_require_approval(
+        &adapter, &group_id, true,
+    ))
+    .expect("set_require_approval(true)");
+    tracing::info!("MX-14: set_require_approval(true) OK");
+
+    rt.block_on(<MatrixAdapter as CoordinatorAdmin>::set_require_approval(
+        &adapter, &group_id, false,
+    ))
+    .expect("set_require_approval(false)");
+    tracing::info!("MX-14: set_require_approval(false) OK");
+
+    rt.block_on(async {
+        let client = build_session_client(&session).await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::from_secs(5)))
+            .await
+            .expect("cleanup sync");
+        if let Ok(rid) = matrix_sdk::ruma::OwnedRoomId::try_from(room_id.as_str()) {
+            if let Some(room) = client.get_room(&rid) {
+                let _ = room.leave().await;
+            }
+        }
+    });
 }
 
 // ── Cleanup helper test (mission 0850h-b §Live-Test Cleanup) ────

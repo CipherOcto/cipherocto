@@ -139,7 +139,7 @@ AdminCapabilityReport {
     can_rename: true,
     can_describe: true,
     can_lock: true,              // JoinRule::Invite
-    can_announce: true,          // events.default power level
+    can_announce: true,          // events_default power level
     can_set_ephemeral: true,     // m.room.retention state event
     can_require_approval: true,  // JoinRule::Knock (caveat: homeserver-dependent)
     // D. Discovery

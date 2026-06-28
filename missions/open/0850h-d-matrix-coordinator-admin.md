@@ -276,14 +276,16 @@ contract), but it must explicitly note:
       `set_require_approval`]). Section coverage is NOT 1:1 -- see
       the coverage-gap note above for the full 24-method breakdown
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
-      --test live_matrix_test -- --ignored --nocapture` — all 14
+      --test live_matrix_test -- --ignored --nocapture` — all 13
       tests pass when run with `--test-threads=1` (live tests must
-      run serially; matrix.org session is shared). Acceptance: mx00
-      through mx14 all green; no flake across 3 consecutive full-suite
-      runs. **Sync timeouts**: new mx09–mx14 tests use the 60s cold-sync
-      budget (per commit `9c5c4ee1`'s production fix), not the 5s
-      budget the pre-scan guard still uses -- the pre-scan is a
-      best-effort warm-up only
+      run serially; matrix.org session is shared). Acceptance: the
+      7 pre-existing tests (mx00, mx01, mx02, mx03,
+      `mx04_05_06_envelope_round_trip`, mx07, mx08) plus the 6
+      new tests (mx09–mx14) all green; no flake across 3
+      consecutive full-suite runs. **Sync timeouts**: new mx09–mx14
+      tests use the 60s cold-sync budget (per commit `9c5c4ee1`'s
+      production fix), not the 5s budget the pre-scan guard still
+      uses -- the pre-scan is a best-effort warm-up only
 - [ ] `docs/research/coordinator-admin-actions.md` §3 table updated
       per the M10 follow-on doc above
 - [ ] **Follow-on mission `0850h-e` is filed** at
@@ -475,15 +477,6 @@ The Matrix Spec, Section 4.6 ("Power level events"):
 <https://spec.matrix.org/v1.13/client-server-api/#mroompower_levels>
 The matrix-sdk 0.18 docs:
 <https://docs.rs/matrix-sdk/0.18.0/matrix_sdk/struct.Room.html>
-
-The power levels for the relevant actions on matrix are:
-
-- Kick: 50 (default)
-- Ban: 50 (default)
-- Invite: 50 (default)
-- Send state events (rename, topic, power levels themselves): 100
-- Set join rules: 50 (default)
-- Send m.room.retention: 100 (typically restricted to admins)
 
 The adapter's `promote_to_admin` maps to "set user's power level to
 100" — this is matrix's "admin" threshold and matches the

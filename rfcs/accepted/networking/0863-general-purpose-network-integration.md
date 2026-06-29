@@ -380,7 +380,7 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 | Approach                                      | Pros                                         | Cons                                                 |
 | --------------------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
 | Feature-gate in octo-sync                     | Simple                                       | Circular dependency; leaf workspace violation        |
-| Carrier → PlatformAdapter in octo-network     | TCP joins DOT overlay naturally              | Requires circular dependency; conceptually backwards |
+| Carrier → PlatformAdapter in octo-network     | TCP/UDP join DOT overlay naturally            | Resolved: TCP (`0x0016`) and UDP (`0x0017`) are now PlatformTypes per RFC-0850 §8.8-§8.9 |
 | Node-level wiring (no crate)                  | No new crate                                 | Each binary reimplements wiring                      |
 | Separate `octo-transport` crate (recommended) | Clean deps; reusable pattern; leaf workspace | Third workspace to maintain                          |
 | Type-erased bridge                            | Minimal coupling                             | Loses compile-time guarantees                        |
@@ -462,6 +462,7 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 | 1.2     | 2026-06-24 | Round 2 review: 1 fix (typo) — 0 findings, loop closed                        |
 | 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met |
 | 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path. |
+| 1.5     | 2026-06-28 | Resolved TCP/UDP transport gap: updated Alternatives Considered to acknowledge `PlatformType::Tcp = 0x0016` and `PlatformType::Udp = 0x0017` per RFC-0850 §8.8-§8.9. TCP/UDP adapters can now implement `PlatformAdapter` and integrate via `PlatformAdapterBridge`. |
 
 ## Related RFCs
 

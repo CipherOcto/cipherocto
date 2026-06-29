@@ -2735,6 +2735,8 @@ This means the quota router network can be deployed and tested without waiting f
 | 1.9 | 2026-06-28 | Adversarial review Round 4 fixes — Removed all 4 `octo-transport/src/bootstrap.rs:332` line-number references (CLAUDE.md line-number prohibition in RFCs/Missions); replaced with bare file path. |
 | 1.10 | 2026-06-28 | Adversarial review Round 1 (v1.9 external changes) fixes — Fixed Mutex-held-across-await deadlock risk in `handle_capacity_request`, `handle_forward_request`, `send_forward_response`, `send_forward_reject` (handler now holds separate `Arc<NodeTransport>` outside Mutex); added `DropAction` enum for lock-scope control in `handle_forward_request`; replaced hardcoded `monotonic_now()` returning `0` with atomic counter; fixed Wire Format diagram discriminator range (`0xC3–0xCC` → `0xC3–0xCB`); fixed `PendingRequests::complete`/`reject` signature (`&mut self` → `&self`); added `primary_provider: Arc<dyn LocalProvider>` field to `QuotaRouterNode` (was referenced by `route()` but missing); updated builder to initialize `primary_provider` and `handler.transport`. |
 
+| 1.11 | 2026-06-28 | Added TCP/UDP transport references: quota router nodes can now use `PlatformType::Tcp` (RFC-0850 §8.8) or `PlatformType::Udp` (RFC-0850 §8.9) adapters via `PlatformAdapterBridge`. Updated transport integration notes to reference TCP adapter for L3 cross-process E2E tests. |
+
 ## Related RFCs
 
 - RFC-0850: Deterministic Overlay Transport — envelope format, platform adapters

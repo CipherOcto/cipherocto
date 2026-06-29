@@ -27,6 +27,8 @@ pub enum PlatformType {
     Lark = 0x0013,
     QQ = 0x0014,
     Quic = 0x0015,
+    Tcp = 0x0016,
+    Udp = 0x0017,
 }
 
 impl PlatformType {
@@ -54,6 +56,8 @@ impl PlatformType {
             0x0013 => Some(Self::Lark),
             0x0014 => Some(Self::QQ),
             0x0015 => Some(Self::Quic),
+            0x0016 => Some(Self::Tcp),
+            0x0017 => Some(Self::Udp),
             _ => None,
         }
     }
@@ -82,6 +86,8 @@ impl PlatformType {
             Self::Lark => "lark",
             Self::QQ => "qq",
             Self::Quic => "quic",
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
         }
     }
 
@@ -95,6 +101,8 @@ impl PlatformType {
             "webhook" => Some(Self::Webhook),
             "p2p" | "nativep2p" => Some(Self::NativeP2P),
             "quic" => Some(Self::Quic),
+            "tcp" => Some(Self::Tcp),
+            "udp" => Some(Self::Udp),
             "signal" => Some(Self::Signal),
             "irc" => Some(Self::IRC),
             "slack" => Some(Self::Slack),
@@ -156,6 +164,8 @@ impl BroadcastDomainId {
             PlatformType::Lark => "lark",
             PlatformType::QQ => "qq",
             PlatformType::Quic => "quic",
+            PlatformType::Tcp => "tcp",
+            PlatformType::Udp => "udp",
         };
         let hash_input = format!("{}:{}", prefix, normalized);
         let hash = blake3::hash(hash_input.as_bytes());

@@ -67,3 +67,106 @@ static START: OnceLock<Instant> = OnceLock::new();
 pub fn monotonic_now() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_secs()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::{ModelPricing, ProviderHealth, ProviderId};
+
+    fn test_capacity(name: &str, remaining: u64) -> ProviderCapacity {
+        ProviderCapacity {
+            provider_id: ProviderId([1u8; 32]),
+            provider_name: name.into(),
+            router_node_id: RouterNodeId([0u8; 32]),
+            models: vec!["gpt-4o".into()],
+            requests_remaining: remaining,
+            pricing: vec![ModelPricing {
+                model: "gpt-4o".into(),
+                price_per_1k_tokens: 3,
+            }],
+            status: ProviderHealth::Healthy,
+            latency_ms: 200,
+            success_rate_bps: 9500,
+            last_updated: 0,
+        }
+    }
+
+    #[test]
+    fn gossip_payload_roundtrip() {
+        let payload = CapacityGossipPayload {
+            sender_id: RouterNodeId([1u8; 32]),
+            timestamp: 100,
+            capacities: vec![test_capacity("openai", 50)],
+            known_peers: vec![RouterNodeId([2u8; 32]), RouterNodeId([3u8; 32])],
+            hmac: [42u8; 32],
+        };
+        let encoded = bincode::serialize(&payload).unwrap();
+        let decoded: CapacityGossipPayload = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded.sender_id, RouterNodeId([1u8; 32]));
+        assert_eq!(decoded.timestamp, 100);
+        assert_eq!(decoded.capacities.len(), 1);
+        assert_eq!(decoded.known_peers.len(), 2);
+        assert_eq!(decoded.hmac, [42u8; 32]);
+    }
+
+    #[test]
+    fn gossip_cache_merge_and_snapshot() {
+        let mut cache = GossipCache::new();
+        let sender = RouterNodeId([1u8; 32]);
+        let caps = vec![test_capacity("openai", 50)];
+        cache.merge(sender, caps.clone());
+        let snap = cache.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].0, sender);
+        assert_eq!(snap[0].1[0].requests_remaining, 50);
+    }
+
+    #[test]
+    fn gossip_cache_snapshot_returns_fresh_entries() {
+        let mut cache = GossipCache::new();
+        let sender = RouterNodeId([1u8; 32]);
+        cache.merge(sender, vec![]);
+        // Freshly merged entries should always appear in snapshot
+        let snap = cache.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].0, sender);
+    }
+
+    #[test]
+    fn gossip_cache_snapshot_empty_when_no_merges() {
+        let cache = GossipCache::new();
+        let snap = cache.snapshot();
+        assert!(snap.is_empty());
+    }
+
+    #[test]
+    fn gossip_cache_merge_overwrite() {
+        let mut cache = GossipCache::new();
+        let sender = RouterNodeId([1u8; 32]);
+        cache.merge(sender, vec![test_capacity("openai", 100)]);
+        cache.merge(sender, vec![test_capacity("openai", 10)]);
+        let snap = cache.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].1[0].requests_remaining, 10);
+    }
+
+    #[test]
+    fn gossip_cache_multi_sender() {
+        let mut cache = GossipCache::new();
+        let a = RouterNodeId([1u8; 32]);
+        let b = RouterNodeId([2u8; 32]);
+        let c = RouterNodeId([3u8; 32]);
+        cache.merge(a, vec![test_capacity("openai", 50)]);
+        cache.merge(b, vec![test_capacity("anthropic", 30)]);
+        cache.merge(c, vec![test_capacity("google", 20)]);
+        let snap = cache.snapshot();
+        assert_eq!(snap.len(), 3);
+        let names: Vec<_> = snap
+            .iter()
+            .map(|(_, caps)| caps[0].provider_name.as_str())
+            .collect();
+        assert!(names.contains(&"openai"));
+        assert!(names.contains(&"anthropic"));
+        assert!(names.contains(&"google"));
+    }
+}

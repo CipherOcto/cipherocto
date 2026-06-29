@@ -60,3 +60,57 @@ impl Default for ForwardingConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_context_all_fields() {
+        let ctx = RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: Some("openai".into()),
+            model_group: Some("reasoning".into()),
+            input_tokens: Some(1024),
+            max_output_tokens: Some(2048),
+            tags: Some(vec!["test".into()]),
+            max_price_per_1k_tokens: Some(10),
+            max_latency_ms: Some(200),
+            policy_override: Some(RoutingPolicy::Cheapest),
+            consumer_id: [42u8; 32],
+            priority: 5,
+            deadline: Some(1000),
+        };
+        assert_eq!(ctx.model, "gpt-4o");
+        assert_eq!(ctx.preferred_provider, Some("openai".into()));
+        assert_eq!(ctx.model_group, Some("reasoning".into()));
+        assert_eq!(ctx.input_tokens, Some(1024));
+        assert_eq!(ctx.max_output_tokens, Some(2048));
+        assert!(ctx.tags.is_some());
+        assert_eq!(ctx.max_price_per_1k_tokens, Some(10));
+        assert_eq!(ctx.max_latency_ms, Some(200));
+        assert!(ctx.policy_override.is_some());
+        assert_eq!(ctx.consumer_id, [42u8; 32]);
+        assert_eq!(ctx.priority, 5);
+        assert_eq!(ctx.deadline, Some(1000));
+    }
+
+    #[test]
+    fn routing_policy_all_variants() {
+        let _c = RoutingPolicy::Cheapest;
+        let _f = RoutingPolicy::Fastest;
+        let _q = RoutingPolicy::Quality;
+        let _b = RoutingPolicy::Balanced;
+        let _l = RoutingPolicy::LocalOnly;
+        let _custom = RoutingPolicy::Custom(CustomPolicy::default());
+    }
+
+    #[test]
+    fn forwarding_config_defaults() {
+        let cfg = ForwardingConfig::default();
+        assert_eq!(cfg.max_ttl, 3);
+        assert_eq!(cfg.max_concurrent_forwards, 64);
+        assert_eq!(cfg.forward_timeout, Duration::from_secs(30));
+        assert_eq!(cfg.max_payload_bytes, 1024 * 1024);
+    }
+}

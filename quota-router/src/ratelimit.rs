@@ -116,4 +116,26 @@ mod tests {
         assert!(!rl.check_peer(&p1));
         assert!(rl.check_peer(&p2));
     }
+
+    #[test]
+    fn rate_limiter_token_refill() {
+        let rl = RateLimiter::new(100, 2);
+        let consumer = [1u8; 32];
+        assert!(rl.check_consumer(&consumer));
+        assert!(rl.check_consumer(&consumer));
+        assert!(!rl.check_consumer(&consumer));
+        // Wait for refill (refill_rate = 100/s, so ~10ms per token)
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(rl.check_consumer(&consumer));
+    }
+
+    #[test]
+    fn rate_limiter_default_config() {
+        let rl = RateLimiter::new(100, 500);
+        let consumer = [1u8; 32];
+        for _ in 0..500 {
+            assert!(rl.check_consumer(&consumer));
+        }
+        assert!(!rl.check_consumer(&consumer));
+    }
 }

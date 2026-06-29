@@ -711,4 +711,174 @@ mod tests {
         let id2 = node.primary_provider_id();
         assert_eq!(id1, id2);
     }
+
+    #[test]
+    fn add_peer_increases_count() {
+        let mut node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        assert_eq!(node.peer_count(), 0);
+        node.add_peer(PeerConfig {
+            node_id: RouterNodeId([3u8; 32]),
+            endpoint: "127.0.0.1:9000".parse().unwrap(),
+            trust_level: PeerTrust::Trusted,
+        });
+        assert_eq!(node.peer_count(), 1);
+        assert!(node
+            .config
+            .peers
+            .iter()
+            .any(|p| p.node_id == RouterNodeId([3u8; 32])));
+    }
+
+    #[test]
+    fn local_provider_models() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into(), "gpt-3.5-turbo".into()],
+            })
+            .build()
+            .unwrap();
+        let models = node.local_provider_models();
+        assert_eq!(models.len(), 2);
+        assert!(models.contains(&"gpt-4o".to_string()));
+        assert!(models.contains(&"gpt-3.5-turbo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn route_local_dispatch() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        let ctx = RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        };
+        let result = node.route(&ctx, b"test").await;
+        // HttpLocalProvider returns b"{}" for any request
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"{}".to_vec());
+    }
+
+    #[tokio::test]
+    async fn route_rate_limited() {
+        let mut node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        // Override rate limiter with very small burst
+        node.rate_limiter = ratelimit::RateLimiter::new(100, 1);
+        let ctx = RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        };
+        // First request succeeds
+        assert!(node.route(&ctx, b"test").await.is_ok());
+        // Second request is rate-limited
+        let result = node.route(&ctx, b"test").await;
+        assert!(matches!(result, Err(RouterNodeError::RateLimited)));
+    }
+
+    #[tokio::test]
+    async fn route_local_only_no_forwarding() {
+        let mut node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .policy(RoutingPolicy::LocalOnly)
+            .build()
+            .unwrap();
+        // Add a peer with gpt-4o to verify LocalOnly doesn't forward
+        node.add_peer(PeerConfig {
+            node_id: RouterNodeId([3u8; 32]),
+            endpoint: "127.0.0.1:9000".parse().unwrap(),
+            trust_level: PeerTrust::Trusted,
+        });
+        // Inject gossip data for the peer
+        node.gossip_cache.merge(
+            RouterNodeId([3u8; 32]),
+            vec![ProviderCapacity {
+                provider_id: ProviderId([4u8; 32]),
+                provider_name: "anthropic".into(),
+                router_node_id: RouterNodeId([3u8; 32]),
+                models: vec!["gpt-4o".into()],
+                requests_remaining: 100,
+                pricing: vec![],
+                status: provider::ProviderHealth::Healthy,
+                latency_ms: 100,
+                success_rate_bps: 9500,
+                last_updated: 0,
+            }],
+        );
+        let ctx = RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: Some(RoutingPolicy::LocalOnly),
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        };
+        // LocalOnly with local provider → dispatches locally
+        let result = node.route(&ctx, b"test").await;
+        assert!(result.is_ok());
+    }
 }

@@ -217,3 +217,83 @@ impl octo_transport::sender::NetworkSender for LocalProviderSender {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_capacity_from_config() {
+        let cfg = ProviderConfig {
+            name: "openai".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth: ProviderAuth::ApiKey("key".into()),
+            models: vec!["gpt-4o".into(), "gpt-3.5-turbo".into()],
+        };
+        let node_id = RouterNodeId([1u8; 32]);
+        let cap = ProviderCapacity::from_config(&cfg, node_id);
+        assert_eq!(cap.provider_name, "openai");
+        assert_eq!(
+            cap.models,
+            vec![String::from("gpt-4o"), String::from("gpt-3.5-turbo")]
+        );
+        assert_eq!(cap.requests_remaining, u64::MAX);
+        assert_eq!(cap.status, ProviderHealth::Unknown);
+        assert_eq!(cap.pricing.len(), 2);
+        // Provider ID is deterministic
+        let cap2 = ProviderCapacity::from_config(&cfg, node_id);
+        assert_eq!(cap.provider_id, cap2.provider_id);
+    }
+
+    #[test]
+    fn http_provider_new_api_key() {
+        let cfg = ProviderConfig {
+            name: "openai".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth: ProviderAuth::ApiKey("sk-test".into()),
+            models: vec!["gpt-4o".into()],
+        };
+        let p = HttpLocalProvider::new(cfg);
+        assert_eq!(p.api_key, "sk-test");
+        assert_eq!(p.models, vec![String::from("gpt-4o")]);
+    }
+
+    #[test]
+    fn http_provider_new_oauth() {
+        let cfg = ProviderConfig {
+            name: "openai".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth: ProviderAuth::OAuth("token".into()),
+            models: vec![],
+        };
+        let p = HttpLocalProvider::new(cfg);
+        assert_eq!(p.api_key, "token");
+    }
+
+    #[test]
+    fn http_provider_new_local() {
+        let cfg = ProviderConfig {
+            name: "ollama".into(),
+            endpoint: "http://localhost:11434".into(),
+            auth: ProviderAuth::Local,
+            models: vec!["llama3".into()],
+        };
+        let p = HttpLocalProvider::new(cfg);
+        assert_eq!(p.api_key, "");
+    }
+
+    #[test]
+    fn provider_health_all_variants() {
+        let variants = [
+            ProviderHealth::Healthy,
+            ProviderHealth::Degraded,
+            ProviderHealth::Unavailable,
+            ProviderHealth::Unknown,
+        ];
+        for v in &variants {
+            let encoded = bincode::serialize(v).unwrap();
+            let decoded: ProviderHealth = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(*v, decoded);
+        }
+    }
+}

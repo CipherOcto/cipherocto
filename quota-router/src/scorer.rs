@@ -346,4 +346,54 @@ mod tests {
             _ => panic!("expected remote"),
         }
     }
+
+    #[test]
+    fn quality_policy_prefers_higher_success_rate() {
+        let high = make_provider("high", "gpt-4o", 5, 200, 9900, 100);
+        let low = make_provider("low", "gpt-4o", 5, 200, 5000, 100);
+        let req = make_request("gpt-4o");
+        let dests = select_destinations(&req, &[high, low], &[], &RoutingPolicy::Quality);
+        assert_eq!(dests.len(), 2);
+        match &dests[0] {
+            Destination::Local { provider, .. } => assert_eq!(provider.provider_name, "high"),
+            _ => panic!("expected high"),
+        }
+    }
+
+    #[test]
+    fn custom_policy_with_model_override() {
+        let mut high = make_provider("preferred", "gpt-4o", 5, 200, 9500, 100);
+        high.provider_name = "preferred".into();
+        let low = make_provider("other", "gpt-4o", 1, 200, 9500, 100);
+        let policy = RoutingPolicy::Custom(crate::request::CustomPolicy {
+            model_overrides: vec![crate::request::ModelOverride {
+                model: "gpt-4o".into(),
+                preferred_providers: vec!["preferred".into()],
+                max_price: 10,
+            }],
+            blacklist: vec![],
+            max_price_per_1k_tokens: 0,
+        });
+        let req = make_request("gpt-4o");
+        let dests = select_destinations(&req, &[high, low], &[], &policy);
+        assert_eq!(dests.len(), 2);
+        match &dests[0] {
+            Destination::Local { score, .. } => assert!(*score >= 0.9),
+            _ => panic!("expected high score"),
+        }
+    }
+
+    #[test]
+    fn preferred_provider_with_remote() {
+        let peer_id = RouterNodeId([2u8; 32]);
+        let remote = vec![make_provider("b", "gpt-4o", 1, 100, 9900, 50)];
+        let mut req = make_request("gpt-4o");
+        req.preferred_provider = Some("b".to_string());
+        let dests = select_destinations(&req, &[], &[(peer_id, remote)], &RoutingPolicy::Balanced);
+        assert_eq!(dests.len(), 1);
+        match &dests[0] {
+            Destination::Remote { provider, .. } => assert_eq!(provider.provider_name, "b"),
+            _ => panic!("expected remote b"),
+        }
+    }
 }

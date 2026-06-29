@@ -122,3 +122,163 @@ impl PendingRequests {
 pub struct CapacityRequestPayload {
     pub requester_id: RouterNodeId,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_request() -> ForwardRequestPayload {
+        ForwardRequestPayload {
+            request_id: [1u8; 32],
+            network_id: NetworkId([2u8; 32]),
+            context: crate::request::RequestContext {
+                model: "gpt-4o".into(),
+                preferred_provider: None,
+                model_group: None,
+                input_tokens: None,
+                max_output_tokens: None,
+                tags: None,
+                max_price_per_1k_tokens: None,
+                max_latency_ms: None,
+                policy_override: None,
+                consumer_id: [0u8; 32],
+                priority: 0,
+                deadline: None,
+            },
+            payload: b"hello".to_vec(),
+            ttl: 3,
+            origin_node: RouterNodeId([9u8; 32]),
+            hop_count: 0,
+            created_at: 100,
+            hmac: [0u8; 32],
+        }
+    }
+
+    #[test]
+    fn forward_request_roundtrip() {
+        let req = test_request();
+        let encoded = bincode::serialize(&req).unwrap();
+        let decoded: ForwardRequestPayload = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded.request_id, req.request_id);
+        assert_eq!(decoded.network_id, req.network_id);
+        assert_eq!(decoded.context.model, "gpt-4o");
+        assert_eq!(decoded.ttl, 3);
+        assert_eq!(decoded.hop_count, 0);
+        assert_eq!(decoded.payload, b"hello".to_vec());
+    }
+
+    #[test]
+    fn forward_response_roundtrip() {
+        let resp = ForwardResponsePayload {
+            request_id: [3u8; 32],
+            response: b"result".to_vec(),
+            executed_by: ProviderId([4u8; 32]),
+            latency_ms: 150,
+        };
+        let encoded = bincode::serialize(&resp).unwrap();
+        let decoded: ForwardResponsePayload = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded.request_id, [3u8; 32]);
+        assert_eq!(decoded.response, b"result".to_vec());
+        assert_eq!(decoded.latency_ms, 150);
+    }
+
+    #[test]
+    fn forward_reject_roundtrip() {
+        let reject = ForwardRejectPayload {
+            request_id: [5u8; 32],
+            peer_id: RouterNodeId([6u8; 32]),
+            reason: ForwardRejectReason::TtlExpired,
+        };
+        let encoded = bincode::serialize(&reject).unwrap();
+        let decoded: ForwardRejectPayload = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded.request_id, [5u8; 32]);
+        assert!(matches!(decoded.reason, ForwardRejectReason::TtlExpired));
+    }
+
+    #[test]
+    fn capacity_request_roundtrip() {
+        let req = CapacityRequestPayload {
+            requester_id: RouterNodeId([7u8; 32]),
+        };
+        let encoded = bincode::serialize(&req).unwrap();
+        let decoded: CapacityRequestPayload = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded.requester_id, RouterNodeId([7u8; 32]));
+    }
+
+    #[tokio::test]
+    async fn pending_insert_and_complete() {
+        let pending = PendingRequests::new();
+        let request_id = [1u8; 32];
+        let origin = RouterNodeId([2u8; 32]);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        pending.insert(request_id, tx, origin);
+        assert_eq!(pending.origin(request_id), Some(origin));
+        pending.complete(request_id, b"response".to_vec());
+        let outcome = rx.await.unwrap();
+        match outcome {
+            ForwardOutcome::Completed(data) => assert_eq!(data, b"response".to_vec()),
+            _ => panic!("expected Completed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_insert_and_reject() {
+        let pending = PendingRequests::new();
+        let request_id = [3u8; 32];
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        pending.insert(request_id, tx, RouterNodeId([0u8; 32]));
+        pending.reject(request_id, ForwardRejectReason::NoProvider);
+        let outcome = rx.await.unwrap();
+        assert!(matches!(
+            outcome,
+            ForwardOutcome::Rejected(ForwardRejectReason::NoProvider)
+        ));
+    }
+
+    #[tokio::test]
+    async fn pending_cancel() {
+        let pending = PendingRequests::new();
+        let request_id = [4u8; 32];
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        pending.insert(request_id, tx, RouterNodeId([0u8; 32]));
+        pending.cancel(request_id);
+        assert!(pending.origin(request_id).is_none());
+        assert!(rx.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn pending_origin_lookup() {
+        let pending = PendingRequests::new();
+        let id_a = [10u8; 32];
+        let id_b = [11u8; 32];
+        let origin_a = RouterNodeId([20u8; 32]);
+        let origin_b = RouterNodeId([21u8; 32]);
+        let (tx1, _) = tokio::sync::oneshot::channel();
+        let (tx2, _) = tokio::sync::oneshot::channel();
+        pending.insert(id_a, tx1, origin_a);
+        pending.insert(id_b, tx2, origin_b);
+        assert_eq!(pending.origin(id_a), Some(origin_a));
+        assert_eq!(pending.origin(id_b), Some(origin_b));
+        assert_eq!(pending.origin([99u8; 32]), None);
+    }
+
+    #[test]
+    fn forward_reject_all_variants() {
+        let variants = [
+            ForwardRejectReason::TtlExpired,
+            ForwardRejectReason::NoProvider,
+            ForwardRejectReason::ModelNotSupported,
+            ForwardRejectReason::CapacityExhausted,
+            ForwardRejectReason::ContextWindowExceeded,
+            ForwardRejectReason::BudgetExceeded,
+            ForwardRejectReason::AuthFailure,
+            ForwardRejectReason::PayloadTooLarge,
+        ];
+        for v in &variants {
+            let encoded = bincode::serialize(v).unwrap();
+            let decoded: ForwardRejectReason = bincode::deserialize(&encoded).unwrap();
+            std::mem::discriminant(v);
+            assert_eq!(std::mem::discriminant(v), std::mem::discriminant(&decoded));
+        }
+    }
+}

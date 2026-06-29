@@ -1,0 +1,15 @@
+[package]
+name = "quota-router-node"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+quota-router = { path = "../../quota-router" }
+octo-transport = { path = "../../octo-transport" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+blake3 = "1.5"
+hex = "0.4"

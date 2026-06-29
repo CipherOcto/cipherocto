@@ -20,8 +20,6 @@ exclude = [
     "determin",
     "octo-sync",
     "octo-transport",
-    "octo-adapter-tcp",
-    "octo-adapter-udp",
     "quota-router",
     "quota-router-e2e-tests",
     "sync-e2e-tests",

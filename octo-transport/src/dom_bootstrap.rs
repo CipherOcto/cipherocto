@@ -605,6 +605,7 @@ mod tests {
             &self,
             _domain: &octo_network::dot::BroadcastDomainId,
             _envelope: &octo_network::dot::envelope::DeterministicEnvelope,
+            _payload: &[u8],
         ) -> Result<octo_network::dot::adapters::DeliveryReceipt, PlatformAdapterError> {
             Ok(octo_network::dot::adapters::DeliveryReceipt {
                 platform_message_id: "mock".to_string(),

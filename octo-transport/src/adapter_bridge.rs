@@ -109,6 +109,7 @@ mod tests {
             &self,
             _domain: &BroadcastDomainId,
             _envelope: &DeterministicEnvelope,
+            _payload: &[u8],
         ) -> Result<DeliveryReceipt, PlatformAdapterError> {
             Ok(DeliveryReceipt {
                 platform_message_id: "mock-001".to_string(),
@@ -160,6 +161,7 @@ mod tests {
             &self,
             _domain: &BroadcastDomainId,
             _envelope: &DeterministicEnvelope,
+            _payload: &[u8],
         ) -> Result<DeliveryReceipt, PlatformAdapterError> {
             Err(PlatformAdapterError::Unreachable {
                 platform: "mock-fail".to_string(),
@@ -325,6 +327,83 @@ mod tests {
 
         let result = bridge.send(b"test payload", &ctx).await;
         assert!(result.is_ok());
+    }
+
+    // === Payload transport regression tests ===
+
+    use std::sync::Mutex;
+
+    /// CaptureAdapter records the payload received by send_message.
+    struct CaptureAdapter {
+        captured: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CaptureAdapter {
+        fn new(captured: Arc<Mutex<Vec<u8>>>) -> Self {
+            Self { captured }
+        }
+    }
+
+    #[async_trait]
+    impl PlatformAdapter for CaptureAdapter {
+        async fn send_message(
+            &self,
+            _domain: &BroadcastDomainId,
+            _envelope: &DeterministicEnvelope,
+            payload: &[u8],
+        ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+            self.captured.lock().unwrap().extend_from_slice(payload);
+            Ok(DeliveryReceipt {
+                platform_message_id: "capture-001".to_string(),
+                delivered_at: 1000,
+            })
+        }
+
+        async fn receive_messages(&self, _: &BroadcastDomainId) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError> { Ok(vec![]) }
+        fn canonicalize(&self, _: &RawPlatformMessage) -> Result<DeterministicEnvelope, PlatformAdapterError> { Ok(DeterministicEnvelope::default()) }
+        fn capabilities(&self) -> CapabilityReport { CapabilityReport { max_payload_bytes: 65536, supports_raw_binary: true, ..Default::default() } }
+        fn domain_id(&self, _: &str) -> BroadcastDomainId { BroadcastDomainId::new(PlatformType::Webhook, "test") }
+        fn platform_type(&self) -> PlatformType { PlatformType::Webhook }
+    }
+
+    #[tokio::test]
+    async fn bridge_passes_exact_payload_to_adapter() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let adapter: Arc<dyn PlatformAdapter> = Arc::new(CaptureAdapter::new(captured.clone()));
+        let bridge = PlatformAdapterBridge::new(adapter, test_domain());
+        let payload = b"hello world payload data";
+        bridge.send(payload, &test_ctx()).await.unwrap();
+        assert_eq!(*captured.lock().unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn bridge_empty_payload_passes_through() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let adapter: Arc<dyn PlatformAdapter> = Arc::new(CaptureAdapter::new(captured.clone()));
+        let bridge = PlatformAdapterBridge::new(adapter, test_domain());
+        bridge.send(b"", &test_ctx()).await.unwrap();
+        assert!(captured.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn bridge_large_payload_not_truncated() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let adapter: Arc<dyn PlatformAdapter> = Arc::new(CaptureAdapter::new(captured.clone()));
+        let bridge = PlatformAdapterBridge::new(adapter, test_domain());
+        let large = vec![0xABu8; 1024 * 1024]; // 1MB
+        bridge.send(&large, &test_ctx()).await.unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 1024 * 1024);
+        assert_eq!(*captured.lock().unwrap(), large);
+    }
+
+    #[tokio::test]
+    async fn bridge_sequential_sends_independent_payloads() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let adapter: Arc<dyn PlatformAdapter> = Arc::new(CaptureAdapter::new(captured.clone()));
+        let bridge = PlatformAdapterBridge::new(adapter, test_domain());
+        bridge.send(b"first", &test_ctx()).await.unwrap();
+        bridge.send(b"second", &test_ctx()).await.unwrap();
+        assert_eq!(*captured.lock().unwrap(), b"firstsecond");
     }
 
     // === Integration: NetworkSender as trait object ===

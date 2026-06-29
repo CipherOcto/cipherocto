@@ -256,4 +256,70 @@ mod tests {
         let t = NodeTransport::new(vec![]);
         assert_eq!(t.broadcast(b"data", &ctx()).await, 0);
     }
+
+    // === Payload transport regression tests ===
+
+    use std::sync::Mutex;
+
+    /// CapturingSender records payloads received by send().
+    struct CapturingSender {
+        captured: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl CapturingSender {
+        fn new(captured: Arc<Mutex<Vec<Vec<u8>>>>) -> Self {
+            Self { captured }
+        }
+    }
+
+    #[async_trait]
+    impl NetworkSender for CapturingSender {
+        async fn send(&self, payload: &[u8], _ctx: &SendContext) -> Result<(), TransportError> {
+            self.captured.lock().unwrap().push(payload.to_vec());
+            Ok(())
+        }
+        fn name(&self) -> &str { "capturing" }
+        fn is_healthy(&self) -> bool { true }
+    }
+
+    #[tokio::test]
+    async fn send_best_passes_payload_to_sender() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let t = NodeTransport::new(vec![Arc::new(CapturingSender::new(captured.clone()))]);
+        let payload = b"test payload for send_best";
+        t.send_best(payload, &ctx()).await.unwrap();
+        let payloads = captured.lock().unwrap();
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0], b"test payload for send_best");
+    }
+
+    #[tokio::test]
+    async fn broadcast_passes_payload_to_all_senders() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let t = NodeTransport::new(vec![
+            Arc::new(CapturingSender::new(captured.clone())),
+            Arc::new(CapturingSender::new(captured.clone())),
+        ]);
+        let payload = b"broadcast payload";
+        let count = t.broadcast(payload, &ctx()).await;
+        assert_eq!(count, 2);
+        let payloads = captured.lock().unwrap();
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0], b"broadcast payload");
+        assert_eq!(payloads[1], b"broadcast payload");
+    }
+
+    #[tokio::test]
+    async fn failover_preserves_payload() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let t = NodeTransport::new(vec![
+            Arc::new(MockSender::failing("fail")),
+            Arc::new(CapturingSender::new(captured.clone())),
+        ]);
+        let payload = b"failover payload";
+        t.send_best(payload, &ctx()).await.unwrap();
+        let payloads = captured.lock().unwrap();
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0], b"failover payload");
+    }
 }

@@ -1,0 +1,69 @@
+name: Quota Router
+
+on:
+  push:
+    branches: [main, next, feat/**]
+    paths:
+      - 'quota-router/**'
+      - 'octo-transport/**'
+      - '.github/workflows/quota-router.yml'
+  pull_request:
+    branches: [main, next]
+    paths:
+      - 'quota-router/**'
+      - 'octo-transport/**'
+  merge_group:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: quota-router
+
+      - name: Build octo-transport (dependency)
+        working-directory: octo-transport
+        run: cargo build
+
+      - name: Run tests
+        working-directory: quota-router
+        run: cargo test --verbose
+
+      - name: Clippy
+        working-directory: quota-router
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Format check
+        working-directory: quota-router
+        run: cargo fmt --all -- --check
+
+  clippy-stable:
+    name: Clippy (stable)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: quota-router
+
+      - name: Clippy
+        working-directory: quota-router
+        run: cargo clippy --all-targets --all-features -- -D warnings

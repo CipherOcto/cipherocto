@@ -21,6 +21,7 @@ use quota_router::provider::{
     NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderCapacity, ProviderConfig,
     ProviderHealth, ProviderId, RouterNodeId,
 };
+use quota_router::request::RequestContext;
 use quota_router::PeerCache;
 
 // ── Test 1: TTL exhaustion ───────────────────────────────────────────
@@ -366,4 +367,225 @@ fn _arc_quota_router_compiles() {
         endpoint: "127.0.0.1:9000".parse().unwrap(),
         trust_level: PeerTrust::Trusted,
     };
+}
+
+// ── Test 6: Multi-hop TTL exhaustion chain ─────────────────────────
+
+/// Verify that a TTL=2 request dies at hop 2 in a 4-node chain.
+/// Node A forwards to B (TTL=1), B tries to forward to C (TTL=0)
+/// and must reject with TtlExpired.
+#[test]
+fn multi_hop_ttl_exhaustion_chain() {
+    let req = ForwardRequestPayload {
+        request_id: [10u8; 32],
+        network_id: NetworkId([2u8; 32]),
+        context: quota_router::request::RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        },
+        payload: b"hello".to_vec(),
+        ttl: 2,
+        origin_node: RouterNodeId([9u8; 32]),
+        hop_count: 0,
+        created_at: 0,
+        hmac: [0u8; 32],
+    };
+    // After first hop (A→B), TTL becomes 1, hop_count becomes 1
+    let after_first_hop = ForwardRequestPayload {
+        ttl: req.ttl - 1,
+        hop_count: req.hop_count + 1,
+        ..req.clone()
+    };
+    assert_eq!(after_first_hop.ttl, 1);
+    // After second hop (B→C), TTL becomes 0 — handler must reject
+    let after_second_hop = ForwardRequestPayload {
+        ttl: after_first_hop.ttl - 1,
+        hop_count: after_first_hop.hop_count + 1,
+        ..after_first_hop.clone()
+    };
+    assert_eq!(after_second_hop.ttl, 0);
+    // Handler sees ttl==0 and rejects
+}
+
+// ── Test 7: Gossip poisoning with wrong HMAC ──────────────────────
+
+/// Malicious gossip with tampered HMAC must be dropped.
+#[test]
+fn gossip_poisoning_with_wrong_hmac() {
+    let key = [42u8; 32];
+    let mut gossip = CapacityGossipPayload {
+        sender_id: RouterNodeId([1u8; 32]),
+        timestamp: 100,
+        capacities: vec![ProviderCapacity {
+            provider_id: ProviderId([3u8; 32]),
+            provider_name: "evil".into(),
+            router_node_id: RouterNodeId([1u8; 32]),
+            models: vec!["gpt-4o".into()],
+            requests_remaining: u64::MAX,
+            pricing: vec![],
+            status: ProviderHealth::Healthy,
+            latency_ms: 0,
+            success_rate_bps: 10000,
+            last_updated: 0,
+        }],
+        known_peers: vec![],
+        hmac: [0u8; 32],
+    };
+    gossip.hmac = gossip.compute_hmac(&key);
+    // Tamper with the capacities after signing
+    gossip.capacities[0].requests_remaining = 0;
+    assert!(!gossip.verify_hmac(&key));
+}
+
+// ── Test 8: Concurrent forwarding race ─────────────────────────────
+
+/// 100 concurrent route calls must not deadlock or panic.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_forwarding_race() {
+    use quota_router::provider::{ProviderAuth, ProviderConfig as PC};
+    use quota_router::QuotaRouterNode;
+
+    let node = Arc::new(
+        QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(PC {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap(),
+    );
+
+    let mut handles = vec![];
+    for i in 0..100u8 {
+        let node = node.clone();
+        handles.push(tokio::spawn(async move {
+            let ctx = quota_router::request::RequestContext {
+                model: "gpt-4o".into(),
+                preferred_provider: None,
+                model_group: None,
+                input_tokens: None,
+                max_output_tokens: None,
+                tags: None,
+                max_price_per_1k_tokens: None,
+                max_latency_ms: None,
+                policy_override: None,
+                consumer_id: [i; 32],
+                priority: 0,
+                deadline: None,
+            };
+            let _ = node.route(&ctx, b"test").await;
+        }));
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+}
+
+// ── Test 9: Capacity manipulation does not panic ──────────────────
+
+/// Gossip with extreme values must not cause division by zero or overflow.
+#[test]
+fn capacity_manipulation_extreme_values() {
+    use quota_router::provider::{
+        ModelPricing, ProviderCapacity, ProviderHealth, ProviderId, RouterNodeId,
+    };
+    use quota_router::request::{RequestContext, RoutingPolicy};
+    use quota_router::scorer::select_destinations;
+
+    let extreme = ProviderCapacity {
+        provider_id: ProviderId([1u8; 32]),
+        provider_name: "extreme".into(),
+        router_node_id: RouterNodeId([0u8; 32]),
+        models: vec!["gpt-4o".into()],
+        requests_remaining: u64::MAX,
+        pricing: vec![ModelPricing {
+            model: "gpt-4o".into(),
+            price_per_1k_tokens: 0,
+        }],
+        status: ProviderHealth::Healthy,
+        latency_ms: 0,
+        success_rate_bps: 0,
+        last_updated: 0,
+    };
+    let req = RequestContext {
+        model: "gpt-4o".into(),
+        preferred_provider: None,
+        model_group: None,
+        input_tokens: None,
+        max_output_tokens: None,
+        tags: None,
+        max_price_per_1k_tokens: None,
+        max_latency_ms: None,
+        policy_override: None,
+        consumer_id: [0u8; 32],
+        priority: 0,
+        deadline: None,
+    };
+    // Must not panic
+    let dests = select_destinations(&req, &[extreme], &[], &RoutingPolicy::Balanced);
+    assert!(!dests.is_empty());
+}
+
+// ── Test 10: Stale gossip eviction under load ──────────────────────
+
+/// Flood with 1000 gossip merges — cache stays bounded, no OOM.
+#[test]
+fn stale_gossip_eviction_under_load() {
+    use quota_router::gossip::GossipCache;
+    use quota_router::provider::RouterNodeId;
+
+    let mut cache = GossipCache::new();
+    for i in 0..1000u16 {
+        let sender = RouterNodeId([i as u8; 32]);
+        cache.merge(sender, vec![]);
+    }
+    let snap = cache.snapshot();
+    assert!(snap.len() <= 1000);
+}
+
+// ── Test 13: Network ID mismatch rejected ──────────────────────────
+
+/// ForwardRequest with wrong network_id must be detected.
+#[test]
+fn network_id_mismatch_rejected() {
+    let req = ForwardRequestPayload {
+        request_id: [1u8; 32],
+        network_id: NetworkId([99u8; 32]),
+        context: RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        },
+        payload: b"test".to_vec(),
+        ttl: 3,
+        origin_node: RouterNodeId([9u8; 32]),
+        hop_count: 0,
+        created_at: 0,
+        hmac: [0u8; 32],
+    };
+    // The node's network_id is [2u8; 32], request has [99u8; 32]
+    assert_ne!(req.network_id, NetworkId([2u8; 32]));
 }

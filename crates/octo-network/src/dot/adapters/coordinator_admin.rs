@@ -3,7 +3,7 @@
 //! This trait is a **separate capability** from [`PlatformAdapter`]:
 //!
 //! - `PlatformAdapter` is the **envelope transport** hot path
-//!   (`send_envelope`, `receive_messages`, `canonicalize`). It models
+//!   (`send_message`, `receive_messages`, `canonicalize`). It models
 //!   "I carry envelopes in and out of a domain".
 //! - `CoordinatorAdmin` is the **group management** surface
 //!   (`create_group`, `add_member`, `promote`, `set_announce`, …).

@@ -415,7 +415,7 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
 
     let domain = adapter.domain_id(&group_jid);
     let receipt = adapter
-        .send_message(&domain, &envelope)
+        .send_message(&domain, &envelope, b"test")
         .await
         .expect("send_message must succeed via the registered group");
     tracing::info!(

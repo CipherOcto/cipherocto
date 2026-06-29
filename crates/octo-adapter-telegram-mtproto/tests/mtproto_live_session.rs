@@ -420,7 +420,7 @@ async fn lt16_send_message_via_adapter() {
     // Proactive delay to avoid FLOOD_WAIT.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     // send_message may fail if the DOT/1 text encoding exceeds limits
     // or the chat doesn't accept messages. We verify it doesn't panic.
     match result {
@@ -731,7 +731,7 @@ async fn lt28_send_message_unregistered_domain() {
     // Proactive delay to avoid FLOOD_WAIT.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(result.is_err(), "unregistered domain should fail");
 
     drop(adapter);

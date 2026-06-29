@@ -187,7 +187,7 @@ impl DotGateway {
                 adapter.platform_type(),
                 &format!("{:02x?}", &envelope.source_peer[..8]),
             );
-            match adapter.send_envelope(&domain, envelope).await {
+            match adapter.send_message(&domain, envelope, b"test").await {
                 Ok(_receipt) => {}
                 Err(_e) => {
                     // Adapter failed — continue to next adapter.

@@ -1207,7 +1207,7 @@ async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
     // ── Step 6: send_message writes the wire bytes ─────────────
     let domain = adapter.domain_id("whatsapp:test-group");
     let receipt = adapter
-        .send_message(&domain, &env)
+        .send_message(&domain, &env, b"test payload")
         .await
         .expect("send_message should succeed");
     assert!(receipt.platform_message_id.starts_with("mock-"));

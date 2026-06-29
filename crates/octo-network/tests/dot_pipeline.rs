@@ -36,7 +36,7 @@ async fn test_envelope_send_through_mock_adapter() {
     let envelope = MockNetwork::make_envelope([0xBB; 32], 1, [0x02; 32], 2000);
 
     let domain = adapter.domain_id("test");
-    let receipt = adapter.send_message(&domain, &envelope).await.unwrap();
+    let receipt = adapter.send_message(&domain, &envelope, b"test").await.unwrap();
     assert!(!receipt.platform_message_id.is_empty());
     assert_eq!(adapter.outbound_count().await, 1);
 

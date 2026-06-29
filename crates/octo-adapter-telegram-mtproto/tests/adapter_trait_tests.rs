@@ -164,7 +164,7 @@ async fn test_send_message_rejects_unregistered_domain() {
         "-999999",
     );
     let envelope = DeterministicEnvelope::default();
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(result.is_err(), "send to unregistered domain should fail");
 }
 
@@ -178,7 +178,7 @@ async fn test_send_message_rejects_not_ready() {
     // Don't mark_ready_for_test — lifecycle is Building.
     let domain = adapter.domain_id("-1001234567890");
     let envelope = DeterministicEnvelope::default();
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(result.is_err(), "send when not ready should fail");
 }
 

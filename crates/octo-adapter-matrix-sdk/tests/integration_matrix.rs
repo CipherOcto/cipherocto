@@ -209,7 +209,7 @@ async fn integration_envelope_round_trip() {
     // platform_message_id (R1-H5). The SDK's `sent.event_id` is the
     // authoritative ID.
     let receipt = adapter
-        .send_message(&domain, &envelope)
+        .send_message(&domain, &envelope, b"test")
         .await
         .expect("send_message must succeed against joined test room");
     assert!(
@@ -546,7 +546,7 @@ async fn integration_encrypted_room_round_trip() {
 
     let domain = broadcast_domain_for(&adapter1, room_id_typed.as_ref());
     let receipt = adapter1
-        .send_message(&domain, &envelope)
+        .send_message(&domain, &envelope, b"test")
         .await
         .expect("send_message into encrypted room");
     assert!(

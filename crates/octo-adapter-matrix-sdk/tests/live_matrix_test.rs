@@ -369,7 +369,7 @@ fn mx04_05_06_envelope_round_trip() {
 
     // mx04: send_message
     let receipt = rt
-        .block_on(adapter.send_message(&domain, &envelope))
+        .block_on(adapter.send_message(&domain, &envelope, b"test"))
         .expect("send_message");
     assert!(!receipt.platform_message_id.is_empty());
     assert!(

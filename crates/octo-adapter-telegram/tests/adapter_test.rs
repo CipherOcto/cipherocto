@@ -294,7 +294,7 @@ async fn test_send_with_retry_retries_on_transient() {
         flags: 0,
         signature: [6u8; 64],
     };
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(
         result.is_ok(),
         "send_message should succeed after 2 transient failures: {:?}",
@@ -357,7 +357,7 @@ async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
         flags: 0,
         signature: [6u8; 64],
     };
-    let result = adapter.send_message(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(
         result.is_err(),
         "send_message should surface Unreachable when max_retries is exhausted"

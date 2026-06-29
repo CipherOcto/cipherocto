@@ -1,6 +1,17 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use clap::Parser;
+use octo_adapter_tcp::TcpAdapter;
+use octo_network::dot::adapters::PlatformAdapter;
+use octo_network::dot::domain::BroadcastDomainId;
+use octo_network::dot::PlatformType;
+use octo_transport::adapter_bridge::PlatformAdapterBridge;
+use octo_transport::node_transport::NodeTransport;
+use quota_router::handler::QuotaRouterHandler;
 use quota_router::provider::{
-    NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderConfig, RouterNodeId,
+    LocalProvider, NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderCapacity,
+    ProviderConfig, ProviderError, ProviderHealth, RouterNodeId,
 };
 use quota_router::request::RoutingPolicy;
 use quota_router::QuotaRouterNode;
@@ -29,6 +40,28 @@ fn decode_hex(s: &str) -> [u8; 32] {
     arr
 }
 
+struct LocalMockProvider {
+    models: Vec<String>,
+}
+
+#[async_trait]
+impl LocalProvider for LocalMockProvider {
+    async fn completion(
+        &self,
+        model: &str,
+        _messages: &[u8],
+        _params: &ProviderCapacity,
+    ) -> Result<Vec<u8>, ProviderError> {
+        Ok(format!("response-{}", model).into_bytes())
+    }
+    async fn health_check(&self) -> ProviderHealth {
+        ProviderHealth::Healthy
+    }
+    fn supported_models(&self) -> Vec<String> {
+        self.models.clone()
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -43,10 +76,11 @@ async fn main() {
         .policy(RoutingPolicy::Balanced)
         .gossip_interval(std::time::Duration::from_millis(args.gossip_interval));
 
+    let models: Vec<String> = args.providers.iter().cloned().collect();
     for model in &args.providers {
         builder = builder.provider(ProviderConfig {
             name: model.clone(),
-            endpoint: format!("http://localhost"),
+            endpoint: "http://localhost".into(),
             auth: ProviderAuth::Local,
             models: vec![model.clone()],
         });
@@ -65,15 +99,63 @@ async fn main() {
         }
     }
 
-    let node = builder.build().expect("failed to build node");
-    tracing::info!("Node {:?} started on {}", node_id, args.listen_addr);
+    let mut node = builder.build().expect("failed to build node");
 
+    // Create TCP adapter
+    let listen_addr: std::net::SocketAddr = args.listen_addr.parse().expect("invalid listen_addr");
+    let tcp_adapter = TcpAdapter::new(listen_addr)
+        .await
+        .expect("failed to create TCP adapter");
+    let actual_addr = tcp_adapter.local_addr();
+
+    // Connect to peers
+    for peer_addr in &args.peers {
+        if let Ok(addr) = peer_addr.parse::<std::net::SocketAddr>() {
+            if let Err(e) = tcp_adapter.connect(addr).await {
+                tracing::warn!("Failed to connect to {}: {}", addr, e);
+            }
+        }
+    }
+
+    // Create PlatformAdapterBridge wrapping TcpAdapter
+    let domain = BroadcastDomainId::new(PlatformType::Tcp, &actual_addr.to_string());
+    let adapter: Arc<dyn PlatformAdapter> = Arc::new(tcp_adapter);
+
+    // Create two NodeTransport instances from the same adapter (NodeTransport is not Clone)
+    let bridge1 = Arc::new(PlatformAdapterBridge::new(adapter.clone(), domain.clone()));
+    let bridge2 = Arc::new(PlatformAdapterBridge::new(adapter, domain));
+
+    node.transport = NodeTransport::new(vec![bridge1]);
+
+    // Create handler
+    let transport = Arc::new(NodeTransport::new(vec![bridge2]));
+    let primary_provider: Arc<dyn LocalProvider> = Arc::new(LocalMockProvider {
+        models: models.clone(),
+    });
+    let handler = Arc::new(QuotaRouterHandler::new(
+        Arc::new(std::sync::Mutex::new(node)),
+        primary_provider,
+        network_key,
+        transport,
+    ));
+
+    tracing::info!("Node {:?} listening on {}", node_id, actual_addr);
+
+    // Main loop: receive messages and dispatch to handler
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
 
-    tokio::select! {
-        _ = shutdown => {
-            tracing::info!("Shutting down node {:?}", node_id);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => {
+                tracing::info!("Shutting down node {:?}", node_id);
+                break;
+            }
+            _ = async {
+                // Poll for incoming messages from TCP adapter
+                // and dispatch to handler.on_receive()
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            } => {}
         }
     }
 }

@@ -29,6 +29,26 @@ pub struct QuotaRouterHandler {
     pub(crate) transport: Arc<octo_transport::node_transport::NodeTransport>,
 }
 
+impl QuotaRouterHandler {
+    /// Create a new handler wrapping the given node and transport.
+    ///
+    /// The handler implements `NetworkReceiver` and processes inbound
+    /// DOT envelopes (forward requests, gossip, announce, withdraw).
+    pub fn new(
+        node: Arc<Mutex<QuotaRouterNode>>,
+        provider: Arc<dyn LocalProvider>,
+        network_key: [u8; 32],
+        transport: Arc<octo_transport::node_transport::NodeTransport>,
+    ) -> Self {
+        Self {
+            node,
+            provider,
+            network_key,
+            transport,
+        }
+    }
+}
+
 enum DropAction {
     Reject,
     LocalDispatch(ProviderCapacity),

@@ -8,9 +8,9 @@
 //
 // Note: The 100 MB file size was reduced to 1 MB to avoid 400 MB peak RSS
 // under `cargo test` (parallel by default). The 100 MB claim is verified
-// manually against TDLib; the routing logic (send_message for small, send_envelope
+// manually against TDLib; the routing logic (send_message for small, send_message
 // for large) is the contract being tested, and 1 MB still proves the routing
-// path because send_envelope (large-envelope) is invoked for any non-trivial payload.
+// path because send_message (large-envelope) is invoked for any non-trivial payload.
 
 use octo_adapter_telegram::client::TelegramClient;
 use octo_adapter_telegram::mock::MockTelegramClient;
@@ -183,16 +183,16 @@ async fn test_send_file_has_no_caption() {
     );
 }
 
-/// H6: `send_envelope` is a new method on `TelegramClient` for envelope
+/// H6: `send_message` is a new method on `TelegramClient` for envelope
 /// uploads. The encoded envelope is set as the caption. The mock records
 /// the encoded envelope into `sent_messages` (same bucket as `send_message`)
 /// so the receive path can decode it.
 #[tokio::test]
-async fn test_send_envelope_records_caption() {
+async fn test_send_message_records_caption() {
     let client = MockTelegramClient::new();
     let encoded = "ZW5jb2RlZC1lbnZlbG9wZQ=="; // base64 of "encoded-envelope"
     let sent = client
-        .send_envelope(
+        .send_message(
             "-1001234567890",
             encoded,
             "envelope.bin",
@@ -221,7 +221,7 @@ async fn test_send_envelope_records_caption() {
 }
 
 /// H6: `send_file` should NOT record a caption. Verify `sent_messages` stays
-/// empty after a `send_file` call, distinguishing it from `send_envelope`.
+/// empty after a `send_file` call, distinguishing it from `send_message`.
 #[tokio::test]
 async fn test_send_file_does_not_record_caption() {
     let client = MockTelegramClient::new();

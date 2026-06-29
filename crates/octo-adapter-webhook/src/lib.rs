@@ -237,10 +237,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for WebhookAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let send_url = self
             .config

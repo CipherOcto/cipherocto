@@ -2004,10 +2004,11 @@ async fn upload_to_cdn(
 
 #[async_trait]
 impl PlatformAdapter for WhatsAppWebAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Clone client Arc to avoid holding mutex guard across await
         let client = {

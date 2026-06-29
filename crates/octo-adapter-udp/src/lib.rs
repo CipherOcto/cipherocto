@@ -104,10 +104,11 @@ impl UdpAdapter {
 
 #[async_trait]
 impl PlatformAdapter for UdpAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let payload = envelope.to_wire_bytes();
 

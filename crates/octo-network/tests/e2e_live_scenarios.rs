@@ -1120,7 +1120,7 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
 //   4. `BindGossipState::record_received` ingests the bind
 //   5. `DeterministicEnvelope` carries the bind as its payload
 //      (payload_hash = blake3(serialized BindEnvelope))
-//   6. `PlatformAdapter::send_envelope` writes wire bytes
+//   6. `PlatformAdapter::send_message` writes wire bytes
 //   7. Wire bytes round-trip through `from_wire_bytes` and still
 //      carry the bind payload (group_id intact)
 
@@ -1204,12 +1204,12 @@ async fn scenario13_coordinator_admin_create_group_then_bind_to_wire() {
         ..env
     };
 
-    // ── Step 6: send_envelope writes the wire bytes ─────────────
+    // ── Step 6: send_message writes the wire bytes ─────────────
     let domain = adapter.domain_id("whatsapp:test-group");
     let receipt = adapter
-        .send_envelope(&domain, &env)
+        .send_message(&domain, &env)
         .await
-        .expect("send_envelope should succeed");
+        .expect("send_message should succeed");
     assert!(receipt.platform_message_id.starts_with("mock-"));
 
     let outbound = adapter.outbound_messages().await;

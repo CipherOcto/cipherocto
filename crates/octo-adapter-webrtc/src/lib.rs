@@ -105,10 +105,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for WebRTCAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
 

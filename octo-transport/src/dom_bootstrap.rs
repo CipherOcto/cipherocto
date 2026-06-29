@@ -601,7 +601,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PlatformAdapter for MockDotDomainAdapter {
-        async fn send_envelope(
+        async fn send_message(
             &self,
             _domain: &octo_network::dot::BroadcastDomainId,
             _envelope: &octo_network::dot::envelope::DeterministicEnvelope,

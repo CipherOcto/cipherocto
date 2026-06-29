@@ -1156,10 +1156,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for IrcAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Spawn the listener if it isn't already running. Without
         // this, a `send_envelope` call before any `receive_messages`

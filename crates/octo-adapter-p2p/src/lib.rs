@@ -246,10 +246,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for NativeP2PAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Native binary transport: send raw wire bytes directly over gossipsub.
         // No base64url encoding needed — gossipsub carries Vec<u8> natively.

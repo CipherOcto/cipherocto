@@ -785,7 +785,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
     for MtprotoTelegramAdapter<C>
 {
     #[tracing::instrument(skip(self, envelope_obj))]
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,

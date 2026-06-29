@@ -1,6 +1,6 @@
 //! Round-trip 282-byte envelope test.
 //! Mission AC line 107: "envelope_tests.rs - round-trip 282-byte envelope"
-//! Mission AC line 129: "send_envelope() writes the 282-byte envelope via sendMessage"
+//! Mission AC line 129: "send_message() writes the 282-byte envelope via sendMessage"
 //!
 //! R6 TEST-C3: Also tests decode-envelope error paths (bad length, bad base64, non-UTF8).
 

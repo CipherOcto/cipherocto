@@ -268,7 +268,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 #[async_trait]
 impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     #[tracing::instrument(skip(self, envelope_obj), fields(chat_id))]
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,

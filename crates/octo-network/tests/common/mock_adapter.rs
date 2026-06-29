@@ -139,7 +139,7 @@ impl MockPlatformAdapter {
     ///
     /// Tests use this to drive cross-module flows (e.g.
     /// `CoordinatorAdmin::create_group` → `BindEnvelope` →
-    /// `DeterministicEnvelope` → `PlatformAdapter::send_envelope`)
+    /// `DeterministicEnvelope` → `PlatformAdapter::send_message`)
     /// without standing up a real WhatsApp/IRC/etc. backend.
     pub fn with_admin_scripted(mut self, scripted: AdminScripted) -> Self {
         self.admin_scripted = Arc::new(Mutex::new(scripted));
@@ -188,7 +188,7 @@ impl MockPlatformAdapter {
 
 #[async_trait::async_trait]
 impl PlatformAdapter for MockPlatformAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,

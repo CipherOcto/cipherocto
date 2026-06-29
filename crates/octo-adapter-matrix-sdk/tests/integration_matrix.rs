@@ -18,7 +18,7 @@
 //! 2. Loads the on-disk config, calls /whoami via the SDK, asserts
 //!    user matches.
 //! 3. Joins the test room, drives the adapter through
-//!    `send_envelope` → `receive_messages`, asserts the envelope
+//!    `send_message` → `receive_messages`, asserts the envelope
 //!    round-trips end-to-end through the homeserver.
 //!
 //! Run: `cargo test -p octo-adapter-matrix-sdk --features integration-matrix
@@ -154,9 +154,9 @@ async fn integration_login_and_whoami() {
 #[ignore = "requires live Matrix homeserver; run with: scripts/integration-matrix.sh up && cargo test -p octo-adapter-matrix-sdk --features integration-matrix -- --ignored"]
 async fn integration_envelope_round_trip() {
     // R1-H6: the test now actually round-trips an envelope through
-    // the homeserver (send_envelope → server → receive_messages).
+    // the homeserver (send_message → server → receive_messages).
     // The earlier version only round-tripped base64 in-process and
-    // never touched `send_envelope` or `receive_messages`.
+    // never touched `send_message` or `receive_messages`.
     let (sess, _client) = login_and_join().await;
 
     let cfg = octo_adapter_matrix_sdk::MatrixConfig {
@@ -209,9 +209,9 @@ async fn integration_envelope_round_trip() {
     // platform_message_id (R1-H5). The SDK's `sent.event_id` is the
     // authoritative ID.
     let receipt = adapter
-        .send_envelope(&domain, &envelope)
+        .send_message(&domain, &envelope)
         .await
-        .expect("send_envelope must succeed against joined test room");
+        .expect("send_message must succeed against joined test room");
     assert!(
         !receipt.platform_message_id.is_empty(),
         "receipt platform_message_id is empty"
@@ -546,9 +546,9 @@ async fn integration_encrypted_room_round_trip() {
 
     let domain = broadcast_domain_for(&adapter1, room_id_typed.as_ref());
     let receipt = adapter1
-        .send_envelope(&domain, &envelope)
+        .send_message(&domain, &envelope)
         .await
-        .expect("send_envelope into encrypted room");
+        .expect("send_message into encrypted room");
     assert!(
         !receipt.platform_message_id.is_empty(),
         "encrypted-room send returned empty event id"

@@ -92,11 +92,15 @@ pub struct MediaCapabilities {
 /// - `replay_protection()` -> RFC `replay_protection.check` (S8.2, S11.2)
 #[async_trait]
 pub trait PlatformAdapter: Send + Sync {
-    /// Send a deterministic envelope to the platform (RFC-0850 S8.2).
-    async fn send_envelope(
+    /// Send a complete DOT message (envelope + payload) to the platform (RFC-0850 S8.2).
+    ///
+    /// The `envelope` carries routing metadata. The `payload` carries the actual data.
+    /// Adapters encode both for platform-specific transport (see RFC-0850 §8.6).
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError>;
 
     /// Receive raw messages from the platform (RFC-0850 S8.2: `receive_envelope`).

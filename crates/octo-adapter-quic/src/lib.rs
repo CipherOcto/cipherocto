@@ -623,10 +623,11 @@ fn quic_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for QuicAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: envelope: &DeterministicEnvelope,[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Raw binary transport per RFC-0850 §8.7.3
         let wire_bytes = envelope.to_wire_bytes();

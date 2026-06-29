@@ -69,7 +69,7 @@ impl PlatformAdapter for NonAdminStubAdapter {
     fn self_handle(&self) -> Option<String> {
         None
     }
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         _envelope: &octo_network::dot::envelope::DeterministicEnvelope,
@@ -80,7 +80,7 @@ impl PlatformAdapter for NonAdminStubAdapter {
         Err(
             octo_network::dot::error::PlatformAdapterError::Unimplemented {
                 platform: "stub".into(),
-                action: "send_envelope".into(),
+                action: "send_message".into(),
             },
         )
     }

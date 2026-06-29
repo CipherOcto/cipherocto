@@ -62,7 +62,7 @@ impl NetworkSender for PlatformAdapterBridge {
             .map_err(|_e| TransportError::Unhealthy)?;
         let envelope = Self::build_envelope(payload, ctx);
         self.adapter
-            .send_envelope(&self.domain, &envelope)
+            .send_message(&self.domain, &envelope, payload)
             .await
             .map_err(adapter_error_to_transport)?;
         Ok(())
@@ -105,7 +105,7 @@ mod tests {
 
     #[async_trait]
     impl PlatformAdapter for MockAdapter {
-        async fn send_envelope(
+        async fn send_message(
             &self,
             _domain: &BroadcastDomainId,
             _envelope: &DeterministicEnvelope,
@@ -156,7 +156,7 @@ mod tests {
 
     #[async_trait]
     impl PlatformAdapter for FailingMockAdapter {
-        async fn send_envelope(
+        async fn send_message(
             &self,
             _domain: &BroadcastDomainId,
             _envelope: &DeterministicEnvelope,

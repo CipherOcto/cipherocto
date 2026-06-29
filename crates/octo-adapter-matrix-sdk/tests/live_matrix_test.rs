@@ -319,7 +319,7 @@ fn mx03_capabilities() {
     );
 }
 
-// ── mx04 + mx05 + mx06: send_envelope, receive_messages, canonicalize ──
+// ── mx04 + mx05 + mx06: send_message, receive_messages, canonicalize ──
 
 #[test]
 #[ignore = "requires live Matrix session; run with --features live-matrix -- --ignored"]
@@ -367,10 +367,10 @@ fn mx04_05_06_envelope_round_trip() {
         DeterministicEnvelope::from_wire_bytes(&envelope_bytes).expect("from_wire_bytes");
     let domain = broadcast_domain(&adapter, &room_id);
 
-    // mx04: send_envelope
+    // mx04: send_message
     let receipt = rt
-        .block_on(adapter.send_envelope(&domain, &envelope))
-        .expect("send_envelope");
+        .block_on(adapter.send_message(&domain, &envelope))
+        .expect("send_message");
     assert!(!receipt.platform_message_id.is_empty());
     assert!(
         receipt.platform_message_id.starts_with('$'),
@@ -378,7 +378,7 @@ fn mx04_05_06_envelope_round_trip() {
         receipt.platform_message_id
     );
     assert!(receipt.delivered_at > 0);
-    tracing::info!(event_id = %receipt.platform_message_id, "MX-04: send_envelope OK");
+    tracing::info!(event_id = %receipt.platform_message_id, "MX-04: send_message OK");
 
     // mx05 + mx06: receive_messages + canonicalize
     let mut found = false;

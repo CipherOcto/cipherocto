@@ -154,9 +154,9 @@ fn test_self_handle_returns_some_after_set() {
 // Send/receive
 // =============================================================================
 
-/// Verify send_envelope rejects unregistered domain.
+/// Verify send_message rejects unregistered domain.
 #[tokio::test]
-async fn test_send_envelope_rejects_unregistered_domain() {
+async fn test_send_message_rejects_unregistered_domain() {
     use octo_network::dot::envelope::DeterministicEnvelope;
     let adapter = adapter();
     let domain = octo_network::dot::BroadcastDomainId::new(
@@ -164,13 +164,13 @@ async fn test_send_envelope_rejects_unregistered_domain() {
         "-999999",
     );
     let envelope = DeterministicEnvelope::default();
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope).await;
     assert!(result.is_err(), "send to unregistered domain should fail");
 }
 
-/// Verify send_envelope rejects not-ready lifecycle.
+/// Verify send_message rejects not-ready lifecycle.
 #[tokio::test]
-async fn test_send_envelope_rejects_not_ready() {
+async fn test_send_message_rejects_not_ready() {
     use octo_network::dot::envelope::DeterministicEnvelope;
     let cfg = config();
     let client = Arc::new(MockTelegramMtprotoClient::new());
@@ -178,7 +178,7 @@ async fn test_send_envelope_rejects_not_ready() {
     // Don't mark_ready_for_test — lifecycle is Building.
     let domain = adapter.domain_id("-1001234567890");
     let envelope = DeterministicEnvelope::default();
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope).await;
     assert!(result.is_err(), "send when not ready should fail");
 }
 

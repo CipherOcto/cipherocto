@@ -313,9 +313,9 @@ async fn round_trip_send_receive() {
     // Send an envelope.
     let env = DeterministicEnvelope::default();
     let receipt = adapter
-        .send_envelope(&domain, &env)
+        .send_message(&domain, &env)
         .await
-        .expect("send_envelope");
+        .expect("send_message");
     assert!(!receipt.platform_message_id.is_empty());
 
     // Inject a return message and verify it's received.

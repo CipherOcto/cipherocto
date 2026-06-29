@@ -15,10 +15,10 @@
 //!    We then call `get_invite_link` to mint a `chat.whatsapp.com` URL
 //!    for the operator to share with humans / other nodes.
 //! 4. The bot registers the new group at runtime via
-//!    `register_group_at_runtime` so the `PlatformAdapter::send_envelope`
+//!    `register_group_at_runtime` so the `PlatformAdapter::send_message`
 //!    domain→JID lookup and the inbound `accept_message` filter accept it,
 //!    then publishes a `DeterministicEnvelope` to the new group via the
-//!    public `PlatformAdapter::send_envelope` path.
+//!    public `PlatformAdapter::send_message` path.
 //! 5. The server returns a `platform_message_id` (the real, server-issued
 //!    message token) confirming the envelope was accepted. We then
 //!    construct a `RawPlatformMessage` from the exact wire bytes the
@@ -132,7 +132,7 @@ fn live_config() -> WhatsAppConfig {
         // groups starts empty: the new group's JID is not known until
         // `create_group` returns. The E2E test calls
         // `register_group_at_runtime(&group_jid)` immediately after
-        // creation so the public `PlatformAdapter::send_envelope` path
+        // creation so the public `PlatformAdapter::send_message` path
         // can route the envelope via domain→JID lookup.
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
@@ -354,7 +354,7 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     );
 
     // Register the freshly-created group at runtime so the inbound
-    // `accept_message` filter and `send_envelope`'s domain→JID lookup
+    // `accept_message` filter and `send_message`'s domain→JID lookup
     // accept the group. Without this, the inbound event would be
     // filtered as "unconfigured group" and we would never observe
     // self-delivery.
@@ -399,7 +399,7 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     );
 
     // ── Step 4: send a DOT envelope to the new group ──────────────
-    // Use the public `PlatformAdapter::send_envelope` path now that
+    // Use the public `PlatformAdapter::send_message` path now that
     // `register_group_at_runtime` has wired the new group into the
     // domain→JID lookup. This exercises the same wire path production
     // uses (no test-only bypass).
@@ -410,14 +410,14 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     tracing::info!(
         group_jid = %group_jid,
         envelope_id = %hex_encode(&envelope.envelope_id),
-        "sending DOT envelope to group via PlatformAdapter::send_envelope"
+        "sending DOT envelope to group via PlatformAdapter::send_message"
     );
 
     let domain = adapter.domain_id(&group_jid);
     let receipt = adapter
-        .send_envelope(&domain, &envelope)
+        .send_message(&domain, &envelope)
         .await
-        .expect("send_envelope must succeed via the registered group");
+        .expect("send_message must succeed via the registered group");
     tracing::info!(
         platform_message_id = %receipt.platform_message_id,
         "envelope accepted by WhatsApp"

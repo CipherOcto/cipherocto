@@ -400,10 +400,10 @@ async fn lt15_send_document_to_saved_messages() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 }
 
-/// send_envelope through the adapter to a registered domain.
+/// send_message through the adapter to a registered domain.
 #[tokio::test]
 #[ignore = "requires live MTProto session"]
-async fn lt16_send_envelope_via_adapter() {
+async fn lt16_send_message_via_adapter() {
     use octo_network::dot::envelope::DeterministicEnvelope;
 
     let (client, self_handle) = live_client_and_handle().await;
@@ -420,8 +420,8 @@ async fn lt16_send_envelope_via_adapter() {
     // Proactive delay to avoid FLOOD_WAIT.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let result = adapter.send_envelope(&domain, &envelope).await;
-    // send_envelope may fail if the DOT/1 text encoding exceeds limits
+    let result = adapter.send_message(&domain, &envelope).await;
+    // send_message may fail if the DOT/1 text encoding exceeds limits
     // or the chat doesn't accept messages. We verify it doesn't panic.
     match result {
         Ok(receipt) => {
@@ -713,10 +713,10 @@ async fn lt27_shutdown_completes() {
     tracing::info!("LT-27 PASSED");
 }
 
-/// send_envelope to unregistered domain fails.
+/// send_message to unregistered domain fails.
 #[tokio::test]
 #[ignore = "requires live MTProto session"]
-async fn lt28_send_envelope_unregistered_domain() {
+async fn lt28_send_message_unregistered_domain() {
     use octo_network::dot::envelope::DeterministicEnvelope;
 
     let (client, self_handle) = live_client_and_handle().await;
@@ -731,7 +731,7 @@ async fn lt28_send_envelope_unregistered_domain() {
     // Proactive delay to avoid FLOOD_WAIT.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope).await;
     assert!(result.is_err(), "unregistered domain should fail");
 
     drop(adapter);

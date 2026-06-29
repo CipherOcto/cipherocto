@@ -192,7 +192,7 @@ async fn test_send_message_records_caption() {
     let client = MockTelegramClient::new();
     let encoded = "ZW5jb2RlZC1lbnZlbG9wZQ=="; // base64 of "encoded-envelope"
     let sent = client
-        .send_message(
+        .send_envelope(
             "-1001234567890",
             encoded,
             "envelope.bin",

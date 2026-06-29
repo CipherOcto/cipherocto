@@ -48,7 +48,7 @@ async fn main() {
     let api_hash = config.api_hash.as_deref().expect("api_hash required");
     let data_dir = config.data_dir.as_ref().expect("data_dir required");
 
-    let session = StoolapSession::open(&data_dir.join("session.db"))
+    let session = StoolapSession::open(data_dir.join("session.db"))
         .unwrap_or_else(|e| panic!("failed to open session: {e}"));
 
     let self_handle = MtprotoSelfHandle::new();

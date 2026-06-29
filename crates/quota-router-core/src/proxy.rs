@@ -21,6 +21,7 @@ use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
 use crate::metrics::Metrics;
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
 use crate::pre_call_checks::{
     CompletionRequest, ContextWindowCheck, ContextWindowResult, DeploymentInfo,
 };
@@ -561,9 +562,17 @@ async fn handle_request<B>(
     master_key: Option<String>,
     metrics: Option<Arc<Metrics>>,
     rate_limiter: Option<Arc<RateLimiterStore>>,
+    #[cfg_attr(
+        not(any(feature = "litellm-mode", feature = "full")),
+        allow(unused_variables)
+    )]
     fallback: Option<Arc<FallbackExecutor>>,
     response_cache: Option<Arc<ResponseCache>>,
     callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
+    #[cfg_attr(
+        not(any(feature = "litellm-mode", feature = "full")),
+        allow(unused_variables)
+    )]
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
     client: reqwest::Client,
 ) -> Result<Response<SseBody>, Infallible>
@@ -2858,6 +2867,7 @@ async fn handle_embedding_request(
 // ============================================================================
 
 /// Classify HTTP status code into RouterError for fallback lookup
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
 fn classify_http_error(status: StatusCode) -> crate::fallback::RouterError {
     match status.as_u16() {
         429 => crate::fallback::RouterError::RateLimit,

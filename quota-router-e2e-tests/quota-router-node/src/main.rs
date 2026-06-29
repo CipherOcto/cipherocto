@@ -1,20 +1,55 @@
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use clap::Parser;
 use octo_adapter_tcp::TcpAdapter;
-use octo_network::dot::adapters::PlatformAdapter;
-use octo_network::dot::domain::BroadcastDomainId;
-use octo_network::dot::PlatformType;
-use octo_transport::adapter_bridge::PlatformAdapterBridge;
 use octo_transport::node_transport::NodeTransport;
+use octo_transport::sender::{NetworkSender, SendContext, TransportError};
 use quota_router::handler::QuotaRouterHandler;
 use quota_router::provider::{
-    LocalProvider, NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderCapacity,
-    ProviderConfig, ProviderError, ProviderHealth, RouterNodeId,
+    LocalProvider, NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderConfig, ProviderError,
+    ProviderHealth, ProviderCapacity, RouterNodeId,
 };
 use quota_router::request::RoutingPolicy;
 use quota_router::QuotaRouterNode;
+use tokio::sync::RwLock;
+
+/// Raw TCP sender — sends length-prefixed frames directly over TCP.
+/// Lives in the binary (not the adapter crate) because it implements
+/// `NetworkSender` from `octo-transport`, and adapters only depend on `octo-network`.
+struct TcpRawSender {
+    peers: Arc<RwLock<BTreeMap<[u8; 32], SocketAddr>>>,
+}
+
+#[async_trait]
+impl NetworkSender for TcpRawSender {
+    async fn send(&self, payload: &[u8], _ctx: &SendContext) -> Result<(), TransportError> {
+        let len = (payload.len() as u32).to_be_bytes();
+        let mut frame = Vec::with_capacity(4 + payload.len());
+        frame.extend_from_slice(&len);
+        frame.extend_from_slice(payload);
+
+        let peers = self.peers.read().await;
+        if peers.is_empty() {
+            return Err(TransportError::AllTransportsFailed);
+        }
+
+        let mut sent = false;
+        for (_id, addr) in peers.iter() {
+            if let Ok(mut stream) = tokio::net::TcpStream::connect(addr).await {
+                if stream.write_all(&frame).await.is_ok() {
+                    sent = true;
+                }
+            }
+        }
+        if sent { Ok(()) } else { Err(TransportError::AllTransportsFailed) }
+    }
+
+    fn name(&self) -> &str { "tcp-raw" }
+    fn is_healthy(&self) -> bool { true }
+}
 
 #[derive(Parser)]
 #[command(name = "quota-router-node")]
@@ -101,34 +136,38 @@ async fn main() {
 
     let mut node = builder.build().expect("failed to build node");
 
-    // Create TCP adapter
+    // Create TCP adapter and track peer addresses
     let listen_addr: std::net::SocketAddr = args.listen_addr.parse().expect("invalid listen_addr");
     let tcp_adapter = TcpAdapter::new(listen_addr)
         .await
         .expect("failed to create TCP adapter");
     let actual_addr = tcp_adapter.local_addr();
 
+    // Collect peer addresses for the raw sender
+    let peer_addrs: BTreeMap<[u8; 32], SocketAddr> = args.peers.iter().filter_map(|p| {
+        let addr: std::net::SocketAddr = p.parse().ok()?;
+        let hash = blake3::hash(p.as_bytes());
+        let mut id = [0u8; 32];
+        id.copy_from_slice(hash.as_bytes());
+        Some((id, addr))
+    }).collect();
+
     // Connect to peers
-    for peer_addr in &args.peers {
-        if let Ok(addr) = peer_addr.parse::<std::net::SocketAddr>() {
-            if let Err(e) = tcp_adapter.connect(addr).await {
-                tracing::warn!("Failed to connect to {}: {}", addr, e);
-            }
+    for addr in peer_addrs.values() {
+        if let Err(e) = tcp_adapter.connect(*addr).await {
+            tracing::warn!("Failed to connect to {}: {}", addr, e);
         }
     }
 
-    // Create PlatformAdapterBridge wrapping TcpAdapter
-    let domain = BroadcastDomainId::new(PlatformType::Tcp, &actual_addr.to_string());
-    let adapter: Arc<dyn PlatformAdapter> = Arc::new(tcp_adapter);
+    // Create raw TCP sender for outbound messages (bypasses DOT envelope wrapping)
+    let raw_sender = Arc::new(TcpRawSender {
+        peers: Arc::new(RwLock::new(peer_addrs)),
+    });
 
-    // Create two NodeTransport instances from the same adapter (NodeTransport is not Clone)
-    let bridge1 = Arc::new(PlatformAdapterBridge::new(adapter.clone(), domain.clone()));
-    let bridge2 = Arc::new(PlatformAdapterBridge::new(adapter, domain));
-
-    node.transport = NodeTransport::new(vec![bridge1]);
+    node.transport = NodeTransport::new(vec![raw_sender]);
 
     // Create handler
-    let transport = Arc::new(NodeTransport::new(vec![bridge2]));
+    let transport = Arc::new(NodeTransport::new(vec![])); // handler transport (unused for now)
     let primary_provider: Arc<dyn LocalProvider> = Arc::new(LocalMockProvider {
         models: models.clone(),
     });

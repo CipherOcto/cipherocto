@@ -141,13 +141,19 @@ impl PlatformAdapter for TcpAdapter {
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
-        let payload = envelope.to_wire_bytes();
-        let len = (payload.len() as u32).to_be_bytes();
-        let mut frame = Vec::with_capacity(4 + payload.len());
-        frame.extend_from_slice(&len);
-        frame.extend_from_slice(&payload);
+        let envelope_bytes = envelope.to_wire_bytes();
+        // Wire format (RFC-0850 v1.3.0 §8.8): two length-prefixed frames so the
+        // receiver can split envelope from payload:
+        //   [4-byte envelope_len][envelope wire bytes][4-byte payload_len][payload bytes]
+        let env_len = (envelope_bytes.len() as u32).to_be_bytes();
+        let payload_len = (payload.len() as u32).to_be_bytes();
+        let mut frame = Vec::with_capacity(8 + envelope_bytes.len() + payload.len());
+        frame.extend_from_slice(&env_len);
+        frame.extend_from_slice(&envelope_bytes);
+        frame.extend_from_slice(&payload_len);
+        frame.extend_from_slice(payload);
 
         let peers = self.peers.read().await;
         if peers.is_empty() {

@@ -789,6 +789,11 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,
+        // RFC-0850 v1.3.0: payload is now part of the trait signature.
+        // MTProto adapter currently embeds the envelope in sendMessage/sendDocument
+        // and does not separately serialise the payload bytes onto the wire;
+        // payload handling is tracked as a follow-up.
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         if !self.lifecycle.is_ready() {
             return Err(PlatformAdapterError::Unreachable {
@@ -1253,7 +1258,7 @@ mod tests {
         // `register_domain` to be called first.
         a.register_domain(&domain, "-1001234567890").unwrap();
         let env = DeterministicEnvelope::default();
-        let r = a.send_envelope(&domain, &env).await.unwrap();
+        let r = a.send_message(&domain, &env, b"").await.unwrap();
         assert!(!r.platform_message_id.is_empty());
     }
 
@@ -1277,7 +1282,7 @@ mod tests {
         // document path is the same send_message call
         // with extra fields.
         let env = DeterministicEnvelope::default();
-        let r = a.send_envelope(&domain, &env).await;
+        let r = a.send_message(&domain, &env, b"").await;
         assert!(r.is_ok());
     }
 
@@ -1288,7 +1293,7 @@ mod tests {
         let env = DeterministicEnvelope::default();
         // No register_domain call → send should fail.
         let domain = BroadcastDomainId::new(PlatformType::Telegram, "-1");
-        let r = a.send_envelope(&domain, &env).await;
+        let r = a.send_message(&domain, &env, b"").await;
         assert!(r.is_err());
     }
 
@@ -1299,7 +1304,7 @@ mod tests {
         let a = MtprotoTelegramAdapter::new(config(), client); // not marked ready
         let env = DeterministicEnvelope::default();
         let domain = a.domain_id("-1001234567890");
-        let r = a.send_envelope(&domain, &env).await;
+        let r = a.send_message(&domain, &env, b"").await;
         assert!(r.is_err());
     }
 

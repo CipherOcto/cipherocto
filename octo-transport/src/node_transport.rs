@@ -278,8 +278,12 @@ mod tests {
             self.captured.lock().unwrap().push(payload.to_vec());
             Ok(())
         }
-        fn name(&self) -> &str { "capturing" }
-        fn is_healthy(&self) -> bool { true }
+        fn name(&self) -> &str {
+            "capturing"
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
     }
 
     #[tokio::test]

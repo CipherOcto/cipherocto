@@ -530,7 +530,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait PlatformAdapter: Send + Sync {
     /// Send a deterministic envelope to the platform.
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
@@ -726,7 +726,7 @@ impl DotGateway {
         // 3. Forward to all adapters
         for adapter in &self.adapters {
             for domain in self.connected_domains() {
-                adapter.send_envelope(&domain, envelope).await?;
+                adapter.send_message(&domain, envelope).await?;
             }
         }
 

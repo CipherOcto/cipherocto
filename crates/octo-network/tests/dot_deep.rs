@@ -74,12 +74,16 @@ fn test_platform_type_all_variants() {
         (0x0013, PlatformType::Lark),
         (0x0014, PlatformType::QQ),
         (0x0015, PlatformType::Quic),
+        (0x0013, PlatformType::Lark),
+        (0x0014, PlatformType::QQ),
+        (0x0015, PlatformType::Quic),
+        (0x0016, PlatformType::Tcp),
+        (0x0017, PlatformType::Udp),
     ];
     for (val, expected) in cases {
         assert_eq!(PlatformType::from_u16(val), Some(expected), "0x{:04x}", val);
     }
     assert!(PlatformType::from_u16(0x0000).is_none());
-    assert!(PlatformType::from_u16(0x0016).is_none());
 }
 
 // ── BroadcastDomainId comprehensive ──

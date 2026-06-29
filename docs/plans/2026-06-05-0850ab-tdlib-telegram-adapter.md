@@ -5,11 +5,13 @@
 **Goal:** Replace the 0850f raw-Bot-API implementation of `octo-adapter-telegram` with a TDLib-backed implementation per mission `missions/claimed/0850ab-dot-telegram-tdlib-adapter.md`, preserving the 0850f wire format (218-byte signing payload + 64-byte signature = 282-byte wire envelope, `BLAKE3("telegram:" + chat_id)` per `PlatformType::Telegram`, base64 URL_SAFE_NO_PAD encoding).
 
 **Architecture:** Three-layer split matching the mission's Architecture section:
+
 1. **Telegram client wrapper** (`src/client.rs`) — TDLib `Client` wrapper behind a `TelegramClient` trait. Default impl = mock (no real TDLib). Real impl behind `--features real-tdlib`.
 2. **DOT envelope layer** (`src/envelope.rs`) — Pack/unpack `DeterministicEnvelope` into base64-encoded text messages (preserved from 0850f).
 3. **`PlatformAdapter` impl** (`src/adapter.rs`) — Implements the trait from RFC-0850 §8.1. Uses the `TelegramClient` trait to talk to either mock or real TDLib.
 
 **Tech Stack:**
+
 - Rust 1.75+ (workspace default)
 - `tokio` 1.35 (async runtime, `rt-multi-thread` + `macros` + `time`)
 - `tdlib-rs` 1.4.x (only behind `--features real-tdlib`; default uses mock)
@@ -27,6 +29,7 @@
 ## Task 1: Update Cargo.toml with new dependency set
 
 **Files:**
+
 - Modify: `crates/octo-adapter-telegram/Cargo.toml`
 
 **Step 1: Read current Cargo.toml**
@@ -37,6 +40,7 @@ Verify it currently has: `serde`, `serde_json`, `reqwest`, `tokio`, `blake3`, `b
 **Step 2: Write the new Cargo.toml**
 
 Replace the file contents with:
+
 ```toml
 [package]
 name = "octo-adapter-telegram"
@@ -120,12 +124,14 @@ TDLib instance (matches mission AC line 143)."
 ## Task 2: Write failing test for the empty lib.rs skeleton
 
 **Files:**
+
 - Create: `crates/octo-adapter-telegram/src/lib.rs`
 - Create: `crates/octo-adapter-telegram/tests/smoke_test.rs`
 
 **Step 1: Write the failing smoke test**
 
 Create file `crates/octo-adapter-telegram/tests/smoke_test.rs`:
+
 ```rust
 //! Smoke test that the crate compiles and exposes the public API.
 //! Mission AC line 125: "crates/octo-adapter-telegram/ crate compiles to cdylib and rlib with default features"
@@ -159,6 +165,7 @@ Expected: FAIL with "cannot find type `TelegramConfig`" or similar (types don't 
 **Step 3: Create empty lib.rs with module declarations**
 
 Create file `crates/octo-adapter-telegram/src/lib.rs`:
+
 ```rust
 //! octo-adapter-telegram — Telegram platform adapter for CipherOcto DOT (RFC-0850 §8.1).
 //!
@@ -204,11 +211,13 @@ Expected: FAIL with "module `adapter` not found" etc. — this is expected; the 
 ## Task 3: Implement error.rs
 
 **Files:**
+
 - Create: `crates/octo-adapter-telegram/src/error.rs`
 
 **Step 1: Write the failing test for TelegramError variants**
 
 Create file `crates/octo-adapter-telegram/tests/error_test.rs`:
+
 ```rust
 //! Tests for the error type taxonomy.
 //! Mission AC line 100: "thiserror error types (TelegramError, AuthError, FileError)"
@@ -248,6 +257,7 @@ Expected: FAIL — `TelegramError` doesn't exist.
 **Step 3: Write the error.rs implementation**
 
 Create file `crates/octo-adapter-telegram/src/error.rs`:
+
 ```rust
 //! Error types for the Telegram adapter.
 //! Mission AC line 100: "thiserror error types (TelegramError, AuthError, FileError)"
@@ -303,11 +313,13 @@ After Task 7's lib.rs is in place, the error.rs module compiles standalone. We c
 ## Task 4: Implement config.rs
 
 **Files:**
+
 - Create: `crates/octo-adapter-telegram/src/config.rs`
 
 **Step 1: Write the failing test for TelegramConfig**
 
 Create file `crates/octo-adapter-telegram/tests/config_test.rs`:
+
 ```rust
 //! Tests for TelegramConfig.
 //! Mission AC line 136: "Config: mode, bot_token, api_id+api_hash+phone, data_dir, groups, webhook_port, password, features"
@@ -376,11 +388,13 @@ Expected: FAIL — `TelegramConfig` doesn't exist (and `serde_yaml` isn't a dep 
 **Step 3: Add serde_yaml to dev-dependencies and write config.rs**
 
 Add to `crates/octo-adapter-telegram/Cargo.toml` `[dev-dependencies]`:
+
 ```toml
 serde_yaml = "0.9"
 ```
 
 Create file `crates/octo-adapter-telegram/src/config.rs`:
+
 ```rust
 //! TelegramConfig — bot vs user mode, groups, data_dir.
 //! Mission AC line 136.
@@ -467,15 +481,17 @@ impl TelegramConfig {
 ## Task 5: Implement envelope.rs (preserved 0850f wire format)
 
 **Files:**
+
 - Create: `crates/octo-adapter-telegram/src/envelope.rs`
 
 **Step 1: Write the failing test for envelope round-trip**
 
 Create file `crates/octo-adapter-telegram/tests/envelope_tests.rs`:
+
 ```rust
 //! Round-trip 282-byte envelope test.
 //! Mission AC line 107: "envelope_tests.rs - round-trip 282-byte envelope"
-//! Mission AC line 129: "send_envelope() writes the 282-byte envelope via sendMessage"
+//! Mission AC line 129: "send_message() writes the 282-byte envelope via sendMessage"
 
 use octo_adapter_telegram::envelope::{encode_envelope, decode_envelope};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -545,6 +561,7 @@ Expected: FAIL — `encode_envelope` and `decode_envelope` don't exist.
 **Step 3: Write envelope.rs**
 
 Create file `crates/octo-adapter-telegram/src/envelope.rs`:
+
 ```rust
 //! DOT envelope pack/unpack (preserved from 0850f).
 //! Mission AC line 97: "envelope.rs - DOT envelope pack/unpack (preserved from 0850f)"
@@ -579,12 +596,14 @@ pub fn decode_envelope(text: &str) -> Result<Vec<u8>> {
 ## Task 6: Implement client.rs (TelegramClient trait + MockTelegramClient)
 
 **Files:**
+
 - Create: `crates/octo-adapter-telegram/src/client.rs`
 - Create: `crates/octo-adapter-telegram/src/mock.rs`
 
 **Step 1: Write the failing test for the mock client**
 
 Create file `crates/octo-adapter-telegram/tests/mock_tdlib.rs`:
+
 ```rust
 //! Mock TDLib client tests.
 //! Mission AC line 143: "Unit tests use a mock TDLib client (no real TDLib instance required for cargo test)"
@@ -629,6 +648,7 @@ Expected: FAIL — MockTelegramClient, TelegramUpdate, NewMessage don't exist.
 **Step 3: Write client.rs with the trait and update types**
 
 Create file `crates/octo-adapter-telegram/src/client.rs`:
+
 ```rust
 //! Telegram client wrapper behind a trait so the rest of the adapter
 //! is independent of TDLib specifics.
@@ -701,6 +721,7 @@ pub trait TelegramClient: Send + Sync {
 **Step 4: Write mock.rs with the default test impl**
 
 Create file `crates/octo-adapter-telegram/src/mock.rs`:
+
 ```rust
 //! Mock Telegram client for tests.
 //! Mission AC line 143: "Unit tests use a mock TDLib client (no real TDLib instance required for cargo test)"
@@ -786,14 +807,17 @@ impl TelegramClient for MockTelegramClient {
 ## Task 7: Wire up lib.rs re-exports, run all tests, commit skeleton
 
 **Files:**
+
 - Modify: `crates/octo-adapter-telegram/src/lib.rs` (re-exports already declared in Task 2)
 
 **Step 1: Verify lib.rs re-exports the public API**
 
 Re-read `crates/octo-adapter-telegram/src/lib.rs` to confirm:
+
 - `pub mod adapter;` — wait, `adapter.rs` doesn't exist yet! Add a stub for now:
 
 Create file `crates/octo-adapter-telegram/src/adapter.rs`:
+
 ```rust
 //! PlatformAdapter impl (preserved contract).
 //! Mission Architecture line 59: "PlatformAdapter impl (src/adapter.rs)".
@@ -866,11 +890,13 @@ incremental in subsequent tasks."
 ## Task 8: Implement PlatformAdapter trait impl in adapter.rs
 
 **Files:**
+
 - Modify: `crates/octo-adapter-telegram/src/adapter.rs`
 
 **Step 1: Write the failing test for PlatformAdapter impl**
 
 Create file `crates/octo-adapter-telegram/tests/adapter_test.rs`:
+
 ```rust
 //! Tests for PlatformAdapter trait impl.
 //! Mission AC line 128: "Implements PlatformAdapter trait with all methods (6 required + 6 optional)"
@@ -944,6 +970,7 @@ Expected: FAIL — `adapter.platform_type()` doesn't exist or adapter doesn't im
 **Step 3: Write the PlatformAdapter impl**
 
 Replace `crates/octo-adapter-telegram/src/adapter.rs` with:
+
 ```rust
 //! PlatformAdapter impl (preserved contract).
 //! Mission AC line 128: "Implements PlatformAdapter trait with all methods (6 required + 6 optional)"
@@ -983,7 +1010,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 
 #[async_trait]
 impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,
@@ -1162,7 +1189,7 @@ git commit -m "feat(octo-adapter-telegram): implement PlatformAdapter trait (mis
 Implements Task 8 of docs/plans/2026-06-05-0850ab-tdlib-telegram-adapter.md.
 
 adapter.rs now has full PlatformAdapter trait impl:
-- 6 required methods: send_envelope, receive_messages,
+- 6 required methods: send_message, receive_messages,
   canonicalize, capabilities, domain_id, platform_type
 - 6 optional methods, all overriding the default:
   replay_protection, health_check, shutdown, self_handle,
@@ -1195,6 +1222,7 @@ cargo clippy -p octo-adapter-telegram --all-targets -- -D warnings: clean"
 ## Task 9: Verify the full build, including with --features real-tdlib (smoke check only)
 
 **Files:**
+
 - No source changes; verification only
 
 **Step 1: Verify default build (mock-only)**
@@ -1221,6 +1249,7 @@ If everything is green, no commit needed. If step 3 reveals a fix, apply and com
 **Step 5: Done — first iteration of mission 0850ab implementation complete**
 
 The mission now has:
+
 - Cargo.toml with 9 deps (real TDLib behind feature flag)
 - 5 src/ files: lib, error, config, envelope, client, mock, adapter
 - 5+ test files: smoke, error, config, envelope, mock_tdlib, adapter
@@ -1230,6 +1259,7 @@ The mission now has:
 - domain_id() uses the correct "telegram:" prefix (R3-fixed)
 
 Future tasks (deferred, not in this plan):
+
 - Task 10: Real TDLib client (behind --features real-tdlib) — would need TDLib build environment
 - Task 11: self_handle.rs split-out (currently inline in adapter.rs)
 - Task 12: auth.rs, files.rs, groups.rs (mission's File Layout)

@@ -1,10 +1,10 @@
 Below is a proposed formalization for a new CipherOcto networking specification layer inspired by the gateway/channel architectures from the uploaded systems:
 
-* OpenClaw multi-channel federation 
-* IronClaw channel manager + WASM gateway model 
-* Hermes platform adapter + gateway runtime model 
-* 9Router translation/routing abstraction 
-* CipherOcto orchestration + bandwidth layer concepts 
+- OpenClaw multi-channel federation
+- IronClaw channel manager + WASM gateway model
+- Hermes platform adapter + gateway runtime model
+- 9Router translation/routing abstraction
+- CipherOcto orchestration + bandwidth layer concepts
 
 This proposal treats messaging/social/group platforms not as “apps” but as deterministic transport substrates for decentralized consensus-aware communication.
 
@@ -26,14 +26,14 @@ Network / Coordination / Overlay Routing
 
 The CipherOcto Deterministic Overlay Transport (DOT) defines a consensus-safe overlay networking layer that enables:
 
-* deterministic message propagation,
-* heterogeneous platform bridging,
-* gateway federation,
-* sovereign peer discovery,
-* cross-platform group synchronization,
-* blockchain-verifiable routing,
-* transport abstraction,
-* replay-safe distributed coordination.
+- deterministic message propagation,
+- heterogeneous platform bridging,
+- gateway federation,
+- sovereign peer discovery,
+- cross-platform group synchronization,
+- blockchain-verifiable routing,
+- transport abstraction,
+- replay-safe distributed coordination.
 
 DOT transforms existing communication platforms (Telegram, Discord, Matrix, Signal, IRC, Nostr, Slack, WhatsApp, etc.) into interoperable overlay relay fabrics.
 
@@ -86,15 +86,15 @@ A broadcast domain is any shared communication surface:
 
 Examples:
 
-* Telegram group
-* Discord channel
-* Matrix room
-* IRC channel
-* Nostr relay mesh
-* Signal group
-* Slack workspace channel
-* Webhook bus
-* P2P gossip swarm
+- Telegram group
+- Discord channel
+- Matrix room
+- IRC channel
+- Nostr relay mesh
+- Signal group
+- Slack workspace channel
+- Webhook bus
+- P2P gossip swarm
 
 A broadcast domain is abstracted as:
 
@@ -113,18 +113,18 @@ A gateway node bridges one or more broadcast domains into CipherOcto DOT.
 
 Equivalent to:
 
-* router,
-* bridge,
-* relay,
-* edge node,
-* transport adapter.
+- router,
+- bridge,
+- relay,
+- edge node,
+- transport adapter.
 
 Inspired by:
 
-* OpenClaw channel adapters,
-* Hermes platform adapters,
-* IronClaw channel manager,
-* 9Router translators.
+- OpenClaw channel adapters,
+- Hermes platform adapters,
+- IronClaw channel manager,
+- 9Router translators.
 
 ---
 
@@ -169,12 +169,12 @@ This is the most critical section.
 
 External platforms MUST be treated as:
 
-* unordered,
-* eventually consistent,
-* delay-variable,
-* censorship-prone,
-* duplication-prone,
-* mutable.
+- unordered,
+- eventually consistent,
+- delay-variable,
+- censorship-prone,
+- duplication-prone,
+- mutable.
 
 Therefore:
 
@@ -202,11 +202,11 @@ Platform-specific metadata MUST NEVER affect consensus.
 
 Forbidden examples:
 
-* Discord message IDs
-* Telegram timestamps
-* Slack thread IDs
-* Matrix event IDs
-* Platform usernames
+- Discord message IDs
+- Telegram timestamps
+- Slack thread IDs
+- Matrix event IDs
+- Platform usernames
 
 Allowed:
 
@@ -290,9 +290,9 @@ capabilities
 
 NOT from:
 
-* latency alone,
-* local heuristics,
-* nondeterministic timing.
+- latency alone,
+- local heuristics,
+- nondeterministic timing.
 
 ---
 
@@ -315,7 +315,7 @@ This allows replay verification.
 
 # 8. Platform Translation Layer (PTL)
 
-Inspired heavily by 9Router translators. 
+Inspired heavily by 9Router translators.
 
 The PTL converts heterogeneous platform semantics into canonical DOT semantics.
 
@@ -343,7 +343,7 @@ Each adapter MUST implement:
 
 ```rust
 trait PlatformAdapter {
-    fn send_envelope(...);
+    fn send_message(...);
     fn receive_envelope(...);
 
     fn canonicalize(...);
@@ -470,13 +470,13 @@ Consensus is layered above it.
 
 DOT MAY transport:
 
-* mempool objects,
-* partial blocks,
-* ZK proofs,
-* checkpoint attestations,
-* mission execution receipts,
-* vector commitments,
-* state snapshots.
+- mempool objects,
+- partial blocks,
+- ZK proofs,
+- checkpoint attestations,
+- mission execution receipts,
+- vector commitments,
+- state snapshots.
 
 ---
 
@@ -488,10 +488,10 @@ DOT assumes external platforms are Byzantine-capable.
 
 Therefore:
 
-* duplication MUST be tolerated,
-* reordering MUST be tolerated,
-* censorship MUST be tolerated,
-* mutation MUST be detectable.
+- duplication MUST be tolerated,
+- reordering MUST be tolerated,
+- censorship MUST be tolerated,
+- mutation MUST be detectable.
 
 ---
 
@@ -519,10 +519,10 @@ Platforms MUST NOT access plaintext mission data.
 
 Gateways SHOULD minimize leakage of:
 
-* topology,
-* routing intent,
-* mission structure,
-* peer graph relationships.
+- topology,
+- routing intent,
+- mission structure,
+- peer graph relationships.
 
 ---
 
@@ -540,14 +540,14 @@ for layered relay encryption.
 
 # 15. Trust & Reputation
 
-Integrates naturally with CipherOcto PoR. 
+Integrates naturally with CipherOcto PoR.
 
 Gateway trust scores influence:
 
-* route selection,
-* bandwidth weighting,
-* relay priority,
-* anti-spam filtering.
+- route selection,
+- bandwidth weighting,
+- relay priority,
+- anti-spam filtering.
 
 ---
 
@@ -563,10 +563,10 @@ Potential token flows:
 
 Gateways earn per:
 
-* validated relay,
-* uptime,
-* deterministic delivery,
-* anti-censorship routing.
+- validated relay,
+- uptime,
+- deterministic delivery,
+- anti-censorship routing.
 
 ---
 
@@ -584,12 +584,12 @@ Bincode Deterministic Profile
 
 with:
 
-* explicit endian rules,
-* fixed integer widths,
-* canonical map ordering,
-* forbidden NaN payload variance.
+- explicit endian rules,
+- fixed integer widths,
+- canonical map ordering,
+- forbidden NaN payload variance.
 
-Your deterministic numeric RFC stack already aligns extremely well with this direction.  
+Your deterministic numeric RFC stack already aligns extremely well with this direction.
 
 ---
 
@@ -639,13 +639,13 @@ Consensus identity is independent.
 
 This architecture is powerful because CipherOcto becomes:
 
-* transport-agnostic,
-* censorship-resilient,
-* opportunistic,
-* bandwidth-amplified,
-* platform-parasitic,
-* self-healing,
-* federation-native.
+- transport-agnostic,
+- censorship-resilient,
+- opportunistic,
+- bandwidth-amplified,
+- platform-parasitic,
+- self-healing,
+- federation-native.
 
 Instead of competing with platforms:
 
@@ -695,7 +695,6 @@ But the differentiator is:
 
 That is genuinely novel territory.
 
-
 # RFC-02XY — Gateway Discovery Protocol (GDP)
 
 ## Status
@@ -708,9 +707,9 @@ Network / Overlay Coordination / Discovery
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-0105 — Deterministic Quant Arithmetic (DQA) 
-* RFC-0104 — Deterministic Floating Point (optional weighting math) 
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-0105 — Deterministic Quant Arithmetic (DQA)
+- RFC-0104 — Deterministic Floating Point (optional weighting math)
 
 ---
 
@@ -718,14 +717,14 @@ Network / Overlay Coordination / Discovery
 
 The Gateway Discovery Protocol (GDP) defines how CipherOcto nodes:
 
-* discover gateways,
-* advertise capabilities,
-* establish overlay topology,
-* exchange route metadata,
-* negotiate transport compatibility,
-* maintain deterministic peer visibility,
-* resist Sybil and eclipse attacks,
-* bootstrap decentralized mission overlays.
+- discover gateways,
+- advertise capabilities,
+- establish overlay topology,
+- exchange route metadata,
+- negotiate transport compatibility,
+- maintain deterministic peer visibility,
+- resist Sybil and eclipse attacks,
+- bootstrap decentralized mission overlays.
 
 GDP provides the equivalent of:
 
@@ -853,11 +852,11 @@ struct GatewayAdvertisement {
 
 Advertisements MUST canonicalize:
 
-* endpoint ordering,
-* capability ordering,
-* route ordering,
-* transport ordering,
-* signature encoding.
+- endpoint ordering,
+- capability ordering,
+- route ordering,
+- transport ordering,
+- signature encoding.
 
 Canonical ordering:
 
@@ -906,10 +905,10 @@ similar to DHT expansion.
 
 Nodes maintain:
 
-* preferred gateways,
-* trust-weighted neighbors,
-* route diversity,
-* anti-eclipse diversity.
+- preferred gateways,
+- trust-weighted neighbors,
+- route diversity,
+- anti-eclipse diversity.
 
 ---
 
@@ -1107,7 +1106,7 @@ GDP MUST assume adversarial gateway creation.
 
 ## 11.1 Proof-of-Reliability Integration
 
-Discovery weighting SHOULD integrate CipherOcto PoR. 
+Discovery weighting SHOULD integrate CipherOcto PoR.
 
 ---
 
@@ -1127,10 +1126,10 @@ required for global advertisement propagation.
 
 Nodes SHOULD maintain:
 
-* transport diversity,
-* geographic diversity,
-* organizational diversity,
-* trust-source diversity.
+- transport diversity,
+- geographic diversity,
+- organizational diversity,
+- trust-source diversity.
 
 To resist eclipse attacks.
 
@@ -1294,10 +1293,10 @@ may decrypt visibility metadata.
 
 Gateways MAY intentionally conceal:
 
-* upstream routes,
-* peer counts,
-* physical location,
-* transport carriers.
+- upstream routes,
+- peer counts,
+- physical location,
+- transport carriers.
 
 ---
 
@@ -1328,10 +1327,10 @@ Merkleized gateway topology snapshots
 
 for:
 
-* route replay,
-* forensic auditing,
-* partition reconstruction,
-* simulation.
+- route replay,
+- forensic auditing,
+- partition reconstruction,
+- simulation.
 
 ---
 
@@ -1375,21 +1374,21 @@ GDP is effectively:
 
 Unlike traditional discovery systems:
 
-* topology is portable,
-* transport is abstracted,
-* platforms are replaceable,
-* routes are cryptographically attestable,
-* overlays are mission-defined,
-* discovery is blockchain-aware.
+- topology is portable,
+- transport is abstracted,
+- platforms are replaceable,
+- routes are cryptographically attestable,
+- overlays are mission-defined,
+- discovery is blockchain-aware.
 
 This creates a foundation where CipherOcto nodes can autonomously form:
 
-* AI swarms,
-* compute clusters,
-* censorship-resistant coordination meshes,
-* temporary mission civilizations,
-* decentralized enterprise fabrics,
-* sovereign machine economies.
+- AI swarms,
+- compute clusters,
+- censorship-resistant coordination meshes,
+- temporary mission civilizations,
+- decentralized enterprise fabrics,
+- sovereign machine economies.
 
 # RFC-02XZ — Deterministic Gossip Protocol (DGP)
 
@@ -1403,10 +1402,10 @@ Network / Overlay Propagation / Replication
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02YD — DOT Serialization (future)
-* RFC-02YC — Overlay Cryptography (future)
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02YD — DOT Serialization (future)
+- RFC-02YC — Overlay Cryptography (future)
 
 ---
 
@@ -1416,13 +1415,13 @@ The Deterministic Gossip Protocol (DGP) defines how CipherOcto nodes propagate, 
 
 DGP provides:
 
-* deterministic message propagation,
-* replay-safe synchronization,
-* partition healing,
-* anti-entropy reconciliation,
-* censorship-resistant dissemination,
-* mission-scoped flooding,
-* consensus-safe relay behavior.
+- deterministic message propagation,
+- replay-safe synchronization,
+- partition healing,
+- anti-entropy reconciliation,
+- censorship-resistant dissemination,
+- mission-scoped flooding,
+- consensus-safe relay behavior.
 
 Unlike traditional gossip systems:
 
@@ -1463,15 +1462,15 @@ chaotic heterogeneous carrier fabric
 
 including:
 
-* Telegram,
-* Discord,
-* Matrix,
-* native QUIC,
-* Nostr,
-* Bluetooth,
-* LoRa,
-* intermittent offline peers,
-* opportunistic relays.
+- Telegram,
+- Discord,
+- Matrix,
+- native QUIC,
+- Nostr,
+- Bluetooth,
+- LoRa,
+- intermittent offline peers,
+- opportunistic relays.
 
 ---
 
@@ -1593,10 +1592,10 @@ order.
 
 NOT:
 
-* receive time,
-* transport order,
-* platform sequence,
-* thread order.
+- receive time,
+- transport order,
+- platform sequence,
+- thread order.
 
 ---
 
@@ -1654,9 +1653,9 @@ Broadcast aggressively.
 
 Used for:
 
-* bootstrap,
-* emergency coordination,
-* partition recovery.
+- bootstrap,
+- emergency coordination,
+- partition recovery.
 
 ---
 
@@ -1688,9 +1687,9 @@ Targeted propagation.
 
 Used for:
 
-* mission overlays,
-* validator coordination,
-* private swarms.
+- mission overlays,
+- validator coordination,
+- private swarms.
 
 ---
 
@@ -1750,10 +1749,10 @@ A gateway MAY relay based on:
 
 Consensus-sensitive relays MUST NOT depend on:
 
-* local CPU load,
-* randomization,
-* wall-clock jitter,
-* platform latency.
+- local CPU load,
+- randomization,
+- wall-clock jitter,
+- platform latency.
 
 ---
 
@@ -1824,11 +1823,11 @@ DGP assumes partitions are inevitable.
 
 Examples:
 
-* blocked platforms,
-* country firewalls,
-* offline mesh segments,
-* satellite delays,
-* mobile intermittency.
+- blocked platforms,
+- country firewalls,
+- offline mesh segments,
+- satellite delays,
+- mobile intermittency.
 
 ---
 
@@ -1881,10 +1880,10 @@ Loss of one carrier MUST NOT invalidate object propagation.
 
 Large state synchronization SHOULD use:
 
-* Bloom filters,
-* Merkle roots,
-* bitmap summaries,
-* range commitments.
+- Bloom filters,
+- Merkle roots,
+- bitmap summaries,
+- range commitments.
 
 ---
 
@@ -1940,10 +1939,10 @@ within replay window.
 
 Optional mechanisms:
 
-* relay stake,
-* bandwidth pricing,
-* PoR weighting,
-* relay quotas.
+- relay stake,
+- bandwidth pricing,
+- PoR weighting,
+- relay quotas.
 
 ---
 
@@ -1951,10 +1950,10 @@ Optional mechanisms:
 
 Rate limiting MAY depend on:
 
-* trust score,
-* mission membership,
-* relay history,
-* stake weight.
+- trust score,
+- mission membership,
+- relay history,
+- stake weight.
 
 ---
 
@@ -2027,10 +2026,10 @@ It propagates consensus artifacts.
 
 Examples:
 
-* mempool transactions,
-* validator attestations,
-* checkpoint signatures,
-* execution receipts.
+- mempool transactions,
+- validator attestations,
+- checkpoint signatures,
+- execution receipts.
 
 These MAY require stricter propagation guarantees.
 
@@ -2044,10 +2043,10 @@ These MAY require stricter propagation guarantees.
 
 Private overlays MAY encrypt:
 
-* payloads,
-* metadata,
-* topology,
-* route summaries.
+- payloads,
+- metadata,
+- topology,
+- route summaries.
 
 ---
 
@@ -2075,11 +2074,11 @@ from archived gossip history.
 
 This is critical for:
 
-* audits,
-* forensic analysis,
-* simulation,
-* historical mission reconstruction,
-* consensus replay.
+- audits,
+- forensic analysis,
+- simulation,
+- historical mission reconstruction,
+- consensus replay.
 
 ---
 
@@ -2121,12 +2120,12 @@ Traditional gossip protocols operate inside networks.
 
 DGP operates across:
 
-* social platforms,
-* encrypted overlays,
-* decentralized relays,
-* opportunistic meshes,
-* sovereign P2P fabrics,
-* intermittent edge devices.
+- social platforms,
+- encrypted overlays,
+- decentralized relays,
+- opportunistic meshes,
+- sovereign P2P fabrics,
+- intermittent edge devices.
 
 That distinction is fundamental.
 
@@ -2145,7 +2144,6 @@ That distinction is fundamental.
 | RFC-02YG | Gossip Privacy Extensions     |
 | RFC-02YH | Deterministic Overlay Mempool |
 
-
 # RFC-02YC — Overlay Cryptography (OCRYPT)
 
 ## Status
@@ -2158,11 +2156,11 @@ Network / Security / Cryptography
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02XZ — Deterministic Gossip Protocol (DGP)
-* RFC-0105 — Deterministic Quant Arithmetic (DQA) 
-* RFC-0104 — Deterministic Floating Point (DFP) (optional cryptographic scoring models) 
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02XZ — Deterministic Gossip Protocol (DGP)
+- RFC-0105 — Deterministic Quant Arithmetic (DQA)
+- RFC-0104 — Deterministic Floating Point (DFP) (optional cryptographic scoring models)
 
 ---
 
@@ -2172,15 +2170,15 @@ Overlay Cryptography (OCrypt) defines the cryptographic model for CipherOcto ove
 
 OCrypt provides:
 
-* sovereign overlay identity,
-* deterministic cryptographic envelopes,
-* transport-independent encryption,
-* mission-scoped trust domains,
-* forward secrecy,
-* replay-safe signatures,
-* onion-capable relay encryption,
-* multi-hop confidentiality,
-* deterministic canonical cryptographic boundaries.
+- sovereign overlay identity,
+- deterministic cryptographic envelopes,
+- transport-independent encryption,
+- mission-scoped trust domains,
+- forward secrecy,
+- replay-safe signatures,
+- onion-capable relay encryption,
+- multi-hop confidentiality,
+- deterministic canonical cryptographic boundaries.
 
 OCrypt is explicitly designed for:
 
@@ -2190,11 +2188,11 @@ hostile heterogeneous transport environments
 
 where underlying communication carriers are assumed:
 
-* observable,
-* mutable,
-* censorable,
-* replayable,
-* adversarial.
+- observable,
+- mutable,
+- censorable,
+- replayable,
+- adversarial.
 
 ---
 
@@ -2234,10 +2232,10 @@ Long-lived sovereign identity.
 
 Used for:
 
-* gateway identity,
-* validator identity,
-* mission authority,
-* governance.
+- gateway identity,
+- validator identity,
+- mission authority,
+- governance.
 
 ---
 
@@ -2247,9 +2245,9 @@ Ephemeral session keys.
 
 Used for:
 
-* relay encryption,
-* transient communication,
-* forward secrecy.
+- relay encryption,
+- transient communication,
+- forward secrecy.
 
 ---
 
@@ -2259,10 +2257,10 @@ Mission-scoped cryptographic namespace.
 
 Used for:
 
-* temporary overlays,
-* AI swarms,
-* task coordination,
-* compartmentalization.
+- temporary overlays,
+- AI swarms,
+- task coordination,
+- compartmentalization.
 
 ---
 
@@ -2325,12 +2323,12 @@ struct OverlayIdentity {
 
 Identity MUST remain independent from:
 
-* Telegram accounts,
-* Discord usernames,
-* Matrix IDs,
-* IP addresses,
-* DNS names,
-* device identifiers.
+- Telegram accounts,
+- Discord usernames,
+- Matrix IDs,
+- IP addresses,
+- DNS names,
+- device identifiers.
 
 ---
 
@@ -2393,10 +2391,10 @@ Validation MUST remain deterministic.
 
 Consensus MUST verify:
 
-* canonical plaintext hash,
-* signature validity,
-* envelope structure,
-* replay invariants.
+- canonical plaintext hash,
+- signature validity,
+- envelope structure,
+- replay invariants.
 
 NOT ciphertext byte equality.
 
@@ -2462,16 +2460,16 @@ Payload
 
 Each relay SHOULD know ONLY:
 
-* previous hop,
-* next hop,
-* local relay instructions.
+- previous hop,
+- next hop,
+- local relay instructions.
 
 NOT:
 
-* origin,
-* destination,
-* full route,
-* mission topology.
+- origin,
+- destination,
+- full route,
+- mission topology.
 
 ---
 
@@ -2505,10 +2503,10 @@ struct MissionRootKey {
 
 Mission overlays SHOULD support:
 
-* member rotation,
-* emergency rekey,
-* partition recovery,
-* compromised-node eviction.
+- member rotation,
+- emergency rekey,
+- partition recovery,
+- compromised-node eviction.
 
 ---
 
@@ -2516,9 +2514,9 @@ Mission overlays SHOULD support:
 
 Compromise of one mission MUST NOT compromise:
 
-* other missions,
-* overlay identity,
-* unrelated sessions.
+- other missions,
+- overlay identity,
+- unrelated sessions.
 
 ---
 
@@ -2558,11 +2556,11 @@ network-defined replay horizon
 
 Signatures MUST cover:
 
-* canonical payload,
-* metadata,
-* route commitment,
-* mission scope,
-* replay identifiers.
+- canonical payload,
+- metadata,
+- route commitment,
+- mission scope,
+- replay identifiers.
 
 ---
 
@@ -2626,9 +2624,9 @@ Payloads SHOULD appear opaque to carriers.
 
 Platforms SHOULD observe ONLY:
 
-* ciphertext,
-* random-looking blobs,
-* relay metadata.
+- ciphertext,
+- random-looking blobs,
+- relay metadata.
 
 ---
 
@@ -2636,10 +2634,10 @@ Platforms SHOULD observe ONLY:
 
 Future extensions MAY include:
 
-* padding,
-* timing normalization,
-* cover traffic,
-* fragmentation camouflage.
+- padding,
+- timing normalization,
+- cover traffic,
+- fragmentation camouflage.
 
 ---
 
@@ -2665,10 +2663,10 @@ HKDF(seed || context || epoch)
 
 Consensus-sensitive operations MUST NOT depend on:
 
-* OS entropy timing,
-* hardware RNG variance,
-* platform randomness APIs,
-* nondeterministic nonce generation.
+- OS entropy timing,
+- hardware RNG variance,
+- platform randomness APIs,
+- nondeterministic nonce generation.
 
 ---
 
@@ -2694,9 +2692,9 @@ Session keys SHOULD rotate aggressively.
 
 Especially for:
 
-* high-value missions,
-* validator traffic,
-* AI coordination swarms.
+- high-value missions,
+- validator traffic,
+- AI coordination swarms.
 
 ---
 
@@ -2708,9 +2706,9 @@ Especially for:
 
 Persisted securely:
 
-* identity keys,
-* mission roots,
-* trust anchors.
+- identity keys,
+- mission roots,
+- trust anchors.
 
 ---
 
@@ -2718,9 +2716,9 @@ Persisted securely:
 
 SHOULD NOT persist:
 
-* relay session keys,
-* temporary onion keys,
-* transient route secrets.
+- relay session keys,
+- temporary onion keys,
+- transient route secrets.
 
 ---
 
@@ -2734,11 +2732,11 @@ OCrypt intentionally avoids centralized PKI.
 
 Trust emerges from:
 
-* mission trust,
-* PoR reputation,
-* signed introductions,
-* governance,
-* overlay economics.
+- mission trust,
+- PoR reputation,
+- signed introductions,
+- governance,
+- overlay economics.
 
 ---
 
@@ -2754,13 +2752,13 @@ These remain mission-local.
 
 OCrypt explicitly assumes:
 
-* malicious gateways,
-* compromised platforms,
-* MITM attacks,
-* replay attacks,
-* metadata surveillance,
-* route correlation,
-* state poisoning.
+- malicious gateways,
+- compromised platforms,
+- MITM attacks,
+- replay attacks,
+- metadata surveillance,
+- route correlation,
+- state poisoning.
 
 ---
 
@@ -2786,21 +2784,21 @@ This is one of the most important sections.
 
 ## 21.1 Consensus MUST NOT Depend On
 
-* ciphertext bytes,
-* encryption randomness,
-* carrier metadata,
-* platform timestamps,
-* packet fragmentation.
+- ciphertext bytes,
+- encryption randomness,
+- carrier metadata,
+- platform timestamps,
+- packet fragmentation.
 
 ---
 
 ## 21.2 Consensus MAY Depend On
 
-* canonical plaintext hashes,
-* deterministic serialization,
-* verified signatures,
-* Merkle commitments,
-* route commitments.
+- canonical plaintext hashes,
+- deterministic serialization,
+- verified signatures,
+- Merkle commitments,
+- route commitments.
 
 ---
 
@@ -2830,10 +2828,10 @@ This is a defining architectural property.
 
 Future mission overlays MAY hide:
 
-* mission existence,
-* membership,
-* topology,
-* traffic patterns.
+- mission existence,
+- membership,
+- topology,
+- traffic patterns.
 
 ---
 
@@ -2879,11 +2877,11 @@ OCrypt SHOULD integrate with:
 
 Cryptographic trust MAY influence:
 
-* relay weighting,
-* stake requirements,
-* mission authority,
-* validator trust,
-* bandwidth economics.
+- relay weighting,
+- stake requirements,
+- mission authority,
+- validator trust,
+- bandwidth economics.
 
 ---
 
@@ -2899,11 +2897,11 @@ Traditional cryptography secures applications.
 
 OCrypt secures:
 
-* overlay societies,
-* autonomous AI swarms,
-* decentralized economies,
-* mission-defined civilizations,
-* sovereign machine coordination.
+- overlay societies,
+- autonomous AI swarms,
+- decentralized economies,
+- mission-defined civilizations,
+- sovereign machine coordination.
 
 That is a fundamentally different design space.
 
@@ -2924,12 +2922,12 @@ That is a fundamentally different design space.
 
 Integrating ZK systems like Stwo into OCrypt is strategically important because CipherOcto’s architecture is already naturally aligned with:
 
-* deterministic execution,
-* canonical serialization,
-* replay-safe envelopes,
-* Merkleized overlay state,
-* mission-scoped computation,
-* transport-independent verification.
+- deterministic execution,
+- canonical serialization,
+- replay-safe envelopes,
+- Merkleized overlay state,
+- mission-scoped computation,
+- transport-independent verification.
 
 Those are exactly the properties modern STARK ecosystems optimize for.
 
@@ -3120,11 +3118,11 @@ struct ProofCarryingEnvelope {
 
 This enables:
 
-* verifiable AI inference,
-* mission correctness proofs,
-* validator proofs,
-* distributed execution attestations,
-* privacy-preserving coordination.
+- verifiable AI inference,
+- mission correctness proofs,
+- validator proofs,
+- distributed execution attestations,
+- privacy-preserving coordination.
 
 ---
 
@@ -3134,12 +3132,12 @@ This is EXTREMELY important.
 
 Consensus MUST NEVER depend on:
 
-* prover runtime,
-* hardware acceleration,
-* proving time,
-* memory layout,
-* parallel execution order,
-* witness generation order.
+- prover runtime,
+- hardware acceleration,
+- proving time,
+- memory layout,
+- parallel execution order,
+- witness generation order.
 
 Consensus MAY depend ONLY on:
 
@@ -3156,7 +3154,7 @@ Consensus MAY depend ONLY on:
 
 A huge future issue.
 
-CipherOcto already cares deeply about deterministic numerics.  
+CipherOcto already cares deeply about deterministic numerics.
 
 This becomes critical in ZK.
 
@@ -3250,11 +3248,11 @@ Imagine:
 
 This enables:
 
-* Proof-of-Relay,
-* Proof-of-Bandwidth,
-* Proof-of-Availability,
-* Proof-of-Mission-Execution,
-* Proof-of-Gossip-Convergence.
+- Proof-of-Relay,
+- Proof-of-Bandwidth,
+- Proof-of-Availability,
+- Proof-of-Mission-Execution,
+- Proof-of-Gossip-Convergence.
 
 Without revealing all underlying data.
 
@@ -3353,12 +3351,12 @@ a proof-carrying civilization layer
 
 where:
 
-* missions,
-* AI swarms,
-* relay behavior,
-* economic coordination,
-* distributed execution,
-* consensus transitions,
+- missions,
+- AI swarms,
+- relay behavior,
+- economic coordination,
+- distributed execution,
+- consensus transitions,
 
 can all become cryptographically attestable.
 
@@ -3382,7 +3380,6 @@ Before continuing networking RFCs, I strongly recommend introducing:
 
 Because ZK becomes foundational to everything afterward.
 
-
 # RFC-02YA — Mission Overlay Networks (MON)
 
 ## Status
@@ -3395,12 +3392,12 @@ Network / Coordination / Distributed Execution
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02XZ — Deterministic Gossip Protocol (DGP)
-* RFC-02YC — Overlay Cryptography (OCrypt)
-* RFC-02YL — Deterministic Proof Substrate (future)
-* RFC-02YM — Proof-Carrying Envelopes (future)
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02XZ — Deterministic Gossip Protocol (DGP)
+- RFC-02YC — Overlay Cryptography (OCrypt)
+- RFC-02YL — Deterministic Proof Substrate (future)
+- RFC-02YM — Proof-Carrying Envelopes (future)
 
 ---
 
@@ -3410,21 +3407,21 @@ Mission Overlay Networks (MON) define temporary or persistent sovereign overlay 
 
 A MON represents:
 
-* a mission-scoped overlay civilization,
-* a cryptographically isolated coordination mesh,
-* a deterministic execution environment,
-* a distributed AI/compute swarm,
-* a transport-independent operational topology.
+- a mission-scoped overlay civilization,
+- a cryptographically isolated coordination mesh,
+- a deterministic execution environment,
+- a distributed AI/compute swarm,
+- a transport-independent operational topology.
 
 MONs are the primary orchestration primitive for:
 
-* AI swarms,
-* distributed execution,
-* decentralized coordination,
-* federated automation,
-* sovereign enterprise fabrics,
-* tactical communication overlays,
-* proof-carrying distributed computation.
+- AI swarms,
+- distributed execution,
+- decentralized coordination,
+- federated automation,
+- sovereign enterprise fabrics,
+- tactical communication overlays,
+- proof-carrying distributed computation.
 
 ---
 
@@ -3606,9 +3603,9 @@ MERKLE(mission_routes)
 
 This enables:
 
-* deterministic replay,
-* topology proofs,
-* route auditing.
+- deterministic replay,
+- topology proofs,
+- route auditing.
 
 ---
 
@@ -3634,11 +3631,11 @@ except through explicit bridge policies.
 
 Routing MAY adapt dynamically to:
 
-* gateway failure,
-* censorship,
-* bandwidth constraints,
-* mission priority,
-* trust degradation.
+- gateway failure,
+- censorship,
+- bandwidth constraints,
+- mission priority,
+- trust degradation.
 
 ---
 
@@ -3670,10 +3667,10 @@ struct MissionKeyHierarchy {
 
 MONs SHOULD support:
 
-* participant rotation,
-* compromise recovery,
-* emergency rekey,
-* partition reconciliation.
+- participant rotation,
+- compromise recovery,
+- emergency rekey,
+- partition reconciliation.
 
 ---
 
@@ -3748,13 +3745,13 @@ One of the most important sections.
 
 MONs MAY coordinate:
 
-* distributed AI inference,
-* compute jobs,
-* federated training,
-* consensus validation,
-* simulation,
-* analytics,
-* orchestration.
+- distributed AI inference,
+- compute jobs,
+- federated training,
+- consensus validation,
+- simulation,
+- analytics,
+- orchestration.
 
 ---
 
@@ -3764,12 +3761,12 @@ Mission-critical execution MUST remain deterministic.
 
 Execution validity MUST NOT depend on:
 
-* node timing,
-* hardware architecture,
-* platform transport order,
-* floating-point nondeterminism.
+- node timing,
+- hardware architecture,
+- platform transport order,
+- floating-point nondeterminism.
 
-Your deterministic numeric stack becomes critically important here.  
+Your deterministic numeric stack becomes critically important here.
 
 ---
 
@@ -3834,9 +3831,9 @@ struct MissionStateRoot {
 
 Mission state synchronization SHOULD use:
 
-* Merkle anti-entropy,
-* deterministic replay,
-* proof-based reconciliation.
+- Merkle anti-entropy,
+- deterministic replay,
+- proof-based reconciliation.
 
 ---
 
@@ -3892,10 +3889,10 @@ without mission identity breakage.
 
 MONs MAY exploit:
 
-* high-bandwidth carriers,
-* low-latency paths,
-* censorship-resistant relays,
-* offline synchronization.
+- high-bandwidth carriers,
+- low-latency paths,
+- censorship-resistant relays,
+- offline synchronization.
 
 simultaneously.
 
@@ -3911,11 +3908,11 @@ A strategic long-term direction.
 
 MONs naturally support:
 
-* agent swarms,
-* distributed cognition,
-* federated inference,
-* cooperative planning,
-* decentralized autonomous coordination.
+- agent swarms,
+- distributed cognition,
+- federated inference,
+- cooperative planning,
+- decentralized autonomous coordination.
 
 ---
 
@@ -3954,11 +3951,11 @@ Possible economic primitives:
 
 Future MONs MAY support:
 
-* compute markets,
-* bandwidth markets,
-* proof markets,
-* AI inference markets,
-* mission leasing.
+- compute markets,
+- bandwidth markets,
+- proof markets,
+- AI inference markets,
+- mission leasing.
 
 ---
 
@@ -3984,11 +3981,11 @@ MONs MAY adopt:
 
 Policies MAY define:
 
-* admission,
-* relay behavior,
-* proof requirements,
-* economic constraints,
-* privacy rules.
+- admission,
+- relay behavior,
+- proof requirements,
+- economic constraints,
+- privacy rules.
 
 ---
 
@@ -4000,11 +3997,11 @@ Policies MAY define:
 
 Future MONs MAY conceal:
 
-* mission existence,
-* topology,
-* participants,
-* traffic volume,
-* execution intent.
+- mission existence,
+- topology,
+- participants,
+- traffic volume,
+- execution intent.
 
 ---
 
@@ -4018,12 +4015,12 @@ Future integration with OCrypt onion layers.
 
 MONs assume:
 
-* malicious participants,
-* compromised gateways,
-* carrier censorship,
-* replay attacks,
-* Sybil infiltration,
-* mission poisoning.
+- malicious participants,
+- compromised gateways,
+- carrier censorship,
+- replay attacks,
+- Sybil infiltration,
+- mission poisoning.
 
 ---
 
@@ -4058,11 +4055,11 @@ from archived state.
 
 This enables:
 
-* auditing,
-* simulation,
-* forensic replay,
-* historical verification,
-* AI training.
+- auditing,
+- simulation,
+- forensic replay,
+- historical verification,
+- AI training.
 
 ---
 
@@ -4091,12 +4088,12 @@ They are:
 
 A MON can simultaneously function as:
 
-* AI swarm,
-* compute cluster,
-* governance system,
-* encrypted relay mesh,
-* economic coordination fabric,
-* proof-generating distributed organism.
+- AI swarm,
+- compute cluster,
+- governance system,
+- encrypted relay mesh,
+- economic coordination fabric,
+- proof-generating distributed organism.
 
 That is a radically different abstraction than traditional networking.
 
@@ -4116,8 +4113,6 @@ That is a radically different abstraction than traditional networking.
 | RFC-02YS | AI Swarm Coordination         |
 | RFC-02YT | Recursive Mission Aggregation |
 
-
-
 # RFC-02YG — Deterministic Route Selection (DRS)
 
 ## Status
@@ -4130,12 +4125,12 @@ Network / Routing / Overlay Coordination
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02XZ — Deterministic Gossip Protocol (DGP)
-* RFC-02YC — Overlay Cryptography (OCrypt)
-* RFC-02YA — Mission Overlay Networks (MON)
-* RFC-02YL — Deterministic Proof Substrate (future)
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02XZ — Deterministic Gossip Protocol (DGP)
+- RFC-02YC — Overlay Cryptography (OCrypt)
+- RFC-02YA — Mission Overlay Networks (MON)
+- RFC-02YL — Deterministic Proof Substrate (future)
 
 ---
 
@@ -4145,14 +4140,14 @@ Deterministic Route Selection (DRS) defines how CipherOcto nodes compute, evalua
 
 DRS provides:
 
-* deterministic overlay routing,
-* mission-aware path computation,
-* trust-weighted relay selection,
-* censorship-resistant transport diversity,
-* replay-safe route convergence,
-* multi-carrier route federation,
-* cryptographically attestable route state,
-* adaptive yet consensus-safe routing behavior.
+- deterministic overlay routing,
+- mission-aware path computation,
+- trust-weighted relay selection,
+- censorship-resistant transport diversity,
+- replay-safe route convergence,
+- multi-carrier route federation,
+- cryptographically attestable route state,
+- adaptive yet consensus-safe routing behavior.
 
 Unlike traditional routing systems:
 
@@ -4176,14 +4171,14 @@ hostile heterogeneous relay ecosystems
 
 where routes may traverse:
 
-* Telegram groups,
-* Discord channels,
-* Matrix federations,
-* QUIC peers,
-* LoRa relays,
-* Bluetooth mesh,
-* intermittent gateways,
-* censorship-resistant overlays.
+- Telegram groups,
+- Discord channels,
+- Matrix federations,
+- QUIC peers,
+- LoRa relays,
+- Bluetooth mesh,
+- intermittent gateways,
+- censorship-resistant overlays.
 
 Classical routing algorithms alone are insufficient.
 
@@ -4362,13 +4357,13 @@ are network-defined deterministic constants.
 
 Consensus-sensitive route selection MUST NOT depend on:
 
-* local CPU load,
-* local latency measurements,
-* thread timing,
-* wall-clock drift,
-* OS scheduler behavior,
-* randomization,
-* platform-native metrics.
+- local CPU load,
+- local latency measurements,
+- thread timing,
+- wall-clock drift,
+- OS scheduler behavior,
+- randomization,
+- platform-native metrics.
 
 ---
 
@@ -4426,9 +4421,9 @@ Routes SHOULD propagate incrementally.
 
 Flood propagation SHOULD be reserved for:
 
-* bootstrap,
-* partition healing,
-* emergency recovery.
+- bootstrap,
+- partition healing,
+- emergency recovery.
 
 ---
 
@@ -4440,11 +4435,11 @@ Flood propagation SHOULD be reserved for:
 
 Routes MAY evolve due to:
 
-* censorship,
-* relay degradation,
-* mission policy,
-* gateway compromise,
-* transport migration.
+- censorship,
+- relay degradation,
+- mission policy,
+- gateway compromise,
+- transport migration.
 
 ---
 
@@ -4495,9 +4490,9 @@ Routes MAY conceal full topology.
 
 Each relay SHOULD know only:
 
-* previous hop,
-* next hop,
-* local instructions.
+- previous hop,
+- next hop,
+- local instructions.
 
 ---
 
@@ -4505,10 +4500,10 @@ Each relay SHOULD know only:
 
 DRS SHOULD minimize:
 
-* topology leakage,
-* mission exposure,
-* route correlation,
-* participant enumeration.
+- topology leakage,
+- mission exposure,
+- route correlation,
+- participant enumeration.
 
 ---
 
@@ -4586,9 +4581,9 @@ High-priority traffic MAY intentionally use redundant paths.
 
 Examples:
 
-* validator propagation,
-* emergency coordination,
-* censorship-resistant delivery.
+- validator propagation,
+- emergency coordination,
+- censorship-resistant delivery.
 
 ---
 
@@ -4627,10 +4622,10 @@ Future integration with Deterministic Proof Substrate.
 
 Routes MAY eventually possess:
 
-* Proof-of-Relay,
-* Proof-of-Availability,
-* Proof-of-Bandwidth,
-* Proof-of-Delivery.
+- Proof-of-Relay,
+- Proof-of-Availability,
+- Proof-of-Bandwidth,
+- Proof-of-Delivery.
 
 ---
 
@@ -4656,10 +4651,10 @@ regional route proofs
 
 Future overlays MAY conceal:
 
-* relay identities,
-* transport carriers,
-* mission topology,
-* geographic distribution.
+- relay identities,
+- transport carriers,
+- mission topology,
+- geographic distribution.
 
 ---
 
@@ -4697,10 +4692,10 @@ Routing is deeply economic.
 
 Future overlays MAY support:
 
-* bandwidth auctions,
-* relay leasing,
-* mission route contracts,
-* censorship-resistant routing premiums.
+- bandwidth auctions,
+- relay leasing,
+- mission route contracts,
+- censorship-resistant routing premiums.
 
 ---
 
@@ -4708,13 +4703,13 @@ Future overlays MAY support:
 
 DRS explicitly assumes:
 
-* malicious relays,
-* fake routes,
-* eclipse attacks,
-* route poisoning,
-* censorship,
-* replay storms,
-* topology manipulation.
+- malicious relays,
+- fake routes,
+- eclipse attacks,
+- route poisoning,
+- censorship,
+- replay storms,
+- topology manipulation.
 
 ---
 
@@ -4752,11 +4747,11 @@ MUST derive identical route selections
 
 Historical routing MAY be replayed for:
 
-* forensic analysis,
-* simulation,
-* optimization,
-* dispute resolution,
-* consensus replay.
+- forensic analysis,
+- simulation,
+- optimization,
+- dispute resolution,
+- consensus replay.
 
 ---
 
@@ -4795,9 +4790,9 @@ This is extremely important.
 
 AI MAY:
 
-* propose routes,
-* optimize topology,
-* predict failures.
+- propose routes,
+- optimize topology,
+- predict failures.
 
 But canonical route selection MUST remain deterministic.
 
@@ -4813,12 +4808,12 @@ It is:
 
 Unlike classical networking:
 
-* transport is abstracted,
-* routes are cryptographically attestable,
-* missions are sovereign,
-* topology is portable,
-* propagation is economic,
-* routing survives censorship and fragmentation.
+- transport is abstracted,
+- routes are cryptographically attestable,
+- missions are sovereign,
+- topology is portable,
+- propagation is economic,
+- routing survives censorship and fragmentation.
 
 This is fundamentally closer to:
 
@@ -4843,8 +4838,6 @@ than conventional packet routing.
 | RFC-02YN | zk Mission Execution          |
 | RFC-02YO | Recursive Overlay Proofs      |
 
-
-
 # RFC-02YH — Deterministic Overlay Mempool (DOM)
 
 ## Status
@@ -4857,14 +4850,14 @@ Consensus / Overlay Coordination / Distributed State Propagation
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02XZ — Deterministic Gossip Protocol (DGP)
-* RFC-02YC — Overlay Cryptography (OCrypt)
-* RFC-02YA — Mission Overlay Networks (MON)
-* RFC-02YG — Deterministic Route Selection (DRS)
-* RFC-0104 — Deterministic Floating Point (DFP) 
-* RFC-0105 — Deterministic Quant Arithmetic (DQA) 
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02XZ — Deterministic Gossip Protocol (DGP)
+- RFC-02YC — Overlay Cryptography (OCrypt)
+- RFC-02YA — Mission Overlay Networks (MON)
+- RFC-02YG — Deterministic Route Selection (DRS)
+- RFC-0104 — Deterministic Floating Point (DFP)
+- RFC-0105 — Deterministic Quant Arithmetic (DQA)
 
 ---
 
@@ -4874,14 +4867,14 @@ The Deterministic Overlay Mempool (DOM) defines the canonical pending-state coor
 
 DOM provides:
 
-* deterministic pending object ordering,
-* replay-safe overlay propagation,
-* mission-scoped transaction pools,
-* censorship-resistant dissemination,
-* canonical admission rules,
-* deterministic eviction,
-* proof-compatible execution queues,
-* multi-transport mempool federation.
+- deterministic pending object ordering,
+- replay-safe overlay propagation,
+- mission-scoped transaction pools,
+- censorship-resistant dissemination,
+- canonical admission rules,
+- deterministic eviction,
+- proof-compatible execution queues,
+- multi-transport mempool federation.
 
 Unlike conventional mempools:
 
@@ -4915,14 +4908,14 @@ fragmented hostile multi-carrier overlays
 
 where objects may propagate through:
 
-* QUIC,
-* Matrix,
-* Telegram,
-* Discord,
-* Bluetooth mesh,
-* LoRa relays,
-* intermittent gateways,
-* offline synchronization.
+- QUIC,
+- Matrix,
+- Telegram,
+- Discord,
+- Bluetooth mesh,
+- LoRa relays,
+- intermittent gateways,
+- offline synchronization.
 
 ---
 
@@ -5056,12 +5049,12 @@ Admission MUST validate:
 
 Admission MUST NOT depend on:
 
-* local latency,
-* wall-clock timing,
-* CPU load,
-* thread order,
-* local bandwidth,
-* transport origin.
+- local latency,
+- wall-clock timing,
+- CPU load,
+- thread order,
+- local bandwidth,
+- transport origin.
 
 ---
 
@@ -5154,9 +5147,9 @@ Nodes SHOULD propagate only unseen intents.
 
 Mempool synchronization SHOULD use:
 
-* Merkle summaries,
-* bitmap ranges,
-* replay-safe reconciliation.
+- Merkle summaries,
+- bitmap ranges,
+- replay-safe reconciliation.
 
 ---
 
@@ -5232,11 +5225,11 @@ Nodes maintain replay caches scoped by:
 
 Intent ordering MAY incorporate:
 
-* fees,
-* stake weight,
-* relay rewards,
-* proof rewards,
-* mission incentives.
+- fees,
+- stake weight,
+- relay rewards,
+- proof rewards,
+- mission incentives.
 
 ---
 
@@ -5334,10 +5327,10 @@ Future integration with Deterministic Proof Substrate.
 
 Intents MAY contain:
 
-* execution proofs,
-* relay proofs,
-* AI inference proofs,
-* zk attestations.
+- execution proofs,
+- relay proofs,
+- AI inference proofs,
+- zk attestations.
 
 ---
 
@@ -5357,10 +5350,10 @@ Strategically important.
 
 DOM naturally supports:
 
-* inference scheduling,
-* distributed execution,
-* model coordination,
-* swarm orchestration.
+- inference scheduling,
+- distributed execution,
+- model coordination,
+- swarm orchestration.
 
 ---
 
@@ -5388,10 +5381,10 @@ Consensus finalizes state.
 
 Examples:
 
-* validator votes,
-* checkpoint signatures,
-* execution receipts,
-* proof submissions.
+- validator votes,
+- checkpoint signatures,
+- execution receipts,
+- proof submissions.
 
 These MAY require stricter propagation guarantees.
 
@@ -5405,9 +5398,9 @@ These MAY require stricter propagation guarantees.
 
 Private missions MAY encrypt:
 
-* intent payloads,
-* sender metadata,
-* execution details.
+- intent payloads,
+- sender metadata,
+- execution details.
 
 ---
 
@@ -5415,9 +5408,9 @@ Private missions MAY encrypt:
 
 Future extensions MAY conceal:
 
-* mempool existence,
-* participant identity,
-* pending activity volume.
+- mempool existence,
+- participant identity,
+- pending activity volume.
 
 ---
 
@@ -5425,13 +5418,13 @@ Future extensions MAY conceal:
 
 DOM explicitly assumes:
 
-* spam flooding,
-* replay storms,
-* censorship,
-* intent mutation,
-* mempool poisoning,
-* eclipse attacks,
-* mission infiltration.
+- spam flooding,
+- replay storms,
+- censorship,
+- intent mutation,
+- mempool poisoning,
+- eclipse attacks,
+- mission infiltration.
 
 ---
 
@@ -5456,15 +5449,15 @@ Critical integration point.
 
 ## 22.1 Numeric Safety
 
-All mempool-critical arithmetic MUST use deterministic numeric semantics.  
+All mempool-critical arithmetic MUST use deterministic numeric semantics.
 
 Especially for:
 
-* fee ordering,
-* stake weighting,
-* reward computation,
-* AI execution pricing,
-* proof markets.
+- fee ordering,
+- stake weighting,
+- reward computation,
+- AI execution pricing,
+- proof markets.
 
 ---
 
@@ -5472,9 +5465,9 @@ Especially for:
 
 DOM arithmetic SHOULD remain compatible with:
 
-* finite field constraints,
-* AIR systems,
-* recursive proving.
+- finite field constraints,
+- AIR systems,
+- recursive proving.
 
 ---
 
@@ -5497,10 +5490,10 @@ DOM arithmetic SHOULD remain compatible with:
 
 Historical mempool states MAY be archived for:
 
-* audits,
-* simulation,
-* AI training,
-* forensic replay.
+- audits,
+- simulation,
+- AI training,
+- forensic replay.
 
 ---
 
@@ -5528,13 +5521,13 @@ It is:
 
 DOM coordinates:
 
-* economics,
-* governance,
-* AI execution,
-* distributed computation,
-* mission orchestration,
-* proof propagation,
-* consensus preparation.
+- economics,
+- governance,
+- AI execution,
+- distributed computation,
+- mission orchestration,
+- proof propagation,
+- consensus preparation.
 
 inside sovereign overlay civilizations.
 
@@ -5556,7 +5549,6 @@ That is far beyond conventional blockchain mempools.
 | RFC-02YP | Overlay Resource Markets      |
 | RFC-02YQ | Overlay Governance Protocol   |
 
-
 # RFC-02YI — Onion Relay Routing (ORR)
 
 ## Status
@@ -5569,13 +5561,13 @@ Network / Privacy / Overlay Routing
 
 ## Depends On
 
-* RFC-02XX — Deterministic Overlay Transport (DOT)
-* RFC-02XY — Gateway Discovery Protocol (GDP)
-* RFC-02XZ — Deterministic Gossip Protocol (DGP)
-* RFC-02YC — Overlay Cryptography (OCrypt)
-* RFC-02YG — Deterministic Route Selection (DRS)
-* RFC-02YH — Deterministic Overlay Mempool (DOM)
-* RFC-02YL — Deterministic Proof Substrate (future)
+- RFC-02XX — Deterministic Overlay Transport (DOT)
+- RFC-02XY — Gateway Discovery Protocol (GDP)
+- RFC-02XZ — Deterministic Gossip Protocol (DGP)
+- RFC-02YC — Overlay Cryptography (OCrypt)
+- RFC-02YG — Deterministic Route Selection (DRS)
+- RFC-02YH — Deterministic Overlay Mempool (DOM)
+- RFC-02YL — Deterministic Proof Substrate (future)
 
 ---
 
@@ -5585,14 +5577,14 @@ Onion Relay Routing (ORR) defines the privacy-preserving multi-hop relay archite
 
 ORR provides:
 
-* onion-encrypted overlay routing,
-* multi-hop relay privacy,
-* topology minimization,
-* mission compartmentalization,
-* censorship-resistant forwarding,
-* deterministic replay-safe routing semantics,
-* transport-independent anonymity layers,
-* relay-oblivious propagation.
+- onion-encrypted overlay routing,
+- multi-hop relay privacy,
+- topology minimization,
+- mission compartmentalization,
+- censorship-resistant forwarding,
+- deterministic replay-safe routing semantics,
+- transport-independent anonymity layers,
+- relay-oblivious propagation.
 
 Unlike classical onion routing systems:
 
@@ -5626,14 +5618,14 @@ carrier-abstracted heterogeneous overlay fabrics
 
 including:
 
-* Telegram groups,
-* Discord bridges,
-* Matrix federation,
-* QUIC relays,
-* Bluetooth mesh,
-* LoRa gateways,
-* offline synchronization,
-* opportunistic transports.
+- Telegram groups,
+- Discord bridges,
+- Matrix federation,
+- QUIC relays,
+- Bluetooth mesh,
+- LoRa gateways,
+- offline synchronization,
+- opportunistic transports.
 
 ---
 
@@ -5657,12 +5649,12 @@ including:
 
 ORR assumes adversaries may control:
 
-* transport carriers,
-* overlay relays,
-* mission gateways,
-* route observers,
-* metadata aggregators,
-* traffic analysis systems.
+- transport carriers,
+- overlay relays,
+- mission gateways,
+- route observers,
+- metadata aggregators,
+- traffic analysis systems.
 
 ORR assumes:
 
@@ -5682,16 +5674,16 @@ The most important invariant:
 
 Each relay SHOULD know ONLY:
 
-* previous hop,
-* next hop,
-* local relay instructions.
+- previous hop,
+- next hop,
+- local relay instructions.
 
 NOT:
 
-* origin identity,
-* final destination,
-* mission topology,
-* total route length.
+- origin identity,
+- final destination,
+- mission topology,
+- total route length.
 
 ---
 
@@ -5786,20 +5778,20 @@ Critical section.
 
 Consensus MUST NOT depend on:
 
-* ciphertext byte equality,
-* encryption randomness,
-* relay timing,
-* packet fragmentation,
-* transport latency.
+- ciphertext byte equality,
+- encryption randomness,
+- relay timing,
+- packet fragmentation,
+- transport latency.
 
 ---
 
 ## 8.2 Consensus MAY Depend On
 
-* canonical plaintext commitments,
-* route commitments,
-* deterministic replay identifiers,
-* verified signatures.
+- canonical plaintext commitments,
+- route commitments,
+- deterministic replay identifiers,
+- verified signatures.
 
 ---
 
@@ -5827,9 +5819,9 @@ X25519
 
 Compromise of one relay MUST NOT expose:
 
-* previous sessions,
-* unrelated hops,
-* full route topology.
+- previous sessions,
+- unrelated hops,
+- full route topology.
 
 ---
 
@@ -5847,10 +5839,10 @@ Routes MUST derive from DRS deterministic scoring.
 
 ORR SHOULD maximize:
 
-* transport diversity,
-* geographic diversity,
-* trust diversity,
-* organizational diversity.
+- transport diversity,
+- geographic diversity,
+- trust diversity,
+- organizational diversity.
 
 ---
 
@@ -5858,10 +5850,10 @@ ORR SHOULD maximize:
 
 Route construction MUST NOT depend on:
 
-* local randomness,
-* wall-clock jitter,
-* OS scheduler behavior,
-* transport timing race conditions.
+- local randomness,
+- wall-clock jitter,
+- OS scheduler behavior,
+- transport timing race conditions.
 
 ---
 
@@ -5873,13 +5865,13 @@ Route construction MUST NOT depend on:
 
 Knows:
 
-* sender,
-* next hop.
+- sender,
+- next hop.
 
 Does NOT know:
 
-* destination,
-* full path.
+- destination,
+- full path.
 
 ---
 
@@ -5887,13 +5879,13 @@ Does NOT know:
 
 Knows:
 
-* previous hop,
-* next hop.
+- previous hop,
+- next hop.
 
 Does NOT know:
 
-* sender,
-* destination.
+- sender,
+- destination.
 
 ---
 
@@ -5901,12 +5893,12 @@ Does NOT know:
 
 Knows:
 
-* final destination,
-* previous hop.
+- final destination,
+- previous hop.
 
 Does NOT know:
 
-* original sender.
+- original sender.
 
 ---
 
@@ -5932,10 +5924,10 @@ Mission B onion topology
 
 Future MONs MAY conceal:
 
-* mission existence,
-* relay topology,
-* participant membership,
-* operational intent.
+- mission existence,
+- relay topology,
+- participant membership,
+- operational intent.
 
 ---
 
@@ -5988,9 +5980,9 @@ to resist traffic analysis.
 
 Future implementations MAY normalize:
 
-* packet sizes,
-* timing patterns,
-* propagation intervals.
+- packet sizes,
+- timing patterns,
+- propagation intervals.
 
 ---
 
@@ -6064,11 +6056,11 @@ Onion routes SHOULD rotate periodically.
 
 Rotation MAY occur due to:
 
-* elapsed epoch,
-* trust degradation,
-* censorship,
-* relay compromise suspicion,
-* mission policy.
+- elapsed epoch,
+- trust degradation,
+- censorship,
+- relay compromise suspicion,
+- mission policy.
 
 ---
 
@@ -6114,10 +6106,10 @@ Future integration with Deterministic Proof Substrate.
 
 Relays MAY eventually produce:
 
-* forwarding proofs,
-* availability proofs,
-* bandwidth proofs,
-* uptime proofs.
+- forwarding proofs,
+- availability proofs,
+- bandwidth proofs,
+- uptime proofs.
 
 without revealing payload contents.
 
@@ -6160,10 +6152,10 @@ subject to deterministic state.
 
 Historical relay state MAY support:
 
-* audits,
-* simulations,
-* mission replay,
-* adversarial analysis.
+- audits,
+- simulations,
+- mission replay,
+- adversarial analysis.
 
 ---
 
@@ -6188,10 +6180,10 @@ Onion relaying is economic infrastructure.
 
 Future overlays MAY support:
 
-* premium privacy routes,
-* trusted relay leasing,
-* stealth mission contracts,
-* censorship-resistant relay markets.
+- premium privacy routes,
+- trusted relay leasing,
+- stealth mission contracts,
+- censorship-resistant relay markets.
 
 ---
 
@@ -6213,9 +6205,9 @@ AI-assisted routing MUST NOT violate deterministic replay guarantees.
 
 AI MAY:
 
-* optimize routes,
-* predict failures,
-* suggest relay diversity.
+- optimize routes,
+- predict failures,
+- suggest relay diversity.
 
 But canonical route selection MUST remain deterministic.
 
@@ -6246,11 +6238,11 @@ It is:
 
 ORR enables:
 
-* covert mission overlays,
-* censorship-resistant coordination,
-* private AI swarms,
-* stealth governance systems,
-* distributed autonomous civilizations.
+- covert mission overlays,
+- censorship-resistant coordination,
+- private AI swarms,
+- stealth governance systems,
+- distributed autonomous civilizations.
 
 Above arbitrary transport carriers.
 

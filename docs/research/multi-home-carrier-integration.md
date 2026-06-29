@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-CipherOcto Network is designed to be the transport backbone for the entire platform — agent communication, database sync, marketplace operations, proof distribution, task dispatch, memory replication, and more. **27 documented use cases** across 4 tiers depend on it. Yet the network has **no general-purpose integration path**. The only working transport is raw TCP in a test binary. The `DotGateway` — intended as the central dispatch hub — has an unimplemented fan-out stub. `PlatformAdapter::send_envelope()` has no production caller. 23 adapter implementations exist but none are wired into any consumer.
+CipherOcto Network is designed to be the transport backbone for the entire platform — agent communication, database sync, marketplace operations, proof distribution, task dispatch, memory replication, and more. **27 documented use cases** across 4 tiers depend on it. Yet the network has **no general-purpose integration path**. The only working transport is raw TCP in a test binary. The `DotGateway` — intended as the central dispatch hub — has an unimplemented fan-out stub. `PlatformAdapter::send_message()` has no production caller. 23 adapter implementations exist but none are wired into any consumer.
 
 The core problem is **not** a missing bridge between two specific traits — it's that **the CipherOcto Network was built as infrastructure but never integrated as a service**. The adapters implement a trait. The gateway exists. The gossip protocol is specified. But no code path connects "something that wants to send data" to "an adapter that can send it."
 
@@ -43,7 +43,7 @@ See §8.2 for the phased approach.
 │                    octo-network                          │
 │                                                          │
 │  PlatformAdapter (13 methods: 6 required, 7 default)  │
-│    ├── send_envelope(domain, envelope)                   │
+│    ├── send_message(domain, envelope)                   │
 │    ├── receive_messages(domain)                          │
 │    ├── canonicalize(raw)                                 │
 │    ├── capabilities() -> CapabilityReport                │
@@ -149,15 +149,15 @@ The v0.1 analysis identified the missing bridge between `PlatformAdapter` and `C
 
 ### 2.1 Production Call Path Audit
 
-| Component                          | Location                                          | Status                   | Notes                                                                                                                                  |
-| ---------------------------------- | ------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `DotGateway::process_envelope()`   | `crates/octo-network/src/dot/mod.rs:175`          | **STUB**                 | Fan-out to adapters is a TODO: _"In production, this would iterate over connected domains and forward to the appropriate adapter(s)."_ |
-| `PlatformAdapter::send_envelope()` | 23 implementations                                | **NO PRODUCTION CALLER** | Only called by tests and adapter internal code. No gateway, no DGP, no sync layer calls it.                                            |
-| `SyncNode`                         | `crates/octo-network/src/sync/mod.rs`             | **DEAD CODE**            | Module not exported from `lib.rs`. Unreachable from crate public API.                                                                  |
-| `SyncNetworkBridge`                | `crates/octo-network/src/sync/dgp_integration.rs` | **DEAD CODE**            | Same — `pub mod sync` not in `lib.rs`.                                                                                                 |
-| `MultiCarrierSync`                 | `octo-sync/src/carrier.rs`                        | **UNUSED**               | Exported from octo-sync but never referenced by `SyncSessionManager` or any production code. Only used in E2E tests.                   |
-| `SyncSessionManager::on_commit()`  | `octo-sync/src/session.rs:214`                    | **IN-MEMORY ONLY**       | Fans out `WalTailChunk` to subscribers via in-memory channels. No serialization to envelope bytes, no carrier broadcast.               |
-| `DgpSyncBridge::dispatch()`        | `octo-sync/src/dgp_bridge.rs`                     | **UNREACHABLE**          | Called only by dead code (`SyncNode`, `SyncNetworkBridge`).                                                                            |
+| Component                         | Location                                          | Status                   | Notes                                                                                                                                  |
+| --------------------------------- | ------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `DotGateway::process_envelope()`  | `crates/octo-network/src/dot/mod.rs:175`          | **STUB**                 | Fan-out to adapters is a TODO: _"In production, this would iterate over connected domains and forward to the appropriate adapter(s)."_ |
+| `PlatformAdapter::send_message()` | 23 implementations                                | **NO PRODUCTION CALLER** | Only called by tests and adapter internal code. No gateway, no DGP, no sync layer calls it.                                            |
+| `SyncNode`                        | `crates/octo-network/src/sync/mod.rs`             | **DEAD CODE**            | Module not exported from `lib.rs`. Unreachable from crate public API.                                                                  |
+| `SyncNetworkBridge`               | `crates/octo-network/src/sync/dgp_integration.rs` | **DEAD CODE**            | Same — `pub mod sync` not in `lib.rs`.                                                                                                 |
+| `MultiCarrierSync`                | `octo-sync/src/carrier.rs`                        | **UNUSED**               | Exported from octo-sync but never referenced by `SyncSessionManager` or any production code. Only used in E2E tests.                   |
+| `SyncSessionManager::on_commit()` | `octo-sync/src/session.rs:214`                    | **IN-MEMORY ONLY**       | Fans out `WalTailChunk` to subscribers via in-memory channels. No serialization to envelope bytes, no carrier broadcast.               |
+| `DgpSyncBridge::dispatch()`       | `octo-sync/src/dgp_bridge.rs`                     | **UNREACHABLE**          | Called only by dead code (`SyncNode`, `SyncNetworkBridge`).                                                                            |
 
 ### 2.2 The Three Missing Links
 
@@ -177,7 +177,7 @@ DotGateway::process_envelope()
   → version/flags/signature verify  ← ✅ EXISTS
   → replay cache check              ← ✅ EXISTS
   → forward to adapters             ← ❌ STUB (TODO comment, not implemented)
-  → adapter.send_envelope()         ← ❌ NO PRODUCTION CALLER
+  → adapter.send_message()         ← ❌ NO PRODUCTION CALLER
 ```
 
 **Link 3: DGP gossip → Sync engine**
@@ -251,7 +251,7 @@ if self.adapters.contains_key(&platform_type) {
 }
 ```
 
-A gateway instance typically has 1 adapter per platform type. Each adapter handles **multiple broadcast domains** (multiple groups/channels on that platform). The `BroadcastDomainId` parameter in `send_envelope` distinguishes which specific domain within a platform to target.
+A gateway instance typically has 1 adapter per platform type. Each adapter handles **multiple broadcast domains** (multiple groups/channels on that platform). The `BroadcastDomainId` parameter in `send_message` distinguishes which specific domain within a platform to target.
 
 ### 2.7 Dependency Graph
 
@@ -474,7 +474,7 @@ impl NetworkSender for PlatformAdapterBridge {
     async fn send(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError> {
         // 1. Construct DeterministicEnvelope from payload + context
         // 2. Resolve target domain from ctx.domain or self.domain
-        // 3. Call self.adapter.send_envelope(&domain, &env).await
+        // 3. Call self.adapter.send_message(&domain, &env).await
         // 4. Map PlatformAdapterError → TransportError
     }
 

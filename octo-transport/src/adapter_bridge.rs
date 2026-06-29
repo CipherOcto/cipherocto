@@ -359,11 +359,31 @@ mod tests {
             })
         }
 
-        async fn receive_messages(&self, _: &BroadcastDomainId) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError> { Ok(vec![]) }
-        fn canonicalize(&self, _: &RawPlatformMessage) -> Result<DeterministicEnvelope, PlatformAdapterError> { Ok(DeterministicEnvelope::default()) }
-        fn capabilities(&self) -> CapabilityReport { CapabilityReport { max_payload_bytes: 65536, supports_raw_binary: true, ..Default::default() } }
-        fn domain_id(&self, _: &str) -> BroadcastDomainId { BroadcastDomainId::new(PlatformType::Webhook, "test") }
-        fn platform_type(&self) -> PlatformType { PlatformType::Webhook }
+        async fn receive_messages(
+            &self,
+            _: &BroadcastDomainId,
+        ) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError> {
+            Ok(vec![])
+        }
+        fn canonicalize(
+            &self,
+            _: &RawPlatformMessage,
+        ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            Ok(DeterministicEnvelope::default())
+        }
+        fn capabilities(&self) -> CapabilityReport {
+            CapabilityReport {
+                max_payload_bytes: 65536,
+                supports_raw_binary: true,
+                ..Default::default()
+            }
+        }
+        fn domain_id(&self, _: &str) -> BroadcastDomainId {
+            BroadcastDomainId::new(PlatformType::Webhook, "test")
+        }
+        fn platform_type(&self) -> PlatformType {
+            PlatformType::Webhook
+        }
     }
 
     #[tokio::test]

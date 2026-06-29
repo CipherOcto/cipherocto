@@ -73,6 +73,7 @@ impl PlatformAdapter for NonAdminStubAdapter {
         &self,
         _domain: &BroadcastDomainId,
         _envelope: &octo_network::dot::envelope::DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<
         octo_network::dot::adapters::DeliveryReceipt,
         octo_network::dot::error::PlatformAdapterError,

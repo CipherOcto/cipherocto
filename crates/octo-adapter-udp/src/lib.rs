@@ -108,14 +108,16 @@ impl PlatformAdapter for UdpAdapter {
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
-        let payload = envelope.to_wire_bytes();
+        let envelope_bytes = envelope.to_wire_bytes();
+        // RFC-0850 v1.3.0 §8.9: transmit envelope + payload in one datagram.
+        let total = envelope_bytes.len() + payload.len();
 
-        if payload.len() > MAX_DATAGRAM_SIZE {
+        if total > MAX_DATAGRAM_SIZE {
             return Err(PlatformAdapterError::PayloadTooLarge {
                 platform: "udp".to_string(),
-                size: payload.len(),
+                size: total,
                 max: MAX_DATAGRAM_SIZE,
             });
         }
@@ -128,9 +130,13 @@ impl PlatformAdapter for UdpAdapter {
             });
         }
 
+        let mut datagram = Vec::with_capacity(total);
+        datagram.extend_from_slice(&envelope_bytes);
+        datagram.extend_from_slice(payload);
+
         let mut sent = 0;
         for (peer_id, addr) in peers.iter() {
-            match self.socket.send_to(&payload, addr).await {
+            match self.socket.send_to(&datagram, addr).await {
                 Ok(_) => sent += 1,
                 Err(e) => {
                     tracing::warn!("UDP send to {:?} failed: {}", peer_id, e);

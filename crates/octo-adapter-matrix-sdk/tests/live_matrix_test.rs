@@ -210,7 +210,7 @@ fn mx00_raw_sdk_sync() {
     let session = load_session();
     let rt = make_runtime();
 
-    let result = rt.block_on(async {
+    rt.block_on(async {
         let client = build_session_client(&session).await;
         println!("Calling sync_once...");
         let sync_result = tokio::time::timeout(
@@ -1012,10 +1012,6 @@ fn cleanup_stale_test_rooms() {
     rt.block_on(async {
         let client = build_session_client(&session).await;
         let left = leave_stale_test_rooms(&client, "octo-test-mx-").await;
-        assert!(
-            left <= u32::MAX,
-            "left count overflowed (sanity check, should never trigger)"
-        );
         tracing::info!(rooms_left = left, "cleanup_stale_test_rooms complete");
     });
 }

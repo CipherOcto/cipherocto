@@ -198,7 +198,7 @@ impl PlatformAdapter for BluetoothAdapter {
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
 

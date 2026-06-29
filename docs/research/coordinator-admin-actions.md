@@ -22,7 +22,7 @@ uniformly.
 ## Executive Summary
 
 The `PlatformAdapter` trait today models only **envelope transport**:
-`send_envelope`, `receive_messages`, `canonicalize`. Group _lifecycle_
+`send_message`, `receive_messages`, `canonicalize`. Group _lifecycle_
 (create, leave, delete), group _membership_ (add, remove, promote, ban),
 group _mode_ (lock, announce, ephemeral, approve-required), group
 _discovery_ (list, lookup by invite), and group _handoff_ (transfer
@@ -596,7 +596,7 @@ it, and explicit about the platforms that _can't_.
 - R19 commit: `f86c580` "live WhatsApp E2E test for coordinator group
   setup + runtime_groups fix" — the 5 WhatsApp admin methods that
   motivate this doc.
-- R18 commits: per-platform `domain_id` / `send_envelope` fixes
+- R18 commits: per-platform `domain_id` / `send_message` fixes
   (the per-adapter concerns this doc doesn't repeat).
 - E2E test plan: `docs/e2e/2026-06-16-e2e-test-plan.md` — the
   scenario-1 cold-start flow this doc extends.

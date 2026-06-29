@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
-use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::PlatformAdapter;
 
 fn default_persist_dir() -> std::path::PathBuf {

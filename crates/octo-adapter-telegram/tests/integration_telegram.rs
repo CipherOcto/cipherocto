@@ -27,7 +27,6 @@
 
 use octo_adapter_telegram::mock::MockTelegramClient;
 use octo_adapter_telegram::{TelegramAdapter, TelegramConfig};
-use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::envelope::DeterministicEnvelope;
 
 fn make_small_envelope() -> DeterministicEnvelope {

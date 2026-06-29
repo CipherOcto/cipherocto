@@ -295,7 +295,7 @@ impl PlatformAdapter for DiscordAdapter {
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
         let encoded = Self::encode_envelope(&wire_bytes);

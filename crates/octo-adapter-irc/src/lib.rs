@@ -1160,7 +1160,7 @@ impl PlatformAdapter for IrcAdapter {
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Spawn the listener if it isn't already running. Without
         // this, a `send_envelope` call before any `receive_messages`
@@ -1478,8 +1478,6 @@ impl CoordinatorAdmin for IrcAdapter {
 
             // ── E. Handoff ────────────────────────────────────
             can_transfer_ownership: false, // no transfer primitive
-
-            ..Default::default()
         }
     }
 

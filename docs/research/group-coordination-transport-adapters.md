@@ -22,8 +22,8 @@ gaps that cause silent routing failures on **two of the twenty adapters**:
 
 1. **`domain_id` format inconsistency** (IRC, Nostr). The static
    `domain_hash(...)` and the trait `domain_id(...)` methods produce
-   *different* hashes unless the caller knows the internal format. The
-   `send_envelope` lookup uses the static method; if the caller computed
+   _different_ hashes unless the caller knows the internal format. The
+   `send_message` lookup uses the static method; if the caller computed
    the `domain_id` via the trait method with a different platform_id
    format, routing fails with "No channel for domain" / "No room for
    domain".
@@ -43,12 +43,12 @@ needed to do it cleanly.
 
 The 20 adapters fall into four tiers by group-coordination capability:
 
-| Tier | Adapters | Native groups? | Adapter handles membership? |
-|------|----------|---------------|----------------------------|
-| **1. Native groups** | WhatsApp, Telegram, Matrix (+matrix-sdk), Discord, Slack, IRC, Signal, WeChat, QQ, DingTalk, Lark, Reddit | Yes | Partially — uses platform's group IDs but config is local |
-| **2. Synthetic channel** | Nostr | No (uses `#t` tag as channel) | One tag per adapter instance |
-| **3. Single recipient** | Bluetooth, LoRa, QUIC, WebRTC, Webhook, Bluesky, Twitter | No (1:1 transport) | No — caller routes per-peer |
-| **4. Native pub/sub** | NativeP2P | Yes (gossipsub topics) | Yes — gossipsub mesh |
+| Tier                     | Adapters                                                                                                  | Native groups?                | Adapter handles membership?                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------- |
+| **1. Native groups**     | WhatsApp, Telegram, Matrix (+matrix-sdk), Discord, Slack, IRC, Signal, WeChat, QQ, DingTalk, Lark, Reddit | Yes                           | Partially — uses platform's group IDs but config is local |
+| **2. Synthetic channel** | Nostr                                                                                                     | No (uses `#t` tag as channel) | One tag per adapter instance                              |
+| **3. Single recipient**  | Bluetooth, LoRa, QUIC, WebRTC, Webhook, Bluesky, Twitter                                                  | No (1:1 transport)            | No — caller routes per-peer                               |
+| **4. Native pub/sub**    | NativeP2P                                                                                                 | Yes (gossipsub topics)        | Yes — gossipsub mesh                                      |
 
 ---
 
@@ -56,7 +56,7 @@ The 20 adapters fall into four tiers by group-coordination capability:
 
 ```rust
 pub trait PlatformAdapter: Send + Sync {
-    async fn send_envelope(&self, domain: &BroadcastDomainId, envelope: &DeterministicEnvelope)
+    async fn send_message(&self, domain: &BroadcastDomainId, envelope: &DeterministicEnvelope)
         -> Result<DeliveryReceipt, PlatformAdapterError>;
     async fn receive_messages(&self, domain: &BroadcastDomainId)
         -> Result<Vec<RawPlatformMessage>, PlatformAdapterError>;
@@ -79,7 +79,7 @@ The trait takes a `BroadcastDomainId` per call. It does not expose:
 
 This is fine for Tier-1 adapters where the platform manages the group
 on the server side. It is a real gap for Tier-3 (1:1 transport) and
-Tier-2 (Nostr) adapters that need to *synthesize* group membership on
+Tier-2 (Nostr) adapters that need to _synthesize_ group membership on
 the client side.
 
 ---
@@ -93,28 +93,28 @@ side. The adapter maps a native group ID (JID, room ID, chat_id, …) to
 a `BroadcastDomainId` and uses the platform's API to send/receive in
 that group.
 
-| Adapter | platform_type | Native group ID | `domain_hash` | `send_envelope` uses domain? |
-|---------|---------------|----------------|---------------|------------------------------|
-| `octo-adapter-whatsapp` | 0x0008 | `xxx@g.us` JID | `BLAKE3("whatsapp:{jid}")` | ✓ (iterates `self.config.groups`) |
-| `octo-adapter-telegram` | 0x0001 | chat_id (i64) | `BLAKE3("telegram:{chat_id}")` | ✓ (uses `domain_chat_ids` map) |
-| `octo-adapter-matrix` | 0x0003 | `!opaque:server` | `BLAKE3("matrix:{room_id}")` | ✓ (iterates `self.config.rooms`) |
-| `octo-adapter-matrix-sdk` | 0x0003 | `!opaque:server` | `BLAKE3("matrix:{room_id}")` | ✓ (iterates `self.config.rooms`) |
-| `octo-adapter-discord` | 0x0002 | channel_id | `BLAKE3("discord:{channel_id}")` | ✗ (sends to a single configured webhook) |
-| `octo-adapter-slack` | 0x0007 | channel_id | `BLAKE3("slack:{channel_id}")` | ✗ (uses `send_to_channel` helper) |
-| `octo-adapter-irc` | 0x0006 | `#channel` on server | `BLAKE3("irc:{server}:{channel}")` | ✓ (iterates `self.config.channels`, **see §3.1**) |
-| `octo-adapter-signal` | 0x0005 | group_id | `BLAKE3("signal:{group_id}")` | ✓ (iterates `self.config.groups`) |
-| `octo-adapter-wechat` | 0x0011 | group_id | `BLAKE3("wechat:{group_id}")` | (stub) |
-| `octo-adapter-qq` | 0x0014 | group_id | `BLAKE3("qq:{group_id}")` | (stub) |
-| `octo-adapter-dingtalk` | 0x0012 | group_id | `BLAKE3("dingtalk:{group_id}")` | (stub) |
-| `octo-adapter-lark` | 0x0013 | chat_id | `BLAKE3("lark:{chat_id}")` | (stub) |
-| `octo-adapter-reddit` | 0x0010 | subreddit | `BLAKE3("reddit:{subreddit}")` | (stub) |
+| Adapter                   | platform_type | Native group ID      | `domain_hash`                      | `send_message` uses domain?                       |
+| ------------------------- | ------------- | -------------------- | ---------------------------------- | ------------------------------------------------- |
+| `octo-adapter-whatsapp`   | 0x0008        | `xxx@g.us` JID       | `BLAKE3("whatsapp:{jid}")`         | ✓ (iterates `self.config.groups`)                 |
+| `octo-adapter-telegram`   | 0x0001        | chat_id (i64)        | `BLAKE3("telegram:{chat_id}")`     | ✓ (uses `domain_chat_ids` map)                    |
+| `octo-adapter-matrix`     | 0x0003        | `!opaque:server`     | `BLAKE3("matrix:{room_id}")`       | ✓ (iterates `self.config.rooms`)                  |
+| `octo-adapter-matrix-sdk` | 0x0003        | `!opaque:server`     | `BLAKE3("matrix:{room_id}")`       | ✓ (iterates `self.config.rooms`)                  |
+| `octo-adapter-discord`    | 0x0002        | channel_id           | `BLAKE3("discord:{channel_id}")`   | ✗ (sends to a single configured webhook)          |
+| `octo-adapter-slack`      | 0x0007        | channel_id           | `BLAKE3("slack:{channel_id}")`     | ✗ (uses `send_to_channel` helper)                 |
+| `octo-adapter-irc`        | 0x0006        | `#channel` on server | `BLAKE3("irc:{server}:{channel}")` | ✓ (iterates `self.config.channels`, **see §3.1**) |
+| `octo-adapter-signal`     | 0x0005        | group_id             | `BLAKE3("signal:{group_id}")`      | ✓ (iterates `self.config.groups`)                 |
+| `octo-adapter-wechat`     | 0x0011        | group_id             | `BLAKE3("wechat:{group_id}")`      | (stub)                                            |
+| `octo-adapter-qq`         | 0x0014        | group_id             | `BLAKE3("qq:{group_id}")`          | (stub)                                            |
+| `octo-adapter-dingtalk`   | 0x0012        | group_id             | `BLAKE3("dingtalk:{group_id}")`    | (stub)                                            |
+| `octo-adapter-lark`       | 0x0013        | chat_id              | `BLAKE3("lark:{chat_id}")`         | (stub)                                            |
+| `octo-adapter-reddit`     | 0x0010        | subreddit            | `BLAKE3("reddit:{subreddit}")`     | (stub)                                            |
 
 All but Discord and Slack use the configured `groups/rooms/channels`
 list to find the native ID for a `BroadcastDomainId` at send time.
 Discord/Slack work around the single-webhook limitation by being
 configured with one webhook per channel (one adapter instance per group).
 
-**Observation:** Even for Tier-1 transports, the *gateway* must know
+**Observation:** Even for Tier-1 transports, the _gateway_ must know
 the native group ID at config time. There is no `discover_groups()`
 API; the gateway cannot say "what groups am I in on WhatsApp?"
 
@@ -133,7 +133,7 @@ pub fn domain_hash(relay_url: &str, channel_tag: &str) -> [u8; 32] {
 fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
     BroadcastDomainId::new(PlatformType::Nostr, platform_id)
 }
-async fn send_envelope(&self, _domain: &BroadcastDomainId, envelope: ...) {
+async fn send_message(&self, _domain: &BroadcastDomainId, envelope: ...) {
     // ignores domain; uses self.config.channel_tag and self.config.relays
 }
 ```
@@ -145,7 +145,7 @@ async fn send_envelope(&self, _domain: &BroadcastDomainId, envelope: ...) {
 
 These match IF the caller passes `"wss://relay.com:tag"` as the
 platform_id. But the static method's two-argument signature invites
-callers to compute it directly from the two-arg form. The `send_envelope`
+callers to compute it directly from the two-arg form. The `send_message`
 ignores the domain and just uses `self.config`, so a mismatch is silent.
 
 To get "multiple groups" on Nostr, the current design is to instantiate
@@ -158,20 +158,20 @@ These transports have no group concept at all. A "group" is either a
 synthetic string identifier the caller invents, or a single configured
 endpoint.
 
-| Adapter | platform_type | Transport | "Group" model | Group support today |
-|---------|---------------|-----------|---------------|---------------------|
-| `octo-adapter-bluetooth` | 0x000B | BLE 1:1 GATT | Synthetic string ID; no fan-out | Adapter ignores domain; pushes to local TX buffer |
-| `octo-adapter-lora` | 0x000C | LoRa 1:1 radio | Synthetic device_id | Adapter ignores domain; same stub as BLE |
-| `octo-adapter-quic` | 0x0009 | QUIC 1:1 stream | Synthetic peer_id; `peers` map | Sends to **first trusted peer** in map, not all |
-| `octo-adapter-webrtc` | 0x000D | WebRTC 1:1 data channel | Synthetic peer_id | Adapter ignores domain; stub |
-| `octo-adapter-webhook` | 0x0010 | HTTP POST | One URL per adapter | Adapter ignores domain; posts to `config.send_url` |
-| `octo-adapter-bluesky` | 0x000E | AT Protocol (1:1 DMs / public posts) | DIDs (no group) | Adapter ignores domain; stub |
-| `octo-adapter-twitter` | 0x000F | X/Twitter 1:1 DMs | DMs (no group) | Adapter ignores domain; stub |
+| Adapter                  | platform_type | Transport                            | "Group" model                   | Group support today                                |
+| ------------------------ | ------------- | ------------------------------------ | ------------------------------- | -------------------------------------------------- |
+| `octo-adapter-bluetooth` | 0x000B        | BLE 1:1 GATT                         | Synthetic string ID; no fan-out | Adapter ignores domain; pushes to local TX buffer  |
+| `octo-adapter-lora`      | 0x000C        | LoRa 1:1 radio                       | Synthetic device_id             | Adapter ignores domain; same stub as BLE           |
+| `octo-adapter-quic`      | 0x0009        | QUIC 1:1 stream                      | Synthetic peer_id; `peers` map  | Sends to **first trusted peer** in map, not all    |
+| `octo-adapter-webrtc`    | 0x000D        | WebRTC 1:1 data channel              | Synthetic peer_id               | Adapter ignores domain; stub                       |
+| `octo-adapter-webhook`   | 0x0010        | HTTP POST                            | One URL per adapter             | Adapter ignores domain; posts to `config.send_url` |
+| `octo-adapter-bluesky`   | 0x000E        | AT Protocol (1:1 DMs / public posts) | DIDs (no group)                 | Adapter ignores domain; stub                       |
+| `octo-adapter-twitter`   | 0x000F        | X/Twitter 1:1 DMs                    | DMs (no group)                  | Adapter ignores domain; stub                       |
 
-These adapters *cannot* do 1:N broadcast without:
+These adapters _cannot_ do 1:N broadcast without:
 
 - A group membership table (a `BTreeMap<BroadcastDomainId, Vec<PeerId>>`)
-- A fan-out loop in `send_envelope` that iterates the members
+- A fan-out loop in `send_message` that iterates the members
 - A way for the gateway to add/remove members (peer join/leave)
 
 The current `PlatformAdapter` trait has no API for any of this. To
@@ -235,7 +235,7 @@ For these to match, the caller must pass `"server:channel"` (e.g.
 method's two-arg form tempts callers to do the right thing in the
 wrong place, and any caller using `domain_id("#cipherocto")` (just the
 channel) will get a hash that doesn't match any configured channel,
-and `send_envelope` will fail with "No channel for domain …".
+and `send_message` will fail with "No channel for domain …".
 
 **Recommendation:** Pick one canonical format and document it. Either
 (a) keep the two-arg form and have `domain_id(server, channel)`, or
@@ -257,13 +257,13 @@ pub fn domain_hash(relay_url: &str, channel_tag: &str) -> [u8; 32] {
 which produces `BLAKE3("nostr:{platform_id}")`. The caller must pass
 `"relay_url:channel_tag"` for the hashes to match.
 
-`send_envelope` (line 334) **ignores the domain parameter entirely** and
+`send_message` (line 334) **ignores the domain parameter entirely** and
 just uses `self.config.channel_tag` and `self.config.relays`. So the
 format mismatch is masked: the caller can't actually use the domain
 parameter to address different Nostr "groups" on the same adapter
 instance.
 
-**Recommendation:** Either (a) make `send_envelope` honour the domain
+**Recommendation:** Either (a) make `send_message` honour the domain
 parameter and look up `(relay_set, channel_tag)` by hash, or (b) drop
 the static `domain_hash(relay_url, channel_tag)` and have a single
 config-level channel.
@@ -287,7 +287,7 @@ Extra code needed:
 1. A `BTreeMap<[u8; 32], Vec<DeviceId>>` in the adapter: domain → members.
 2. A setup API (`register_group_member(domain, device_id)`) called by
    the gateway when a new device pairs.
-3. A `send_envelope` that iterates the member list and writes to each
+3. A `send_message` that iterates the member list and writes to each
    device's TX buffer (sequentially, since BLE is half-duplex and LoRa
    is single-frequency).
 4. Inbound filter in `receive_messages` that drops any message whose
@@ -306,7 +306,7 @@ star topology with a designated hub peer**.
 Extra code needed (star topology):
 
 1. A `peers: BTreeMap<[u8; 32], Vec<PeerId>>` table: domain → members.
-2. A `send_envelope` that iterates members and opens a 1:1 stream to
+2. A `send_message` that iterates members and opens a 1:1 stream to
    each. With QUIC this is one `open_bi()` per peer.
 3. Inbound filter as above.
 4. A heartbeat/keepalive to detect dead members and evict.
@@ -323,8 +323,8 @@ Extra code needed:
 
 1. Replace the single `send_url: Option<String>` with
    `send_urls: BTreeMap<[u8; 32], String>` (domain → URL).
-2. Have `send_envelope` look up the URL by domain hash.
-3. The HMAC signing (currently in `send_envelope`) is per-URL, so
+2. Have `send_message` look up the URL by domain hash.
+3. The HMAC signing (currently in `send_message`) is per-URL, so
    `auth_header` and `hmac_secret` need to be per-URL too.
 
 Parity: **YES**, and the change is mechanical. The user pays for it in
@@ -341,13 +341,14 @@ public groups).
 Extra code needed:
 
 1. A `BTreeMap<[u8; 32], Vec<Did>>` table: domain → members.
-2. `send_envelope` iterates members and DMs each.
+2. `send_message` iterates members and DMs each.
 3. Inbound filter as above.
 
 Parity: **YES for small N** (≤50 DMs per broadcast; Bluesky rate limit
 is 5000/hour for DMs, Twitter is 1000/day for DMs).
 
 ### 4.5 Matrix / Signal (already have groups, but the model is
+
 server-mediated)
 
 These are Tier-1 transports. No extra code needed; the platform
@@ -366,7 +367,7 @@ Pick a canonical `domain_id` format. Recommended:
   static `domain_hash(server, channel)` and inline it into
   `domain_id`.
 - **Nostr**: same shape — `BLAKE3("nostr:{relay_url}:{channel_tag}")`
-  with the colon-separator format. Make `send_envelope` honour the
+  with the colon-separator format. Make `send_message` honour the
   domain by looking up the right `(relay_set, channel_tag)` from a
   `BTreeMap<[u8; 32], (Vec<String>, String)>` keyed by the domain hash.
 
@@ -421,7 +422,7 @@ For each Tier-3 adapter, add a doc comment explaining:
 - What a "group" means on this transport (e.g. "an agreed-upon string
   identifier; the adapter doesn't manage membership")
 - How group coordination is achieved (e.g. "the gateway must call
-  `send_envelope(domain, envelope)` once per recipient, with each
+  `send_message(domain, envelope)` once per recipient, with each
   recipient's adapter instance")
 - The maximum realistic group size (e.g. "≤8 for BLE; ≤50 for QUIC;
   ≤50 for Webhook")
@@ -434,37 +435,38 @@ This is a doc-only change. Estimated effort: 7 doc comments.
 
 ## 6. Summary table
 
-| Adapter | Tier | Domain format match? | `send_envelope` honours domain? | Native group support | Group size limit |
-|---------|------|----------------------|---------------------------------|----------------------|------------------|
-| whatsapp | 1 | ✓ | ✓ | Platform server | platform limit |
-| telegram | 1 | ✓ | ✓ | Platform server | platform limit |
-| matrix | 1 | ✓ | ✓ | Platform server | platform limit |
-| matrix-sdk | 1 | ✓ | ✓ | Platform server | platform limit |
-| discord | 1 | ✓ | ✗ (single webhook) | Platform server | platform limit |
-| slack | 1 | ✓ | ✗ (single webhook) | Platform server | platform limit |
-| irc | 1 | **✗ (mismatch)** | ✓ | Platform server | platform limit |
-| signal | 1 | ✓ | ✓ | Platform server | platform limit |
-| wechat | 1 | ✓ | (stub) | Platform server | platform limit |
-| qq | 1 | ✓ | (stub) | Platform server | platform limit |
-| dingtalk | 1 | ✓ | (stub) | Platform server | platform limit |
-| lark | 1 | ✓ | (stub) | Platform server | platform limit |
-| reddit | 1 | ✓ | (stub) | Platform server | platform limit |
-| nostr | 2 | **✗ (mismatch)** | ✗ (uses config) | Synthetic tag | 1 tag per adapter |
-| bluesky | 3 | ✓ | ✗ (stub) | None (DIDs) | ≤50 (DM rate) |
-| twitter | 3 | ✓ | ✗ (stub) | None (DMs) | ≤50 (DM rate) |
-| bluetooth | 3 | ✓ | ✗ (stub) | None (1:1 GATT) | ≤8 (timing) |
-| lora | 3 | ✓ | ✗ (stub) | None (1:1 radio) | ≤8 (timing) |
-| quic | 3 | ✓ | partial (1 peer) | None (1:1 stream) | ≤50 (with fan-out) |
-| webrtc | 3 | ✓ | ✗ (stub) | None (1:1 datachannel) | ≤50 (with fan-out) |
-| webhook | 3 | ✓ | ✗ (1 URL) | None (1:1 HTTP) | unlimited (1 URL each) |
-| nativep2p | 4 | ✓ | ✓ (gossipsub topic) | libp2p gossipsub | mesh-dependent |
+| Adapter    | Tier | Domain format match? | `send_message` honours domain? | Native group support   | Group size limit       |
+| ---------- | ---- | -------------------- | ------------------------------ | ---------------------- | ---------------------- |
+| whatsapp   | 1    | ✓                    | ✓                              | Platform server        | platform limit         |
+| telegram   | 1    | ✓                    | ✓                              | Platform server        | platform limit         |
+| matrix     | 1    | ✓                    | ✓                              | Platform server        | platform limit         |
+| matrix-sdk | 1    | ✓                    | ✓                              | Platform server        | platform limit         |
+| discord    | 1    | ✓                    | ✗ (single webhook)             | Platform server        | platform limit         |
+| slack      | 1    | ✓                    | ✗ (single webhook)             | Platform server        | platform limit         |
+| irc        | 1    | **✗ (mismatch)**     | ✓                              | Platform server        | platform limit         |
+| signal     | 1    | ✓                    | ✓                              | Platform server        | platform limit         |
+| wechat     | 1    | ✓                    | (stub)                         | Platform server        | platform limit         |
+| qq         | 1    | ✓                    | (stub)                         | Platform server        | platform limit         |
+| dingtalk   | 1    | ✓                    | (stub)                         | Platform server        | platform limit         |
+| lark       | 1    | ✓                    | (stub)                         | Platform server        | platform limit         |
+| reddit     | 1    | ✓                    | (stub)                         | Platform server        | platform limit         |
+| nostr      | 2    | **✗ (mismatch)**     | ✗ (uses config)                | Synthetic tag          | 1 tag per adapter      |
+| bluesky    | 3    | ✓                    | ✗ (stub)                       | None (DIDs)            | ≤50 (DM rate)          |
+| twitter    | 3    | ✓                    | ✗ (stub)                       | None (DMs)             | ≤50 (DM rate)          |
+| bluetooth  | 3    | ✓                    | ✗ (stub)                       | None (1:1 GATT)        | ≤8 (timing)            |
+| lora       | 3    | ✓                    | ✗ (stub)                       | None (1:1 radio)       | ≤8 (timing)            |
+| quic       | 3    | ✓                    | partial (1 peer)               | None (1:1 stream)      | ≤50 (with fan-out)     |
+| webrtc     | 3    | ✓                    | ✗ (stub)                       | None (1:1 datachannel) | ≤50 (with fan-out)     |
+| webhook    | 3    | ✓                    | ✗ (1 URL)                      | None (1:1 HTTP)        | unlimited (1 URL each) |
+| nativep2p  | 4    | ✓                    | ✓ (gossipsub topic)            | libp2p gossipsub       | mesh-dependent         |
 
 **Tier 1:** 12 adapters (with 2 bugs in domain format and 2 adapters
-that don't honour the domain in `send_envelope`).
+that don't honour the domain in `send_message`).
 **Tier 2:** 1 adapter (with 1 domain format bug and 1 ignored-domain bug).
 **Tier 3:** 6 adapters (no native groups; would need extra code for 1:N).
 **Tier 4:** 1 adapter (gossipsub — already correct).
 
 **Net assessment:** 13 of 20 adapters have at least one real issue
 preventing correct group coordination. The fixes are small (~130 LOC
-+ 16 regression tests total) and the architecture is sound.
+
+- 16 regression tests total) and the architecture is sound.

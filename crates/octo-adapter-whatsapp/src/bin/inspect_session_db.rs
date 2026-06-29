@@ -116,9 +116,7 @@ fn main() {
             (),
         )
         .unwrap();
-    let mut conv_count = 0i64;
     while let Some(Ok(row)) = rows.next() {
-        conv_count += 1;
         let jid: String = row.get(0).unwrap_or_default();
         let name: String = row.get(1).unwrap_or_default();
         let is_group: i64 = row.get(2).unwrap_or(0);

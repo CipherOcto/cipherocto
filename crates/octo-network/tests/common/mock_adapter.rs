@@ -89,6 +89,8 @@ pub struct MockPlatformAdapter {
     platform: PlatformType,
     /// Outbound messages (sent by the adapter)
     outbound: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// Captured payloads from send_message calls
+    captured_payloads: Arc<Mutex<Vec<Vec<u8>>>>,
     /// Inbound messages (to be received by the adapter)
     inbound: Arc<Mutex<VecDeque<RawPlatformMessage>>>,
     /// Failure mode
@@ -113,6 +115,7 @@ impl MockPlatformAdapter {
         Self {
             platform,
             outbound: Arc::new(Mutex::new(Vec::new())),
+            captured_payloads: Arc::new(Mutex::new(Vec::new())),
             inbound: Arc::new(Mutex::new(VecDeque::new())),
             failure_mode: FailureMode::None,
             self_id: None,
@@ -179,6 +182,11 @@ impl MockPlatformAdapter {
         self.outbound.lock().await.len()
     }
 
+    /// Get captured payloads from send_message calls.
+    pub async fn captured_payloads(&self) -> Vec<Vec<u8>> {
+        self.captured_payloads.lock().await.clone()
+    }
+
     /// Clear all queues.
     pub async fn clear(&self) {
         self.outbound.lock().await.clear();
@@ -192,8 +200,12 @@ impl PlatformAdapter for MockPlatformAdapter {
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
+
+        // Capture payload for regression tests
+        self.captured_payloads.lock().await.push(payload.to_vec());
 
         // Apply failure mode
         match &self.failure_mode {

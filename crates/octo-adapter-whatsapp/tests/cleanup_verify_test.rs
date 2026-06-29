@@ -125,21 +125,12 @@ async fn cleanup_test_group_verify() {
 
     // Find a test group.
     let test_prefixes = ["octo_test_", "media-test-", "renamed_", "DOT-e2e-"];
-    let target = groups.iter().find(|g| {
-        // We need subject from metadata to match prefixes.
-        // Since GroupHandle doesn't have subject, we'll fetch metadata below.
-        // For now, just pick the first group.
-        true
-    });
 
-    let target = match target {
-        Some(g) => g,
-        None => {
-            tracing::info!("no groups found");
-            adapter.shutdown().await.expect("shutdown");
-            return;
-        }
-    };
+    if groups.is_empty() {
+        tracing::info!("no groups found");
+        adapter.shutdown().await.expect("shutdown");
+        return;
+    }
 
     // Fetch metadata for all groups to find a test group.
     let mut test_group_jid: Option<String> = None;

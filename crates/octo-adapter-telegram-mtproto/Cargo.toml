@@ -137,3 +137,19 @@ wiremock = "0.6"
 # Pinned to a recent minor; matches the rest of the workspace.
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 tracing = { workspace = true }
+
+# CLI binaries that exercise the real-network path (live DC + real auth).
+# These are gated on the `real-network` feature so the default build does
+# not require grammers/TDLib/toolchain pieces. Without `required-features`,
+# cargo would auto-discover the files under `src/bin/` and complain about
+# missing `fn main()` when the feature is disabled (since the files use
+# `#![cfg(feature = "real-network")]` to hide their entire body).
+[[bin]]
+name = "list_test_users"
+path = "src/bin/list_test_users.rs"
+required-features = ["real-network"]
+
+[[bin]]
+name = "cleanup_test_artifacts"
+path = "src/bin/cleanup_test_artifacts.rs"
+required-features = ["real-network"]

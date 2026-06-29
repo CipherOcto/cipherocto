@@ -204,7 +204,6 @@ proptest! {
     #[test]
     fn hmac_deterministic(
         key in any::<[u8; 32]>(),
-        payload in proptest::collection::vec(any::<u8>(), 0..4096),
         sender in any_node_id(),
     ) {
         let gossip = CapacityGossipPayload {

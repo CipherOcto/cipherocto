@@ -241,7 +241,7 @@ impl PlatformAdapter for WebhookAdapter {
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let send_url = self
             .config

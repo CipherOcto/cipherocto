@@ -57,7 +57,7 @@ async fn live_client_and_handle() -> (Arc<RealTelegramMtprotoClient>, MtprotoSel
     let api_hash = config.api_hash.as_deref().expect("api_hash required");
     let data_dir = config.data_dir.as_ref().expect("data_dir required");
 
-    let session = StoolapSession::open(&data_dir.join("session.db"))
+    let session = StoolapSession::open(data_dir.join("session.db"))
         .unwrap_or_else(|e| panic!("failed to open session: {e}"));
 
     let self_handle = MtprotoSelfHandle::new();
@@ -1448,7 +1448,7 @@ async fn lt53_list_dialog_ids() {
     assert!(dialogs.is_ok(), "list_dialog_ids: {:?}", dialogs.err());
     let ids = dialogs.unwrap();
     assert!(
-        ids.iter().any(|&id| id == chat_id),
+        ids.contains(&chat_id),
         "test group should be in dialog list"
     );
 

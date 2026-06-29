@@ -2008,7 +2008,7 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-        payload: envelope: &DeterministicEnvelope,[u8],
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Clone client Arc to avoid holding mutex guard across await
         let client = {
@@ -4822,7 +4822,7 @@ mod tests {
         let domain = BroadcastDomainId::new(PlatformType::WhatsApp, "999999999");
         let envelope = DeterministicEnvelope::from_wire_bytes(&[0u8; 282])
             .expect("zeroed 282-byte buffer is structurally valid");
-        let result = adapter.send_envelope(&domain, &envelope).await;
+        let result = adapter.send_message(&domain, &envelope, b"").await;
         assert!(
             matches!(result, Err(PlatformAdapterError::Unreachable { .. })),
             "send_envelope to unknown domain must return Unreachable, got {result:?}"

@@ -3,7 +3,7 @@
 /// Captures events during group creation and destruction to compare
 /// with the official app's event flow.
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
-use octo_network::dot::adapters::coordinator_admin::{GroupId, GroupMemberSpec};
+use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::PlatformAdapter;
 use std::collections::BTreeMap;
 use std::sync::Arc;

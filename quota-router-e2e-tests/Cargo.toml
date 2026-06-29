@@ -1,0 +1,15 @@
+[package]
+name = "quota-router-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "End-to-end integration tests for the quota router network (RFC-0870)"
+
+[dependencies]
+quota-router = { path = "../quota-router" }
+octo-transport = { path = "../octo-transport" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+async-trait = "0.1"
+bincode = "1"
+blake3 = "1.5"
+rand = "0.8"

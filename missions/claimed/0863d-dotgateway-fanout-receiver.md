@@ -37,7 +37,7 @@ Replace the TODO stub with actual adapter dispatch:
 // Replace with:
 for adapter in &self.adapters {
     if let Some(domain) = envelope.domain() {
-        match adapter.send_envelope(&domain, envelope).await {
+        match adapter.send_message(&domain, envelope).await {
             Ok(_receipt) => { /* log success */ }
             Err(e) => { /* log error, continue to next adapter */ }
         }
@@ -127,7 +127,7 @@ Medium (~300-500 lines). DotGateway fan-out is ~50 lines. NetworkReceiver trait 
 
 ## Implementation Notes
 
-- The DotGateway fan-out iterates `self.adapters` (a `Vec<Box<dyn PlatformAdapter>>`). For each adapter, check if the envelope's domain matches the adapter's platform type, then call `send_envelope()`. **Note:** `DeterministicEnvelope` may not have a `domain()` method — the implementer must verify against `octo-network/src/dot/envelope.rs`. If not available, the domain must be extracted from the envelope's wire format or passed as a parameter to `process_envelope()`.
+- The DotGateway fan-out iterates `self.adapters` (a `Vec<Box<dyn PlatformAdapter>>`). For each adapter, check if the envelope's domain matches the adapter's platform type, then call `send_message()`. **Note:** `DeterministicEnvelope` may not have a `domain()` method — the implementer must verify against `octo-network/src/dot/envelope.rs`. If not available, the domain must be extracted from the envelope's wire format or passed as a parameter to `process_envelope()`.
 - `NetworkReceiver` is the inbound counterpart to `NetworkSender`. Handlers register with `NodeTransport` (future) or `DotGateway` to receive dispatched payloads.
 - Exporting `sync` module is a one-line change in `lib.rs` but unblocks the entire DGP integration path.
 - The existing `SyncNode` and `SyncNetworkBridge` code in `octo-network/src/sync/` is already implemented — it just needs to be exported.

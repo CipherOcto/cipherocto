@@ -341,7 +341,7 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
 
 - [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
       changes `Duration::from_secs(5)` to
-      `Duration::from_secs(60)` in the `send_envelope`
+      `Duration::from_secs(60)` in the `send_message`
       initial-sync path. The 5 s → 60 s bump is justified
       by the cold-session E2EE bootstrap cost; the
       comment above the call site is updated to explain
@@ -505,7 +505,7 @@ causes:
   `"Health check timed out after 5s"` on every cold call.
 - `mx04_05_06_envelope_round_trip` to fail with
   `"Room <id> not found in joined rooms"` because the
-  one-shot sync in `send_envelope` (lib.rs:858) times out
+  one-shot sync in `send_message` (lib.rs:858) times out
   before the freshly-created room is indexed by the SDK's
   in-memory room map.
 
@@ -520,7 +520,7 @@ room, so the 60 s sync code path doesn't execute.
 **Two sync_once callsites are touched:**
 
 - `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
-  (initial sync in `send_envelope`):
+  (initial sync in `send_message`):
   - **Before:** `SyncSettings::default().timeout(Duration::from_secs(5))`
   - **After:** `SyncSettings::default().timeout(Duration::from_secs(60))`
   - **Why:** This is the one-shot recovery sync when the

@@ -59,10 +59,11 @@ pub struct TcpAdapter {
 ```rust
 #[async_trait]
 impl PlatformAdapter for TcpAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Serialize envelope to bytes
         // Find peer connection by domain
@@ -149,7 +150,7 @@ let transport = NodeTransport::new(vec![sender]);
 - [ ] `crates/octo-adapter-tcp/` crate created with `TcpAdapter` implementing `PlatformAdapter`
 - [ ] `PlatformType::Tcp = 0x0016` registered in `octo-network` domain registry
 - [ ] TCP framing: length-prefix `[u32 len][payload]` working correctly
-- [ ] `send_envelope` sends DOT envelopes over TCP to connected peers
+- [ ] `send_message` sends DOT messages over TCP to connected peers
 - [ ] `receive_messages` accepts incoming TCP connections and reads frames
 - [ ] `canonicalize` parses raw TCP frames into `DeterministicEnvelope`
 - [ ] `PlatformAdapterBridge::new(Box::new(tcp_adapter))` compiles and produces `NetworkSender`
@@ -170,7 +171,7 @@ High (~800-1200 lines). Adapter crate + framing + connection management + binary
 - Frame parsing must handle partial reads (TCP is a byte stream, not message-oriented)
 - The adapter does NOT handle TLS — that's a separate concern (RFC-0853)
 - For L3 tests, the adapter runs in the same process as the binary — no separate certificate management needed
-- The `send_envelope` method must be thread-safe (called from multiple async tasks)
+- The `send_message` method must be thread-safe (called from multiple async tasks)
 - Connection pool should be bounded (max 128 connections per adapter, matching `PeerCache` limits)
 
 ## Type Coverage

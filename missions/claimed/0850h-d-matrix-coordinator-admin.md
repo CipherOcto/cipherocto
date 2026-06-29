@@ -545,7 +545,7 @@ Mission `0850h-b-matrix-adapter-e2ee.md` is about E2EE bootstrap,
 recovery key, and SAS verification — the crypto-side of the matrix
 adapter. `CoordinatorAdmin` is the group-management-side. The two
 share the matrix-sdk crate and the same `MatrixAdapter` struct but
-they're orthogonal features: E2EE is required for `send_envelope`
+they're orthogonal features: E2EE is required for `send_message`
 end-to-end; `CoordinatorAdmin` is required for the
 domain-coordinator role to manage the room that envelopes flow
 through. Combining them would force a single PR covering crypto,

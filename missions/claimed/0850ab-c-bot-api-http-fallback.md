@@ -157,7 +157,7 @@ probe). The wire format is HTTPS + JSON, with the canonical Telegram
 5. **Transport selection**: the adapter's `connect` accepts a
    `Transport` enum (`Mtproto` | `BotApiHttp`). When `BotApiHttp` is
    selected and `config.bot_token` is present, the adapter builds a
-   `BotApiClient` and routes `send_envelope` / `receive_messages` /
+   `BotApiClient` and routes `send_message` / `receive_messages` /
    `self_handle` through it. When `Mtproto` is selected, the existing
    grammers-backed path is used. Selection is per-`Adapter` instance;
    no global mode flag.
@@ -324,7 +324,7 @@ struct BotApiErrorParameters {
     updates, and the loop terminates after the third empty result.
 12. **Transport routing** (unit test on the adapter): with
     `Transport::BotApiHttp` and a `bot_token`, `connect` returns an
-    adapter that dispatches `send_envelope` to the `BotApiClient`
+    adapter that dispatches `send_message` to the `BotApiClient`
     path; with `Transport::Mtproto`, it dispatches to the existing
     grammers path. Assert no cross-contamination (a `BotApiHttp`
     adapter never calls into grammers types).

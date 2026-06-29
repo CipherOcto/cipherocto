@@ -672,11 +672,16 @@ Each adapter MUST implement the following trait:
 ```rust
 #[async_trait]
 trait PlatformAdapter: Send + Sync {
-    /// Send a deterministic envelope to the platform.
-    async fn send_envelope(
+    /// Send a complete DOT message (envelope + payload) to the platform.
+    ///
+    /// The `envelope` carries routing metadata (envelope_id, mission_id, source_peer, etc.).
+    /// The `payload` carries the actual data being transmitted.
+    /// Adapters encode both for platform-specific transport (see §8.6).
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError>;
 
     /// Receive raw messages from the platform.
@@ -793,17 +798,17 @@ When an envelope exceeds the adapter's `max_payload_bytes`, the gateway fragment
 
 #### 8.6 Payload Encoding
 
-Envelopes are encoded for platform transport using one of four modes:
+Adapters encode DOT messages for platform transport using one of four modes. The `send_message(domain, envelope, payload)` method receives both the envelope (routing metadata) and the payload (actual data). Adapters use the payload to select the encoding mode and transmit both components.
 
 ```text
-DOT/1/{base64}       → Text mode (base64url-encoded envelope bytes)
+DOT/1/{base64}       → Text mode (base64url-encoded envelope + payload)
 DOT/2/{msg_id}       → Native upload mode (platform message ID reference)
 DOT/F/{base64_frag}  → Fragment mode (base64-encoded fragment with header)
-RAW/{binary}         → Raw binary mode (native byte transport, see §8.7)
+RAW/{binary}         → Raw binary mode (envelope + payload as native bytes, see §8.7)
 ```
 
 **Mode selection** (deterministic: same payload + same capabilities → same mode):
-- If `capabilities.supports_raw_binary` → `RAW/{binary}` (raw binary mode — QUIC, WebRTC, NativeP2P)
+- If `capabilities.supports_raw_binary` → `RAW/{binary}` (raw binary mode — QUIC, WebRTC, NativeP2P, TCP)
 - If `payload.len() <= max_text_bytes` → `DOT/1/{base64}` (text mode)
 - If `payload.len() > max_text_bytes && capabilities.supports_upload` → `DOT/2/{msg_id}` (native mode)
 - If `payload.len() > max_text_bytes && !capabilities.supports_upload` → `DOT/F/{fragment}` (fragment mode)
@@ -1573,6 +1578,7 @@ Logical timestamps provide deterministic ordering independent of physical time.
 | 1.0.0 | 2026-05-25 | Initial draft — core envelope, gateway model, platform adapters, phases |
 | 1.1.0 | 2026-05-30 | Added QUIC Transport Profile (§8.7): stream multiplexing, 0-RTT, connection management, two-layer handshake, `PlatformType::Quic = 0x0015`, `RAW/{binary}` encoding mode, Phase 5 implementation plan |
 | 1.2.0 | 2026-06-28 | Added TCP and UDP Transport Profiles (§8.8, §8.9): `PlatformType::Tcp = 0x0016`, `PlatformType::Udp = 0x0017`, length-prefix framing, RAW/{binary} encoding, security considerations. Rationale: QUIC sits at Layer 1 but has a PlatformType; TCP and UDP are equally valid as direct peer-to-peer transports for infrastructure nodes, quota router meshes, and internal service communication. |
+| 1.3.0 | 2026-06-28 | Fixed payload transport gap: renamed `send_envelope` → `send_message(domain, envelope, payload)` in `PlatformAdapter` trait. Added `payload: &[u8]` parameter so adapters receive the actual data alongside routing metadata. Updated §8.6 encoding mode descriptions to reference payload parameter. This fixes a design gap where `PlatformAdapterBridge` discarded payload bytes after computing `payload_hash`. |
 
 ## Related RFCs
 

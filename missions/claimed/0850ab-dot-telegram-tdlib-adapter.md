@@ -56,7 +56,7 @@ The adapter is split into three layers, each independently testable:
 
 1. **Telegram client wrapper** (`src/client.rs`) — Owns the TDLib `Client`, runs the receive loop on a dedicated OS thread, and exposes an async API to the rest of the adapter. Persists auth state to `$data_dir/tdlib/<bot_id>/database`. Surfaces typed Rust enums for: `Update::NewMessage { chat_id, message }`, `Update::MessageEdited { ... }`, `Update::FileDownloaded { file_id, local_path, size }`, etc.
 2. **DOT envelope layer** (`src/envelope.rs`) — Preserves the exact 0850f wire format: 218-byte signing payload + 64-byte signature (282-byte wire envelope) (BLAKE3-256 domain hash, `BLAKE3("telegram:" + chat_id)` per the RFC-0850 spec). The TDLib `Message` content is parsed to extract the envelope, which is then validated against the `BroadcastDomainId`.
-3. **`PlatformAdapter` impl** (`src/adapter.rs`) — Implements the trait from RFC-0850 §8.1. The `send_envelope` path packs the envelope into either:
+3. **`PlatformAdapter` impl** (`src/adapter.rs`) — Implements the trait from RFC-0850 §8.1. The `send_message` path packs the envelope into either:
    - `sendMessage` (≤4096 chars total, default for 282-byte envelopes)
    - `sendDocument` (multi-MB up to 2 GB via TDLib's `messages.sendMultiMedia` + `inputFile::LocalFile`)
    - `messages.sendEncryptedFile` (for E2E-encrypted chats, optional future work)
@@ -127,8 +127,8 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] With `--features download-tdlib`, a fresh build (no local TDLib) succeeds on Linux x86_64, Linux aarch64, macOS x86_64, macOS arm64, Windows x86_64
 - [ ] With `--features local-tdlib`, a build against `$LOCAL_TDLIB_PATH` succeeds
 - [ ] Implements `PlatformAdapter` trait with all methods (6 required + 6 optional: `replay_protection`, `health_check`, `shutdown`, `self_handle`, `upload_media`, `download_media`; `self_handle` must override the default to return the bot's user_id, `upload_media`/`download_media` required for the TDLib file transfer feature)
-- [ ] `send_envelope()` writes the 282-byte envelope via `sendMessage` for the small case (preserved from 0850f)
-- [ ] `send_envelope()` writes larger envelopes via `sendDocument` / TDLib's file upload (up to 2 GB)
+- [ ] `send_message()` writes the 282-byte envelope via `sendMessage` for the small case (preserved from 0850f)
+- [ ] `send_message()` writes larger envelopes via `sendDocument` / TDLib's file upload (up to 2 GB)
 - [ ] `receive_messages()` consumes TDLib's update stream (sub-100ms push latency, not polling)
 - [ ] `canonicalize()` extracts envelope from both text and document messages
 - [ ] Fragmentation: large envelopes sent as multi-part documents (preserved from 0850f)

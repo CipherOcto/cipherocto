@@ -25,7 +25,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 **Scope:**
 
 - Bot-mode sign-in (`AuthMode::BotToken(String)`) with a custom `StoolapSession` impl of `grammers_session::Session` (NO use of grammers' built-in `SqliteSession`, per the project-wide cipherocto persistence convention)
-- `PlatformAdapter` trait methods: `send_envelope`, `receive_messages`, `canonicalize`, `capabilities`, `domain_id`, `platform_type`, `replay_protection`, `health_check`, `shutdown`, `self_handle`, `upload_media_to_domain`, `download_media`
+- `PlatformAdapter` trait methods: `send_message`, `receive_messages`, `canonicalize`, `capabilities`, `domain_id`, `platform_type`, `replay_protection`, `health_check`, `shutdown`, `self_handle`, `upload_media_to_domain`, `download_media`
 - Self-handle filter (drop self-originated messages)
 - Three lifecycles: `AdapterLifecycle`, `BotAuthLifecycle`, `UserAuthLifecycle` (UserAuthLifecycle skeleton only; full state machine in Phase 2)
 - DOT wire-format codec (shared with `octo-network`)
@@ -72,7 +72,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - [ ] `fn platform_type(&self) -> &'static str { "telegram-mtproto" }` returns the canonical identifier
 - [ ] `fn domain_id(&self) -> BroadcastDomainId` computes `BLAKE3("telegram-mtproto:" || adapter_config_hash)` deterministically per RFC-0850ab-c §"Roles and Authorities / 1. TelegramPlatformAdapter"
 - [ ] `fn capabilities(&self) -> PlatformCapabilities` returns `TelegramCapabilities` with text_max_chars=4096, upload_max_bytes=2GB (MTProto), download_max_bytes=2GB, user_mode_enabled=false (Phase 1), http_fallback_enabled=false (Phase 3)
-- [ ] `fn send_envelope(&self, domain_id, envelope) -> Result<MessageId, SendError>` implements Algorithm 5 (text or file based on encoded length)
+- [ ] `fn send_message(&self, domain_id, envelope) -> Result<MessageId, SendError>` implements Algorithm 5 (text or file based on encoded length)
 - [ ] `fn receive_messages(&self, domain_id) -> Vec<RawPlatformMessage>` implements Algorithm 4 (drain channel, canonicalize, self-filter)
 - [ ] `fn canonicalize(&self, update) -> Result<DeterministicEnvelope, CanonicalizeError>` is a pure function of `update`
 - [ ] `fn replay_protection(&self, msg_id) -> bool` delegates to grammers' `MessageBox`

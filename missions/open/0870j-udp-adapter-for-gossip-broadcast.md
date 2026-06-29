@@ -34,7 +34,7 @@ QuotaRouterNode::broadcast_gossip()
         ↓
    PlatformAdapterBridge::send()
         ↓
-   UdpAdapter::send_envelope()
+    UdpAdapter::send_message()
         ↓
    UDP datagram (tokio::net::UdpSocket)
 ```
@@ -59,7 +59,7 @@ pub struct UdpAdapter {
 ```rust
 #[async_trait]
 impl PlatformAdapter for UdpAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
@@ -145,7 +145,7 @@ let transport = NodeTransport::new(senders);
 
 ### Error handling
 
-- **Payload too large:** `UdpAdapter::send_envelope` returns `PlatformAdapterError::PayloadTooLarge` if envelope exceeds `max_datagram_size`
+- **Payload too large:** `UdpAdapter::send_message` returns `PlatformAdapterError::PayloadTooLarge` if envelope exceeds `max_datagram_size`
 - **Delivery not guaranteed:** UDP has no delivery guarantee. Callers MUST NOT rely on delivery confirmation for critical messages
 - **Replay protection:** Standard DOT replay cache applies (§11.2 of RFC-0850)
 
@@ -154,7 +154,7 @@ let transport = NodeTransport::new(senders);
 - [ ] `crates/octo-adapter-udp/` crate created with `UdpAdapter` implementing `PlatformAdapter`
 - [ ] `PlatformType::Udp = 0x0017` registered in `octo-network` domain registry
 - [ ] UDP datagram framing: `[discriminator][payload]` working correctly
-- [ ] `send_envelope` sends UDP datagrams to known peers
+- [ ] `send_message` sends UDP datagrams to known peers
 - [ ] `receive_messages` receives UDP datagrams and parses them
 - [ ] `canonicalize` parses raw UDP datagrams into `DeterministicEnvelope`
 - [ ] Payload size check: rejects envelopes exceeding 1400 bytes
@@ -169,7 +169,7 @@ Medium (~400-600 lines). Adapter crate + datagram framing.
 ## Implementation Notes
 
 - Use `tokio::net::UdpSocket` for async UDP
-- UDP is connectionless — each `send_envelope` call is independent
+- UDP is connectionless — each `send_message` call is independent
 - The `receive_messages` method should use `recv_from` with a timeout to avoid blocking
 - For broadcast gossip, the adapter can send to all known peers in parallel
 - The adapter does NOT handle fragmentation — callers must ensure payloads fit in one datagram

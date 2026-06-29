@@ -44,7 +44,7 @@ This RFC defines a general-purpose integration layer (`octo-transport`) that con
 
 CipherOcto Network has 23 platform adapter implementations (Telegram, Discord, QUIC, Webhook, P2P, etc.), a `DotGateway` for envelope dispatch, and a gossip protocol for propagation. Yet **no code path connects "something that wants to send data" to "an adapter that can send it"**:
 
-- `PlatformAdapter::send_envelope()` has no production caller
+- `PlatformAdapter::send_message()` has no production caller
 - `DotGateway::process_envelope()` fan-out is a TODO stub
 - `SyncNode` and `SyncNetworkBridge` are dead code (module not exported)
 - `MultiCarrierSync` is exported but never referenced by `SyncSessionManager`
@@ -141,7 +141,7 @@ impl NetworkSender for PlatformAdapterBridge {
     async fn send(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError> {
         // 1. Construct DeterministicEnvelope from payload + context
         // 2. Resolve target domain from ctx.domain or self.domain
-        // 3. Call self.adapter.send_envelope(&domain, &env).await
+        // 3. Call self.adapter.send_message(&domain, &env, payload).await
         // 4. Map PlatformAdapterError → TransportError
     }
 
@@ -197,7 +197,7 @@ All operations are Class C (Probabilistic). The transport layer handles network 
 
 | Error                                  | Source                                                | Recovery                                       |
 | -------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
-| `TransportError::AdapterFailure`       | `PlatformAdapter::send_envelope()` fails              | Failover to next transport in `NodeTransport`  |
+| `TransportError::AdapterFailure`       | `PlatformAdapter::send_message()` fails              | Failover to next transport in `NodeTransport`  |
 | `TransportError::AllTransportsFailed`  | All `NetworkSender::send()` calls fail                | Return error to caller; no retry at this layer |
 | `TransportError::EnvelopeConstruction` | Cannot construct `DeterministicEnvelope` from payload | Log error, skip transport                      |
 | `TransportError::Unhealthy`            | `NetworkSender::is_healthy()` returns false           | Skip transport, try next                       |
@@ -463,6 +463,7 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 | 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met |
 | 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path. |
 | 1.5     | 2026-06-28 | Resolved TCP/UDP transport gap: updated Alternatives Considered to acknowledge `PlatformType::Tcp = 0x0016` and `PlatformType::Udp = 0x0017` per RFC-0850 §8.8-§8.9. TCP/UDP adapters can now implement `PlatformAdapter` and integrate via `PlatformAdapterBridge`. |
+| 1.6     | 2026-06-28 | Aligned with RFC-0850 v1.3.0: `PlatformAdapter::send_envelope` renamed to `send_message(domain, envelope, payload)`. Updated bridge to pass payload bytes to adapter. |
 
 ## Related RFCs
 
@@ -490,7 +491,7 @@ The following components were identified as dead code or stubs during analysis. 
 | Component                                | Location                                          | Original Status      | Current Status         |
 | ---------------------------------------- | ------------------------------------------------- | -------------------- | ---------------------- |
 | `DotGateway::process_envelope()` fan-out | `crates/octo-network/src/dot/mod.rs:175`          | STUB                 | ✅ Implemented (0863d) |
-| `PlatformAdapter::send_envelope()`       | 23 implementations                                | NO PRODUCTION CALLER | ✅ Called via bridge    |
+| `PlatformAdapter::send_message()`       | 23 implementations                                | NO PRODUCTION CALLER | ✅ Called via bridge    |
 | `SyncNode`                               | `crates/octo-network/src/sync/mod.rs`             | DEAD CODE            | ✅ Exported + wired    |
 | `SyncNetworkBridge`                      | `crates/octo-network/src/sync/dgp_integration.rs` | DEAD CODE            | ✅ Exported + wired    |
 | `MultiCarrierSync`                       | `octo-sync/src/carrier.rs`                        | UNUSED by consumers  | ⚠️ Deprecated (NodeTransport replaces) |

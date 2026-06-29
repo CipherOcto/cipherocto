@@ -130,7 +130,7 @@ impl AdapterFactory {
 - [ ] `SendContext` struct defined with `mission_id`, `domain`, `priority`
 - [ ] `TransportError` enum defined with 4 variants
 - [ ] `PlatformAdapterBridge` implements `NetworkSender` for any `PlatformAdapter`
-- [ ] `PlatformAdapterBridge::send` constructs `DeterministicEnvelope` and calls `adapter.send_envelope()`
+- [ ] `PlatformAdapterBridge::send` constructs `DeterministicEnvelope` and calls `adapter.send_message()`
 - [ ] `AdapterFactory::from_registry` produces `Vec<Arc<dyn NetworkSender>>` from `AdapterRegistry`
 - [ ] Unit tests pass: `cargo test -p octo-transport`
 - [ ] Clippy clean: `cargo clippy -p octo-transport -- -D warnings`

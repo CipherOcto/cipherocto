@@ -1,0 +1,16 @@
+[package]
+name = "octo-adapter-udp"
+version = "0.1.0"
+edition = "2021"
+description = "UDP transport adapter for CipherOcto DOT (RFC-0850 §8.9)"
+
+[dependencies]
+octo-network = { path = "../crates/octo-network" }
+async-trait = "0.1"
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "macros"] }
+blake3 = "1.5"
+bincode = "1"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+thiserror = "1"
+hex = "0.4"

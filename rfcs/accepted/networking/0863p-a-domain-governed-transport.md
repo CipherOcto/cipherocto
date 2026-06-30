@@ -371,7 +371,10 @@ impl GovernedTransport {
     /// Receive messages from all governance-approved adapters.
     /// Skips adapters whose domain is decommissioned or where the
     /// node has been kicked.
-    pub async fn receive(&self) -> Vec<ReceivedMessage> { ... }
+    /// Receive and dispatch inbound messages with governance checks.
+    /// Polls adapters, applies kick detection and domain binding checks,
+    /// then calls inner.dispatch() (RFC-0863 v1.7) to deliver to receivers.
+    pub async fn receive(&self) -> Result<(), TransportError> { ... }
 
 /// A message received from a platform adapter.
 pub struct ReceivedMessage {
@@ -528,30 +531,35 @@ function governed_send_best(transport, group_registry, dc_store, payload, ctx):
 
 #### Governance-Gated Receive Path
 
+The receive path builds on RFC-0863's `NodeTransport::dispatch()`. The consumer polls adapters for raw bytes, then calls `governed_receive()` which applies governance checks before dispatching to registered receivers.
+
 ```
-function governed_receive(transport, group_registry, dc_store):
-    messages = []
+function governed_receive(transport, group_registry, dc_store, local_peer_id):
+    // 1. Poll adapters for raw messages
     for adapter in transport.adapters():
         domain = find_domain_for_adapter(adapter, group_registry)
         
-        if domain is None:
-            // PTP adapter: no governance
-            messages.extend(adapter.receive_messages())
-            continue
+        if domain is not None:
+            // Governance check: still bound?
+            binding = group_registry.lookup(domain.platform, domain.group_jid)
+            if binding is None or binding.state != Bound:
+                continue
+            
+            // Governance check: not kicked?
+            if is_kicked_from_domain(domain, local_peer_id):
+                continue
         
-        // Governance check: still bound?
-        binding = group_registry.lookup(domain.platform, domain.group_jid)
-        if binding is None or binding.state != Bound:
-            continue
-        
-        // Governance check: not kicked?
-        if is_kicked_from_domain(domain, local_peer_id):
-            continue
-        
-        messages.extend(adapter.receive_messages())
+        // 2. Receive raw messages from adapter
+        for raw_msg in adapter.receive_messages():
+            // 3. Canonicalize and dispatch through NodeTransport
+            wire_bytes = canonicalize(raw_msg)
+            ctx = ReceiveContext { source_transport: adapter.name(), ... }
+            transport.dispatch(&wire_bytes, &ctx).await
     
-    return messages
+    return Ok(())
 ```
+
+This delegates the actual handler dispatch to `NodeTransport::dispatch()`, which iterates registered `NetworkReceiver` handlers. The governed layer only adds the governance gate (kick detection, domain binding) before the dispatch.
 
 ### Lifecycle Requirements
 
@@ -811,6 +819,8 @@ The `NodeTransport::builder()` pattern mirrors the established builder pattern i
 |---------|------|---------|
 | 0.1.0 | 2026-06-25 | Initial draft |
 | 0.1.1 | 2026-06-25 | Adversarial review R1: 10 findings fixed (2H, 6M, 2L). Added `GovernedTransport` struct definition, `FLAG_DEGRADED_DOMAIN` constant, helper functions (`find_domain_for_sender`, `find_domain_for_adapter`, `on_domain_loss`), `DcLifecycleEvent` type, `transport.ready()` method, `Credentials::Custom` format clarification, `DcTrustLevel` cross-ref to 0851p-b, domain loss detection trigger. |
+| 0.1.2 | 2026-06-29 | Aligned receive path with RFC-0863 v1.7 `NodeTransport::dispatch()`. Updated `governed_receive()` algorithm to poll adapters, apply governance checks, then delegate to `inner.dispatch()`. Changed `GovernedTransport::receive()` signature from `Vec<ReceivedMessage>` to `Result<(), TransportError>`. |
+| 0.1.3 | 2026-06-30 | Confirmed `GovernedTransport::receive()` implementation contract: governance checks (kick detection, domain binding via `find_domain_for_adapter` and `is_kicked_from_domain`) run first; on pass, the polled message is canonicalized and passed to `self.inner.dispatch(payload, ctx)`. On fail, the message is skipped and `receive()` continues to the next adapter. The `receive()` method returns `Result<(), TransportError>` indicating overall success/failure of the polling-dispatch loop. The implementation lands in `octo-transport/src/governed_transport.rs` (Task 3.5 of the cleanup plan). |
 
 ## Related RFCs
 

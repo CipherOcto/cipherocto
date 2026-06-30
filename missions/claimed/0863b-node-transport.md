@@ -25,10 +25,16 @@ Implement `NodeTransport` — the declarative transport stack that provides `bro
 ```rust
 pub struct NodeTransport {
     senders: Vec<Arc<dyn NetworkSender>>,
+    receivers: Vec<Arc<dyn NetworkReceiver>>,
 }
 
 impl NodeTransport {
     pub fn new(senders: Vec<Arc<dyn NetworkSender>>) -> Self;
+
+    /// Register a handler for inbound payloads.
+    /// Handlers are called in registration order by `dispatch()`.
+    /// Safe to call concurrently — receivers are protected internally.
+    pub fn register_receiver(&self, receiver: Arc<dyn NetworkReceiver>);
 
     /// Broadcast to all healthy transports concurrently.
     /// Returns count of successful sends.
@@ -37,6 +43,11 @@ impl NodeTransport {
     /// Send to the best available transport (failover).
     /// Tries transports in order, skips unhealthy, returns first success.
     pub async fn send_best(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError>;
+
+    /// Dispatch an inbound payload to all registered receivers.
+    /// Calls `on_receive()` on each receiver in registration order.
+    /// Returns first error (fail-fast) or Ok if all succeed.
+    pub async fn dispatch(&self, payload: &[u8], ctx: &ReceiveContext) -> Result<(), TransportError>;
 
     /// Return list of healthy transport names.
     pub fn healthy_transports(&self) -> Vec<String>;
@@ -68,7 +79,7 @@ impl NodeTransport {
 - `NetworkSender` trait (0863a)
 - `PlatformAdapterBridge` (0863a)
 - Sync consumer wiring (0863c)
-- `NetworkReceiver` / DotGateway fan-out (0863d)
+- DotGateway fan-out (0863d — separate concern)
 
 ### Dependency addition
 
@@ -83,17 +94,24 @@ Add `futures = "0.3"` to `octo-transport/Cargo.toml` `[dependencies]` section (n
 - [ ] `NodeTransport::send_best()` returns `TransportError::AllTransportsFailed` when all fail
 - [ ] `NodeTransport::healthy_transports()` returns names of healthy transports only
 - [ ] Unhealthy transports are skipped in both `broadcast()` and `send_best()`
+- [ ] `NodeTransport::register_receiver()` appends to the `receivers` vec and is safe to call concurrently
+- [ ] `NodeTransport::dispatch()` with an empty `receivers` vec returns `Ok(())` (no-op)
+- [ ] `NodeTransport::dispatch()` iterates `receivers` in registration order, calling `on_receive()` on each
+- [ ] `NodeTransport::dispatch()` fails fast on the first receiver to return `Err` — subsequent receivers are not invoked
 - [ ] Unit tests pass: `cargo test -p octo-transport`
 - [ ] Clippy clean: `cargo clippy -p octo-transport -- -D warnings`
 - [ ] `cargo fmt --check` passes
 
 ## Type Coverage
 
-| RFC Type                     | Implemented By |
-| ---------------------------- | -------------- |
-| `NodeTransport` struct       | This mission   |
-| `NodeTransport::broadcast()` | This mission   |
-| `NodeTransport::send_best()` | This mission   |
+| RFC Type                          | Implemented By |
+| --------------------------------- | -------------- |
+| `NodeTransport` struct            | This mission   |
+| `NodeTransport::broadcast()`      | This mission   |
+| `NodeTransport::send_best()`      | This mission   |
+| `NodeTransport::register_receiver()` | This mission |
+| `NodeTransport::dispatch()`       | This mission   |
+| `NodeTransport::receivers` field  | This mission   |
 
 ## Complexity
 

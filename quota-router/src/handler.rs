@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 
@@ -23,14 +23,13 @@ fn deserialize<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Tran
 }
 
 pub struct QuotaRouterHandler {
-    pub(crate) node: Weak<Mutex<QuotaRouterNode>>,
+    pub(crate) node: Weak<QuotaRouterNode>,
     pub(crate) provider: Arc<dyn LocalProvider>,
     pub(crate) network_key: [u8; 32],
-    pub(crate) transport: Arc<octo_transport::node_transport::NodeTransport>,
 }
 
 impl QuotaRouterHandler {
-    /// Create a new handler wrapping the given node and transport.
+    /// Create a new handler wrapping the given node.
     ///
     /// The handler implements `NetworkReceiver` and processes inbound
     /// DOT envelopes (forward requests, gossip, announce, withdraw).
@@ -40,46 +39,23 @@ impl QuotaRouterHandler {
     /// node, the handler's `upgrade()` returns `None` and inbound
     /// dispatch becomes a no-op.
     pub fn new(
-        node: Weak<Mutex<QuotaRouterNode>>,
+        node: Weak<QuotaRouterNode>,
         provider: Arc<dyn LocalProvider>,
         network_key: [u8; 32],
-        transport: Arc<octo_transport::node_transport::NodeTransport>,
     ) -> Self {
         Self {
             node,
             provider,
             network_key,
-            transport,
         }
     }
 
-    /// Acquire the node's mutex; returns `Err` if the node has been
-    /// dropped (its `Weak` no longer upgrades).
-    ///
-    /// The returned guard borrows from an `Arc<Mutex<QuotaRouterNode>>`
-    /// owned by this function — the Arc is intentionally leaked via
-    /// `mem::forget` after the guard is created. The strong-ref leak
-    /// is bounded: each inbound call adds one leaked Arc, but the
-    /// underlying `Mutex<QuotaRouterNode>` is dropped with the guard
-    /// when the caller's scope ends. (This trade-off keeps the handler
-    /// API ergonomic without lifetime gymnastics — see 0870c review
-    /// discussion.)
-    fn lock_node(&self) -> Result<MutexGuard<'static, QuotaRouterNode>, TransportError> {
-        let arc = self
-            .node
+    /// Upgrade the handler's `Weak` reference back to a strong `Arc`.
+    /// Returns `Err` if the node has been dropped.
+    fn upgrade_node(&self) -> Result<Arc<QuotaRouterNode>, TransportError> {
+        self.node
             .upgrade()
-            .ok_or_else(|| TransportError::AdapterFailure("node dropped".into()))?;
-        let guard = arc.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: The guard's lifetime is tied to the Arc's allocation,
-        // which we now leak via `mem::forget`. The Mutex inside the Arc
-        // is dropped when the guard is dropped; the Arc metadata leaks
-        // but the underlying QuotaRouterNode is reachable via the Weak
-        // held in the handler. This leak is per-call; acceptable for
-        // the handler use case.
-        let static_guard: MutexGuard<'static, QuotaRouterNode> =
-            unsafe { std::mem::transmute(guard) };
-        std::mem::forget(arc);
-        Ok(static_guard)
+            .ok_or_else(|| TransportError::AdapterFailure("node dropped".into()))
     }
 }
 
@@ -120,6 +96,7 @@ impl QuotaRouterHandler {
         payload: &[u8],
         ctx: &ReceiveContext,
     ) -> Result<(), TransportError> {
+        let node = self.upgrade_node()?;
         let req: ForwardRequestPayload = deserialize(payload)?;
 
         // HMAC verification (RFC v1.10 / 0870d): the spec defaults to
@@ -130,15 +107,13 @@ impl QuotaRouterHandler {
         // we fall back to `Trusted` (skip verification).
         let sender_node_id: Option<RouterNodeId> = if let Some(sender_bytes) = ctx.sender_id {
             let sender = RouterNodeId(sender_bytes);
-            let trust = {
-                let node = self.lock_node()?;
-                node.config
-                    .peers
-                    .iter()
-                    .find(|p| p.node_id == sender)
-                    .map(|p| p.trust_level.clone())
-                    .unwrap_or(PeerTrust::Trusted)
-            };
+            let trust = node
+                .config
+                .peers
+                .iter()
+                .find(|p| p.node_id == sender)
+                .map(|p| p.trust_level.clone())
+                .unwrap_or(PeerTrust::Trusted);
             if trust == PeerTrust::Verified && !req.verify_hmac(&self.network_key) {
                 return Err(TransportError::AdapterFailure(
                     "forward request HMAC mismatch".into(),
@@ -153,19 +128,16 @@ impl QuotaRouterHandler {
         // When the sender is identifiable we charge its bucket; otherwise
         // we fall back to a synthetic per-consumer bucket derived from
         // the consumer_id inside the request context.
-        {
-            let node = self.lock_node()?;
-            if let Some(sender) = sender_node_id {
-                if !node.rate_limiter.check_peer(&sender) {
-                    return Err(TransportError::AdapterFailure(
-                        "peer rate limit exceeded".into(),
-                    ));
-                }
-            } else if !node.rate_limiter.check_consumer(&req.context.consumer_id) {
+        if let Some(sender) = sender_node_id {
+            if !node.rate_limiter.check_peer(&sender) {
                 return Err(TransportError::AdapterFailure(
-                    "consumer rate limit exceeded".into(),
+                    "peer rate limit exceeded".into(),
                 ));
             }
+        } else if !node.rate_limiter.check_consumer(&req.context.consumer_id) {
+            return Err(TransportError::AdapterFailure(
+                "consumer rate limit exceeded".into(),
+            ));
         }
 
         if req.ttl == 0 {
@@ -175,14 +147,13 @@ impl QuotaRouterHandler {
         }
 
         let action = {
-            let node = self.lock_node()?;
             let local: Vec<ProviderCapacity> = node
                 .config
                 .providers
                 .iter()
                 .map(|p| ProviderCapacity::from_config(p, node.config.node_id))
                 .collect();
-            let peer_caps = node.gossip_cache.snapshot();
+            let peer_caps = node.gossip_cache.lock().unwrap().snapshot();
             let destinations =
                 node.select_destinations(&req.context, &local, &peer_caps, &node.config.policy);
 
@@ -219,7 +190,7 @@ impl QuotaRouterHandler {
                     fwd.hop_count += 1;
                     serialize(&fwd)?
                 };
-                self.transport
+                node.transport
                     .send_best(&fwd_bytes, &SendContext::default())
                     .await?;
             }
@@ -230,14 +201,14 @@ impl QuotaRouterHandler {
 
     async fn handle_forward_response(&self, payload: &[u8]) -> Result<(), TransportError> {
         let resp: ForwardResponsePayload = deserialize(payload)?;
-        let node = self.lock_node()?;
+        let node = self.upgrade_node()?;
         node.pending.complete(resp.request_id, resp.response);
         Ok(())
     }
 
     async fn handle_forward_reject(&self, payload: &[u8]) -> Result<(), TransportError> {
         let reject: ForwardRejectPayload = deserialize(payload)?;
-        let node = self.lock_node()?;
+        let node = self.upgrade_node()?;
         node.pending
             .reject(reject.request_id, reject.reason.clone());
         // Trigger pull-gossip so we learn the rejecting peer's fresh
@@ -256,10 +227,13 @@ impl QuotaRouterHandler {
                 "capacity gossip HMAC mismatch".into(),
             ));
         }
-        let mut node = self.lock_node()?;
-        node.gossip_cache.merge(gossip.sender_id, gossip.capacities);
+        let node = self.upgrade_node()?;
+        node.gossip_cache
+            .lock()
+            .unwrap()
+            .merge(gossip.sender_id, gossip.capacities);
         for peer_id in gossip.known_peers {
-            node.peer_cache.try_add(peer_id);
+            node.peer_cache.lock().unwrap().try_add(peer_id);
         }
         Ok(())
     }
@@ -271,7 +245,7 @@ impl QuotaRouterHandler {
                 "router announce HMAC mismatch".into(),
             ));
         }
-        let mut node = self.lock_node()?;
+        let node = self.upgrade_node()?;
         let local_models: Vec<String> = node.local_provider_models();
         let has_overlap = announce
             .supported_models
@@ -284,8 +258,12 @@ impl QuotaRouterHandler {
             // but discarded them (Round 1 finding #11) — that lost the
             // peer's model availability data entirely.
             node.gossip_cache
+                .lock()
+                .unwrap()
                 .merge(announce.node_id, announce.capacities.clone());
             node.peer_cache
+                .lock()
+                .unwrap()
                 .add_direct(announce.node_id, announce.capacities);
         }
         Ok(())
@@ -296,12 +274,10 @@ impl QuotaRouterHandler {
         _payload: &[u8],
         _ctx: &ReceiveContext,
     ) -> Result<(), TransportError> {
-        let payload_bytes = {
-            let node = self.lock_node()?;
-            let gossip = node.build_capacity_gossip();
-            serialize(&gossip)?
-        };
-        self.transport
+        let node = self.upgrade_node()?;
+        let gossip = node.build_capacity_gossip();
+        let payload_bytes = serialize(&gossip)?;
+        node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
     }
@@ -313,8 +289,8 @@ impl QuotaRouterHandler {
                 "router withdraw HMAC mismatch".into(),
             ));
         }
-        let mut node = self.lock_node()?;
-        node.peer_cache.remove(withdraw.node_id);
+        let node = self.upgrade_node()?;
+        node.peer_cache.lock().unwrap().remove(withdraw.node_id);
         Ok(())
     }
 
@@ -325,17 +301,15 @@ impl QuotaRouterHandler {
     ) -> Result<(), TransportError> {
         // v1: uses send_best which broadcasts. F8 (per-peer routing)
         // will replace with targeted send to origin_node.
-        let payload_bytes = {
-            let node = self.lock_node()?;
-            let payload = ForwardResponsePayload {
-                request_id,
-                response,
-                executed_by: node.primary_provider_id(),
-                latency_ms: 0,
-            };
-            serialize(&payload)?
+        let node = self.upgrade_node()?;
+        let payload = ForwardResponsePayload {
+            request_id,
+            response,
+            executed_by: node.primary_provider_id(),
+            latency_ms: 0,
         };
-        self.transport
+        let payload_bytes = serialize(&payload)?;
+        node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
     }
@@ -345,16 +319,14 @@ impl QuotaRouterHandler {
         request_id: [u8; 32],
         reason: ForwardRejectReason,
     ) -> Result<(), TransportError> {
-        let payload_bytes = {
-            let node = self.lock_node()?;
-            let payload = ForwardRejectPayload {
-                request_id,
-                peer_id: node.config.node_id,
-                reason,
-            };
-            serialize(&payload)?
+        let node = self.upgrade_node()?;
+        let payload = ForwardRejectPayload {
+            request_id,
+            peer_id: node.config.node_id,
+            reason,
         };
-        self.transport
+        let payload_bytes = serialize(&payload)?;
+        node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
     }

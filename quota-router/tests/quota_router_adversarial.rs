@@ -548,7 +548,7 @@ fn stale_gossip_eviction_under_load() {
     use quota_router::gossip::GossipCache;
     use quota_router::provider::RouterNodeId;
 
-    let mut cache = GossipCache::new();
+    let cache = GossipCache::new();
     for i in 0..1000u16 {
         let sender = RouterNodeId([i as u8; 32]);
         cache.merge(sender, vec![]);

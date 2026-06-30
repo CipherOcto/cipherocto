@@ -8,7 +8,7 @@ pub mod ratelimit;
 pub mod request;
 pub mod scorer;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use octo_transport::node_transport::NodeTransport;
 use octo_transport::sender::{NetworkSender, SendContext};
@@ -76,8 +76,14 @@ pub struct QuotaRouterNode {
     pub config: RouterNodeConfig,
     pub state: RouterNodeLifecycle,
     pub transport: Arc<NodeTransport>,
-    pub gossip_cache: GossipCache,
-    pub peer_cache: PeerCache,
+    /// Cached capacities learned via gossip. Wrapped in `Mutex` so the
+    /// inbound handler can merge entries through the `Arc<QuotaRouterNode>`
+    /// shared via `Weak`.
+    pub gossip_cache: Mutex<GossipCache>,
+    /// Discovered/configured peer table. Wrapped in `Mutex` so the
+    /// inbound handler can add/remove entries through the
+    /// `Arc<QuotaRouterNode>` shared via `Weak`.
+    pub peer_cache: Mutex<PeerCache>,
     pub(crate) pending: PendingRequests,
     pub identity_key: [u8; 32],
     #[allow(dead_code)]
@@ -87,9 +93,8 @@ pub struct QuotaRouterNode {
     /// Internal inbound handler. Owned by the node and registered
     /// with `self.transport` by the builder so inbound envelopes
     /// are dispatched into the handler without callers having to
-    /// wire it up manually. `Some(_)` for any node returned by the
-    /// builder; `None` only during construction.
-    pub(crate) handler: Option<Arc<handler::QuotaRouterHandler>>,
+    /// wire it up manually.
+    pub(crate) handler: Arc<handler::QuotaRouterHandler>,
 }
 
 pub struct PeerCache {
@@ -192,7 +197,7 @@ impl QuotaRouterNode {
     }
 
     pub fn peer_count(&self) -> usize {
-        self.peer_cache.total()
+        self.peer_cache.lock().unwrap().total()
     }
 
     pub fn local_provider_models(&self) -> Vec<String> {
@@ -204,7 +209,10 @@ impl QuotaRouterNode {
     }
 
     pub fn add_peer(&mut self, peer: PeerConfig) {
-        self.peer_cache.add_direct(peer.node_id, vec![]);
+        self.peer_cache
+            .lock()
+            .unwrap()
+            .add_direct(peer.node_id, vec![]);
         self.config.peers.push(peer);
     }
 
@@ -243,8 +251,14 @@ impl QuotaRouterNode {
             .iter()
             .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
             .collect();
-        let known_peers: Vec<RouterNodeId> =
-            self.peer_cache.direct_ids().into_iter().take(32).collect();
+        let known_peers: Vec<RouterNodeId> = self
+            .peer_cache
+            .lock()
+            .unwrap()
+            .direct_ids()
+            .into_iter()
+            .take(32)
+            .collect();
         let mut payload = CapacityGossipPayload {
             sender_id: self.config.node_id,
             timestamp: monotonic_now(),
@@ -322,7 +336,7 @@ impl QuotaRouterNode {
             .iter()
             .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
             .collect();
-        let peer_caps = self.gossip_cache.snapshot();
+        let peer_caps = self.gossip_cache.lock().unwrap().snapshot();
         let effective_policy = context
             .policy_override
             .as_ref()
@@ -566,63 +580,49 @@ impl QuotaRouterNodeBuilder {
         // ones. Derived here so handler and node agree on it.
         let network_key = *blake3::hash(network_id.0.as_ref()).as_bytes();
 
-        let node = QuotaRouterNode {
-            config: RouterNodeConfig {
-                node_id,
-                network_id,
-                providers: self.providers,
-                peers: self.peers,
-                policy: self.policy,
-                forwarding: self.forwarding,
-                gossip_interval: self.gossip_interval,
-            },
-            state: RouterNodeLifecycle::Init,
-            transport: transport.clone(),
-            gossip_cache: GossipCache::new(),
-            peer_cache: PeerCache::new(),
-            pending: PendingRequests::new(),
-            identity_key,
-            primary_provider: primary_provider.clone(),
-            rate_limiter: ratelimit::RateLimiter::new(100, 500),
-            metrics: Some(metrics::QuotaRouterMetrics::new()),
-            handler: None,
-        };
+        // Build the node via `Arc::new_cyclic` so the handler can hold
+        // a `Weak` back-pointer to the node. The closure receives the
+        // `Weak` already, hands a clone to the handler, and stores the
+        // resulting `Arc<QuotaRouterHandler>` on the node — no Mutex
+        // needed because the Strong ref owns the data outright.
+        let node = Arc::new_cyclic(|weak: &std::sync::Weak<QuotaRouterNode>| {
+            let handler = Arc::new(handler::QuotaRouterHandler::new(
+                weak.clone(),
+                primary_provider.clone(),
+                network_key,
+            ));
+            QuotaRouterNode {
+                config: RouterNodeConfig {
+                    node_id,
+                    network_id,
+                    providers: self.providers,
+                    peers: self.peers,
+                    policy: self.policy,
+                    forwarding: self.forwarding,
+                    gossip_interval: self.gossip_interval,
+                },
+                state: RouterNodeLifecycle::Init,
+                transport: transport.clone(),
+                gossip_cache: Mutex::new(GossipCache::new()),
+                peer_cache: Mutex::new(PeerCache::new()),
+                pending: PendingRequests::new(),
+                identity_key,
+                primary_provider: primary_provider.clone(),
+                rate_limiter: ratelimit::RateLimiter::new(100, 500),
+                metrics: Some(metrics::QuotaRouterMetrics::new()),
+                handler,
+            }
+        });
 
-        // Wrap the node in `Arc<Mutex<...>>` so the handler can share
-        // it. The handler holds a `Weak<Mutex<QuotaRouterNode>>` —
-        // that breaks the cycle (Weak doesn't bump strong_count) so we
-        // can unwrap our local strong ref and return the bare
-        // `QuotaRouterNode` per the existing builder signature.
-        let node_arc = Arc::new(std::sync::Mutex::new(node));
-        let node_weak: std::sync::Weak<std::sync::Mutex<QuotaRouterNode>> =
-            Arc::downgrade(&node_arc);
-
-        let handler = Arc::new(handler::QuotaRouterHandler::new(
-            node_weak,
-            primary_provider,
-            network_key,
-            transport.clone(),
-        ));
-        transport.register_receiver(
-            handler.clone() as Arc<dyn octo_transport::receiver::NetworkReceiver>,
+        node.transport.register_receiver(
+            node.handler.clone() as Arc<dyn octo_transport::receiver::NetworkReceiver>
         );
 
-        // Stash the handler on the node so callers can introspect it
-        // (this is what Task 3.2's test asserts). Do this BEFORE the
-        // unwrap — once we unwrap, we lose the Mutex wrapper that
-        // gives us interior mutability.
-        node_arc
-            .lock()
-            .map_err(|e| RouterNodeError::Serialization(format!("node mutex: {e}")))?
-            .handler = Some(handler);
-
-        // Unwrap our local strong ref. The handler holds only Weak,
-        // so strong_count == 1 and `Arc::try_unwrap` succeeds.
-        let mutex = Arc::try_unwrap(node_arc)
-            .map_err(|_| RouterNodeError::Serialization("node retained by handler".into()))?;
-        mutex
-            .into_inner()
-            .map_err(|_| RouterNodeError::Serialization("node mutex poisoned".into()))
+        Arc::try_unwrap(node).map_err(|_| {
+            RouterNodeError::Serialization(
+                "build() called while another Arc<QuotaRouterNode> already exists".into(),
+            )
+        })
     }
 }
 
@@ -661,7 +661,13 @@ mod tests {
             })
             .build()
             .unwrap();
-        assert!(node.handler.is_some(), "QuotaRouterNode must own its handler");
+        assert!(
+            std::sync::Arc::strong_count(&node.handler) >= 1,
+            "QuotaRouterNode must own its handler"
+        );
+        let handler_as_receiver: Arc<dyn octo_transport::receiver::NetworkReceiver> =
+            node.handler.clone();
+        assert_eq!(handler_as_receiver.name(), "quota-router-handler");
     }
 
     #[test]
@@ -724,7 +730,7 @@ mod tests {
 
     #[test]
     fn gossip_cache_staleness() {
-        let mut cache = GossipCache::new();
+        let cache = GossipCache::new();
         let id = RouterNodeId([1u8; 32]);
         cache.merge(id, vec![]);
         let snap = cache.snapshot();
@@ -920,7 +926,7 @@ mod tests {
             trust_level: PeerTrust::Trusted,
         });
         // Inject gossip data for the peer
-        node.gossip_cache.merge(
+        node.gossip_cache.lock().unwrap().merge(
             RouterNodeId([3u8; 32]),
             vec![ProviderCapacity {
                 provider_id: ProviderId([4u8; 32]),

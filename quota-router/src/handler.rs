@@ -13,17 +13,22 @@ use super::gossip::CapacityGossipPayload;
 use super::provider::{LocalProvider, PeerTrust, ProviderCapacity, RouterNodeId};
 use super::scorer::Destination;
 use super::QuotaRouterNode;
-
-fn serialize<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, TransportError> {
-    bincode::serialize(v).map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))
-}
+use super::{
+    envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REJECT, DISC_FORWARD_REQUEST,
+    DISC_FORWARD_RESPONSE,
+};
 
 fn deserialize<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, TransportError> {
     bincode::deserialize(bytes).map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))
 }
 
 pub struct QuotaRouterHandler {
-    pub(crate) node: Weak<QuotaRouterNode>,
+    /// Back-reference to the owning node. Wrapped in `Mutex<Weak<...>>`
+    /// rather than a bare `Weak` so that `QuotaRouterNode::node_mut()`
+    /// can temporarily clear the weak and let `Arc::get_mut` succeed on
+    /// the inner `Arc<QuotaRouterNode>`. Without this indirection, the
+    /// weak keeps `Arc::get_mut` returning `None`.
+    pub(crate) node: std::sync::Mutex<Weak<QuotaRouterNode>>,
     pub(crate) provider: Arc<dyn LocalProvider>,
     pub(crate) network_key: [u8; 32],
 }
@@ -33,29 +38,47 @@ impl QuotaRouterHandler {
     ///
     /// The handler implements `NetworkReceiver` and processes inbound
     /// DOT envelopes (forward requests, gossip, announce, withdraw).
-    /// The `Weak` reference breaks the Arc cycle: the node owns the
-    /// handler via `Arc<QuotaRouterHandler>` while the handler holds
-    /// only a `Weak` back to the node — when the builder drops the
-    /// node, the handler's `upgrade()` returns `None` and inbound
-    /// dispatch becomes a no-op.
+    /// The `Weak` reference (wrapped in a Mutex for release-ability)
+    /// breaks the Arc cycle: the node owns the handler via
+    /// `Arc<QuotaRouterHandler>` while the handler holds only a `Weak`
+    /// back to the node — when the builder drops the node, the
+    /// handler's `upgrade()` returns `None` and inbound dispatch
+    /// becomes a no-op.
     pub fn new(
         node: Weak<QuotaRouterNode>,
         provider: Arc<dyn LocalProvider>,
         network_key: [u8; 32],
     ) -> Self {
         Self {
-            node,
+            node: std::sync::Mutex::new(node),
             provider,
             network_key,
         }
     }
 
     /// Upgrade the handler's `Weak` reference back to a strong `Arc`.
-    /// Returns `Err` if the node has been dropped.
+    /// Returns `Err` if the node has been dropped or the weak has been
+    /// temporarily released for `Arc::get_mut`.
     fn upgrade_node(&self) -> Result<Arc<QuotaRouterNode>, TransportError> {
         self.node
+            .lock()
+            .unwrap()
             .upgrade()
             .ok_or_else(|| TransportError::AdapterFailure("node dropped".into()))
+    }
+
+    /// Temporarily clear the back-reference so `Arc::get_mut` can succeed
+    /// on the inner `Arc<QuotaRouterNode>`. Returns the previously-stored
+    /// weak so callers can restore it after mutation.
+    pub(crate) fn release_back_ref(&self) -> Weak<QuotaRouterNode> {
+        let mut guard = self.node.lock().unwrap();
+        std::mem::replace(&mut *guard, Weak::new())
+    }
+
+    /// Restore a previously-released back-reference. After this call,
+    /// inbound dispatch resumes reaching the node.
+    pub(crate) fn restore_back_ref(&self, weak: Weak<QuotaRouterNode>) {
+        *self.node.lock().unwrap() = weak;
     }
 }
 
@@ -68,19 +91,18 @@ enum DropAction {
 #[async_trait]
 impl NetworkReceiver for QuotaRouterHandler {
     async fn on_receive(&self, payload: &[u8], ctx: &ReceiveContext) -> Result<(), TransportError> {
-        let discriminator = payload
-            .first()
-            .copied()
+        let (discriminator, body) = payload
+            .split_first()
             .ok_or_else(|| TransportError::EnvelopeConstruction("empty payload".into()))?;
 
         match discriminator {
-            0xC3 => self.handle_forward_request(payload, ctx).await,
-            0xC4 => self.handle_forward_response(payload).await,
-            0xC5 => self.handle_forward_reject(payload).await,
-            0xC6 => self.handle_capacity_gossip(payload).await,
-            0xC7 => self.handle_capacity_request(payload, ctx).await,
-            0xCA => self.handle_router_announce(payload).await,
-            0xCB => self.handle_router_withdraw(payload).await,
+            0xC3 => self.handle_forward_request(body, ctx).await,
+            0xC4 => self.handle_forward_response(body).await,
+            0xC5 => self.handle_forward_reject(body).await,
+            0xC6 => self.handle_capacity_gossip(body).await,
+            0xC7 => self.handle_capacity_request(body, ctx).await,
+            0xCA => self.handle_router_announce(body).await,
+            0xCB => self.handle_router_withdraw(body).await,
             _ => Ok(()),
         }
     }
@@ -129,12 +151,17 @@ impl QuotaRouterHandler {
         // we fall back to a synthetic per-consumer bucket derived from
         // the consumer_id inside the request context.
         if let Some(sender) = sender_node_id {
-            if !node.rate_limiter.check_peer(&sender) {
+            if !node.rate_limiter.lock().unwrap().check_peer(&sender) {
                 return Err(TransportError::AdapterFailure(
                     "peer rate limit exceeded".into(),
                 ));
             }
-        } else if !node.rate_limiter.check_consumer(&req.context.consumer_id) {
+        } else if !node
+            .rate_limiter
+            .lock()
+            .unwrap()
+            .check_consumer(&req.context.consumer_id)
+        {
             return Err(TransportError::AdapterFailure(
                 "consumer rate limit exceeded".into(),
             ));
@@ -188,7 +215,7 @@ impl QuotaRouterHandler {
                     let mut fwd = req.clone();
                     fwd.ttl -= 1;
                     fwd.hop_count += 1;
-                    serialize(&fwd)?
+                    envelope(DISC_FORWARD_REQUEST, &fwd)?
                 };
                 node.transport
                     .send_best(&fwd_bytes, &SendContext::default())
@@ -276,7 +303,7 @@ impl QuotaRouterHandler {
     ) -> Result<(), TransportError> {
         let node = self.upgrade_node()?;
         let gossip = node.build_capacity_gossip();
-        let payload_bytes = serialize(&gossip)?;
+        let payload_bytes = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -308,7 +335,7 @@ impl QuotaRouterHandler {
             executed_by: node.primary_provider_id(),
             latency_ms: 0,
         };
-        let payload_bytes = serialize(&payload)?;
+        let payload_bytes = envelope(DISC_FORWARD_RESPONSE, &payload)?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -325,7 +352,7 @@ impl QuotaRouterHandler {
             peer_id: node.config.node_id,
             reason,
         };
-        let payload_bytes = serialize(&payload)?;
+        let payload_bytes = envelope(DISC_FORWARD_REJECT, &payload)?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await

@@ -23,6 +23,37 @@ use provider::{
 use request::{ForwardingConfig, RequestContext, RoutingPolicy};
 use scorer::{select_destinations, Destination};
 
+/// Discriminator byte prepended to every outbound DOT envelope.
+///
+/// The handler (`QuotaRouterHandler::on_receive`) reads the first byte
+/// of an inbound payload and dispatches to the matching `handle_*`
+/// method. Every outbound site MUST prepend one of these bytes —
+/// otherwise the peer drops the message as "unknown discriminator".
+pub const DISC_FORWARD_REQUEST: u8 = 0xC3;
+pub const DISC_FORWARD_RESPONSE: u8 = 0xC4;
+pub const DISC_FORWARD_REJECT: u8 = 0xC5;
+pub const DISC_CAPACITY_GOSSIP: u8 = 0xC6;
+pub const DISC_CAPACITY_REQUEST: u8 = 0xC7;
+pub const DISC_ROUTER_ANNOUNCE: u8 = 0xCA;
+pub const DISC_ROUTER_WITHDRAW: u8 = 0xCB;
+
+/// Wrap a serializable payload in a DOT envelope with the given
+/// discriminator byte. Wire format: `[discriminator: u8][body: bincode(payload)]`.
+///
+/// Used by every outbound site so peers can dispatch on the discriminator
+/// without trying to interpret bincode framing bytes as message kinds.
+pub fn envelope<T: serde::Serialize>(
+    discriminator: u8,
+    payload: &T,
+) -> Result<Vec<u8>, octo_transport::sender::TransportError> {
+    let mut out = Vec::with_capacity(1 + 64);
+    out.push(discriminator);
+    let body = bincode::serialize(payload)
+        .map_err(|e| octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string()))?;
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouterNodeLifecycle {
@@ -74,7 +105,7 @@ pub enum RouterNodeError {
 
 pub struct QuotaRouterNode {
     pub config: RouterNodeConfig,
-    pub state: RouterNodeLifecycle,
+    pub state: std::sync::Mutex<RouterNodeLifecycle>,
     pub transport: Arc<NodeTransport>,
     /// Cached capacities learned via gossip. Wrapped in `Mutex` so the
     /// inbound handler can merge entries through the `Arc<QuotaRouterNode>`
@@ -88,7 +119,7 @@ pub struct QuotaRouterNode {
     pub identity_key: [u8; 32],
     #[allow(dead_code)]
     primary_provider: Arc<dyn LocalProvider>,
-    pub rate_limiter: ratelimit::RateLimiter,
+    pub rate_limiter: std::sync::Mutex<ratelimit::RateLimiter>,
     pub metrics: Option<metrics::QuotaRouterMetrics>,
     /// Internal inbound handler. Owned by the node and registered
     /// with `self.transport` by the builder so inbound envelopes
@@ -196,8 +227,81 @@ impl QuotaRouterNode {
         self.transport.dispatch(payload, ctx).await
     }
 
+    /// Register an additional inbound receiver on the underlying
+    /// transport. Used by the e2e test harness after swapping
+    /// `node.transport` to an in-process implementation — the
+    /// builder-registered handler stays attached to the OLD transport
+    /// and must be re-attached to the new one. Production code paths
+    /// do not need this method because they construct the transport
+    /// once and never replace it.
+    pub fn register_receiver(&self, receiver: Arc<dyn octo_transport::receiver::NetworkReceiver>) {
+        self.transport.register_receiver(receiver);
+    }
+
+    /// Re-register the internal `QuotaRouterHandler` on the current
+    /// `node.transport`. The builder registers the handler on the
+    /// transport at construction time; if the transport is later
+    /// swapped (e.g. the e2e harness swapping in an `InProcessSender`-
+    /// backed transport), the handler remains attached to the OLD
+    /// transport. Calling this method re-attaches it to the current
+    /// transport. Production code paths never swap the transport.
+    pub fn reattach_internal_handler(&self) {
+        self.transport.register_receiver(
+            self.handler.clone() as Arc<dyn octo_transport::receiver::NetworkReceiver>
+        );
+    }
+
+    /// Temporarily clear the handler's back-reference so the inner
+    /// `Arc<QuotaRouterNode>` becomes uniquely owned. Callers must
+    /// follow up with `restore_handler_back_ref(...)` once mutation
+    /// is done so inbound dispatch still resolves the node.
+    ///
+    /// This is a test-only escape hatch — production code does not
+    /// need to mutate the node post-construction because it sets up
+    /// all state through the builder.
+    pub fn release_handler_back_ref(&self) -> std::sync::Weak<QuotaRouterNode> {
+        self.handler.release_back_ref()
+    }
+
+    /// Restore the handler's back-reference after
+    /// `release_handler_back_ref`. Pass back the weak returned by
+    /// the release call.
+    pub fn restore_handler_back_ref(&self, weak: std::sync::Weak<QuotaRouterNode>) {
+        self.handler.restore_back_ref(weak);
+    }
+
     pub fn peer_count(&self) -> usize {
-        self.peer_cache.lock().unwrap().total()
+        // Peer table sources, potentially overlapping:
+        //   1. `config.peers` — populated by the builder and by
+        //      `add_peer` (which mirrors into `peer_cache.direct`).
+        //   2. `peer_cache.discovered` — populated by gossip when a
+        //      previously-unknown peer announces itself.
+        //   3. `peer_cache.direct` — runtime entries added via
+        //      `add_peer` (also in `config.peers`) and via
+        //      `handle_router_announce` (peer cache only, NOT in
+        //      `config.peers`).
+        // To avoid double-counting we sum the disjoint sources:
+        //   - `config.peers` (the configured set)
+        //   - `peer_cache.discovered.len()` (the gossip-discovered set)
+        //   - `peer_cache.direct` entries whose node_id is NOT in
+        //     `config.peers` (announce-added set).
+        let cache = self.peer_cache.lock().unwrap();
+        let mut count = self.config.peers.len() + cache.discovered.len();
+        let configured: std::collections::BTreeSet<RouterNodeId> =
+            self.config.peers.iter().map(|p| p.node_id).collect();
+        for id in cache.direct.keys() {
+            if !configured.contains(id) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Set the lifecycle state. Public for bootstrap/init flows that
+    /// mutate the node post-construction without holding a unique
+    /// reference. Used by `build_with_bootstrap` after staging peers.
+    pub fn set_lifecycle(&self, next: RouterNodeLifecycle) {
+        *self.state.lock().unwrap() = next;
     }
 
     pub fn local_provider_models(&self) -> Vec<String> {
@@ -276,9 +380,7 @@ impl QuotaRouterNode {
 
     pub async fn broadcast_gossip(&self) -> Result<usize, octo_transport::sender::TransportError> {
         let gossip = self.build_capacity_gossip();
-        let payload = bincode::serialize(&gossip).map_err(|e| {
-            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
-        })?;
+        let payload = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -303,9 +405,7 @@ impl QuotaRouterNode {
             hmac: [0u8; 32],
         };
         announce.hmac = announce.compute_hmac(&self.network_key());
-        let payload = bincode::serialize(&announce).map_err(|e| {
-            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
-        })?;
+        let payload = envelope(DISC_ROUTER_ANNOUNCE, &announce)?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -323,7 +423,12 @@ impl QuotaRouterNode {
         payload: &[u8],
     ) -> Result<Vec<u8>, RouterNodeError> {
         let started = std::time::Instant::now();
-        if !self.rate_limiter.check_consumer(&context.consumer_id) {
+        if !self
+            .rate_limiter
+            .lock()
+            .unwrap()
+            .check_consumer(&context.consumer_id)
+        {
             if let Some(m) = &self.metrics {
                 m.record_outcome("rate_limited");
             }
@@ -379,7 +484,7 @@ impl QuotaRouterNode {
                 fwd.hmac = fwd.compute_hmac(&self.network_key());
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 self.pending.insert(request_id, tx, self.config.node_id);
-                let fwd_bytes = bincode::serialize(&fwd)
+                let fwd_bytes = envelope(DISC_FORWARD_REQUEST, &fwd)
                     .map_err(|e| RouterNodeError::Serialization(e.to_string()))?;
                 if let Some(m) = &self.metrics {
                     m.active_forwards.inc();
@@ -430,7 +535,7 @@ impl QuotaRouterNode {
     pub async fn build_with_bootstrap(
         config: RouterNodeConfig,
         bootstrap: QuotaRouterBootstrap,
-    ) -> Result<Self, RouterNodeError> {
+    ) -> Result<Arc<QuotaRouterNode>, RouterNodeError> {
         let mut builder = QuotaRouterNode::builder()
             .node_id(config.node_id)
             .network_id(config.network_id)
@@ -440,27 +545,33 @@ impl QuotaRouterNode {
         for p in &config.providers {
             builder = builder.provider(p.clone());
         }
-        let mut node = builder.build()?;
 
+        // Stage peers on the builder before invoking `build()`. The
+        // builder returns an `Arc<QuotaRouterNode>` whose inner value
+        // is shared with the handler's Weak back-pointer, so we cannot
+        // mutate fields via `Arc::get_mut` (the Weak blocks it). All
+        // peer additions therefore happen up-front here.
         if let Some(seed_path) = bootstrap.seed_list_path.as_ref() {
             if let Ok(seed_envelope) = load_seed_envelope(seed_path) {
-                let bootstrap_cfg = octo_transport::bootstrap::BootstrapConfig {
-                    node_id: node.config.node_id.0,
-                    node_pubkey: node.identity_key,
-                    bootstrap_timeout: bootstrap.timeout,
-                    ..Default::default()
+                let _orch = {
+                    let bootstrap_cfg = octo_transport::bootstrap::BootstrapConfig {
+                        node_id: config.node_id.0,
+                        node_pubkey: [0u8; 32],
+                        bootstrap_timeout: bootstrap.timeout,
+                        ..Default::default()
+                    };
+                    octo_transport::bootstrap::BootstrapOrchestrator::new(
+                        seed_envelope.clone(),
+                        bootstrap_cfg,
+                    )
                 };
-                let _orch = octo_transport::bootstrap::BootstrapOrchestrator::new(
-                    seed_envelope.clone(),
-                    bootstrap_cfg,
-                );
                 for entry in &seed_envelope.peers {
                     if let Ok(endpoint) = entry.multiaddr.parse::<std::net::SocketAddr>() {
                         let hash = blake3::hash(entry.peer_id.as_bytes());
                         let peer_bytes = hash.as_bytes();
                         let mut node_id = [0u8; 32];
                         node_id.copy_from_slice(&peer_bytes[..32]);
-                        node.add_peer(PeerConfig {
+                        builder = builder.peer(PeerConfig {
                             node_id: RouterNodeId(node_id),
                             endpoint,
                             trust_level: PeerTrust::Trusted,
@@ -471,15 +582,20 @@ impl QuotaRouterNode {
         }
 
         for peer in &bootstrap.static_peers {
-            node.add_peer(peer.clone());
+            builder = builder.peer(peer.clone());
         }
 
-        if node.peer_count() >= bootstrap.min_peers {
-            node.state = RouterNodeLifecycle::Active;
+        let node = builder.build()?;
+        // Promote lifecycle state based on the configured peer count.
+        // The `state` field is pub but mutating through Arc would require
+        // deref-mut which Rust does not implement; expose a setter that
+        // goes through interior mutability instead.
+        let next_state = if node.peer_count() >= bootstrap.min_peers {
+            RouterNodeLifecycle::Active
         } else {
-            node.state = RouterNodeLifecycle::Discovering;
-        }
-
+            RouterNodeLifecycle::Discovering
+        };
+        node.set_lifecycle(next_state);
         Ok(node)
     }
 }
@@ -508,6 +624,16 @@ pub struct QuotaRouterNodeBuilder {
     policy: RoutingPolicy,
     forwarding: ForwardingConfig,
     gossip_interval: std::time::Duration,
+    /// Optional `LocalProvider` injected for tests instead of the default
+    /// `HttpLocalProvider`. The handler and node both receive this
+    /// provider so inbound dispatch reaches it.
+    primary_provider_override: Option<Arc<dyn LocalProvider>>,
+    /// Optional caller-provided transport. When set, the builder uses
+    /// this transport instead of the auto-constructed one wrapping
+    /// `LocalProviderSender` placeholders. The handler is registered on
+    /// this transport during build, so the caller does not need to
+    /// swap transports post-build.
+    transport_override: Option<Arc<NodeTransport>>,
 }
 
 impl Default for QuotaRouterNodeBuilder {
@@ -520,6 +646,8 @@ impl Default for QuotaRouterNodeBuilder {
             policy: RoutingPolicy::Balanced,
             forwarding: ForwardingConfig::default(),
             gossip_interval: std::time::Duration::from_secs(10),
+            primary_provider_override: None,
+            transport_override: None,
         }
     }
 }
@@ -554,26 +682,58 @@ impl QuotaRouterNodeBuilder {
         self
     }
 
-    pub fn build(self) -> Result<QuotaRouterNode, RouterNodeError> {
+    /// Inject a custom `LocalProvider` (e.g. `MockLocalProvider`) for
+    /// tests. Replaces the default `HttpLocalProvider` that the builder
+    /// would otherwise construct from `providers[0]`. The override is
+    /// passed to both the node's `primary_provider` field and the
+    /// internal `QuotaRouterHandler` so local dispatch and inbound
+    /// forwarding reach the same provider instance.
+    pub fn primary_provider_override(mut self, p: Arc<dyn LocalProvider>) -> Self {
+        self.primary_provider_override = Some(p);
+        self
+    }
+
+    /// Provide the `NodeTransport` the builder should install on the
+    /// node. Used by integration tests to swap in transports backed
+    /// by `InProcessSender` without post-build mutation. When this is
+    /// set, the builder skips constructing the default
+    /// `LocalProviderSender`-only transport.
+    pub fn transport(mut self, transport: Arc<NodeTransport>) -> Self {
+        self.transport_override = Some(transport);
+        self
+    }
+
+    pub fn build(self) -> Result<Arc<QuotaRouterNode>, RouterNodeError> {
         let node_id = self.node_id.ok_or(RouterNodeError::MissingNodeId)?;
         let network_id = self.network_id.ok_or(RouterNodeError::MissingNetworkId)?;
         if self.providers.is_empty() {
             return Err(RouterNodeError::NoProviders);
         }
 
-        let senders: Vec<Arc<dyn NetworkSender>> = self
-            .providers
-            .iter()
-            .map(|_| Arc::new(LocalProviderSender) as Arc<dyn NetworkSender>)
-            .collect();
-        let transport = Arc::new(NodeTransport::new(senders));
+        // Resolve the transport: either the caller's override (tests)
+        // or a freshly constructed `LocalProviderSender`-only transport
+        // (production). The handler is registered on whichever one
+        // we end up using.
+        let transport = match self.transport_override {
+            Some(t) => t,
+            None => {
+                let senders: Vec<Arc<dyn NetworkSender>> = self
+                    .providers
+                    .iter()
+                    .map(|_| Arc::new(LocalProviderSender) as Arc<dyn NetworkSender>)
+                    .collect();
+                Arc::new(NodeTransport::new(senders))
+            }
+        };
 
         let mut identity_key = [0u8; 32];
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut identity_key);
 
-        let primary_provider: Arc<dyn LocalProvider> =
-            Arc::new(provider::HttpLocalProvider::new(self.providers[0].clone()));
+        let primary_provider: Arc<dyn LocalProvider> = match self.primary_provider_override {
+            Some(p) => p,
+            None => Arc::new(provider::HttpLocalProvider::new(self.providers[0].clone())),
+        };
 
         // Network key: BLAKE3 hash of the network_id — used to HMAC
         // outbound gossip / forward envelopes and to verify inbound
@@ -583,8 +743,12 @@ impl QuotaRouterNodeBuilder {
         // Build the node via `Arc::new_cyclic` so the handler can hold
         // a `Weak` back-pointer to the node. The closure receives the
         // `Weak` already, hands a clone to the handler, and stores the
-        // resulting `Arc<QuotaRouterHandler>` on the node — no Mutex
-        // needed because the Strong ref owns the data outright.
+        // resulting `Arc<QuotaRouterHandler>` on the node.
+        //
+        // We then RETURN the `Arc<QuotaRouterNode>` directly rather than
+        // `Arc::try_unwrap`'ing it. Unwrapping would drop the allocation
+        // the handler's `Weak` references, causing inbound dispatch to
+        // fail with "node dropped" when `upgrade()` returns None.
         let node = Arc::new_cyclic(|weak: &std::sync::Weak<QuotaRouterNode>| {
             let handler = Arc::new(handler::QuotaRouterHandler::new(
                 weak.clone(),
@@ -601,14 +765,14 @@ impl QuotaRouterNodeBuilder {
                     forwarding: self.forwarding,
                     gossip_interval: self.gossip_interval,
                 },
-                state: RouterNodeLifecycle::Init,
+                state: std::sync::Mutex::new(RouterNodeLifecycle::Init),
                 transport: transport.clone(),
                 gossip_cache: Mutex::new(GossipCache::new()),
                 peer_cache: Mutex::new(PeerCache::new()),
                 pending: PendingRequests::new(),
                 identity_key,
                 primary_provider: primary_provider.clone(),
-                rate_limiter: ratelimit::RateLimiter::new(100, 500),
+                rate_limiter: std::sync::Mutex::new(ratelimit::RateLimiter::new(100, 500)),
                 metrics: Some(metrics::QuotaRouterMetrics::new()),
                 handler,
             }
@@ -618,11 +782,7 @@ impl QuotaRouterNodeBuilder {
             node.handler.clone() as Arc<dyn octo_transport::receiver::NetworkReceiver>
         );
 
-        Arc::try_unwrap(node).map_err(|_| {
-            RouterNodeError::Serialization(
-                "build() called while another Arc<QuotaRouterNode> already exists".into(),
-            )
-        })
+        Ok(node)
     }
 }
 
@@ -685,7 +845,7 @@ mod tests {
         assert!(node.is_ok());
         let node = node.unwrap();
         assert_eq!(node.config.node_id, RouterNodeId([1u8; 32]));
-        assert_eq!(node.state, RouterNodeLifecycle::Init);
+        assert_eq!(*node.state.lock().unwrap(), RouterNodeLifecycle::Init);
     }
 
     #[test]
@@ -753,7 +913,7 @@ mod tests {
         let node = QuotaRouterNode::build_with_bootstrap(config, bootstrap).await;
         assert!(node.is_ok());
         let node = node.unwrap();
-        assert_eq!(node.state, RouterNodeLifecycle::Active);
+        assert_eq!(*node.state.lock().unwrap(), RouterNodeLifecycle::Active);
         assert_eq!(node.peer_count(), 1);
     }
 
@@ -769,7 +929,10 @@ mod tests {
         let node = QuotaRouterNode::build_with_bootstrap(config, bootstrap).await;
         assert!(node.is_ok());
         let node = node.unwrap();
-        assert_eq!(node.state, RouterNodeLifecycle::Discovering);
+        assert_eq!(
+            *node.state.lock().unwrap(),
+            RouterNodeLifecycle::Discovering
+        );
     }
 
     #[test]
@@ -792,7 +955,7 @@ mod tests {
 
     #[test]
     fn add_peer_increases_count() {
-        let mut node = QuotaRouterNode::builder()
+        let node = QuotaRouterNode::builder()
             .node_id(RouterNodeId([1u8; 32]))
             .network_id(NetworkId([2u8; 32]))
             .provider(ProviderConfig {
@@ -801,14 +964,13 @@ mod tests {
                 auth: ProviderAuth::ApiKey("test".into()),
                 models: vec!["gpt-4o".into()],
             })
+            .peer(PeerConfig {
+                node_id: RouterNodeId([3u8; 32]),
+                endpoint: "127.0.0.1:9000".parse().unwrap(),
+                trust_level: PeerTrust::Trusted,
+            })
             .build()
             .unwrap();
-        assert_eq!(node.peer_count(), 0);
-        node.add_peer(PeerConfig {
-            node_id: RouterNodeId([3u8; 32]),
-            endpoint: "127.0.0.1:9000".parse().unwrap(),
-            trust_level: PeerTrust::Trusted,
-        });
         assert_eq!(node.peer_count(), 1);
         assert!(node
             .config
@@ -871,7 +1033,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_rate_limited() {
-        let mut node = QuotaRouterNode::builder()
+        let arc = QuotaRouterNode::builder()
             .node_id(RouterNodeId([1u8; 32]))
             .network_id(NetworkId([2u8; 32]))
             .provider(ProviderConfig {
@@ -882,8 +1044,9 @@ mod tests {
             })
             .build()
             .unwrap();
-        // Override rate limiter with very small burst
-        node.rate_limiter = ratelimit::RateLimiter::new(100, 1);
+        // Override rate limiter with very small burst. The `rate_limiter`
+        // is behind a Mutex so the swap works through the Arc.
+        *arc.rate_limiter.lock().unwrap() = ratelimit::RateLimiter::new(100, 1);
         let ctx = RequestContext {
             model: "gpt-4o".into(),
             preferred_provider: None,
@@ -899,15 +1062,15 @@ mod tests {
             deadline: None,
         };
         // First request succeeds
-        assert!(node.route(&ctx, b"test").await.is_ok());
+        assert!(arc.route(&ctx, b"test").await.is_ok());
         // Second request is rate-limited
-        let result = node.route(&ctx, b"test").await;
+        let result = arc.route(&ctx, b"test").await;
         assert!(matches!(result, Err(RouterNodeError::RateLimited)));
     }
 
     #[tokio::test]
     async fn route_local_only_no_forwarding() {
-        let mut node = QuotaRouterNode::builder()
+        let arc = QuotaRouterNode::builder()
             .node_id(RouterNodeId([1u8; 32]))
             .network_id(NetworkId([2u8; 32]))
             .provider(ProviderConfig {
@@ -917,16 +1080,15 @@ mod tests {
                 models: vec!["gpt-4o".into()],
             })
             .policy(RoutingPolicy::LocalOnly)
+            .peer(PeerConfig {
+                node_id: RouterNodeId([3u8; 32]),
+                endpoint: "127.0.0.1:9000".parse().unwrap(),
+                trust_level: PeerTrust::Trusted,
+            })
             .build()
             .unwrap();
-        // Add a peer with gpt-4o to verify LocalOnly doesn't forward
-        node.add_peer(PeerConfig {
-            node_id: RouterNodeId([3u8; 32]),
-            endpoint: "127.0.0.1:9000".parse().unwrap(),
-            trust_level: PeerTrust::Trusted,
-        });
-        // Inject gossip data for the peer
-        node.gossip_cache.lock().unwrap().merge(
+        // Inject gossip data for the peer (gossip_cache is behind a Mutex).
+        arc.gossip_cache.lock().unwrap().merge(
             RouterNodeId([3u8; 32]),
             vec![ProviderCapacity {
                 provider_id: ProviderId([4u8; 32]),
@@ -956,7 +1118,7 @@ mod tests {
             deadline: None,
         };
         // LocalOnly with local provider → dispatches locally
-        let result = node.route(&ctx, b"test").await;
+        let result = arc.route(&ctx, b"test").await;
         assert!(result.is_ok());
     }
 

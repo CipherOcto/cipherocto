@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 
 use crate::dom_bootstrap::{BroadcastDomainHint, DcTrustLevel};
 use crate::node_transport::NodeTransport;
+use crate::receiver::ReceiveContext;
 use crate::sender::{SendContext, TransportError};
 
 // ── Constants ────────────────────────────────────────────────────
@@ -285,6 +286,66 @@ impl GovernedTransport {
         &self.adapter_domains
     }
 
+    /// Governance check for an inbound receive.
+    ///
+    /// A context "passes" when:
+    /// - The transport lifecycle is not `Rebooting` (kick / full domain loss).
+    /// - If the source transport maps to a configured broadcast domain,
+    ///   that domain's DC trust level is not `Untrusted` (decommissioned).
+    ///
+    /// PTP adapters (no domain binding) always pass the domain check.
+    pub fn passes_governance(&self, ctx: &ReceiveContext) -> bool {
+        // 1. Lifecycle gate: Rebooting means the node was kicked or all
+        //    domains were lost — refuse all receives during recovery.
+        if self.lifecycle == GovernedTransportLifecycle::Rebooting {
+            return false;
+        }
+
+        // 2. Domain trust gate: if the source transport corresponds to a
+        //    broadcast domain, that domain's DC must not be Untrusted.
+        let Some(platform) = platform_from_source(&ctx.source_transport) else {
+            // Unknown source name → treat as PTP / external; allow.
+            return true;
+        };
+
+        let Some((_, role)) = find_domain_for_platform(platform, &self.adapter_domains) else {
+            // No broadcast binding → PTP adapter; allow.
+            return true;
+        };
+        if role == DomainRole::None {
+            return true;
+        }
+
+        // Broadcast domain — refuse if any DC for this domain is Untrusted.
+        // dc_trust is indexed by dc_id, not by domain; we conservatively
+        // reject if any tracked DC is Untrusted (the configured domain's
+        // binding state, when wired, will narrow this further).
+        !self
+            .dc_trust
+            .values()
+            .any(|lvl| *lvl == DcTrustLevel::Untrusted)
+    }
+
+    /// Receive a single inbound payload and dispatch it to registered
+    /// receivers after passing the governance gate.
+    ///
+    /// Mirrors `NodeTransport::dispatch` but adds a governance pre-check
+    /// (RFC-0863p-a §Governance-Gated Receive Path). Returns
+    /// `TransportError::GovernanceViolation` when the context fails the
+    /// gate (e.g. node was kicked, or the source domain is decommissioned).
+    pub async fn receive(
+        &self,
+        payload: &[u8],
+        ctx: &ReceiveContext,
+    ) -> Result<(), TransportError> {
+        if !self.passes_governance(ctx) {
+            return Err(TransportError::GovernanceViolation(
+                "kick detected or domain mismatch".into(),
+            ));
+        }
+        self.inner.dispatch(payload, ctx).await
+    }
+
     /// Recalculate lifecycle from aggregate DC trust levels.
     fn recalculate_lifecycle(&mut self) {
         let levels: Vec<DcTrustLevel> = self.dc_trust.values().copied().collect();
@@ -306,6 +367,40 @@ pub fn find_domain_for_platform(
         .map(|(_, domain_ref, role)| (domain_ref.clone(), *role))
 }
 
+/// Map a receive `source_transport` string back to a `PlatformType`.
+/// Returns `None` when the name does not correspond to any known platform
+/// (treated as PTP / external by the governance gate).
+fn platform_from_source(source: &str) -> Option<octo_network::dot::PlatformType> {
+    // Source names follow the lowercase `PlatformType::name()` convention.
+    let lower = source.to_ascii_lowercase();
+    match lower.as_str() {
+        "telegram" => Some(octo_network::dot::PlatformType::Telegram),
+        "discord" => Some(octo_network::dot::PlatformType::Discord),
+        "matrix" => Some(octo_network::dot::PlatformType::Matrix),
+        "nostr" => Some(octo_network::dot::PlatformType::Nostr),
+        "signal" => Some(octo_network::dot::PlatformType::Signal),
+        "irc" => Some(octo_network::dot::PlatformType::IRC),
+        "slack" => Some(octo_network::dot::PlatformType::Slack),
+        "whatsapp" => Some(octo_network::dot::PlatformType::WhatsApp),
+        "webhook" => Some(octo_network::dot::PlatformType::Webhook),
+        "native-p2p" => Some(octo_network::dot::PlatformType::NativeP2P),
+        "bluetooth" => Some(octo_network::dot::PlatformType::Bluetooth),
+        "lora" => Some(octo_network::dot::PlatformType::LoRa),
+        "webrtc" => Some(octo_network::dot::PlatformType::WebRTC),
+        "bluesky" => Some(octo_network::dot::PlatformType::Bluesky),
+        "twitter" => Some(octo_network::dot::PlatformType::Twitter),
+        "reddit" => Some(octo_network::dot::PlatformType::Reddit),
+        "wechat" => Some(octo_network::dot::PlatformType::WeChat),
+        "dingtalk" => Some(octo_network::dot::PlatformType::DingTalk),
+        "lark" => Some(octo_network::dot::PlatformType::Lark),
+        "qq" => Some(octo_network::dot::PlatformType::QQ),
+        "quic" => Some(octo_network::dot::PlatformType::Quic),
+        "tcp" => Some(octo_network::dot::PlatformType::Tcp),
+        "udp" => Some(octo_network::dot::PlatformType::Udp),
+        _ => None,
+    }
+}
+
 /// Derive trust levels from a list of DC lifecycle byte values.
 pub fn derive_trust_levels(lifecycle_bytes: &[u8]) -> Vec<DcTrustLevel> {
     lifecycle_bytes
@@ -319,6 +414,7 @@ pub fn derive_trust_levels(lifecycle_bytes: &[u8]) -> Vec<DcTrustLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::receiver::NetworkReceiver;
     use crate::sender::NetworkSender;
     use async_trait::async_trait;
     use std::sync::Arc;
@@ -652,5 +748,136 @@ mod tests {
     #[test]
     fn flag_degraded_domain_value() {
         assert_eq!(FLAG_DEGRADED_DOMAIN, 0x0001);
+    }
+
+    // ── receive() governance tests ──────────────────────────────
+
+    /// Receiver that records invocations for receive-path tests.
+    struct CountingReceiver {
+        count: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl NetworkReceiver for CountingReceiver {
+        async fn on_receive(
+            &self,
+            _payload: &[u8],
+            _ctx: &ReceiveContext,
+        ) -> Result<(), TransportError> {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "counting"
+        }
+    }
+
+    fn make_governed_transport_with_receiver(
+        count: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> GovernedTransport {
+        let inner = NodeTransport::new(vec![Arc::new(MockSender) as Arc<dyn NetworkSender>]);
+        inner.register_receiver(Arc::new(CountingReceiver { count }));
+        GovernedTransport::new(
+            inner,
+            [0x42u8; 32],
+            vec![(
+                octo_network::dot::PlatformType::Telegram,
+                "-100".to_string(),
+                DomainRole::Joiner,
+            )],
+        )
+    }
+
+    fn recv_ctx(source: &str, sender: Option<[u8; 32]>) -> ReceiveContext {
+        ReceiveContext {
+            source_transport: source.to_string(),
+            mission_id: [0x42u8; 32],
+            sender_id: sender,
+        }
+    }
+
+    #[tokio::test]
+    async fn receive_dispatches_when_ready() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut gt = make_governed_transport_with_receiver(count.clone());
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
+
+        let ctx = recv_ctx("telegram", Some([0xCC; 32]));
+        let result = gt.receive(b"payload", &ctx).await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+        assert!(
+            count.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+            "receiver was not invoked"
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_with_ptp_source_dispatches() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut gt = make_governed_transport_with_receiver(count.clone());
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
+
+        // "tcp" maps to a PTP platform (no broadcast binding in fixture)
+        let ctx = recv_ctx("tcp", None);
+        let result = gt.receive(b"payload", &ctx).await;
+        assert!(result.is_ok());
+        assert!(count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn receive_returns_governance_violation_when_rebooting() {
+        // Rebooting == "kick detected or all domains lost" per RFC.
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut gt = make_governed_transport_with_receiver(count.clone());
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Untrusted);
+
+        let ctx = recv_ctx("telegram", Some([0xCC; 32]));
+        let result = gt.receive(b"payload", &ctx).await;
+        assert!(matches!(
+            result,
+            Err(TransportError::GovernanceViolation(_))
+        ));
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "receiver must not be invoked when governance fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_returns_governance_violation_when_domain_untrusted() {
+        // Lifecycle Ready but a tracked DC is Untrusted → domain decommissioned.
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut gt = make_governed_transport_with_receiver(count.clone());
+        // Add a second DC marked Trusted so lifecycle is Ready, but keep
+        // the first as Untrusted to simulate a decommissioned broadcast
+        // domain the governance gate must reject.
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Untrusted);
+        gt.update_dc_trust([0xBB; 32], DcTrustLevel::Trusted);
+
+        let ctx = recv_ctx("telegram", Some([0xCC; 32]));
+        let result = gt.receive(b"payload", &ctx).await;
+        assert!(matches!(
+            result,
+            Err(TransportError::GovernanceViolation(_))
+        ));
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "receiver must not be invoked when the broadcast domain is decommissioned"
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_with_unknown_source_treated_as_ptp() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut gt = make_governed_transport_with_receiver(count.clone());
+        gt.update_dc_trust([0xAA; 32], DcTrustLevel::Trusted);
+
+        // Unknown source name → no platform mapping → PTP / external.
+        let ctx = recv_ctx("custom-relay", None);
+        let result = gt.receive(b"payload", &ctx).await;
+        assert!(result.is_ok());
+        assert!(count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
     }
 }

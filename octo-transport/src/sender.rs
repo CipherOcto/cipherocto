@@ -31,6 +31,11 @@ pub enum TransportError {
     /// The transport is unhealthy and was skipped.
     #[error("transport unhealthy")]
     Unhealthy,
+
+    /// A governance check rejected the operation (e.g. domain
+    /// decommissioned, sender kicked, lifecycle Rebooting).
+    #[error("governance violation: {0}")]
+    GovernanceViolation(String),
 }
 
 /// General-purpose outbound transport trait.

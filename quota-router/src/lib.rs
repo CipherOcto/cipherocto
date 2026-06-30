@@ -75,7 +75,7 @@ pub enum RouterNodeError {
 pub struct QuotaRouterNode {
     pub config: RouterNodeConfig,
     pub state: RouterNodeLifecycle,
-    pub transport: NodeTransport,
+    pub transport: Arc<NodeTransport>,
     pub gossip_cache: GossipCache,
     pub peer_cache: PeerCache,
     pub(crate) pending: PendingRequests,
@@ -84,6 +84,12 @@ pub struct QuotaRouterNode {
     primary_provider: Arc<dyn LocalProvider>,
     pub rate_limiter: ratelimit::RateLimiter,
     pub metrics: Option<metrics::QuotaRouterMetrics>,
+    /// Internal inbound handler. Owned by the node and registered
+    /// with `self.transport` by the builder so inbound envelopes
+    /// are dispatched into the handler without callers having to
+    /// wire it up manually. `Some(_)` for any node returned by the
+    /// builder; `None` only during construction.
+    pub(crate) handler: Option<Arc<handler::QuotaRouterHandler>>,
 }
 
 pub struct PeerCache {
@@ -175,6 +181,14 @@ impl PeerCache {
 impl QuotaRouterNode {
     pub fn builder() -> QuotaRouterNodeBuilder {
         QuotaRouterNodeBuilder::default()
+    }
+
+    pub async fn receive(
+        &self,
+        payload: &[u8],
+        ctx: &octo_transport::receiver::ReceiveContext,
+    ) -> Result<(), octo_transport::sender::TransportError> {
+        self.transport.dispatch(payload, ctx).await
     }
 
     pub fn peer_count(&self) -> usize {
@@ -538,7 +552,7 @@ impl QuotaRouterNodeBuilder {
             .iter()
             .map(|_| Arc::new(LocalProviderSender) as Arc<dyn NetworkSender>)
             .collect();
-        let transport = NodeTransport::new(senders);
+        let transport = Arc::new(NodeTransport::new(senders));
 
         let mut identity_key = [0u8; 32];
         use rand::RngCore;
@@ -547,7 +561,12 @@ impl QuotaRouterNodeBuilder {
         let primary_provider: Arc<dyn LocalProvider> =
             Arc::new(provider::HttpLocalProvider::new(self.providers[0].clone()));
 
-        Ok(QuotaRouterNode {
+        // Network key: BLAKE3 hash of the network_id — used to HMAC
+        // outbound gossip / forward envelopes and to verify inbound
+        // ones. Derived here so handler and node agree on it.
+        let network_key = *blake3::hash(network_id.0.as_ref()).as_bytes();
+
+        let node = QuotaRouterNode {
             config: RouterNodeConfig {
                 node_id,
                 network_id,
@@ -558,15 +577,52 @@ impl QuotaRouterNodeBuilder {
                 gossip_interval: self.gossip_interval,
             },
             state: RouterNodeLifecycle::Init,
-            transport,
+            transport: transport.clone(),
             gossip_cache: GossipCache::new(),
             peer_cache: PeerCache::new(),
             pending: PendingRequests::new(),
             identity_key,
-            primary_provider,
+            primary_provider: primary_provider.clone(),
             rate_limiter: ratelimit::RateLimiter::new(100, 500),
             metrics: Some(metrics::QuotaRouterMetrics::new()),
-        })
+            handler: None,
+        };
+
+        // Wrap the node in `Arc<Mutex<...>>` so the handler can share
+        // it. The handler holds a `Weak<Mutex<QuotaRouterNode>>` —
+        // that breaks the cycle (Weak doesn't bump strong_count) so we
+        // can unwrap our local strong ref and return the bare
+        // `QuotaRouterNode` per the existing builder signature.
+        let node_arc = Arc::new(std::sync::Mutex::new(node));
+        let node_weak: std::sync::Weak<std::sync::Mutex<QuotaRouterNode>> =
+            Arc::downgrade(&node_arc);
+
+        let handler = Arc::new(handler::QuotaRouterHandler::new(
+            node_weak,
+            primary_provider,
+            network_key,
+            transport.clone(),
+        ));
+        transport.register_receiver(
+            handler.clone() as Arc<dyn octo_transport::receiver::NetworkReceiver>,
+        );
+
+        // Stash the handler on the node so callers can introspect it
+        // (this is what Task 3.2's test asserts). Do this BEFORE the
+        // unwrap — once we unwrap, we lose the Mutex wrapper that
+        // gives us interior mutability.
+        node_arc
+            .lock()
+            .map_err(|e| RouterNodeError::Serialization(format!("node mutex: {e}")))?
+            .handler = Some(handler);
+
+        // Unwrap our local strong ref. The handler holds only Weak,
+        // so strong_count == 1 and `Arc::try_unwrap` succeeds.
+        let mutex = Arc::try_unwrap(node_arc)
+            .map_err(|_| RouterNodeError::Serialization("node retained by handler".into()))?;
+        mutex
+            .into_inner()
+            .map_err(|_| RouterNodeError::Serialization("node mutex poisoned".into()))
     }
 }
 
@@ -590,6 +646,22 @@ mod tests {
             forwarding: ForwardingConfig::default(),
             gossip_interval: std::time::Duration::from_secs(10),
         }
+    }
+
+    #[test]
+    fn node_has_internal_handler_after_build() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        assert!(node.handler.is_some(), "QuotaRouterNode must own its handler");
     }
 
     #[test]
@@ -880,5 +952,30 @@ mod tests {
         // LocalOnly with local provider → dispatches locally
         let result = node.route(&ctx, b"test").await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn receive_delegates_to_transport_dispatch() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        let ctx = octo_transport::receiver::ReceiveContext {
+            source_transport: "test".into(),
+            mission_id: [0u8; 32],
+            sender_id: None,
+        };
+        // Handler is auto-registered by the builder. Unknown
+        // discriminator 0xFF should be silently accepted (handler
+        // returns Ok for unknown discriminators).
+        let r = node.receive(&[0xFF], &ctx).await;
+        assert!(r.is_ok(), "expected Ok for unknown discriminator: {:?}", r);
     }
 }

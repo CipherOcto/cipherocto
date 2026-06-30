@@ -72,15 +72,21 @@ pub struct ReceiveContext {
 
 ### 3. Inbound dispatch flow
 
+The inbound path flows through `NodeTransport::dispatch()`:
+
 ```
-PlatformAdapter::receive_messages()
-  → Canonicalize raw message to DeterministicEnvelope
-  → DotGateway::process_envelope() (verify, replay check)
-  → Dispatch to NetworkReceiver handlers:
-     - Sync handler (for sync payloads)
-     - Agent handler (for agent messages)
-     - Marketplace handler (for settlement)
-     - Default handler (log unknown)
+Consumer (node runtime, test harness):
+  1. Poll adapters for raw bytes (PlatformAdapter::receive_messages)
+  2. Canonicalize to wire bytes
+  3. Call node.receive(payload, &ctx)  [public API; symmetric to node.route()]
+     — or, equivalently for custom layers, call node.transport.dispatch(payload, &ctx)
+
+NodeTransport::dispatch():
+  → Iterates registered NetworkReceiver handlers
+     - QuotaRouterHandler (for mesh forwarding; registered automatically by QuotaRouterNodeBuilder::build())
+     - SyncNode (for sync payloads)
+     - Agent handler (for agent messages, future)
+     - Marketplace handler (for settlement, future)
 ```
 
 ### 4. Export `sync` module from `octo-network`
@@ -128,6 +134,6 @@ Medium (~300-500 lines). DotGateway fan-out is ~50 lines. NetworkReceiver trait 
 ## Implementation Notes
 
 - The DotGateway fan-out iterates `self.adapters` (a `Vec<Box<dyn PlatformAdapter>>`). For each adapter, check if the envelope's domain matches the adapter's platform type, then call `send_message()`. **Note:** `DeterministicEnvelope` may not have a `domain()` method — the implementer must verify against `octo-network/src/dot/envelope.rs`. If not available, the domain must be extracted from the envelope's wire format or passed as a parameter to `process_envelope()`.
-- `NetworkReceiver` is the inbound counterpart to `NetworkSender`. Handlers register with `NodeTransport` (future) or `DotGateway` to receive dispatched payloads.
+- `NetworkReceiver` is the inbound counterpart to `NetworkSender`. Handlers register with `NodeTransport` via `register_receiver()`. For the quota router mesh, this is wired automatically by `QuotaRouterNodeBuilder::build()` (no caller-side registration required). Other consumers (sync, agent, marketplace runtimes) may register their own handlers after build. The consumer is responsible for obtaining raw bytes from the wire and calling either `node.receive(payload, &ctx)` (the public API for quota router consumers) or `node.transport.dispatch(payload, &ctx)` (for custom layered inbound flows).
 - Exporting `sync` module is a one-line change in `lib.rs` but unblocks the entire DGP integration path.
 - The existing `SyncNode` and `SyncNetworkBridge` code in `octo-network/src/sync/` is already implemented — it just needs to be exported.

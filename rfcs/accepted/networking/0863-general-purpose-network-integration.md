@@ -14,7 +14,7 @@ Accepted (2026-06-25) — Implemented v1.3: all 4 missions complete (0863a-d), 3
 
 ## Summary
 
-This RFC defines a general-purpose integration layer (`octo-transport`) that connects CipherOcto Network's 23 platform adapters to any consumer — sync engines, agent runtimes, marketplace services, proof distributors, and beyond. The layer provides a `NetworkSender` trait for outbound transport, a `PlatformAdapterBridge` that adapts `PlatformAdapter` into `NetworkSender`, and a `NodeTransport` configuration that any node can use to declare its transport stack declaratively. This RFC resolves the systemic gap identified in [Research: General-Purpose Network Integration](../../docs/research/multi-home-carrier-integration.md) where the network infrastructure (adapters, gateway, gossip, crypto) is built but no consumer can actually use it.
+This RFC defines a general-purpose integration layer (`octo-transport`) that connects CipherOcto Network's 23 platform adapters to any consumer — sync engines, agent runtimes, marketplace services, proof distributors, and beyond. The layer provides a `NetworkSender` trait for outbound transport, a `NetworkReceiver` trait for inbound dispatch, a `PlatformAdapterBridge` that adapts `PlatformAdapter` into `NetworkSender`, and a `NodeTransport` configuration that any node can use to declare its transport stack declaratively — including both outbound fan-out/failover and inbound receiver registration and dispatch. This RFC resolves the systemic gap identified in [Research: General-Purpose Network Integration](../../docs/research/multi-home-carrier-integration.md) where the network infrastructure (adapters, gateway, gossip, crypto) is built but no consumer can actually use it.
 
 ## Dependencies
 
@@ -153,30 +153,49 @@ impl NetworkSender for PlatformAdapterBridge {
 
 ```rust
 /// Declarative transport stack for any node.
+/// Handles both outbound (fan-out/failover) and inbound (receiver dispatch).
 pub struct NodeTransport {
     senders: Vec<Arc<dyn NetworkSender>>,
+    receivers: Vec<Arc<dyn NetworkReceiver>>,
 }
 
 impl NodeTransport {
     pub fn new(senders: Vec<Arc<dyn NetworkSender>>) -> Self { ... }
+
+    /// Register a handler for inbound payloads.
+    /// Handlers are called in registration order by `dispatch()`.
+    /// Safe to call concurrently — receivers are protected internally.
+    pub fn register_receiver(&self, receiver: Arc<dyn NetworkReceiver>);
 
     /// Broadcast to all healthy transports (fan-out).
     pub async fn broadcast(&self, payload: &[u8], ctx: &SendContext) -> usize;
 
     /// Send to the best available transport (failover).
     pub async fn send_best(&self, payload: &[u8], ctx: &SendContext) -> Result<(), TransportError>;
+
+    /// Dispatch an inbound payload to all registered receivers.
+    /// Calls `on_receive()` on each receiver in registration order.
+    /// Returns first error (fail-fast) or Ok if all succeed.
+    pub async fn dispatch(&self, payload: &[u8], ctx: &ReceiveContext) -> Result<(), TransportError>;
 }
 ```
 
+**Inbound dispatch model:** Consumers (node runtimes, test harnesses) are responsible for obtaining raw bytes from the wire — via `PlatformAdapter::receive_messages()`, mpsc channels, or other means — and calling `node.transport.dispatch(payload, &ctx)`. `NodeTransport` does not own a polling loop; it is a dispatch fan-out that routes inbound payloads to registered handlers, mirroring how `broadcast()` fan-outs outbound payloads to registered senders.
+
+**Registration order:** Receivers are dispatched in the order they were registered via `register_receiver()`. The first receiver to return an `Err` stops dispatch (fail-fast). This matches the outbound failover semantics where the first successful send stops iteration.
+
+**Receiver ownership:** `NodeTransport` does not assume a specific number of receivers. Typical usage is a single receiver that owns the consumer's inbound dispatch logic (for example, `QuotaRouterNode` registers its internal `QuotaRouterHandler` automatically in `QuotaRouterNodeBuilder::build()`). Multi-receiver setups (for example, a primary handler plus an observability sink) are supported and dispatch in registration order. Receivers are not owned by `NodeTransport` — they live as long as their containing `Arc` is held; dropping the last `Arc` is the only thing that unregisters them in practice.
+
 ### Lifecycle Requirements
 
-No stateful actors in this RFC. `NetworkSender` is a stateless transport trait — it sends a payload and returns success/failure. Health tracking is delegated to `MultiCarrierSync`'s existing EMA-based health tracking (RFC-0862). `NodeTransport` holds a list of senders but maintains no state beyond the list itself.
+No stateful actors in this RFC. `NetworkSender` is a stateless transport trait — it sends a payload and returns success/failure. `NetworkReceiver` is a stateless inbound trait — it receives a payload and returns success/failure. Health tracking is delegated to `MultiCarrierSync`'s existing EMA-based health tracking (RFC-0862). `NodeTransport` holds lists of senders and receivers but maintains no state beyond the lists themselves.
 
 ### Roles and Authorities
 
 | Role               | Identifier                                 | Authority Scope                         | Lifecycle                       | Source/Ref              |
 | ------------------ | ------------------------------------------ | --------------------------------------- | ------------------------------- | ----------------------- |
 | Transport Consumer | Any code calling `NetworkSender::send()`   | Send payloads through adapters          | Stateless — no persistent state | This RFC §Specification |
+| Inbound Handler    | Any code implementing `NetworkReceiver`    | Receive dispatched inbound payloads     | Stateless — no persistent state | This RFC §Specification |
 | Adapter Owner      | Operator who configures and loads adapters | Register adapters in `AdapterRegistry`  | Stateless — config at startup   | RFC-0850 §8             |
 | Node Operator      | Operator running a CipherOcto node         | Configure `NodeTransport` with adapters | Stateless — config at startup   | This RFC §Specification |
 
@@ -189,7 +208,9 @@ All operations are Class C (Probabilistic). The transport layer handles network 
 | Operation                                | Class | Rationale                              |
 | ---------------------------------------- | ----- | -------------------------------------- |
 | `NetworkSender::send()`                  | C     | Network I/O is non-deterministic       |
+| `NetworkReceiver::on_receive()`          | C     | Handler processing time varies         |
 | `NodeTransport::broadcast()`             | C     | Concurrent fan-out order varies        |
+| `NodeTransport::dispatch()`              | C     | Handler execution order varies         |
 | `PlatformAdapterBridge::send()`          | C     | Adapter I/O timing varies              |
 | `DeterministicEnvelope::to_wire_bytes()` | A     | Deterministic serialization (RFC-0850) |
 
@@ -405,8 +426,9 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 
 ### Phase 3: General-Purpose NodeTransport
 
-- [x] Implement `NetworkReceiver` for inbound dispatch
-- [x] Complete `DotGateway` fan-out (implement adapter dispatch stub)
+- [x] Implement `NetworkReceiver` trait and `ReceiveContext` struct
+- [ ] Add `register_receiver()` and `dispatch()` to `NodeTransport`
+- [ ] Complete `DotGateway` fan-out (implement adapter dispatch stub)
 - [ ] Wire agent runtime to `NodeTransport` (deferred — runtime not implemented)
 - [ ] Wire marketplace to `NodeTransport` (deferred — marketplace not implemented)
 - [x] Add general-purpose transport tests
@@ -451,7 +473,7 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 
 ## Rationale
 
-The separate `octo-transport` crate follows the established leaf workspace pattern (`octo-determin`, `octo-sync`). It avoids circular dependencies, keeps both `octo-sync` and `octo-network` clean, and provides a reusable pattern that all 27+ use cases can adopt. The `NetworkSender` trait is deliberately simple (3 methods) — complex logic (health tracking, failover, crypto) lives in `NodeTransport` or existing modules.
+The separate `octo-transport` crate follows the established leaf workspace pattern (`octo-determin`, `octo-sync`). It avoids circular dependencies, keeps both `octo-sync` and `octo-network` clean, and provides a reusable pattern that all 27+ use cases can adopt. The `NetworkSender` and `NetworkReceiver` traits are deliberately simple (3 methods each) — complex logic (health tracking, failover, crypto, dispatch) lives in `NodeTransport` or existing modules.
 
 ## Version History
 
@@ -464,6 +486,8 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 | 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path. |
 | 1.5     | 2026-06-28 | Resolved TCP/UDP transport gap: updated Alternatives Considered to acknowledge `PlatformType::Tcp = 0x0016` and `PlatformType::Udp = 0x0017` per RFC-0850 §8.8-§8.9. TCP/UDP adapters can now implement `PlatformAdapter` and integrate via `PlatformAdapterBridge`. |
 | 1.6     | 2026-06-28 | Aligned with RFC-0850 v1.3.0: `PlatformAdapter::send_envelope` renamed to `send_message(domain, envelope, payload)`. Updated bridge to pass payload bytes to adapter. |
+| 1.7     | 2026-06-29 | Fixed Phase 3 checklist (inbound dispatch was not implemented). Added `receivers` field, `register_receiver()`, and `dispatch()` to `NodeTransport` spec. Added `NetworkReceiver` inbound dispatch model documentation. Updated Summary, Roles, Determinism tables. |
+| 1.8     | 2026-06-30 | Clarified `NodeTransport` receiver-ownership semantics: any number of receivers are supported, typical usage is a single receiver owned by the consumer (e.g., `QuotaRouterNode`'s internal handler), receivers live as long as their `Arc` is held. Aligned with RFC-0870 v1.13 builder change (single-node return, internal handler registration). |
 
 ## Related RFCs
 

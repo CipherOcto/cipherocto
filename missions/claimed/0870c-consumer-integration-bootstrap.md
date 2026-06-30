@@ -24,11 +24,11 @@ Implement the `QuotaRouterNode::route()` public API, `QuotaRouterHandler` (full 
 ### Files to implement
 
 - `quota-router/src/handler.rs` — full `QuotaRouterHandler` with all 7 envelope handlers
-- `quota-router/src/mod.rs` — `QuotaRouterNode::route()`, `build_with_bootstrap()`
+- `quota-router/src/lib.rs` — `QuotaRouterNode::route()`, `QuotaRouterNode::receive()`, `build_with_bootstrap()`. The builder wires the handler into `NodeTransport` automatically via `register_receiver()`.
 
 ### Methods to implement
 
-#### `QuotaRouterNode::route()` (`mod.rs`)
+#### `QuotaRouterNode::route()` (`lib.rs`)
 
 ```rust
 pub async fn route(
@@ -46,14 +46,61 @@ pub async fn route(
 }
 ```
 
+#### `QuotaRouterNode::receive()` (`lib.rs`)
+
+```rust
+/// Public inbound API: dispatch a payload through `NodeTransport` to all
+/// registered receivers. The internal `QuotaRouterHandler` is one of
+/// those receivers (registered automatically by the builder). Symmetric
+/// to `route()` for outbound traffic.
+pub async fn receive(
+    &self,
+    payload: &[u8],
+    ctx: &ReceiveContext,
+) -> Result<(), TransportError> {
+    self.transport.dispatch(payload, ctx).await
+}
+```
+
+#### Wiring
+
+The full consumer-facing wiring is a single builder call plus symmetric outbound/inbound use:
+
+```rust
+use quota_router::QuotaRouterNode;
+
+let node = QuotaRouterNode::builder()
+    .node_id(my_node_id)
+    .network_id(network_id)
+    .provider(openai_config)
+    .provider(anthropic_config)
+    .peer(peer_b_config)
+    .policy(RoutingPolicy::Balanced)
+    .build()?;
+
+// Outbound: consumer-facing request dispatch.
+// node.route(ctx).await? returns provider bytes.
+
+let recv_ctx = ReceiveContext {
+    source_transport: "tcp".into(),
+    mission_id: [0u8; 32],
+    sender_id: None,
+};
+// Inbound: a transport adapter (in tests, an mpsc channel; in
+// production, a `PlatformAdapter` polling loop) feeds payloads into
+// `node.receive(...)`. The handler is internal — no manual wiring.
+// node.receive(&wire_bytes, &recv_ctx).await?;
+```
+
+There is no step where the caller constructs or registers a handler. The builder handles that internally. If a caller wants multiple receivers (for example, an observability sink in addition to the quota router handler), they can call `node.transport.register_receiver(...)` directly after `build()` — but that is an opt-in pattern, not part of the consumer contract.
+
 #### `QuotaRouterHandler` (`handler.rs`)
 
 ```rust
 pub struct QuotaRouterHandler {
-    node: Arc<Mutex<QuotaRouterNode>>,
+    node: Arc<QuotaRouterNode>,
     provider: Arc<dyn LocalProvider>,
     network_key: [u8; 32],
-    transport: Arc<NodeTransport>,
 }
 
 impl NetworkReceiver for QuotaRouterHandler {
@@ -61,21 +108,21 @@ impl NetworkReceiver for QuotaRouterHandler {
 }
 ```
 
-Handler methods (all acquire lock, do synchronous work, release lock before async send):
+Handler methods (all use `self.node` for state access and `self.node.transport` for outbound sends):
 
-- `handle_forward_request` — TTL check, destination selection (under lock), dispatch or forward (lock released)
+- `handle_forward_request` — TTL check, destination selection, dispatch or forward via `self.node.transport.send_best()`
 - `handle_forward_response` — complete pending request via oneshot channel
 - `handle_forward_reject` — reject pending request, trigger pull-gossip on CapacityExhausted
 - `handle_capacity_gossip` — verify HMAC, merge capacities, merge known_peers
 - `handle_router_announce` — verify HMAC, add peer if model overlap
-- `handle_capacity_request` — build gossip snapshot, reply
+- `handle_capacity_request` — build gossip snapshot, reply via `self.node.transport.send_best()`
 - `handle_router_withdraw` — verify HMAC, remove peer
 
 Helper methods:
-- `send_forward_response` — build ForwardResponsePayload, send to origin_node
-- `send_forward_reject` — build ForwardRejectPayload, send to origin_node
+- `send_forward_response` — build ForwardResponsePayload, send via `self.node.transport.send_best()`
+- `send_forward_reject` — build ForwardRejectPayload, send via `self.node.transport.send_best()`
 
-#### `build_with_bootstrap()` (`mod.rs`)
+#### `build_with_bootstrap()` (`lib.rs`)
 
 ```rust
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -108,6 +155,9 @@ Tries `BootstrapOrchestrator` first, falls back to static peers.
 - [ ] `route()` awaits `ForwardOutcome` with `forward_timeout` (30s default)
 - [ ] `route()` returns `RouterNodeError::ForwardRejected` on `ForwardOutcome::Rejected`
 - [ ] `route()` returns `RouterNodeError::ForwardTimeout` on timeout
+- [ ] `QuotaRouterNode::receive()` is reachable as `pub async fn`
+- [ ] `receive(payload, ctx)` delegates to `self.transport.dispatch(payload, ctx)` — symmetric to `route()`
+- [ ] Builder auto-registers the handler as a `NetworkReceiver` (no caller-side wiring)
 - [ ] `QuotaRouterHandler` implements `NetworkReceiver` with 7 discriminator dispatch arms
 - [ ] `handle_forward_request` uses `DropAction` enum to avoid Mutex-held-across-await
 - [ ] `handle_forward_response` completes pending request via oneshot
@@ -116,7 +166,7 @@ Tries `BootstrapOrchestrator` first, falls back to static peers.
 - [ ] `handle_router_announce` verifies HMAC before adding peer
 - [ ] `handle_capacity_request` builds and sends gossip reply
 - [ ] `handle_router_withdraw` verifies HMAC and removes peer
-- [ ] `send_forward_response`/`send_forward_reject` use `self.transport` (outside Mutex)
+- [ ] `send_forward_response`/`send_forward_reject` use `self.node.transport`
 - [ ] `build_with_bootstrap` tries `BootstrapOrchestrator`, falls back to static peers
 - [ ] `QuotaRouterBootstrap` config struct exists with `seed_list_path`, `static_peers`, `timeout`, `min_peers`
 - [ ] Integration test: two nodes, one forwards request to the other, response routes back
@@ -149,7 +199,7 @@ High (~600-800 lines). Full inbound handler + route API + bootstrap integration 
 
 ## Implementation Notes
 
-- The handler holds `Arc<NodeTransport>` outside the Mutex to avoid deadlock (tokio requires that Mutex guards are not held across `.await` points).
+- The handler holds `Arc<QuotaRouterNode>` directly (no Mutex). Concurrency safety is provided by `GossipCache` and `PeerCache` using internal `RwLock`s — readers (`route`) and writers (handler) never block each other. Outbound sends go through `self.node.transport` (the same transport `route` uses).
 - `route()` inserts into `PendingRequests` before sending the `ForwardRequest`, so the response can be routed back.
 - `handle_forward_request` uses `DropAction` enum: scoring is synchronous (under lock), dispatch/forward is async (lock released).
 - `build_with_bootstrap` requires `octo-transport/src/bootstrap.rs` to be functional — if the stub is not fixed, this method falls back to static peers only.

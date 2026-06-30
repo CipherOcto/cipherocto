@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-28) — 4 rounds of adversarial review (v1.0→v1.10), 27 findings fixed, zero remaining.
+Accepted (2026-06-29) — `QuotaRouterNode` now owns its `QuotaRouterHandler` as an internal member; `builder().build()` returns a single, fully-wired node. Cross-process boundary is out of scope until a real design discussion lands (see Mission 0870g in `missions/deferred/`). All tests must target the production library per the Test Policy below.
 
 ## Authors
 
@@ -14,7 +14,7 @@ Accepted (2026-06-28) — 4 rounds of adversarial review (v1.0→v1.10), 27 find
 
 ## Summary
 
-Defines a distributed mesh network of Quota Router Nodes that cooperatively route AI inference requests to the best available provider. Each router node maintains local provider connections and quota state, propagates requests to peers when local capacity is insufficient, and dispatches to the optimal provider across the network. The design reuses `octo-transport` (`NodeTransport`, `NetworkSender`) as the underlying transport layer and extends it with a request-forwarding protocol, quota-aware routing, and peer capacity gossip.
+Defines a distributed mesh network of Quota Router Nodes that cooperatively route AI inference requests to the best available provider. Each router node maintains local provider connections and quota state, propagates requests to peers when local capacity is insufficient, and dispatches to the optimal provider across the network. The design reuses `octo-transport` (`NodeTransport`, `NetworkSender`, `NetworkReceiver`) as the underlying transport layer and extends it with a request-forwarding protocol, quota-aware routing, and peer capacity gossip. Outbound goes through `node.transport.send_best()`; inbound goes through `node.transport.dispatch()` → the node's internal `QuotaRouterHandler` (a `NetworkReceiver` impl).
 
 ## Dependencies
 
@@ -552,16 +552,13 @@ fn deserialize<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Tran
 /// Handles inbound quota router network messages.
 /// Implements NetworkReceiver to receive dispatched payloads from NodeTransport.
 pub struct QuotaRouterHandler {
-    /// Reference to the parent QuotaRouterNode (for dispatch decisions).
-    node: Arc<Mutex<QuotaRouterNode>>,
+    /// Reference to the parent QuotaRouterNode (for dispatch decisions
+    /// and outbound sends via node.transport).
+    node: Arc<QuotaRouterNode>,
     /// Local provider dispatcher.
     provider: Arc<dyn LocalProvider>,
     /// Network key for HMAC verification (derived from network_id + genesis seed).
     network_key: [u8; 32],
-    /// Shared reference to the transport layer — held OUTSIDE the Mutex to
-    /// avoid holding the lock across async .await points (tokio deadlock
-    /// prevention). Cloned from the node at build time.
-    transport: Arc<NodeTransport>,
 }
 
 #[async_trait]
@@ -1071,7 +1068,7 @@ impl QuotaRouterNodeBuilder {
     pub fn forwarding(mut self, f: ForwardingConfig) -> Self { self.forwarding = f; self }
     pub fn gossip_interval(mut self, d: Duration) -> Self { self.gossip_interval = d; self }
 
-    pub fn build(self) -> Result<(QuotaRouterNode, QuotaRouterHandler), RouterNodeError> {
+    pub fn build(self) -> Result<QuotaRouterNode, RouterNodeError> {
         let node_id = self.node_id.ok_or(RouterNodeError::MissingNodeId)?;
         let network_id = self.network_id.ok_or(RouterNodeError::MissingNetworkId)?;
         if self.providers.is_empty() {
@@ -1086,9 +1083,12 @@ impl QuotaRouterNodeBuilder {
         let transport = NodeTransport::new(senders);
 
         let primary_provider: Arc<dyn LocalProvider> =
-            Arc::new(HttpLocalProvider::new(node.config.providers[0].clone()));
+            Arc::new(HttpLocalProvider::new(self.providers[0].clone()));
 
-        let node = QuotaRouterNode {
+        // Construct the node first, then the handler with an Arc to the node.
+        // Both the handler and a duplicate `Arc<NodeTransport>` are wired into
+        // the node so callers receive a single, fully-wired `QuotaRouterNode`.
+        let node = Arc::new(QuotaRouterNode {
             config: RouterNodeConfig {
                 node_id, network_id,
                 providers: self.providers,
@@ -1104,23 +1104,73 @@ impl QuotaRouterNodeBuilder {
             pending: PendingRequests::new(),
             keypair: Keypair::generate(),  // persistent load replaces this at startup
             primary_provider: primary_provider.clone(),
-        };
+            handler: Arc::new(QuotaRouterHandler::new(
+                Arc::clone(&node),
+                primary_provider,
+                *blake3::hash(network_id.0.as_ref()).as_bytes(),
+            )),
+        });
 
-        let handler = QuotaRouterHandler {
-            node: Arc::new(Mutex::new(node.clone())),
-            provider: primary_provider,
-            network_key: *blake3::hash(network_id.0.as_ref()).as_bytes(),
-            transport: Arc::new(node.transport.clone()),
-        };
+        // Register the handler with NodeTransport so inbound payloads reach it.
+        node.transport
+            .register_receiver(node.handler.clone() as Arc<dyn NetworkReceiver>);
 
-        Ok((node, handler))
+        // Unwrap the Arc so the public return type is `QuotaRouterNode`, not
+        // `Arc<QuotaRouterNode>`. Callers that need shared ownership should
+        // `Arc::new(node)` themselves; the builder does not impose that.
+        Arc::try_unwrap(node).map_err(|_| RouterNodeError::Internal(
+            "build() called while another Arc<QuotaRouterNode> already exists".into(),
+        ))
     }
 }
 ```
 
-**Design Choice — Builder returns both Node and Handler:**
+**Design Choice — `QuotaRouterNode` owns its handler:**
 
-The `build()` returns a tuple `(QuotaRouterNode, QuotaRouterHandler)`. The node is the consumer-facing API (for `route()` calls). The handler is the inbound processor (registered with `NodeTransport` as a `NetworkReceiver`). This separation follows the sender/receiver split already present in `octo-transport` (`NetworkSender` vs `NetworkReceiver`).
+The `build()` returns a single, fully-wired `QuotaRouterNode`. The internal `QuotaRouterHandler` (which implements `NetworkReceiver`) is constructed inside the builder and registered with `NodeTransport` via `register_receiver()`. Callers do not perform any handler wiring — there is no `register_receiver()` call in the public API. The node is the only public surface for both outbound (`route()`) and inbound (`receive()`) operations.
+
+Rationale:
+
+- **Symmetric data flow.** Outbound (`node.route`) and inbound (`node.receive`) both flow through `NodeTransport`. The handler-internal structure means there is exactly one inbound path: `transport.dispatch() → handler.on_receive()`.
+- **No caller-side wiring.** A tuple return required callers to construct or pass `Arc`s in the right order; this was a frequent source of bugs. Returning a single value removes that surface.
+- **Layered API.** The internal layering (`NodeTransport` → `NetworkReceiver` → handler) is an implementation detail. The public surface is `QuotaRouterNode`, period.
+
+See Mission 0870c for the consumer-side wiring example, Mission 0870m for the inbound API definition, and Mission 0870g (in `missions/deferred/`) for the cross-process boundary discussion that is *not* covered by this RFC.
+
+### Public API
+
+The single public surface for a running quota router node is `QuotaRouterNode`. Three entry points cover all consumer-facing use cases:
+
+```rust
+impl QuotaRouterNode {
+    /// Construct a new node from configuration.
+    pub fn builder() -> QuotaRouterNodeBuilder;
+
+    /// Submit an inference request. Returns the provider response bytes
+    /// once the request has been dispatched (locally or via the mesh).
+    pub async fn route(
+        &self,
+        context: &RequestContext,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, RouterNodeError>;
+
+    /// Inbound API: dispatch a payload through `NodeTransport` to all
+    /// registered receivers. The internal `QuotaRouterHandler` is one of
+    /// those receivers (registered automatically by the builder).
+    /// Symmetric to `route()` for outbound traffic.
+    pub async fn receive(
+        &self,
+        payload: &[u8],
+        ctx: &ReceiveContext,
+    ) -> Result<(), TransportError>;
+}
+```
+
+Notes:
+
+- `route()` is outbound. The caller (consumer SDK or CLI) supplies a request and gets back provider bytes.
+- `receive()` is inbound. A platform adapter (or test harness) calls it with a payload and a `ReceiveContext`. The payload is dispatched through `NodeTransport` and reaches the handler via the registered receiver. Callers do not pass `NetworkReceiver` instances to `receive()`.
+- All other methods (`peer_count`, `local_provider_models`, `add_peer`, `select_destinations`, `pending_origin`, `primary_provider_id`, `build_capacity_gossip`, `request_capacity_from`, `broadcast_gossip`, `broadcast_announce`, `build_with_bootstrap`) are accessors or background-loop drivers. They are not part of the symmetric inbound/outbound contract.
 
 ### Wiring Diagram: Full Integration
 
@@ -1135,10 +1185,21 @@ The `build()` returns a tuple `(QuotaRouterNode, QuotaRouterHandler)`. The node 
 │     ├─ .provider(HttpLocalProvider::new(anthropic_key))             │
 │     ├─ .peer(PeerConfig { node_id: B, endpoint: ... })             │
 │     ├─ .policy(RoutingPolicy::Balanced)                             │
-│     └─ .build() → (node, handler)                                   │
+│     └─ .build() → node    (handler is internal; transport.register_receiver│
+│                            is called inside build() — no caller wiring)  │
 │                                                                     │
-│  2. Register handler with NodeTransport                             │
-│     transport.register_receiver(handler)  // NetworkReceiver         │
+│  2. Start inbound receive loop (polls adapters, dispatches via node)│
+│     tokio::spawn(async {                                             │
+│         loop {                                                       │
+│             // Platform adapter receive → canonicalize → node.receive│
+│             if let Ok(messages) = adapter.receive_messages(&domain).await { │
+│                 for msg in messages {                                 │
+│                     let payload = adapter.canonicalize(&msg)?;       │
+│                     node.receive(&payload, &ctx).await?;             │
+│                 }                                                    │
+│             }                                                        │
+│         }                                                            │
+│     });                                                              │
 │                                                                     │
 │  3. Start gossip loop                                               │
 │     tokio::spawn(async {                                             │
@@ -1154,6 +1215,8 @@ The `build()` returns a tuple `(QuotaRouterNode, QuotaRouterHandler)`. The node 
 │     });                                                              │
 │                                                                     │
 │  5. Node is now Active and ready to route                           │
+│     // Outbound: caller invokes node.route(...).await?               │
+│     // Inbound:  platform adapter feeds node.receive(...).await?     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -2611,6 +2674,28 @@ Expected:
   // HMAC MUST verify against network_key, otherwise the entire gossip is dropped.
 ```
 
+## Test Policy
+
+This RFC and its associated missions are governed by the following test policy. **All tests must target the production library** (`quota-router` crate, optionally with `quota-router-e2e-tests` as an integration test harness that exercises the public API). Subprocess-based tests, test-only binaries, and fixtures that exist solely to make tests appear to exercise production code are not acceptable.
+
+### Rules
+
+1. **Tests target the production library.** Tests construct a `QuotaRouterNode` via the public builder and exercise behavior through `node.route()`, `node.receive()`, and accessors. They do not fork subprocesses or depend on test-only binaries.
+2. **No fake tests, no workarounds.** If a test reveals that production code is missing, untestable, or unreachable from the public API, the gap is raised as a design concern (RFC amendment or new mission). It is **not** papered over with a hack.
+3. **Symmetric API exercise.** Tests that verify inbound behavior call `node.receive()` (or, in the L2 test harness, the production seam that ends in `node.transport.dispatch()`). Tests do not call `QuotaRouterHandler::on_receive()` directly.
+4. **In-process transport is the test seam.** The L2 test harness feeds payloads through an in-process mpsc channel that calls `node.transport.dispatch()` → `handler.on_receive()`. This is the production code path, not a parallel test path.
+
+### What this forbids
+
+- Standalone binaries that pretend to be the production runtime (e.g., a `quota-router-node` binary in a test folder).
+- Tests that spawn subprocesses to simulate cross-process behavior when the in-process library does not support that behavior.
+- Test-only stubs that bypass the public API and call internal methods directly.
+- "Smoke tests" that only verify a binary starts without verifying behavior through the public API.
+
+### Cross-process boundary
+
+Cross-process TCP/UDP for quota router nodes is a separate design problem (see Mission 0870g in `missions/deferred/`). Until that design lands, cross-process tests are out of scope and are **not** implemented as fake subprocesses.
+
 ## Alternatives Considered
 
 | Approach | Pros | Cons |
@@ -2736,6 +2821,8 @@ This means the quota router network can be deployed and tested without waiting f
 | 1.10 | 2026-06-28 | Adversarial review Round 1 (v1.9 external changes) fixes — Fixed Mutex-held-across-await deadlock risk in `handle_capacity_request`, `handle_forward_request`, `send_forward_response`, `send_forward_reject` (handler now holds separate `Arc<NodeTransport>` outside Mutex); added `DropAction` enum for lock-scope control in `handle_forward_request`; replaced hardcoded `monotonic_now()` returning `0` with atomic counter; fixed Wire Format diagram discriminator range (`0xC3–0xCC` → `0xC3–0xCB`); fixed `PendingRequests::complete`/`reject` signature (`&mut self` → `&self`); added `primary_provider: Arc<dyn LocalProvider>` field to `QuotaRouterNode` (was referenced by `route()` but missing); updated builder to initialize `primary_provider` and `handler.transport`. |
 
 | 1.11 | 2026-06-28 | Added TCP/UDP transport references: quota router nodes can now use `PlatformType::Tcp` (RFC-0850 §8.8) or `PlatformType::Udp` (RFC-0850 §8.9) adapters via `PlatformAdapterBridge`. Updated transport integration notes to reference TCP adapter for L3 cross-process E2E tests. |
+| 1.12 | 2026-06-29 | Fixed wiring diagram to use RFC-0863 v1.7 `NodeTransport::register_receiver()`. Removed fictional `transport: Arc<NodeTransport>` field from `QuotaRouterHandler` spec. Updated handler to hold `Arc<QuotaRouterNode>` directly (no Mutex). Added inbound receive loop to startup diagram. |
+| 1.13 | 2026-06-30 | **Architectural cleanup — fake-binary removal.** Removed the fictitious `quota-router-node` binary from scope. `QuotaRouterNodeBuilder::build()` now returns a single, fully-wired `QuotaRouterNode` (the internal `QuotaRouterHandler` is constructed and registered with `NodeTransport` inside `build()` — no caller-side wiring). Added `QuotaRouterNode::receive()` public inbound API (symmetric to `route()`). Added §Public API subsection listing the three entry points. Added §Test Policy codifying "tests must target the production library; no fake tests, no workarounds". Missions 0870g and 0870i moved to `missions/deferred/` pending a real cross-process design discussion. |
 
 ## Related RFCs
 

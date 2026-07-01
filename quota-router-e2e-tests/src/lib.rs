@@ -470,8 +470,9 @@ impl TestCluster {
         //   3. No other thread/task can clone `test_node.node` while
         //      the guard is alive (it ties to `&mut self`).
         drop(test_node.node.release_handler_back_ref());
-        let raw: *mut QuotaRouterNode =
-            std::sync::Arc::as_ptr(&test_node.node).cast_mut().cast::<QuotaRouterNode>();
+        let raw: *mut QuotaRouterNode = std::sync::Arc::as_ptr(&test_node.node)
+            .cast_mut()
+            .cast::<QuotaRouterNode>();
         let inner: &mut QuotaRouterNode = unsafe { &mut *raw };
         // Recreate the handler's back-reference now. Since `inner`
         // was created via raw pointer (not via `Arc::get_mut`), the

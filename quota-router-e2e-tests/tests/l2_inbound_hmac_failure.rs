@@ -8,6 +8,7 @@
 //! Production paths exercised:
 //!   - `node.receive(payload, &ctx)` → `transport.dispatch(...)` →
 //!     `handler.on_receive(...)` → `handle_capacity_gossip(...)`.
+//!
 //! The handler returns `TransportError::AdapterFailure("capacity gossip
 //! HMAC mismatch")` when the HMAC fails to verify, and that propagates
 //! through `dispatch()` (which fails fast on the first receiver error).

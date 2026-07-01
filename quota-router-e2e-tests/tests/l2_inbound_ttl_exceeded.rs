@@ -114,8 +114,7 @@ async fn l2_inbound_ttl_exceeded_emits_ttl_reject() {
     // When node 1's driver drains the inbox and dispatches via
     // transport.dispatch, the observer captures the reject envelope.
     let observer = TestObserver::new();
-    cluster
-        .nodes[1]
+    cluster.nodes[1]
         .node
         .transport
         .register_receiver(observer.clone());

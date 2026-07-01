@@ -83,8 +83,7 @@ async fn l2_inbound_multi_receiver_observer_fires() {
 
     // Register the observer after the builder ran.
     let observer = TestObserver::new();
-    cluster
-        .nodes[0]
+    cluster.nodes[0]
         .node
         .transport
         .register_receiver(observer.clone());
@@ -127,7 +126,10 @@ async fn l2_inbound_multi_receiver_observer_fires() {
     );
     let captured = observer.captured.lock().unwrap().clone();
     assert_eq!(captured.len(), 1, "observer should have 1 captured payload");
-    assert_eq!(captured[0], framed, "captured bytes should match the original envelope");
+    assert_eq!(
+        captured[0], framed,
+        "captured bytes should match the original envelope"
+    );
 
     // The built-in handler must have merged the gossiped capacity.
     let snap = cluster.nodes[0].gossip_cache_snapshot().await;
@@ -143,8 +145,14 @@ async fn l2_inbound_multi_receiver_two_observers() {
 
     let obs_a = TestObserver::new();
     let obs_b = TestObserver::new();
-    cluster.nodes[0].node.transport.register_receiver(obs_a.clone());
-    cluster.nodes[0].node.transport.register_receiver(obs_b.clone());
+    cluster.nodes[0]
+        .node
+        .transport
+        .register_receiver(obs_a.clone());
+    cluster.nodes[0]
+        .node
+        .transport
+        .register_receiver(obs_b.clone());
 
     let sender_id = RouterNodeId([0x88u8; 32]);
     let mut gossip = CapacityGossipPayload {
@@ -163,6 +171,12 @@ async fn l2_inbound_multi_receiver_two_observers() {
     };
     cluster.nodes[0].node.receive(&framed, &ctx).await.unwrap();
 
-    assert!(obs_a.call_count.load(Ordering::SeqCst) >= 1, "obs_a should fire");
-    assert!(obs_b.call_count.load(Ordering::SeqCst) >= 1, "obs_b should fire");
+    assert!(
+        obs_a.call_count.load(Ordering::SeqCst) >= 1,
+        "obs_a should fire"
+    );
+    assert!(
+        obs_b.call_count.load(Ordering::SeqCst) >= 1,
+        "obs_b should fire"
+    );
 }

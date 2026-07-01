@@ -81,7 +81,7 @@ pub fn monotonic_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ModelPricing, ProviderHealth, ProviderId};
+    use super::super::provider::{ModelPricing, ProviderHealth, ProviderId};
 
     fn test_capacity(name: &str, remaining: u64) -> ProviderCapacity {
         ProviderCapacity {

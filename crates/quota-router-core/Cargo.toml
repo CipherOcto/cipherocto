@@ -55,6 +55,13 @@ hmac-sha256 = "1.1"
 # For HMAC (AWS SigV4 signing)
 hmac = "0.12"
 
+# For bincode serialization (mesh envelope wire format)
+bincode = "1"
+
+# Mesh network layer dependencies (QuotaRouterNode, gossip, forward, handler)
+octo-transport = { path = "../../octo-transport" }
+octo-network = { path = "../octo-network" }
+
 # For SHA256 (used in event_id computation)
 sha2.workspace = true
 

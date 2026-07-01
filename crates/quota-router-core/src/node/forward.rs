@@ -131,7 +131,7 @@ mod tests {
         ForwardRequestPayload {
             request_id: [1u8; 32],
             network_id: NetworkId([2u8; 32]),
-            context: crate::request::RequestContext {
+            context: super::super::request::RequestContext {
                 model: "gpt-4o".into(),
                 preferred_provider: None,
                 model_group: None,

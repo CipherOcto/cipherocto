@@ -185,7 +185,7 @@ fn score_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ModelPricing, ProviderHealth, ProviderId, RouterNodeId};
+    use super::super::provider::{ModelPricing, ProviderHealth, ProviderId, RouterNodeId};
 
     fn make_provider(
         name: &str,
@@ -365,8 +365,8 @@ mod tests {
         let mut high = make_provider("preferred", "gpt-4o", 5, 200, 9500, 100);
         high.provider_name = "preferred".into();
         let low = make_provider("other", "gpt-4o", 1, 200, 9500, 100);
-        let policy = RoutingPolicy::Custom(crate::request::CustomPolicy {
-            model_overrides: vec![crate::request::ModelOverride {
+        let policy = RoutingPolicy::Custom(super::super::request::CustomPolicy {
+            model_overrides: vec![super::super::request::ModelOverride {
                 model: "gpt-4o".into(),
                 preferred_providers: vec!["preferred".into()],
                 max_price: 10,

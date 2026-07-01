@@ -373,7 +373,7 @@ impl GovernedTransport {
     /// node has been kicked.
     /// Receive and dispatch inbound messages with governance checks.
     /// Polls adapters, applies kick detection and domain binding checks,
-    /// then calls inner.dispatch() (RFC-0863 v1.7) to deliver to receivers.
+    /// then calls inner.dispatch() to deliver to receivers.
     pub async fn receive(&self) -> Result<(), TransportError> { ... }
 
 /// A message received from a platform adapter.

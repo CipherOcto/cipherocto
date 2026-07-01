@@ -44,10 +44,10 @@ async fn capture_wire_bytes(
 ///
 /// Sets up a raw `TcpListener`, points a `TcpAdapter` at it, calls
 /// `send_message(domain, envelope, payload)`, and verifies the bytes that
-/// reach the listener contain the payload (and envelope) verbatim.
+/// reach the listener contain the envelope and payload verbatim.
 ///
-/// Wire format (RFC-0850 v1.3.0 §8.8):
-///   `[4-byte env_len][envelope wire bytes][4-byte payload_len][payload bytes]`
+/// Wire format (RFC-0850 §8.8, Raw mode, single-frame):
+///   `[4-byte total_len][envelope wire bytes][payload bytes]`
 #[tokio::test(flavor = "multi_thread")]
 async fn tcp_adapter_sends_payload_over_wire() {
     // 1. Bind a raw listener
@@ -96,13 +96,14 @@ async fn tcp_adapter_sends_payload_over_wire() {
     // 7. Capture wire bytes across all accepts
     let bytes = captor.await.unwrap();
 
-    // Find the captured frame: skip leading 0 bytes (from connection #1 with
-    // no data) and locate the envelope length prefix
+    // New wire format: single length-prefixed frame
+    //   [4-byte total_len][envelope bytes][payload bytes]
     let env_len = envelope_bytes.len();
     let payload_len = payload.len();
+    let total_len = env_len + payload_len;
 
-    // Search the captured bytes for our specific envelope length prefix
-    let prefix = (env_len as u32).to_be_bytes();
+    // Search for the total_len prefix to locate the frame
+    let prefix = (total_len as u32).to_be_bytes();
     let mut found_at = None;
     for i in 0..bytes.len().saturating_sub(4) {
         if bytes[i..i + 4] == prefix {
@@ -110,66 +111,101 @@ async fn tcp_adapter_sends_payload_over_wire() {
             break;
         }
     }
-    let frame_start = found_at.expect("envelope length prefix must appear in captured wire bytes");
+    let frame_start =
+        found_at.expect("total-length prefix must appear in captured wire bytes");
 
-    // 8. Verify wire envelope bytes
-    let env_end = frame_start + 4 + env_len;
+    // 8. Verify wire envelope bytes (right after the total_len prefix)
+    let env_start = frame_start + 4;
+    let env_end = env_start + env_len;
     assert!(
-        env_end <= bytes.len(),
-        "captured bytes are too short to contain envelope (frame_start={frame_start}, env_len={env_len}, captured_len={})",
-        bytes.len()
+        env_end + payload_len <= bytes.len(),
+        "captured bytes too short: need {} envelope + {} payload bytes",
+        env_len,
+        payload_len
     );
-    let wire_envelope = &bytes[frame_start + 4..env_end];
+    let wire_envelope = &bytes[env_start..env_end];
     assert_eq!(
         wire_envelope,
         &envelope_bytes[..],
         "wire envelope bytes must match envelope.to_wire_bytes()"
     );
 
-    // 9. Verify wire payload bytes
-    let pl_off = env_end;
-    let pl_len_off = pl_off + 4;
-    assert!(
-        pl_len_off <= bytes.len(),
-        "captured bytes must contain payload length prefix"
-    );
-    let captured_pl_len =
-        u32::from_be_bytes(bytes[pl_off..pl_len_off].try_into().unwrap()) as usize;
-    assert_eq!(
-        captured_pl_len, payload_len,
-        "payload length prefix must equal payload.len()"
-    );
-
-    assert!(
-        pl_len_off + payload_len <= bytes.len(),
-        "captured bytes must contain full payload (need {}, got {})",
-        payload_len,
-        bytes.len() - pl_len_off
-    );
-    let wire_payload = &bytes[pl_len_off..pl_len_off + payload_len];
+    // 9. Verify wire payload bytes (right after the envelope)
+    let pl_start = env_end;
+    let pl_end = pl_start + payload_len;
+    let wire_payload = &bytes[pl_start..pl_end];
     assert_eq!(
         wire_payload, payload,
         "wire payload bytes must match the payload argument to send_message"
     );
 }
 
-/// L5: tcp_adapter_receives_payload_from_wire (DEFERRED)
+/// L5: tcp_adapter_receives_payload_from_wire
 ///
-/// This test is currently `#[ignore]`d: it documents the intended behaviour
-/// per RFC-0850 v1.3.0 (`receive_messages` returns the payload in
-/// `RawPlatformMessage.payload`), but the on-wire reader still expects the
-/// envelope-only frame format from RFC-0850 v1.2.0.
-///
-/// The reader upgrade is tracked as a follow-up ("make the payload readable")
-/// once the team decides on the wire-format migration policy (compatibility
-/// flag vs clean break).
+/// Validates the inbound path: sends a single-frame message via one
+/// `TcpAdapter`'s `send_message`, then drains it through a second
+/// `TcpAdapter`'s `receive_messages` and confirms `RawPlatformMessage.payload`
+/// equals the original envelope-bytes || payload-bytes concatenation.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "TCP reader still expects RFC-0850 v1.2.0 envelope-only frame; reader upgrade tracked as follow-up"]
 async fn tcp_adapter_receives_payload_from_wire() {
-    // Once the reader is updated, this test will:
-    //   1. Spin up two TcpAdapters
-    //   2. Push a payload-shaped frame through the wire
-    //   3. Assert `receive_messages` returns a RawPlatformMessage whose
-    //      `payload` equals the bytes originally passed to `send_message`.
-    unimplemented!("reader-side payload parsing — see pending work plan");
+    use octo_network::dot::adapters::PlatformAdapter;
+    use std::collections::BTreeMap;
+
+    // Sender binds an ephemeral port; receiver connects to it.
+    let receiver = TcpAdapter::new("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+        .await
+        .unwrap();
+    let recv_addr = receiver.local_addr();
+    // Give the accept loop a moment to start
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let sender = TcpAdapter::new("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+        .await
+        .unwrap();
+    sender.connect(recv_addr).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let envelope = DeterministicEnvelope::default();
+    let payload: &[u8] = b"inbound L5 payload bytes";
+    let domain = BroadcastDomainId::new(PlatformType::Tcp, "recv.example");
+
+    sender
+        .send_message(&domain, &envelope, payload)
+        .await
+        .expect("send_message");
+
+    // Drain the receiver
+    let _ = recv_addr; // silence unused
+    let domain_drain = BroadcastDomainId::new(PlatformType::Tcp, "recv.example");
+    let messages = tokio::time::timeout(
+        Duration::from_millis(2000),
+        receiver.receive_messages(&domain_drain),
+    )
+    .await
+    .expect("receive_messages timed out")
+    .expect("receive_messages error");
+
+    assert!(
+        !messages.is_empty(),
+        "receiver should have received the inbound frame"
+    );
+    let raw = &messages[0];
+    let expected_frame: Vec<u8> = envelope
+        .to_wire_bytes()
+        .into_iter()
+        .chain(payload.iter().copied())
+        .collect();
+    assert_eq!(
+        raw.payload, expected_frame,
+        "RawPlatformMessage.payload should be envelope-bytes || payload-bytes"
+    );
+
+    // canonicalize parses the first ENVELOPE_WIRE_LEN bytes
+    let canonical = receiver
+        .canonicalize(raw)
+        .expect("canonicalize should succeed");
+    assert_eq!(canonical.envelope_id, envelope.envelope_id);
+
+    // Silence unused
+    let _: BTreeMap<String, String> = BTreeMap::new();
 }

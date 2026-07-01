@@ -106,6 +106,14 @@ impl TcpAdapter {
         mut stream: TcpStream,
         tx: mpsc::Sender<RawPlatformMessage>,
     ) {
+        // Wire format (RFC-0850 §8.8, Raw mode, single-frame):
+        //   [4-byte total_len][DeterministicEnvelope wire bytes (282 bytes)][mesh payload bytes]
+        //
+        // One logical message = one RawPlatformMessage. The receiver splits
+        // the frame internally: the first 282 bytes are the DOT envelope
+        // (parsed by `canonicalize`); the remaining bytes are the mesh
+        // payload fed to the inbound handler. This eliminates the
+        // consumer-pairing hazard of the prior 2-frame design.
         loop {
             let mut len_buf = [0u8; 4];
             if stream.read_exact(&mut len_buf).await.is_err() {
@@ -144,15 +152,15 @@ impl PlatformAdapter for TcpAdapter {
         payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let envelope_bytes = envelope.to_wire_bytes();
-        // Wire format (RFC-0850 v1.3.0 §8.8): two length-prefixed frames so the
-        // receiver can split envelope from payload:
-        //   [4-byte envelope_len][envelope wire bytes][4-byte payload_len][payload bytes]
-        let env_len = (envelope_bytes.len() as u32).to_be_bytes();
-        let payload_len = (payload.len() as u32).to_be_bytes();
-        let mut frame = Vec::with_capacity(8 + envelope_bytes.len() + payload.len());
-        frame.extend_from_slice(&env_len);
+        // Wire format (RFC-0850 §8.8, Raw mode, single-frame):
+        //   [4-byte total_len][envelope wire bytes][payload bytes]
+        //
+        // One logical message = one contiguous frame. Receiver reads
+        // total_len, then total_len bytes; splits internally.
+        let total_len = (envelope_bytes.len() + payload.len()) as u32;
+        let mut frame = Vec::with_capacity(4 + envelope_bytes.len() + payload.len());
+        frame.extend_from_slice(&total_len.to_be_bytes());
         frame.extend_from_slice(&envelope_bytes);
-        frame.extend_from_slice(&payload_len);
         frame.extend_from_slice(payload);
 
         let peers = self.peers.read().await;
@@ -210,7 +218,22 @@ impl PlatformAdapter for TcpAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+        // Wire format is `[envelope_bytes][payload_bytes]`. Parse only the
+        // first `ENVELOPE_WIRE_LEN` bytes as the envelope; the remaining
+        // bytes are the mesh payload and are extracted separately by
+        // `PlatformAdapterPoller` (or other consumers).
+        use octo_network::dot::envelope::ENVELOPE_WIRE_LEN;
+        if raw.payload.len() < ENVELOPE_WIRE_LEN {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "envelope parse error: frame too short ({} bytes, need {})",
+                    raw.payload.len(),
+                    ENVELOPE_WIRE_LEN
+                ),
+            });
+        }
+        DeterministicEnvelope::from_wire_bytes(&raw.payload[..ENVELOPE_WIRE_LEN]).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("envelope parse error: {}", e),

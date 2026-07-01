@@ -24,6 +24,14 @@ pub enum MessageType {
     Discovery = 0x000B,
 }
 
+/// Canonical wire length of a serialized `DeterministicEnvelope`
+/// (signing bytes + 64-byte signature).
+///
+/// Single-frame Raw-mode wire formats (e.g., `TcpAdapter`) place the
+/// envelope at the start of a length-prefixed frame and the mesh
+/// payload after this many bytes.
+pub const ENVELOPE_WIRE_LEN: usize = 282;
+
 /// Deterministic Envelope for DOT
 ///
 /// All messages transported through DOT MUST use this canonical envelope.

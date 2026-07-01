@@ -21,7 +21,7 @@ fn make_request(model: &str) -> RequestContext {
     }
 }
 
-fn build_node(provider_models: Vec<&str>) -> QuotaRouterNode {
+fn build_node(provider_models: Vec<&str>) -> std::sync::Arc<QuotaRouterNode> {
     let mut builder = QuotaRouterNode::builder()
         .node_id(RouterNodeId([1u8; 32]))
         .network_id(NetworkId([2u8; 32]));

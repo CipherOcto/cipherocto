@@ -1,12 +1,8 @@
-use quota_router_e2e_tests::{TestCluster, Topology};
+use quota_router_e2e_tests::TestCluster;
 
 #[tokio::test]
 async fn l2_t15_gossip_propagation() {
-    let cluster = TestCluster::new(
-        2,
-        Topology::Star,
-        vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]],
-    );
+    let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     // Node 0 broadcasts gossip
@@ -28,7 +24,6 @@ async fn l2_t15_gossip_propagation() {
 async fn l2_t17_three_node_gossip_convergence() {
     let cluster = TestCluster::new(
         3,
-        Topology::Star,
         vec![
             vec!["gpt-4o".into()],
             vec!["claude-3".into()],
@@ -53,11 +48,7 @@ async fn l2_t17_three_node_gossip_convergence() {
 
 #[tokio::test]
 async fn l2_t18_gossip_capacity_update() {
-    let cluster = TestCluster::new(
-        2,
-        Topology::Star,
-        vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]],
-    );
+    let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     // Initial gossip

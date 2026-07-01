@@ -39,9 +39,7 @@ impl SignedPayload for RouterAnnouncePayload {
     }
     fn verify_hmac(&self, network_key: &[u8; 32]) -> bool {
         let expected = self.compute_hmac(network_key);
-        // Constant-time comparison to prevent timing leaks.
-        // In production, use `subtle::ConstantTimeEq`. For spec, direct compare.
-        self.hmac == expected
+        constant_time_eq(&self.hmac, &expected)
     }
 }
 
@@ -54,7 +52,7 @@ impl SignedPayload for RouterWithdrawPayload {
     }
     fn verify_hmac(&self, network_key: &[u8; 32]) -> bool {
         let expected = self.compute_hmac(network_key);
-        self.hmac == expected
+        constant_time_eq(&self.hmac, &expected)
     }
 }
 
@@ -67,7 +65,7 @@ impl SignedPayload for super::gossip::CapacityGossipPayload {
     }
     fn verify_hmac(&self, network_key: &[u8; 32]) -> bool {
         let expected = self.compute_hmac(network_key);
-        self.hmac == expected
+        constant_time_eq(&self.hmac, &expected)
     }
 }
 
@@ -84,8 +82,19 @@ impl SignedPayload for super::forward::ForwardRequestPayload {
     }
     fn verify_hmac(&self, network_key: &[u8; 32]) -> bool {
         let expected = self.compute_hmac(network_key);
-        self.hmac == expected
+        constant_time_eq(&self.hmac, &expected)
     }
+}
+
+/// Constant-time comparison of two byte arrays.
+/// XORs all bytes and accumulates — total time depends only on length,
+/// not on the values being compared.
+fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut diff = 0u8;
+    for i in 0..32 {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
 }
 
 #[cfg(test)]

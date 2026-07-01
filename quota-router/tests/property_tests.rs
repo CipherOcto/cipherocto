@@ -174,8 +174,8 @@ proptest! {
         caps_a in proptest::collection::vec(any_gossip_capacity(), 1..5),
         caps_b in proptest::collection::vec(any_gossip_capacity(), 1..5),
     ) {
-        let mut cache1 = GossipCache::new();
-        let mut cache2 = GossipCache::new();
+        let cache1 = GossipCache::new();
+        let cache2 = GossipCache::new();
         let sender_a = RouterNodeId([1u8; 32]);
         let sender_b = RouterNodeId([2u8; 32]);
         cache1.merge(sender_a, caps_a.clone());
@@ -191,8 +191,8 @@ proptest! {
     fn gossip_merge_idempotent(
         caps in proptest::collection::vec(any_gossip_capacity(), 1..5),
     ) {
-        let mut cache1 = GossipCache::new();
-        let mut cache2 = GossipCache::new();
+        let cache1 = GossipCache::new();
+        let cache2 = GossipCache::new();
         let sender = RouterNodeId([1u8; 32]);
         cache1.merge(sender, caps.clone());
         cache2.merge(sender, caps);

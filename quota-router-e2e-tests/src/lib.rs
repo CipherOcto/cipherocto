@@ -31,6 +31,7 @@
 //! real handler running on the peer side via the same dispatch path.
 
 use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -316,41 +317,157 @@ pub struct TestCluster {
     _peer_map: PeerMap,
     driver_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     driver_cancel: Arc<AtomicBool>,
+    driver_paused: Arc<AtomicBool>,
+    driver_ack: Arc<tokio::sync::Notify>,
+    driver_resume: Arc<tokio::sync::Notify>,
+    /// Shared registry of `Weak<TestNode>` references the driver uses
+    /// each iteration. Drained by [`TestCluster::node_mut`] so that
+    /// `Arc::get_mut` on `self.nodes[idx]` succeeds (it would otherwise
+    /// fail while any `Weak<TestNode>` references exist).
+    driver_nodes: Arc<Mutex<Vec<std::sync::Weak<TestNode>>>>,
+}
+
+/// RAII guard returned by [`TestCluster::node_mut`]. While the guard
+/// is alive, the cluster's background driver is paused (cannot
+/// upgrade its `Weak<TestNode>` to an `Arc<TestNode>`), so the caller
+/// has exclusive `&mut QuotaRouterNode` access. On `Drop`, fresh
+/// `Weak<TestNode>` references are re-created from the cluster's
+/// `nodes`, the pause flag is cleared, and `driver_resume` is
+/// signalled so the driver wakes from its pause wait.
+pub struct NodeMutGuard<'a> {
+    node: &'a mut QuotaRouterNode,
+    driver_paused: Arc<AtomicBool>,
+    driver_resume: Arc<tokio::sync::Notify>,
+    driver_nodes: Arc<Mutex<Vec<std::sync::Weak<TestNode>>>>,
+    /// Raw pointer to the cluster's `nodes` Vec, captured for use in
+    /// `Drop` to recreate `Weak<TestNode>` references without holding
+    /// an `Arc` (which would inflate `strong_count` and break
+    /// `Arc::get_mut`). Sound because `node_mut` borrows the cluster
+    /// mutably while the guard is constructed.
+    cluster_nodes_ptr: *const Vec<Arc<TestNode>>,
+}
+
+impl Deref for NodeMutGuard<'_> {
+    type Target = QuotaRouterNode;
+    fn deref(&self) -> &QuotaRouterNode {
+        self.node
+    }
+}
+
+impl DerefMut for NodeMutGuard<'_> {
+    fn deref_mut(&mut self) -> &mut QuotaRouterNode {
+        self.node
+    }
+}
+
+impl Drop for NodeMutGuard<'_> {
+    fn drop(&mut self) {
+        // SAFETY: `cluster_nodes_ptr` was captured from `&mut self`
+        // and the guard's lifetime ties to `&mut self`, so the Vec
+        // is still alive and unmodified. We only read it to construct
+        // Weak refs for the driver's registry.
+        let cluster_nodes = unsafe { &*self.cluster_nodes_ptr };
+        let weaks: Vec<std::sync::Weak<TestNode>> = cluster_nodes
+            .iter()
+            .map(std::sync::Arc::downgrade)
+            .collect();
+        if let Ok(mut guard) = self.driver_nodes.lock() {
+            *guard = weaks;
+        }
+        // Clear the pause flag so the background driver resumes on
+        // its next loop iteration.
+        self.driver_paused.store(false, Ordering::SeqCst);
+        // Signal the driver to wake from its pause-wait. The driver
+        // holds no other Awaited futures while paused, so this
+        // `notify_one` is guaranteed to be observed.
+        self.driver_resume.notify_one();
+    }
 }
 
 impl TestCluster {
     /// Mutable access to a test node's `QuotaRouterNode` by index.
-    /// Temporarily releases the handler's `Weak` back-reference so
-    /// `Arc::get_mut` succeeds on the inner `Arc<QuotaRouterNode>`,
-    /// then restores the weak once the caller is done mutating.
-    /// The Weak lives in a Mutex specifically to allow this escape
-    /// hatch while keeping inbound dispatch working the rest of the time.
-    pub fn node_mut(&mut self, idx: usize) -> &mut QuotaRouterNode {
-        // The builder returns `Arc<QuotaRouterNode>`. The inner
-        // `Arc::get_mut` requires unique ownership AND no Weak refs.
-        // The handler holds the Weak through a release-able Mutex so
-        // we can temporarily clear it.
-        //
-        // The outer `Arc::get_mut(&mut self.nodes[idx])` can fail if
-        // the background driver holds an `Arc<TestNode>` (it doesn't
-        // drop its local ref between iterations). Tests that need
-        // `node_mut` should pause the driver via
-        // `cluster.driver_cancel.store(true, Ordering::Relaxed)` and
-        // call `wait` for the in-flight iteration to finish before
-        // mutating. The gossip-correctness tests don't call
-        // `node_mut`, so the driver interferes only with TTL/concurrency
-        // tests — a separate cleanup-plan follow-up.
+    ///
+    /// Returns a [`NodeMutGuard`] that derefs to `QuotaRouterNode`,
+    /// borrowing the cluster for the guard's lifetime. While the
+    /// guard is alive, the background driver is paused — the driver
+    /// task observes `driver_paused` at every iteration boundary and
+    /// signals `driver_ack` when it sees the flag set. `node_mut`
+    /// awaits that signal before returning, guaranteeing no
+    /// `Arc<TestNode>` is currently held by the driver (which would
+    /// prevent `Arc::get_mut` from succeeding on `nodes[idx]`).
+    ///
+    /// **Pause mechanism (Option B):** an `AtomicBool` flag the
+    /// driver checks at iteration boundaries, plus a
+    /// `tokio::sync::Notify` the driver signals when it observes the
+    /// flag. This is preferred over aborting the driver (Option C)
+    /// because it preserves any in-flight iteration state and is
+    /// automatically reversed when the guard drops.
+    pub async fn node_mut(&mut self, idx: usize) -> NodeMutGuard<'_> {
+        // Pause the driver BEFORE registering the listener so we
+        // don't miss a notify that races ahead of us.
+        self.driver_paused.store(true, Ordering::SeqCst);
+        // Wait for the driver to acknowledge the pause. The driver
+        // signals `driver_ack` after observing the flag and dropping
+        // any locally-held `Weak<TestNode>` refs from its current
+        // iteration — at that point no `Arc<TestNode>` and no local
+        // `Weak<TestNode>` are held by the driver.
+        self.driver_ack.notified().await;
+
+        // Drain the driver's shared `Weak<TestNode>` registry so
+        // `Arc::get_mut` on `self.nodes[idx]` succeeds. We `take`
+        // (not clone) so the Weak refs are entirely dropped, freeing
+        // the weak_count on the underlying Arc allocations. The guard
+        // will re-create fresh Weak refs on `Drop` from the cluster's
+        // `nodes` (via raw pointer — see below). The returned Vec is
+        // immediately dropped here via `drop(...)` so the Weak refs
+        // are released before `Arc::get_mut` runs.
+        {
+            let mut guard = self.driver_nodes.lock().unwrap();
+            let drained: Vec<std::sync::Weak<TestNode>> = std::mem::take(&mut *guard);
+            drop(drained);
+        }
+
+        // Capture a raw pointer to `self.nodes` for use in Drop to
+        // recreate `Weak<TestNode>` refs. Storing `Arc<TestNode>`
+        // here would inflate `strong_count` and break `Arc::get_mut`.
+        // Sound because the guard's lifetime is tied to `&mut self`.
+        let cluster_nodes_ptr: *const Vec<Arc<TestNode>> = &self.nodes;
+
         let test_node = Arc::get_mut(&mut self.nodes[idx]).expect(
             "TestCluster::node_mut: another Arc<TestNode> exists; \
              tests must not clone node before tweaking config",
         );
-        let weak = test_node.node.release_handler_back_ref();
-        let inner = Arc::get_mut(&mut test_node.node).expect(
-            "TestCluster::node_mut: inner Arc<QuotaRouterNode> \
-             still has aliasing references after releasing the handler Weak",
-        );
-        inner.restore_handler_back_ref(weak);
-        inner
+        // Release the handler's back-reference (handler stores
+        // `Weak::new()` now) and immediately drop the returned Weak
+        // so the inner `Arc<QuotaRouterNode>` has zero outstanding
+        // Weak pointers. We can't call `Arc::get_mut` here because
+        // any Weak we'd create to hand back to the handler would
+        // inflate weak_count and fail the check. Instead, cast the
+        // Arc's pointer directly to `&mut QuotaRouterNode`. This is
+        // sound because:
+        //   1. `test_node.node` is the unique `Arc` for this node
+        //      (we hold the only strong reference — the cluster's
+        //      `Arc<TestNode>` does NOT clone the inner Arc).
+        //   2. We just dropped the handler's Weak, so weak_count = 0.
+        //   3. No other thread/task can clone `test_node.node` while
+        //      the guard is alive (it ties to `&mut self`).
+        drop(test_node.node.release_handler_back_ref());
+        let raw: *mut QuotaRouterNode =
+            std::sync::Arc::as_ptr(&test_node.node).cast_mut().cast::<QuotaRouterNode>();
+        let inner: &mut QuotaRouterNode = unsafe { &mut *raw };
+        // Recreate the handler's back-reference now. Since `inner`
+        // was created via raw pointer (not via `Arc::get_mut`), the
+        // borrow checker doesn't see a borrow on `test_node.node` —
+        // so we can downgrade it freely to rebuild the Weak.
+        let restore_weak = std::sync::Arc::downgrade(&test_node.node);
+        inner.restore_handler_back_ref(restore_weak);
+        NodeMutGuard {
+            node: inner,
+            driver_paused: self.driver_paused.clone(),
+            driver_resume: self.driver_resume.clone(),
+            driver_nodes: self.driver_nodes.clone(),
+            cluster_nodes_ptr,
+        }
     }
 }
 
@@ -380,22 +497,60 @@ impl TestCluster {
         // the peer must run its handler to fulfil it, and that requires
         // the inbox to be drained while `route()` is awaiting.
         //
-        // Holds `Weak<TestNode>` references and upgrades each iteration
-        // so the cluster retains the only strong `Arc<TestNode>` refs.
-        // That keeps `TestCluster::node_mut` working via `Arc::get_mut`
-        // for tests that tweak node config (e.g. `ForwardingConfig`)
-        // after `start_all()`.
+        // Holds `Weak<TestNode>` references (sourced from the shared
+        // `driver_nodes` registry) and upgrades each iteration. While
+        // running, no strong `Arc<TestNode>` is retained by the driver,
+        // and the `Weak` refs are short-lived (cloned per iteration and
+        // dropped at the end of the for-loop). The driver observes
+        // `driver_paused` at every iteration boundary and signals
+        // `driver_ack` when it sees the flag, allowing `node_mut` to
+        // safely acquire `&mut QuotaRouterNode` without racing.
+        //
+        // `Arc::get_mut` requires the absence of any `Weak` pointer to
+        // the same allocation, so `node_mut` must drain the registry
+        // before mutating (the guard restores it on Drop).
         let driver_cancel = Arc::new(AtomicBool::new(false));
+        let driver_paused = Arc::new(AtomicBool::new(false));
+        let driver_ack = Arc::new(tokio::sync::Notify::new());
+        let driver_resume = Arc::new(tokio::sync::Notify::new());
+        let driver_nodes: Arc<Mutex<Vec<std::sync::Weak<TestNode>>>> = Arc::new(Mutex::new(
+            nodes.iter().map(std::sync::Arc::downgrade).collect(),
+        ));
         let driver_handle = {
-            let nodes_for_driver: Vec<std::sync::Weak<TestNode>> =
-                nodes.iter().map(std::sync::Arc::downgrade).collect();
+            let driver_nodes = driver_nodes.clone();
             let cancel = driver_cancel.clone();
+            let paused = driver_paused.clone();
+            let ack = driver_ack.clone();
+            let resume = driver_resume.clone();
             tokio::spawn(async move {
                 while !cancel.load(Ordering::Relaxed) {
-                    for weak_node in &nodes_for_driver {
+                    // Check pause BEFORE acquiring the snapshot so we
+                    // never hold `Weak<TestNode>` refs when notifying.
+                    // If paused, notify once and wait for the guard's
+                    // `Drop` to signal resume.
+                    if paused.load(Ordering::SeqCst) {
+                        ack.notify_one();
+                        resume.notified().await;
+                        continue;
+                    }
+                    let snapshot: Vec<std::sync::Weak<TestNode>> = {
+                        let guard = driver_nodes.lock().unwrap();
+                        guard.iter().cloned().collect()
+                    };
+                    let mut saw_pause = false;
+                    for weak_node in &snapshot {
+                        if paused.load(Ordering::SeqCst) {
+                            saw_pause = true;
+                            break;
+                        }
                         if let Some(node) = weak_node.upgrade() {
                             node.drive().await;
                         }
+                    }
+                    drop(snapshot);
+                    if saw_pause {
+                        ack.notify_one();
+                        resume.notified().await;
                     }
                     tokio::task::yield_now().await;
                 }
@@ -408,6 +563,10 @@ impl TestCluster {
             _peer_map: peer_map,
             driver_handle: Mutex::new(Some(driver_handle)),
             driver_cancel,
+            driver_paused,
+            driver_ack,
+            driver_resume,
+            driver_nodes,
         }
     }
 

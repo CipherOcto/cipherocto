@@ -12,6 +12,10 @@ pub struct CapacityGossipPayload {
 }
 
 pub struct GossipCache {
+    inner: std::sync::RwLock<GossipCacheInner>,
+}
+
+struct GossipCacheInner {
     entries: BTreeMap<RouterNodeId, Vec<ProviderCapacity>>,
     last_updated: BTreeMap<RouterNodeId, u64>,
 }
@@ -29,23 +33,29 @@ impl Default for GossipCache {
 impl GossipCache {
     pub fn new() -> Self {
         Self {
-            entries: BTreeMap::new(),
-            last_updated: BTreeMap::new(),
+            inner: std::sync::RwLock::new(GossipCacheInner {
+                entries: BTreeMap::new(),
+                last_updated: BTreeMap::new(),
+            }),
         }
     }
 
-    pub fn merge(&mut self, sender_id: RouterNodeId, capacities: Vec<ProviderCapacity>) {
+    pub fn merge(&self, sender_id: RouterNodeId, capacities: Vec<ProviderCapacity>) {
         let now = monotonic_now();
-        self.entries.insert(sender_id, capacities);
-        self.last_updated.insert(sender_id, now);
+        let mut inner = self.inner.write().unwrap();
+        inner.entries.insert(sender_id, capacities);
+        inner.last_updated.insert(sender_id, now);
     }
 
     pub fn snapshot(&self) -> Vec<(RouterNodeId, Vec<ProviderCapacity>)> {
         let now = monotonic_now();
-        self.entries
+        let inner = self.inner.read().unwrap();
+        inner
+            .entries
             .iter()
             .filter(|(id, _)| {
-                self.last_updated
+                inner
+                    .last_updated
                     .get(id)
                     .map(|t| now.saturating_sub(*t) <= STALENESS_THRESHOLD)
                     .unwrap_or(false)
@@ -111,7 +121,7 @@ mod tests {
 
     #[test]
     fn gossip_cache_merge_and_snapshot() {
-        let mut cache = GossipCache::new();
+        let cache = GossipCache::new();
         let sender = RouterNodeId([1u8; 32]);
         let caps = vec![test_capacity("openai", 50)];
         cache.merge(sender, caps.clone());
@@ -123,7 +133,7 @@ mod tests {
 
     #[test]
     fn gossip_cache_snapshot_returns_fresh_entries() {
-        let mut cache = GossipCache::new();
+        let cache = GossipCache::new();
         let sender = RouterNodeId([1u8; 32]);
         cache.merge(sender, vec![]);
         // Freshly merged entries should always appear in snapshot
@@ -141,7 +151,7 @@ mod tests {
 
     #[test]
     fn gossip_cache_merge_overwrite() {
-        let mut cache = GossipCache::new();
+        let cache = GossipCache::new();
         let sender = RouterNodeId([1u8; 32]);
         cache.merge(sender, vec![test_capacity("openai", 100)]);
         cache.merge(sender, vec![test_capacity("openai", 10)]);
@@ -152,7 +162,7 @@ mod tests {
 
     #[test]
     fn gossip_cache_multi_sender() {
-        let mut cache = GossipCache::new();
+        let cache = GossipCache::new();
         let a = RouterNodeId([1u8; 32]);
         let b = RouterNodeId([2u8; 32]);
         let c = RouterNodeId([3u8; 32]);

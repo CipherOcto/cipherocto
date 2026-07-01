@@ -1,8 +1,8 @@
-use quota_router_e2e_tests::{make_request, TestCluster, Topology};
+use quota_router_e2e_tests::{make_request, TestCluster};
 
 #[tokio::test]
 async fn l2_t1_local_dispatch() {
-    let cluster = TestCluster::new(1, Topology::Star, vec![vec!["gpt-4o".into()]]);
+    let cluster = TestCluster::new(1, vec![vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     let ctx = make_request("gpt-4o");
@@ -13,7 +13,7 @@ async fn l2_t1_local_dispatch() {
 
 #[tokio::test]
 async fn l2_t5_model_not_supported() {
-    let cluster = TestCluster::new(1, Topology::Star, vec![vec!["gpt-4o".into()]]);
+    let cluster = TestCluster::new(1, vec![vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     let ctx = make_request("claude-3");
@@ -29,11 +29,7 @@ async fn l2_t5_model_not_supported() {
 async fn l2_t6_policy_quality() {
     // Node A has gpt-4o with 9000 bps, Node B has 9900 bps
     // Both should be available; Quality policy should prefer higher bps
-    let cluster = TestCluster::new(
-        2,
-        Topology::Star,
-        vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]],
-    );
+    let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     let ctx = make_request("gpt-4o");
@@ -43,7 +39,7 @@ async fn l2_t6_policy_quality() {
 
 #[tokio::test]
 async fn l2_t7_policy_local_only() {
-    let cluster = TestCluster::new(1, Topology::Star, vec![vec!["gpt-4o".into()]]);
+    let cluster = TestCluster::new(1, vec![vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     let mut ctx = make_request("gpt-4o");
@@ -54,7 +50,7 @@ async fn l2_t7_policy_local_only() {
 
 #[tokio::test]
 async fn l2_t10_payload_too_large() {
-    let cluster = TestCluster::new(1, Topology::Star, vec![vec!["gpt-4o".into()]]);
+    let cluster = TestCluster::new(1, vec![vec!["gpt-4o".into()]]);
     cluster.start_all().await;
 
     let ctx = make_request("gpt-4o");

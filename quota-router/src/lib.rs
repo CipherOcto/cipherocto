@@ -121,6 +121,11 @@ pub struct QuotaRouterNode {
     primary_provider: Arc<dyn LocalProvider>,
     pub rate_limiter: std::sync::Mutex<ratelimit::RateLimiter>,
     pub metrics: Option<metrics::QuotaRouterMetrics>,
+    /// Live count of in-flight remote forwards. Incremented when a
+    /// forward is dispatched, decremented when its oneshot resolves
+    /// or the request times out. Used to enforce
+    /// `config.forwarding.max_concurrent_forwards` in `route()`.
+    pub active_forwards: std::sync::atomic::AtomicUsize,
     /// Internal inbound handler. Owned by the node and registered
     /// with `self.transport` by the builder so inbound envelopes
     /// are dispatched into the handler without callers having to
@@ -464,6 +469,23 @@ impl QuotaRouterNode {
                     .map_err(RouterNodeError::Provider)
             }
             Destination::Remote { .. } => {
+                // Concurrent-forward gate. If we've hit the configured
+                // cap, refuse the forward rather than queuing — keeps the
+                // in-flight set bounded so backpressure is observable to
+                // callers. Pre-check (load) is a hint; the post-add
+                // fetch_add ensures the counter is correct under races.
+                if self
+                    .active_forwards
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    >= self.config.forwarding.max_concurrent_forwards as usize
+                {
+                    if let Some(m) = &self.metrics {
+                        m.record_outcome("rate_limited");
+                    }
+                    return Err(RouterNodeError::RateLimited);
+                }
+                self.active_forwards
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let request_id = {
                     let mut hasher = blake3::Hasher::new();
                     hasher.update(&context.consumer_id);
@@ -499,6 +521,8 @@ impl QuotaRouterNode {
                         m.active_forwards.dec();
                         m.record_outcome("send_failed");
                     }
+                    self.active_forwards
+                        .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     return Err(RouterNodeError::Transport(e.to_string()));
                 }
                 let outcome =
@@ -506,6 +530,8 @@ impl QuotaRouterNode {
                 if let Some(m) = &self.metrics {
                     m.active_forwards.dec();
                 }
+                self.active_forwards
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 match outcome {
                     Ok(Ok(ForwardOutcome::Completed(bytes))) => {
                         outcome_label = "remote_success";
@@ -774,6 +800,7 @@ impl QuotaRouterNodeBuilder {
                 primary_provider: primary_provider.clone(),
                 rate_limiter: std::sync::Mutex::new(ratelimit::RateLimiter::new(100, 500)),
                 metrics: Some(metrics::QuotaRouterMetrics::new()),
+                active_forwards: std::sync::atomic::AtomicUsize::new(0),
                 handler,
             }
         });

@@ -2,20 +2,33 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 
+use crate::receiver::{NetworkReceiver, ReceiveContext};
 use crate::sender::{NetworkSender, SendContext, TransportError};
 
-/// Declarative transport stack that fans out or fails over to multiple senders.
+/// Declarative transport stack that fans out or fails over to multiple senders,
+/// and dispatches inbound payloads to registered receivers.
 ///
 /// This is the consumer-facing API for any code — sync engines, agent
-/// runtimes, marketplace services — that needs to send data through
-/// the network.
+/// runtimes, marketplace services — that needs to send and receive data
+/// through the network.
 pub struct NodeTransport {
     senders: Vec<Arc<dyn NetworkSender>>,
+    receivers: std::sync::Mutex<Vec<Arc<dyn NetworkReceiver>>>,
 }
 
 impl NodeTransport {
     pub fn new(senders: Vec<Arc<dyn NetworkSender>>) -> Self {
-        Self { senders }
+        Self {
+            senders,
+            receivers: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Register a handler for inbound payloads.
+    /// Handlers are called in registration order by `dispatch()`.
+    /// Safe to call concurrently — receivers are protected by Mutex.
+    pub fn register_receiver(&self, receiver: Arc<dyn NetworkReceiver>) {
+        self.receivers.lock().unwrap().push(receiver);
     }
 
     /// Broadcast to all healthy transports concurrently.
@@ -52,6 +65,21 @@ impl NodeTransport {
         } else {
             Err(TransportError::Unhealthy)
         }
+    }
+
+    /// Dispatch an inbound payload to all registered receivers.
+    /// Calls `on_receive()` on each receiver in registration order.
+    /// Returns first error (fail-fast) or Ok if all succeed.
+    pub async fn dispatch(
+        &self,
+        payload: &[u8],
+        ctx: &ReceiveContext,
+    ) -> Result<(), TransportError> {
+        let receivers: Vec<_> = self.receivers.lock().unwrap().clone();
+        for receiver in &receivers {
+            receiver.on_receive(payload, ctx).await?;
+        }
+        Ok(())
     }
 
     /// Return list of healthy transport names.
@@ -325,5 +353,120 @@ mod tests {
         let payloads = captured.lock().unwrap();
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0], b"failover payload");
+    }
+
+    // === Receiver dispatch tests ===
+
+    use crate::receiver::{NetworkReceiver, ReceiveContext};
+
+    struct MockReceiver {
+        name: String,
+        captured: Arc<Mutex<Vec<Vec<u8>>>>,
+        should_fail: bool,
+    }
+
+    impl MockReceiver {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                captured: Arc::new(Mutex::new(Vec::new())),
+                should_fail: false,
+            }
+        }
+
+        fn failing(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                captured: Arc::new(Mutex::new(Vec::new())),
+                should_fail: true,
+            }
+        }
+
+        fn captured(&self) -> Vec<Vec<u8>> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl NetworkReceiver for MockReceiver {
+        async fn on_receive(
+            &self,
+            payload: &[u8],
+            _ctx: &ReceiveContext,
+        ) -> Result<(), TransportError> {
+            if self.should_fail {
+                Err(TransportError::AdapterFailure(self.name.clone()))
+            } else {
+                self.captured.lock().unwrap().push(payload.to_vec());
+                Ok(())
+            }
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    fn recv_ctx() -> ReceiveContext {
+        ReceiveContext {
+            source_transport: "test".to_string(),
+            mission_id: [0u8; 32],
+            sender_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_empty_receivers() {
+        let t = NodeTransport::new(vec![]);
+        assert!(t.dispatch(b"data", &recv_ctx()).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatch_single_receiver() {
+        let receiver = Arc::new(MockReceiver::new("rx1"));
+        let rx_clone = Arc::clone(&receiver);
+        let t = NodeTransport::new(vec![]);
+        t.register_receiver(receiver);
+        t.dispatch(b"hello", &recv_ctx()).await.unwrap();
+        assert_eq!(rx_clone.captured(), vec![b"hello".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_multiple_receivers() {
+        let rx1 = Arc::new(MockReceiver::new("rx1"));
+        let rx2 = Arc::new(MockReceiver::new("rx2"));
+        let rx1_clone = Arc::clone(&rx1);
+        let rx2_clone = Arc::clone(&rx2);
+        let t = NodeTransport::new(vec![]);
+        t.register_receiver(rx1);
+        t.register_receiver(rx2);
+        t.dispatch(b"data", &recv_ctx()).await.unwrap();
+        assert_eq!(rx1_clone.captured(), vec![b"data".to_vec()]);
+        assert_eq!(rx2_clone.captured(), vec![b"data".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn dispatch_fail_fast_on_first_error() {
+        let rx1 = Arc::new(MockReceiver::failing("rx1"));
+        let rx2 = Arc::new(MockReceiver::new("rx2"));
+        let rx2_clone = Arc::clone(&rx2);
+        let t = NodeTransport::new(vec![]);
+        t.register_receiver(rx1);
+        t.register_receiver(rx2);
+        let result = t.dispatch(b"data", &recv_ctx()).await;
+        assert!(matches!(result, Err(TransportError::AdapterFailure(_))));
+        // rx2 should NOT have been called (fail-fast)
+        assert_eq!(rx2_clone.captured(), Vec::<Vec<u8>>::new());
+    }
+
+    #[tokio::test]
+    async fn dispatch_preserves_payload() {
+        let receiver = Arc::new(MockReceiver::new("rx1"));
+        let rx_clone = Arc::clone(&receiver);
+        let t = NodeTransport::new(vec![]);
+        t.register_receiver(receiver);
+        let payload = b"exact payload bytes";
+        t.dispatch(payload, &recv_ctx()).await.unwrap();
+        assert_eq!(rx_clone.captured(), vec![payload.to_vec()]);
     }
 }

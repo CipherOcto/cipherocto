@@ -186,6 +186,12 @@ pub struct TestNode {
     pub node: Arc<QuotaRouterNode>,
     pub provider: Arc<MockLocalProvider>,
     inbox_rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<(RouterNodeId, Vec<u8>)>>,
+    /// Regression guard: counts every `dispatch_with_sender` invocation,
+    /// i.e. every payload that flowed through `node.receive()`. Tests
+    /// that bypass `receive()` and call `handler.on_receive()` directly
+    /// will not increment this counter — making any future bypass
+    /// attempt visible.
+    dispatch_call_count: std::sync::atomic::AtomicUsize,
 }
 
 impl TestNode {
@@ -240,6 +246,7 @@ impl TestNode {
             node,
             provider,
             inbox_rx: tokio::sync::Mutex::new(inbox_rx),
+            dispatch_call_count: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -270,12 +277,23 @@ impl TestNode {
             mission_id: [0u8; 32],
             sender_id: Some(sender_id.0),
         };
+        self.dispatch_call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Err(e) = self.node.receive(payload, &ctx).await {
             eprintln!(
                 "node {:?}: handler error on disc 0x{:02X}: {}",
                 self.node_id, payload[0], e
             );
         }
+    }
+
+    /// Number of times a payload was dispatched through this node's
+    /// production inbound path (`node.receive()`). Use this to assert
+    /// that an end-to-end interaction actually flowed through the
+    /// public API, not a bypass.
+    pub fn dispatch_call_count(&self) -> usize {
+        self.dispatch_call_count
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Broadcast a RouterAnnounce using the production method.

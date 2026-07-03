@@ -119,6 +119,7 @@ impl SsoKeyMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{ProviderConfig, ProviderType};
 
     #[test]
     fn test_map_role() {
@@ -151,6 +152,77 @@ mod tests {
             Some("eng-team".to_string())
         );
         assert_eq!(mapper.map_team(&["other".to_string()]), None);
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_key_no_mapping() {
+        let mapper = SsoKeyMapper::new(Arc::new(MockKeyStorage), HashMap::new(), HashMap::new());
+        let user = SsoUser {
+            sub: "user-123".into(),
+            email: Some("user@example.com".into()),
+            name: Some("Test User".into()),
+            groups: vec![],
+            roles: vec![],
+            provider_id: "okta".into(),
+        };
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: ProviderType::Okta,
+            config: ProviderConfig {
+                client_id: None,
+                client_secret: None,
+                issuer: None,
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        let result = mapper.get_or_create_key(&user, &provider).await;
+        assert!(matches!(result, Err(SsoError::NoKeyMapping(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_or_create_key_auto_provision() {
+        let mapper = SsoKeyMapper::new(Arc::new(MockKeyStorage), HashMap::new(), HashMap::new());
+        let user = SsoUser {
+            sub: "user-456".into(),
+            email: Some("user2@example.com".into()),
+            name: Some("Test User 2".into()),
+            groups: vec![],
+            roles: vec![],
+            provider_id: "okta".into(),
+        };
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: ProviderType::Okta,
+            config: ProviderConfig {
+                client_id: None,
+                client_secret: None,
+                issuer: None,
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: true,
+            default_team: None,
+        };
+        let result = mapper.get_or_create_key(&user, &provider).await;
+        // MockKeyStorage returns error for create, so this should fail
+        assert!(result.is_err());
     }
 
     struct MockKeyStorage;

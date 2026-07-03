@@ -832,3 +832,59 @@ fn convert_response(data: OpenAIResponse, _status: u16) -> HttpCompletionRespons
         metadata: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_response() {
+        let data = OpenAIResponse {
+            id: "chatcmpl-123".into(),
+            object: "chat.completion".into(),
+            created: 1234567890,
+            model: "gpt-4".into(),
+            choices: vec![OpenAIChoice {
+                index: 0,
+                message: OpenAIMessage {
+                    role: "assistant".into(),
+                    content: "Hello!".into(),
+                },
+                finish_reason: "stop".into(),
+            }],
+            usage: OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            },
+        };
+
+        let resp = convert_response(data, 200);
+        assert_eq!(resp.id, "chatcmpl-123");
+        assert_eq!(resp.object, "chat.completion");
+        assert_eq!(resp.model, "gpt-4");
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.content, Some("Hello!".into()));
+        assert_eq!(resp.usage.prompt_tokens, 10);
+        assert_eq!(resp.usage.completion_tokens, 5);
+        assert_eq!(resp.usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_status_error_401() {
+        let err = status_error(reqwest::StatusCode::UNAUTHORIZED, "Unauthorized");
+        assert!(matches!(err, ProviderError::AuthError(_)));
+    }
+
+    #[test]
+    fn test_status_error_429() {
+        let err = status_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "Rate limited");
+        assert!(matches!(err, ProviderError::RateLimit(_)));
+    }
+
+    #[test]
+    fn test_status_error_500() {
+        let err = status_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "Server error");
+        assert!(matches!(err, ProviderError::InvalidResponse(_)));
+    }
+}

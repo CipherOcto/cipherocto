@@ -142,4 +142,15 @@ mod tests {
         assert!(!blacklist.is_revoked("expired-token").await.unwrap());
         assert!(blacklist.is_revoked("valid-token").await.unwrap());
     }
+
+    #[tokio::test]
+    async fn test_blacklist_default() {
+        let storage = Arc::new(InMemoryBlacklistStorage::default());
+        let blacklist = TokenBlacklist::new(storage);
+
+        // Should work with default storage
+        let expires_at = Utc::now() + Duration::hours(1);
+        blacklist.revoke("token-default", expires_at).await.unwrap();
+        assert!(blacklist.is_revoked("token-default").await.unwrap());
+    }
 }

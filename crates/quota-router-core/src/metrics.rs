@@ -148,3 +148,64 @@ impl Default for Metrics {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics_new() {
+        let metrics = Metrics::new();
+        assert_eq!(metrics.requests_total.get(), 0);
+        assert_eq!(metrics.rate_limit_hits.get(), 0);
+        assert_eq!(metrics.provider_errors.get(), 0);
+        assert_eq!(metrics.routing_decisions.get(), 0);
+        assert_eq!(metrics.cache_hits.get(), 0);
+        assert_eq!(metrics.cache_misses.get(), 0);
+        assert_eq!(metrics.precall_check_failures.get(), 0);
+        assert_eq!(metrics.budget_alerts.get(), 0);
+    }
+
+    #[test]
+    fn test_metrics_default() {
+        let metrics = Metrics::default();
+        assert_eq!(metrics.requests_total.get(), 0);
+    }
+
+    #[test]
+    fn test_metrics_encode() {
+        let metrics = Metrics::new();
+        let encoded = metrics.encode();
+        assert!(encoded.contains("requests_total"));
+        assert!(encoded.contains("rate_limit_hits_total"));
+        assert!(encoded.contains("provider_errors_total"));
+    }
+
+    #[test]
+    fn test_metrics_counter_increment() {
+        let metrics = Metrics::new();
+        metrics.requests_total.inc();
+        metrics.requests_total.inc();
+        assert_eq!(metrics.requests_total.get(), 2);
+
+        metrics.rate_limit_hits.inc();
+        assert_eq!(metrics.rate_limit_hits.get(), 1);
+    }
+
+    #[test]
+    fn test_metrics_histogram_observe() {
+        let metrics = Metrics::new();
+        metrics.request_duration.observe(0.5);
+        metrics.request_duration.observe(1.0);
+        assert_eq!(metrics.request_duration.get_sample_count(), 2);
+    }
+
+    #[test]
+    fn test_metrics_gauge_set() {
+        let metrics = Metrics::new();
+        metrics.budget_spend.set(100.0);
+        assert_eq!(metrics.budget_spend.get(), 100.0);
+        metrics.budget_spend.set(200.0);
+        assert_eq!(metrics.budget_spend.get(), 200.0);
+    }
+}

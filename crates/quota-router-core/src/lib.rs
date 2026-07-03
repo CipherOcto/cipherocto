@@ -42,6 +42,9 @@ pub mod secret_manager;
 pub mod storage;
 pub mod tracing;
 
+#[cfg(test)]
+pub mod testing;
+
 // Mesh network layer (QuotaRouterNode + gossip + forward + handler + scorer)
 // Always available — node mesh works in all 3 modes (litellm / any-llm / full).
 pub mod node;

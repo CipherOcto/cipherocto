@@ -265,3 +265,139 @@ impl ChunkChoice {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_new() {
+        let msg = Message::new("user", "hello");
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, Some("hello".into()));
+        assert!(msg.name.is_none());
+        assert!(msg.tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_message_with_tool_calls() {
+        let tool_call = ToolCall {
+            id: "call_1".into(),
+            r#type: "function".into(),
+            function: FunctionCall {
+                name: "get_weather".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let msg = Message::with_tool_calls("assistant", vec![tool_call]);
+        assert_eq!(msg.role, "assistant");
+        assert!(msg.content.is_none());
+        assert!(msg.tool_calls.is_some());
+    }
+
+    #[test]
+    fn test_message_tool_response() {
+        let msg = Message::tool_response("call_1", "sunny");
+        assert_eq!(msg.role, "tool");
+        assert_eq!(msg.content, Some("sunny".into()));
+        assert_eq!(msg.tool_call_id, Some("call_1".into()));
+    }
+
+    #[test]
+    fn test_usage_new() {
+        let usage = Usage::new(10, 20, 30);
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 20);
+        assert_eq!(usage.total_tokens, 30);
+    }
+
+    #[test]
+    fn test_usage_default() {
+        let usage = Usage::default();
+        assert_eq!(usage.prompt_tokens, 0);
+    }
+
+    #[test]
+    fn test_choice_new() {
+        let msg = Message::new("assistant", "hi");
+        let choice = Choice::new(0, msg, "stop");
+        assert_eq!(choice.index, 0);
+        assert_eq!(choice.finish_reason, "stop");
+        assert!(choice.logprobs.is_none());
+    }
+
+    #[test]
+    fn test_embedding_new() {
+        let emb = Embedding::new(0, vec![0.1, 0.2, 0.3]);
+        assert_eq!(emb.object, "embedding");
+        assert_eq!(emb.index, 0);
+        assert_eq!(emb.embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn test_chat_completion_chunk_new() {
+        let delta = Message::new("assistant", "hi");
+        let choice = ChunkChoice::new(0, delta);
+        let chunk = ChatCompletionChunk::new("chunk-1", "gpt-4o", choice);
+        assert_eq!(chunk.id, "chunk-1");
+        assert_eq!(chunk.model, "gpt-4o");
+        assert_eq!(chunk.object, "chat.completion.chunk");
+    }
+
+    #[test]
+    fn test_chunk_choice_new() {
+        let delta = Message::new("assistant", "hi");
+        let choice = ChunkChoice::new(0, delta);
+        assert_eq!(choice.index, 0);
+        assert!(choice.finish_reason.is_none());
+    }
+
+    #[test]
+    fn test_chunk_choice_with_finish_reason() {
+        let delta = Message::new("assistant", "hi");
+        let choice = ChunkChoice::with_finish_reason(0, delta, "stop");
+        assert_eq!(choice.finish_reason, Some("stop".into()));
+    }
+
+    #[test]
+    fn test_tool_choice_string() {
+        let tc = ToolChoice::String("auto".into());
+        match tc {
+            ToolChoice::String(s) => assert_eq!(s, "auto"),
+            _ => panic!("expected String variant"),
+        }
+    }
+
+    #[test]
+    fn test_tool_choice_specific() {
+        let tc = ToolChoice::Specific(SpecificToolChoice {
+            r#type: "function".into(),
+            function: FunctionName {
+                name: "get_weather".into(),
+            },
+        });
+        match tc {
+            ToolChoice::Specific(s) => assert_eq!(s.function.name, "get_weather"),
+            _ => panic!("expected Specific variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_format() {
+        let rf = ResponseFormat {
+            r#type: "json_object".into(),
+            json_schema: None,
+        };
+        assert_eq!(rf.r#type, "json_object");
+    }
+
+    #[test]
+    fn test_function_definition() {
+        let fd = FunctionDefinition {
+            name: "get_weather".into(),
+            description: Some("Get weather".into()),
+            parameters: None,
+        };
+        assert_eq!(fd.name, "get_weather");
+    }
+}

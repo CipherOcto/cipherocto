@@ -640,4 +640,82 @@ mod tests {
         assert_eq!(config.jwt.supported_algorithms.len(), 6);
         assert_eq!(config.rate_limit.login_per_minute, 10);
     }
+
+    #[test]
+    fn test_sso_error_status_codes() {
+        let errors = vec![
+            (SsoError::ProviderNotFound("test".into()), 404),
+            (SsoError::ProviderDisabled("test".into()), 404),
+            (SsoError::InvalidState, 400),
+            (SsoError::InvalidCode, 400),
+            (SsoError::TokenExpired, 401),
+            (SsoError::TokenRevoked, 401),
+            (SsoError::TokenInvalid("test".into()), 401),
+            (SsoError::TokenAlgorithmUnsupported("test".into()), 401),
+            (SsoError::TokenAlgorithmNone, 401),
+            (SsoError::AudienceMismatch { expected: "a".into(), actual: "b".into() }, 401),
+            (SsoError::IssuerMismatch { expected: "a".into(), actual: "b".into() }, 401),
+            (SsoError::SamlSignatureInvalid("test".into()), 401),
+            (SsoError::SamlAssertionExpired, 401),
+            (SsoError::SamlAudienceMismatch, 401),
+            (SsoError::NoKeyMapping("test".into()), 403),
+            (SsoError::UserDeactivated("test".into()), 403),
+            (SsoError::ProviderError("test".into()), 502),
+            (SsoError::RateLimited, 429),
+        ];
+
+        for (err, expected_code) in errors {
+            assert_eq!(err.status_code(), expected_code);
+        }
+    }
+
+    #[test]
+    fn test_sso_error_types() {
+        let errors = vec![
+            (SsoError::ProviderNotFound("test".into()), "not_found"),
+            (SsoError::ProviderDisabled("test".into()), "not_found"),
+            (SsoError::InvalidState, "invalid_request"),
+            (SsoError::InvalidCode, "invalid_request"),
+            (SsoError::TokenExpired, "authentication_error"),
+            (SsoError::TokenRevoked, "authentication_error"),
+        ];
+
+        for (err, expected_type) in errors {
+            assert_eq!(err.error_type(), expected_type);
+        }
+    }
+
+    #[test]
+    fn test_provider_config_validation_generic_oauth() {
+        let config = ProviderConfig {
+            client_id: Some("id".into()),
+            client_secret: Some("secret".into()),
+            issuer: Some("https://oauth.example.com".into()),
+            scopes: None,
+            idp_metadata_url: None,
+            sp_entity_id: None,
+            acs_url: None,
+            idp_certificate: None,
+            scim_url: None,
+            scim_token: None,
+        };
+        assert!(config.validate(&ProviderType::GenericOidc).is_ok());
+    }
+
+    #[test]
+    fn test_provider_config_validation_generic_oidc() {
+        let config = ProviderConfig {
+            client_id: Some("id".into()),
+            client_secret: Some("secret".into()),
+            issuer: Some("https://oidc.example.com".into()),
+            scopes: None,
+            idp_metadata_url: None,
+            sp_entity_id: None,
+            acs_url: None,
+            idp_certificate: None,
+            scim_url: None,
+            scim_token: None,
+        };
+        assert!(config.validate(&ProviderType::GenericOidc).is_ok());
+    }
 }

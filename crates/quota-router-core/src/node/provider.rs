@@ -170,6 +170,45 @@ impl LocalProvider for PyO3LocalProvider {
     }
 }
 
+/// A deterministic local provider for docker tests and CLI
+/// `--mock-provider` mode. Returns a fixed JSON response without
+/// calling any real API. Used by T-CLI1 and Layer 4 docker tests.
+pub struct MockLocalProvider {
+    models: Vec<String>,
+    response: Vec<u8>,
+}
+
+impl MockLocalProvider {
+    pub fn new(models: Vec<String>) -> Self {
+        Self {
+            models,
+            response: br#"{"mock":true}"#.to_vec(),
+        }
+    }
+
+    pub fn with_response(models: Vec<String>, response: Vec<u8>) -> Self {
+        Self { models, response }
+    }
+}
+
+#[async_trait]
+impl LocalProvider for MockLocalProvider {
+    async fn completion(
+        &self,
+        _model: &str,
+        _messages: &[u8],
+        _params: &ProviderCapacity,
+    ) -> Result<Vec<u8>, ProviderError> {
+        Ok(self.response.clone())
+    }
+    async fn health_check(&self) -> ProviderHealth {
+        ProviderHealth::Healthy
+    }
+    fn supported_models(&self) -> Vec<String> {
+        self.models.clone()
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
@@ -295,5 +334,84 @@ mod tests {
             let decoded: ProviderHealth = bincode::deserialize(&encoded).unwrap();
             assert_eq!(*v, decoded);
         }
+    }
+
+    #[tokio::test]
+    async fn mock_provider_returns_default_response() {
+        let p = MockLocalProvider::new(vec!["gpt-4o".into()]);
+        let params = ProviderCapacity {
+            provider_id: ProviderId([1u8; 32]),
+            provider_name: "test".into(),
+            router_node_id: RouterNodeId([0u8; 32]),
+            models: vec![],
+            requests_remaining: 100,
+            pricing: vec![],
+            status: ProviderHealth::Healthy,
+            latency_ms: 0,
+            success_rate_bps: 0,
+            last_updated: 0,
+        };
+        let result = p.completion("gpt-4o", b"test", &params).await.unwrap();
+        assert_eq!(result, br#"{"mock":true}"#);
+        assert_eq!(p.health_check().await, ProviderHealth::Healthy);
+        assert_eq!(p.supported_models(), vec!["gpt-4o".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn mock_provider_with_response() {
+        let p =
+            MockLocalProvider::with_response(vec!["gpt-4o".into()], b"custom response".to_vec());
+        let params = ProviderCapacity {
+            provider_id: ProviderId([1u8; 32]),
+            provider_name: "test".into(),
+            router_node_id: RouterNodeId([0u8; 32]),
+            models: vec![],
+            requests_remaining: 100,
+            pricing: vec![],
+            status: ProviderHealth::Healthy,
+            latency_ms: 0,
+            success_rate_bps: 0,
+            last_updated: 0,
+        };
+        let result = p.completion("gpt-4o", b"", &params).await.unwrap();
+        assert_eq!(result, b"custom response");
+    }
+
+    #[tokio::test]
+    async fn http_provider_health_check_returns_unknown() {
+        let cfg = ProviderConfig {
+            name: "openai".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth: ProviderAuth::ApiKey("test".into()),
+            models: vec!["gpt-4o".into()],
+        };
+        let p = HttpLocalProvider::new(cfg);
+        assert_eq!(p.health_check().await, ProviderHealth::Unknown);
+        assert_eq!(p.supported_models(), vec!["gpt-4o".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn http_provider_completion_returns_placeholder() {
+        let cfg = ProviderConfig {
+            name: "openai".into(),
+            endpoint: "https://api.openai.com".into(),
+            auth: ProviderAuth::ApiKey("test".into()),
+            models: vec!["gpt-4o".into()],
+        };
+        let p = HttpLocalProvider::new(cfg);
+        let params = ProviderCapacity {
+            provider_id: ProviderId([1u8; 32]),
+            provider_name: "test".into(),
+            router_node_id: RouterNodeId([0u8; 32]),
+            models: vec![],
+            requests_remaining: 100,
+            pricing: vec![],
+            status: ProviderHealth::Healthy,
+            latency_ms: 0,
+            success_rate_bps: 0,
+            last_updated: 0,
+        };
+        let result = p.completion("gpt-4o", b"test", &params).await.unwrap();
+        assert_eq!(result, b"{}");
     }
 }

@@ -23,6 +23,23 @@ impl Destination {
     }
 }
 
+/// Outcome of the destination selection algorithm. Distinguishes
+/// between "no candidates matched" and "all matching candidates had
+/// zero capacity" so the handler can emit the correct
+/// `ForwardRejectReason` and trigger pull-gossip when appropriate.
+#[derive(Clone, Debug)]
+pub enum SelectionState {
+    /// At least one destination passed all hard filters.
+    Matched(Vec<Destination>),
+    /// All candidates were filtered out because no provider has
+    /// remaining capacity (model matches but `requests_remaining == 0`
+    /// for every matching provider, both local and remote).
+    CapacityExhausted,
+    /// All candidates were filtered out for other reasons (model
+    /// mismatch, budget exceeded, health unavailable, etc.).
+    NoMatch,
+}
+
 pub fn select_destinations(
     request: &RequestContext,
     local_providers: &[ProviderCapacity],
@@ -72,6 +89,34 @@ pub fn select_destinations(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     candidates
+}
+
+/// Selection variant that distinguishes "no match" from "capacity
+/// exhausted". Used by the handler to emit the correct
+/// `ForwardRejectReason` and trigger pull-gossip on capacity exhaustion.
+pub fn select_destinations_with_state(
+    request: &RequestContext,
+    local_providers: &[ProviderCapacity],
+    peer_capabilities: &[(RouterNodeId, Vec<ProviderCapacity>)],
+    policy: &RoutingPolicy,
+) -> SelectionState {
+    let candidates = select_destinations(request, local_providers, peer_capabilities, policy);
+    if !candidates.is_empty() {
+        return SelectionState::Matched(candidates);
+    }
+
+    // Candidates were empty — determine why. Check if any provider
+    // (local or remote) matches the model at all but has zero capacity.
+    let has_matching_with_zero_capacity = local_providers
+        .iter()
+        .chain(peer_capabilities.iter().flat_map(|(_, caps)| caps.iter()))
+        .any(|p| filter_model(p, &request.model) && p.requests_remaining == 0);
+
+    if has_matching_with_zero_capacity {
+        SelectionState::CapacityExhausted
+    } else {
+        SelectionState::NoMatch
+    }
 }
 
 fn filter_model(provider: &ProviderCapacity, model: &str) -> bool {
@@ -184,8 +229,8 @@ fn score_provider(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::provider::{ModelPricing, ProviderHealth, ProviderId, RouterNodeId};
+    use super::*;
 
     fn make_provider(
         name: &str,
@@ -395,5 +440,62 @@ mod tests {
             Destination::Remote { provider, .. } => assert_eq!(provider.provider_name, "b"),
             _ => panic!("expected remote b"),
         }
+    }
+
+    #[test]
+    fn selection_state_matched() {
+        let local = vec![make_provider("a", "gpt-4o", 3, 200, 9500, 100)];
+        let req = make_request("gpt-4o");
+        let state = select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(state, SelectionState::Matched(_)));
+    }
+
+    #[test]
+    fn selection_state_no_match_model_mismatch() {
+        let local = vec![make_provider("a", "gpt-4o", 3, 200, 9500, 100)];
+        let req = make_request("claude-3-opus");
+        let state = select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(state, SelectionState::NoMatch));
+    }
+
+    #[test]
+    fn selection_state_no_match_budget_exceeded() {
+        let local = vec![make_provider("a", "gpt-4o", 15, 200, 9500, 100)];
+        let mut req = make_request("gpt-4o");
+        req.max_price_per_1k_tokens = Some(10);
+        let state = select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(state, SelectionState::NoMatch));
+    }
+
+    #[test]
+    fn selection_state_capacity_exhausted() {
+        let local = vec![make_provider("a", "gpt-4o", 3, 200, 9500, 0)];
+        let req = make_request("gpt-4o");
+        let state = select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(state, SelectionState::CapacityExhausted));
+    }
+
+    #[test]
+    fn selection_state_capacity_exhausted_remote_only() {
+        let peer_id = RouterNodeId([2u8; 32]);
+        let remote = vec![make_provider("remote", "gpt-4o", 2, 100, 9900, 0)];
+        let req = make_request("gpt-4o");
+        let state = select_destinations_with_state(
+            &req,
+            &[],
+            &[(peer_id, remote)],
+            &RoutingPolicy::Balanced,
+        );
+        assert!(matches!(state, SelectionState::CapacityExhausted));
+    }
+
+    #[test]
+    fn selection_state_no_match_health_unavailable() {
+        let mut p = make_provider("a", "gpt-4o", 3, 200, 9500, 100);
+        p.status = ProviderHealth::Unavailable;
+        let local = vec![p];
+        let req = make_request("gpt-4o");
+        let state = select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(state, SelectionState::NoMatch));
     }
 }

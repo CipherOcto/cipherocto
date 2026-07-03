@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-29) — `QuotaRouterNode` now owns its `QuotaRouterHandler` as an internal member; `builder().build()` returns a single, fully-wired node. Cross-process boundary is out of scope until a real design discussion lands (see Mission 0870g in `missions/deferred/`). All tests must target the production library per the Test Policy below.
+Accepted (2026-06-30) — `QuotaRouterNode` now owns its `QuotaRouterHandler` as an internal member; `builder().build()` returns a single, fully-wired node. `SelectionState` enum distinguishes capacity-exhausted from no-match rejections. `PlatformAdapterPoller` closes the inbound gap for `PlatformAdapter`. Cross-process boundary is out of scope until a real design discussion lands (see Mission 0870g in `missions/deferred/`). All tests must target the production library per the Test Policy below.
 
 ## Authors
 
@@ -712,7 +712,7 @@ impl QuotaRouterHandler {
 /// Mutex across async .await. The scoring pass is synchronous (under lock);
 /// the dispatch/forward is async (lock released).
 enum DropAction {
-    Reject,
+    Reject(ForwardRejectReason),
     LocalDispatch(ProviderCapacity),
     Forward,
 }
@@ -739,26 +739,30 @@ impl QuotaRouterHandler {
                 .map(|p| ProviderCapacity::from_config(p, node.config.node_id))
                 .collect();
             let peer_caps = node.gossip_cache.snapshot();
-            let destinations = node.select_destinations(
+            let selection = node.select_destinations_with_state(
                 &req.context, &local, &peer_caps, &node.config.policy,
             );
 
-            if destinations.is_empty() {
-                DropAction::Reject
-            } else {
-                match destinations.first() {
+            match selection {
+                SelectionState::Matched(destinations) => match destinations.first() {
                     Some(Destination::Local { provider, .. }) => {
                         DropAction::LocalDispatch(provider.clone())
                     }
                     Some(Destination::Remote { .. }) => DropAction::Forward,
                     None => unreachable!(),
+                },
+                SelectionState::CapacityExhausted => {
+                    DropAction::Reject(ForwardRejectReason::CapacityExhausted)
+                }
+                SelectionState::NoMatch => {
+                    DropAction::Reject(ForwardRejectReason::NoProvider)
                 }
             }
         }; // lock released here
 
         match action {
-            DropAction::Reject => {
-                self.send_forward_reject(req.request_id, ForwardRejectReason::NoProvider).await?;
+            DropAction::Reject(reason) => {
+                self.send_forward_reject(req.request_id, reason).await?;
             }
             DropAction::LocalDispatch(provider) => {
                 let response = self.provider.completion(
@@ -840,6 +844,85 @@ All inbound quota router messages flow through a single `QuotaRouterHandler` tha
 **Design Choice — Handler owns a reference to QuotaRouterNode:**
 
 The handler needs access to the node's gossip cache, peer cache, and routing policy to process inbound messages. It holds an `Arc<Mutex<QuotaRouterNode>>` — the same thread-safety pattern used by `GovernedTransport` and `TransportDiscovery`.
+
+### PlatformAdapter Receiver: Inbound Polling Bridge
+
+The mesh is send-only without a receiver-side bridge. `PlatformAdapterBridge` (RFC-0863) implements `NetworkSender` for outbound dispatch via `adapter.send_message(...)`, but there is no production path for inbound data from a `PlatformAdapter` into `NodeTransport::dispatch`.
+
+`PlatformAdapterPoller` closes this gap. It is the inbound counterpart of `PlatformAdapterBridge` — together they make a `PlatformAdapter` fully usable from `NodeTransport`:
+
+- **Outbound:** `PlatformAdapterBridge::send` → `adapter.send_message(domain, envelope, payload)`
+- **Inbound:** `PlatformAdapterPoller::run` → poll `adapter.receive_messages(domain)` → parse envelope → `NodeTransport::dispatch(payload, ctx)`
+
+```rust
+/// Runtime poller that drains `PlatformAdapter::receive_messages` and
+/// feeds the inbound payloads into `NodeTransport::dispatch`.
+pub struct PlatformAdapterPoller {
+    adapter: Arc<dyn PlatformAdapter>,
+    domain: BroadcastDomainId,
+    transport: Arc<NodeTransport>,
+}
+
+impl PlatformAdapterPoller {
+    pub fn new(
+        adapter: Arc<dyn PlatformAdapter>,
+        domain: BroadcastDomainId,
+        transport: Arc<NodeTransport>,
+    ) -> Self;
+
+    /// Run the poll loop. Returns when the adapter's inbound mpsc closes.
+    ///
+    /// For each `RawPlatformMessage`:
+    ///   1. `adapter.canonicalize(raw)` → `DeterministicEnvelope`
+    ///      (parses first `ENVELOPE_WIRE_LEN` bytes of `raw.payload`)
+    ///   2. `envelope.source_peer` → `ReceiveContext.sender_id`
+    ///   3. `raw.payload[ENVELOPE_WIRE_LEN..]` → mesh payload
+    ///   4. `transport.dispatch(payload, ctx)` → registered receivers
+    pub async fn run(&self) {
+        loop {
+            let messages = match self.adapter.receive_messages(&self.domain).await {
+                Ok(m) => m,
+                Err(e) => { /* log + yield + continue */ }
+            };
+            if messages.is_empty() {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            for raw in messages {
+                self.dispatch_one(&raw).await;
+            }
+        }
+    }
+}
+```
+
+**Wire-format contract (RFC-0850 §8.8 Raw mode):**
+
+`RawPlatformMessage.payload` is `[DeterministicEnvelope wire bytes (282 bytes)][mesh payload bytes]`. The poller splits the frame:
+- Bytes `0..ENVELOPE_WIRE_LEN` → parsed via `canonicalize()` to extract `envelope.source_peer` (32-byte sender-id), `envelope.mission_id`, and other envelope fields.
+- Bytes `ENVELOPE_WIRE_LEN..` → the mesh payload, dispatched to all registered `NetworkReceiver` instances via `NodeTransport::dispatch`.
+
+**Sender-id plumbing:**
+
+`envelope.source_peer` is mapped to `ReceiveContext.sender_id` so the handler's HMAC trust check can resolve the sender's `PeerTrust`. For `TcpAdapter`, the sender-id is derived from the 32-byte `source_peer` field in the `DeterministicEnvelope` (already present in the wire format). No wire change is needed.
+
+**Integration with `QuotaRouterNode`:**
+
+When `quota-router serve` (T-CLI1) or the PyO3 binding starts the mesh, the startup sequence spawns a `PlatformAdapterPoller` per configured `PlatformAdapter`:
+
+```rust
+// Startup wiring (inside core::serve or PyO3 binding):
+let poller = PlatformAdapterPoller::new(
+    Arc::clone(&adapter),
+    domain,
+    Arc::clone(&node.transport),
+);
+tokio::spawn(async move { poller.run().await });
+```
+
+The poller runs as a background task. It does not hold any node-level locks — only `Arc<NodeTransport>` and `Arc<dyn PlatformAdapter>`. The dispatch path (`NodeTransport::dispatch`) iterates registered receivers (including `QuotaRouterHandler`) and calls `on_receive` on each.
+
+**Production code location:** `octo-transport/src/adapter_poller.rs`
 
 ### Response Path: How ForwardResponse Routes Back
 
@@ -2355,7 +2438,32 @@ impl Destination {
         }
     }
 }
+
+/// Outcome of the destination selection algorithm. Distinguishes
+/// between "no candidates matched" and "all matching candidates had
+/// zero capacity" so the handler can emit the correct
+/// `ForwardRejectReason` and trigger pull-gossip when appropriate.
+pub enum SelectionState {
+    /// At least one destination passed all hard filters.
+    Matched(Vec<Destination>),
+    /// All candidates were filtered out because no provider has
+    /// remaining capacity (model matches but `requests_remaining == 0`
+    /// for every matching provider, both local and remote).
+    CapacityExhausted,
+    /// All candidates were filtered out for other reasons (model
+    /// mismatch, budget exceeded, health unavailable, etc.).
+    NoMatch,
+}
 ```
+
+**Design Choice — `SelectionState` over empty `Vec<Destination>`:**
+
+A bare empty `Vec<Destination>` from `select_destinations` conflates two distinct failure modes: "no provider supports this model" (`NoMatch`) and "providers support the model but all are at zero capacity" (`CapacityExhausted`). The handler needs this distinction to:
+
+1. Send the correct `ForwardRejectReason` (`NoProvider` vs `CapacityExhausted`).
+2. Trigger pull-gossip only on `CapacityExhausted` (the originating node learns fresh capacity and may retry other peers). On `NoMatch`, pull-gossip is pointless — no peer has the model regardless of capacity.
+
+The `select_destinations_with_state` function wraps `select_destinations` and adds the post-hoc classification by scanning whether any model-matching provider has `requests_remaining == 0`.
 
 ### Provider Scoring Function
 
@@ -2823,6 +2931,7 @@ This means the quota router network can be deployed and tested without waiting f
 | 1.11 | 2026-06-28 | Added TCP/UDP transport references: quota router nodes can now use `PlatformType::Tcp` (RFC-0850 §8.8) or `PlatformType::Udp` (RFC-0850 §8.9) adapters via `PlatformAdapterBridge`. Updated transport integration notes to reference TCP adapter for L3 cross-process E2E tests. |
 | 1.12 | 2026-06-29 | Fixed wiring diagram to use RFC-0863 v1.7 `NodeTransport::register_receiver()`. Removed fictional `transport: Arc<NodeTransport>` field from `QuotaRouterHandler` spec. Updated handler to hold `Arc<QuotaRouterNode>` directly (no Mutex). Added inbound receive loop to startup diagram. |
 | 1.13 | 2026-06-30 | **Architectural cleanup — fake-binary removal.** Removed the fictitious `quota-router-node` binary from scope. `QuotaRouterNodeBuilder::build()` now returns a single, fully-wired `QuotaRouterNode` (the internal `QuotaRouterHandler` is constructed and registered with `NodeTransport` inside `build()` — no caller-side wiring). Added `QuotaRouterNode::receive()` public inbound API (symmetric to `route()`). Added §Public API subsection listing the three entry points. Added §Test Policy codifying "tests must target the production library; no fake tests, no workarounds". Missions 0870g and 0870i moved to `missions/deferred/` pending a real cross-process design discussion. |
+| 1.14 | 2026-06-30 | **SelectionState + PlatformAdapter receiver.** Added `SelectionState` enum (`Matched`, `CapacityExhausted`, `NoMatch`) to the scorer, replacing the bare empty `Vec<Destination>` as the rejection signal. The handler now emits `ForwardRejectReason::CapacityExhausted` (with pull-gossip trigger) vs `ForwardRejectReason::NoProvider` based on `SelectionState`. Added §PlatformAdapter Receiver documenting `PlatformAdapterPoller` — the inbound polling bridge that drains `PlatformAdapter::receive_messages` and feeds `NodeTransport::dispatch`. Closes the send-only gap: `PlatformAdapterBridge` (outbound) + `PlatformAdapterPoller` (inbound) make a `PlatformAdapter` fully usable from `NodeTransport`. Updated §Destination Ranking with `SelectionState` definition and design rationale. Updated §Inbound Path handler spec to use `select_destinations_with_state` and `DropAction::Reject(reason)`. |
 
 ## Related RFCs
 

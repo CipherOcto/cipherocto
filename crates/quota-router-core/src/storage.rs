@@ -2035,4 +2035,96 @@ mod tests {
         let result = storage.reset_budget("nonexistent", "key", 1000000);
         assert!(result.is_err());
     }
+
+    fn make_test_key(id: &str, team_id: Option<&str>) -> ApiKey {
+        // key_id must be a valid UUID for storage
+        let key_uuid = uuid::Uuid::parse_str(id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1, 2, 3],
+            key_prefix: "sk-qr-test".into(),
+            team_id: team_id.map(|_| uuid::Uuid::new_v4()),
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_count_keys_for_team() {
+        let storage = create_test_storage();
+        let team_id = uuid::Uuid::new_v4();
+        let count = storage.count_keys_for_team(&team_id.to_string()).unwrap();
+        assert_eq!(count, 0);
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        key.team_id = Some(team_id);
+        storage.create_key(&key).unwrap();
+        let count = storage.count_keys_for_team(&team_id.to_string()).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_lookup_by_hash() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        key.key_hash = vec![0xAB, 0xCD, 0xEF];
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xAB, 0xCD, 0xEF]).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().key_id, key.key_id);
+        let not_found = storage.lookup_by_hash(&[0x00, 0x00, 0x00]).unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_record_spend() {
+        let storage = create_test_storage();
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+        storage.record_spend(&key.key_id, 1000).unwrap();
+        let spend = storage.get_spend(&key.key_id).unwrap().unwrap();
+        assert_eq!(spend.total_spend, 1000);
+    }
+
+    #[test]
+    fn test_get_spend_not_found() {
+        let storage = create_test_storage();
+        let spend = storage.get_spend("nonexistent").unwrap();
+        assert!(spend.is_none());
+    }
+
+    #[test]
+    fn test_delete_team() {
+        let storage = create_test_storage();
+        let team_id = uuid::Uuid::new_v4().to_string();
+        let team = Team {
+            team_id: team_id.clone(),
+            name: "Delete Me".into(),
+            budget_limit: 1000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+        assert!(storage.get_team(&team_id).unwrap().is_some());
+        storage.delete_team(&team_id).unwrap();
+        assert!(storage.get_team(&team_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_total_spend() {
+        let storage = create_test_storage();
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 0);
+    }
 }

@@ -259,7 +259,7 @@ High (~1800-2400 lines). Test harness + 32 e2e tests.
 
 - Use `tokio::test` for all async tests
 - `InProcessTransport` uses `tokio::sync::mpsc::unbounded_channel` for message delivery (no backpressure in tests)
-- `TestCluster::drive_node` is critical — it pulls messages from a node's inbox and calls `handler.on_receive()` for each. This simulates the network without real TCP.
+- `TestCluster::drive_node` is critical — it pulls messages from a node's inbox and calls `handler.on_receive()` for each. This simulates the network without real TCP. This is intentional for L2: the test harness bypasses `NodeTransport::dispatch()` for test isolation and control. L3+ tests (mission 0870g) use `NodeTransport::dispatch()` for production-faithful inbound.
 - For gossip convergence tests, run a tight loop of `drive_all()` + `tokio::time::sleep(Duration::from_millis(10))` until convergence or timeout
 - HMAC tests need nodes to share a `network_key` — `TestCluster::new` generates one
 - Rate limit tests need tight timing — use `tokio::time::pause()` for deterministic time control

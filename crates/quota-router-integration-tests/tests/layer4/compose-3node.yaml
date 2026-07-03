@@ -1,0 +1,76 @@
+# Layer 4: Three-node quota-router mesh for gossip convergence tests.
+#
+# Run from workspace root:
+#   docker compose -f crates/quota-router-integration-tests/tests/layer4/compose-3node.yaml up -d
+#   docker compose -f crates/quota-router-integration-tests/tests/layer4/compose-3node.yaml down
+
+services:
+  node-a:
+    build:
+      context: ../../../../..
+      dockerfile: crates/quota-router-integration-tests/tests/layer4/Dockerfile
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9100"
+      NETWORK_CONFIG: /etc/qr/network.toml
+      MOCK_PROVIDER: "1"
+      PEERS: ""
+    volumes:
+      - ./config/node-a.toml:/etc/qr/network.toml:ro
+    ports:
+      - "19200:9100"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo | nc -w 1 localhost 9100 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - qr-mesh
+
+  node-b:
+    build:
+      context: ../../../../..
+      dockerfile: crates/quota-router-integration-tests/tests/layer4/Dockerfile
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9100"
+      NETWORK_CONFIG: /etc/qr/network.toml
+      MOCK_PROVIDER: "1"
+      PEERS: ""
+    volumes:
+      - ./config/node-b.toml:/etc/qr/network.toml:ro
+    ports:
+      - "19201:9100"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo | nc -w 1 localhost 9100 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - qr-mesh
+
+  node-c:
+    build:
+      context: ../../../../..
+      dockerfile: crates/quota-router-integration-tests/tests/layer4/Dockerfile
+    environment:
+      LISTEN_ADDR: "0.0.0.0:9100"
+      NETWORK_CONFIG: /etc/qr/network.toml
+      MOCK_PROVIDER: "1"
+      PEERS: ""
+    volumes:
+      - ./config/node-c.toml:/etc/qr/network.toml:ro
+    ports:
+      - "19202:9100"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo | nc -w 1 localhost 9100 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - qr-mesh
+
+networks:
+  qr-mesh:
+    driver: bridge

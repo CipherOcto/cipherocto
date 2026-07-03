@@ -141,6 +141,7 @@ path = "src/lib.rs"
 #
 # See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 default = ["litellm-mode"]
+test-helpers = []
 litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "bytes"]
 any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
 full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]

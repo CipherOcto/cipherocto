@@ -11,7 +11,7 @@ use super::forward::{
 };
 use super::gossip::CapacityGossipPayload;
 use super::provider::{LocalProvider, PeerTrust, ProviderCapacity, RouterNodeId};
-use super::scorer::Destination;
+use super::scorer::{Destination, SelectionState};
 use super::QuotaRouterNode;
 use super::{
     envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REJECT, DISC_FORWARD_REQUEST,
@@ -83,7 +83,7 @@ impl QuotaRouterHandler {
 }
 
 enum DropAction {
-    Reject,
+    Reject(ForwardRejectReason),
     LocalDispatch(ProviderCapacity),
     Forward,
 }
@@ -181,26 +181,31 @@ impl QuotaRouterHandler {
                 .map(|p| ProviderCapacity::from_config(p, node.config.node_id))
                 .collect();
             let peer_caps = node.gossip_cache.lock().unwrap().snapshot();
-            let destinations =
-                node.select_destinations(&req.context, &local, &peer_caps, &node.config.policy);
+            let selection = node.select_destinations_with_state(
+                &req.context,
+                &local,
+                &peer_caps,
+                &node.config.policy,
+            );
 
-            if destinations.is_empty() {
-                DropAction::Reject
-            } else {
-                match destinations.first() {
+            match selection {
+                SelectionState::Matched(destinations) => match destinations.first() {
                     Some(Destination::Local { provider, .. }) => {
                         DropAction::LocalDispatch(provider.clone())
                     }
                     Some(Destination::Remote { .. }) => DropAction::Forward,
                     None => unreachable!(),
+                },
+                SelectionState::CapacityExhausted => {
+                    DropAction::Reject(ForwardRejectReason::CapacityExhausted)
                 }
+                SelectionState::NoMatch => DropAction::Reject(ForwardRejectReason::NoProvider),
             }
         };
 
         match action {
-            DropAction::Reject => {
-                self.send_forward_reject(req.request_id, ForwardRejectReason::NoProvider)
-                    .await?;
+            DropAction::Reject(reason) => {
+                self.send_forward_reject(req.request_id, reason).await?;
             }
             DropAction::LocalDispatch(provider) => {
                 let response = self
@@ -356,5 +361,226 @@ impl QuotaRouterHandler {
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::provider::{ProviderAuth, ProviderConfig, RouterNodeId};
+    use crate::node::request::{ForwardingConfig, RequestContext, RoutingPolicy};
+    use crate::node::QuotaRouterNode;
+    use std::sync::Arc;
+
+    fn make_node() -> Arc<QuotaRouterNode> {
+        QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(crate::node::provider::NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .policy(RoutingPolicy::Balanced)
+            .forwarding(ForwardingConfig::default())
+            .build()
+            .unwrap()
+    }
+
+    fn make_ctx() -> ReceiveContext {
+        ReceiveContext {
+            source_transport: "test".into(),
+            mission_id: [0u8; 32],
+            sender_id: None,
+        }
+    }
+
+    fn make_request_ctx(model: &str) -> RequestContext {
+        RequestContext {
+            model: model.to_string(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_unknown_discriminator_is_ok() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let r = node.receive(&[0xFF], &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handler_empty_payload_is_err() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let r = node.receive(&[], &ctx).await;
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_forward_request_ttl_zero_rejects() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let req = super::super::forward::ForwardRequestPayload {
+            request_id: [1u8; 32],
+            network_id: crate::node::provider::NetworkId([2u8; 32]),
+            context: make_request_ctx("gpt-4o"),
+            payload: b"test".to_vec(),
+            ttl: 0,
+            origin_node: RouterNodeId([3u8; 32]),
+            hop_count: 0,
+            created_at: 0,
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(DISC_FORWARD_REQUEST, &req).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_forward_request_no_provider_rejects() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let req = super::super::forward::ForwardRequestPayload {
+            request_id: [2u8; 32],
+            network_id: crate::node::provider::NetworkId([2u8; 32]),
+            context: make_request_ctx("unsupported-model"),
+            payload: b"test".to_vec(),
+            ttl: 3,
+            origin_node: RouterNodeId([3u8; 32]),
+            hop_count: 0,
+            created_at: 0,
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(DISC_FORWARD_REQUEST, &req).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_forward_request_local_dispatch() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let req = super::super::forward::ForwardRequestPayload {
+            request_id: [3u8; 32],
+            network_id: crate::node::provider::NetworkId([2u8; 32]),
+            context: make_request_ctx("gpt-4o"),
+            payload: b"test".to_vec(),
+            ttl: 3,
+            origin_node: RouterNodeId([3u8; 32]),
+            hop_count: 0,
+            created_at: 0,
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(DISC_FORWARD_REQUEST, &req).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_capacity_gossip_invalid_hmac_rejects() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let gossip = super::super::gossip::CapacityGossipPayload {
+            sender_id: RouterNodeId([5u8; 32]),
+            timestamp: 100,
+            capacities: vec![],
+            known_peers: vec![],
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(DISC_CAPACITY_GOSSIP, &gossip).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        // HMAC mismatch → Err
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_capacity_gossip_valid_hmac_merges() {
+        let node = make_node();
+        let network_key = *blake3::hash(node.config.network_id.0.as_ref()).as_bytes();
+        let ctx = make_ctx();
+        let mut gossip = super::super::gossip::CapacityGossipPayload {
+            sender_id: RouterNodeId([5u8; 32]),
+            timestamp: 100,
+            capacities: vec![],
+            known_peers: vec![],
+            hmac: [0u8; 32],
+        };
+        gossip.hmac = gossip.compute_hmac(&network_key);
+        let payload = envelope(DISC_CAPACITY_GOSSIP, &gossip).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_capacity_request_replies() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let req = super::super::forward::CapacityRequestPayload {
+            requester_id: RouterNodeId([5u8; 32]),
+        };
+        // 0xC7 is capacity request discriminator
+        let payload = envelope(super::super::DISC_CAPACITY_REQUEST, &req).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_router_announce_invalid_hmac_rejects() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let announce = super::super::announce::RouterAnnouncePayload {
+            node_id: RouterNodeId([6u8; 32]),
+            network_id: crate::node::provider::NetworkId([2u8; 32]),
+            supported_models: vec!["gpt-4o".into()],
+            capacities: vec![],
+            timestamp: 100,
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(super::super::DISC_ROUTER_ANNOUNCE, &announce).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_router_withdraw_invalid_hmac_rejects() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let withdraw = super::super::announce::RouterWithdrawPayload {
+            node_id: RouterNodeId([7u8; 32]),
+            reason: super::super::announce::WithdrawReason::Graceful,
+            timestamp: 100,
+            hmac: [0u8; 32],
+        };
+        let payload = envelope(super::super::DISC_ROUTER_WITHDRAW, &withdraw).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_forward_response_unknown_id_is_ok() {
+        let node = make_node();
+        let ctx = make_ctx();
+        let resp = super::super::forward::ForwardResponsePayload {
+            request_id: [99u8; 32], // unknown request_id
+            response: b"result".to_vec(),
+            executed_by: super::super::provider::ProviderId([1u8; 32]),
+            latency_ms: 100,
+        };
+        let payload = envelope(DISC_FORWARD_RESPONSE, &resp).unwrap();
+        let r = node.receive(&payload, &ctx).await;
+        assert!(r.is_ok());
     }
 }

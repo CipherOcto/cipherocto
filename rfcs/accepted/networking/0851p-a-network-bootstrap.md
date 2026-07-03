@@ -750,12 +750,58 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 | Bootstrap node censoring legit peer | MEDIUM | F6 slashing (0x000D.03); multi-seed consensus |
 | Replay of old seed list | LOW | `signed_at_epoch` check (F3) |
 | DoS on seed list service | LOW | Multi-seed fallback; service is replicated |
+## Orchestrator Contract
+
+The `BootstrapOrchestrator` (in `octo-transport/src/bootstrap.rs`) implements the client-side bootstrap protocol. Its contract is:
+
+### Input
+
+- `SeedListEnvelope` — signed seed list containing bootstrap node entries
+- `BootstrapConfig` — timeout, min_responses, intersection_threshold, max_retries, node identity
+
+### Output
+
+- `Ok(u32)` — number of peers acquired and merged into the discovery cache
+- `Err(BootstrapError)` — one of: `SeedListStale`, `NoResponses`, `AuthorityError`, `SeedListStale`, `AllTransportsFailed`
+
+### Lifecycle
+
+1. **Filter slashed seeds** — remove any peer_id in the `SlashedSeedBlacklist`
+2. **Health check** — verify seed list is not fully stale (`SeedHealth::check`)
+3. **Authority verification** — verify the seed list authority is valid for the current epoch
+4. **Send requests** — connect to each seed via direct TCP (length-prefixed JSON frames: `[4-byte len][json]`)
+5. **Collect responses** — wait for `min_responses` BOOTSTRAP_RESP messages or timeout
+6. **Validate intersection** — compute peer-list intersection across responses; require ≥80% agreement
+7. **Populate discovery** — merge validated peers into the `TransportDiscovery` cache
+
+### Wire Format
+
+```
+Request:  [4-byte big-endian length][BootstrapRequest JSON]
+Response: [4-byte big-endian length][BootstrapResponse JSON]
+```
+
+The `BootstrapRequest` includes `requester_id`, `requester_pubkey`, `nonce`, `epoch`, `capability_filter`, `max_peers`. The `BootstrapResponse` includes `requester_id` (echo), `request_nonce` (echo), `epoch`, `responder_id`, `peer_entries`.
+
+### Retry Policy
+
+Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped at 60s). After `max_retries` attempts, transitions to `Failed`.
+
+### Integration with QuotaRouterNode
+
+`QuotaRouterNode::build_with_bootstrap()` uses the orchestrator via `discover_peers()`:
+1. Creates an orchestrator from the seed list
+2. Calls `discover_peers()` which runs validation + TCP collection
+3. If responses are received, uses peer entries from the responses
+4. If no responses (bootstrap nodes unreachable), falls back to parsing seed list entries directly
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft |
 | 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with spec column + mission paths in `missions/open/0851p-a-f{1,2,3,4,5,6}-*.md`. |
+| 0.1.2 | 2026-06-30 | Added §Orchestrator Contract — codifies `BootstrapOrchestrator` input/output/lifecycle/wire-format/retry-policy/integration. Replaces the stub `send_bootstrap_requests` with direct TCP response collection. `discover_peers()` public API for callers that don't need `TransportDiscovery`. |
 
 ## Related RFCs
 

@@ -7,6 +7,8 @@ pub mod provider;
 pub mod ratelimit;
 pub mod request;
 pub mod scorer;
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod testing;
 
 use std::sync::{Arc, Mutex};
 
@@ -21,7 +23,7 @@ use provider::{
     ProviderConfig, ProviderError, ProviderId, RouterNodeId,
 };
 use request::{ForwardingConfig, RequestContext, RoutingPolicy};
-use scorer::{select_destinations, Destination};
+use scorer::{select_destinations, select_destinations_with_state, Destination, SelectionState};
 
 /// Discriminator byte prepended to every outbound DOT envelope.
 ///
@@ -335,6 +337,16 @@ impl QuotaRouterNode {
         select_destinations(request, local_providers, peer_capabilities, policy)
     }
 
+    pub fn select_destinations_with_state(
+        &self,
+        request: &RequestContext,
+        local_providers: &[ProviderCapacity],
+        peer_capabilities: &[(RouterNodeId, Vec<ProviderCapacity>)],
+        policy: &RoutingPolicy,
+    ) -> SelectionState {
+        select_destinations_with_state(request, local_providers, peer_capabilities, policy)
+    }
+
     pub fn pending_origin(&self, request_id: [u8; 32]) -> Option<RouterNodeId> {
         self.pending.origin(request_id)
     }
@@ -579,30 +591,69 @@ impl QuotaRouterNode {
         // peer additions therefore happen up-front here.
         if let Some(seed_path) = bootstrap.seed_list_path.as_ref() {
             if let Ok(seed_envelope) = load_seed_envelope(seed_path) {
-                let _orch = {
-                    let bootstrap_cfg = octo_transport::bootstrap::BootstrapConfig {
-                        node_id: config.node_id.0,
-                        node_pubkey: [0u8; 32],
-                        bootstrap_timeout: bootstrap.timeout,
-                        ..Default::default()
-                    };
-                    octo_transport::bootstrap::BootstrapOrchestrator::new(
-                        seed_envelope.clone(),
-                        bootstrap_cfg,
-                    )
+                let bootstrap_cfg = octo_transport::bootstrap::BootstrapConfig {
+                    node_id: config.node_id.0,
+                    node_pubkey: [0u8; 32],
+                    bootstrap_timeout: bootstrap.timeout,
+                    min_responses: 0,
+                    max_retries: 1,
+                    ..Default::default()
                 };
-                for entry in &seed_envelope.peers {
-                    if let Ok(endpoint) = entry.multiaddr.parse::<std::net::SocketAddr>() {
-                        let hash = blake3::hash(entry.peer_id.as_bytes());
-                        let peer_bytes = hash.as_bytes();
-                        let mut node_id = [0u8; 32];
-                        node_id.copy_from_slice(&peer_bytes[..32]);
-                        builder = builder.peer(PeerConfig {
-                            node_id: RouterNodeId(node_id),
-                            endpoint,
-                            trust_level: PeerTrust::Trusted,
-                        });
+                let mut orch = octo_transport::bootstrap::BootstrapOrchestrator::new(
+                    seed_envelope.clone(),
+                    bootstrap_cfg,
+                );
+
+                // Run the orchestrator to validate the seed list and
+                // attempt to collect responses from bootstrap nodes.
+                // On success, use the response peer entries. On failure
+                // (e.g. bootstrap nodes unreachable), fall back to the
+                // seed list entries directly.
+                let peer_configs = match orch.discover_peers(&dummy_transport(), 256).await {
+                    Ok(responses) if !responses.is_empty() => {
+                        // Build peer configs from bootstrap responses
+                        let mut configs = Vec::new();
+                        for resp in &responses {
+                            for entry in &resp.peer_entries {
+                                let hash = blake3::hash(&entry.peer_id);
+                                let peer_bytes = hash.as_bytes();
+                                let mut node_id = [0u8; 32];
+                                node_id.copy_from_slice(&peer_bytes[..32]);
+                                if let Ok(endpoint) =
+                                    entry.multiaddr.parse::<std::net::SocketAddr>()
+                                {
+                                    configs.push(PeerConfig {
+                                        node_id: RouterNodeId(node_id),
+                                        endpoint,
+                                        trust_level: PeerTrust::Trusted,
+                                    });
+                                }
+                            }
+                        }
+                        configs
                     }
+                    _ => {
+                        // Fallback: parse seed list entries directly
+                        let mut configs = Vec::new();
+                        for entry in &seed_envelope.peers {
+                            if let Ok(endpoint) = entry.multiaddr.parse::<std::net::SocketAddr>() {
+                                let hash = blake3::hash(entry.peer_id.as_bytes());
+                                let peer_bytes = hash.as_bytes();
+                                let mut node_id = [0u8; 32];
+                                node_id.copy_from_slice(&peer_bytes[..32]);
+                                configs.push(PeerConfig {
+                                    node_id: RouterNodeId(node_id),
+                                    endpoint,
+                                    trust_level: PeerTrust::Trusted,
+                                });
+                            }
+                        }
+                        configs
+                    }
+                };
+
+                for cfg in peer_configs {
+                    builder = builder.peer(cfg);
                 }
             }
         }
@@ -632,6 +683,32 @@ fn load_seed_envelope(
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|e| RouterNodeError::Serialization(format!("seed list: {e}")))
+}
+
+/// Create a minimal `NodeTransport` for bootstrap orchestrator calls.
+/// The orchestrator uses direct TCP connections for seed communication
+/// and does not route through the transport, so this only needs to
+/// satisfy the type signature.
+fn dummy_transport() -> octo_transport::node_transport::NodeTransport {
+    use octo_transport::sender::NetworkSender;
+    struct DummySender;
+    #[async_trait::async_trait]
+    impl NetworkSender for DummySender {
+        async fn send(
+            &self,
+            _: &[u8],
+            _: &octo_transport::sender::SendContext,
+        ) -> Result<(), octo_transport::sender::TransportError> {
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "dummy"
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+    }
+    octo_transport::node_transport::NodeTransport::new(vec![std::sync::Arc::new(DummySender)])
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1172,5 +1249,148 @@ mod tests {
         // returns Ok for unknown discriminators).
         let r = node.receive(&[0xFF], &ctx).await;
         assert!(r.is_ok(), "expected Ok for unknown discriminator: {:?}", r);
+    }
+
+    #[tokio::test]
+    async fn broadcast_gossip_does_not_panic() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        // broadcast_gossip sends to LocalProviderSender (no-op), should not panic
+        let _ = node.broadcast_gossip().await;
+    }
+
+    #[tokio::test]
+    async fn broadcast_announce_does_not_panic() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        let _ = node.broadcast_announce().await;
+    }
+
+    #[test]
+    fn select_destinations_with_state_capacity_exhausted() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        let req = super::request::RequestContext {
+            model: "gpt-4o".into(),
+            preferred_provider: None,
+            model_group: None,
+            input_tokens: None,
+            max_output_tokens: None,
+            tags: None,
+            max_price_per_1k_tokens: None,
+            max_latency_ms: None,
+            policy_override: None,
+            consumer_id: [0u8; 32],
+            priority: 0,
+            deadline: None,
+        };
+        // Provider with 0 remaining → CapacityExhausted
+        let local = vec![super::provider::ProviderCapacity {
+            provider_id: super::provider::ProviderId([1u8; 32]),
+            provider_name: "openai".into(),
+            router_node_id: RouterNodeId([1u8; 32]),
+            models: vec!["gpt-4o".into()],
+            requests_remaining: 0,
+            pricing: vec![super::provider::ModelPricing {
+                model: "gpt-4o".into(),
+                price_per_1k_tokens: 3,
+            }],
+            status: super::provider::ProviderHealth::Healthy,
+            latency_ms: 200,
+            success_rate_bps: 9500,
+            last_updated: 0,
+        }];
+        let state =
+            node.select_destinations_with_state(&req, &local, &[], &RoutingPolicy::Balanced);
+        assert!(matches!(
+            state,
+            super::scorer::SelectionState::CapacityExhausted
+        ));
+    }
+
+    #[test]
+    fn build_capacity_gossip_includes_known_peers() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        // Add a peer so gossip includes it
+        node.peer_cache
+            .lock()
+            .unwrap()
+            .add_direct(RouterNodeId([3u8; 32]), vec![]);
+        let gossip = node.build_capacity_gossip();
+        assert_eq!(gossip.sender_id, RouterNodeId([1u8; 32]));
+        assert!(gossip.known_peers.contains(&RouterNodeId([3u8; 32])));
+    }
+
+    #[test]
+    fn pending_origin_returns_none_for_unknown() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        assert!(node.pending_origin([99u8; 32]).is_none());
+    }
+
+    #[test]
+    fn set_lifecycle_transitions() {
+        let node = QuotaRouterNode::builder()
+            .node_id(RouterNodeId([1u8; 32]))
+            .network_id(NetworkId([2u8; 32]))
+            .provider(ProviderConfig {
+                name: "openai".into(),
+                endpoint: "https://api.openai.com".into(),
+                auth: ProviderAuth::ApiKey("test".into()),
+                models: vec!["gpt-4o".into()],
+            })
+            .build()
+            .unwrap();
+        assert_eq!(*node.state.lock().unwrap(), RouterNodeLifecycle::Init);
+        node.set_lifecycle(RouterNodeLifecycle::Active);
+        assert_eq!(*node.state.lock().unwrap(), RouterNodeLifecycle::Active);
+        node.set_lifecycle(RouterNodeLifecycle::Draining);
+        assert_eq!(*node.state.lock().unwrap(), RouterNodeLifecycle::Draining);
     }
 }

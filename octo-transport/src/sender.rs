@@ -54,3 +54,61 @@ pub trait NetworkSender: Send + Sync {
     /// Whether this transport is currently healthy and can send.
     fn is_healthy(&self) -> bool;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_context_default() {
+        let ctx = SendContext::default();
+        assert_eq!(ctx.mission_id, [0u8; 32]);
+        assert_eq!(ctx.priority, 0);
+        assert_eq!(ctx.source_peer, [0u8; 32]);
+        assert_eq!(ctx.origin_gateway, [0u8; 32]);
+    }
+
+    #[test]
+    fn send_context_with_values() {
+        let ctx = SendContext {
+            mission_id: [1u8; 32],
+            priority: 255,
+            source_peer: [2u8; 32],
+            origin_gateway: [3u8; 32],
+        };
+        assert_eq!(ctx.mission_id, [1u8; 32]);
+        assert_eq!(ctx.priority, 255);
+        assert_eq!(ctx.source_peer, [2u8; 32]);
+        assert_eq!(ctx.origin_gateway, [3u8; 32]);
+    }
+
+    #[test]
+    fn transport_error_display() {
+        let cases = vec![
+            (TransportError::AdapterFailure("test".into()), "adapter failure: test"),
+            (TransportError::AllTransportsFailed, "all transports failed"),
+            (TransportError::EnvelopeConstruction("bad".into()), "envelope construction failed: bad"),
+            (TransportError::Unhealthy, "transport unhealthy"),
+            (TransportError::GovernanceViolation("denied".into()), "governance violation: denied"),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(format!("{}", err), expected);
+        }
+    }
+
+    #[test]
+    fn transport_error_debug() {
+        let err = TransportError::AdapterFailure("test".into());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("AdapterFailure"));
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn send_context_debug() {
+        let ctx = SendContext::default();
+        let debug = format!("{:?}", ctx);
+        assert!(debug.contains("SendContext"));
+        assert!(debug.contains("mission_id"));
+    }
+}

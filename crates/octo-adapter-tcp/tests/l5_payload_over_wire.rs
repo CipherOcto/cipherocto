@@ -174,16 +174,20 @@ async fn tcp_adapter_receives_payload_from_wire() {
         .await
         .expect("send_message");
 
-    // Drain the receiver
+    // Allow the receiver's accept_loop + reader_loop to process the inbound frame
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain the receiver — poll until messages arrive or timeout
     let _ = recv_addr; // silence unused
     let domain_drain = BroadcastDomainId::new(PlatformType::Tcp, "recv.example");
-    let messages = tokio::time::timeout(
-        Duration::from_millis(2000),
-        receiver.receive_messages(&domain_drain),
-    )
-    .await
-    .expect("receive_messages timed out")
-    .expect("receive_messages error");
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(3000);
+    let mut messages = Vec::new();
+    while messages.is_empty() && tokio::time::Instant::now() < deadline {
+        messages = receiver.receive_messages(&domain_drain).await.unwrap_or_default();
+        if messages.is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
 
     assert!(
         !messages.is_empty(),

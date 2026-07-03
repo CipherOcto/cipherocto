@@ -79,11 +79,11 @@ to `use_tls: false` and update the config docs to say "TLS not yet supported".
 
 ---
 
-### C2 — IRC `send_envelope` does not actually write to the wire
+### C2 — IRC `send_message` does not actually write to the wire
 
 **File:** `crates/octo-adapter-irc/src/lib.rs:540-585`
 
-The `send_envelope` impl builds a string of bytes that *would* be written:
+The `send_message` impl builds a string of bytes that *would* be written:
 
 ```rust
 let mut sent_bytes = Vec::new();
@@ -117,7 +117,7 @@ will silently no-op.
 
 **Fix:** Add a `send_tx: mpsc::Sender<String>` to the adapter (mirroring the
 admin `cmd_tx` pattern), install it in `ensure_connected`, and use it in
-`send_envelope`. Then add a test that asserts the bytes hit the local TCP
+`send_message`. Then add a test that asserts the bytes hit the local TCP
 listener the same way `test_send_raw_line_writes_through_listener` does for
 admin commands. Bonus: write a `DeliveryReceipt` only after the line is
 enqueued (currently fine — but make sure the API doesn't claim a server-confirmed
@@ -125,11 +125,11 @@ ID).
 
 ---
 
-### C3 — IRC `send_envelope` does not call `ensure_connected`
+### C3 — IRC `send_message` does not call `ensure_connected`
 
 **File:** `crates/octo-adapter-irc/src/lib.rs:540-585`
 
-Compounding C2: `send_envelope` does NOT call `ensure_connected`, so the
+Compounding C2: `send_message` does NOT call `ensure_connected`, so the
 listener task is never spawned, the admin `cmd_tx` is `None`, and the message
 goes nowhere. Compare WhatsApp's pattern (which gates on `self.client` being
 populated) and IRC's own `send_raw_line` (which calls `ensure_connected` at
@@ -140,7 +140,7 @@ line 591) would spawn the listener — but the message sent *before* any receive
 is lost, and the first send returns Ok-without-sending regardless.
 
 **Fix:** Add `self.ensure_connected().await?;` as the first line of
-`send_envelope`, before the channel lookup. (Same prerequisite as
+`send_message`, before the channel lookup. (Same prerequisite as
 `send_raw_line`.)
 
 ---
@@ -841,7 +841,7 @@ the ABI export, single source of truth.
 | LOW      | 5 (L1–L5) |
 | **Total** | **32** |
 
-The most important findings are the IRC adapter's broken `send_envelope`
+The most important findings are the IRC adapter's broken `send_message`
 and `connect_tls` (C1, C2, C3) — these are correctness bugs that would
 silently lose every outbound envelope and fail to establish TLS
 connections. The capability report lie (H1) and the trait/inherent

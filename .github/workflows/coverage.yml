@@ -92,3 +92,28 @@ jobs:
           cargo llvm-cov --no-default-features --features full -p quota-router-core \
             --json --output-path coverage-quota-router-core.json
           echo "Coverage report generated"
+
+      - name: Check coverage threshold
+        run: |
+          # Extract line coverage percentage from llvm-cov JSON
+          # The JSON has a "data"[0]"totals"."lines"."count" and "covered" field
+          COVERAGE=$(python3 -c "
+          import json, sys
+          with open('coverage.json') as f:
+              data = json.load(f)
+          totals = data['data'][0]['totals']['lines']
+          if totals['count'] > 0:
+              pct = totals['covered'] / totals['count'] * 100
+              print(f'{pct:.1f}')
+          else:
+              print('0.0')
+          ")
+          echo "Line coverage: ${COVERAGE}%"
+
+          # Threshold: fail if below 80% (tighten over time)
+          THRESHOLD=80
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "ERROR: Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+          echo "Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"

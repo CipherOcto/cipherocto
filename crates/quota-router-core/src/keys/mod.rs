@@ -412,31 +412,9 @@ pub fn check_team_key_limit(key_count: u32) -> Result<(), KeyError> {
     Ok(())
 }
 
-/// Generate a new key_id using UUIDv7-like format
-/// Format: {timestamp_hex}-{random_hex}
+/// Generate a new key_id using UUIDv4
 pub fn generate_key_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-
-    let mut rng = rand::rng();
-    let random_bytes: Vec<u8> = (0..8).map(|_| rng.random()).collect();
-
-    format!(
-        "{:016x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        now,
-        random_bytes[0],
-        random_bytes[1],
-        random_bytes[2],
-        random_bytes[3],
-        random_bytes[4],
-        random_bytes[5],
-        random_bytes[6],
-        random_bytes[7]
-    )
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Validate an API key (check expiry, revoked status)

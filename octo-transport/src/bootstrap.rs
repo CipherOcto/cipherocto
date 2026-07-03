@@ -25,7 +25,7 @@ use octo_network::mon::bootstrap::{
 
 use crate::discovery::TransportDiscovery;
 use crate::node_transport::NodeTransport;
-use crate::sender::{SendContext, TransportError};
+use crate::sender::TransportError;
 
 // ── Constants (RFC-0851p-a §D) ────────────────────────────────────
 
@@ -324,23 +324,34 @@ impl BootstrapOrchestrator {
         Err(BootstrapError::NoResponses)
     }
 
-    /// Send BOOTSTRAP_REQ to each seed and collect responses.
+    /// Send BOOTSTRAP_REQ to each seed via direct TCP connections and
+    /// collect responses. Bootstrap happens before the mesh transport
+    /// is established, so we connect directly to each seed rather than
+    /// routing through `NodeTransport`.
     ///
-    /// **Stub**: sends requests but does not collect responses.
-    /// Real response collection requires wiring the `NetworkReceiver`
-    /// inbound path. Returns an empty Vec until that wiring exists.
+    /// Each seed is contacted concurrently. Responses are collected
+    /// until `min_responses` are received or the timeout expires.
     async fn send_bootstrap_requests(
         &self,
-        transport: &NodeTransport,
+        _transport: &NodeTransport,
         seed_list: &SeedListEnvelope,
     ) -> Vec<BootstrapResponse> {
         use rand::Rng;
 
-        let mut sent_count = 0u32;
+        let mut handles = Vec::new();
+        let timeout = self.config.bootstrap_timeout;
 
-        for _seed in &seed_list.peers {
+        for seed in &seed_list.peers {
+            if self.blacklist.is_slashed(&seed.peer_id) {
+                continue;
+            }
+
+            let addr = match parse_multiaddr(&seed.multiaddr) {
+                Some(a) => a,
+                None => continue,
+            };
+
             let nonce: [u8; 16] = rand::thread_rng().gen();
-
             let req = BootstrapRequest {
                 requester_id: self.config.node_id,
                 requester_pubkey: self.config.node_pubkey,
@@ -350,41 +361,174 @@ impl BootstrapOrchestrator {
                 max_peers: MAX_PEER_LIST,
             };
 
-            let payload = match serde_json::to_vec(&req) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+            let node_id = self.config.node_id;
+            handles.push(tokio::spawn(async move {
+                connect_and_collect(addr, &req, node_id, timeout).await
+            }));
+        }
 
-            let ctx = SendContext {
-                mission_id: [0u8; 32],
-                priority: 255, // Bootstrap is highest priority
-                source_peer: self.config.node_id,
-                origin_gateway: self.config.node_id,
-            };
-
-            // Send via transport (best available)
-            match tokio::time::timeout(
-                self.config.bootstrap_timeout,
-                transport.send_best(&payload, &ctx),
-            )
-            .await
-            {
-                Ok(Ok(())) => {
-                    sent_count += 1;
+        let mut responses = Vec::new();
+        for handle in handles {
+            if let Ok(Some(resp)) = handle.await {
+                responses.push(resp);
+                if responses.len() >= self.config.min_responses {
+                    break;
                 }
-                _ => continue,
             }
         }
 
-        // Log sent count (tracing not available in this crate;
-        // caller should instrument via the stoolap-node tracing layer).
-        let _ = sent_count;
-
-        // Stub: response collection not yet implemented.
-        // Real responses arrive asynchronously via NetworkReceiver.
-        Vec::new()
+        responses
     }
 
+    /// Run validation and collect bootstrap responses via direct TCP.
+    /// Returns the collected `BootstrapResponse` entries (up to
+    /// `max_responses`). This is a simplified entry point that does
+    /// not require `TransportDiscovery` — callers extract peer entries
+    /// from the responses and add them directly.
+    pub async fn discover_peers(
+        &mut self,
+        transport: &NodeTransport,
+        max_responses: usize,
+    ) -> Result<Vec<BootstrapResponse>, BootstrapError> {
+        // Step 1: Filter slashed seeds
+        let filtered = self.blacklist.filter(self.seed_list.clone());
+        if filtered.peers.is_empty() {
+            self.state = BootstrapClientLifecycle::Failed;
+            return Err(BootstrapError::NoResponses);
+        }
+
+        // Step 2: Seed health check
+        let health = SeedHealth::check(&filtered, self.config.current_epoch);
+        if health.refuses_start() {
+            self.state = BootstrapClientLifecycle::Failed;
+            return Err(BootstrapError::SeedListStale);
+        }
+
+        // Step 3: Authority verification
+        match octo_network::mon::bootstrap::verify_authority(
+            self.config.authority,
+            self.config.current_epoch,
+        ) {
+            Ok(()) => {}
+            Err(e) => {
+                self.state = BootstrapClientLifecycle::Failed;
+                return Err(BootstrapError::AuthorityError(e));
+            }
+        }
+
+        // Step 4-6: Send BOOTSTRAP_REQ, collect responses
+        self.state = BootstrapClientLifecycle::Connecting;
+        let mut attempt = 0u32;
+
+        while attempt < self.config.max_retries {
+            let responses = self.send_bootstrap_requests(transport, &filtered).await;
+
+            if !responses.is_empty() {
+                self.state = BootstrapClientLifecycle::Validating;
+                self.state = BootstrapClientLifecycle::Cached;
+                let truncated: Vec<BootstrapResponse> =
+                    responses.into_iter().take(max_responses).collect();
+                return Ok(truncated);
+            }
+
+            attempt += 1;
+            if attempt < self.config.max_retries {
+                let backoff = self
+                    .config
+                    .initial_backoff
+                    .saturating_mul(2u32.saturating_pow(attempt - 1));
+                let backoff = backoff.min(MAX_BACKOFF);
+                tokio::time::sleep(backoff).await;
+            }
+        }
+
+        self.state = BootstrapClientLifecycle::Failed;
+        Err(BootstrapError::NoResponses)
+    }
+}
+
+// ── Direct TCP helpers ────────────────────────────────────────────
+
+/// Parse a multiaddr string like `/ip4/1.2.3.4/tcp/4001/p2p/...`
+/// into a `SocketAddr`. Only the `/ip4/.../tcp/...` prefix is used;
+/// the `/p2p/...` suffix is ignored (it's the peer ID, which we
+/// already have from the seed entry).
+fn parse_multiaddr(multiaddr: &str) -> Option<std::net::SocketAddr> {
+    let mut ip = None;
+    let mut port = None;
+    let components: Vec<&str> = multiaddr.split('/').filter(|s| !s.is_empty()).collect();
+    for (i, component) in components.iter().enumerate() {
+        if *component == "ip4" {
+            ip = components.get(i + 1).copied();
+        } else if *component == "tcp" {
+            port = components.get(i + 1).and_then(|p| p.parse::<u16>().ok());
+        }
+    }
+    match (ip, port) {
+        (Some(ip_str), Some(port)) => {
+            let ip: std::net::IpAddr = ip_str.parse().ok()?;
+            Some(std::net::SocketAddr::new(ip, port))
+        }
+        _ => None,
+    }
+}
+
+/// Connect to a single bootstrap node, send a `BootstrapRequest`,
+/// and read the `BootstrapResponse`. Returns `None` on any error
+/// or timeout.
+async fn connect_and_collect(
+    addr: std::net::SocketAddr,
+    req: &BootstrapRequest,
+    _expected_requester_id: [u8; 32],
+    timeout: Duration,
+) -> Option<BootstrapResponse> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr))
+        .await
+        .ok()?
+        .ok()?;
+
+    let payload = serde_json::to_vec(req).ok()?;
+
+    // Write length-prefixed frame: [4-byte len][json bytes]
+    let len = (payload.len() as u32).to_be_bytes();
+    tokio::time::timeout(timeout, stream.write_all(&len))
+        .await
+        .ok()?
+        .ok()?;
+    tokio::time::timeout(timeout, stream.write_all(&payload))
+        .await
+        .ok()?
+        .ok()?;
+
+    // Read response: [4-byte len][json bytes]
+    let mut len_buf = [0u8; 4];
+    tokio::time::timeout(timeout, stream.read_exact(&mut len_buf))
+        .await
+        .ok()?
+        .ok()?;
+    let resp_len = u32::from_be_bytes(len_buf) as usize;
+    if resp_len > 16 * 1024 * 1024 {
+        return None; // sanity check
+    }
+    let mut resp_buf = vec![0u8; resp_len];
+    tokio::time::timeout(timeout, stream.read_exact(&mut resp_buf))
+        .await
+        .ok()?
+        .ok()?;
+
+    let resp: BootstrapResponse = serde_json::from_slice(&resp_buf).ok()?;
+
+    // Verify the response is for us
+    if resp.requester_id != req.requester_id {
+        return None;
+    }
+
+    Some(resp)
+}
+
+impl BootstrapOrchestrator {
     /// Populate the discovery cache with bootstrapped peers.
     fn populate_discovery(
         &self,
@@ -827,5 +971,252 @@ mod tests {
         let peer_ids: Vec<[u8; 32]> = (0..3).map(|i| [i as u8; 32]).collect();
         orch.populate_discovery(&peer_ids, &discovery, &mut state);
         assert_eq!(state.phase, DiscoveryLifecycle::Bootstrap);
+    }
+
+    // ── parse_multiaddr tests ────────────────────────────────────
+
+    #[test]
+    fn parse_multiaddr_standard() {
+        let addr = parse_multiaddr("/ip4/127.0.0.1/tcp/4001/p2p/QmTest");
+        assert_eq!(addr, Some("127.0.0.1:4001".parse().unwrap()));
+    }
+
+    #[test]
+    fn parse_multiaddr_localhost() {
+        let addr = parse_multiaddr("/ip4/0.0.0.0/tcp/9100");
+        assert_eq!(addr, Some("0.0.0.0:9100".parse().unwrap()));
+    }
+
+    #[test]
+    fn parse_multiaddr_no_tcp() {
+        let addr = parse_multiaddr("/ip4/1.2.3.4");
+        assert!(addr.is_none());
+    }
+
+    #[test]
+    fn parse_multiaddr_no_ip() {
+        let addr = parse_multiaddr("/tcp/4001");
+        assert!(addr.is_none());
+    }
+
+    #[test]
+    fn parse_multiaddr_invalid_ip() {
+        let addr = parse_multiaddr("/ip4/not-an-ip/tcp/4001");
+        assert!(addr.is_none());
+    }
+
+    #[test]
+    fn parse_multiaddr_invalid_port() {
+        let addr = parse_multiaddr("/ip4/1.2.3.4/tcp/not-a-port");
+        assert!(addr.is_none());
+    }
+
+    // ── connect_and_collect tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn connect_and_collect_happy_path() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Start a mock bootstrap server
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            // Read request: [4-byte len][json]
+            let mut len_buf = [0u8; 4];
+            stream.read_exact(&mut len_buf).await.unwrap();
+            let req_len = u32::from_be_bytes(len_buf) as usize;
+            let mut req_buf = vec![0u8; req_len];
+            stream.read_exact(&mut req_buf).await.unwrap();
+            let _req: BootstrapRequest = serde_json::from_slice(&req_buf).unwrap();
+
+            // Send response
+            let resp = BootstrapResponse {
+                requester_id: [0x42u8; 32],
+                request_nonce: [0u8; 16],
+                epoch: 0,
+                responder_id: [0x99u8; 32],
+                peer_entries: vec![
+                    BootstrapPeerEntry {
+                        peer_id: [1u8; 32],
+                        multiaddr: "/ip4/10.0.0.1/tcp/4001".into(),
+                    },
+                    BootstrapPeerEntry {
+                        peer_id: [2u8; 32],
+                        multiaddr: "/ip4/10.0.0.2/tcp/4002".into(),
+                    },
+                ],
+            };
+            let resp_bytes = serde_json::to_vec(&resp).unwrap();
+            let len = (resp_bytes.len() as u32).to_be_bytes();
+            stream.write_all(&len).await.unwrap();
+            stream.write_all(&resp_bytes).await.unwrap();
+        });
+
+        let req = BootstrapRequest {
+            requester_id: [0x42u8; 32],
+            requester_pubkey: [0x43u8; 32],
+            nonce: [0u8; 16],
+            epoch: 0,
+            capability_filter: 0xFFFF,
+            max_peers: 256,
+        };
+
+        let resp = connect_and_collect(addr, &req, [0x42u8; 32], Duration::from_secs(5))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.requester_id, [0x42u8; 32]);
+        assert_eq!(resp.peer_entries.len(), 2);
+        assert_eq!(resp.peer_entries[0].peer_id, [1u8; 32]);
+    }
+
+    #[tokio::test]
+    async fn connect_and_collect_timeout() {
+        // No server — should time out
+        let addr = "127.0.0.1:1".parse().unwrap();
+        let req = BootstrapRequest {
+            requester_id: [0x42u8; 32],
+            requester_pubkey: [0x43u8; 32],
+            nonce: [0u8; 16],
+            epoch: 0,
+            capability_filter: 0xFFFF,
+            max_peers: 256,
+        };
+
+        let result = connect_and_collect(addr, &req, [0x42u8; 32], Duration::from_millis(50)).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn connect_and_collect_wrong_requester_id() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut len_buf = [0u8; 4];
+            stream.read_exact(&mut len_buf).await.unwrap();
+            let req_len = u32::from_be_bytes(len_buf) as usize;
+            let mut req_buf = vec![0u8; req_len];
+            stream.read_exact(&mut req_buf).await.unwrap();
+
+            // Response with wrong requester_id
+            let resp = BootstrapResponse {
+                requester_id: [0xFFu8; 32], // wrong!
+                request_nonce: [0u8; 16],
+                epoch: 0,
+                responder_id: [0x99u8; 32],
+                peer_entries: vec![],
+            };
+            let resp_bytes = serde_json::to_vec(&resp).unwrap();
+            let len = (resp_bytes.len() as u32).to_be_bytes();
+            stream.write_all(&len).await.unwrap();
+            stream.write_all(&resp_bytes).await.unwrap();
+        });
+
+        let req = BootstrapRequest {
+            requester_id: [0x42u8; 32],
+            requester_pubkey: [0x43u8; 32],
+            nonce: [0u8; 16],
+            epoch: 0,
+            capability_filter: 0xFFFF,
+            max_peers: 256,
+        };
+
+        let result = connect_and_collect(addr, &req, [0x42u8; 32], Duration::from_secs(5)).await;
+        assert!(result.is_none());
+    }
+
+    // ── discover_peers tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn discover_peers_falls_back_on_no_bootstrap() {
+        // No running bootstrap nodes → falls back to NoResponses
+        let env = make_envelope(vec![make_seed_entry("a", 100)]);
+        let config = BootstrapConfig {
+            min_responses: 0,
+            max_retries: 1,
+            bootstrap_timeout: Duration::from_millis(50),
+            ..make_config()
+        };
+        let mut orch = BootstrapOrchestrator::new(env, config);
+        let transport = make_transport();
+
+        let result = orch.discover_peers(&transport, 256).await;
+        // Should fail because the seed multiaddr doesn't point to a real server
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn discover_peers_collects_from_mock_server() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Start a mock bootstrap server
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let accept = listener.accept().await;
+                if let Ok((mut stream, _)) = accept {
+                    tokio::spawn(async move {
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_err() {
+                            return;
+                        }
+                        let req_len = u32::from_be_bytes(len_buf) as usize;
+                        let mut req_buf = vec![0u8; req_len];
+                        if stream.read_exact(&mut req_buf).await.is_err() {
+                            return;
+                        }
+
+                        let resp = BootstrapResponse {
+                            requester_id: [0x42u8; 32],
+                            request_nonce: [0u8; 16],
+                            epoch: 0,
+                            responder_id: [0x99u8; 32],
+                            peer_entries: vec![BootstrapPeerEntry {
+                                peer_id: [1u8; 32],
+                                multiaddr: "/ip4/10.0.0.1/tcp/4001".into(),
+                            }],
+                        };
+                        let resp_bytes = serde_json::to_vec(&resp).unwrap();
+                        let len = (resp_bytes.len() as u32).to_be_bytes();
+                        let _ = stream.write_all(&len).await;
+                        let _ = stream.write_all(&resp_bytes).await;
+                    });
+                }
+            }
+        });
+
+        let multiaddr = format!("/ip4/127.0.0.1/tcp/{}/p2p/test", addr.port());
+        let seed = octo_network::mon::bootstrap::SeedEntry {
+            peer_id: "test-bootstrap".into(),
+            multiaddr,
+            signed_at_epoch: 100,
+        };
+        let env = make_envelope(vec![seed]);
+        let config = BootstrapConfig {
+            node_id: [0x42u8; 32],
+            node_pubkey: [0x43u8; 32],
+            min_responses: 1,
+            max_retries: 2,
+            bootstrap_timeout: Duration::from_secs(2),
+            ..BootstrapConfig::default()
+        };
+        let mut orch = BootstrapOrchestrator::new(env, config);
+        let transport = make_transport();
+
+        let result = orch.discover_peers(&transport, 256).await;
+        assert!(result.is_ok());
+        let responses = result.unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].peer_entries.len(), 1);
+        assert_eq!(responses[0].peer_entries[0].peer_id, [1u8; 32]);
     }
 }

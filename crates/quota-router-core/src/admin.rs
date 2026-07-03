@@ -2257,3 +2257,227 @@ fn json_response<T: serde::Serialize>(data: &T) -> Response<String> {
         .body(serde_json::to_string(data).unwrap_or_default())
         .unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::{CreateTeamRequest, GenerateKeyRequest, KeyType, UpdateTeamRequest};
+    use crate::storage::StoolapKeyStorage;
+
+    fn create_test_storage() -> StoolapKeyStorage {
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        StoolapKeyStorage::new(db)
+    }
+
+    fn make_create_key_request() -> GenerateKeyRequest {
+        GenerateKeyRequest {
+            key: None,
+            budget_limit: 1000,
+            rpm_limit: Some(100),
+            tpm_limit: Some(1000),
+            key_type: KeyType::Default,
+            auto_rotate: None,
+            rotation_interval_days: None,
+            team_id: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_handle_list_keys_empty() {
+        let storage = create_test_storage();
+        let resp = handle_list_keys(&storage, None);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body();
+        assert!(body.contains("[]"));
+    }
+
+    #[test]
+    fn test_handle_list_keys_with_team_filter() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let resp = handle_list_keys(&storage, Some(&fake_id));
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_handle_create_team() {
+        let storage = create_test_storage();
+        let req = CreateTeamRequest {
+            team_id: uuid::Uuid::new_v4().to_string(),
+            name: "Test Team".into(),
+            budget_limit: 10000,
+        };
+        let resp = handle_create_team(&storage, req);
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_get_team_not_found() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let resp = handle_get_team(&storage, &fake_id);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_handle_list_teams_empty() {
+        let storage = create_test_storage();
+        let resp = handle_list_teams(&storage);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_handle_update_team() {
+        let storage = create_test_storage();
+        let team_id = uuid::Uuid::new_v4();
+        let team = Team {
+            team_id: team_id.to_string(),
+            name: "Original".into(),
+            budget_limit: 1000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let req = UpdateTeamRequest {
+            name: Some("Updated".into()),
+            budget_limit: Some(2000),
+        };
+        let resp = handle_update_team(&storage, &team_id.to_string(), req);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_handle_update_team_not_found() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let req = UpdateTeamRequest {
+            name: Some("Updated".into()),
+            budget_limit: None,
+        };
+        let resp = handle_update_team(&storage, &fake_id, req);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_handle_spend_logs() {
+        let storage = create_test_storage();
+        let resp = handle_spend_logs(&storage);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_handle_global_spend() {
+        let storage = create_test_storage();
+        let resp = handle_global_spend(&storage);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_json_response() {
+        let data = serde_json::json!({"key": "value"});
+        let resp = json_response(&data);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_handle_revoke_key_not_found() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let req = RevokeKeyRequest {
+            revoked_by: Some("admin".into()),
+            reason: Some("test".into()),
+        };
+        let resp = handle_revoke_key(&storage, &fake_id, req);
+        // Handler returns 200 even for non-existent keys (idempotent)
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_update_key_not_found() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let req = KeyUpdates {
+            budget_limit: Some(2000),
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            revoked: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: None,
+            description: None,
+            metadata: None,
+        };
+        let resp = handle_update_key(&storage, &fake_id, req);
+        // Handler returns 200 even for non-existent keys (idempotent)
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_create_key() {
+        let storage = create_test_storage();
+        let req = make_create_key_request();
+        let resp = handle_create_key(&storage, &req);
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_create_key_with_team() {
+        let storage = create_test_storage();
+        let team_id = uuid::Uuid::new_v4();
+        let team = Team {
+            team_id: team_id.to_string(),
+            name: "Test Team".into(),
+            budget_limit: 10000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let req = GenerateKeyRequest {
+            key: None,
+            budget_limit: 500,
+            rpm_limit: None,
+            tpm_limit: None,
+            key_type: KeyType::Default,
+            auto_rotate: None,
+            rotation_interval_days: None,
+            team_id: Some(team_id),
+            description: None,
+            metadata: None,
+        };
+        let resp = handle_create_key(&storage, &req);
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_rotate_key() {
+        let storage = create_test_storage();
+        let fake_id = uuid::Uuid::new_v4().to_string();
+        let resp = handle_rotate_key(&storage, &fake_id, None);
+        // Handler returns 200 even for non-existent keys (idempotent)
+        assert!(resp.status().is_success());
+    }
+
+    #[test]
+    fn test_handle_create_key_invalid_budget() {
+        let storage = create_test_storage();
+        let req = GenerateKeyRequest {
+            key: None,
+            budget_limit: 0,
+            rpm_limit: None,
+            tpm_limit: None,
+            key_type: KeyType::Default,
+            auto_rotate: None,
+            rotation_interval_days: None,
+            team_id: None,
+            description: None,
+            metadata: None,
+        };
+        let resp = handle_create_key(&storage, &req);
+        // Just verify it doesn't panic - budget 0 handling varies
+        let _status = resp.status();
+    }
+}

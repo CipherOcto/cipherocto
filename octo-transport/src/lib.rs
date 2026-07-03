@@ -1,5 +1,6 @@
 pub mod adapter_bridge;
 pub mod adapter_factory;
+pub mod adapter_poller;
 pub mod bootstrap;
 pub mod broadcaster;
 pub mod discovery;
@@ -14,6 +15,7 @@ pub mod sender;
 
 pub use adapter_bridge::PlatformAdapterBridge;
 pub use adapter_factory::AdapterFactory;
+pub use adapter_poller::PlatformAdapterPoller;
 pub use bootstrap::BootstrapOrchestrator;
 pub use broadcaster::NodeTransportBroadcaster;
 pub use discovery::TransportDiscovery;

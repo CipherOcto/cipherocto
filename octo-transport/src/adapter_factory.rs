@@ -37,3 +37,21 @@ impl AdapterFactory {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octo_network::dot::adapters::registry::{AdapterHealth, RegistryEntry};
+    use octo_network::dot::domain::PlatformType;
+
+    fn make_domain() -> BroadcastDomainId {
+        BroadcastDomainId::new(PlatformType::Tcp, "test")
+    }
+
+    #[test]
+    fn from_registry_empty() {
+        let registry = AdapterRegistry::new(vec![]);
+        let senders = AdapterFactory::from_registry(registry, make_domain());
+        assert!(senders.is_empty());
+    }
+}

@@ -334,4 +334,72 @@ mod tests {
         let domain = adapter.domain_id("127.0.0.1:4001");
         assert_eq!(domain.platform_type, PlatformType::Tcp as u16);
     }
+
+    #[tokio::test]
+    async fn tcp_health_check_ok() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        assert!(adapter.health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn tcp_shutdown_sets_unhealthy() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        assert!(adapter.health_check().await.is_ok());
+        adapter.shutdown().await.unwrap();
+        assert!(adapter.health_check().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn tcp_canonicalize_valid() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let envelope = DeterministicEnvelope::default();
+        let wire = envelope.to_wire_bytes();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: wire,
+            metadata: BTreeMap::new(),
+        };
+        let parsed = adapter.canonicalize(&raw).unwrap();
+        assert_eq!(parsed.envelope_id, envelope.envelope_id);
+    }
+
+    #[tokio::test]
+    async fn tcp_canonicalize_short_frame() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![0u8; 10],
+            metadata: BTreeMap::new(),
+        };
+        assert!(adapter.canonicalize(&raw).is_err());
+    }
+
+    #[tokio::test]
+    async fn tcp_send_no_peers_fails() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let domain = BroadcastDomainId::new(PlatformType::Tcp, "test");
+        let envelope = DeterministicEnvelope::default();
+        let result = adapter.send_message(&domain, &envelope, b"test").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn tcp_receive_messages_empty() {
+        let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let domain = BroadcastDomainId::new(PlatformType::Tcp, "test");
+        let msgs = adapter.receive_messages(&domain).await.unwrap();
+        assert!(msgs.is_empty());
+    }
 }

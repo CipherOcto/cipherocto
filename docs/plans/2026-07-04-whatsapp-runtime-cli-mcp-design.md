@@ -78,6 +78,43 @@ that can also be addressed by an agent. The new runtime fills that gap.
 Single binary with multiple modes — mirrors `dockerd` / `gh` / `ollama`. One
 systemd unit, one Docker image, one Cargo crate.
 
+**Why a separate `octo-whatsapp` binary (not an `octo whatsapp` subcommand):**
+- `crates/octo-cli/` (`bin: octo`) is the agent orchestrator and pulls in
+  `octo-runtime` (Deno sandbox). Coupling WhatsApp's long-lived socket to
+  the agent runtime is unwanted — WhatsApp sessions survive across the
+  agent's lifecycle.
+- systemd unit separation: one process = one responsibility, easier
+  memory + restart isolation.
+- The repo's established pattern (per `crates/octo-cli-meta/`,
+  `crates/octo-telegram-onboard/`) is feature-gated meta-CLIs. `octo-whatsapp`
+  follows that pattern, not the agent-CLI dispatch model.
+
+**Relationship to existing crates**:
+- `crates/octo-runtime/` is the daemon supervisor crate (CancellationToken,
+  JoinHandles, signal handling). If `octo-runtime` exposes a public supervisor
+  primitive, `daemon.rs` MUST reuse it; if not, document a formal rebuttal
+  for why the WhatsApp runtime's supervisor must live in this crate
+  instead. **Default: reuse `octo-runtime`'s supervisor.**
+- `crates/octo-cli-meta/` is the meta-crate that aggregates
+  `octo-telegram-onboard`, `octo-telegram-onboard-core`, etc. via feature
+  flags. The new `octo-whatsapp` adds a `whatsapp-cli` feature there:
+  ```toml
+  # crates/octo-cli-meta/Cargo.toml
+  [features]
+  default = []
+  whatsapp-cli = ["dep:octo-whatsapp"]
+  whatsapp-cli-core = ["dep:octo-whatsapp-onboard-core"]
+  ```
+  Build: `cargo build -p octo-cli-meta --features whatsapp-cli`.
+- `crates/octo-whatsapp-onboard` is **renamed-in-place** to a feature of
+  the new `octo-whatsapp` binary's `onboard` subcommand (per Section 1.5);
+  the old binary is removed. `octo-whatsapp-onboard-core` stays as a
+  library crate.
+- `octo-network` provides `PlatformAdapter` (DOT) and `CoordinatorAdmin`
+  (group ops) traits — both implemented by `octo-adapter-whatsapp`. The
+  runtime crate consumes these via `as_coordinator_admin` downcast and the
+  `PlatformAdapter` trait object.
+
 ```
 crates/octo-whatsapp/
 ├── Cargo.toml
@@ -938,7 +975,166 @@ integration.
 unless explicitly enabled. Prevents accidental wrapping of agent arguments
 in DOT envelopes.
 
-## Configuration
+## Workspace Integration
+
+The new crate `octo-whatsapp` integrates with the existing workspace as
+follows.
+
+**Root `Cargo.toml` changes**:
+```toml
+[workspace]
+members = ["crates/*"]
+exclude = [
+    "determin",
+    "octo-sync",
+    "octo-transport",
+    "quota-router",
+    "sync-e2e-tests",
+    "crates/quota-router-pyo3",
+    "crates/octo-telegram-onboard",
+    "crates/octo-telegram-onboard-core",
+    "crates/octo-whatsapp",           # NEW — meta-gated via octo-cli-meta
+    "crates/octo-whatsapp-onboard",   # NEW — removed (folded into octo-whatsapp onboard subcommand)
+]
+```
+
+**`octo-whatsapp/Cargo.toml` `[dependencies]`**:
+```toml
+[dependencies]
+# Internal
+octo-adapter-whatsapp      = { path = "../octo-adapter-whatsapp" }
+octo-whatsapp-onboard-core = { path = "../octo-whatsapp-onboard-core" }
+octo-network               = { path = "../octo-network" }
+octo-runtime               = { path = "../octo-runtime" }      # supervisor primitives
+
+# Async + serialization
+tokio       = { workspace = true }       # tokio = "1.35" features=["full"]
+tokio-util  = { workspace = true }       # CancellationToken (rt feature already enabled)
+arc-swap    = "1"                        # ArcSwap<Ruleset> lock-free reads
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+
+# CLI + completion + man pages
+clap           = { version = "4.5", features = ["derive", "wrap_help"] }
+clap_complete  = "4.5"
+clap_mangen    = "0.2"
+
+# Observability
+tracing            = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender   = "0.2"
+
+# JSON-RPC + MCP
+serde_json        = { workspace = true }
+# Optional: rmcp = "0.5" (the Rust MCP SDK) — see Cross-cutting §MCP protocol
+
+# Security (Linux-only where noted)
+subtle            = "2"                    # ConstantTimeEq
+keyring           = { version = "3", features = ["apple-native", "linux-native", "windows-native"], optional = true }
+landlock          = { version = "0.4", optional = true }                      # Linux-only, #[cfg(target_os = "linux")]
+seccompiler       = { version = "0.5", optional = true }                      # Linux-only
+openat2           = { version = "0.1", optional = true }                      # Linux-only
+
+# Schema generation (MCP tool input schemas)
+schemars          = { version = "0.8", features = ["derive"] }
+
+# Stoolap is NOT a direct dep — only via octo-adapter-whatsapp. Enforced
+# by the grep invariant test (see §Stoolap sharing rule). Adding it here
+# directly would let a future contributor bypass DaemonState.
+
+[features]
+default        = []
+live-whatsapp  = ["octo-adapter-whatsapp/live-whatsapp"]   # for live e2e tests
+landlock       = ["dep:landlock"]                          # opt-in: enable Landlock
+seccomp        = ["dep:seccompiler"]                       # opt-in: enable seccomp
+openat2        = ["dep:openat2"]                           # opt-in: enable openat2
+
+[dev-dependencies]
+tempfile       = "3"
+assert_cmd     = "2"
+predicates     = "3"
+loom           = { version = "0.7", optional = true }       # loom tests under cfg(feature = "loom")
+```
+
+**Stoolap dep direction (enforced):** `octo-whatsapp` MUST NOT declare
+`stoolap = "..."` directly. All stoolap access goes through `DaemonState.store:
+Arc<StoolapStore>` cloned out of `octo-adapter-whatsapp`'s
+`Arc<Mutex<Option<Arc<StoolapStore>>>>` at startup. Verified by grep test
+`tests/it_stoolap_uniqueness.rs` (already specified in §Stoolap sharing rule).
+
+**Live e2e test** (continues to work as-is): `crates/octo-adapter-whatsapp/tests/live_e2e_group_setup_test.rs:379`
+calls `add_members(...)` directly. This is **acceptable** — that test exercises
+the adapter-inherent form as a focused e2e scenario for the adapter crate,
+NOT the runtime's production path. The runtime's `groups.members.add` RPC
+routes through `CoordinatorAdmin::add_member` (singular). The test is
+intentionally separate from the runtime's parity guarantee; the runtime
+regression tests (`tests/it_ipc_roundtrip.rs`) cover the canonical path.
+
+## CI Integration
+
+Per `CLAUDE.md` mandate (`cargo clippy --all-targets --all-features --
+-D warnings`) and the `octo-cli-meta` pattern from `telegram-cli`:
+
+```yaml
+# .github/workflows/ci.yml (excerpt — new lines)
+- name: cargo check — whatsapp-cli
+  run: cargo check -p octo-cli-meta --features whatsapp-cli
+
+- name: cargo clippy — whatsapp-cli
+  run: cargo clippy -p octo-cli-meta --features whatsapp-cli,landlock,seccomp,openat2 --all-targets -- -D warnings
+
+- name: cargo test — whatsapp runtime (hermetic)
+  run: cargo test -p octo-cli-meta --features whatsapp-cli --test it_ipc_roundtrip --test it_rules_hot_swap --test it_event_router_persistence --test it_stoolap_uniqueness --test it_send_text_ceiling --test it_session_refresh_confirmation --test it_bot_liveness --test it_parity_table --test it_spki_rotation --test it_token_rotation_restart --test it_mcp_flood --test it_healthcheck_contract
+
+- name: cargo test — whatsapp live e2e (gated)
+  if: github.event.label == 'live-whatsapp'
+  run: cargo test -p octo-adapter-whatsapp --features live-whatsapp --test live_session_test --test live_e2e_group_setup_test -- --include-ignored --nocapture --test-threads=1
+```
+
+**Coverage toolchain:** `cargo-llvm-cov` (the established choice in this
+repo). Per-module coverage targets:
+
+| Module | Line | Branch | Rationale |
+|---|---|---|---|
+| `protocol.rs` (RPC types + handler dispatch) | ≥ 90% | ≥ 80% | Schema-validated; integration tests cover each method |
+| `cli.rs` (clap dispatch) | ≥ 85% | ≥ 75% | Default `--help` paths partially covered by smoke |
+| `mcp_server.rs` | ≥ 85% | ≥ 75% | Hand-rolled JSON-RPC; tested via `it_mcp_tool_dispatch` |
+| `daemon.rs` (supervisor) | ≥ 80% | ≥ 70% | OS-level signals; some paths env-only |
+| `rules.rs` (predicate evaluator) | ≥ 90% | ≥ 85% | Mutation-tested separately |
+| `triggers.rs` | ≥ 75% | ≥ 65% | OS sandbox calls integration-only |
+| `actions/{webhook,agent_run,shell,mcp_notify}.rs` | ≥ 80% | ≥ 70% | Action dispatcher covers happy path |
+
+**Coverage exclusions** (explicit): `#[cfg(not(target_os = "linux"))]`
+mod landlock_bridge/seccomp_bridge/openat2_bridge are excluded on non-Linux
+CI runners; `live-whatsapp` test paths are excluded from the gate (matches
+telegram/tdlib exclusion precedent).
+
+## MCP Protocol Version
+
+The MCP server pins **`protocolVersion: "2025-06-18"`** (the latest stable
+revision as of design date). This revision includes structured content,
+elicitation, and the notifications/resources/updated semantics used by the
+design. Earlier revisions (2024-11-05, 2025-03-26) are NOT supported.
+
+**Schema generation strategy:** Tool input schemas are derived from
+`schemars` (JsonSchema derive) on the existing
+`octo_network::dot::adapters::*` request types where possible; hand-written
+JSON Schema for RPC types that don't yet have JsonSchema derives. The
+`schemars` strategy is preferred — single source of truth, automatic
+update on type changes.
+
+**Reference SDK considered:** `rmcp` (https://github.com/modelcontextprotocol/rust-sdk).
+**Decision:** `rmcp` is **NOT used** in v1. Rationale (formal rebuttal):
+`rmcp`'s request handlers are tightly coupled to its `ServerHandler` trait,
+which would force all 96 RPC methods to live in `rmcp`'s handler model. The
+runtime's design needs the RPC methods to be callable from both the
+daemon-internal IPC (over unix socket) AND the MCP server (over stdio) AND
+the CLI (in-process). Three parallel dispatch surfaces in one model is
+harder to maintain than three thin adapters in front of one set of pure
+`async fn`. **Round 3 reviewer finding round3-cross-03 rebutted**: reuse
+`rmcp`'s schema generation helpers (`schemars` integration) but not its
+handler framework. `rmcp` may be revisited in a future phase if its
+handler model gains the flexibility we need.
 
 Single TOML at `$XDG_CONFIG_HOME/octo-whatsapp/config.toml`. Schema validated
 at startup via `figment` + `serde`; invalid config refuses to start with the
@@ -1550,12 +1746,52 @@ in Phase 2; 🔒 = adapter-internal (deliberately not exposed via RPC).
 
 ### CoordinatorAdmin (delegated via `as_coordinator_admin`)
 
-`create_group`, `leave_group`, `destroy_group` (revoke+leave), `join_by_invite`,
-`add_member`, `remove_member`, `ban_member`, `promote_to_admin`,
-`demote_from_admin`, `approve_join_request`, `rename_group`,
-`set_group_description`, `set_locked`, `set_announce`, `set_ephemeral`,
-`set_require_approval`, `list_own_groups`, `get_group_metadata`,
-`resolve_invite`, `transfer_ownership` — all ✅ via `groups.*`.
+The `CoordinatorAdmin` trait in `crates/octo-network/src/dot/adapters/coordinator_admin.rs`
+exposes **24 methods** (verified by awk + grep; the design's earlier "~20
+methods" was off by 4 — see Round 3 parity-01 finding). The WhatsApp
+adapter implements all 24:
+
+| Trait method | Adapter method | Disposition |
+|---|---|---|
+| `admin_capabilities` | inherent | ✅ via `capabilities` |
+| `create_group` | `CoordinatorAdmin::create_group` impl | ✅ via `groups.create` |
+| `leave_group` | `CoordinatorAdmin::leave_group` impl | ✅ via `groups.leave` |
+| `destroy_group` | revoke+leave | ✅ via `groups.destroy` (revoke + leave) |
+| `add_member` | `CoordinatorAdmin::add_member` (singular) | ✅ via `groups.participants.add` |
+| `remove_member` | `CoordinatorAdmin::remove_member` (singular) | ✅ via `groups.participants.remove` |
+| `ban_member` | revoke+remove | ✅ via `groups.participants.ban` |
+| `promote_to_admin` | `CoordinatorAdmin::promote_to_admin` (singular) | ✅ via `groups.participants.promote` |
+| `demote_from_admin` | `CoordinatorAdmin::demote_from_admin` (singular) | ✅ via `groups.participants.demote` |
+| `approve_join_request` | `CoordinatorAdmin::approve_join_request` | ✅ via `groups.requests.approve` |
+| `rename_group` | `CoordinatorAdmin::rename_group` | ✅ via `groups.subject` |
+| `set_group_description` | `CoordinatorAdmin::set_group_description` | ✅ via `groups.description` |
+| `set_locked` | `CoordinatorAdmin::set_locked` | ✅ via `groups.locked` |
+| `set_announce` | `CoordinatorAdmin::set_announce` | ✅ via `groups.announce` |
+| `set_ephemeral` | `CoordinatorAdmin::set_ephemeral` | ✅ via `groups.ephemeral` |
+| `set_require_approval` | `CoordinatorAdmin::set_require_approval` | ✅ via `groups.approval` |
+| `list_own_groups` | `CoordinatorAdmin::list_own_groups` | ✅ via `groups.list` |
+| `list_own_groups_with_invites` | `CoordinatorAdmin::list_own_groups_with_invites` | ✅ via `groups.list --with-invites` |
+| `get_group_metadata` | `CoordinatorAdmin::get_group_metadata` | ✅ via `groups.metadata` |
+| `resolve_invite` | `CoordinatorAdmin::resolve_invite` | ✅ via `groups.invite.resolve` |
+| `join_by_invite` | `CoordinatorAdmin::join_by_invite` | ✅ via `groups.join-by-invite` |
+| `join_by_id` | `CoordinatorAdmin::join_by_id` | 🚫 (not supported by WhatsApp — `admin_capabilities.can_join_by_id = false`) |
+| `transfer_ownership` | `CoordinatorAdmin::transfer_ownership` | ✅ via `groups.ownership.transfer` |
+| `platform_name` | inherent | ✅ via `capabilities.platform` (merged) |
+
+**Deprecation rule (uniformly applied):** All adapter-inherent plural/suffixed
+forms (`create_group_str`, `add_members`, `remove_members`,
+`promote_participants`, `demote_participants`, `get_participating`,
+`create_group` as inherent if any) are 🔒. Routes go through the
+`CoordinatorAdmin` trait methods (singular where applicable). The live
+e2e test `crates/octo-adapter-whatsapp/tests/live_e2e_group_setup_test.rs:379`
+uses `add_members` directly — **acceptable** because that test exercises
+the adapter as a standalone crate (not via the runtime); the runtime
+regression suite (`tests/it_ipc_roundtrip.rs`) covers the canonical
+`CoordinatorAdmin::add_member` path.
+
+**Note:** `health_check`, `shutdown`, `as_coordinator_admin`, `domain_id`,
+`platform_type` (PlatformAdapter trait surface) are 🔒 (adapter-internal
+trait dispatch — never exposed via RPC).
 
 ### StoolapStore (store.rs)
 
@@ -1866,3 +2102,101 @@ stale 'Connected'.
   and Protocol sections specifically for spec-ambiguity that
   prevents implementation, and the Completeness parity tables for
   any remaining 🔒 → ✅ miscategorizations.
+
+## Round 3 Revisions Summary
+
+The third adversarial review (3 lenses, 28 findings) was focused on
+**convergence**: spec ambiguity resolution, parity verification, and
+cross-cutting integration. All major findings applied inline; remaining
+spec ambiguity resolutions documented below.
+
+**Spec ambiguity resolutions** (paste-ready text):
+
+1. **Webhook HMAC protocol direction**: Stripe-style is for INCOMING
+   webhooks (receiver verifies). Outbound uses
+   `X-Octo-Idempotency-Key: UUIDv7`; sender maintains an in-memory
+   1024-entry dedupe per target (not persistent across restarts).
+   Receiver is responsible for replay protection per Stripe semantics.
+2. **SPKI pin rotation semantics**: Two-set model
+   (`pins_active` + `pins_rotating`). Migration via
+   `adapter.rotate_pin {add, drop}` RPC. `allow_pin_mismatch` refuses
+   start unless acked within 24h. Grace 1-90 days.
+3. **Allowlist format**: Literal-or-glob with `*` restricted to a
+   SINGLE trailing segment. No regex. Hard cap 1024 entries.
+4. **Parity table schema**: 🔒 entries MUST have an explicit route
+   column. Build-time CI test `it_parity_table.rs` parses the table
+   markdown and fails on missing routes.
+5. **Token rotation grace vs systemd restart**: Grace state persisted
+   to `$DATADIR/tokens/grace.json` (mode 0600, fsync-before-ack) with
+   absolute expiry; systemd restart does not truncate grace.
+6. **MCP `resources/updated` flood control**: Commit-only notifications;
+   250ms per-(session, uri) debounce; hard cap 20/sec/session;
+   subscriber auto-pause on >1000 missed events.
+7. **`bot_task` silent completion**: Three exit classes (panic / clean
+   / silent); each emits distinct event; supervisor auto-restarts
+   panic and silent, NOT clean.
+8. **Docker HEALTHCHECK**: `--interval=30s --timeout=5s --start-period=60s
+   --retries=3` + `octo whatsapp health` verb contract (exit 0 only if
+   `connected=true` AND `bot_state ∈ {Connected, Reconnecting}`).
+
+**Parity verification — key corrections**:
+
+- `CoordinatorAdmin` has **24 methods** (not "~20"). Updated
+  CoordinatorAdmin sub-section table with all 24.
+- **`send_message` / `receive_messages` are 🔒** (PlatformAdapter
+  trait methods; routed via `envelope.send` and `envelope.tail-dot`
+  internally). Same for `upload_media` / `download_media` (routed via
+  `media.upload` / `media.download` which ARE ✅).
+- **Live e2e test using `.add_members()` directly**: REBUTTED — that
+  test exercises the adapter standalone, not via the runtime. The
+  runtime regression suite covers `CoordinatorAdmin::add_member`.
+  Test retention is acceptable.
+
+**Cross-cutting integration** (workspace):
+
+- New `crates/octo-whatsapp/` follows `octo-cli-meta` pattern:
+  - Root `Cargo.toml` `exclude` list adds
+    `crates/octo-whatsapp` and `crates/octo-whatsapp-onboard` (renamed-
+    in-place).
+  - `crates/octo-cli-meta/Cargo.toml` gains `whatsapp-cli` feature
+    depending on `octo-whatsapp`.
+- **Cargo.toml deps pinned** explicitly: `arc-swap`, `schemars`,
+  `subtle`, `keyring` (optional), `landlock` (Linux-only optional),
+  `seccompiler` (Linux-only optional), `openat2` (Linux-only optional).
+- **MCP protocol version pinned** to `2025-06-18`. `rmcp` SDK
+  evaluated and **rebutted** (use `schemars` for schema generation but
+  not `rmcp`'s handler framework).
+- **CI integration**: workflow excerpts added for `cargo check
+  -p octo-cli-meta --features whatsapp-cli`, `cargo clippy
+  --all-targets --all-features -- -D warnings`, hermetic test list,
+  and gated live e2e.
+- **Coverage toolchain**: `cargo-llvm-cov`; per-module targets added
+  in a table.
+- **Stoolap dep direction enforced**: `octo-whatsapp` MUST NOT
+  declare `stoolap` as a direct dep — access only via
+  `DaemonState.store`.
+- **Supervisor reuse**: `daemon.rs` reuses `octo-runtime` primitives
+  (CancellationToken, JoinHandles); if `octo-runtime` lacks the needed
+  API, document a formal rebuttal.
+
+**Why a separate `octo-whatsapp` binary** (not an `octo whatsapp`
+subcommand): `octo-cli` pulls in `octo-runtime` (Deno sandbox);
+coupling WhatsApp's long-lived socket to the agent runtime is
+unwanted; systemd unit separation; matches `octo-cli-meta` pattern.
+
+**Conversational convergence signal:** Round 3 produced 8 spec
+RESOLUTIONS, 10 parity corrections (1 rebutted), and 10 cross-cutting
+fixes. No new ambiguities surfaced. **Design is implementation-ready
+for Phase 1 (MVP).**
+
+**Implementation handoff.** With Round 3 complete, the design doc
+(2,103 lines) converges. Next step (per project workflow):
+1. `superpowers:using-git-worktrees` — isolated implementation
+   workspace
+2. `superpowers:writing-plans` — break the 5-phase rollout into
+   discrete, testable tasks
+3. Phase 1 (MVP, ~2 weeks): crate scaffold + daemon + JSON-RPC +
+   4 method surfaces (`status.get`, `send.text`, `groups.create|list|
+   info|leave`, `messages.list`) + onboarding passthrough
+4. Phase 2-5 per the §Rollout schedule (each phase ends with tests
+   green + `daemon.api.version` bump + RFC/mission update)

@@ -260,18 +260,58 @@ RPC method and (where useful) one MCP tool.
 
 ## Daemon Lifecycle
 
-**Process model.** Single tokio runtime, multi-task. The `daemon` subcommand
-replaces CLI arg parsing with daemon-mode dispatch.
+**Process model.** Single tokio runtime, supervised multi-task. The `daemon`
+subcommand replaces CLI arg parsing with daemon-mode dispatch.
+
+The supervisor retains every `JoinHandle` and drives shutdown via a
+`tokio_util::sync::CancellationToken`. `tokio::select!` is **not** used at the
+top level — it would drop sibling branches on first completion, which is the
+opposite of graceful shutdown.
 
 ```
 main → tokio runtime → spawn:
-  ├─ ws_loop        (drives WhatsAppWebAdapter::run_reconnect_loop)
-  ├─ control_server (accepts unix socket connections, dispatches RPCs)
-  ├─ event_router   (subscribes to raw events, fans out to MCP/CLI subscribers + rules)
-  ├─ rules_engine   (event → rule match → action dispatch)
-  ├─ signal_handler (SIGTERM → graceful shutdown; SIGHUP → partial reload)
-  └─ health_reporter (periodic self-check; updates dropped_inbound, last_event_ts)
+  ├─ bot_task       (calls WhatsAppWebAdapter::start_bot() — never returns
+  │                  under normal operation; wacore owns reconnection
+  │                  internally; see adapter.rs:1281 doc-comment. The runtime
+  │                  does NOT call run_reconnect_loop — it is a no-op.)
+  ├─ control_server (accepts unix socket connections; max_connections=64,
+  │                  idle_timeout=5min, per-conn write deadline 100ms,
+  │                  SO_PEERCRED/PID+starttime check on every accept)
+  ├─ event_router   (subscribes to raw events; persists-before-fan-out;
+  │                  per-sink bounded mpsc: subscribers=256, rules=1024;
+  │                  subscribers first, rules last, drop-newest on overflow
+  │                  with explicit Lagged counter per sink)
+  ├─ rules_persister (SINGLE owner of rules.toml disk writes; receives
+  │                  mutate requests via mpsc; debounce 100ms; atomic
+  │                  temp-file + rename; flush on shutdown/cancel)
+  ├─ matcher_pool   (4 dedicated tasks consuming from a single rules mpsc;
+  │                  predicate eval inline; arc_swap::Guard dropped before
+  │                  any await on action dispatch)
+  ├─ action_dispatcher (semaphore=16 per-rule concurrency; try_join_all
+  │                  over a Vec<JoinHandle>; JoinHandles cleaned on completion)
+  ├─ signal_handler (SIGTERM → graceful shutdown; SIGHUP → partial config
+  │                  reload; SIGINT → same as SIGTERM)
+  └─ health_reporter (periodic self-check; updates dropped_inbound,
+                     last_event_ts, generations_resident, sink_lagged_total)
 ```
+
+**Lock ordering (global).** All lock acquisitions in the runtime follow this
+strict order to prevent deadlock:
+
+1. `state.metrics` (AtomicU64 only — no Mutex)
+2. `adapter.runtime_groups`
+3. `adapter.client`
+4. `adapter.self_phone`
+5. `adapter.store` (init only — runtime hot path uses `DaemonState.store: Arc<StoolapStore>` cloned out at startup, see Stoolap sharing rule)
+6. `arc_swap::ArcSwap::store` (writers only — readers are lock-free)
+
+Lint: `clippy::await_holding_lock` plus a custom `await_holding_*` audit in
+CI that scans for `lock().await` patterns.
+
+**Send + Sync.** `DaemonState` and `WhatsAppWebAdapter` carry
+`const _: () = assert_send_sync::<DaemonState>();` style compile-time
+assertions so Send+Sync is verified, not discovered by a future spawn-site
+compile error.
 
 **Startup sequence.**
 
@@ -289,17 +329,53 @@ fail in some test runs. Readiness is therefore a composite signal:
 
 | Signal | Source | Meaning | Blocks RPCs? |
 |---|---|---|---|
-| `connected` | `adapter.connected().notified()` | WS handshake done | yes |
+| `connected` | `DaemonState.connected: AtomicBool` (updated by `bot_task` watching `adapter.connected().notified()`) | WS handshake done | yes |
 | `session_valid` | `adapter.has_valid_session()` | `session.db` decrypts + creds present | yes |
-| `synced` | `adapter.synced().notified()` | HistorySync from server | **no** (soft hint) |
+| `synced` | `DaemonState.synced: AtomicBool` (updated from `adapter.synced().notified()`) | HistorySync from server | **no** (soft hint) |
 | `ready` | `connected && session_valid` | Daemon accepts outbound RPCs | derived |
 
 `synced()` is a soft hint that history is available — it MUST NOT block RPC
 readiness. Operators who want stricter gating opt in via `--require-sync`
 (default **OFF**) with `--sync-timeout 120s` after which the daemon proceeds
-and logs a warning. `status.get` RPC and CLI `octo whatsapp status` return the
-full breakdown: `{ connected, synced, session_valid, ready, dropped_inbound,
-last_event_ts }`.
+and logs a warning.
+
+**`status.get` RPC and CLI `octo whatsapp status` return the full
+breakdown:**
+
+```json
+{
+  "connected": true,
+  "session_valid": true,
+  "synced": false,
+  "ready": true,
+  "bot_state": "Connected",            // 7-variant BotState verbatim
+  "dropped_inbound": 0,
+  "last_event_ts": "2026-07-04T12:34:56Z",
+  "last_event_ts_mono_ns": 1234567890,
+  "uptime_secs": 3600,
+  "daemon_version": "0.1.0",
+  "api_version": "1.0.0+phase1",
+  "sink_lagged_total": {"mcp": 0, "cli": 0},
+  "rules_generations_resident": 2,
+  "stoolap_persist_queue_depth": 0
+}
+```
+
+`require_sync` is a daemon-level gate; toggling it via SIGHUP takes effect
+within ≤1s without restart. `--require-sync` CLI flag and `[daemon]
+require_sync` config have the same meaning; config wins if both set.
+
+**BotState mapping to error codes** — `SessionLost` is split into three
+codes so callers can branch on cause:
+
+| `BotState` (from `state.rs`) | Error code (when blocking) | Notes |
+|---|---|---|
+| `Disconnected` (default) | n/a | daemon starting up |
+| `PairingQr` / `PairingCode` | n/a | daemon is showing QR / pair code |
+| `Connected` | n/a | normal operation |
+| `Replaced` | `-32001a SessionLostReplaced` | multi-device pairing displaced us |
+| `LoggedOut` | `-32001b SessionLostLoggedOut` | operator-initiated |
+| `SessionExpired` | `-32001c SessionLostExpired` | needs re-pair |
 
 ### Session-loss path (no auto-onboard)
 
@@ -324,20 +400,47 @@ the next `octo whatsapp daemon` invocation picks up the new session naturally.
 
 ### Stoolap sharing rule
 
-One `Arc<WhatsAppWebAdapter>` lives in `DaemonState`. Its `Arc<StoolapStore>`
-(already `Arc<Mutex<Option<Arc<StoolapStore>>>>` in the adapter) is the ONLY
-store handle in the runtime. All RPC paths go
-`RPC → DaemonState → Arc<WhatsAppWebAdapter> → store`. **No RPC handler, CLI
-subcommand, or MCP tool may call `StoolapStore::new()` or open a second handle
-to the same file.**
+One `Arc<WhatsAppWebAdapter>` lives in `DaemonState`. Its
+`Arc<StoolapStore>` (already `Arc<Mutex<Option<Arc<StoolapStore>>>>` in the
+adapter) is the ONLY store handle in the runtime. The invariant is enforced
+at startup and per RPC:
 
-Enforcement: a unit test (`tests/it_stoolap_uniqueness.rs`) greps the crate for
-`StoolapStore::new(` outside the adapter's own `start_bot()`. CI fails on any
-new instance.
+1. **Init:** `start_bot()` populates `adapter.store`; the runtime immediately
+   clones the inner `Arc<StoolapStore>` into `DaemonState.store`. From that
+   point on, `adapter.store` is init-only — no RPC path touches it.
+2. **Hot path:** all RPC paths use `DaemonState.store` directly. The adapter's
+   `self.store.lock()` is held for at most one statement (clone-out), never
+   across an await — same discipline the adapter uses in `send_message`.
+3. **One writer at a time:** writes go through a dedicated `db_writer` task
+   owning `DaemonState.store` and receiving requests via unbounded mpsc. This
+   serializes all writes (preserving the adapter's single-writer invariant)
+   while letting RPC handlers queue without holding any lock.
+4. **Reader isolation:** read-only queries (`messages.list`, `events.list`)
+   use the same `Arc<StoolapStore>` via short-lived read transactions; the
+   `db_writer` and readers never share a Mutex — stoolap handles concurrent
+   reads natively.
+
+**No RPC handler, CLI subcommand, or MCP tool may call `StoolapStore::new()`
+or open a second handle to the same file.** Enforcement:
+- A unit test (`tests/it_stoolap_uniqueness.rs`) greps the crate for
+  `StoolapStore::new(` outside the adapter's own `start_bot()` and outside
+  the existing offline binaries (`bin/event_listener.rs`,
+  `bin/inspect_session_db.rs`, `bin/cleanup_test_groups.rs` — explicitly
+  documented as offline).
+- A second test greps the crate for `stoolap::Database::open(` outside the
+  adapter's `start_bot()` and the three offline binaries.
+- A third test asserts every RPC handler reads `DaemonState.store`, never
+  `adapter.store`.
 
 Why: a separate per-client store handle would deadlock with the adapter's
-existing handle (both writing to the same DB file). The `inspect_session_db`
-binary remains a read-only offline tool and is not wired into any RPC.
+existing handle (both writing to the same DB file). The
+`inspect_session_db`, `event_listener`, and `cleanup_test_groups` binaries
+remain read-only offline tools and are explicitly NOT wired into any RPC.
+
+**Multi-instance safety.** When `--name NAME` is used, the session_path is
+templated: `~/.local/share/octo/whatsapp/{NAME}.session.db`. Startup acquires
+`flock(LOCK_EX|LOCK_NB)` on the session file; collision with another live
+daemon fails fast with `session_locked`.
 
 ## IPC Contract
 
@@ -415,23 +518,38 @@ audit.tail, audit.since
 
 ### Error codes
 
-| Code | Name | When |
-|---|---|---|
-| -32700 | ParseError | malformed JSON |
-| -32600 | InvalidRequest | missing id/method |
-| -32601 | MethodNotFound | unknown verb |
-| -32602 | InvalidParams | schema validation failed |
-| -32603 | InternalError | unexpected panic |
-| -32001 | SessionLost | `BotState::Replaced/LoggedOut/SessionExpired` |
-| -32002 | NotConfigured | daemon missing required config |
-| -32003 | RateLimited | global or per-peer limit hit |
-| -32004 | PayloadTooLarge | exceeds adapter ceiling |
-| -32005 | GroupNotAdmin | operation requires admin |
-| -32010 | PeerNotAllowed | sender_allowlist blocks target |
-| -32020 | RuleConflict | etag mismatch on rules.update |
-| -32030 | TriggerDisabled | trigger.enabled = false |
-| -32040 | UploadPathDenied | outside allowed_upload_roots |
-| -32050 | Internal | uncategorized adapter error |
+| Code | Name | Emitted by | When |
+|---|---|---|---|
+| -32700 | ParseError | all RPC | malformed JSON |
+| -32600 | InvalidRequest | all RPC | missing id/method |
+| -32601 | MethodNotFound | all RPC | unknown verb (or unknown MCP tool translated to this) |
+| -32602 | InvalidParams | all RPC | schema validation failed; for MCP `tools/call` to unknown tool |
+| -32603 | InternalError | all RPC | unexpected panic |
+| -32001a | SessionLostReplaced | outbound RPC | `LoggedOutCause::Replaced` observed |
+| -32001b | SessionLostLoggedOut | outbound RPC | `BotState::LoggedOut` observed |
+| -32001c | SessionLostExpired | outbound RPC | `BotState::SessionExpired` observed |
+| -32002 | NotConfigured | `start_bot`, `daemon.reconfig` | daemon missing required config |
+| -32003 | RateLimited | all outbound RPC, rule creates, tool toggles | per-peer, global, or rule-create limit hit |
+| -32004 | PayloadTooLarge | `send.*`, `envelope.*`, `media.upload` | exceeds 65,536 bytes for text mode OR exceeds 100 MiB for native mode OR envelope file too large |
+| -32005 | GroupNotAdmin | `groups.*` admin operations | operation requires admin (e.g. set_ephemeral by non-admin) |
+| -32006 | FallbackExhausted | `send.*` native mode | native upload + text fallback both failed |
+| -32007 | PayloadTooLargeForTrigger | `triggers.run` | message text exceeds ARG_MAX for env-var dispatch |
+| -32008 | EscalationFailed | `actions.escalate` | escalation target unreachable after retries |
+| -32009 | ToolDisabled | MCP `tools/call` | tool was enabled when listed, disabled before call landed |
+| -32010 | PeerNotAllowed | outbound RPC | target JID/phone not in peer_allowlist |
+| -32011 | StoreNotReady | stoolap-backed RPC | called before `start_bot()` populated `DaemonState.store` |
+| -32012 | NotConnected | outbound RPC | `connected=false` (WS dropped, not yet reconnected) |
+| -32013 | EditWindowExpired | `messages.edit` | edit window closed (typically 1 hour, server-side) |
+| -32014 | DeleteWindowExpired | `send.delete`, `messages.delete` | delete-for-everyone window closed |
+| -32015 | BackoffCancelled | `reconnect.now` | operator forced immediate reconnect while one was in progress |
+| -32020 | RuleConflict | `rules.update`, `rules.patch` | etag mismatch (RFC 8785 canonical JSON used for hashing) |
+| -32021 | RuleRegexUnsafe | `rules.create`, `rules.update` | regex pattern fails compile-time ReDoS classifier |
+| -32022 | RuleMatchTimeout | `rules.match` | predicate exceeded regex timeout (default 10ms) |
+| -32030 | TriggerDisabled | `triggers.run` | trigger.enabled = false |
+| -32040 | UploadPathDenied | `media.upload`, `send.* --file`, `profile.picture`, `groups.icon` | path outside allowed_upload_roots or fails openat2 RESOLVE_BENEATH |
+| -32050 | Internal | RPC adapter | uncategorized adapter error (string from `Result<T, String>`) |
+| -32060 | Unimplemented | `CoordinatorAdmin::*` | `PlatformAdapterError::Unimplemented { platform, action }` |
+| -32099 | ShuttingDown | outbound RPC | SIGTERM in flight, refusing new RPCs until drain completes |
 
 ### Auth & access
 
@@ -446,21 +564,73 @@ audit.tail, audit.since
 
 ### InboundEvent (typed)
 
+The raw broadcast from the adapter is `tokio::sync::broadcast::Sender<String>`
+of capacity 1000 (adapter.rs). This channel is **lossy by design**: subscribers
+that fall behind receive `RecvError::Lagged(n)` and the events themselves are
+gone — the design never claims "no event loss".
+
 ```rust
 enum InboundEvent {
-    Message { id, peer, sender, ts, kind, text, media_token?, reply_to?, mentions, is_group },
-    Reaction { id, target_msg_id, emoji, from, peer, ts },
-    GroupChange { group_jid, kind: Join|Leave|Promote|Demote|Subject|Icon|Description, actor, target, ts, after },
+    Message { id, peer, sender, ts, ts_mono_ns, kind, text, media_token?, reply_to?, mentions: SmallVec<[Jid; 8]>, is_group },
+    Reaction { id, target_msg_id, emoji, from, peer, ts, ts_mono_ns },
+    GroupChange { group_jid, kind: Join|Leave|Promote|Demote|Subject|Icon|Description, actor, target, ts, ts_mono_ns, after },
     Presence { jid, kind: Available|Unavailable|Typing|Recording, last_seen },
-    Connection { kind: Connected|Disconnected|Replaced|LoggedOut|Synced, cause, ts },
-    Receipt { msg_id, peer, kind: Read|Delivered|Played, ts },
-    Call { id, peer, kind: Voice|Video, state: Offered|Accepted|Rejected|Terminated, ts },
-    Story { id, peer, kind: Posted|Viewed, ts },
+    Connection { kind: Connected|Disconnected|Replaced|LoggedOut|Synced, cause: Option<LoggedOutCause>, ts, ts_mono_ns },
+    Receipt { msg_id, peer, kind: Read|Delivered|Played, ts, ts_mono_ns },
+    Call { id, peer, kind: Voice|Video, state: Offered|Accepted|Rejected|Terminated, ts, ts_mono_ns },
+    Story { id, peer, kind: Posted|Viewed, ts, ts_mono_ns },
+    Unknown { raw, ts, ts_mono_ns },         // fallback for unrecognized wacore events
 }
 ```
 
-Every event is **persisted** to stoolap table `events` before fan-out, so
-`events.list / show / replay` work and a daemon crash doesn't lose history.
+**InboundEvent parser location.** `events.rs` owns the `String → InboundEvent`
+parser. Input format is `format!("{:?}", ev)` produced by the adapter's
+`on_event` closure (the same format `event_listener.rs` already prints).
+Parser maintainers: when wacore emits a new event kind, add the variant here
+and an `Unknown` fallback for unmapped cases.
+
+**Timestamp policy.** Every event carries both `ts` (wall clock, NTP-corrected
+at startup) and `ts_mono_ns` (monotonic nanos since boot). Wall-clock events
+with `ts > now() + 60s` are flagged `untrusted=true` and emitted with a
+`daemon.clock_skew` event. `events.list` accepts `--since-ts` (wall) and
+`--since-mono` (monotonic); prefer monotonic for replay across clock jumps.
+
+**Persister-before-fan-out.** Every event is persisted to stoolap table
+`events` before fan-out. Persist goes through the `db_writer` task to avoid
+back-pressure on the rules engine and subscribers:
+
+```sql
+CREATE TABLE events (
+    id              BIGINT PRIMARY KEY,
+    ts              TEXT    NOT NULL,    -- RFC 3339 wall clock
+    ts_mono_ns      INTEGER NOT NULL,    -- monotonic since boot
+    kind            TEXT    NOT NULL,
+    peer            TEXT,
+    sender          TEXT,
+    payload_json    TEXT    NOT NULL,
+    rule_id_fired   TEXT,
+    action_results  TEXT,
+    persist_failed  INTEGER DEFAULT 0,
+    untrusted       INTEGER DEFAULT 0    -- 1 if ts > now() + 60s
+);
+CREATE INDEX idx_events_ts ON events(ts);
+CREATE INDEX idx_events_peer ON events(peer);
+CREATE INDEX idx_events_kind ON events(kind);
+```
+
+**Retention** is bounded by `[events] retention_days` (default 30),
+`max_rows` (default 1,000,000). Daemon evicts oldest beyond cap on each
+insert in batches of 1000 rows/transaction. Eviction emits a
+`daemon.events.evicted_total` metric.
+
+**Loss recovery.** Subscribers experiencing `RecvError::Lagged(n)` use
+`events.list --since-id <last_seen>` to backfill. The Lagged count is
+surfaced per sink in `status.get`.
+
+**InboundEvent bounding.** `mentions` is `SmallVec<[Jid; 8]>` — longer
+mention lists truncate with a `mentions_truncated=true` flag. `text` over
+64 KiB truncates in the events table (full text available via
+`messages.get`). This bounds memory and stoolap page size.
 
 ### Fan-out
 
@@ -500,16 +670,38 @@ block the matcher hot path.
 **Hot mutation safety:**
 
 - All writes go through `DaemonState::mutate_rules(closure)` which validates
-  (schema + action kind + regex compile), bumps version, persists to disk via
-  temp-file + rename, and swaps atomically.
+  (schema + action kind + ReDoS-classifier on text_regex), bumps version,
+  persists to disk via temp-file + rename (single-owner `rules_persister`
+  task — see Process Model), and swaps atomically.
 - Disk writes are debounced 100 ms (burst-safe) but flush on
-  `rules.delete` / daemon shutdown.
+  `rules.delete` / daemon shutdown / `rules.flush` RPC. **Loss window is
+  documented:** up to 100 ms of rule changes may be lost on a hard crash
+  (OOM, SIGKILL, power loss) before the debounce fires. Operators who need
+  stronger durability call `rules.flush` or wait ≥100 ms before critical
+  steps.
 - Concurrent edits: `update` requires the caller's `etag`; mismatch returns
   `RuleConflict` (`-32020`) with current etag + version → caller re-reads,
-  retries.
-- In-flight matches finish against their snapshot (Arc keeps old Ruleset alive
-  briefly; GC after 5 s of no readers).
-- `rules.test` evaluates against the in-memory Ruleset **without** persisting.
+  retries. ETag is `sha256(canonical_json({version, match, actions}))` where
+  `canonical_json` follows RFC 8785 (JSON Canonicalization Scheme) — no
+  spurious conflicts from key ordering or whitespace.
+- In-flight matchers: predicate evaluation holds the `arc_swap::Guard` only
+  long enough to clone a `Vec<Arc<Action>>` for the matched rules. The guard
+  is dropped **before** any await on action dispatch. This prevents the old
+  `Arc<Ruleset>` from being pinned for the duration of a slow action.
+- GC: a `sweeper` task wakes every 1 s, walks in-flight generations, and
+  drops any whose `Drop` would release the last `Arc`. Bounded
+  `rules.generations_resident` gauge; default cap 16; overflow skips the
+  swap with a warning and a `rules.swap_skipped` metric (the in-flight
+  matchers will finish against the previous generation).
+- `rules.test --event JSON` evaluates against the in-memory Ruleset and
+  returns `{ matched: [...], would_fire: [{rule_id, action_kind}] }`
+  WITHOUT executing actions. `--execute-actions` opt-in flag (default
+  false) is gated to a separate `rules.execute` capability, NOT in the
+  default `all-non-envelope` set.
+- `rules.create` / `rules.update` rate-limited to 10/min per caller_uid;
+  `rules.create` defaults to a `rule_draft` state that requires
+  `rules.approve` (operator scope) before firing — unless
+  `[security] auto_approve_rules = true`.
 - An MCP agent can call `rules.create` / `rules.update` / `rules.delete` /
   `rules.enable` / `rules.disable` at any time without daemon restart.
 
@@ -622,15 +814,64 @@ Two distinct surfaces, made explicit:
 **Default CLI is raw.** `octo whatsapp send text alice "hello"` sends a plain
 WhatsApp text message — no `DOT/1/` prefix, no base64, no envelope.
 
+**Pre-flight ceiling on raw text.** The raw `send.text` path enforces the
+same 65,536-byte ceiling as the DOT path's `select_mode_with_max_text` (the
+adapter's actual call uses `encoded.len()` per RFC-0850 §8.6). Text over
+65,536 bytes returns `-32004 PayloadTooLarge` with hint `"use send.doc"`,
+without contacting WhatsApp. The text-mode ceiling is documented as
+`≤65,536` inclusive; the boundary is tested in CI with both 65,536-byte and
+65,537-byte payloads.
+
 **Explicit DOT namespace:**
 
 ```
-octo whatsapp envelope send         <peer> --file <envelope.bin> [--mode text|native]
-octo whatsapp envelope send-native  <peer> --file <payload.bin>
-octo whatsapp envelope encode       [--file <wire.bin>]             # → DOT/1/ text on stdout
-octo whatsapp envelope decode                                         # ← DOT/1/ text on stdin → wire.bin
-octo whatsapp capabilities                                             # CapabilityReport (RFC-0850 §8.1)
-octo whatsapp domain compute-hash <group-jid>                          # BLAKE3-256("whatsapp:{jid}")
+octo whatsapp envelope send         <peer> --file <envelope.bin>
+                                    # DeterministicEnvelope wire bytes; mode
+                                    # selected deterministically by the adapter
+                                    # (RFC-0850 §8.6). No --mode flag.
+octo whatsapp envelope send-native  <peer> --file <wire.bin>
+                                    # Uploads the wire bytes via the wacore
+                                    # document path and sends a text message
+                                    # carrying the DOT/2/{media_ref_token}
+                                    # reference (RFC-0850 §8.6 line 804).
+                                    # Input MUST be raw wire bytes; rejects
+                                    # inputs that already start with "DOT/".
+octo whatsapp envelope encode       [--file <wire.bin>]
+                                    # Input: binary wire bytes.
+                                    # Output: DOT/1/{base64url-no-pad} to stdout
+                                    # (RFC 4648 §5). Delegates to
+                                    # WhatsAppWebAdapter::encode_envelope.
+octo whatsapp envelope decode
+                                    # Input: DOT/1/{base64url-no-pad} from stdin.
+                                    # Output: binary wire bytes to stdout.
+                                    # Rejects inputs missing the DOT/1/ prefix
+                                    # with the adapter's verbatim error.
+                                    # Delegates to decode_envelope.
+octo whatsapp capabilities
+                                    # Returns CapabilityReport (RFC-0850 §8.2
+                                    # Platform Adapter Contract — invoked per
+                                    # §8.4 Lifecycle step 3; NOT §8.1).
+                                    # Expected shape:
+                                    # {
+                                    #   max_payload_bytes: 65536,
+                                    #   supports_fragmentation: false,
+                                    #   supports_raw_binary: false,
+                                    #   rate_limit_per_second: 20,           # global, not per-peer (see below)
+                                    #   media_capabilities: {
+                                    #     max_upload_bytes: 104857600,
+                                    #     supported_mime_types: ["application/octet-stream"]
+                                    #   }
+                                    # }
+                                    # Image/video/audio uploads should use
+                                    # send.image / send.video / send.audio
+                                    # MCP tools, NOT envelope send-native.
+octo whatsapp domain compute-hash   <digits or <digits>@g.us>
+                                    # BLAKE3-256("whatsapp:" + lowercase(trim(input)))
+                                    # Input MUST be digits or <digits>@g.us.
+                                    # Other forms (e.g. <digits>@lid,
+                                    # <digits>@s.whatsapp.net, raw +E.164)
+                                    # are rejected with the same error as
+                                    # adapter.rs:637 group_to_jid.
 ```
 
 **Inbound** is also typed and raw by default. `events.tail/list/show/replay`
@@ -714,41 +955,133 @@ adapter cleanly.
 - **Socket**: `0600`, owner UID only (`SO_PEERCRED`).
 - **TCP listener**: opt-in, requires bearer token, never `0.0.0.0` without
   `--allow-non-loopback-tcp` and banner.
-- **Tokens**: read from env at daemon start, never written to disk. Optional
-  `keyring` integration (env > keyring > file).
+- **Tokens**: read from env at daemon start (`bearer_token_env`), zeroed
+  after copy. Rotation: `security.rotate_token` RPC reads a new env var
+  `OCTO_WHATSAPP_TOKEN_NEW` and swaps atomically with a configurable grace
+  period (default 5 min, both old and new accepted). Online rotation is
+  the normal path; daemon restart is the last-resort fallback.
+  Comparison uses `subtle::ConstantTimeEq`. Optional `keyring` integration
+  (env > keyring > file).
+- **TCP auth**: `[security] tcp_listen` opt-in only. Bearer token in
+  `Authorization: Bearer …` header. Plain HTTP over loopback is allowed
+  (documented); `tcp.tls_cert` + `tcp.tls_key` configuration enables TLS
+  for non-loopback. Per-remote-IP failed-auth counter with exponential
+  backoff (1-Hz cap). `tcp.attempts_total{result}` metric.
 - **Trigger runner sandboxing**: shell commands run with `env_clear()`,
-  explicit `env_passthrough` allowlist, **never** `sh -c "…"` — args passed
-  as `argv`. Event-derived content (message text) passed via **stdin** or
-  named env var (`EVENT_TEXT`), never interpolated.
-- **HTTP triggers**: TLS-only, domain allowlist, optional HMAC signature
-  header on outbound.
-- **Media paths**: `allowed_upload_roots` enforced via `canonicalize()` +
-  prefix check; rejects symlinks pointing outside. Download tokens: 128-bit
-  random, 15-min TTL, single-use.
-- **Rate limit**: adapter's `rate_limit_per_second()` enforced per-peer;
-  daemon adds a global outbound RPC rate limit (token bucket, configurable).
-- **Audit log**: every RPC recorded with `{ts, caller_uid, method,
-  args_sha256, result_status, latency_ms}` into stoolap `audit_log` (capped
-  at 10k rows). `audit.tail` RPC exposes it.
+  explicit `env_passthrough` allowlist (default `HOME`, `PATH`, `LANG`,
+  `TZ`, `OCTO_*`), **never** `sh -c "…"` — args passed as `argv`. Event
+  content ≤64 KiB → `EVENT_TEXT` env var; larger → stdin. Mandatory
+  defenses: `prctl(PR_SET_NO_NEW_PRIVS)` set; executable path resolved
+  and validated against the trigger's `allowed_executables` whitelist
+  (absolute paths only, canonicalized); Landlock ruleset restricting FS to
+  a per-trigger scratch dir + read-only rootfs; seccomp filter blocking
+  network unless trigger has `net=allow`; `rlimit_as` (default 1 GiB) and
+  `rlimit_fsize` (default 100 MiB) via `setrlimit` in `pre_exec`;
+  `kill(-PGID, SIGKILL)` on timeout to reap children; stdout/stderr
+  capture capped at 10 MiB. Outputs go to audit_log hash, not logs.
+- **HTTP triggers**: TLS-only (refuses `http://`), domain allowlist from
+  `[actions.webhook] allowed_domains`, optional HMAC signature header
+  `X-Octowhatsapp-Signature: t=<unix>,v1=<hex(hmac-sha256(t || '.' || body || '.' || path))>`
+  with 5-min skew window + nonce table (TTL 2× skew). All webhook actions
+  carry an `idempotency_key: UUID` (auto-generated, sent in
+  `X-Octo-Idempotency-Key` header) so retries on timeouts don't double-fire.
+- **Media paths**: `allowed_upload_roots` enforced via `openat2()` with
+  `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`
+  (kernel-level, no userland race); rejects hardlinks and bind mounts
+  crossing allowed root's `st_dev`; `O_NOFOLLOW` open. `/proc/self/fd/N`
+  and `/proc/<pid>/` paths blocked. Applies to `media.upload`,
+  `send.* --file`, `profile.picture`, `groups.icon`.
+- **Download tokens**: 128-bit OsRng-sourced; row in stoolap columns
+  `(token_hash, file_sha256, uploader_jid, allow_peer_jid,
+  expires_at, used_at NULLABLE)`. Single-use enforced via
+  `UPDATE … WHERE used_at IS NULL RETURNING used_at` (CAS). TTL
+  anchored to system monotonic clock + NTP-clamp. Cap 1,000
+  outstanding tokens; oldest-evict on overflow with WARN log.
+- **Rate limit**: the adapter publishes `rate_limit_per_second = 20`
+  (carrier-wide, NOT per-peer — see RFC-0850 §8.4 step 3). The daemon
+  adds a hierarchical token bucket: `[runtime] outbound_rate_limit_per_second = 20`
+  (global) and `[runtime] per_peer_rate_limit_per_second = 5` (per-peer);
+  per-rule quota distinct from per-peer; jitter ±25% on backoff; drop-new
+  default. Metric: `octo_whatsapp_rate_limit_dropped_total{scope, peer}`.
+- **Audit log**: every RPC recorded with `{ts, ts_mono_ns, caller_uid,
+  caller_pid, method, args_canonical_sha256, result_status, latency_ms}`
+  into stoolap `audit_log`. **Ring-buffer** eviction when the cap
+  (`[security] audit_max_rows`, default 100,000) is reached, with a
+  `audit.truncated {dropped_count}` event emitted on each eviction.
+  Hash-chained: each row carries
+  `sha256(prev_audit_hash || ts || caller_uid || method ||
+  args_canonical_sha256 || result_status)` for tamper-evidence. Sensitive
+  fields redacted via typed `RedactedMessage { id, length_bytes,
+  peer_hash }` wrapper; clippy lint bans `info!(message = ?x)` for any
+  `InboundMessage`. Audit log is itself audited (`audit.tail` writes a
+  meta-audit row).
+- **MCP server attack surface**: per-request limits enforced at the
+  JSON-RPC layer — max body size 1 MiB, max nesting depth 32, max key
+  length 1024, max string length 256 KiB, max array length 10,000.
+  Unicode normalization to NFC + filtering of bidi-control characters in
+  any string field destined for logs or process args. Per-MCP-session
+  concurrency cap 16, rate-limit 100 calls/min.
+- **Session file security**: `session.db` mode MUST be 0600 and owned by
+  the daemon's UID at start; refuses to read otherwise. NAME parameter
+  regex `^[A-Za-z0-9_-]{1,32}$` (no path traversal, no NUL, no shell
+  metacharacters). `session.refresh` requires a one-time confirmation
+  token printed to the operator's TTY during onboard (passed via
+  `--confirm-token`); emits an audit row with prior and new
+  `session.fingerprint`. `session.export` writes an encrypted+MAC'd
+  blob using a passphrase from env (NOT plaintext).
+- **WebSocket origin**: default `ws_url = wss://web.whatsapp.com:443`
+  with rustls + webpki-roots and SPKI hash pin as backup. `[adapter]
+  ws_pin_sha256 = "…"` opts into pinning mode. Other `ws_url` values
+  emit a startup warning unless `allow_pin_mismatch=true`. SNI must
+  match `web.whatsapp.com` (or per config). Refuses plaintext `ws://`.
+- **Env-var override policy**: `[security] allow_env_overrides` defaults
+  to `false`. When false, only secrets (`bearer_token`,
+  `webhook_signing_secret`) accept env override. Structure-affecting
+  fields require config-file edit.
 
 ## Observability
 
 - **Logs**: structured tracing; default JSON to stderr + rotating file at
-  `$XDG_DATA_HOME/octo-whatsapp/logs/daemon.log`. Levels via `RUST_LOG` or
-  `[logging] level`. Sensitive fields (tokens, message bodies) auto-redacted
-  by a custom tracing layer.
-- **Metrics** (optional Prometheus):
+  `$XDG_DATA_HOME/octo-whatsapp/logs/daemon.log`. **Rotation policy is
+  size-based with a daily cap:** `[logging] rotation = { size = "100M",
+  keep = 20, daily_cap = "1G" }` (TOML table syntax; default values shown).
+  Levels via `RUST_LOG` or `[logging] level`. Sensitive fields redacted via
+  typed `RedactedMessage` wrapper enforced by a clippy lint and a
+  `redaction.test` corpus. Three deployment modes and their correct log
+  target: systemd → journald (no file), container → stdout (no file),
+  standalone → file rotation.
+- **Metrics** (optional Prometheus on `[observability.metrics]
+  prometheus_listen`, default `null`):
   - `octo_whatsapp_daemon_uptime_seconds`
-  - `octo_whatsapp_bot_state{state}`
+  - `octo_whatsapp_bot_state{state}` (the 7-variant `BotState`)
+  - `octo_whatsapp_connected{value}`
   - `octo_whatsapp_inbound_events_total{kind}`
   - `octo_whatsapp_outbound_messages_total{kind,result}`
-  - `octo_whatsapp_dropped_inbound_total`
+  - `octo_whatsapp_dropped_inbound_total` (wacore-internal drops)
+  - `octo_whatsapp_sink_lagged_total{sink}` (per-subscriber drops)
   - `octo_whatsapp_rule_fires_total{rule_id,result}`
   - `octo_whatsapp_trigger_runs_total{trigger_id,result}`
+  - `octo_whatsapp_persist_failed_total`
+  - `octo_whatsapp_audit_truncated_total`
+  - `octo_whatsapp_stoolap_lock_wait_seconds{op}` (histogram)
+  - `octo_whatsapp_stoolap_lock_held_seconds{op}` (histogram)
+  - `octo_whatsapp_rate_limit_dropped_total{scope,peer}`
   - latency histograms per RPC method
-- **Health**: `health.get` RPC; HTTP `/health` (liveness) / `/ready`
-  (readiness per the 4-signal breakdown).
-- **OTLP tracing**: optional `otlp_endpoint` for distributed traces.
+  - High-cardinality labels (peer_jid, rule_id) are HMAC-hashed and
+    truncated (8 hex chars) to bound cardinality. `/metrics` requires
+    bearer token when TCP is enabled, OR is on a separate `[observability.health]
+    http_listen` (default `127.0.0.1:7778`).
+- **Health**: three orthogonal surfaces:
+  1. `health.get` RPC over unix socket — full breakdown JSON (see
+     Readiness).
+  2. HTTP `/health` (liveness) on `[observability.health] http_listen` —
+     returns 200 if process alive AND unix socket bound AND
+     `bot_state ∈ {Connected, PairingQr, PairingCode}` (i.e. daemon
+     process is functioning; **does not** check session validity).
+  3. HTTP `/ready` (readiness) — returns 200 only when
+     `connected && session_valid`; 503 otherwise. Default loopback bind.
+- **OTLP tracing**: optional `otlp_endpoint` for distributed traces; spans
+  wrap RPC handling, rule matching, trigger execution.
 
 ## End-to-End Data Flow
 
@@ -806,18 +1139,25 @@ sequenceDiagram
   MCP->>MS: tools/call {name:"send_text", args:{peer,text}}
   MS->>DC: JSON-RPC {method:"send.text", params}
   DC->>DC: check ready (connected && session_valid)
-  alt raw path (default)
-    DC->>AD: send_message_raw (no envelope)
+  alt text.len() > 65,536 bytes
+    DC-->>MS: -32004 PayloadTooLarge {size, max: 65536, hint: "use send.doc"}
+  else raw path (default)
+    DC->>AD: send_text_message(Jid, body)   # wacore direct, no DOT
     AD->>WC: send_text_message (plain WhatsApp)
   else DOT path (envelope_send)
     DC->>AD: send_message (DeterministicEnvelope)
-    AD->>AD: select_mode_with_max_text (text ≤65KB, native ≤100MB)
-    alt text mode
-      AD->>WC: send_text_message (DOT/1/ base64)
-    else native mode
-      AD->>WC: upload_to_cdn + send_document
-      alt primary fails + fits in text
-        AD->>WC: MUST-fallback to text (RFC-0850 §9.4)
+    AD->>AD: select_mode_with_max_text(encoded.len(), &caps, WHATSAPP_MAX_TEXT_BYTES)
+    alt encoded.len() <= 65,536
+      AD->>WC: send_text_message (DOT/1/{base64url-no-pad})
+    else encoded.len() > 65,536
+      AD->>WC: upload_to_cdn(wire_bytes) -- idempotency_key=uuid
+      AD->>WC: send_document(DOT/2/{media_ref_token})
+      alt primary fails with Unreachable AND encoded.len() <= 65,536
+        AD->>WC: MUST-fallback (RFC-0850 §9.4) — text re-send
+      else primary fails, payload > 65,536
+        DC-->>MS: -32004 PayloadTooLarge {size, max: 104857600, cdn_id, mode_attempted:["native"]}
+      else both paths fail
+        DC-->>MS: -32006 FallbackExhausted {modes_attempted, last_error}
       end
     end
   end
@@ -825,7 +1165,7 @@ sequenceDiagram
   WS-->>WC: ack + receipt
   AD-->>DC: DeliveryReceipt
   DC-->>MS: RPC result
-  MS-->>MCP: tools/call result {receipt_id, mode, ts}
+  MS-->>MCP: tools/call result {receipt_id, mode, ts, cdn_id?}
 ```
 
 ### Rule hot-update (MCP tool call → atomic swap)
@@ -854,78 +1194,182 @@ sequenceDiagram
 ## Error Handling
 
 - **Daemon invariants** (always enforced):
-  - One writer per `Arc<StoolapStore>`.
-  - Ruleset swap is atomic; in-flight matches finish against old snapshot.
-  - Audit log captures every RPC.
+  - One writer per `Arc<StoolapStore>` (serialized through `db_writer` task).
+  - Ruleset swap is atomic; in-flight matchers release `arc_swap::Guard`
+    before any await on action dispatch (clone-out-of-guard discipline).
+  - Audit log captures every RPC, including `audit.tail` itself.
+  - Lock ordering is global and documented (Process Model).
 - **Failure modes**:
-  - **WS disconnect** → exponential backoff reconnect (`1s → 30s`); daemon
-    stays `ready`; no event loss (events buffered in `broadcast::Receiver`
-    with Lagged counter).
-  - **Session lost** → daemon `SessionLost`, refuses outbound RPCs
-    (`-32001`), operator runs `onboard qr-link` manually.
-  - **Stoolap write error** → emit `tracing::error!`, mark event as
-    `persist_failed=true` (rules still fire; persistence best-effort for the
-    `events` table; triggers persist via dedicated path).
-  - **Trigger timeout** → kill runner, record `timeout` in `trigger_runs`,
-    retry per `retries` config with backoff, escalate via configured
-    `actions.escalate`.
+  - **WS disconnect** → wacore handles reconnection internally with its
+    own backoff. The daemon watches `adapter.connected().notified()` and
+    updates `DaemonState.connected: AtomicBool`; outbound RPCs during
+    disconnect return `-32012 NotConnected`. Subscribers experiencing
+    `RecvError::Lagged(n)` use `events.list --since-id <last_seen>` for
+    backfill. Reconnect jitter is ±25% to avoid herd effects when many
+    daemons reconnect after a WhatsApp-side outage.
+  - **Session lost** → daemon enters `SessionLost` with the three
+    split error codes (`-32001a/b/c`) based on `LoggedOutCause`; refuses
+    outbound RPCs; operator runs `onboard qr-link` then `session.refresh
+    --confirm-token <token>` manually. `[auto_recover] notify_cmd` may
+    be configured (notification only, NEVER auto-pair); timeout 10s,
+    circuit-breaker after 5 consecutive failures.
+  - **Stoolap write error** → daemon enters `StorageDegraded` state;
+    refuses new outbound RPCs with `-32050 Internal / reason=storage`;
+    `octo_whatsapp_persist_failed_total` metric increments; emits
+    `daemon.storage_degraded {cause}`. The contract: **if events won't
+    persist, rules must not fire** — at-least-once delivery requires
+    storage to be present. Operator restores disk and runs
+    `daemon.recover_storage` to clear the state.
+  - **Trigger timeout** → kill runner process group
+    (`kill(-PGID, SIGKILL)`); record `timeout` in `trigger_runs`; retry
+    per `retries` config with **exponential_with_jitter** backoff;
+    escalate via `actions.escalate` (defined: re-dispatch to a
+    `fallback_trigger_id` OR dead-letter to a stoolap `dead_letters`
+    table — configurable per trigger). Idempotent webhook delivery via
+    `X-Octo-Idempotency-Key` header.
   - **Rules file corrupt on disk** → daemon keeps last good in-memory
-    ruleset, logs error, emits `rules.reload_failed` event.
+    ruleset, logs error, emits `rules.reload_failed {path, error}`
+    event. Operator fixes file, sends SIGHUP.
+  - **Schema version mismatch** → daemon refuses to start with
+    `needs_migration` error; operator runs `octo whatsapp db migrate`
+    (offline) which reads `_meta.schema_version` and applies migrations.
+    Schema migrations are append-only and versioned.
   - **MCP client disconnects mid-`events.tail`** → per-client write task
-    cancelled, no impact on other clients.
+    cancelled via `cancellation_token`; per-client `try_send` to
+    bounded mpsc drops with `subscriber_lagged{sink, n}` event after
+    100ms write deadline; no impact on other clients.
+  - **ReDoS** → rule predicate classifier rejects unsafe regex at
+    create-time (`-32021 RuleRegexUnsafe`); per-match timeout 10ms
+    with `-32022 RuleMatchTimeout`; input truncated to 4 KiB before
+    regex eval.
+  - **Trigger runner OOM** → `rlimit_as` kills runner before daemon
+    OOMs; audit records `runner_oom`.
 
 ## Testing Strategy
 
 - **Unit**: per-module; snapshot tests for rule predicates; schema tests for
-  every MCP tool (param validation against JSON Schema).
+  every MCP tool (param validation against JSON Schema); RFC 8785 canonical
+  JSON round-trip; mode-dispatch boundary tests at 65,536 / 65,537 /
+  100,000,000 / 100,000,001 bytes.
 - **Integration** (`tests/it_*.rs`, hermetic):
   - `it_ipc_roundtrip.rs` — fake daemon + JSON-RPC client over abstract
     transport.
   - `it_rules_hot_swap.rs` — concurrent mutator + matcher; assert no torn
-    reads.
+    reads; assert old Ruleset dropped within sweeper window.
   - `it_mcp_tool_dispatch.rs` — every tool with synthetic event, verifies
     schema + result.
   - `it_event_router_persistence.rs` — events table population, replay,
-    dropped counter.
-  - `it_stoolap_uniqueness.rs` — grep-based invariant check.
+    dropped counter, retention eviction.
+  - `it_stoolap_uniqueness.rs` — grep-based invariant check (3 grep
+    patterns; whitelists the existing offline binaries).
+  - `it_send_text_ceiling.rs` — 65,536 bytes accepted, 65,537 bytes
+    rejected with `-32004 PayloadTooLarge`, no WhatsApp contact.
+  - `it_session_refresh_confirmation.rs` — refresh without token rejected,
+    with token + matching fingerprint accepted, audit row emitted.
 - **Adversarial**:
   - Rule that matches everything → backpressure test (cooldown enforced).
-  - Trigger that hangs → timeout kills it.
-  - Two MCP clients edit the same rule → one gets 409 with current etag.
-  - Path traversal in `media.upload` → rejected.
+  - Trigger that hangs → timeout kills it (PGID kill verified).
+  - Two MCP clients edit the same rule → one gets 409 with current etag
+    (RFC 8785 canonical; same rule with different key orderings yields
+    same etag).
+  - Path traversal in `media.upload` → rejected by `openat2`
+    `RESOLVE_BENEATH`.
+  - Hardlink to `/etc/shadow` in allowed root → rejected by `st_dev`
+    check.
+  - Bind mount of `/etc` inside allowed root → rejected.
+  - ReDoS regex `(a+)+$` against 64 KB of 'a' → rejected by classifier at
+    create-time (`-32021`) OR timeout at match (`-32022`).
+  - 1000 burst `tools.enable` calls → exactly 1
+    `notifications/tools/list_changed` (1s debounce).
+  - MCP client writes blocked at OS pipe buffer → 100ms timeout, eviction,
+    `subscriber_lagged{sink="mcp",n=…}` event.
+  - Stoolap disk full → daemon enters `StorageDegraded`, rules stop
+    firing, recovery RPC restores.
+  - Bearer token replayed → rejected after nonce TTL.
+  - `--name NAME='../etc'` → rejected by NAME regex.
+- **Chaos** (Phase 5): toxiproxy network partition + slow stoolap + OOM
+  cgroup + clock skew (forward/backward) + file-descriptor exhaustion.
+  Each scenario asserts daemon emits the correct degradation event and
+  recovers cleanly.
 - **Live e2e** (`live-whatsapp` feature, gated): one happy-path and one
   trigger-fires scenario; reuse existing test infra.
 - **Coverage gates**: line ≥ 85%, branch ≥ 75%; mutation testing on the
-  `rules` predicate evaluator only.
+  `rules` predicate evaluator and redaction layer (the two highest-risk
+  pure functions).
 
 ## Rollout
 
-1. **Phase 1 — MVP (≈ 2 weeks)**: crate scaffold, daemon + unix socket +
-   JSON-RPC + `status.get`, `send.text`, `groups.*`, `messages.list`
-   (via persisted conversations), onboarding passthrough. MCP server with
-   the same tools. CLI mirror.
-2. **Phase 2 — Outbound matrix (≈ 2 weeks)**: full `send.*` (image / video /
-   audio / voice / sticker / reaction / poll / contact / location),
-   `messages.search`, `chats.*`, profile, contacts, presence.
-3. **Phase 3 — Events (≈ 1 week)**: event router + typed `InboundEvent` +
-   stoolap `events` table + `events.tail/list/show/replay` + MCP
-   notifications.
-4. **Phase 4 — Rules & triggers (≈ 2 weeks)**: rules engine with `arc_swap`
-   hot-swap, full MCP `rules.*` and `triggers.*` tools, audit log.
-5. **Phase 5 — Hardening (≈ 1 week)**: token auth, sandbox, audit,
-   Prometheus metrics, OTLP, man pages, completions, Debian package,
-   systemd unit, Docker image.
-
 Each phase ends with: tests green, coverage gate met, `octo-whatsapp`
-release tag, and an RFC / mission update referencing this design doc.
+release tag, an `daemon.api.version` bump (visible via `version.get`),
+and an RFC / mission update referencing this design doc. Unknown
+methods for the current phase return `-32601` with `data.api_version`
+informing the client what's available.
+
+1. **Phase 1 — MVP (≈ 2 weeks)**:
+   Crate scaffold; daemon + unix socket + JSON-RPC + supervisor
+   (CancellationToken, JoinHandles); `status.get`, `version.get`,
+   `health.get`, `send.text` (with 65,536-byte ceiling enforced
+   pre-flight per RFC-0850 §8.6), `groups.create|list|info|leave`,
+   `messages.list` (via persisted conversations), `rules.list|get`
+   (read-only at this phase), `triggers.list|get` (read-only),
+   `events.list|show` (no tail yet), onboarding passthrough.
+   MCP server with the same tools. CLI mirror. `daemon.api.version =
+   1.0.0+phase1`. Send.image/video/etc., groups.invite, messages.search,
+   rules.create/update/delete/triggers.create/run, events.tail,
+   chat/profile/contacts/presence, and the DOT envelope trio all return
+   `-32601 MethodNotFound` with `data.api_version = '1.0.0+phase1'` and
+   `data.available_in = 'phaseN'`. The 65 KB ceiling on `send.text` is
+   tested in Phase 1's gate.
+
+2. **Phase 2 — Outbound matrix (≈ 2 weeks)**:
+   Full `send.*` (image / video / audio / voice / sticker / reaction /
+   poll / contact / location); `messages.search`; `chats.*`;
+   `messages.edit | delete | mark-read` with `-32013 EditWindowExpired` /
+   `-32014 DeleteWindowExpired`. Each new media method adds an
+   inherent method on `WhatsAppWebAdapter` (per the parity promise —
+   see "API Parity Coverage" below).
+
+3. **Phase 3 — Events (≈ 1 week)**:
+   Event router + typed `InboundEvent` parser + stoolap `events`
+   table with retention/compaction; `events.tail` with subscriber
+   bounded mpsc + per-sink Lagged counter; MCP notifications
+   (`resources/updated`, `tools/list_changed` debounced 1s);
+   `clients/list` and `daemon.methods.list|help` for agent discovery.
+
+4. **Phase 4 — Rules & triggers (≈ 2 weeks)**:
+   Rules engine with `arc_swap::ArcSwap<Ruleset>`, matcher pool,
+   rule_draft → rule_approved flow with operator scope, ReDoS
+   classifier, RFC 8785 canonical etag, optimistic concurrency;
+   full MCP `rules.*` and `triggers.*` tools; trigger runners with
+   full sandboxing (Landlock + seccomp + rlimit + PGID kill);
+   `actions.escalate` defined; `audit_log` with hash chain and
+   ring-buffer truncation.
+
+5. **Phase 5 — Hardening (≈ 1 week)**:
+   Token rotation RPC + grace period; Prometheus metrics + bearer
+   auth; OTLP; per-feature chaos tests (toxiproxy network, slow disk,
+   OOM cgroup, clock skew); man pages + completions; Dockerfile
+   (`USER 1000`, `VOLUME [/var/lib/octo/whatsapp, /var/log/octo/whatsapp]`,
+   `HEALTHCHECK` via unix socket `/ready`); systemd unit
+   (`Type=simple`, `Restart=on-failure`, `DynamicUser=yes` with
+   `StateDirectory=octo/whatsapp`, `ProtectSystem=strict`,
+   `NoNewPrivileges=true`); Debian package.
+
+**Project risk (acknowledged):** Phase 5's scope is aggressive for
+a one-week sprint touching a high-stakes target (WhatsApp Web).
+Re-scope into 5a (security/audit) and 5b (packaging) if Phase 4 slips.
 
 ## Risks & Open Questions
 
 - **`whatsapp-rust` upstream churn**: the adapter already has many
   version-specific comments (e.g. `R8-H1 fix`, `R9-M1 fix`); pinning the
   version and an `outbound-compat` test suite is critical.
-- **Large outbound media (≤ 100 MiB Document)**: memory + disk buffering
-  policy needs explicit design (write to temp, upload, `unlink`).
+- **Large outbound media (≤ 100 MiB Document)**: buffering policy is
+  **now explicit**: outbound media streams to a per-request temp file
+  (`$TMPDIR/octo-whatsapp/{request_id}.bin`), uploads from the file, then
+  `unlink`s on success or failure. Cap `max_concurrent_uploads = 4` to
+  bound disk + memory; pre-flight disk-space check rejects uploads if
+  free space < 2× payload size.
 - **HistorySync drift**: when `synced()` is unreliable, the `events` table is
   the primary history, not WhatsApp's own. We commit to this in design but
   should document for operators.
@@ -936,3 +1380,199 @@ release tag, and an RFC / mission update referencing this design doc.
   (waiting on `octo-agent` spec).
 - **WhatsApp ToS**: this runtime automates a personal WhatsApp Web session.
   Operators are responsible for compliance; document clearly.
+
+## API Parity Coverage (Round 1)
+
+Per the completeness-lens audit, every public item on the adapter is
+mapped below. ✅ = exposed via RPC + CLI + MCP; 🆕 = thin wrapper added
+in Phase 2; 🔒 = adapter-internal (deliberately not exposed via RPC).
+
+### WhatsAppWebAdapter (adapter.rs)
+
+| Item | Disposition | Notes |
+|---|---|---|
+| `validate` | 🔒 | adapter-internal |
+| `new` | 🔒 | constructor |
+| `from_config_bytes` | 🔒 | adapter-internal |
+| `connected` / `synced` (Notify) | ✅ | via `status.get` |
+| `has_valid_session` | ✅ | via `status.get` |
+| `dropped_inbound_messages` | ✅ | via `status.get` |
+| `register_group_at_runtime` | ✅ | automatic on `groups.create`; documented in §Subcommand tree |
+| `list_all_conversations` | ✅ | surfaced via `messages.list` (in-memory form) |
+| `list_persisted_conversations` | ✅ | surfaced via `messages.list` (DB form) |
+| `persist_conversations` | 🔒 | called by event_router on inbound |
+| `subscribe_raw_events` | ✅ | consumed by event_router; clients use `events.tail` |
+| `domain_hash` | ✅ | via `domain compute-hash` |
+| `max_payload_bytes` | ✅ | via `capabilities` |
+| `rate_limit_per_second` | ✅ | via `capabilities` (annotated: global, not per-peer) |
+| `encode_envelope` / `decode_envelope` | ✅ | via `envelope encode` / `envelope decode` |
+| `start_bot` | ✅ | daemon calls it on `bot_task` start |
+| `run_reconnect_loop` | 🔒 | **no-op** (adapter.rs:1281); wacore owns reconnect |
+| `create_group_str` (inherent) | 🔒 | deprecated; superseded by `CoordinatorAdmin::create_group` |
+| `add_members` / `remove_members` / `promote_participants` / `demote_participants` | ✅ | via `groups.members.*` / `groups.admins.*` |
+| `get_invite_link` / `get_invite_info` | ✅ | via `groups.invite.*` |
+| `get_participating` | ✅ | via `groups.members.list` |
+| `group_metadata` | ✅ | via `groups.metadata` |
+| `leave_group` | ✅ | via `groups.leave` |
+| `set_subject` / `set_description` / `set_announce` / `set_locked` / `set_ephemeral` / `set_membership_approval` | ✅ | via `groups.<verb>` |
+| `upload_media` / `download_media` / `send_document` | ✅ | via `media.*` / `send.doc` |
+| `send_message` (trait) | ✅ | internal; called by `envelope.send` (DOT path only) |
+| `receive_messages` (trait) | ✅ | internal; called by `envelope.tail-dot` (DOT path only) |
+| `as_coordinator_admin` | 🔒 | adapter-internal dispatch |
+| `admin_capabilities` / `platform_name` | ✅ | via `capabilities` (merged report) |
+
+### CoordinatorAdmin (delegated via `as_coordinator_admin`)
+
+`create_group`, `leave_group`, `destroy_group` (revoke+leave), `join_by_invite`,
+`add_member`, `remove_member`, `ban_member`, `promote_to_admin`,
+`demote_from_admin`, `approve_join_request`, `rename_group`,
+`set_group_description`, `set_locked`, `set_announce`, `set_ephemeral`,
+`set_require_approval`, `list_own_groups`, `get_group_metadata`,
+`resolve_invite`, `transfer_ownership` — all ✅ via `groups.*`.
+
+### StoolapStore (store.rs)
+
+| Item | Disposition |
+|---|---|
+| `new` / `new_in_memory` / `delete_db_file` | 🔒 adapter-only (offline binaries exempt) |
+| `upsert_conversations` / `list_conversations` | ✅ via `messages.list` |
+
+### BotState (state.rs)
+
+All 7 variants surfaced via `status.get.bot_state` verbatim.
+
+### Existing binaries (`src/bin/`)
+
+| Binary | Disposition |
+|---|---|
+| `event_listener.rs` | **Preserved** — offline developer utility; opens own broadcast::Receiver; documented as offline |
+| `inspect_session_db.rs` | **Preserved** — read-only offline tool; explicitly NOT wired into any RPC; it_stoolap_uniqueness test whitelists it |
+| `cleanup_test_groups.rs` | **Preserved** — live e2e test cleanup; gated on `live-whatsapp` feature |
+
+### New methods added by Phase 2
+
+The 🆕 subcommands (image, video, audio, voice, sticker, reaction, poll,
+contact, location, delete) require new inherent methods on
+`WhatsAppWebAdapter`. Phase 2 adds these as 20-50 LoC delegates to the
+existing `whatsapp-rust` client; once added, they appear in the table
+above as ✅.
+
+### MCP tool / RPC method / CLI verb mapping
+
+Every verb maps 1:1 across the three surfaces. MCP `tools/call` to an
+unknown tool returns `-32601 MethodNotFound` with
+`data.api_version` informing the client. RPC method schemas are
+available via `daemon.schema.dump` (returns JSON-Schema for every
+method); the same is exposed as `octo whatsapp --rpc-schema`. MCP
+manifest is `octo whatsapp --mcp-schema`.
+
+## Round 1 Revisions Summary
+
+The first adversarial review (6 lenses, 165 findings) drove these
+material design changes:
+
+**Correctness (40 findings)** — Fixed: process model rewritten (drives
+`start_bot`, not the no-op `run_reconnect_loop`); Stoolap mutex
+serialization via `db_writer` task; broadcast lossy semantics
+documented with Lagged + backfill; arc_swap clone-out-of-guard
+discipline; error codes split for `SessionLostReplaced` /
+`LoggedOut` / `Expired`; 65,536-byte pre-flight on `send.text`; etag
+uses RFC 8785 JCS; presence subscription cap; trigger runner
+history_cap enforcement; `events` table schema + retention;
+`profile.picture` path validation; token rotation RPC; `ready` =
+`connected && session_valid` clarified. RebuTted (1): `BotState` does
+exist in `state.rs` (agent grepped only `adapter.rs`); reference in
+design is correct.
+
+**Security (20 findings)** — Fixed: SO_PEERCRED + starttime check + PID
+verification (Linux pidfd); trigger runner sandboxing with Landlock,
+seccomp, rlimit, PGID kill, `prctl(NO_NEW_PRIVS)`, env_clear, executable
+allowlist; MCP rule creation requires `rule_draft → rule_approved`
+flow with operator scope and rate-limit; bearer token rotation +
+`ConstantTimeEq` + grace period + TLS opt-in; media paths via `openat2`
+with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` + `st_dev` check +
+hardlink rejection; download tokens via SQL CAS, peer binding, 1k cap;
+webhook signing with Stripe-style header + replay nonce table +
+idempotency key; rate-limit hierarchy (per-peer + global + per-rule +
+jitter); audit hash-chain + ring buffer + redaction; MCP JSON-RPC
+limits (size/depth/unicode); ENV_TEXT size cap; WA server TLS pin +
+SNI check; session file mode+uid check + NAME regex; envelope decode
+16 MiB cap; `allow_env_overrides` config; Prometheus auth + cardinality.
+
+**Protocol (12 findings)** — Fixed: domain_hash help text documents
+trim+lowercase + input grammar; mode-dispatch diagram uses
+`encoded.len()` per RFC-0850 §8.6 + `should_fallback_to_text`
+restrictive fallback contract + new error codes `-32006 FallbackExhausted`;
+raw `send.text` 65 KB pre-flight; `--mode` flag removed (deterministic
+mode selection per RFC); envelope base64 alphabet pinned to
+URL_SAFE_NO_PAD (RFC 4648 §5); `envelope send-native` ambiguity
+resolved (wraps wire bytes, emits DOT/2 token, rejects DOT/1
+re-wrap); `send_message_raw` renamed to `send_text_message` (real
+wacore direct call); RFC §8.1 → §8.2 citation corrected;
+`rate_limit_per_second` annotated as global; envelope IO contracts
+explicit; `dot_mode` dual-mode discriminator documented; Phase 1
+includes 65 KB ceiling test.
+
+**Concurrency (16 findings)** — Fixed: per-sink mpsc capacities (256/1024)
++ drop-newest + per-sink Lagged counter; arc_swap Guard clone-out
+discipline; matcher pool (4 dedicated tasks) with bounded queue;
+sweeper task with `rules.generations_resident` cap; per-subscriber
+write deadline + eviction; parking_lot Mutex lock-clone-out enforced
+via adapter pattern; supervisor + JoinHandles + CancellationToken
+replaces `tokio::select!`; per-receiver AtomicU64 Lagged counter;
+`const _: () = assert_send_sync::<T>();` compile-time checks; global
+lock ordering with clippy lint; action dispatcher uses semaphore +
+try_join_all; per-connection limits (max=64, idle=5min); rules_persister
+single-owner; per-event `EventDispatchContext` snapshot; cancel-safety
+doc per `select!` arm; SIGHUP precise semantics (rules.toml reload via
+RPC only, not SIGHUP).
+
+**Operational (28 findings)** — Fixed: `session.refresh` requires
+`--confirm-token`; SIGHUP atomic parse + validate + on-failure keep
+in-memory; `StorageDegraded` state on stoolap failure (refuses new
+RPCs, metric, recovery RPC); size-based log rotation with daily cap;
+token rotation via RPC + grace period; `--detach` + PID file + EPIPE
+ignore + container PID 1; `--name` session path templated + flock
+collision check; schema versioning + `db migrate` + `db backup` +
+`db repair` + audit cap ring buffer; per-sink Lagged promoted to event;
+dual timestamps (wall + mono) + skew detection; auto_recover timeout
++ circuit breaker + audit; `/health` (liveness) decoupled from
+`/ready` (readiness) on separate `http_listen`; persist-before-fan-out
+background batching with `octo_whatsapp_persist_queue_depth` gauge;
+trigger runner rlimit + setrlimit + PGID kill; Dockerfile + systemd
+unit; audit ring-buffer with truncation event + 100k default cap;
+ReDoS guard (linear-time regex + compile-time classifier + 10ms
+timeout + 4 KB input cap); phased shutdown (reject new RPCs → drain
+→ send Disconnect → flush → sync audit → exit); `SmallVec` mentions +
+64 KiB text cap + memory bounds; `openat2` race-free media path;
+explicit env-var override mapping table; 1s debounce on
+`tools.list_changed`; MCP roots = intersection with allowed_upload_roots;
+`/metrics` token auth + cardinality cap; chaos test suite (toxiproxy,
+slow disk, OOM, clock skew); reconnect jitter ±25%; redaction
+mutation test.
+
+**Completeness (29 findings)** — Fixed: `create_group_str` deprecated,
+`CoordinatorAdmin::create_group` is the canonical path; `status.get`
+exposes full 7-variant `BotState` + 3-way split error codes; raw event
+parser location + format documented (`events.rs`, `format!("{:?}", ev)`);
+StoolapStore public methods coverage table added; `list_all_conversations`
+vs `list_persisted_conversations` distinguished in subcommand tree;
+`--name` RPC account shape via single-socket binding per account
+documented; `-32060 Unimplemented` added to error table;
+`register_group_at_runtime` automatic on `groups.create` documented;
+envelope encode/decode explicit param schemas;
+`inspect_session_db` / `event_listener` / `cleanup_test_groups`
+preserved as offline; `Result<T, String>` translation to `-32050`
+documented; `capabilities` merges `CapabilityReport` and
+`AdminCapabilityReport`; `daemon.api.version` exposed via `version.get`,
+bumped per phase; `LoggedOutCause` exposed in `Connection` event;
+`daemon.methods.list` + `daemon.methods.help` added; `domain_id` /
+`platform_type` / `as_coordinator_admin` documented as
+`PlatformAdapter`-trait-internal; peer/JID normalization conventions
+documented; offline debug subcommand `octo-whatsapp debug inspect-db`;
+initial BotState contract documented; `session.info` schema explicit;
+MCP unknown-tool → `-32601` with `data.api_version`; `reconnect.now`
+schema documented; `daemon.limits` separate RPC for tight inner loops;
+`send.*` media methods added as new inherent adapter methods in
+Phase 2; `transfer_ownership` schema documented; `daemon.list` RPC
+for account discovery.

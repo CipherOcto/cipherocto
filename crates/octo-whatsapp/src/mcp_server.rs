@@ -10,6 +10,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
+/// Number of MCP tools registered (Phase 1 + Phase 2 RPC surface).
+/// Used by integration tests to assert `tools/list` advertises the full set.
+pub const EXPECTED_TOOL_COUNT: usize = 39;
+
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -87,6 +91,7 @@ async fn handle_tools_list(id: Value, _socket: &Path) -> anyhow::Result<Value> {
 /// Canonical tool descriptor list mirrored from the daemon's RPC method
 /// registry. Each tool's `name` is forwarded as the RPC `method` field;
 /// arguments map 1:1 to RPC params (the JSON Schema is the source of truth).
+#[allow(clippy::vec_init_then_push)]
 pub fn tool_descriptors() -> Vec<Value> {
     let mut v: Vec<Value> = Vec::new();
     // ─── Lifecycle (3) ────────────────────────────────────────────────
@@ -109,16 +114,17 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "send.text",
         "Send a text message to a peer.",
-        schema_props_required(
-            &[("peer", "string"), ("text", "string")],
-            &["peer", "text"],
-        ),
+        schema_props_required(&[("peer", "string"), ("text", "string")], &["peer", "text"]),
     ));
     v.push(td(
         "send.image",
         "Send an image with optional caption.",
         schema_props_required(
-            &[("peer", "string"), ("file", "string"), ("caption", "string")],
+            &[
+                ("peer", "string"),
+                ("file", "string"),
+                ("caption", "string"),
+            ],
             &["peer", "file"],
         ),
     ));
@@ -126,39 +132,38 @@ pub fn tool_descriptors() -> Vec<Value> {
         "send.video",
         "Send a video with optional caption.",
         schema_props_required(
-            &[("peer", "string"), ("file", "string"), ("caption", "string")],
+            &[
+                ("peer", "string"),
+                ("file", "string"),
+                ("caption", "string"),
+            ],
             &["peer", "file"],
         ),
     ));
     v.push(td(
         "send.audio",
         "Send an audio file.",
-        schema_props_required(
-            &[("peer", "string"), ("file", "string")],
-            &["peer", "file"],
-        ),
+        schema_props_required(&[("peer", "string"), ("file", "string")], &["peer", "file"]),
     ));
     v.push(td(
         "send.voice",
         "Send a voice-note (PTT) audio file.",
-        schema_props_required(
-            &[("peer", "string"), ("file", "string")],
-            &["peer", "file"],
-        ),
+        schema_props_required(&[("peer", "string"), ("file", "string")], &["peer", "file"]),
     ));
     v.push(td(
         "send.sticker",
         "Send a sticker image (WEBP).",
-        schema_props_required(
-            &[("peer", "string"), ("file", "string")],
-            &["peer", "file"],
-        ),
+        schema_props_required(&[("peer", "string"), ("file", "string")], &["peer", "file"]),
     ));
     v.push(td(
         "send.reaction",
         "React to a message with an emoji.",
         schema_props_required(
-            &[("peer", "string"), ("msg_id", "string"), ("emoji", "string")],
+            &[
+                ("peer", "string"),
+                ("msg_id", "string"),
+                ("emoji", "string"),
+            ],
             &["peer", "msg_id", "emoji"],
         ),
     ));
@@ -212,9 +217,11 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "messages.list",
         "List recent messages, optionally filtered by peer.",
-        schema_props_optional(
-            &[("peer", "string"), ("since", "integer"), ("limit", "integer")],
-        ),
+        schema_props_optional(&[
+            ("peer", "string"),
+            ("since", "integer"),
+            ("limit", "integer"),
+        ]),
     ));
     v.push(td(
         "messages.get",
@@ -224,10 +231,7 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "messages.search",
         "Full-text search across message history.",
-        schema_props_required(
-            &[("query", "string"), ("peer", "string")],
-            &["query"],
-        ),
+        schema_props_required(&[("query", "string"), ("peer", "string")], &["query"]),
     ));
     v.push(td(
         "messages.edit",
@@ -300,19 +304,37 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "chats.typing",
         "Set or clear the typing indicator on a chat.",
+        schema_props_required(&[("jid", "string"), ("on", "boolean")], &["jid", "on"]),
+    ));
+    // ─── Groups (4) ───────────────────────────────────────────────────
+    v.push(td(
+        "groups.create",
+        "Create a new group.",
         schema_props_required(
-            &[("jid", "string"), ("on", "boolean")],
-            &["jid", "on"],
+            &[("subject", "string"), ("members", "array")],
+            &["subject", "members"],
         ),
+    ));
+    v.push(td(
+        "groups.list",
+        "List groups the daemon belongs to.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "groups.info",
+        "Show info about a single group.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "groups.leave",
+        "Leave a group.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
     ));
     // ─── Media (1) ────────────────────────────────────────────────────
     v.push(td(
         "media.info",
         "Return metadata for a media-ref token.",
-        schema_props_required(
-            &[("media_ref_token", "string")],
-            &["media_ref_token"],
-        ),
+        schema_props_required(&[("media_ref_token", "string")], &["media_ref_token"]),
     ));
     // ─── Envelope (4) ─────────────────────────────────────────────────
     v.push(td(
@@ -328,18 +350,12 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "envelope.send",
         "Send a DOT/1 envelope file as a message.",
-        schema_props_required(
-            &[("peer", "string"), ("file", "string")],
-            &["peer", "file"],
-        ),
+        schema_props_required(&[("peer", "string"), ("file", "string")], &["peer", "file"]),
     ));
     v.push(td(
         "envelope.send-native",
         "Send a DOT/1 envelope via the native transport.",
-        schema_props_required(
-            &[("peer", "string"), ("file", "string")],
-            &["peer", "file"],
-        ),
+        schema_props_required(&[("peer", "string"), ("file", "string")], &["peer", "file"]),
     ));
     // ─── Capabilities + domain (2) ────────────────────────────────────
     v.push(td(
@@ -397,6 +413,10 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "chats.archive" => "chats.archive",
         "chats.delete" => "chats.delete",
         "chats.typing" => "chats.typing",
+        "groups.create" => "groups.create",
+        "groups.list" => "groups.list",
+        "groups.info" => "groups.info",
+        "groups.leave" => "groups.leave",
         "media.info" => "media.info",
         "envelope.encode" => "envelope.encode",
         "envelope.decode" => "envelope.decode",
@@ -426,15 +446,19 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
 }
 
 async fn forward_to_daemon(socket: &Path, method: &str, params: Value) -> anyhow::Result<Value> {
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     let mut s = UnixStream::connect(socket)?;
     let req = serde_json::json!({"id": 1, "method": method, "params": params});
     let mut line = serde_json::to_string(&req)?;
     line.push('\n');
     s.write_all(line.as_bytes())?;
+    // Server keeps connections open for further requests, so read exactly
+    // one line via BufReader::read_line instead of read_to_string (which
+    // would block until EOF).
+    let mut reader = BufReader::new(s);
     let mut buf = String::new();
-    s.read_to_string(&mut buf)?;
+    reader.read_line(&mut buf)?;
     let resp: Value = serde_json::from_str(buf.trim())?;
     Ok(resp.get("result").cloned().unwrap_or(Value::Null))
 }

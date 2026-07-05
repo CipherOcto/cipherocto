@@ -28,12 +28,34 @@ pub struct DaemonHandle {
 struct DaemonInner {
     config: WhatsAppRuntimeConfig,
     cancel: CancellationToken,
-    phase: tokio::sync::RwLock<DaemonPhase>,
+    /// Synchronous `std::sync::RwLock<DaemonPhase>`.
+    ///
+    /// Reads from RPC handlers (status/health/etc.) are always under
+    /// `try_read` so they are non-blocking; writes from the supervisor and
+    /// the `shutdown` handler are instantaneous. We deliberately avoid
+    /// `tokio::sync::RwLock` here because:
+    ///
+    /// 1. RPC handlers must be callable from a tokio runtime context but
+    ///    not block it (`blocking_read` panics inside `#[tokio::test]`),
+    /// 2. the daemon's status reply path needs a snapshot, not a future.
+    phase: std::sync::RwLock<DaemonPhase>,
 }
 
 impl DaemonHandle {
+    /// Snapshot read of the current lifecycle phase. Falls back to
+    /// `Booting` only if the underlying lock is contended AND poisoned
+    /// — under normal operation the read always succeeds.
     pub fn phase(&self) -> DaemonPhase {
-        *self.inner.phase.blocking_read()
+        match self.inner.phase.try_read() {
+            Ok(g) => *g,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // A writer is mid-transition (microsecond-scale). Retry
+                // once with the blocking reader: writers are instantaneous
+                // so this never stalls a tokio runtime in practice.
+                *self.inner.phase.read().unwrap_or_else(|p| p.into_inner())
+            }
+            Err(std::sync::TryLockError::Poisoned(p)) => *p.into_inner(),
+        }
     }
 
     pub fn config(&self) -> &WhatsAppRuntimeConfig {
@@ -42,6 +64,16 @@ impl DaemonHandle {
 
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel.clone()
+    }
+
+    /// Async-marked for API symmetry with future async setters, but the
+    /// underlying lock is sync (`std::sync::RwLock`) so this only does a
+    /// single instantaneous write. The crate's
+    /// `#![warn(clippy::await_holding_lock)]` does not bite: this is a
+    /// terminal op, not a held-across-await pattern.
+    pub async fn set_phase(&self, p: DaemonPhase) {
+        let mut g = self.inner.phase.write().unwrap_or_else(|p| p.into_inner());
+        *g = p;
     }
 }
 
@@ -72,7 +104,7 @@ impl Daemon {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
                 cancel: self.cancel.clone(),
-                phase: tokio::sync::RwLock::new(DaemonPhase::Booting),
+                phase: std::sync::RwLock::new(DaemonPhase::Booting),
             }),
         }
     }

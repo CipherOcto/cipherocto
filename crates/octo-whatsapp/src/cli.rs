@@ -456,3 +456,40 @@ pub fn dispatch_shutdown(cli: &Cli) -> anyhow::Result<()> {
     let result = RpcClient::new(resolve_socket_path(cli)).call("shutdown", serde_json::Value::Null)?;
     print_result(cli.json, &result)
 }
+
+/// Print a "this command requires the standalone `octo-whatsapp-onboard` binary"
+/// delegation message. Onboarding is daemon-free by design.
+pub fn onboard_passthrough_message(action: &str, args: &[&str]) -> anyhow::Result<()> {
+    println!(
+        "octo-whatsapp: onboard {action} {args} is provided by the standalone `octo-whatsapp-onboard` binary.",
+        args = args.join(" ")
+    );
+    println!(
+        "Run: octo-whatsapp-onboard {action} {args}",
+        action = action,
+        args = args.join(" ")
+    );
+    Ok(())
+}
+
+/// Wire `onboard *` subcommands (Task 49). Phase 1: passthrough only — the
+/// runtime does not shell out to the standalone binary (cross-crate binary
+/// invocation has its own edge cases); it instructs the operator.
+pub fn dispatch_onboard(_cli: &Cli, cmd: &OnboardCmd) -> anyhow::Result<()> {
+    match &cmd.action {
+        OnboardAction::QrLink { timeout } => {
+            onboard_passthrough_message("qr-link", &[&format!("--timeout={timeout}")])
+        }
+        OnboardAction::PairLink { phone } => onboard_passthrough_message("pair-link", &[phone]),
+        OnboardAction::Whoami => onboard_passthrough_message("whoami", &[]),
+        OnboardAction::Session { action } => match action {
+            SessionCmd::List => onboard_passthrough_message("session", &["list"]),
+            SessionCmd::Verify { name } => {
+                onboard_passthrough_message("session", &["verify", name])
+            }
+            SessionCmd::Remove { name } => {
+                onboard_passthrough_message("session", &["remove", name])
+            }
+        },
+    }
+}

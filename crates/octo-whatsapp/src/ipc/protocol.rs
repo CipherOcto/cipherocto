@@ -87,8 +87,22 @@ impl RpcErrorCode {
 }
 
 impl RpcRequest {
-    pub fn from_json(_bytes: &[u8]) -> Result<Self, RpcParseError> {
-        todo!("Phase 1 Task 18")
+    pub fn from_json(bytes: &[u8]) -> Result<Self, RpcParseError> {
+        let v: serde_json::Value = serde_json::from_slice(bytes)?;
+        let obj = v.as_object().ok_or(RpcParseError::MissingField("object"))?;
+        let id = obj
+            .get("id")
+            .ok_or(RpcParseError::MissingField("id"))?
+            .as_u64()
+            .ok_or(RpcParseError::InvalidId)?;
+        let method = obj
+            .get("method")
+            .ok_or(RpcParseError::MissingField("method"))?
+            .as_str()
+            .ok_or(RpcParseError::MissingField("method"))?
+            .to_string();
+        let params = obj.get("params").cloned().unwrap_or(Value::Null);
+        Ok(Self { id, method, params })
     }
 }
 

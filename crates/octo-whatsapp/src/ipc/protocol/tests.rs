@@ -61,11 +61,13 @@ fn response_with_error() {
 }
 
 #[test]
-#[should_panic(expected = "Phase 1 Task 18")]
-fn from_json_helper_is_todo_in_task17() {
-    // The plan places `RpcRequest::from_json` in Task 18 (TDD green).
-    // Until then, the helper panics with `todo!()` so this test pins the
-    // TDD-red state. Task 18 will replace the body and remove this test
-    // in favor of the two helper tests that follow.
-    let _ = RpcRequest::from_json(br#"{"id":1,"method":"x"}"#);
+fn from_json_helper_matches_serde() {
+    let r = RpcRequest::from_json(br#"{"id":7,"method":"x"}"#).unwrap();
+    assert_eq!(r.id, 7);
+    assert_eq!(r.method, "x");
+}
+
+#[test]
+fn from_json_helper_rejects_missing_method() {
+    assert!(RpcRequest::from_json(br#"{"id":1}"#).is_err());
 }

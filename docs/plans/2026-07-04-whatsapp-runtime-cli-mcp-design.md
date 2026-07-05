@@ -1,7 +1,7 @@
 # Design: WhatsApp Runtime, CLI, and MCP Server
 
 **Date:** 2026-07-04
-**Status:** Implemented — Phase 1 complete (branch feat/whatsapp-runtime-cli-mcp, commit b363d394 + follow-ups)
+**Status:** Implemented — Phase 1 + Phase 2 complete (branch feat/whatsapp-runtime-cli-mcp, +48 commits since Phase 1). `daemon.api.version = "1.0.0+phase2"`. Coverage gate deferred (lines 71.18% / branches 72.18% vs ≥85% / ≥75%) — requires MockAdapter infrastructure to close handler success-path gaps. Branch local-only, no push, no PR per 2026-07-05 ruling.
 **RFC:** RFC-0850 (Deterministic Overlay Transport)
 **Crate:** `octo-whatsapp` (new), depends on `octo-adapter-whatsapp`, `octo-whatsapp-onboard-core`
 

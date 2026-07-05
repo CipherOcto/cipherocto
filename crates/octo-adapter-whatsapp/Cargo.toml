@@ -36,7 +36,7 @@ test-helpers = []
 # so the workspace `cargo check` doesn't need a feature switch to find it,
 # but it's only used in the live-session test, so the default `cargo test`
 # build cost is unaffected.
-live-whatsapp = []
+live-whatsapp = ["test-helpers"]
 
 [dependencies]
 # WhatsApp Web protocol (oxidezap/whatsapp-rust)

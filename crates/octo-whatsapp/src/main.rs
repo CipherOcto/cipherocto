@@ -1,4 +1,7 @@
-fn main() {
-    eprintln!("octo-whatsapp: stub - Phase 1 in progress");
-    std::process::exit(2);
+use clap::Parser;
+use octo_whatsapp::cli::{dispatch, Cli};
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    dispatch(cli)
 }

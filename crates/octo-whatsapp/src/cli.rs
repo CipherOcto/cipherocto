@@ -501,3 +501,45 @@ pub fn dispatch_onboard(_cli: &Cli, cmd: &OnboardCmd) -> anyhow::Result<()> {
         },
     }
 }
+
+/// Top-level dispatch. Called by `main()` after `Cli::parse()`. Routes each
+/// `Command` variant to the appropriate leaf dispatcher.
+pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
+    match cli.command {
+        Command::Daemon => {
+            // The daemon path needs to be async. Build a small runtime so
+            // `main()` can stay sync (matching the plan's snippet).
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(crate::daemon::Daemon::new(
+                crate::config::WhatsAppRuntimeConfig::from_toml(
+                    format!("name = {:?}\n", cli.name).as_bytes(),
+                )?,
+            )
+            .run())
+        }
+        Command::Mcp => {
+            // MCP server arrives in Part L (Tasks 51-58). For now, print a
+            // clear message and exit non-zero so operators know the path
+            // forward without a silent failure.
+            eprintln!(
+                "octo-whatsapp: `mcp` subcommand is not wired in Phase 1 task 50; \
+                 arrives with the MCP server in Part L."
+            );
+            std::process::exit(2);
+        }
+        Command::Version => dispatch_simple(&cli, "version.get"),
+        Command::Status => dispatch_simple(&cli, "status.get"),
+        Command::Health => dispatch_simple(&cli, "health.get"),
+        Command::Send(ref args) => dispatch_send(&cli, args),
+        Command::Groups(ref cmd) => dispatch_groups(&cli, cmd),
+        Command::Messages(ref cmd) => dispatch_messages(&cli, cmd),
+        Command::Rules(ref cmd) => dispatch_rules(&cli, cmd),
+        Command::Triggers(ref cmd) => dispatch_triggers(&cli, cmd),
+        Command::Events(ref cmd) => dispatch_events(&cli, cmd),
+        Command::Reconnect => dispatch_reconnect(&cli),
+        Command::Shutdown => dispatch_shutdown(&cli),
+        Command::Onboard(ref cmd) => dispatch_onboard(&cli, cmd),
+    }
+}

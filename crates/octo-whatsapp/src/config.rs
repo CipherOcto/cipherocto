@@ -61,8 +61,14 @@ impl WhatsAppRuntimeConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Phase 1 Task 10: pass-through. Real validation arrives in Task 11.
-        let _ = self;
+        if self.name.is_empty()
+            || !self
+                .name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        {
+            return Err(ConfigError::InvalidName(self.name.clone()));
+        }
         Ok(())
     }
 }

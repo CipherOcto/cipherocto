@@ -52,3 +52,24 @@ fn from_path_reads_file() {
     let cfg = WhatsAppRuntimeConfig::from_path(&p).unwrap();
     assert_eq!(cfg.name, "default");
 }
+
+#[test]
+fn validate_rejects_uppercase() {
+    let mut cfg = WhatsAppRuntimeConfig::from_toml(MINIMAL.as_bytes()).unwrap();
+    cfg.name = "Default".to_string();
+    assert!(matches!(cfg.validate(), Err(ConfigError::InvalidName(_))));
+}
+
+#[test]
+fn validate_rejects_path_traversal() {
+    let mut cfg = WhatsAppRuntimeConfig::from_toml(MINIMAL.as_bytes()).unwrap();
+    cfg.name = "../etc".to_string();
+    assert!(matches!(cfg.validate(), Err(ConfigError::InvalidName(_))));
+}
+
+#[test]
+fn validate_rejects_empty_name() {
+    let mut cfg = WhatsAppRuntimeConfig::from_toml(MINIMAL.as_bytes()).unwrap();
+    cfg.name = String::new();
+    assert!(matches!(cfg.validate(), Err(ConfigError::InvalidName(_))));
+}

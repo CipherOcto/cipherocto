@@ -2,6 +2,9 @@
 name = "octo-whatsapp"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Long-lived daemon for the WhatsApp adapter: owns the WebSocket, exposes JSON-RPC over unix socket, MCP over stdio, and a structured CLI."
+publish = false
 
 [[bin]]
 name = "octo-whatsapp"

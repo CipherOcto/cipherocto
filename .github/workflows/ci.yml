@@ -71,6 +71,22 @@ jobs:
         run: |
           if [ -f Cargo.toml ]; then cargo clippy -p octo-cli-meta --features telegram-cli --all-targets -- -D warnings; fi
 
+      - name: Check whatsapp-cli builds via meta-crate
+        # The WhatsApp CLI (octo-whatsapp) is excluded from the main workspace
+        # by default and pulled in via the octo-cli-meta meta-crate's
+        # whatsapp-cli feature. Pure-Rust, no TDLib pollution risk, but still
+        # gated so unrelated downstream work doesn't break the workspace build.
+        run: |
+          if [ -f Cargo.toml ]; then cargo check -p octo-cli-meta --features whatsapp-cli; fi
+
+      - name: Clippy whatsapp-cli
+        run: |
+          if [ -f Cargo.toml ]; then cargo clippy -p octo-cli-meta --features whatsapp-cli --all-targets -- -D warnings; fi
+
+      - name: Run whatsapp-cli tests
+        run: |
+          if [ -f Cargo.toml ]; then cargo test -p octo-cli-meta --features whatsapp-cli; fi
+
       - name: Run JS tests
         run: |
           if [ -f package.json ]; then npm test || true; fi

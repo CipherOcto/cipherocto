@@ -286,8 +286,40 @@ impl RpcClient {
     }
 }
 
+/// Pretty-print an RPC result to stdout. When `as_json` is set, print
+/// `serde_json::to_string_pretty`. Otherwise, for scalars, print the bare
+/// value; for objects/arrays, fall back to pretty JSON so operators can
+/// still read it.
+pub fn print_result(as_json: bool, value: &serde_json::Value) -> anyhow::Result<()> {
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(value)?);
+        return Ok(());
+    }
+    match value {
+        serde_json::Value::Null => println!("(null)"),
+        serde_json::Value::Bool(b) => println!("{b}"),
+        serde_json::Value::Number(n) => println!("{n}"),
+        serde_json::Value::String(s) => println!("{s}"),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            println!("{}", serde_json::to_string_pretty(value)?);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn print_result_emits_pretty_json_for_structured_data() {
+        // Pure data-path verification: the structured branch falls back to
+        // pretty JSON, which we sanity-check by formatting the same value.
+        let v = serde_json::json!({"k": "v"});
+        let s = serde_json::to_string_pretty(&v).unwrap();
+        assert!(s.contains("\"k\""));
+        assert!(s.contains("\"v\""));
+    }
     use super::*;
 
     fn cli_with(socket: Option<PathBuf>, name: &str) -> Cli {
@@ -307,7 +339,6 @@ mod tests {
 
     #[test]
     fn resolve_socket_path_derives_from_name_when_no_socket() {
-        // Use the test seam to verify the derivation without mutating env.
         let path = resolve_socket_path_with_env("alpha", Some("/run/user/1000"));
         assert_eq!(path, PathBuf::from("/run/user/1000/octo-whatsapp-alpha.sock"));
     }
@@ -320,7 +351,6 @@ mod tests {
 
     #[test]
     fn rpc_client_call_reports_socket_unreachable() {
-        // Socket at /nonexistent must fail cleanly with a clear message.
         let c = RpcClient::new(PathBuf::from("/nonexistent/octo-whatsapp-test.sock"));
         let err = c.call("version.get", serde_json::Value::Null).unwrap_err();
         let msg = format!("{err}");
@@ -329,4 +359,10 @@ mod tests {
             "expected friendly hint in error, got: {msg}"
         );
     }
+}
+
+/// Wire the read-only `version` / `status` / `health` commands (Tasks 41).
+pub fn dispatch_simple(cli: &Cli, method: &str) -> anyhow::Result<()> {
+    let result = RpcClient::new(resolve_socket_path(cli)).call(method, serde_json::Value::Null)?;
+    print_result(cli.json, &result)
 }

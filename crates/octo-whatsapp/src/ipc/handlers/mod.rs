@@ -2,15 +2,18 @@
 //! `build_registry()` at the bottom of this module.
 
 pub mod chats_archive;
+pub mod chats_delete;
 pub mod chats_info;
 pub mod chats_list;
 pub mod chats_mute;
 pub mod chats_pin;
+pub mod chats_typing;
 pub mod chats_unpin;
 pub mod daemon_ops;
 pub mod events;
 pub mod groups;
 pub mod health;
+pub mod media_info;
 pub mod messages_download;
 pub mod messages_edit;
 pub mod messages_get;
@@ -79,6 +82,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(chats_unpin::ChatsUnpin))
         .register(Arc::new(chats_mute::ChatsMute))
         .register(Arc::new(chats_archive::ChatsArchive))
+        .register(Arc::new(chats_delete::ChatsDelete))
+        .register(Arc::new(chats_typing::ChatsTyping))
+        .register(Arc::new(media_info::MediaInfo))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -138,6 +144,9 @@ pub const PHASE2_CHATS_METHODS: &[&str] = &[
     "chats.unpin",
     "chats.mute",
     "chats.archive",
+    "chats.delete",
+    "chats.typing",
+    "media.info",
 ];
 
 #[cfg(test)]

@@ -444,3 +444,15 @@ pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
 }
+
+/// Wire `reconnect` and `shutdown` (Task 48).
+pub fn dispatch_reconnect(cli: &Cli) -> anyhow::Result<()> {
+    let result =
+        RpcClient::new(resolve_socket_path(cli)).call("reconnect.now", serde_json::Value::Null)?;
+    print_result(cli.json, &result)
+}
+
+pub fn dispatch_shutdown(cli: &Cli) -> anyhow::Result<()> {
+    let result = RpcClient::new(resolve_socket_path(cli)).call("shutdown", serde_json::Value::Null)?;
+    print_result(cli.json, &result)
+}

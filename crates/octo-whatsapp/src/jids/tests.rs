@@ -56,6 +56,24 @@ fn peer_to_jid_rejects_arbitrary_at_sign() {
 }
 
 #[test]
+fn peer_to_jid_rejects_short_e164() {
+    // 5 digits is below the 7-digit minimum
+    assert!(matches!(
+        peer_to_jid("+12345"),
+        Err(JidError::InvalidPhone(_))
+    ));
+}
+
+#[test]
+fn peer_to_jid_rejects_long_e164() {
+    // 17 digits is above the 15-digit E.164 maximum
+    assert!(matches!(
+        peer_to_jid("+12345678901234567"),
+        Err(JidError::InvalidPhone(_))
+    ));
+}
+
+#[test]
 fn group_to_jid_accepts_canonical() {
     let jid = group_to_jid("120363123456789@g.us").unwrap();
     assert_eq!(jid, "120363123456789@g.us");

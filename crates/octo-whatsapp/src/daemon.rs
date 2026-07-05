@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use octo_adapter_whatsapp::WhatsAppWebAdapter;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -115,12 +114,25 @@ impl Daemon {
         self.cancel.clone()
     }
 
-    pub async fn run(self, _adapter: WhatsAppWebAdapter) -> anyhow::Result<()> {
-        info!(
-            name = self.config.name.as_str(),
-            "daemon stub: exiting immediately"
-        );
-        // Phase 1 stub: real boot arrives in Task 26.
+    pub async fn run(self) -> anyhow::Result<()> {
+        info!(name = self.config.name.as_str(), "daemon: starting");
+
+        let cancel = self.cancel.clone();
+        let handle = self.handle();
+
+        let registry = std::sync::Arc::new(crate::ipc::handlers::build_registry());
+        let sock = self.config.socket_path();
+        let server = crate::ipc::server::UnixSocketServer::bind(&sock)?;
+        let server_task = {
+            let cancel = cancel.clone();
+            let handle = handle.clone();
+            tokio::spawn(async move { server.serve(handle, registry, cancel).await })
+        };
+
+        cancel.cancelled().await;
+        info!("daemon: cancel observed; waiting for server to drain");
+        let _ = server_task.await;
+        info!("daemon: exited");
         Ok(())
     }
 }

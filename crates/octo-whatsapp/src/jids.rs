@@ -28,9 +28,6 @@ pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
     if trimmed.ends_with("@s.whatsapp.net") {
         return Ok(trimmed.to_string());
     }
-    if trimmed.contains('@') {
-        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
-    }
     if trimmed.contains('@') || trimmed.contains(' ') {
         return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
     }

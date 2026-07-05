@@ -74,6 +74,18 @@ fn peer_to_jid_rejects_long_e164() {
 }
 
 #[test]
+fn peer_to_jid_trims_whitespace() {
+    let jid = peer_to_jid("  +15551234567  ").unwrap();
+    assert_eq!(jid, "15551234567@s.whatsapp.net");
+}
+
+#[test]
+fn group_to_jid_trims_whitespace() {
+    let jid = group_to_jid("  120363123456789@g.us  ").unwrap();
+    assert_eq!(jid, "120363123456789@g.us");
+}
+
+#[test]
 fn group_to_jid_accepts_canonical() {
     let jid = group_to_jid("120363123456789@g.us").unwrap();
     assert_eq!(jid, "120363123456789@g.us");

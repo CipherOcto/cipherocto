@@ -46,12 +46,22 @@ pub enum Command {
     Status,
     /// Print daemon health.
     Health,
-    /// Send a text message.
+    /// Send a message (text/image/video/audio/voice/sticker/reaction/poll/contact/location/delete).
     Send(SendArgs),
     /// Group operations.
     Groups(GroupsCmd),
     /// Message operations.
     Messages(MessagesCmd),
+    /// Chat operations (list/info/pin/unpin/mute/archive/delete/typing).
+    Chats(ChatsCmd),
+    /// Envelope operations (encode/decode/send/send-native).
+    Envelope(EnvelopeCmd),
+    /// Media operations (info).
+    Media(MediaCmd),
+    /// Platform capabilities (payload sizes, media caps, flags).
+    Capabilities,
+    /// Domain operations (compute-hash).
+    Domain(DomainCmd),
     /// Rule operations (Phase 1: read-only).
     Rules(RulesCmd),
     /// Trigger operations (Phase 1: read-only).
@@ -81,6 +91,68 @@ pub enum SendKind {
         /// Text payload.
         #[arg(long)]
         text: String,
+    },
+    /// Send an image with optional caption.
+    Image {
+        peer: String,
+        /// Path to the image file on disk.
+        file: PathBuf,
+        /// Optional caption.
+        #[arg(long)]
+        caption: Option<String>,
+    },
+    /// Send a video with optional caption.
+    Video {
+        peer: String,
+        file: PathBuf,
+        #[arg(long)]
+        caption: Option<String>,
+    },
+    /// Send an audio file (non-voice).
+    Audio { peer: String, file: PathBuf },
+    /// Send a voice-note (PTT) audio file.
+    Voice { peer: String, file: PathBuf },
+    /// Send a sticker (WEBP image).
+    Sticker { peer: String, file: PathBuf },
+    /// React to a message with an emoji.
+    Reaction {
+        peer: String,
+        msg_id: String,
+        #[arg(long)]
+        emoji: String,
+    },
+    /// Send a poll with question + options.
+    Poll {
+        peer: String,
+        #[arg(long)]
+        question: String,
+        #[arg(long, value_delimiter = ',')]
+        options: Vec<String>,
+        #[arg(long)]
+        multi: bool,
+    },
+    /// Send a vCard contact.
+    Contact {
+        peer: String,
+        /// Path to a vCard (.vcf) file.
+        vcard: PathBuf,
+    },
+    /// Send a location pin.
+    Location {
+        peer: String,
+        #[arg(long)]
+        lat: f64,
+        #[arg(long)]
+        lon: f64,
+        #[arg(long)]
+        name: String,
+    },
+    /// Delete (revoke) a previously sent message.
+    Delete {
+        peer: String,
+        msg_id: String,
+        #[arg(long)]
+        msg_timestamp: i64,
     },
 }
 
@@ -120,8 +192,129 @@ pub enum MessagesAction {
         #[arg(long)]
         peer: Option<String>,
         #[arg(long)]
+        since: Option<i64>,
+        #[arg(long)]
         limit: Option<u32>,
     },
+    /// Get a single message by id.
+    Get { msg_id: String },
+    /// Full-text search across message history.
+    Search {
+        query: String,
+        #[arg(long)]
+        peer: Option<String>,
+    },
+    /// Edit a previously sent text message (within the platform edit window).
+    Edit {
+        peer: String,
+        msg_id: String,
+        #[arg(long)]
+        msg_timestamp: i64,
+        #[arg(long)]
+        new_text: String,
+    },
+    /// Mark messages up to a given id as read.
+    MarkRead {
+        peer: String,
+        #[arg(long)]
+        up_to: String,
+    },
+    /// Download a media-ref token to a local path.
+    Download {
+        media_ref_token: String,
+        out: PathBuf,
+    },
+}
+
+/// Top-level Chats subcommand tree (Task 55). Mirrors the `chats.*` RPC
+/// surface: list/info/pin/unpin/mute/archive/delete/typing.
+#[derive(Debug, Args)]
+pub struct ChatsCmd {
+    #[command(subcommand)]
+    pub action: ChatsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChatsAction {
+    /// List known chats, optionally filtered by kind and limited.
+    List {
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+    /// Show info about a single chat by JID.
+    Info { jid: String },
+    /// Pin a chat to the top of the list.
+    Pin { jid: String },
+    /// Unpin a previously pinned chat.
+    Unpin { jid: String },
+    /// Mute a chat until the given epoch-seconds timestamp.
+    Mute {
+        jid: String,
+        #[arg(long)]
+        until_epoch_secs: i64,
+    },
+    /// Archive a chat (hide from the default list).
+    Archive { jid: String },
+    /// Delete a chat and its history locally.
+    Delete { jid: String },
+    /// Set or clear the typing indicator on a chat.
+    Typing {
+        jid: String,
+        #[arg(long)]
+        on: bool,
+    },
+}
+
+/// Top-level Envelope subcommand tree (Task 56). Mirrors the `envelope.*`
+/// RPC surface: encode/decode/send/send-native.
+#[derive(Debug, Args)]
+pub struct EnvelopeCmd {
+    #[command(subcommand)]
+    pub action: EnvelopeAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EnvelopeAction {
+    /// Wrap raw bytes in a DOT/1 envelope. Reads from `--file` if given,
+    /// otherwise from stdin.
+    Encode {
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Decode a DOT/1 envelope from stdin (prints payload).
+    Decode,
+    /// Send a DOT/1 envelope file as a message.
+    Send { peer: String, file: PathBuf },
+    /// Send a DOT/1 envelope via the native transport.
+    SendNative { peer: String, file: PathBuf },
+}
+
+/// Top-level Media subcommand tree (Task 56). Mirrors `media.info`.
+#[derive(Debug, Args)]
+pub struct MediaCmd {
+    #[command(subcommand)]
+    pub action: MediaAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MediaAction {
+    /// Return metadata for a media-ref token.
+    Info { media_ref_token: String },
+}
+
+/// Top-level Domain subcommand tree (Task 56). Mirrors `domain.compute-hash`.
+#[derive(Debug, Args)]
+pub struct DomainCmd {
+    #[command(subcommand)]
+    pub action: DomainAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DomainAction {
+    /// Compute the deterministic domain id for a group JID.
+    ComputeHash { group_jid: String },
 }
 
 #[derive(Debug, Args)]
@@ -320,15 +513,114 @@ pub fn dispatch_simple(cli: &Cli, method: &str) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
-/// Wire `send text <peer> --text "..."` (Task 42) and `groups *` (Task 43).
+/// Wire `send *` subcommands (Task 42 + Task 54). The Phase 2 surface
+/// includes image/video/audio/voice/sticker/reaction/poll/contact/location/
+/// delete alongside the original `text` variant.
 pub fn dispatch_send(cli: &Cli, args: &SendArgs) -> anyhow::Result<()> {
-    match &args.kind {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &args.kind {
         SendKind::Text { peer, text } => {
-            let params = serde_json::json!({"peer": peer, "text": text});
-            let result = RpcClient::new(resolve_socket_path(cli)).call("send.text", params)?;
-            print_result(cli.json, &result)
+            ("send.text", serde_json::json!({"peer": peer, "text": text}))
         }
-    }
+        SendKind::Image {
+            peer,
+            file,
+            caption,
+        } => {
+            let mut p = serde_json::Map::new();
+            p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            p.insert(
+                "file".into(),
+                serde_json::Value::String(file.to_string_lossy().into_owned()),
+            );
+            if let Some(cap) = caption {
+                p.insert("caption".into(), serde_json::Value::String(cap.clone()));
+            }
+            ("send.image", serde_json::Value::Object(p))
+        }
+        SendKind::Video {
+            peer,
+            file,
+            caption,
+        } => {
+            let mut p = serde_json::Map::new();
+            p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            p.insert(
+                "file".into(),
+                serde_json::Value::String(file.to_string_lossy().into_owned()),
+            );
+            if let Some(cap) = caption {
+                p.insert("caption".into(), serde_json::Value::String(cap.clone()));
+            }
+            ("send.video", serde_json::Value::Object(p))
+        }
+        SendKind::Audio { peer, file } => (
+            "send.audio",
+            serde_json::json!({"peer": peer, "file": file.to_string_lossy()}),
+        ),
+        SendKind::Voice { peer, file } => (
+            "send.voice",
+            serde_json::json!({"peer": peer, "file": file.to_string_lossy()}),
+        ),
+        SendKind::Sticker { peer, file } => (
+            "send.sticker",
+            serde_json::json!({"peer": peer, "file": file.to_string_lossy()}),
+        ),
+        SendKind::Reaction {
+            peer,
+            msg_id,
+            emoji,
+        } => (
+            "send.reaction",
+            serde_json::json!({"peer": peer, "msg_id": msg_id, "emoji": emoji}),
+        ),
+        SendKind::Poll {
+            peer,
+            question,
+            options,
+            multi,
+        } => (
+            "send.poll",
+            serde_json::json!({
+                "peer": peer,
+                "question": question,
+                "options": options,
+                "multi": multi,
+            }),
+        ),
+        SendKind::Contact { peer, vcard } => (
+            "send.contact",
+            serde_json::json!({"peer": peer, "vcard": vcard.to_string_lossy()}),
+        ),
+        SendKind::Location {
+            peer,
+            lat,
+            lon,
+            name,
+        } => (
+            "send.location",
+            serde_json::json!({
+                "peer": peer,
+                "lat": lat,
+                "lon": lon,
+                "name": name,
+            }),
+        ),
+        SendKind::Delete {
+            peer,
+            msg_id,
+            msg_timestamp,
+        } => (
+            "send.delete",
+            serde_json::json!({
+                "peer": peer,
+                "msg_id": msg_id,
+                "msg_timestamp": msg_timestamp,
+            }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
 }
 
 pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
@@ -346,22 +638,158 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
-/// Wire `messages list [--peer JID] [--limit N]` (Task 44).
+/// Wire `messages *` subcommands (Task 44 + Task 55). Phase 2 extends
+/// `messages list` with optional `--since` and adds `get`/`search`/`edit`/
+/// `mark_read`/`download`.
 pub fn dispatch_messages(cli: &Cli, cmd: &MessagesCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
-    let params = match &cmd.action {
-        MessagesAction::List { peer, limit } => {
+    let (method, params) = match &cmd.action {
+        MessagesAction::List { peer, since, limit } => {
             let mut p = serde_json::Map::new();
             if let Some(peer) = peer {
                 p.insert("peer".into(), serde_json::Value::String(peer.clone()));
             }
+            if let Some(since) = since {
+                p.insert("since".into(), serde_json::Value::Number((*since).into()));
+            }
             if let Some(limit) = limit {
                 p.insert("limit".into(), serde_json::Value::Number((*limit).into()));
             }
-            serde_json::Value::Object(p)
+            ("messages.list", serde_json::Value::Object(p))
+        }
+        MessagesAction::Get { msg_id } => ("messages.get", serde_json::json!({"msg_id": msg_id})),
+        MessagesAction::Search { query, peer } => {
+            let mut p = serde_json::Map::new();
+            p.insert("query".into(), serde_json::Value::String(query.clone()));
+            if let Some(peer) = peer {
+                p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            }
+            ("messages.search", serde_json::Value::Object(p))
+        }
+        MessagesAction::Edit {
+            peer,
+            msg_id,
+            msg_timestamp,
+            new_text,
+        } => (
+            "messages.edit",
+            serde_json::json!({
+                "peer": peer,
+                "msg_id": msg_id,
+                "msg_timestamp": msg_timestamp,
+                "new_text": new_text,
+            }),
+        ),
+        MessagesAction::MarkRead { peer, up_to } => (
+            "messages.mark_read",
+            serde_json::json!({"peer": peer, "up_to": up_to}),
+        ),
+        MessagesAction::Download {
+            media_ref_token,
+            out,
+        } => (
+            "messages.download",
+            serde_json::json!({
+                "media_ref_token": media_ref_token,
+                "out": out.to_string_lossy(),
+            }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `chats *` subcommands (Task 55). Mirrors the `chats.*` RPC surface:
+/// list/info/pin/unpin/mute/archive/delete/typing.
+pub fn dispatch_chats(cli: &Cli, cmd: &ChatsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        ChatsAction::List { kind, limit } => {
+            let mut p = serde_json::Map::new();
+            if let Some(k) = kind {
+                p.insert("kind".into(), serde_json::Value::String(k.clone()));
+            }
+            if let Some(limit) = limit {
+                p.insert("limit".into(), serde_json::Value::Number((*limit).into()));
+            }
+            ("chats.list", serde_json::Value::Object(p))
+        }
+        ChatsAction::Info { jid } => ("chats.info", serde_json::json!({"jid": jid})),
+        ChatsAction::Pin { jid } => ("chats.pin", serde_json::json!({"jid": jid})),
+        ChatsAction::Unpin { jid } => ("chats.unpin", serde_json::json!({"jid": jid})),
+        ChatsAction::Mute {
+            jid,
+            until_epoch_secs,
+        } => (
+            "chats.mute",
+            serde_json::json!({"jid": jid, "until_epoch_secs": until_epoch_secs}),
+        ),
+        ChatsAction::Archive { jid } => ("chats.archive", serde_json::json!({"jid": jid})),
+        ChatsAction::Delete { jid } => ("chats.delete", serde_json::json!({"jid": jid})),
+        ChatsAction::Typing { jid, on } => {
+            ("chats.typing", serde_json::json!({"jid": jid, "on": on}))
         }
     };
-    let result = client.call("messages.list", params)?;
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `envelope *` subcommands (Task 56). Mirrors `envelope.*` RPC surface.
+pub fn dispatch_envelope(cli: &Cli, cmd: &EnvelopeCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        EnvelopeAction::Encode { file } => {
+            let mut p = serde_json::Map::new();
+            if let Some(f) = file {
+                p.insert(
+                    "file".into(),
+                    serde_json::Value::String(f.to_string_lossy().into_owned()),
+                );
+            }
+            ("envelope.encode", serde_json::Value::Object(p))
+        }
+        EnvelopeAction::Decode => ("envelope.decode", serde_json::Value::Null),
+        EnvelopeAction::Send { peer, file } => (
+            "envelope.send",
+            serde_json::json!({"peer": peer, "file": file.to_string_lossy()}),
+        ),
+        EnvelopeAction::SendNative { peer, file } => (
+            "envelope.send-native",
+            serde_json::json!({"peer": peer, "file": file.to_string_lossy()}),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `media *` subcommands (Task 56). Mirrors `media.*` RPC surface.
+pub fn dispatch_media(cli: &Cli, cmd: &MediaCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        MediaAction::Info { media_ref_token } => (
+            "media.info",
+            serde_json::json!({"media_ref_token": media_ref_token}),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `octo-whatsapp capabilities` (Task 56). Single RPC, no params.
+pub fn dispatch_capabilities(cli: &Cli) -> anyhow::Result<()> {
+    dispatch_simple(cli, "capabilities")
+}
+
+/// Wire `domain *` subcommands (Task 56). Mirrors `domain.*` RPC surface.
+pub fn dispatch_domain(cli: &Cli, cmd: &DomainCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        DomainAction::ComputeHash { group_jid } => (
+            "domain.compute-hash",
+            serde_json::json!({"group_jid": group_jid}),
+        ),
+    };
+    let result = client.call(method, params)?;
     print_result(cli.json, &result)
 }
 
@@ -483,6 +911,11 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Send(ref args) => dispatch_send(&cli, args),
         Command::Groups(ref cmd) => dispatch_groups(&cli, cmd),
         Command::Messages(ref cmd) => dispatch_messages(&cli, cmd),
+        Command::Chats(ref cmd) => dispatch_chats(&cli, cmd),
+        Command::Envelope(ref cmd) => dispatch_envelope(&cli, cmd),
+        Command::Media(ref cmd) => dispatch_media(&cli, cmd),
+        Command::Capabilities => dispatch_capabilities(&cli),
+        Command::Domain(ref cmd) => dispatch_domain(&cli, cmd),
         Command::Rules(ref cmd) => dispatch_rules(&cli, cmd),
         Command::Triggers(ref cmd) => dispatch_triggers(&cli, cmd),
         Command::Events(ref cmd) => dispatch_events(&cli, cmd),

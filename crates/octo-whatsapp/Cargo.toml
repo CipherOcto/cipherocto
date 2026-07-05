@@ -43,9 +43,6 @@ tracing-appender   = "0.2"
 # Unix socket + SO_PEERCRED (Linux-only; we test on Linux only)
 nix = { version = "0.29", features = ["fs", "socket", "uio", "feature"] }
 
-# Peer JID parsing
-phonenumber = "0.3"
-
 # Error mapping
 thiserror = "1"
 anyhow    = "1"

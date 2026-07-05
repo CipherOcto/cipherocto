@@ -311,17 +311,6 @@ pub fn print_result(as_json: bool, value: &serde_json::Value) -> anyhow::Result<
 mod tests {
     use super::*;
 
-    #[test]
-    fn print_result_emits_pretty_json_for_structured_data() {
-        // Pure data-path verification: the structured branch falls back to
-        // pretty JSON, which we sanity-check by formatting the same value.
-        let v = serde_json::json!({"k": "v"});
-        let s = serde_json::to_string_pretty(&v).unwrap();
-        assert!(s.contains("\"k\""));
-        assert!(s.contains("\"v\""));
-    }
-    use super::*;
-
     fn cli_with(socket: Option<PathBuf>, name: &str) -> Cli {
         Cli {
             socket,
@@ -358,6 +347,25 @@ mod tests {
             msg.contains("is the daemon running"),
             "expected friendly hint in error, got: {msg}"
         );
+    }
+
+    /// `print_result` with `as_json=true` always emits `to_string_pretty`,
+    /// regardless of the value shape — that's the --json contract.
+    #[test]
+    fn print_result_json_mode_emits_pretty_for_any_value() {
+        // Pure-data verification: the json-mode branch is just
+        // `serde_json::to_string_pretty(value)` plus a trailing newline.
+        let v = serde_json::json!({"k": "v"});
+        let s = serde_json::to_string_pretty(&v).unwrap();
+        assert!(s.contains("\"k\""));
+        assert!(s.contains("\"v\""));
+    }
+
+    /// `--json` is a global flag on `Cli`; verify clap wires it through.
+    #[test]
+    fn cli_parses_global_json_flag() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "--json", "version"]).expect("parse");
+        assert!(c.json);
     }
 }
 

@@ -199,3 +199,134 @@ pub enum SessionCmd {
     /// Remove a session's stored credentials.
     Remove { name: String },
 }
+
+/// Resolve the daemon socket path: `--socket` if set, otherwise derive from
+/// `$XDG_RUNTIME_DIR/octo-whatsapp-{name}.sock` (falling back to
+/// `/tmp/octo-whatsapp-{name}.sock`).
+///
+/// This MUST match the daemon's `WhatsAppRuntimeConfig::socket_path()` for the
+/// default `--name = "default"` case so the CLI finds the daemon without flags.
+pub fn resolve_socket_path(cli: &Cli) -> PathBuf {
+    if let Some(s) = &cli.socket {
+        return s.clone();
+    }
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(dir).join(format!("octo-whatsapp-{}.sock", cli.name))
+}
+
+/// Test seam: derive the default socket path given an explicit env value.
+/// Public so unit tests can verify both branches without mutating process env
+/// (the crate denies `unsafe_code`, so `std::env::set_var` is not an option).
+pub fn resolve_socket_path_with_env(name: &str, xdg_runtime_dir: Option<&str>) -> PathBuf {
+    let dir = xdg_runtime_dir.unwrap_or("/tmp");
+    PathBuf::from(dir).join(format!("octo-whatsapp-{name}.sock"))
+}
+
+/// Synchronous CLI→RPC client. Sends one newline-delimited JSON-RPC 2.0
+/// request and returns the `result` field. Errors propagate as `anyhow::Error`
+/// carrying the daemon's error message + data.
+pub struct RpcClient {
+    socket_path: PathBuf,
+}
+
+impl std::fmt::Debug for RpcClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcClient")
+            .field("socket_path", &self.socket_path)
+            .finish()
+    }
+}
+
+impl RpcClient {
+    pub fn new(socket_path: PathBuf) -> Self {
+        Self { socket_path }
+    }
+
+    /// Send `method` with `params` and return the `result` field. Returns
+    /// `Err` with the daemon's error message (and JSON data) on RPC failure,
+    /// or a connection error if the daemon socket is not reachable.
+    pub fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+
+        let mut s = UnixStream::connect(&self.socket_path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to connect to daemon socket at {}: {e}; is the daemon running?",
+                self.socket_path.display()
+            )
+        })?;
+        let req = serde_json::json!({"id": 1, "method": method, "params": params});
+        let mut line = serde_json::to_string(&req)?;
+        line.push('\n');
+        s.write_all(line.as_bytes())?;
+        let mut buf = String::new();
+        s.read_to_string(&mut buf)?;
+        let resp: serde_json::Value = serde_json::from_str(buf.trim())
+            .map_err(|e| anyhow::anyhow!("malformed RPC response from daemon: {e}"))?;
+        if let Some(err) = resp.get("error") {
+            let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+            let message = err
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no message)");
+            let data = err.get("data").cloned().unwrap_or(serde_json::Value::Null);
+            anyhow::bail!(
+                "RPC {} error (code {}): {} [data={}]",
+                method,
+                code,
+                message,
+                serde_json::to_string(&data).unwrap_or_default()
+            );
+        }
+        Ok(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli_with(socket: Option<PathBuf>, name: &str) -> Cli {
+        Cli {
+            socket,
+            name: name.to_string(),
+            json: false,
+            command: Command::Version,
+        }
+    }
+
+    #[test]
+    fn resolve_socket_path_uses_socket_override() {
+        let cli = cli_with(Some(PathBuf::from("/tmp/override.sock")), "default");
+        assert_eq!(resolve_socket_path(&cli), PathBuf::from("/tmp/override.sock"));
+    }
+
+    #[test]
+    fn resolve_socket_path_derives_from_name_when_no_socket() {
+        // Use the test seam to verify the derivation without mutating env.
+        let path = resolve_socket_path_with_env("alpha", Some("/run/user/1000"));
+        assert_eq!(path, PathBuf::from("/run/user/1000/octo-whatsapp-alpha.sock"));
+    }
+
+    #[test]
+    fn resolve_socket_path_falls_back_to_tmp() {
+        let path = resolve_socket_path_with_env("beta", None);
+        assert_eq!(path, PathBuf::from("/tmp/octo-whatsapp-beta.sock"));
+    }
+
+    #[test]
+    fn rpc_client_call_reports_socket_unreachable() {
+        // Socket at /nonexistent must fail cleanly with a clear message.
+        let c = RpcClient::new(PathBuf::from("/nonexistent/octo-whatsapp-test.sock"));
+        let err = c.call("version.get", serde_json::Value::Null).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("is the daemon running"),
+            "expected friendly hint in error, got: {msg}"
+        );
+    }
+}

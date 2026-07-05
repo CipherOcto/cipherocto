@@ -20,6 +20,7 @@ pub mod ipc;
 pub mod jids;
 pub mod limits;
 pub mod mcp_server;
+pub mod media_buffer;
 pub mod onboarding;
 pub mod rules;
 pub mod triggers;

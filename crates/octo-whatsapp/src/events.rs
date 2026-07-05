@@ -22,10 +22,11 @@ pub enum InboundEvent {
 
 impl InboundEvent {
     pub fn parse(env: EventEnvelope) -> Self {
-        // Phase 1: every event is `Unknown`. Phase 3 will introduce a real
-        // parser that classifies by `format!("{:?}", ev)` output shape.
-        let _ = env;
-        todo!("Phase 1 Task 13")
+        InboundEvent::Unknown {
+            raw: env.raw,
+            ts_unix_ms: env.ts_unix_ms,
+            ts_mono_ns: env.ts_mono_ns,
+        }
     }
 }
 

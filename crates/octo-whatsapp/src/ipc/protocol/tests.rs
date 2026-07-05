@@ -99,3 +99,13 @@ fn disk_unreachable_and_fallback_exhausted_share_wire_code() {
         RpcErrorCode::FallbackExhausted.as_i32(),
     );
 }
+
+#[test]
+fn edit_window_serializes_to_minus_32013() {
+    assert_eq!(RpcErrorCode::EditWindowExpired.as_i32(), -32013);
+}
+
+#[test]
+fn delete_window_serializes_to_minus_32014() {
+    assert_eq!(RpcErrorCode::DeleteWindowExpired.as_i32(), -32014);
+}

@@ -75,6 +75,13 @@ impl DaemonHandle {
         &self.inner.media_buffer
     }
 
+    /// Bound adapter, if any. Runtime RPC handlers consult this for
+    /// every outbound call; pre-flight checks happen BEFORE this lookup
+    /// so ceiling tests don't need a live adapter.
+    pub fn adapter(&self) -> Option<Arc<octo_adapter_whatsapp::WhatsAppWebAdapter>> {
+        None
+    }
+
     /// Async-marked for API symmetry with future async setters, but the
     /// underlying lock is sync (`std::sync::RwLock`) so this only does a
     /// single instantaneous write. The crate's
@@ -109,8 +116,10 @@ impl Daemon {
     }
 
     pub fn handle(&self) -> DaemonHandle {
-        let mb_cfg = self.config.media_buffer.clone().unwrap_or_default();
-        let media_buffer = MediaBuffer::new(mb_cfg.max_concurrent_uploads, mb_cfg.root);
+        let media_buffer = MediaBuffer::new(
+            self.config.media_buffer.max_concurrent_uploads,
+            self.config.media_buffer.root.clone(),
+        );
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),

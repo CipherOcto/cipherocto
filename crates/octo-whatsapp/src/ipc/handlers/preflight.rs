@@ -86,14 +86,10 @@ mod tests {
             data_dir: std::env::temp_dir(),
             log_dir: std::env::temp_dir(),
             socket_dir: std::env::temp_dir(),
-            media_buffer: Some(MediaBufferConfig {
+            media_buffer: MediaBufferConfig {
                 max_concurrent_uploads: cap,
-                root: std::env::temp_dir().join(format!(
-                    "octo-pf-{}-{}",
-                    std::process::id(),
-                    cap
-                )),
-            }),
+                root: std::env::temp_dir().join(format!("octo-pf-{}-{}", std::process::id(), cap)),
+            },
         };
         Daemon::new(cfg).handle()
     }

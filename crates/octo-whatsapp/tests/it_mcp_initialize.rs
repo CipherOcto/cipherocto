@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use octo_whatsapp::config::WhatsAppRuntimeConfig;
+use octo_whatsapp::config::{MediaBufferConfig, WhatsAppRuntimeConfig};
 use octo_whatsapp::daemon::Daemon;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15,6 +15,7 @@ async fn mcp_initialize_returns_protocol_version_2025_06_18() {
         data_dir: tmp.path().join("data"),
         log_dir: tmp.path().join("log"),
         socket_dir: tmp.path().to_path_buf(),
+        media_buffer: MediaBufferConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

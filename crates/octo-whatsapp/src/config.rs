@@ -46,11 +46,22 @@ pub struct WhatsAppRuntimeConfig {
     pub log_dir: PathBuf,
     #[serde(default = "default_socket_dir")]
     pub socket_dir: PathBuf,
-    /// Optional media buffer tuning. Falls back to `MediaBufferConfig::default()`
-    /// when absent, which is the safe production default (4 concurrent uploads
-    /// under `$TMPDIR/octo-whatsapp`).
+    /// Media buffer tuning. Defaults to 4 concurrent uploads under
+    /// `$TMPDIR/octo-whatsapp` (safe production default).
     #[serde(default)]
-    pub media_buffer: Option<MediaBufferConfig>,
+    pub media_buffer: MediaBufferConfig,
+}
+
+impl Default for WhatsAppRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            data_dir: default_data_dir(),
+            log_dir: default_log_dir(),
+            socket_dir: default_socket_dir(),
+            media_buffer: MediaBufferConfig::default(),
+        }
+    }
 }
 
 fn default_data_dir() -> PathBuf {
@@ -92,17 +103,15 @@ impl WhatsAppRuntimeConfig {
         {
             return Err(ConfigError::InvalidName(self.name.clone()));
         }
-        if let Some(mb) = &self.media_buffer {
-            if mb.max_concurrent_uploads == 0 {
-                return Err(ConfigError::InvalidName(format!(
-                    "media_buffer.max_concurrent_uploads must be > 0 (got 0)"
-                )));
-            }
-            if mb.root.as_os_str().is_empty() {
-                return Err(ConfigError::InvalidName(
-                    "media_buffer.root must be non-empty".into(),
-                ));
-            }
+        if self.media_buffer.max_concurrent_uploads == 0 {
+            return Err(ConfigError::InvalidName(
+                "media_buffer.max_concurrent_uploads must be > 0 (got 0)".to_string(),
+            ));
+        }
+        if self.media_buffer.root.as_os_str().is_empty() {
+            return Err(ConfigError::InvalidName(
+                "media_buffer.root must be non-empty".into(),
+            ));
         }
         Ok(())
     }

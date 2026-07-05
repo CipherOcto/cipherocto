@@ -81,10 +81,10 @@ fn media_buffer_config_validates() {
         data_dir: std::env::temp_dir(),
         log_dir: std::env::temp_dir(),
         socket_dir: std::env::temp_dir(),
-        media_buffer: Some(MediaBufferConfig {
+        media_buffer: MediaBufferConfig {
             max_concurrent_uploads: 4,
             root: std::env::temp_dir().join("mb"),
-        }),
+        },
     };
     assert!(cfg.validate().is_ok());
     let bad = WhatsAppRuntimeConfig {
@@ -92,10 +92,10 @@ fn media_buffer_config_validates() {
         data_dir: std::env::temp_dir(),
         log_dir: std::env::temp_dir(),
         socket_dir: std::env::temp_dir(),
-        media_buffer: Some(MediaBufferConfig {
+        media_buffer: MediaBufferConfig {
             max_concurrent_uploads: 0,
             root: std::env::temp_dir(),
-        }),
+        },
     };
     assert!(bad.validate().is_err());
 }

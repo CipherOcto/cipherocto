@@ -248,7 +248,7 @@ pub struct WhatsAppWebAdapter {
     /// Bot handle for shutdown
     bot_handle: Arc<Mutex<Option<whatsapp_rust::bot::BotHandle>>>,
     /// Client for sending messages
-    client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
     /// Internal message buffer: on_event() pushes, receive_messages() drains
     inbound_rx: Arc<Mutex<tokio::sync::mpsc::Receiver<RawPlatformMessage>>>,
     inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
@@ -279,7 +279,7 @@ pub struct WhatsAppWebAdapter {
     /// chats from groups we already left.
     conversation_jids: Arc<Mutex<Vec<String>>>,
     /// StoolapStore reference for persisting conversations. Set in start_bot.
-    store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
+    pub(crate) store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
     /// Raw event broadcast for debugging/monitoring. Every event from
     /// wa-rs is stringified and sent here. Used by event_listener binary.
     raw_event_tx: tokio::sync::broadcast::Sender<String>,

@@ -392,3 +392,55 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
 }
+
+/// Wire `messages list [--peer JID] [--limit N]` (Task 44).
+pub fn dispatch_messages(cli: &Cli, cmd: &MessagesCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let params = match &cmd.action {
+        MessagesAction::List { peer, limit } => {
+            let mut p = serde_json::Map::new();
+            if let Some(peer) = peer {
+                p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            }
+            if let Some(limit) = limit {
+                p.insert("limit".into(), serde_json::Value::Number((*limit).into()));
+            }
+            serde_json::Value::Object(p)
+        }
+    };
+    let result = client.call("messages.list", params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `rules list` and `rules get <id>` (Task 45).
+pub fn dispatch_rules(cli: &Cli, cmd: &RulesCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        RulesAction::List => ("rules.list", serde_json::Value::Null),
+        RulesAction::Get { id } => ("rules.get", serde_json::json!({"id": id})),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `triggers list` and `triggers get <id>` (Task 46).
+pub fn dispatch_triggers(cli: &Cli, cmd: &TriggersCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        TriggersAction::List => ("triggers.list", serde_json::Value::Null),
+        TriggersAction::Get { id } => ("triggers.get", serde_json::json!({"id": id})),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `events list` and `events show <id>` (Task 47).
+pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        EventsAction::List => ("events.list", serde_json::Value::Null),
+        EventsAction::Show { id } => ("events.show", serde_json::json!({"id": id})),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}

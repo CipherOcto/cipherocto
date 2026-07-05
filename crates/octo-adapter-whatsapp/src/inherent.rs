@@ -4,9 +4,12 @@
 
 use std::path::Path;
 
-use crate::adapter::WhatsAppWebAdapter;
+use crate::adapter::{upload_to_cdn, WhatsAppWebAdapter};
+use crate::media_ref::{encode_base64url, MediaRef};
 use crate::PlatformAdapterError;
 use wacore_binary::JidExt;
+use whatsapp_rust::download::MediaType;
+use whatsapp_rust::upload::UploadOptions;
 
 /// Local copy of `adapter.rs::epoch_millis` (module-private there; duplicated
 /// here to keep the wiring self-contained without widening visibility).
@@ -24,14 +27,70 @@ impl WhatsAppWebAdapter {
     pub async fn send_image(
         &self,
         to_jid: &str,
-        _file_path: &Path,
-        _caption: Option<&str>,
+        file_path: &Path,
+        caption: Option<&str>,
     ) -> Result<(String, String), PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_image: wacore wiring deferred".into(),
-        })
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.clone(),
+            MediaType::Image,
+            UploadOptions::new(),
+        )
+        .await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image");
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mime = "image/jpeg";
+        let img_msg = waproto::whatsapp::message::ImageMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime.to_string()),
+            caption: caption.map(String::from),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            image_message: Some(Box::new(img_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_image failed: {e}"),
+            })?;
+        Ok((send_result.message_id, token))
     }
     /// Size-gated wrapper for `send_image`.
     pub async fn send_image_checked(
@@ -62,14 +121,71 @@ impl WhatsAppWebAdapter {
     pub async fn send_video(
         &self,
         to_jid: &str,
-        _file_path: &Path,
-        _caption: Option<&str>,
+        file_path: &Path,
+        caption: Option<&str>,
     ) -> Result<(String, String), PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_video: wacore wiring deferred".into(),
-        })
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.clone(),
+            MediaType::Video,
+            UploadOptions::new(),
+        )
+        .await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("video");
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mime = "video/mp4";
+        let vid_msg = waproto::whatsapp::message::VideoMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime.to_string()),
+            caption: caption.map(String::from),
+            gif_playback: Some(false),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            video_message: Some(Box::new(vid_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_video failed: {e}"),
+            })?;
+        Ok((send_result.message_id, token))
     }
     /// Size-gated wrapper for `send_video`.
     pub async fn send_video_checked(
@@ -100,13 +216,68 @@ impl WhatsAppWebAdapter {
     pub async fn send_audio(
         &self,
         to_jid: &str,
-        _file_path: &Path,
+        file_path: &Path,
     ) -> Result<(String, String), PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_audio: wacore wiring deferred".into(),
-        })
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.clone(),
+            MediaType::Audio,
+            UploadOptions::new(),
+        )
+        .await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mime = "audio/mpeg";
+        let aud_msg = waproto::whatsapp::message::AudioMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime.to_string()),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            audio_message: Some(Box::new(aud_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_audio failed: {e}"),
+            })?;
+        Ok((send_result.message_id, token))
     }
     /// Size-gated wrapper for `send_audio`.
     pub async fn send_audio_checked(
@@ -136,13 +307,69 @@ impl WhatsAppWebAdapter {
     pub async fn send_voice(
         &self,
         to_jid: &str,
-        _file_path: &Path,
+        file_path: &Path,
     ) -> Result<(String, String), PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_voice: wacore wiring deferred".into(),
-        })
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.clone(),
+            MediaType::Audio,
+            UploadOptions::new(),
+        )
+        .await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("voice");
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mime = "audio/ogg; codecs=opus";
+        let aud_msg = waproto::whatsapp::message::AudioMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime.to_string()),
+            ptt: Some(true),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            audio_message: Some(Box::new(aud_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_voice failed: {e}"),
+            })?;
+        Ok((send_result.message_id, token))
     }
     /// Size-gated wrapper for `send_voice`.
     pub async fn send_voice_checked(
@@ -172,13 +399,68 @@ impl WhatsAppWebAdapter {
     pub async fn send_sticker(
         &self,
         to_jid: &str,
-        _file_path: &Path,
+        file_path: &Path,
     ) -> Result<(String, String), PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_sticker: wacore wiring deferred".into(),
-        })
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.clone(),
+            MediaType::Sticker,
+            UploadOptions::new(),
+        )
+        .await?;
+        let filename = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("sticker");
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mime = "image/webp";
+        let stk_msg = waproto::whatsapp::message::StickerMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime.to_string()),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            sticker_message: Some(Box::new(stk_msg)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_sticker failed: {e}"),
+            })?;
+        Ok((send_result.message_id, token))
     }
     /// Size-gated wrapper for `send_sticker`.
     pub async fn send_sticker_checked(
@@ -349,13 +631,54 @@ impl WhatsAppWebAdapter {
     pub async fn send_contact(
         &self,
         to_jid: &str,
-        _vcard_path: &Path,
+        vcard_path: &Path,
     ) -> Result<String, PlatformAdapterError> {
-        let _ = to_jid;
-        Err(PlatformAdapterError::Unreachable {
-            platform: "whatsapp".into(),
-            reason: "send_contact: wacore wiring deferred".into(),
-        })
+        let text = tokio::fs::read_to_string(vcard_path).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("read vcard {vcard_path:?}: {e}"),
+            }
+        })?;
+        let display_name = text
+            .lines()
+            .find_map(|l| l.strip_prefix("FN:").map(|s| s.trim().to_string()))
+            .or_else(|| {
+                vcard_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "Contact".to_string());
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let cm = waproto::whatsapp::message::ContactMessage {
+            display_name: Some(display_name),
+            vcard: Some(text),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            contact_message: Some(Box::new(cm)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_contact failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
     }
     /// Size-gated wrapper for `send_contact`.
     pub async fn send_contact_checked(

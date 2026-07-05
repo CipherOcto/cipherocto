@@ -1971,7 +1971,7 @@ pub(crate) async fn download_via_media_ref(
 /// `WhatsAppWebAdapter::upload_media` and `send_envelope`'s native
 /// branch. Returns the `UploadResponse` on success. Caller is
 /// responsible for the `MediaRef::encode_base64url(&response)` step.
-async fn upload_to_cdn(
+pub(crate) async fn upload_to_cdn(
     client: &Arc<whatsapp_rust::Client>,
     data: Vec<u8>,
     media_type: MediaType,

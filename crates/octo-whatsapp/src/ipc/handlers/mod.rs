@@ -1,8 +1,10 @@
 //! Concrete RPC method handlers. One file per logical group; all wired into
 //! `build_registry()` at the bottom of this module.
 
+pub mod chats_archive;
 pub mod chats_info;
 pub mod chats_list;
+pub mod chats_mute;
 pub mod chats_pin;
 pub mod chats_unpin;
 pub mod daemon_ops;
@@ -75,6 +77,8 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(chats_info::ChatsInfo))
         .register(Arc::new(chats_pin::ChatsPin))
         .register(Arc::new(chats_unpin::ChatsUnpin))
+        .register(Arc::new(chats_mute::ChatsMute))
+        .register(Arc::new(chats_archive::ChatsArchive))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -132,6 +136,8 @@ pub const PHASE2_CHATS_METHODS: &[&str] = &[
     "chats.info",
     "chats.pin",
     "chats.unpin",
+    "chats.mute",
+    "chats.archive",
 ];
 
 #[cfg(test)]

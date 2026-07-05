@@ -42,19 +42,28 @@ fn default_socket_dir() -> PathBuf {
 
 impl WhatsAppRuntimeConfig {
     pub fn from_toml(bytes: &[u8]) -> Result<Self, ConfigError> {
-        todo!("Phase 1 Task 10")
+        let s = std::str::from_utf8(bytes).map_err(|e| {
+            ConfigError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        let cfg: Self = toml::from_str(s)?;
+        cfg.validate()?;
+        Ok(cfg)
     }
 
     pub fn from_path(path: &Path) -> Result<Self, ConfigError> {
-        todo!("Phase 1 Task 10")
+        let bytes = std::fs::read(path)?;
+        Self::from_toml(&bytes)
     }
 
     pub fn socket_path(&self) -> PathBuf {
-        self.socket_dir.join(format!("octo-whatsapp-{}.sock", self.name))
+        self.socket_dir
+            .join(format!("octo-whatsapp-{}.sock", self.name))
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        todo!("Phase 1 Task 11")
+        // Phase 1 Task 10: pass-through. Real validation arrives in Task 11.
+        let _ = self;
+        Ok(())
     }
 }
 

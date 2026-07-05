@@ -14,28 +14,31 @@ default = []
 # `#[cfg(any(test, feature = "test-helpers"))]`). Off by default; off
 # when not running tests so the helper doesn't ship to consumers.
 test-helpers = []
-# Live WhatsApp Web tests: enables the `tests/live_session_test.rs` suite,
-# which talks to the production WhatsApp Web servers (no `--ws-url` override).
-# Off by default because the tests require an existing authenticated session
-# (a `.session.db` produced by `octo-whatsapp-onboard qr-link` / `pair-link`),
-# take a long time, and produce real network traffic that the operator is
-# rate-limited for. Enable with:
+# Live WhatsApp Web tests: enables the live test suites under `tests/`
+# (`live_session_test.rs`, `live_e2e_group_setup_test.rs`,
+# `live_2_5_wiring.rs` — Phase 2.5 media + reaction wiring tests,
+# `live_admin_test.rs`), which talk to the production WhatsApp Web
+# servers (no `--ws-url` override). Off by default because the tests
+# require an existing authenticated session (a `.session.db` produced
+# by `octo-whatsapp-onboard qr-link` / `pair-link`), take a long time,
+# and produce real network traffic that the operator is rate-limited
+# for. Enable with:
 #
 #   cargo test -p octo-adapter-whatsapp \
 #     --features live-whatsapp \
-#     --test live_session_test \
+#     --test live_2_5_wiring \
 #     -- --include-ignored --nocapture --test-threads=1
 #
 # The session database is read from $OCTO_WHATSAPP_PERSIST_DIR (default
 # `$HOME/.local/share/octo/whatsapp/`, with session name `default.session.db`
 # — the on-disk layout that `octo-whatsapp-onboard` writes via
 # `default_session_base_dir` in `octo-whatsapp-onboard/src/main.rs`).
+# `live_2_5_wiring.rs` additionally requires $OCTO_WHATSAPP_E2E_TEST_PEER
+# (a JID to send media to).
 #
-# Note: this feature only gates the test file (via `#[cfg(feature =
-# "live-whatsapp")]`). The `tracing-subscriber` dev-dep is always present
-# so the workspace `cargo check` doesn't need a feature switch to find it,
-# but it's only used in the live-session test, so the default `cargo test`
-# build cost is unaffected.
+# Implies `test-helpers` so the hermetic `inherent_smoke.rs` integration
+# tests continue to compile alongside the live suites when building
+# `cargo check --features live-whatsapp --tests`.
 live-whatsapp = ["test-helpers"]
 
 [dependencies]

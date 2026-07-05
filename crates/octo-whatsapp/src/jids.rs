@@ -14,7 +14,35 @@ pub enum JidError {
 }
 
 pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
-    todo!("Phase 1 Task 6")
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    if trimmed.ends_with("@lid") {
+        let digits = trimmed.trim_end_matches("@lid");
+        if digits.chars().all(|c| c.is_ascii_digit()) && !digits.is_empty() {
+            return Ok(format!("{digits}@lid"));
+        }
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    if trimmed.ends_with("@s.whatsapp.net") {
+        return Ok(trimmed.to_string());
+    }
+    if trimmed.contains('@') {
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    if trimmed.contains('@') || trimmed.contains(' ') {
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    let digits = trimmed.trim_start_matches('+');
+    if !digits.chars().all(|c| c.is_ascii_digit()) || digits.is_empty() {
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    // Light validation: 7-15 digits (E.164 max length).
+    if digits.len() < 7 || digits.len() > 15 {
+        return Err(JidError::InvalidPhone(trimmed.to_string()));
+    }
+    Ok(format!("{digits}@s.whatsapp.net"))
 }
 
 pub fn group_to_jid(input: &str) -> Result<String, JidError> {

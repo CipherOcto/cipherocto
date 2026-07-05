@@ -250,7 +250,7 @@ impl RpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        use std::io::{Read, Write};
+        use std::io::{BufRead, BufReader, Write};
         use std::os::unix::net::UnixStream;
 
         let mut s = UnixStream::connect(&self.socket_path).map_err(|e| {
@@ -263,8 +263,12 @@ impl RpcClient {
         let mut line = serde_json::to_string(&req)?;
         line.push('\n');
         s.write_all(line.as_bytes())?;
+        // Server keeps connections open for further requests, so read exactly
+        // one line via BufReader::read_line instead of read_to_string (which
+        // would block until EOF).
+        let mut reader = BufReader::new(s);
         let mut buf = String::new();
-        s.read_to_string(&mut buf)?;
+        reader.read_line(&mut buf)?;
         let resp: serde_json::Value = serde_json::from_str(buf.trim())
             .map_err(|e| anyhow::anyhow!("malformed RPC response from daemon: {e}"))?;
         if let Some(err) = resp.get("error") {

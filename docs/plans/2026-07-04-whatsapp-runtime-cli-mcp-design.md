@@ -1,7 +1,7 @@
 # Design: WhatsApp Runtime, CLI, and MCP Server
 
 **Date:** 2026-07-04
-**Status:** Approved (post-brainstorm)
+**Status:** Implemented — Phase 1 complete (branch feat/whatsapp-runtime-cli-mcp, commit b363d394 + follow-ups)
 **RFC:** RFC-0850 (Deterministic Overlay Transport)
 **Crate:** `octo-whatsapp` (new), depends on `octo-adapter-whatsapp`, `octo-whatsapp-onboard-core`
 
@@ -993,7 +993,12 @@ exclude = [
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",
-    "crates/octo-whatsapp",           # NEW — meta-gated via octo-cli-meta
+    # NOTE: crates/octo-whatsapp is NOT excluded (user-approved deviation
+    # from this design doc, 2026-07-04). WhatsApp is pure-Rust, no TDLib
+    # pollution risk, and removing the exclusion makes `cargo test -p
+    # octo-whatsapp` work as the plan's commands assume. The meta-gating
+    # pattern in octo-cli-meta (`whatsapp-cli = ["dep:octo-whatsapp"]`)
+    # still gates for downstream consumers.
     "crates/octo-whatsapp-onboard",   # NEW — removed (folded into octo-whatsapp onboard subcommand)
 ]
 ```

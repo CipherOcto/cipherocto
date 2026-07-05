@@ -32,6 +32,9 @@ pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
         return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
     }
     let digits = trimmed.trim_start_matches('+');
+    // ASCII-only (not Unicode numeric): WhatsApp uses ASCII E.164 internally;
+    // accepting Arabic-Indic or full-width digits here would create a JID the
+    // server rejects.
     if !digits.chars().all(|c| c.is_ascii_digit()) || digits.is_empty() {
         return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
     }

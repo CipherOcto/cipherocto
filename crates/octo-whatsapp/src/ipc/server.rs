@@ -105,18 +105,23 @@ impl Default for HandlerRegistry {
 /// over an existing file), binds the socket, and locks down permissions to
 /// `0600` so only the owning UID can talk to the daemon.
 ///
-/// The bound `UnixListener` is not stored on the struct so `bind` stays a
-/// synchronous, infallible-ish setup step. `serve` re-binds at the start
-/// of its loop; the re-bind races with no one because `bind` already holds
-/// the path and the per-connection handlers don't touch `socket_path`.
+/// The bound `UnixListener` is stored on the struct so `serve` reuses it
+/// without re-binding. The earlier "drop and re-bind" pattern could hang on
+/// Linux when the freshly-released socket path was still in the kernel's
+/// pending-state table; see handoff memory note for details.
 pub struct UnixSocketServer {
     pub socket_path: PathBuf,
+    listener: Option<UnixListener>,
 }
 
 impl std::fmt::Debug for UnixSocketServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnixSocketServer")
             .field("socket_path", &self.socket_path)
+            .field(
+                "listener_bound",
+                &self.listener.as_ref().map(|_| true).unwrap_or(false),
+            )
             .finish()
     }
 }
@@ -127,36 +132,27 @@ impl UnixSocketServer {
             std::fs::remove_file(path)?;
         }
         let listener = UnixListener::bind(path)?;
-        drop(listener);
         let perms = std::fs::Permissions::from_mode(0o600);
         std::fs::set_permissions(path, perms)?;
         info!(socket = ?path, "bound unix socket");
         Ok(Self {
             socket_path: path.to_path_buf(),
+            listener: Some(listener),
         })
-    }
-
-    /// Bind a fresh listener on the same path. Used by `serve` to obtain an
-    /// async listener — `bind` above is the canonical path-write setup.
-    pub fn listener(&self) -> std::io::Result<UnixListener> {
-        if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path)?;
-        }
-        let listener = UnixListener::bind(&self.socket_path)?;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&self.socket_path, perms)?;
-        Ok(listener)
     }
 
     /// Accept loop. Stops on cancellation; cleans up the socket file before
     /// returning.
     pub async fn serve(
-        self,
+        mut self,
         handle: DaemonHandle,
         registry: Arc<HandlerRegistry>,
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
-        let listener = self.listener()?;
+        let listener = self
+            .listener
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("UnixSocketServer::serve called without bind()"))?;
         info!(socket = ?self.socket_path, "unix socket server: accept loop starting");
         loop {
             tokio::select! {

@@ -33,27 +33,23 @@ async fn ipc_roundtrip_via_unix_socket() {
     let handle = daemon.handle();
     let registry: Arc<HandlerRegistry> = Arc::new(build_registry());
 
-    // Confirm bind() sets up the socket file (sync part), then serve()
-    // re-binds an async listener on the same path.
-    let _server = UnixSocketServer::bind(&sock).unwrap();
-    let server_path = sock.clone();
+    // bind() returns Self with the listener already stored; serve() reuses
+    // it without re-binding. The previous "drop listener then rebind" pattern
+    // could hang on Linux when the kernel's socket-file pending-state table
+    // hadn't released the path yet.
+    let server = UnixSocketServer::bind(&sock).unwrap();
     let server_cancel = cancel.clone();
     let server_handle = handle.clone();
     let server_registry = registry.clone();
     let server_task = tokio::spawn(async move {
-        UnixSocketServer {
-            socket_path: server_path,
-        }
-        .serve(server_handle, server_registry, server_cancel)
-        .await
+        server.serve(server_handle, server_registry, server_cancel).await
     });
 
-    // Server doesn't hold the listener past `bind`, so give serve() a tick
-    // to call `listener()` and bind the actual async listener. If we
-    // connect before that, we'll see ECONNREFUSED.
+    // The listener is bound before serve() is called, so connect should
+    // succeed on the first try. A small retry window covers the spawn
+    // scheduling latency.
     let sock_for_thread = sock.clone();
     let connect_thread = tokio::task::spawn_blocking(move || -> StdUnixStream {
-        // Try a few times; serve() may need one retry after listener() runs.
         let mut last_err = None;
         for _ in 0..20 {
             match StdUnixStream::connect(&sock_for_thread) {

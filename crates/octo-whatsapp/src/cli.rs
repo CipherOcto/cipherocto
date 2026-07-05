@@ -282,7 +282,10 @@ impl RpcClient {
                 serde_json::to_string(&data).unwrap_or_default()
             );
         }
-        Ok(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(resp
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -305,68 +308,6 @@ pub fn print_result(as_json: bool, value: &serde_json::Value) -> anyhow::Result<
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn cli_with(socket: Option<PathBuf>, name: &str) -> Cli {
-        Cli {
-            socket,
-            name: name.to_string(),
-            json: false,
-            command: Command::Version,
-        }
-    }
-
-    #[test]
-    fn resolve_socket_path_uses_socket_override() {
-        let cli = cli_with(Some(PathBuf::from("/tmp/override.sock")), "default");
-        assert_eq!(resolve_socket_path(&cli), PathBuf::from("/tmp/override.sock"));
-    }
-
-    #[test]
-    fn resolve_socket_path_derives_from_name_when_no_socket() {
-        let path = resolve_socket_path_with_env("alpha", Some("/run/user/1000"));
-        assert_eq!(path, PathBuf::from("/run/user/1000/octo-whatsapp-alpha.sock"));
-    }
-
-    #[test]
-    fn resolve_socket_path_falls_back_to_tmp() {
-        let path = resolve_socket_path_with_env("beta", None);
-        assert_eq!(path, PathBuf::from("/tmp/octo-whatsapp-beta.sock"));
-    }
-
-    #[test]
-    fn rpc_client_call_reports_socket_unreachable() {
-        let c = RpcClient::new(PathBuf::from("/nonexistent/octo-whatsapp-test.sock"));
-        let err = c.call("version.get", serde_json::Value::Null).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("is the daemon running"),
-            "expected friendly hint in error, got: {msg}"
-        );
-    }
-
-    /// `print_result` with `as_json=true` always emits `to_string_pretty`,
-    /// regardless of the value shape — that's the --json contract.
-    #[test]
-    fn print_result_json_mode_emits_pretty_for_any_value() {
-        // Pure-data verification: the json-mode branch is just
-        // `serde_json::to_string_pretty(value)` plus a trailing newline.
-        let v = serde_json::json!({"k": "v"});
-        let s = serde_json::to_string_pretty(&v).unwrap();
-        assert!(s.contains("\"k\""));
-        assert!(s.contains("\"v\""));
-    }
-
-    /// `--json` is a global flag on `Cli`; verify clap wires it through.
-    #[test]
-    fn cli_parses_global_json_flag() {
-        let c = Cli::try_parse_from(["octo-whatsapp", "--json", "version"]).expect("parse");
-        assert!(c.json);
-    }
 }
 
 /// Wire the read-only `version` / `status` / `health` commands (Tasks 41).
@@ -461,7 +402,8 @@ pub fn dispatch_reconnect(cli: &Cli) -> anyhow::Result<()> {
 }
 
 pub fn dispatch_shutdown(cli: &Cli) -> anyhow::Result<()> {
-    let result = RpcClient::new(resolve_socket_path(cli)).call("shutdown", serde_json::Value::Null)?;
+    let result =
+        RpcClient::new(resolve_socket_path(cli)).call("shutdown", serde_json::Value::Null)?;
     print_result(cli.json, &result)
 }
 
@@ -512,12 +454,12 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
-            runtime.block_on(crate::daemon::Daemon::new(
-                crate::config::WhatsAppRuntimeConfig::from_toml(
+            runtime.block_on(
+                crate::daemon::Daemon::new(crate::config::WhatsAppRuntimeConfig::from_toml(
                     format!("name = {:?}\n", cli.name).as_bytes(),
-                )?,
+                )?)
+                .run(),
             )
-            .run())
         }
         Command::Mcp => {
             // MCP server arrives in Part L (Tasks 51-58). For now, print a
@@ -541,5 +483,73 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Reconnect => dispatch_reconnect(&cli),
         Command::Shutdown => dispatch_shutdown(&cli),
         Command::Onboard(ref cmd) => dispatch_onboard(&cli, cmd),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli_with(socket: Option<PathBuf>, name: &str) -> Cli {
+        Cli {
+            socket,
+            name: name.to_string(),
+            json: false,
+            command: Command::Version,
+        }
+    }
+
+    #[test]
+    fn resolve_socket_path_uses_socket_override() {
+        let cli = cli_with(Some(PathBuf::from("/tmp/override.sock")), "default");
+        assert_eq!(
+            resolve_socket_path(&cli),
+            PathBuf::from("/tmp/override.sock")
+        );
+    }
+
+    #[test]
+    fn resolve_socket_path_derives_from_name_when_no_socket() {
+        let path = resolve_socket_path_with_env("alpha", Some("/run/user/1000"));
+        assert_eq!(
+            path,
+            PathBuf::from("/run/user/1000/octo-whatsapp-alpha.sock")
+        );
+    }
+
+    #[test]
+    fn resolve_socket_path_falls_back_to_tmp() {
+        let path = resolve_socket_path_with_env("beta", None);
+        assert_eq!(path, PathBuf::from("/tmp/octo-whatsapp-beta.sock"));
+    }
+
+    #[test]
+    fn rpc_client_call_reports_socket_unreachable() {
+        let c = RpcClient::new(PathBuf::from("/nonexistent/octo-whatsapp-test.sock"));
+        let err = c.call("version.get", serde_json::Value::Null).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("is the daemon running"),
+            "expected friendly hint in error, got: {msg}"
+        );
+    }
+
+    /// `print_result` with `as_json=true` always emits `to_string_pretty`,
+    /// regardless of the value shape — that's the --json contract.
+    #[test]
+    fn print_result_json_mode_emits_pretty_for_any_value() {
+        // Pure-data verification: the json-mode branch is just
+        // `serde_json::to_string_pretty(value)` plus a trailing newline.
+        let v = serde_json::json!({"k": "v"});
+        let s = serde_json::to_string_pretty(&v).unwrap();
+        assert!(s.contains("\"k\""));
+        assert!(s.contains("\"v\""));
+    }
+
+    /// `--json` is a global flag on `Cli`; verify clap wires it through.
+    #[test]
+    fn cli_parses_global_json_flag() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "--json", "version"]).expect("parse");
+        assert!(c.json);
     }
 }

@@ -12,8 +12,17 @@ pub const MAX_VCARD_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediaKind {
-    Text, Image, Video, Audio, Voice, Sticker, Document, Contact,
-    Reaction, Poll, Location,
+    Text,
+    Image,
+    Video,
+    Audio,
+    Voice,
+    Sticker,
+    Document,
+    Contact,
+    Reaction,
+    Poll,
+    Location,
 }
 impl MediaKind {
     pub fn as_str(self) -> &'static str {
@@ -46,6 +55,7 @@ impl MediaKind {
             Self::Location => 1024,
         }
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "text" => Some(Self::Text),
@@ -80,10 +90,18 @@ mod tests {
     }
     #[test]
     fn media_kind_round_trip() {
-        for k in [MediaKind::Image, MediaKind::Video, MediaKind::Audio,
-                  MediaKind::Voice, MediaKind::Sticker, MediaKind::Document,
-                  MediaKind::Contact, MediaKind::Reaction, MediaKind::Poll,
-                  MediaKind::Location] {
+        for k in [
+            MediaKind::Image,
+            MediaKind::Video,
+            MediaKind::Audio,
+            MediaKind::Voice,
+            MediaKind::Sticker,
+            MediaKind::Document,
+            MediaKind::Contact,
+            MediaKind::Reaction,
+            MediaKind::Poll,
+            MediaKind::Location,
+        ] {
             assert_eq!(MediaKind::from_str(k.as_str()).unwrap(), k);
         }
     }

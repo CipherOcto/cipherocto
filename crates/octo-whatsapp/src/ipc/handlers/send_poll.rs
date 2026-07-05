@@ -33,15 +33,11 @@ impl RpcHandler for SendPoll {
             data: None,
         })?;
         let kind = MediaKind::Poll;
-        let payload_size =
-            p.question.len() + p.options.iter().map(|o| o.len()).sum::<usize>() + 32;
+        let payload_size = p.question.len() + p.options.iter().map(|o| o.len()).sum::<usize>() + 32;
         if payload_size > kind.max_bytes() {
             return Err(RpcError {
                 code: RpcErrorCode::PayloadTooLarge.as_i32(),
-                message: format!(
-                    "poll payload {payload_size} > ceiling {}",
-                    kind.max_bytes()
-                ),
+                message: format!("poll payload {payload_size} > ceiling {}", kind.max_bytes()),
                 data: Some(json!({
                     "size_bytes": payload_size,
                     "max_bytes": kind.max_bytes(),
@@ -56,13 +52,7 @@ impl RpcHandler for SendPoll {
             data: None,
         })?;
         let id = adapter
-            .send_poll_checked(
-                &p.peer,
-                &p.question,
-                &p.options,
-                p.multi,
-                kind.max_bytes(),
-            )
+            .send_poll_checked(&p.peer, &p.question, &p.options, p.multi, kind.max_bytes())
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::NotConnected.as_i32(),

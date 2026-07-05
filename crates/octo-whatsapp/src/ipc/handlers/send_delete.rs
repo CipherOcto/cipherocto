@@ -55,13 +55,14 @@ impl RpcHandler for SendDelete {
             message: "no adapter bound to daemon".into(),
             data: None,
         })?;
-        adapter.delete_message(&p.peer, &p.msg_id).await.map_err(|e| {
-            RpcError {
+        adapter
+            .delete_message(&p.peer, &p.msg_id)
+            .await
+            .map_err(|e| RpcError {
                 code: RpcErrorCode::NotConnected.as_i32(),
                 message: format!("adapter delete_message failed: {e}"),
                 data: None,
-            }
-        })?;
+            })?;
         Ok(json!({
             "status": "deleted",
             "msg_id": p.msg_id,

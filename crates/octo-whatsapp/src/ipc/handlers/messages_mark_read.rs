@@ -33,13 +33,14 @@ impl RpcHandler for MessagesMarkRead {
             message: "no adapter bound to daemon".into(),
             data: None,
         })?;
-        adapter.mark_read(&p.peer, &p.up_to_msg_id).await.map_err(|e| {
-            RpcError {
+        adapter
+            .mark_read(&p.peer, &p.up_to_msg_id)
+            .await
+            .map_err(|e| RpcError {
                 code: RpcErrorCode::NotConnected.as_i32(),
                 message: format!("adapter mark_read failed: {e}"),
                 data: None,
-            }
-        })?;
+            })?;
         Ok(json!({
             "status": "marked_read",
             "peer": p.peer,

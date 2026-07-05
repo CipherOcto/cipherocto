@@ -5,11 +5,21 @@ pub mod daemon_ops;
 pub mod events;
 pub mod groups;
 pub mod health;
-pub mod messages;
+pub mod messages_download;
+pub mod messages_edit;
+pub mod messages_get;
+pub mod messages_list;
+pub mod messages_mark_read;
+pub mod messages_search;
 pub mod preflight;
 pub mod rules;
 pub mod send_audio;
+pub mod send_contact;
+pub mod send_delete;
 pub mod send_image;
+pub mod send_location;
+pub mod send_poll;
+pub mod send_reaction;
 pub mod send_sticker;
 pub mod send_text;
 pub mod send_video;
@@ -34,11 +44,21 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(send_audio::SendAudio))
         .register(Arc::new(send_voice::SendVoice))
         .register(Arc::new(send_sticker::SendSticker))
+        .register(Arc::new(send_reaction::SendReaction))
+        .register(Arc::new(send_poll::SendPoll))
+        .register(Arc::new(send_contact::SendContact))
+        .register(Arc::new(send_location::SendLocation))
+        .register(Arc::new(send_delete::SendDelete))
         .register(Arc::new(groups::GroupsCreate))
         .register(Arc::new(groups::GroupsList))
         .register(Arc::new(groups::GroupsInfo))
         .register(Arc::new(groups::GroupsLeave))
-        .register(Arc::new(messages::MessagesList))
+        .register(Arc::new(messages_list::MessagesList))
+        .register(Arc::new(messages_search::MessagesSearch))
+        .register(Arc::new(messages_edit::MessagesEdit))
+        .register(Arc::new(messages_mark_read::MessagesMarkRead))
+        .register(Arc::new(messages_download::MessagesDownload))
+        .register(Arc::new(messages_get::MessagesGet))
         .register(Arc::new(rules::RulesList))
         .register(Arc::new(rules::RulesGet))
         .register(Arc::new(triggers::TriggersList))
@@ -70,13 +90,31 @@ pub const PHASE1_METHODS: &[&str] = &[
     "shutdown",
 ];
 
-/// RPC method names added in Phase 2 (outbound media matrix; tasks 26-30).
+/// RPC method names added in Phase 2 outbound media matrix (Tasks 26-30).
 pub const PHASE2_MEDIA_METHODS: &[&str] = &[
     "send.image",
     "send.video",
     "send.audio",
     "send.voice",
     "send.sticker",
+];
+
+/// RPC method names added in Phase 2 send/message control plane
+/// (Tasks 31-40): reactions, polls, contacts, location, delete,
+/// search, edit, mark_read, download, messages.list (re-stub),
+/// messages.get.
+pub const PHASE2_SEND_MESSAGE_METHODS: &[&str] = &[
+    "send.reaction",
+    "send.poll",
+    "send.contact",
+    "send.location",
+    "send.delete",
+    "messages.search",
+    "messages.edit",
+    "messages.mark_read",
+    "messages.download",
+    "messages.list",
+    "messages.get",
 ];
 
 #[cfg(test)]
@@ -103,10 +141,30 @@ mod tests {
                 "method {m:?} not registered in build_registry()"
             );
         }
-        assert_eq!(
-            reg.methods().len(),
-            PHASE1_METHODS.len() + PHASE2_MEDIA_METHODS.len(),
-            "registry size must equal Phase 1 + Phase 2 (media) sets",
-        );
+    }
+
+    #[test]
+    fn phase2_send_message_methods_all_registered() {
+        let reg = build_registry();
+        for m in PHASE2_SEND_MESSAGE_METHODS {
+            assert!(
+                reg.contains(m),
+                "method {m:?} not registered in build_registry()"
+            );
+        }
+    }
+
+    #[test]
+    fn registry_size_matches_phase1_phase2() {
+        let reg = build_registry();
+        // `messages.list` is in both PHASE1_METHODS and
+        // PHASE2_SEND_MESSAGE_METHODS; we only register it once.
+        let dedup = PHASE1_METHODS
+            .iter()
+            .chain(PHASE2_MEDIA_METHODS.iter())
+            .chain(PHASE2_SEND_MESSAGE_METHODS.iter())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(reg.methods().len(), dedup);
     }
 }

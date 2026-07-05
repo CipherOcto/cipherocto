@@ -45,3 +45,12 @@ async fn unknown_method_returns_method_not_found() {
     let err = resp.error.unwrap();
     assert_eq!(err.code, -32601);
 }
+
+#[tokio::test]
+async fn bind_creates_socket_file_with_0600() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let sock = tmp.path().join("t.sock");
+    let _server = UnixSocketServer::bind(&sock).unwrap();
+    let meta = std::fs::metadata(&sock).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+}

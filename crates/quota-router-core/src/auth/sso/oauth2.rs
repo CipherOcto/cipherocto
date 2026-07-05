@@ -830,4 +830,1042 @@ mod tests {
         // but we can verify the handler structure
         assert!(handler.pending_states.try_read().is_ok());
     }
+
+    #[test]
+    fn test_oauth2_state_new_fields() {
+        let state = OAuth2State::new("google-workspace");
+        assert_eq!(state.provider_id, "google-workspace");
+        assert_eq!(state.state.len(), 32);
+        assert_eq!(state.nonce.len(), 16);
+        assert!(!state.state.is_empty());
+        assert!(!state.nonce.is_empty());
+        assert!(!state.pkce.code_verifier.is_empty());
+        assert!(!state.pkce.code_challenge.is_empty());
+    }
+
+    #[test]
+    fn test_oauth2_state_serialization_roundtrip() {
+        let state = OAuth2State::new("test-provider");
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: OAuth2State = serde_json::from_str(&json).unwrap();
+        assert_eq!(state.state, deserialized.state);
+        assert_eq!(state.nonce, deserialized.nonce);
+        assert_eq!(state.provider_id, deserialized.provider_id);
+    }
+
+    #[tokio::test]
+    async fn test_session_store_get_nonexistent() {
+        let store = SsoSessionStore::new();
+        assert!(store.get("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_store_remove_nonexistent() {
+        let store = SsoSessionStore::new();
+        let removed = store.remove("nonexistent").await;
+        assert!(removed.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_store_cleanup_expired() {
+        let store = SsoSessionStore::new();
+
+        // Insert expired session
+        store
+            .insert(SsoSession {
+                session_id: "expired".into(),
+                sub: "user1".into(),
+                provider_id: "okta".into(),
+                access_token: "token".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user1".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: 0,
+                    iat: 0,
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now() - Duration::hours(2),
+                expires_at: Utc::now() - Duration::hours(1),
+            })
+            .await;
+
+        // Insert valid session
+        store
+            .insert(SsoSession {
+                session_id: "valid".into(),
+                sub: "user2".into(),
+                provider_id: "okta".into(),
+                access_token: "token".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user2".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: (Utc::now() + Duration::hours(1)).timestamp(),
+                    iat: Utc::now().timestamp(),
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+
+        store.cleanup_expired().await;
+
+        assert!(store.get("expired").await.is_none());
+        assert!(store.get("valid").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_session_store_default() {
+        let store = SsoSessionStore::default();
+        assert!(store.get("anything").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_session_store_overwrite() {
+        let store = SsoSessionStore::new();
+
+        let session = SsoSession {
+            session_id: "s1".into(),
+            sub: "user1".into(),
+            provider_id: "okta".into(),
+            access_token: "token-v1".into(),
+            refresh_token: None,
+            claims: TokenClaims {
+                sub: "user1".into(),
+                email: None,
+                name: None,
+                groups: vec![],
+                roles: vec![],
+                exp: 0,
+                iat: 0,
+                iss: String::new(),
+                aud: String::new(),
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::hours(1),
+        };
+
+        store.insert(session.clone()).await;
+        let mut updated = session;
+        updated.access_token = "token-v2".into();
+        store.insert(updated).await;
+
+        let retrieved = store.get("s1").await.unwrap();
+        assert_eq!(retrieved.access_token, "token-v2");
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_new() {
+        let handler = OAuth2FlowHandler::new();
+        assert!(handler.validator.is_none());
+        assert!(handler.pending_states.try_read().is_ok());
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_with_jwt_validator() {
+        let jwt_config = super::super::JwtValidationConfig::default();
+        let handler = OAuth2FlowHandler::with_jwt_validator(jwt_config);
+        assert!(handler.validator.is_some());
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_set_validator() {
+        let mut handler = OAuth2FlowHandler::new();
+        assert!(handler.validator.is_none());
+        let jwt_config = super::super::JwtValidationConfig::default();
+        let validator = super::super::TokenValidator::new(jwt_config);
+        handler.set_validator(validator);
+        assert!(handler.validator.is_some());
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_default() {
+        let handler = OAuth2FlowHandler::default();
+        assert!(handler.validator.is_none());
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_revoke() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = OAuth2FlowHandler::new();
+
+        // Revoke nonexistent session
+        let result = rt.block_on(handler.revoke("nonexistent"));
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_oidc_discovery_all_fields() {
+        let disc = OidcDiscovery::from_provider("https://auth0.example.com");
+        assert_eq!(disc.issuer, "https://auth0.example.com");
+        assert_eq!(
+            disc.authorization_endpoint,
+            "https://auth0.example.com/authorize"
+        );
+        assert_eq!(
+            disc.token_endpoint,
+            "https://auth0.example.com/oauth/token"
+        );
+        assert_eq!(
+            disc.userinfo_endpoint,
+            "https://auth0.example.com/userinfo"
+        );
+        assert_eq!(
+            disc.jwks_uri,
+            "https://auth0.example.com/.well-known/jwks.json"
+        );
+        assert!(disc.scopes_supported.contains(&"openid".to_string()));
+        assert!(disc.scopes_supported.contains(&"profile".to_string()));
+        assert!(disc.scopes_supported.contains(&"email".to_string()));
+        assert!(disc
+            .scopes_supported
+            .contains(&"offline_access".to_string()));
+        assert!(disc
+            .response_types_supported
+            .contains(&"code".to_string()));
+        assert!(disc
+            .grant_types_supported
+            .contains(&"authorization_code".to_string()));
+        assert!(disc
+            .grant_types_supported
+            .contains(&"client_credentials".to_string()));
+        assert!(disc
+            .grant_types_supported
+            .contains(&"refresh_token".to_string()));
+        assert!(disc
+            .subject_types_supported
+            .contains(&"public".to_string()));
+        assert!(disc
+            .id_token_signing_alg_values_supported
+            .contains(&"RS256".to_string()));
+        assert!(disc
+            .id_token_signing_alg_values_supported
+            .contains(&"ES256".to_string()));
+        assert!(disc
+            .token_endpoint_auth_methods_supported
+            .contains(&"client_secret_basic".to_string()));
+        assert!(disc
+            .token_endpoint_auth_methods_supported
+            .contains(&"client_secret_post".to_string()));
+    }
+
+    #[test]
+    fn test_oauth2_token_response_serialization() {
+        let resp = OAuth2TokenResponse {
+            access_token: "at123".into(),
+            token_type: "Bearer".into(),
+            expires_in: Some(3600),
+            refresh_token: Some("rt456".into()),
+            id_token: Some("id_jwt".into()),
+            scope: Some("openid profile".into()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("at123"));
+        assert!(json.contains("Bearer"));
+
+        let deserialized: OAuth2TokenResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.access_token, "at123");
+        assert_eq!(deserialized.expires_in, Some(3600));
+    }
+
+    #[test]
+    fn test_generate_random_string_charset() {
+        let s = generate_random_string(1000);
+        for c in s.chars() {
+            assert!(
+                c.is_ascii_alphanumeric(),
+                "unexpected char: {}",
+                c
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_store_remove_by_sub_multiple_providers() {
+        let store = SsoSessionStore::new();
+
+        // User1 with multiple sessions
+        store
+            .insert(SsoSession {
+                session_id: "s1".into(),
+                sub: "user1".into(),
+                provider_id: "okta".into(),
+                access_token: "t1".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user1".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: 0,
+                    iat: 0,
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+        store
+            .insert(SsoSession {
+                session_id: "s2".into(),
+                sub: "user1".into(),
+                provider_id: "google".into(),
+                access_token: "t2".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user1".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: 0,
+                    iat: 0,
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+
+        // User2
+        store
+            .insert(SsoSession {
+                session_id: "s3".into(),
+                sub: "user2".into(),
+                provider_id: "okta".into(),
+                access_token: "t3".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user2".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: 0,
+                    iat: 0,
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+
+        // Remove user1 across all providers
+        store.remove_by_sub("user1").await;
+        assert!(store.get("s1").await.is_none());
+        assert!(store.get("s2").await.is_none());
+        assert!(store.get("s3").await.is_some());
+    }
+
+    #[test]
+    fn test_sso_session_serialization() {
+        let session = SsoSession {
+            session_id: "test-sid".into(),
+            sub: "user1".into(),
+            provider_id: "okta".into(),
+            access_token: "at".into(),
+            refresh_token: Some("rt".into()),
+            claims: TokenClaims {
+                sub: "user1".into(),
+                email: Some("user@example.com".into()),
+                name: Some("Test User".into()),
+                groups: vec!["admin".into()],
+                roles: vec!["admin".into()],
+                exp: 1700000000,
+                iat: 1699996400,
+                iss: "https://okta.com".into(),
+                aud: "client-id".into(),
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::hours(1),
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("test-sid"));
+        assert!(json.contains("user1"));
+
+        let deserialized: SsoSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.session_id, "test-sid");
+        assert_eq!(deserialized.sub, "user1");
+        assert_eq!(deserialized.refresh_token, Some("rt".into()));
+    }
+
+    #[tokio::test]
+    async fn test_revoke_with_blacklist_no_session() {
+        let handler = OAuth2FlowHandler::new();
+        let blacklist: Option<std::sync::Arc<dyn super::super::TokenBlacklistStorage>> = None;
+        let result = handler
+            .revoke_with_blacklist("nonexistent", &blacklist)
+            .await
+            .unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_with_blacklist_success() {
+        let handler = OAuth2FlowHandler::new();
+        handler
+            .sessions
+            .insert(SsoSession {
+                session_id: "s1".into(),
+                sub: "user1".into(),
+                provider_id: "okta".into(),
+                access_token: "token123".into(),
+                refresh_token: None,
+                claims: TokenClaims {
+                    sub: "user1".into(),
+                    email: None,
+                    name: None,
+                    groups: vec![],
+                    roles: vec![],
+                    exp: 0,
+                    iat: 0,
+                    iss: String::new(),
+                    aud: String::new(),
+                },
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+
+        let blacklist: Option<std::sync::Arc<dyn super::super::TokenBlacklistStorage>> = None;
+        let result = handler.revoke_with_blacklist("s1", &blacklist).await.unwrap();
+        assert!(result);
+
+        // Session should be removed
+        assert!(handler.sessions.get("s1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_with_blacklist_session_not_found() {
+        let handler = OAuth2FlowHandler::new();
+        let blacklist: Option<std::sync::Arc<dyn super::super::TokenBlacklistStorage>> = None;
+        let result = handler
+            .revoke_with_blacklist("nonexistent", &blacklist)
+            .await
+            .unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_oauth2_flow_handler_initiate_disabled_provider() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "disabled-okta".into(),
+            name: "Disabled Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("test".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: false,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        let result = rt.block_on(handler.initiate(&provider, "https://example.com/callback"));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            super::super::SsoError::ProviderDisabled(id) => assert_eq!(id, "disabled-okta"),
+            other => panic!("Expected ProviderDisabled, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_handler_callback_invalid_state() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("test".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        let result = rt.block_on(handler.callback(
+            "invalid-state",
+            "code",
+            "verifier",
+            &provider,
+            "https://okta.com/oauth/token",
+        ));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_handler_refresh_no_session() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("test".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        let result = rt.block_on(handler.refresh(
+            "nonexistent-session",
+            &provider,
+            "https://okta.com/oauth/token",
+        ));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            super::super::SsoError::TokenRevoked => {}
+            other => panic!("Expected TokenRevoked, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_flow_handler_refresh_no_refresh_token() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("test".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        handler
+            .sessions
+            .insert(SsoSession {
+                session_id: "s1".into(),
+                sub: "user1".into(),
+                provider_id: "okta".into(),
+                access_token: "token".into(),
+                refresh_token: None,
+                claims: TokenClaims::default(),
+                created_at: Utc::now(),
+                expires_at: Utc::now() + Duration::hours(1),
+            })
+            .await;
+
+        let result = rt.block_on(handler.refresh(
+            "s1",
+            &provider,
+            "https://okta.com/oauth/token",
+        ));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            super::super::SsoError::TokenInvalid(msg) => {
+                assert!(msg.contains("no refresh token"));
+            }
+            other => panic!("Expected TokenInvalid, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_initiate_disabled_provider() {
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "disabled-idp".into(),
+            name: "Disabled".into(),
+            provider_type: super::super::ProviderType::GenericOidc,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: None,
+                issuer: Some("https://idp.example.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: false,
+            auto_provision: false,
+            default_team: None,
+        };
+        let result = handler.initiate(&provider, "https://app/redirect").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderDisabled(id) => assert_eq!(id, "disabled-idp"),
+            other => panic!("Expected ProviderDisabled, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_initiate_generates_url() {
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("my-client".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: Some(vec!["openid".into(), "email".into()]),
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        let (state, challenge, url) = handler
+            .initiate(&provider, "https://app/redirect")
+            .await
+            .unwrap();
+        assert!(!state.is_empty());
+        assert!(!challenge.is_empty());
+        assert!(url.contains("https://okta.com/authorize"));
+        assert!(url.contains("client_id=my-client"));
+        assert!(url.contains("openid email"));
+        assert!(url.contains("code_challenge="));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("state="));
+        assert!(url.contains("nonce="));
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_initiate_default_scopes() {
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "auth0".into(),
+            name: "Auth0".into(),
+            provider_type: super::super::ProviderType::Auth0,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://auth0.example.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        let (_, _, url) = handler
+            .initiate(&provider, "https://app/cb")
+            .await
+            .unwrap();
+        assert!(url.contains("openid+profile+email"));
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_callback_invalid_state() {
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        let result = handler
+            .callback("bad-state", "code", "verifier", &provider, "https://token")
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SsoError::InvalidState));
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_callback_wrong_provider() {
+        let handler = OAuth2FlowHandler::new();
+        let provider_okta = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        let provider_azure = IdentityProvider {
+            id: "azure".into(),
+            name: "Azure".into(),
+            provider_type: super::super::ProviderType::AzureAd,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://azure.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        // Initiate with okta
+        let (state_str, _, _) = handler.initiate(&provider_okta, "https://app/cb").await.unwrap();
+        // Callback with azure provider — should fail
+        let result = handler
+            .callback(&state_str, "code", "verifier", &provider_azure, "https://token")
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SsoError::InvalidState));
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_callback_expired_state() {
+        let handler = OAuth2FlowHandler::new();
+        let provider = IdentityProvider {
+            id: "okta".into(),
+            name: "Okta".into(),
+            provider_type: super::super::ProviderType::Okta,
+            config: super::super::ProviderConfig {
+                client_id: Some("cid".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+        // Initiate to get a state
+        let (state_str, _, _) = handler.initiate(&provider, "https://app/cb").await.unwrap();
+
+        // Manually expire the state
+        {
+            let mut states = handler.pending_states.write().await;
+            if let Some(mut s) = states.remove(&state_str) {
+                s.expires_at = Utc::now() - Duration::minutes(10);
+                states.insert(state_str.clone(), s);
+            }
+        }
+
+        let result = handler
+            .callback(&state_str, "code", "verifier", &provider, "https://token")
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SsoError::InvalidState));
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_revoke_session() {
+        let handler = OAuth2FlowHandler::new();
+        // Revoke non-existent session
+        assert!(!handler.revoke("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_revoke_with_blacklist_no_session() {
+        let handler = OAuth2FlowHandler::new();
+        let result = handler
+            .revoke_with_blacklist("nonexistent", &None)
+            .await
+            .unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_oauth2_revoke_with_blacklist_with_session() {
+        use std::sync::Arc;
+
+        let handler = OAuth2FlowHandler::new();
+        let session = SsoSession {
+            session_id: "sess-1".into(),
+            sub: "user1".into(),
+            provider_id: "okta".into(),
+            access_token: "access-token-123".into(),
+            refresh_token: Some("refresh-token-456".into()),
+            claims: TokenClaims {
+                sub: "user1".into(),
+                email: None,
+                name: None,
+                groups: vec![],
+                roles: vec![],
+                exp: 0,
+                iat: 0,
+                iss: String::new(),
+                aud: String::new(),
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::hours(1),
+        };
+        handler.sessions.insert(session).await;
+
+        let result = handler
+            .revoke_with_blacklist("sess-1", &None)
+            .await
+            .unwrap();
+        assert!(result);
+        assert!(handler.sessions.get("sess-1").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sso_session_store_cleanup_expired() {
+        let store = SsoSessionStore::new();
+        let expired_session = SsoSession {
+            session_id: "expired".into(),
+            sub: "user1".into(),
+            provider_id: "okta".into(),
+            access_token: "token".into(),
+            refresh_token: None,
+            claims: TokenClaims {
+                sub: "user1".into(),
+                email: None,
+                name: None,
+                groups: vec![],
+                roles: vec![],
+                exp: 0,
+                iat: 0,
+                iss: String::new(),
+                aud: String::new(),
+            },
+            created_at: Utc::now() - Duration::hours(2),
+            expires_at: Utc::now() - Duration::hours(1),
+        };
+        let valid_session = SsoSession {
+            session_id: "valid".into(),
+            sub: "user2".into(),
+            provider_id: "okta".into(),
+            access_token: "token".into(),
+            refresh_token: None,
+            claims: TokenClaims {
+                sub: "user2".into(),
+                email: None,
+                name: None,
+                groups: vec![],
+                roles: vec![],
+                exp: 0,
+                iat: 0,
+                iss: String::new(),
+                aud: String::new(),
+            },
+            created_at: Utc::now(),
+            expires_at: Utc::now() + Duration::hours(1),
+        };
+        store.insert(expired_session).await;
+        store.insert(valid_session).await;
+        assert!(store.get("expired").await.is_some());
+        assert!(store.get("valid").await.is_some());
+
+        store.cleanup_expired().await;
+
+        assert!(store.get("expired").await.is_none());
+        assert!(store.get("valid").await.is_some());
+    }
+
+    #[test]
+    fn test_oauth2_token_response_deserialize() {
+        let json = r#"{
+            "access_token": "at123",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "refresh_token": "rt456",
+            "id_token": "id789",
+            "scope": "openid profile"
+        }"#;
+        let resp: OAuth2TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.access_token, "at123");
+        assert_eq!(resp.token_type, "Bearer");
+        assert_eq!(resp.expires_in, Some(3600));
+        assert_eq!(resp.refresh_token, Some("rt456".into()));
+        assert_eq!(resp.id_token, Some("id789".into()));
+        assert_eq!(resp.scope, Some("openid profile".into()));
+    }
+
+    #[test]
+    fn test_oauth2_token_response_minimal() {
+        let json = r#"{
+            "access_token": "at123",
+            "token_type": "Bearer"
+        }"#;
+        let resp: OAuth2TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.access_token, "at123");
+        assert!(resp.expires_in.is_none());
+        assert!(resp.refresh_token.is_none());
+        assert!(resp.id_token.is_none());
+    }
+
+    #[test]
+    fn test_oauth2_state_serialization() {
+        let state = OAuth2State::new("test-provider");
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: OAuth2State = serde_json::from_str(&json).unwrap();
+        assert_eq!(state.state, deserialized.state);
+        assert_eq!(state.provider_id, deserialized.provider_id);
+        assert_eq!(state.nonce, deserialized.nonce);
+    }
+
+    #[test]
+    fn test_oidc_discovery_full() {
+        let disc = OidcDiscovery::from_provider("https://idp.example.com");
+        assert_eq!(disc.issuer, "https://idp.example.com");
+        assert_eq!(
+            disc.authorization_endpoint,
+            "https://idp.example.com/authorize"
+        );
+        assert_eq!(
+            disc.token_endpoint,
+            "https://idp.example.com/oauth/token"
+        );
+        assert_eq!(
+            disc.userinfo_endpoint,
+            "https://idp.example.com/userinfo"
+        );
+        assert_eq!(
+            disc.jwks_uri,
+            "https://idp.example.com/.well-known/jwks.json"
+        );
+        assert!(disc.scopes_supported.contains(&"openid".to_string()));
+        assert!(disc.scopes_supported.contains(&"offline_access".to_string()));
+        assert!(disc.response_types_supported.contains(&"code".to_string()));
+        assert!(disc.grant_types_supported.contains(&"client_credentials".to_string()));
+        assert!(disc.subject_types_supported.contains(&"public".to_string()));
+        assert!(
+            disc.id_token_signing_alg_values_supported
+                .contains(&"RS256".to_string())
+        );
+        assert!(
+            disc.token_endpoint_auth_methods_supported
+                .contains(&"client_secret_basic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_generate_random_string_lengths() {
+        let s1 = generate_random_string(1);
+        assert_eq!(s1.len(), 1);
+        let s16 = generate_random_string(16);
+        assert_eq!(s16.len(), 16);
+        let s100 = generate_random_string(100);
+        assert_eq!(s100.len(), 100);
+    }
+
+    #[test]
+    fn test_oauth2_handler_default() {
+        let handler = OAuth2FlowHandler::default();
+        assert!(handler.pending_states.try_read().is_ok());
+    }
+
+    #[test]
+    fn test_oauth2_handler_with_jwt_validator() {
+        use super::JwtValidationConfig;
+        let config = JwtValidationConfig::default();
+        let handler = OAuth2FlowHandler::with_jwt_validator(config);
+        // Verify handler was constructed with a validator by attempting initiate
+        // (which would use the validator if called with an id_token)
+        assert!(handler.pending_states.try_read().is_ok());
+    }
+
+    #[test]
+    fn test_oauth2_handler_set_validator() {
+        use super::{JwtValidationConfig, TokenValidator};
+        let config = JwtValidationConfig::default();
+        let validator = TokenValidator::new(config);
+        let mut handler = OAuth2FlowHandler::new();
+        handler.set_validator(validator);
+        // set_validator completes without panic
+    }
+
+    #[test]
+    fn test_oauth2_state_pkce_challenge() {
+        let state = OAuth2State::new("test");
+        assert!(!state.pkce.code_verifier.is_empty());
+        assert!(!state.pkce.code_challenge.is_empty());
+    }
 }

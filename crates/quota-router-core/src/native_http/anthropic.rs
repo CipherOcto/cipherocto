@@ -462,12 +462,417 @@ impl AnthropicEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_http::HttpProvider;
+    use crate::testing::mock_http::MockHttpServer;
+
+    fn msg(role: &str, c: &str) -> crate::shared_types::Message {
+        crate::shared_types::Message {
+            role: role.into(),
+            content: Some(c.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    fn req(model: &str) -> HttpCompletionRequest {
+        HttpCompletionRequest {
+            model: model.into(),
+            messages: vec![msg("user", "hi")],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        }
+    }
+
+    fn req_with_api(model: &str, api_base: &str) -> HttpCompletionRequest {
+        HttpCompletionRequest {
+            api_base: Some(api_base.into()),
+            ..req(model)
+        }
+    }
+
+    fn ok_response() -> serde_json::Value {
+        serde_json::json!({
+            "id": "msg_abc123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello!"}],
+            "stop_reason": "stop",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        })
+    }
+
+    #[test]
+    fn test_name() {
+        assert_eq!(AnthropicProvider::new().name(), "anthropic");
+    }
+
+    #[test]
+    fn test_supported_models() {
+        let p = AnthropicProvider::new();
+        let models = p.supported_models();
+        assert!(models.contains(&"claude-3-5-sonnet-latest"));
+        assert!(models.contains(&"claude-3-opus-latest"));
+        assert!(models.contains(&"claude-3-haiku-latest"));
+    }
+
+    #[test]
+    fn test_supports_streaming() {
+        assert!(AnthropicProvider::new().supports_streaming());
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(AnthropicProvider::default().name(), "anthropic");
+    }
+
+    #[test]
+    fn test_routing_weight() {
+        assert_eq!(AnthropicProvider::new().routing_weight(), 8);
+    }
+
+    #[tokio::test]
+    async fn embedding_unsupported() {
+        let p = AnthropicProvider::new();
+        let err = p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "test".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::UnsupportedModel(_)));
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = AnthropicProvider::new();
+        let err = p.completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn completion_success() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let p = AnthropicProvider::new();
+        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        assert_eq!(r.choices.len(), 1);
+        assert_eq!(r.choices[0].message.content, Some("Hello!".into()));
+        assert_eq!(r.usage.prompt_tokens, 10);
+        assert_eq!(r.usage.completion_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn completion_auth_401() {
+        let s = MockHttpServer::unauthorized().await;
+        let p = AnthropicProvider::new();
+        assert!(matches!(
+            p.completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_auth_403() {
+        let s = MockHttpServer::forbidden().await;
+        let p = AnthropicProvider::new();
+        assert!(matches!(
+            p.completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let p = AnthropicProvider::new();
+        assert!(matches!(
+            p.completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::RateLimit(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let p = AnthropicProvider::new();
+        assert!(matches!(
+            p.completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_bad_json() {
+        let s = MockHttpServer::with_response(reqwest::StatusCode::OK, "not-json").await;
+        let p = AnthropicProvider::new();
+        assert!(matches!(
+            p.completion(&req_with_api("claude-3", &s.base_url()), None).await.unwrap_err(),
+            ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_with_system_message() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let p = AnthropicProvider::new();
+        let mut r = req_with_api("claude-3", &s.base_url());
+        r.messages.insert(
+            0,
+            msg("system", "You are a helpful assistant"),
+        );
+        let result = p.completion(&r, Some("k")).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn completion_with_temperature() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let p = AnthropicProvider::new();
+        let mut r = req_with_api("claude-3", &s.base_url());
+        r.temperature = Some(0.5);
+        r.max_tokens = Some(100);
+        r.top_p = Some(0.9);
+        r.stop = Some(vec!["END".into()]);
+        let result = p.completion(&r, Some("k")).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn completion_thinking_content() {
+        let thinking_resp = serde_json::json!({
+            "id": "msg_abc123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "Let me think..."}],
+            "stop_reason": "stop",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        });
+        let s = MockHttpServer::with_json(&thinking_resp).await;
+        let p = AnthropicProvider::new();
+        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        assert_eq!(r.choices[0].message.content, Some("Let me think...".into()));
+    }
+
+    #[tokio::test]
+    async fn completion_empty_content() {
+        let empty_resp = serde_json::json!({
+            "id": "msg_abc123",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "stop_reason": "stop",
+            "stop_sequence": null,
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        });
+        let s = MockHttpServer::with_json(&empty_resp).await;
+        let p = AnthropicProvider::new();
+        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        assert_eq!(r.choices[0].message.content, Some("".into()));
+    }
+
+    #[tokio::test]
+    async fn completion_no_stop_reason() {
+        let resp = serde_json::json!({
+            "id": "msg_abc123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi"}],
+            "stop_sequence": null,
+            "usage": {"input_tokens": 10, "output_tokens": 1}
+        });
+        let s = MockHttpServer::with_json(&resp).await;
+        let p = AnthropicProvider::new();
+        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        assert_eq!(r.choices[0].finish_reason, "stop");
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_network_error() {
+        let p = AnthropicProvider::new();
+        let err = p.streaming_completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        let p = AnthropicProvider::new();
+        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let p = AnthropicProvider::new();
+        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let p = AnthropicProvider::new();
+        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_success() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body(
+                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"model\":\"claude-3\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hi\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"tokens\":5,\"stop_reason\":\"stop\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+                        .to_string(),
+                )
+                .unwrap()
+        })
+        .await;
+        let p = AnthropicProvider::new();
+        let mut r = p
+            .streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .unwrap();
+        let chunk = r.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_with_system_and_temperature() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body(
+                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"model\":\"claude-3\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hi\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+                        .to_string(),
+                )
+                .unwrap()
+        })
+        .await;
+        let p = AnthropicProvider::new();
+        let mut r = req_with_api("claude-3", &s.base_url());
+        r.messages.insert(0, msg("system", "Be brief"));
+        r.temperature = Some(0.5);
+        r.max_tokens = Some(100);
+        let mut resp = p.streaming_completion(&r, Some("k")).await.unwrap();
+        let chunk = resp.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+    }
+
+    // AnthropicEvent tests
 
     #[test]
     fn test_anthropic_event_parse() {
         let data = b"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"model\":\"claude-3\"}}";
         let event = AnthropicEvent::parse(data);
         assert!(matches!(event, Some(AnthropicEvent::MessageStart { .. })));
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_content_block_start() {
+        let data = b"data: {\"type\":\"content_block_start\",\"index\":0}";
+        let event = AnthropicEvent::parse(data);
+        assert!(matches!(event, Some(AnthropicEvent::ContentBlockStart { index: 0 })));
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_content_block_delta() {
+        let data = b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hello\"}}";
+        let event = AnthropicEvent::parse(data);
+        match event {
+            Some(AnthropicEvent::ContentBlockDelta { index, text }) => {
+                assert_eq!(index, 0);
+                assert_eq!(text, "Hello");
+            }
+            _ => panic!("Expected ContentBlockDelta"),
+        }
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_content_block_stop() {
+        let data = b"data: {\"type\":\"content_block_stop\",\"index\":0}";
+        let event = AnthropicEvent::parse(data);
+        assert!(matches!(event, Some(AnthropicEvent::ContentBlockStop { index: 0 })));
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_message_delta() {
+        let data = b"data: {\"type\":\"message_delta\",\"delta\":{\"tokens\":10,\"stop_reason\":\"end_turn\"}}";
+        let event = AnthropicEvent::parse(data);
+        match event {
+            Some(AnthropicEvent::MessageDelta { tokens, stop_reason }) => {
+                assert_eq!(tokens, 10);
+                assert_eq!(stop_reason, "end_turn");
+            }
+            _ => panic!("Expected MessageDelta"),
+        }
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_message_stop() {
+        let data = b"data: {\"type\":\"message_stop\"}";
+        let event = AnthropicEvent::parse(data);
+        assert!(matches!(event, Some(AnthropicEvent::MessageStop)));
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_unknown_type() {
+        let data = b"data: {\"type\":\"unknown_event\"}";
+        assert!(AnthropicEvent::parse(data).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_invalid_json() {
+        let data = b"data: not-json";
+        assert!(AnthropicEvent::parse(data).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_no_data_prefix() {
+        let data = b"event: message_start";
+        assert!(AnthropicEvent::parse(data).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_event_parse_utf8_error() {
+        let data = &[0xFF, 0xFE];
+        assert!(AnthropicEvent::parse(data).is_none());
     }
 
     #[test]
@@ -482,4 +887,85 @@ mod tests {
         assert!(sse.contains("Hello"));
         assert!(sse.contains("chat.completion.chunk"));
     }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_message_delta() {
+        let event = AnthropicEvent::MessageDelta {
+            tokens: 5,
+            stop_reason: "end_turn".to_string(),
+        };
+        let sse = event.to_openai_sse("msg_123", "claude-3", 1234567890);
+        assert!(sse.is_some());
+        let sse = sse.unwrap();
+        assert!(sse.contains("end_turn"));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_message_stop() {
+        let event = AnthropicEvent::MessageStop;
+        let sse = event.to_openai_sse("msg_123", "claude-3", 1234567890);
+        assert!(sse.is_some());
+        assert_eq!(sse.unwrap(), "data: [DONE]\n\n");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_message_start_returns_none() {
+        let event = AnthropicEvent::MessageStart {
+            id: "msg_123".into(),
+            model: "claude-3".into(),
+        };
+        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_content_block_start_returns_none() {
+        let event = AnthropicEvent::ContentBlockStart { index: 0 };
+        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_content_block_stop_returns_none() {
+        let event = AnthropicEvent::ContentBlockStop { index: 0 };
+        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_text_with_quotes() {
+        let event = AnthropicEvent::ContentBlockDelta {
+            index: 0,
+            text: r#"She said "hello""#.to_string(),
+        };
+        let sse = event.to_openai_sse("msg_1", "claude-3", 1).unwrap();
+        assert!(sse.contains("She said \\\"hello\\\""));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_sse_text_with_newlines() {
+        let event = AnthropicEvent::ContentBlockDelta {
+            index: 0,
+            text: "line1\nline2".to_string(),
+        };
+        let sse = event.to_openai_sse("msg_1", "claude-3", 1).unwrap();
+        assert!(sse.contains("line1\\nline2"));
+    }
+
+    #[test]
+    fn test_anthropic_event_debug() {
+        let event = AnthropicEvent::MessageStop;
+        assert!(format!("{:?}", event).contains("MessageStop"));
+    }
+
+    #[test]
+    fn test_anthropic_event_clone() {
+        let event = AnthropicEvent::ContentBlockDelta {
+            index: 0,
+            text: "Hi".to_string(),
+        };
+        let cloned = event.clone();
+        match cloned {
+            AnthropicEvent::ContentBlockDelta { text, .. } => assert_eq!(text, "Hi"),
+            _ => panic!("Clone failed"),
+        }
+    }
+
 }

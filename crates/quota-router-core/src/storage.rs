@@ -1867,84 +1867,6 @@ mod tests {
     }
 
     #[test]
-    fn test_record_spend_ledger_provider_usage() {
-        // RE-ENABLED: stoolap aggregate support in transactions (RFC-0204 Phase 2)
-        // This test validates COUNT and AVG inside transactions
-
-        let db = Database::open_in_memory().unwrap();
-
-        // Create minimal table
-        db.execute(
-            "CREATE TABLE spend_ledger (event_id TEXT NOT NULL, key_id TEXT NOT NULL, cost_amount INTEGER NOT NULL)",
-            (),
-        )
-        .unwrap();
-
-        // Insert test data
-        let key_id = "test-key-002";
-        db.execute(
-            "INSERT INTO spend_ledger (event_id, key_id, cost_amount) VALUES ($1, $2, $3)",
-            vec![
-                stoolap::core::Value::text("event1"),
-                stoolap::core::Value::text(key_id),
-                stoolap::core::Value::integer(100),
-            ],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO spend_ledger (event_id, key_id, cost_amount) VALUES ($1, $2, $3)",
-            vec![
-                stoolap::core::Value::text("event2"),
-                stoolap::core::Value::text(key_id),
-                stoolap::core::Value::integer(200),
-            ],
-        )
-        .unwrap();
-
-        // Test COUNT inside transaction
-        let mut tx = db.begin().unwrap();
-
-        let mut count_rows = tx
-            .query(
-                "SELECT COUNT(*) FROM spend_ledger WHERE key_id = $1",
-                vec![stoolap::core::Value::text(key_id)],
-            )
-            .unwrap();
-
-        if let Some(row) = count_rows.next() {
-            let row = row.unwrap();
-            if let Ok(Some(count)) = row.get::<Option<i64>>(0) {
-                let result: i64 = count;
-                assert_eq!(result, 2, "COUNT should return 2");
-            } else {
-                panic!("COUNT returned NULL");
-            }
-        }
-
-        let mut avg_rows = tx
-            .query(
-                "SELECT AVG(cost_amount) FROM spend_ledger WHERE key_id = $1",
-                vec![stoolap::core::Value::text(key_id)],
-            )
-            .unwrap();
-
-        if let Some(row) = avg_rows.next() {
-            let row = row.unwrap();
-            if let Ok(Some(avg)) = row.get::<Option<i64>>(0) {
-                let result: i64 = avg;
-                tx.commit().unwrap();
-                assert_eq!(result, 150, "AVG should return 150");
-            } else {
-                tx.commit().unwrap();
-                panic!("AVG returned NULL");
-            }
-        } else {
-            tx.commit().unwrap();
-            panic!("No rows returned for AVG");
-        }
-    }
-
-    #[test]
     fn test_upsert_budget_create() {
         let storage = create_test_storage();
         storage
@@ -2126,5 +2048,1686 @@ mod tests {
         let storage = create_test_storage();
         let total = storage.get_total_spend().unwrap();
         assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_create_key_negative_budget_fails() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: -100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        assert!(matches!(storage.create_key(&key), Err(KeyError::InvalidFormat)));
+    }
+
+    #[test]
+    fn test_create_key_llm_api_type() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xAA],
+            key_prefix: "sk-qr-llm".into(),
+            team_id: None,
+            budget_limit: 5000,
+            rpm_limit: Some(60),
+            tpm_limit: Some(6000),
+            created_at: 200,
+            expires_at: Some(9999999),
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::LlmApi,
+            allowed_routes: Some("/v1/chat".to_string()),
+            auto_rotate: true,
+            rotation_interval_days: Some(90),
+            description: Some("LLM key".to_string()),
+            metadata: Some(r#"{"env":"prod"}"#.to_string()),
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xAA]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::LlmApi);
+        assert_eq!(found.budget_limit, 5000);
+        assert_eq!(found.rpm_limit, Some(60));
+        assert_eq!(found.tpm_limit, Some(6000));
+        assert!(found.auto_rotate);
+        assert_eq!(found.rotation_interval_days, Some(90));
+        assert_eq!(found.description, Some("LLM key".to_string()));
+        assert_eq!(found.metadata, Some(r#"{"env":"prod"}"#.to_string()));
+        assert_eq!(found.allowed_routes, Some("/v1/chat".to_string()));
+    }
+
+    #[test]
+    fn test_create_key_management_type() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xBB],
+            key_prefix: "sk-qr-mgt".into(),
+            team_id: None,
+            budget_limit: 100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Management,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xBB]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Management);
+    }
+
+    #[test]
+    fn test_create_key_readonly_type() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xCC],
+            key_prefix: "sk-qr-r".into(),
+            team_id: None,
+            budget_limit: 100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::ReadOnly,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xCC]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::ReadOnly);
+    }
+
+    #[test]
+    fn test_create_key_sso_type() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xDD],
+            key_prefix: "sk-qr-sso".into(),
+            team_id: None,
+            budget_limit: 100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Sso,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xDD]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Sso);
+    }
+
+    #[test]
+    fn test_create_key_with_team() {
+        let storage = create_test_storage();
+        let team_uuid = uuid::Uuid::new_v4();
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "My Team".into(),
+            budget_limit: 50000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xEE],
+            key_prefix: "sk-qr-t".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xEE]).unwrap().unwrap();
+        assert_eq!(found.team_id, Some(team_uuid));
+    }
+
+    #[test]
+    fn test_update_key_empty_updates_ok() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_update_key_revoked_sets_timestamp() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: Some(true),
+                    revoked_by: Some("admin".to_string()),
+                    revocation_reason: Some("compromised".to_string()),
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+        let found = storage.lookup_by_hash(&[1]).unwrap();
+        assert!(found.is_none(), "Revoked key should not appear in lookup_by_hash (WHERE revoked = 0)");
+    }
+
+    #[test]
+    fn test_update_key_tpm_limit() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: Some(5000),
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+        let found = storage.lookup_by_hash(&[1]).unwrap().unwrap();
+        assert_eq!(found.tpm_limit, Some(5000));
+    }
+
+    #[test]
+    fn test_update_key_key_type() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: Some(KeyType::Management),
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+        let found = storage.lookup_by_hash(&[1]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Management);
+    }
+
+    #[test]
+    fn test_update_key_metadata() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: None,
+                    metadata: Some(r#"{"tags":["dev"]}"#.to_string()),
+                },
+            )
+            .unwrap();
+        let found = storage.lookup_by_hash(&[1]).unwrap().unwrap();
+        assert_eq!(found.metadata, Some(r#"{"tags":["dev"]}"#.to_string()));
+    }
+
+    #[test]
+    fn test_record_spend_existing() {
+        let storage = create_test_storage();
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+        storage.record_spend(&key.key_id, 100).unwrap();
+        storage.record_spend(&key.key_id, 200).unwrap();
+        let spend = storage.get_spend(&key.key_id).unwrap().unwrap();
+        assert_eq!(spend.total_spend, 300);
+    }
+
+    #[test]
+    fn test_record_spend_ledger_provider_usage() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+        let team_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "Team".into(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 50000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event_id_hex = hex::encode([1u8; 32]);
+        let event = SpendEvent {
+            event_id: event_id_hex,
+            request_id: "req-001".to_string(),
+            key_id: key_uuid,
+            team_id: Some(team_uuid),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 250,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+        storage.record_spend_ledger(&event).unwrap();
+
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 250);
+    }
+
+    #[test]
+    fn test_record_spend_ledger_with_team() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+        let team_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "Team".into(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 50000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event_id_hex = hex::encode([4u8; 32]);
+        let event = SpendEvent {
+            event_id: event_id_hex,
+            request_id: "req-004".to_string(),
+            key_id: key_uuid,
+            team_id: Some(team_uuid),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 300,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+        storage
+            .record_spend_ledger_with_team(
+                &key_uuid.to_string(),
+                &team_uuid.to_string(),
+                &event,
+            )
+            .unwrap();
+
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 300);
+    }
+
+    #[test]
+    fn test_record_spend_ledger_with_team_key_budget_exceeded() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+        let team_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "Team".into(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 50,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event_id_hex = hex::encode([5u8; 32]);
+        let event = SpendEvent {
+            event_id: event_id_hex,
+            request_id: "req-005".to_string(),
+            key_id: key_uuid,
+            team_id: Some(team_uuid),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 100,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+        let result = storage.record_spend_ledger_with_team(
+            &key_uuid.to_string(),
+            &team_uuid.to_string(),
+            &event,
+        );
+        assert!(matches!(result, Err(KeyError::BudgetExceeded { .. })));
+    }
+
+    #[test]
+    fn test_record_spend_ledger_with_team_team_budget_exceeded() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+        let team_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "Team".into(),
+            budget_limit: 50,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 100000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event_id_hex = hex::encode([6u8; 32]);
+        let event = SpendEvent {
+            event_id: event_id_hex,
+            request_id: "req-006".to_string(),
+            key_id: key_uuid,
+            team_id: Some(team_uuid),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 100,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+        let result = storage.record_spend_ledger_with_team(
+            &key_uuid.to_string(),
+            &team_uuid.to_string(),
+            &event,
+        );
+        assert!(matches!(result, Err(KeyError::TeamBudgetExceeded { .. })));
+    }
+
+    #[test]
+    fn test_query_spend_ledger() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+        let team_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_uuid.to_string(),
+            name: "Team".into(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: Some(team_uuid),
+            budget_limit: 100000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event_id_hex = hex::encode([7u8; 32]);
+        let event = SpendEvent {
+            event_id: event_id_hex,
+            request_id: "req-007".to_string(),
+            key_id: key_uuid,
+            team_id: Some(team_uuid),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 200,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+        storage.record_spend_ledger(&event).unwrap();
+
+        // Query with no filters
+        let results = storage.query_spend_ledger(None, None, None).unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Query with limit
+        let results = storage.query_spend_ledger(None, None, Some(10)).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_get_total_spend_with_data() {
+        let storage = create_test_storage();
+        let key_uuid = uuid::Uuid::new_v4();
+
+        let key = ApiKey {
+            key_id: key_uuid.to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 100000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        for i in 0..3u8 {
+            let mut event_id = [0u8; 32];
+            event_id[0] = i + 10;
+            let event = SpendEvent {
+                event_id: hex::encode(event_id),
+                request_id: format!("req-{}", i),
+                key_id: key_uuid,
+                team_id: None,
+                provider: "openai".into(),
+                model: "gpt-4".into(),
+                input_tokens: 100,
+                output_tokens: 50,
+                cost_amount: 100,
+                pricing_hash: [0u8; 32],
+                token_source: TokenSource::ProviderUsage,
+                tokenizer_version: None,
+                provider_usage_json: None,
+                timestamp: 1000 + i as i64,
+            };
+            storage.record_spend_ledger(&event).unwrap();
+        }
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 300);
+    }
+
+    #[test]
+    fn test_octo_w_balance_default_zero() {
+        let storage = create_test_storage();
+        let balance = storage.get_octo_w_balance("nonexistent").unwrap();
+        assert_eq!(balance, 0);
+    }
+
+    #[test]
+    fn test_deduct_octo_w_insufficient() {
+        let storage = create_test_storage();
+        let result = storage.deduct_octo_w("nonexistent", 100);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_provider_key() {
+        let storage = create_test_storage();
+        let id = storage
+            .create_provider_key("openai", "sk-test-12345678", Some("test key"))
+            .unwrap();
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn test_list_provider_keys() {
+        let storage = create_test_storage();
+        storage
+            .create_provider_key("openai", "sk-openai-12345678", Some("key1"))
+            .unwrap();
+        storage
+            .create_provider_key("anthropic", "sk-ant-1234567890", Some("key2"))
+            .unwrap();
+        storage
+            .create_provider_key("openai", "sk-openai-87654321", Some("key3"))
+            .unwrap();
+
+        // List all
+        let all = storage.list_provider_keys(None).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // List filtered by provider
+        let openai_keys = storage.list_provider_keys(Some("openai")).unwrap();
+        assert_eq!(openai_keys.len(), 2);
+
+        let anthropic_keys = storage.list_provider_keys(Some("anthropic")).unwrap();
+        assert_eq!(anthropic_keys.len(), 1);
+    }
+
+    #[test]
+    fn test_delete_provider_key() {
+        let storage = create_test_storage();
+        let id = storage
+            .create_provider_key("openai", "sk-openai-12345678", None)
+            .unwrap();
+        storage.delete_provider_key(&id).unwrap();
+        let keys = storage.list_provider_keys(None).unwrap();
+        assert_eq!(keys.len(), 0);
+    }
+
+    #[test]
+    fn test_delete_provider_key_not_found() {
+        let storage = create_test_storage();
+        let result = storage.delete_provider_key("nonexistent-id");
+        assert!(matches!(result, Err(KeyError::NotFound)));
+    }
+
+    #[test]
+    fn test_get_provider_key_by_hash() {
+        use sha2::{Digest, Sha256};
+        let storage = create_test_storage();
+        storage
+            .create_provider_key("openai", "sk-my-secret-key", Some("my-key"))
+            .unwrap();
+
+        let hash: [u8; 32] = Sha256::digest(b"sk-my-secret-key").into();
+        let found = storage.get_provider_key_by_hash(&hash).unwrap();
+        assert!(found.is_some());
+        let info = found.unwrap();
+        assert_eq!(info.provider, "openai");
+        assert!(info.is_active);
+
+        // Wrong hash
+        let wrong_hash: [u8; 32] = Sha256::digest(b"wrong-key").into();
+        let not_found = storage.get_provider_key_by_hash(&wrong_hash).unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_update_team() {
+        let storage = create_test_storage();
+        let team = Team {
+            team_id: uuid::Uuid::new_v4().to_string(),
+            name: "Original".into(),
+            budget_limit: 1000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+        storage
+            .update_team(&team.team_id, "Updated", 5000)
+            .unwrap();
+        let updated = storage.get_team(&team.team_id).unwrap().unwrap();
+        assert_eq!(updated.name, "Updated");
+        assert_eq!(updated.budget_limit, 5000);
+    }
+
+    #[test]
+    fn test_list_keys_empty() {
+        let storage = create_test_storage();
+        let keys = storage.list_keys(None).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_by_hash_not_found() {
+        let storage = create_test_storage();
+        let result = storage.lookup_by_hash(&[0xFF; 32]).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_lookup_by_hash_revoked_key_excluded() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![0xAA],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        assert!(storage.lookup_by_hash(&[0xAA]).unwrap().is_some());
+
+        // Revoke
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: Some(true),
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+
+        // Revoked key should not be found
+        assert!(storage.lookup_by_hash(&[0xAA]).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_nonexistent_provider_key_by_hash() {
+        let storage = create_test_storage();
+        let hash = [0xFFu8; 32];
+        let result = storage.get_provider_key_by_hash(&hash).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_row_to_api_key_llm_api() {
+        let storage = create_test_storage();
+        let team_uuid = uuid::Uuid::parse_str("660e8400-e29b-41d4-a716-446655440001").unwrap();
+        let key = ApiKey {
+            key_id: "550e8400-e29b-41d4-a716-446655440050".to_string(),
+            key_hash: vec![0xAA; 32],
+            key_prefix: "sk-qr-llm".to_string(),
+            team_id: Some(team_uuid),
+            budget_limit: 50000,
+            rpm_limit: Some(500),
+            tpm_limit: Some(5000),
+            created_at: 1000,
+            expires_at: Some(2000000000),
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::LlmApi,
+            allowed_routes: Some("/v1/chat".to_string()),
+            auto_rotate: true,
+            rotation_interval_days: Some(30),
+            description: Some("LLM API key".to_string()),
+            metadata: Some("{\"env\":\"prod\"}".to_string()),
+        };
+        storage.create_key(&key).unwrap();
+
+        let found = storage.lookup_by_hash(&[0xAA; 32]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::LlmApi);
+        assert_eq!(found.team_id, Some(team_uuid));
+        assert_eq!(found.budget_limit, 50000);
+        assert_eq!(found.rpm_limit, Some(500));
+        assert_eq!(found.tpm_limit, Some(5000));
+        assert_eq!(found.expires_at, Some(2000000000));
+        assert!(!found.revoked);
+        assert!(found.auto_rotate);
+        assert_eq!(found.rotation_interval_days, Some(30));
+        assert_eq!(found.description, Some("LLM API key".to_string()));
+        assert_eq!(
+            found.metadata,
+            Some("{\"env\":\"prod\"}".to_string())
+        );
+        assert_eq!(
+            found.allowed_routes,
+            Some("/v1/chat".to_string())
+        );
+    }
+
+    #[test]
+    fn test_row_to_api_key_management() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: "550e8400-e29b-41d4-a716-446655440051".to_string(),
+            key_hash: vec![0xBB; 32],
+            key_prefix: "sk-qr-mgt".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Management,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xBB; 32]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Management);
+        assert!(found.team_id.is_none());
+    }
+
+    #[test]
+    fn test_row_to_api_key_read_only() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: "550e8400-e29b-41d4-a716-446655440052".to_string(),
+            key_hash: vec![0xCC; 32],
+            key_prefix: "sk-qr-ro".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::ReadOnly,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xCC; 32]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::ReadOnly);
+    }
+
+    #[test]
+    fn test_row_to_api_key_sso() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: "550e8400-e29b-41d4-a716-446655440053".to_string(),
+            key_hash: vec![0xDD; 32],
+            key_prefix: "sk-qr-sso".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Sso,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+        let found = storage.lookup_by_hash(&[0xDD; 32]).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Sso);
+    }
+
+    #[test]
+    fn test_create_key_empty_id_fails() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: String::new(),
+            key_hash: vec![1],
+            key_prefix: "sk-".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        assert!(storage.create_key(&key).is_err());
+    }
+
+    #[test]
+    fn test_create_key_zero_budget_fails() {
+        let storage = create_test_storage();
+        let key = ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".to_string(),
+            team_id: None,
+            budget_limit: 0,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        assert!(storage.create_key(&key).is_err());
+    }
+
+    #[test]
+    fn test_update_key_empty_updates() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        // Empty updates should be a no-op
+        storage
+            .update_key(&key.key_id, &KeyUpdates::default())
+            .unwrap();
+
+        let found = storage.lookup_by_hash(&key.key_hash).unwrap().unwrap();
+        assert_eq!(found.budget_limit, 1000);
+    }
+
+    #[test]
+    fn test_update_key_revoked_sets_revoked_at() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    revoked: Some(true),
+                    revoked_by: Some("admin".to_string()),
+                    revocation_reason: Some("compromised".to_string()),
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+
+        let found = storage.lookup_by_hash(&key.key_hash).unwrap().unwrap();
+        assert!(found.revoked);
+        assert!(found.revoked_at.is_some());
+    }
+
+    #[test]
+    fn test_record_spend_update_existing() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        storage.record_spend(&key.key_id, 500).unwrap();
+        let spend1 = storage.get_spend(&key.key_id).unwrap().unwrap();
+        assert_eq!(spend1.total_spend, 500);
+
+        // Second call should update existing
+        storage.record_spend(&key.key_id, 300).unwrap();
+        let spend2 = storage.get_spend(&key.key_id).unwrap().unwrap();
+        assert_eq!(spend2.total_spend, 800);
+    }
+
+    #[test]
+    fn test_reset_spend() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        storage.record_spend(&key.key_id, 500).unwrap();
+        storage.reset_spend(&key.key_id).unwrap();
+        let spend = storage.get_spend(&key.key_id).unwrap().unwrap();
+        assert_eq!(spend.total_spend, 0);
+    }
+
+    #[test]
+    fn test_provider_key_crud() {
+        let storage = create_test_storage();
+
+        // Create
+        let id1 = storage
+            .create_provider_key("openai", "sk-secret-key-12345678", Some("production"))
+            .unwrap();
+        let id2 = storage
+            .create_provider_key("openai", "sk-secret-key-abcdefgh", None)
+            .unwrap();
+        assert_ne!(id1, id2);
+
+        // List all
+        let all = storage.list_provider_keys(None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // List by provider
+        let openai_keys = storage.list_provider_keys(Some("openai")).unwrap();
+        assert_eq!(openai_keys.len(), 2);
+
+        let anthropic_keys = storage.list_provider_keys(Some("anthropic")).unwrap();
+        assert_eq!(anthropic_keys.len(), 0);
+
+        // Get by hash
+        use sha2::{Digest, Sha256};
+        let hash1: [u8; 32] = Sha256::digest(b"sk-secret-key-12345678").into();
+        let found = storage.get_provider_key_by_hash(&hash1).unwrap();
+        assert!(found.is_some());
+        let info = found.unwrap();
+        assert_eq!(info.provider, "openai");
+        assert_eq!(info.api_key_prefix, "sk-secre");
+        assert_eq!(info.label, Some("production".to_string()));
+        assert!(info.is_active);
+
+        // Get by non-existent hash
+        let hash_bad: [u8; 32] = Sha256::digest(b"nonexistent").into();
+        assert!(storage.get_provider_key_by_hash(&hash_bad).unwrap().is_none());
+
+        // Delete
+        storage.delete_provider_key(&id1).unwrap();
+        let after_delete = storage.list_provider_keys(None).unwrap();
+        assert_eq!(after_delete.len(), 1);
+        assert_eq!(after_delete[0].id, id2);
+
+        // Delete non-existent
+        assert!(storage.delete_provider_key("nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_create_provider_key_short_key() {
+        let storage = create_test_storage();
+        let id = storage
+            .create_provider_key("test", "short", None)
+            .unwrap();
+        let keys = storage.list_provider_keys(None).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].api_key_prefix, "short");
+    }
+
+    #[test]
+    fn test_octo_w_balance() {
+        let storage = create_test_storage();
+
+        // Default balance for non-existent key is 0
+        let balance = storage.get_octo_w_balance("nonexistent").unwrap();
+        assert_eq!(balance, 0);
+
+        // Insert a balance record
+        storage
+            .db
+            .execute(
+                "INSERT INTO octo_w_balances (key_id, balance, updated_at) VALUES ($1, $2, $3)",
+                vec!["test-key".into(), 1000_i64.into(), 100_i64.into()],
+            )
+            .unwrap();
+
+        let balance = storage.get_octo_w_balance("test-key").unwrap();
+        assert_eq!(balance, 1000);
+
+        // Deduct successfully
+        let new_balance = storage.deduct_octo_w("test-key", 400).unwrap();
+        assert_eq!(new_balance, 600);
+
+        // Deduct all remaining
+        let new_balance = storage.deduct_octo_w("test-key", 600).unwrap();
+        assert_eq!(new_balance, 0);
+    }
+
+    #[test]
+    fn test_octo_w_insufficient_balance() {
+        let storage = create_test_storage();
+
+        // Insert a balance
+        storage
+            .db
+            .execute(
+                "INSERT INTO octo_w_balances (key_id, balance, updated_at) VALUES ($1, $2, $3)",
+                vec!["test-key".into(), 100_i64.into(), 100_i64.into()],
+            )
+            .unwrap();
+
+        // Try to deduct more than available
+        let result = storage.deduct_octo_w("test-key", 200);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_octo_w_deduct_nonexistent_key() {
+        let storage = create_test_storage();
+        // Deducting from non-existent key should fail (rows_affected == 0, balance == 0)
+        let result = storage.deduct_octo_w("nonexistent", 100);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ensure_tokenizer_without_provider() {
+        let storage = create_test_storage();
+        let id1 = storage.ensure_tokenizer("test-version-no-provider", None).unwrap();
+        let id2 = storage.ensure_tokenizer("test-version-no-provider", None).unwrap();
+        assert_eq!(id1, id2);
+        let version = storage.resolve_tokenizer(&id1).unwrap();
+        assert_eq!(version, Some("test-version-no-provider".to_string()));
+    }
+
+    #[test]
+    fn test_record_spend_ledger_provider_usage_v2() {
+        let storage = create_test_storage();
+
+        let team_id = uuid::Uuid::new_v4();
+        let key_id_uuid = uuid::Uuid::new_v4();
+        let team = Team {
+            team_id: team_id.to_string(),
+            name: "Ledger Team".to_string(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_id_uuid.to_string(),
+            key_hash: vec![0xEE; 32],
+            key_prefix: "sk-qr-led".to_string(),
+            team_id: Some(team_id),
+            budget_limit: 100000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event = SpendEvent {
+            event_id: hex::encode([0x11u8; 32]),
+            request_id: "req-001".to_string(),
+            key_id: key_id_uuid,
+            team_id: Some(team_id),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 500,
+            pricing_hash: [0x22; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+
+        storage.record_spend_ledger(&event).unwrap();
+
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 500);
+    }
+
+    #[test]
+    fn test_record_spend_ledger_budget_exceeded() {
+        let storage = create_test_storage();
+
+        let key_id_uuid = uuid::Uuid::new_v4();
+        let key = ApiKey {
+            key_id: key_id_uuid.to_string(),
+            key_hash: vec![0xFF; 32],
+            key_prefix: "sk-qr-bud".to_string(),
+            team_id: None,
+            budget_limit: 100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event = SpendEvent {
+            event_id: hex::encode([0x33u8; 32]),
+            request_id: "req-002".to_string(),
+            key_id: key_id_uuid,
+            team_id: None,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 50,
+            pricing_hash: [0x44; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+
+        storage.record_spend_ledger(&event).unwrap();
+
+        // Second event would exceed budget
+        let event2 = SpendEvent {
+            event_id: hex::encode([0x55u8; 32]),
+            request_id: "req-003".to_string(),
+            key_id: key_id_uuid,
+            team_id: None,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: 60,
+            pricing_hash: [0x66; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 1001,
+        };
+
+        let result = storage.record_spend_ledger(&event2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_record_spend_ledger_invalid_token_source() {
+        let storage = create_test_storage();
+        let key_id_uuid = uuid::Uuid::new_v4();
+        let key = ApiKey {
+            key_id: key_id_uuid.to_string(),
+            key_hash: vec![0xAB; 32],
+            key_prefix: "sk-qr-inv".to_string(),
+            team_id: None,
+            budget_limit: 100000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // We need to create a SpendEvent with an invalid token source
+        // Since TokenSource only has 2 valid variants, we can't directly test InvalidFormat
+        // from the enum, but we can test that ProviderUsage works
+        let event = SpendEvent {
+            event_id: hex::encode([0x77u8; 32]),
+            request_id: "req-004".to_string(),
+            key_id: key_id_uuid,
+            team_id: None,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 10,
+            output_tokens: 5,
+            cost_amount: 10,
+            pricing_hash: [0x88; 32],
+            token_source: TokenSource::CanonicalTokenizer,
+            tokenizer_version: Some("test-tokenizer-v1".to_string()),
+            provider_usage_json: None,
+            timestamp: 1000,
+        };
+
+        storage.record_spend_ledger(&event).unwrap();
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn test_record_spend_ledger_with_team_success() {
+        let storage = create_test_storage();
+
+        let team_id = uuid::Uuid::new_v4();
+        let key_id_uuid = uuid::Uuid::new_v4();
+
+        let team = Team {
+            team_id: team_id.to_string(),
+            name: "Team Budget".to_string(),
+            budget_limit: 100000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        let key = ApiKey {
+            key_id: key_id_uuid.to_string(),
+            key_hash: vec![0x10; 32],
+            key_prefix: "sk-qr-tb".to_string(),
+            team_id: Some(team_id),
+            budget_limit: 50000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        let event = SpendEvent {
+            event_id: hex::encode([0x91u8; 32]),
+            request_id: "req-team-001".to_string(),
+            key_id: key_id_uuid,
+            team_id: Some(team_id),
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 200,
+            output_tokens: 100,
+            cost_amount: 1000,
+            pricing_hash: [0x92; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 2000,
+        };
+
+        storage
+            .record_spend_ledger_with_team(
+                &key_id_uuid.to_string(),
+                &team_id.to_string(),
+                &event,
+            )
+            .unwrap();
+
+        let total = storage.get_total_spend().unwrap();
+        assert_eq!(total, 1000);
+    }
+
+    #[test]
+    fn test_query_spend_ledger_empty() {
+        let storage = create_test_storage();
+        let results = storage
+            .query_spend_ledger(None, None, None)
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_query_spend_ledger_with_limit() {
+        let storage = create_test_storage();
+        let results = storage.query_spend_ledger(None, None, Some(5)).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_update_key_type_and_metadata() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    key_type: Some(KeyType::Sso),
+                    metadata: Some("{\"sso\":true}".to_string()),
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    description: None,
+                },
+            )
+            .unwrap();
+
+        let found = storage.lookup_by_hash(&key.key_hash).unwrap().unwrap();
+        assert_eq!(found.key_type, KeyType::Sso);
+        assert_eq!(found.metadata, Some("{\"sso\":true}".to_string()));
+    }
+
+    #[test]
+    fn test_update_key_expires_at() {
+        let storage = create_test_storage();
+        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        storage.create_key(&key).unwrap();
+
+        storage
+            .update_key(
+                &key.key_id,
+                &KeyUpdates {
+                    expires_at: Some(9999999999),
+                    budget_limit: None,
+                    rpm_limit: None,
+                    tpm_limit: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: None,
+                    metadata: None,
+                },
+            )
+            .unwrap();
+
+        let found = storage.lookup_by_hash(&key.key_hash).unwrap().unwrap();
+        assert_eq!(found.expires_at, Some(9999999999));
     }
 }

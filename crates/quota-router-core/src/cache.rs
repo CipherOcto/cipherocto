@@ -950,4 +950,550 @@ mod tests {
             _ => panic!("Expected KeyInvalidated event"),
         }
     }
+
+    #[tokio::test]
+    async fn test_key_cache_len() {
+        let cache = KeyCache::with_capacity_and_ttl(100, 60);
+        assert_eq!(cache.len().await, 0);
+
+        let key = crate::keys::ApiKey {
+            key_id: "test".to_string(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        cache.put(vec![1], key.clone()).await;
+        assert_eq!(cache.len().await, 1);
+
+        cache.put(vec![2], key).await;
+        assert_eq!(cache.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_key_cache_lru_eviction() {
+        let cache = KeyCache::with_capacity_and_ttl(2, 60);
+
+        let make_key = |id: u8| crate::keys::ApiKey {
+            key_id: format!("key-{}", id),
+            key_hash: vec![id],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        cache.put(vec![1], make_key(1)).await;
+        cache.put(vec![2], make_key(2)).await;
+        assert_eq!(cache.len().await, 2);
+
+        // Adding a 3rd should evict the LRU (vec![1])
+        cache.put(vec![3], make_key(3)).await;
+        assert_eq!(cache.len().await, 2);
+        assert!(cache.get(&[1]).await.is_none());
+        assert!(cache.get(&[2]).await.is_some());
+        assert!(cache.get(&[3]).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_key_cache_get_nonexistent() {
+        let cache = KeyCache::new();
+        assert!(cache.get(&[99, 99, 99]).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_key_cache_default() {
+        let cache = KeyCache::default();
+        assert!(cache.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_validate_key_with_cache_miss() {
+        use crate::storage::{KeyStorage, StoolapKeyStorage};
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = StoolapKeyStorage::new(db.clone());
+
+        let key_str = crate::keys::generate_key_string();
+        let key_hash = crate::keys::compute_key_hash(&key_str);
+        let key_id = crate::keys::generate_key_id();
+
+        let api_key = crate::keys::ApiKey {
+            key_id,
+            key_hash: key_hash.to_vec(),
+            key_prefix: key_str.chars().take(8).collect(),
+            team_id: None,
+            budget_limit: 10000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&api_key).unwrap();
+
+        let cache = KeyCache::new();
+        // Cache miss -> DB lookup -> should succeed
+        let result = super::validate_key_with_cache(&db, &cache, &key_str).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().key_id, api_key.key_id);
+
+        // Now it should be cached
+        assert!(cache.get(&key_hash).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_validate_key_with_cache_hit() {
+        use crate::storage::StoolapKeyStorage;
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+
+        let key_str = crate::keys::generate_key_string();
+        let key_hash = crate::keys::compute_key_hash(&key_str);
+
+        let api_key = crate::keys::ApiKey {
+            key_id: crate::keys::generate_key_id(),
+            key_hash: key_hash.to_vec(),
+            key_prefix: key_str.chars().take(8).collect(),
+            team_id: None,
+            budget_limit: 10000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        let cache = KeyCache::new();
+        // Pre-populate cache
+        cache.put(key_hash.to_vec(), api_key.clone()).await;
+
+        let result = super::validate_key_with_cache(&db, &cache, &key_str).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().key_id, api_key.key_id);
+    }
+
+    #[tokio::test]
+    async fn test_validate_key_with_cache_miss_not_found() {
+        use stoolap::Database;
+
+        let db = Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let cache = KeyCache::new();
+
+        let result = super::validate_key_with_cache(&db, &cache, "nonexistent-key").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_budget_period_as_str() {
+        assert_eq!(BudgetPeriod::Daily.as_str(), "daily");
+        assert_eq!(BudgetPeriod::Weekly.as_str(), "weekly");
+        assert_eq!(BudgetPeriod::Monthly.as_str(), "monthly");
+        assert_eq!(BudgetPeriod::Total.as_str(), "total");
+    }
+
+    #[test]
+    fn test_budget_period_parse() {
+        assert_eq!(BudgetPeriod::parse_period("daily"), Some(BudgetPeriod::Daily));
+        assert_eq!(BudgetPeriod::parse_period("weekly"), Some(BudgetPeriod::Weekly));
+        assert_eq!(BudgetPeriod::parse_period("monthly"), Some(BudgetPeriod::Monthly));
+        assert_eq!(BudgetPeriod::parse_period("total"), Some(BudgetPeriod::Total));
+        assert_eq!(BudgetPeriod::parse_period("invalid"), None);
+        assert_eq!(BudgetPeriod::parse_period(""), None);
+        assert_eq!(BudgetPeriod::parse_period("DAILY"), None);
+    }
+
+    #[test]
+    fn test_budget_period_next_reset() {
+        assert_eq!(BudgetPeriod::Daily.next_reset(1000), Some(1000 + 86400));
+        assert_eq!(BudgetPeriod::Weekly.next_reset(1000), Some(1000 + 604800));
+        assert_eq!(BudgetPeriod::Monthly.next_reset(1000), Some(1000 + 2592000));
+        assert_eq!(BudgetPeriod::Total.next_reset(1000), None);
+    }
+
+    #[test]
+    fn test_entity_type_as_str() {
+        assert_eq!(EntityType::Key.as_str(), "key");
+        assert_eq!(EntityType::User.as_str(), "user");
+        assert_eq!(EntityType::Team.as_str(), "team");
+    }
+
+    #[test]
+    fn test_entity_type_parse() {
+        assert_eq!(EntityType::parse_entity("key"), Some(EntityType::Key));
+        assert_eq!(EntityType::parse_entity("user"), Some(EntityType::User));
+        assert_eq!(EntityType::parse_entity("team"), Some(EntityType::Team));
+        assert_eq!(EntityType::parse_entity("invalid"), None);
+        assert_eq!(EntityType::parse_entity(""), None);
+        assert_eq!(EntityType::parse_entity("KEY"), None);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_cache() {
+        use crate::cache::{InMemoryCache, StoolapCache};
+
+        let cache = InMemoryCache::new();
+
+        // Get nonexistent
+        assert!(cache.get("key1").await.is_none());
+
+        // Set and get
+        cache.set("key1", "value1", 60).await.unwrap();
+        assert_eq!(cache.get("key1").await, Some("value1".to_string()));
+
+        // Overwrite
+        cache.set("key1", "value2", 60).await.unwrap();
+        assert_eq!(cache.get("key1").await, Some("value2".to_string()));
+
+        // Delete
+        cache.delete("key1").await.unwrap();
+        assert!(cache.get("key1").await.is_none());
+
+        // Delete nonexistent
+        cache.delete("nonexistent").await.unwrap();
+    }
+
+    #[test]
+    fn test_in_memory_cache_default() {
+        let cache = InMemoryCache::default();
+        // Should be constructible
+        let _rt = tokio::runtime::Runtime::new().unwrap();
+        assert!(_rt.block_on(cache.get("anything")).is_none());
+    }
+
+    #[test]
+    fn test_response_cache_get_set() {
+        let cache = ResponseCache::new(Duration::from_secs(60));
+        let key = "test-key".to_string();
+
+        // Get from empty cache
+        assert!(cache.get(&key).is_none());
+
+        // Set and get
+        cache.set(key.clone(), "response".to_string());
+        assert_eq!(cache.get(&key), Some("response".to_string()));
+    }
+
+    #[test]
+    fn test_response_cache_ttl_expiry() {
+        let cache = ResponseCache::new(Duration::from_millis(1));
+        let key = "test-key".to_string();
+
+        cache.set(key.clone(), "response".to_string());
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(cache.get(&key).is_none());
+    }
+
+    #[test]
+    fn test_response_cache_cleanup() {
+        let cache = ResponseCache::new(Duration::from_millis(1));
+
+        cache.set("a".to_string(), "resp_a".to_string());
+        cache.set("b".to_string(), "resp_b".to_string());
+        std::thread::sleep(Duration::from_millis(10));
+
+        cache.cleanup();
+        // After cleanup, expired entries should be removed
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_none());
+    }
+
+    #[test]
+    fn test_response_cache_default() {
+        let cache = ResponseCache::default();
+        assert!(cache.get("anything").is_none());
+    }
+
+    #[test]
+    fn test_response_cache_key_generation() {
+        use crate::shared_types::Message;
+
+        let messages = vec![
+            Message::new("system", "You are helpful"),
+            Message::new("user", "Hello"),
+        ];
+
+        let key1 = ResponseCache::cache_key("gpt-4", &messages, Some(0.7), Some(1000));
+        let key2 = ResponseCache::cache_key("gpt-4", &messages, Some(0.7), Some(1000));
+        assert_eq!(key1, key2); // Same inputs -> same key
+
+        let key3 = ResponseCache::cache_key("gpt-3.5", &messages, Some(0.7), Some(1000));
+        assert_ne!(key1, key3); // Different model -> different key
+
+        let key4 = ResponseCache::cache_key("gpt-4", &messages, None, None);
+        assert_ne!(key1, key4); // Different params -> different key
+    }
+
+    #[test]
+    fn test_response_cache_different_messages_different_keys() {
+        use crate::shared_types::Message;
+
+        let msgs1 = vec![Message::new("user", "Hello")];
+        let msgs2 = vec![Message::new("user", "Goodbye")];
+
+        let key1 = ResponseCache::cache_key("gpt-4", &msgs1, None, None);
+        let key2 = ResponseCache::cache_key("gpt-4", &msgs2, None, None);
+        assert_ne!(key1, key2);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_event_bus_only() {
+        let ci = CacheInvalidation::new(KeyCache::new());
+        let rx = ci.event_bus().subscribe();
+
+        ci.invalidate_key(
+            vec![10, 20, 30],
+            stoolap::pubsub::InvalidationReason::Revoke,
+            Some(100),
+            Some(5000),
+        )
+        .unwrap();
+
+        let event = rx.recv().unwrap();
+        match event {
+            stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash,
+                rpm_limit,
+                tpm_limit,
+                ..
+            } => {
+                assert_eq!(key_hash, vec![10, 20, 30]);
+                assert_eq!(rpm_limit, Some(100));
+                assert_eq!(tpm_limit, Some(5000));
+            }
+            _ => panic!("Expected KeyInvalidated"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_with_wal_accessors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+        let cache = KeyCache::new();
+        let ci = CacheInvalidation::with_wal(cache, wal_path);
+
+        assert!(ci.wal_pubsub().is_some());
+        assert!(ci.cache().is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_handle_event_key_invalidated() {
+        let cache = KeyCache::new();
+        let key_hash = vec![1, 2, 3];
+
+        let api_key = crate::keys::ApiKey {
+            key_id: "test".to_string(),
+            key_hash: key_hash.clone(),
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        cache.put(key_hash.clone(), api_key).await;
+        assert!(cache.get(&key_hash).await.is_some());
+
+        // Handle invalidation event
+        let event = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+            key_hash: key_hash.clone(),
+            reason: stoolap::pubsub::InvalidationReason::Revoke,
+            rpm_limit: None,
+            tpm_limit: None,
+            event_id: [0u8; 32],
+        };
+        CacheInvalidation::handle_event(&cache, &event).await;
+        assert!(cache.get(&key_hash).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_handle_event_table_modified() {
+        let cache = KeyCache::new();
+        let event = stoolap::pubsub::DatabaseEvent::TableModified {
+            table_name: "api_keys".to_string(),
+            operation: stoolap::pubsub::OperationType::Insert,
+            txn_id: 1,
+            event_id: [0u8; 32],
+        };
+        // Should be a no-op
+        CacheInvalidation::handle_event(&cache, &event).await;
+        assert!(cache.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_handle_event_schema_changed() {
+        let cache = KeyCache::new();
+        let event = stoolap::pubsub::DatabaseEvent::SchemaChanged {
+            table_name: "api_keys".to_string(),
+            change_type: stoolap::pubsub::SchemaChangeType::CreateTable,
+            event_id: [0u8; 32],
+        };
+        CacheInvalidation::handle_event(&cache, &event).await;
+        assert!(cache.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_handle_event_transaction_committed() {
+        let cache = KeyCache::new();
+        let event = stoolap::pubsub::DatabaseEvent::TransactionCommited {
+            txn_id: 42,
+            affected_tables: vec!["api_keys".to_string()],
+            event_id: [0u8; 32],
+        };
+        CacheInvalidation::handle_event(&cache, &event).await;
+        assert!(cache.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn test_check_budget_soft_limit_under_budget() {
+        use crate::storage::{KeyStorage, StoolapKeyStorage};
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = StoolapKeyStorage::new(db.clone());
+
+        let key_id = uuid::Uuid::new_v4().to_string();
+        let key = crate::keys::ApiKey {
+            key_id: key_id.clone(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 10000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Under budget
+        let result = super::check_budget_soft_limit(&db, &key_id, 5000);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_budget_soft_limit_over_budget() {
+        use crate::storage::{KeyStorage, StoolapKeyStorage};
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = StoolapKeyStorage::new(db.clone());
+
+        let key_id = uuid::Uuid::new_v4().to_string();
+        let key = crate::keys::ApiKey {
+            key_id: key_id.clone(),
+            key_hash: vec![1],
+            key_prefix: "sk-".into(),
+            team_id: None,
+            budget_limit: 100,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Over budget
+        let result = super::check_budget_soft_limit(&db, &key_id, 200);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::keys::KeyError::BudgetExceeded { current, limit } => {
+                assert_eq!(current, 0);
+                assert_eq!(limit, 100);
+            }
+            other => panic!("Expected BudgetExceeded, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_budget_soft_limit_key_not_found() {
+        use stoolap::Database;
+
+        let db = Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+
+        let result = super::check_budget_soft_limit(&db, "nonexistent", 100);
+        assert!(result.is_err());
+    }
 }
+

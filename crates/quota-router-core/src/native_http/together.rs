@@ -1,8 +1,8 @@
 // together — Together AI via reqwest (native_http, LiteLLM mode)
 
 use super::{
-    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError, StreamingResponse,
+    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
+    HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -299,4 +299,235 @@ struct TogetherEmbedding {
     object: String,
     embedding: Vec<f32>,
     index: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_http::HttpProvider;
+    use crate::testing::mock_http::MockHttpServer;
+
+    fn msg(role: &str, c: &str) -> crate::shared_types::Message {
+        crate::shared_types::Message {
+            role: role.into(),
+            content: Some(c.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    fn req(model: &str) -> HttpCompletionRequest {
+        HttpCompletionRequest {
+            model: model.into(),
+            messages: vec![msg("user", "hi")],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        }
+    }
+
+    fn ok_response() -> serde_json::Value {
+        serde_json::json!({
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "meta-llama/Llama-3-70b-chat",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi!"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        })
+    }
+
+    fn ok_embeddings() -> serde_json::Value {
+        serde_json::json!({
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": [0.1, 0.2], "index": 0}],
+            "model": "togethercomputer/llama-3-8b",
+            "usage": {"prompt_tokens": 8, "completion_tokens": 0, "total_tokens": 8}
+        })
+    }
+
+    #[test]
+    fn test_name() {
+        assert_eq!(TogetherProvider::new().name(), "together");
+    }
+
+    #[test]
+    fn test_supported_models() {
+        let p = TogetherProvider::new();
+        let models = p.supported_models();
+        assert!(models.contains(&"meta-llama/Llama-3-70b-chat"));
+        assert!(models.contains(&"deepseek-ai/DeepSeek-V3"));
+    }
+
+    #[test]
+    fn test_supports_streaming() {
+        assert!(TogetherProvider::new().supports_streaming());
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(TogetherProvider::default().name(), "together");
+    }
+
+    #[test]
+    fn test_routing_weight() {
+        assert_eq!(TogetherProvider::new().routing_weight(), 5);
+    }
+
+    #[test]
+    fn test_supports_model() {
+        let p = TogetherProvider::new();
+        assert!(p.supports_model("meta-llama/Llama-3-70b-chat"));
+        assert!(!p.supports_model("gpt-4"));
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = TogetherProvider::new();
+        let mut r = req("m");
+        r.api_base = Some("http://127.0.0.1:1".into());
+        assert!(p.completion(&r, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_success() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let mut r = req("meta-llama/Llama-3-70b-chat");
+        r.api_base = Some(s.base_url());
+        let p = TogetherProvider::new();
+        let resp = p.completion(&r, Some("k")).await.unwrap();
+        assert_eq!(resp.choices.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn completion_auth_401() {
+        let s = MockHttpServer::unauthorized().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(matches!(
+            TogetherProvider::new().completion(&r, Some("k")).await.unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(matches!(
+            TogetherProvider::new().completion(&r, Some("k")).await.unwrap_err(),
+            ProviderError::RateLimit(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(matches!(
+            TogetherProvider::new().completion(&r, Some("k")).await.unwrap_err(),
+            ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn embedding_success() {
+        let s = MockHttpServer::with_json(&ok_embeddings()).await;
+        let p = TogetherProvider::new();
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        let _ = p.embedding(
+            &HttpEmbeddingRequest {
+                input: "hello".into(),
+                model: "m".into(),
+                api_base: Some(s.base_url()),
+                timeout: None,
+            },
+            Some("k"),
+        ).await;
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(TogetherProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(TogetherProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(TogetherProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_success() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n".to_string())
+                .unwrap()
+        })
+        .await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        let mut resp = TogetherProvider::new().streaming_completion(&r, Some("k")).await.unwrap();
+        let chunk = resp.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+    }
+
+    #[tokio::test]
+    async fn default_trait_methods() {
+        let p = TogetherProvider::new();
+        assert!(p.get_response("id", None, None, None).await.is_err());
+        assert!(p.delete_response("id", None, None, None).await.is_err());
+        let batch_req = HttpBatchCreateRequest {
+            input_file: "f".into(),
+            endpoint: "/v1".into(),
+            completion_window: "24h".into(),
+            metadata: None,
+            api_base: None,
+            timeout: None,
+        };
+        assert!(p.batch_create(&batch_req, None).await.is_err());
+        assert!(p.batch_retrieve("id", None, None, None).await.is_err());
+        assert!(p.batch_cancel("id", None, None, None).await.is_err());
+        assert!(p.batch_list(None, None, None, None).await.is_err());
+        assert!(p.batch_results("id", None, None, None).await.is_err());
+        assert!(p.list_models(None, None, None).await.is_err());
+    }
 }

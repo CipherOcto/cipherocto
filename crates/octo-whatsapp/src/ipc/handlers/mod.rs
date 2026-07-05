@@ -1,6 +1,7 @@
 //! Concrete RPC method handlers. One file per logical group; all wired into
 //! `build_registry()` at the bottom of this module.
 
+pub mod chats_list;
 pub mod daemon_ops;
 pub mod events;
 pub mod groups;
@@ -67,6 +68,7 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(events::EventsShow))
         .register(Arc::new(daemon_ops::ReconnectNow))
         .register(Arc::new(daemon_ops::Shutdown))
+        .register(Arc::new(chats_list::ChatsList))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -117,6 +119,10 @@ pub const PHASE2_SEND_MESSAGE_METHODS: &[&str] = &[
     "messages.get",
 ];
 
+/// RPC method names added in Phase 2 chat-control plane (Tasks 41-45):
+/// chat list/info/pin/unpin/mute/archive/delete/typing + media.info.
+pub const PHASE2_CHATS_METHODS: &[&str] = &["chats.list"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +169,7 @@ mod tests {
             .iter()
             .chain(PHASE2_MEDIA_METHODS.iter())
             .chain(PHASE2_SEND_MESSAGE_METHODS.iter())
+            .chain(PHASE2_CHATS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

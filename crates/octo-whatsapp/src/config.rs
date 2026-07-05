@@ -20,6 +20,24 @@ pub enum ConfigError {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MediaBufferConfig {
+    /// Maximum concurrent in-flight media uploads. Bounded to keep
+    /// disk + memory under control. `0` is invalid.
+    pub max_concurrent_uploads: usize,
+    /// Root temp directory under which per-request `.bin` files live.
+    pub root: PathBuf,
+}
+
+impl Default for MediaBufferConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_uploads: 4,
+            root: std::env::temp_dir().join("octo-whatsapp"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WhatsAppRuntimeConfig {
     pub name: String,
     #[serde(default = "default_data_dir")]
@@ -28,6 +46,11 @@ pub struct WhatsAppRuntimeConfig {
     pub log_dir: PathBuf,
     #[serde(default = "default_socket_dir")]
     pub socket_dir: PathBuf,
+    /// Optional media buffer tuning. Falls back to `MediaBufferConfig::default()`
+    /// when absent, which is the safe production default (4 concurrent uploads
+    /// under `$TMPDIR/octo-whatsapp`).
+    #[serde(default)]
+    pub media_buffer: Option<MediaBufferConfig>,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -68,6 +91,18 @@ impl WhatsAppRuntimeConfig {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         {
             return Err(ConfigError::InvalidName(self.name.clone()));
+        }
+        if let Some(mb) = &self.media_buffer {
+            if mb.max_concurrent_uploads == 0 {
+                return Err(ConfigError::InvalidName(format!(
+                    "media_buffer.max_concurrent_uploads must be > 0 (got 0)"
+                )));
+            }
+            if mb.root.as_os_str().is_empty() {
+                return Err(ConfigError::InvalidName(
+                    "media_buffer.root must be non-empty".into(),
+                ));
+            }
         }
         Ok(())
     }

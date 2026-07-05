@@ -73,3 +73,29 @@ fn validate_rejects_empty_name() {
     cfg.name = String::new();
     assert!(matches!(cfg.validate(), Err(ConfigError::InvalidName(_))));
 }
+
+#[test]
+fn media_buffer_config_validates() {
+    let cfg = WhatsAppRuntimeConfig {
+        name: "x".into(),
+        data_dir: std::env::temp_dir(),
+        log_dir: std::env::temp_dir(),
+        socket_dir: std::env::temp_dir(),
+        media_buffer: Some(MediaBufferConfig {
+            max_concurrent_uploads: 4,
+            root: std::env::temp_dir().join("mb"),
+        }),
+    };
+    assert!(cfg.validate().is_ok());
+    let bad = WhatsAppRuntimeConfig {
+        name: "x".into(),
+        data_dir: std::env::temp_dir(),
+        log_dir: std::env::temp_dir(),
+        socket_dir: std::env::temp_dir(),
+        media_buffer: Some(MediaBufferConfig {
+            max_concurrent_uploads: 0,
+            root: std::env::temp_dir(),
+        }),
+    };
+    assert!(bad.validate().is_err());
+}

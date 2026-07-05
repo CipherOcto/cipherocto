@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::config::WhatsAppRuntimeConfig;
+use crate::media_buffer::MediaBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +39,8 @@ struct DaemonInner {
     ///    not block it (`blocking_read` panics inside `#[tokio::test]`),
     /// 2. the daemon's status reply path needs a snapshot, not a future.
     phase: std::sync::RwLock<DaemonPhase>,
+    /// Concurrency-capped scratch disk for outbound media uploads.
+    media_buffer: MediaBuffer,
 }
 
 impl DaemonHandle {
@@ -63,6 +66,13 @@ impl DaemonHandle {
 
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel.clone()
+    }
+
+    /// Media buffer (concurrency-capped scratch disk) used by all
+    /// outbound media RPC handlers. Acquired slots live as long as the
+    /// returned `MediaSlot`, releasing back to the pool on drop.
+    pub fn media_buffer(&self) -> &MediaBuffer {
+        &self.inner.media_buffer
     }
 
     /// Async-marked for API symmetry with future async setters, but the
@@ -99,11 +109,14 @@ impl Daemon {
     }
 
     pub fn handle(&self) -> DaemonHandle {
+        let mb_cfg = self.config.media_buffer.clone().unwrap_or_default();
+        let media_buffer = MediaBuffer::new(mb_cfg.max_concurrent_uploads, mb_cfg.root);
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
                 cancel: self.cancel.clone(),
                 phase: std::sync::RwLock::new(DaemonPhase::Booting),
+                media_buffer,
             }),
         }
     }

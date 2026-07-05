@@ -15,6 +15,7 @@ pub struct MediaBuffer {
 struct MediaBufferInner {
     sem: Arc<Semaphore>,
     root: PathBuf,
+    max_concurrent: usize,
 }
 
 impl MediaBuffer {
@@ -26,6 +27,7 @@ impl MediaBuffer {
             inner: Arc::new(MediaBufferInner {
                 sem: Arc::new(Semaphore::new(max_concurrent_uploads)),
                 root,
+                max_concurrent: max_concurrent_uploads,
             }),
         }
     }
@@ -48,6 +50,10 @@ impl MediaBuffer {
             _permit: permit,
             root: self.inner.root.clone(),
         })
+    }
+    /// The configured concurrency ceiling (max simultaneous uploads).
+    pub fn max_concurrent(&self) -> usize {
+        self.inner.max_concurrent
     }
     pub fn request_path(&self, request_id: &str) -> PathBuf {
         let safe: String = request_id

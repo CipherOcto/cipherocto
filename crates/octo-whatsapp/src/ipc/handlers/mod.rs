@@ -1,6 +1,7 @@
 //! Concrete RPC method handlers. One file per logical group; all wired into
 //! `build_registry()` at the bottom of this module.
 
+pub mod capabilities;
 pub mod chats_archive;
 pub mod chats_delete;
 pub mod chats_info;
@@ -10,6 +11,11 @@ pub mod chats_pin;
 pub mod chats_typing;
 pub mod chats_unpin;
 pub mod daemon_ops;
+pub mod domain_compute_hash;
+pub mod envelope_decode;
+pub mod envelope_encode;
+pub mod envelope_send;
+pub mod envelope_send_native;
 pub mod events;
 pub mod groups;
 pub mod health;
@@ -85,6 +91,12 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(chats_delete::ChatsDelete))
         .register(Arc::new(chats_typing::ChatsTyping))
         .register(Arc::new(media_info::MediaInfo))
+        .register(Arc::new(envelope_encode::EnvelopeEncode))
+        .register(Arc::new(envelope_decode::EnvelopeDecode))
+        .register(Arc::new(envelope_send::EnvelopeSend))
+        .register(Arc::new(envelope_send_native::EnvelopeSendNative))
+        .register(Arc::new(capabilities::Capabilities))
+        .register(Arc::new(domain_compute_hash::DomainComputeHash))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -149,6 +161,18 @@ pub const PHASE2_CHATS_METHODS: &[&str] = &[
     "media.info",
 ];
 
+/// RPC method names added in Phase 2 envelope + capabilities plane
+/// (Tasks 46-50): DOT/1 encode/decode/send, native transport,
+/// platform capabilities, and deterministic domain-id hashing.
+pub const PHASE2_ENVELOPE_METHODS: &[&str] = &[
+    "envelope.encode",
+    "envelope.decode",
+    "envelope.send",
+    "envelope.send-native",
+    "capabilities",
+    "domain.compute-hash",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +211,17 @@ mod tests {
     }
 
     #[test]
+    fn phase2_envelope_methods_all_registered() {
+        let reg = build_registry();
+        for m in PHASE2_ENVELOPE_METHODS {
+            assert!(
+                reg.contains(m),
+                "method {m:?} not registered in build_registry()"
+            );
+        }
+    }
+
+    #[test]
     fn registry_size_matches_phase1_phase2() {
         let reg = build_registry();
         // `messages.list` is in both PHASE1_METHODS and
@@ -196,6 +231,7 @@ mod tests {
             .chain(PHASE2_MEDIA_METHODS.iter())
             .chain(PHASE2_SEND_MESSAGE_METHODS.iter())
             .chain(PHASE2_CHATS_METHODS.iter())
+            .chain(PHASE2_ENVELOPE_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

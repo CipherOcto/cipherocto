@@ -3,7 +3,12 @@
 //! See `docs/plans/2026-07-04-whatsapp-runtime-cli-mcp-design.md` for the
 //! full design. Phase 1 (MVP) covers the daemon + unix socket + JSON-RPC +
 //! the 12 method surfaces listed in §Rollout, plus CLI and MCP mirrors.
+//!
+//! This crate is excluded from the default workspace build. Build via
+//! `cargo build -p octo-cli-meta --features whatsapp-cli`.
 
+#![deny(unsafe_code)]
+#![warn(clippy::await_holding_lock)]
 #![deny(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 

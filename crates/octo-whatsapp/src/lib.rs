@@ -18,6 +18,7 @@ pub mod daemon;
 pub mod events;
 pub mod ipc;
 pub mod jids;
+pub mod limits;
 pub mod mcp_server;
 pub mod onboarding;
 pub mod rules;

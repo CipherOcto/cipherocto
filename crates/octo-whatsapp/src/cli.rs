@@ -462,14 +462,16 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             )
         }
         Command::Mcp => {
-            // MCP server arrives in Part L (Tasks 51-58). For now, print a
-            // clear message and exit non-zero so operators know the path
-            // forward without a silent failure.
-            eprintln!(
-                "octo-whatsapp: `mcp` subcommand is not wired in Phase 1 task 50; \
-                 arrives with the MCP server in Part L."
-            );
-            std::process::exit(2);
+            // MCP server (Part L — Task 51-52). Spawns a multi-threaded
+            // tokio runtime and forwards JSON-RPC requests from stdin to the
+            // daemon's unix socket, writing responses on stdout. Stdio reads
+            // are blocking, so we use a multi-threaded runtime so other tasks
+            // can drive the daemon forward if needed.
+            let socket = resolve_socket_path(&cli);
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(crate::mcp_server::serve(&socket))
         }
         Command::Version => dispatch_simple(&cli, "version.get"),
         Command::Status => dispatch_simple(&cli, "status.get"),

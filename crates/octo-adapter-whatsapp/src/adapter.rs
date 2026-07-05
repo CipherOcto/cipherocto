@@ -3235,6 +3235,34 @@ fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
 
 // ── Tests ──────────────────────────────────────────────────────────
 
+/// Test-only convenience constructor. Builds an adapter from a minimal
+/// valid `WhatsAppConfig` without invoking `start_bot` (no network
+/// connection, no QR pairing, no session-database touch). Returns a
+/// fully-formed `WhatsAppWebAdapter` whose `client` mutex remains
+/// `None` — any `_checked` pre-flight that delegates to a deferred
+/// wacore method will short-circuit on the size ceiling before any
+/// network call would have been made.
+///
+/// Used by unit tests that exercise the inherent-method surface
+/// (Phase 2 Tasks 4-21) without a live WhatsApp connection. Also
+/// exposed via the `test-helpers` feature so integration tests in
+/// sibling crates can build an adapter fixture cheaply.
+#[cfg(any(test, feature = "test-helpers"))]
+impl WhatsAppWebAdapter {
+    pub fn new_unconnected_for_tests() -> Self {
+        // `session_path` is a required field on `WhatsAppConfig` (no
+        // `#[serde(default)]`), and `from_config_bytes` rejects empty
+        // configs. We use a placeholder path that is never read —
+        // `start_bot` is never called from this constructor, so the
+        // path is never opened, validated, or written. The string
+        // `"/tmp/octo-whatsapp-test-fixture.session.db"` mirrors the
+        // shape that `cfg_with` in the inline test module uses.
+        let cfg_json =
+            br#"{"session_path":"/tmp/octo-whatsapp-test-fixture.session.db","groups":[]}"#;
+        Self::from_config_bytes(cfg_json).expect("test adapter init from empty config")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

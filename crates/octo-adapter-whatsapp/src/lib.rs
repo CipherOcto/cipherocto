@@ -14,6 +14,12 @@
 //! ```
 
 pub mod adapter;
+/// Phase 2 — 18 new inherent methods on `WhatsAppWebAdapter`
+/// (`send_image`, `edit_message`, `mark_read`, ...).
+pub mod inherent;
+/// Re-export of `PlatformAdapterError` from `octo-network::dot::error`.
+/// Provides a stable import path for inherent methods and runtime code.
+pub use octo_network::dot::error::PlatformAdapterError as AdapterError;
 mod media_ref; // R9-M1 fix: was `pub mod media_ref;`; the spec at
                // `missions/open/0850-whatsapp-media-transport.md:224`
                // explicitly requires the module be private (it's an
@@ -31,6 +37,45 @@ pub use store::StoolapStore;
 // test) don't need a direct `whatsapp-rust` dependency on their dev-deps
 // just to spell out a `CreateGroupOutput.metadata.participants: Vec<GroupParticipant>`.
 pub use whatsapp_rust::{GroupMetadata, GroupParticipant, ParticipantChangeResponse};
+
+// ── Phase 2 RPC payload types ──────────────────────────────────────
+//
+// Defined here (not inside `inherent` / `adapter`) so RPC handlers
+// (Tasks 36-50) can import them as `octo_adapter_whatsapp::MessageHit`
+// etc. without depending on either implementation module.
+
+/// A single hit returned from [`WhatsAppWebAdapter::message_search`].
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MessageHit {
+    /// WhatsApp message ID of the hit.
+    pub msg_id: String,
+    /// Peer JID (`<digits>@s.whatsapp.net` or `<digits>@g.us`).
+    pub peer: String,
+    /// Timestamp (epoch seconds) of the hit.
+    pub ts: i64,
+    /// Short text snippet (truncated for transport).
+    pub snippet: String,
+}
+
+/// Metadata for a chat (1:1 or group).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChatInfo {
+    /// Chat JID.
+    pub jid: String,
+    /// `"dm"` or `"group"`.
+    pub kind: String,
+    /// Display name (subject for groups; push name for 1:1). `None` if unknown.
+    pub name: Option<String>,
+    /// Last-activity timestamp (epoch seconds).
+    pub last_activity_ts: i64,
+}
+
+/// Convenience alias used by the Phase 2 RPC handlers and the inherent
+/// methods in this crate. They are interchangeable — pick whichever is
+/// clearer at the call site.
+pub use octo_network::dot::error::PlatformAdapterError;
+
+// (blank line kept for cargo fmt)
 
 // ── Plugin ABI ─────────────────────────────────────────────────────
 

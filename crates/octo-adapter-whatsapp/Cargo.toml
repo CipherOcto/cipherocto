@@ -9,6 +9,11 @@ crate-type = ["cdylib", "rlib"]
 [features]
 # Default: no live network. Unit tests run with this.
 default = []
+# Test helpers: enables `WhatsAppWebAdapter::new_unconnected_for_tests`
+# for downstream integration tests (gated by
+# `#[cfg(any(test, feature = "test-helpers"))]`). Off by default; off
+# when not running tests so the helper doesn't ship to consumers.
+test-helpers = []
 # Live WhatsApp Web tests: enables the `tests/live_session_test.rs` suite,
 # which talks to the production WhatsApp Web servers (no `--ws-url` override).
 # Off by default because the tests require an existing authenticated session

@@ -58,7 +58,7 @@ async fn cli_version_reads_daemon() {
     let output = assert_output.get_output().clone();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("1.0.0+phase1"),
+        stdout.contains("1.0.0+phase2"),
         "expected daemon_api_version marker in stdout, got: {stdout}"
     );
     assert!(

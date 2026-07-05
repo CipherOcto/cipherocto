@@ -19,7 +19,7 @@ impl RpcHandler for VersionGet {
         Ok(serde_json::json!({
             "daemon_api_version": "1.0.0+phase2",
             "daemon_binary_version": env!("CARGO_PKG_VERSION"),
-            "phase": "phase1",
+            "phase": "phase2",
             "rpc_error_code_max": RpcErrorCode::ShuttingDown.as_i32(),
         }))
     }
@@ -32,12 +32,12 @@ mod tests {
     use crate::daemon::Daemon;
 
     #[tokio::test]
-    async fn version_get_returns_phase1() {
+    async fn version_get_returns_phase2() {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         let h = Daemon::new(cfg).handle();
         let v = VersionGet.call(h, Value::Null).await.unwrap();
         assert_eq!(v["daemon_api_version"], "1.0.0+phase2");
-        assert_eq!(v["phase"], "phase1");
+        assert_eq!(v["phase"], "phase2");
         assert_eq!(
             v["daemon_binary_version"],
             env!("CARGO_PKG_VERSION"),

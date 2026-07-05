@@ -67,7 +67,7 @@ async fn multi_rpc_sequence_on_single_connection() {
     .await
     .unwrap();
 
-    assert_eq!(results.0["result"]["daemon_api_version"], "1.0.0+phase1");
+    assert_eq!(results.0["result"]["daemon_api_version"], "1.0.0+phase2");
     assert_eq!(results.1["result"]["ok"], true);
     assert_eq!(results.2["result"]["ok"], true);
 

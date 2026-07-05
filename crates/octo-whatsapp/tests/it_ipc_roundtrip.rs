@@ -7,7 +7,7 @@
 //!    (driven via `spawn_blocking` so we don't stall the runtime).
 //! 4. Send one line-delimited JSON-RPC `version.get` request.
 //! 5. Read the response line and assert the daemon echoes
-//!    `daemon_api_version = "1.0.0+phase1"`.
+//!    `daemon_api_version = "1.0.0+phase2"`.
 //! 6. Trigger cancellation; the accept loop must remove the socket file
 //!    and the spawn task must complete with Ok.
 
@@ -85,7 +85,7 @@ async fn ipc_roundtrip_via_unix_socket() {
 
     let resp: serde_json::Value = serde_json::from_str(resp_json.trim()).unwrap();
     assert_eq!(resp["id"], 1);
-    assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase1");
+    assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase2");
 
     cancel.cancel();
     let serve_result = server_task.await.unwrap();

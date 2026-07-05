@@ -46,7 +46,16 @@ pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
 }
 
 pub fn group_to_jid(input: &str) -> Result<String, JidError> {
-    todo!("Phase 1 Task 9")
+    let trimmed = input.trim();
+    if !trimmed.ends_with("@g.us") {
+        return Err(JidError::InvalidGroupFormat(trimmed.to_string()));
+    }
+    let digits = trimmed.trim_end_matches("@g.us");
+    if digits.chars().all(|c| c.is_ascii_digit()) && !digits.is_empty() && digits.len() >= 10 {
+        Ok(trimmed.to_string())
+    } else {
+        Err(JidError::InvalidGroupFormat(trimmed.to_string()))
+    }
 }
 
 #[cfg(test)]

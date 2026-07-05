@@ -6,6 +6,7 @@ pub mod events;
 pub mod groups;
 pub mod health;
 pub mod messages;
+pub mod preflight;
 pub mod rules;
 pub mod send_text;
 pub mod status;

@@ -8,7 +8,12 @@ pub mod health;
 pub mod messages;
 pub mod preflight;
 pub mod rules;
+pub mod send_audio;
+pub mod send_image;
+pub mod send_sticker;
 pub mod send_text;
+pub mod send_video;
+pub mod send_voice;
 pub mod status;
 pub mod triggers;
 pub mod version;
@@ -24,6 +29,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(status::StatusGet))
         .register(Arc::new(health::HealthGet))
         .register(Arc::new(send_text::SendText))
+        .register(Arc::new(send_image::SendImage))
+        .register(Arc::new(send_video::SendVideo))
+        .register(Arc::new(send_audio::SendAudio))
+        .register(Arc::new(send_voice::SendVoice))
+        .register(Arc::new(send_sticker::SendSticker))
         .register(Arc::new(groups::GroupsCreate))
         .register(Arc::new(groups::GroupsList))
         .register(Arc::new(groups::GroupsInfo))
@@ -60,6 +70,15 @@ pub const PHASE1_METHODS: &[&str] = &[
     "shutdown",
 ];
 
+/// RPC method names added in Phase 2 (outbound media matrix; tasks 26-30).
+pub const PHASE2_MEDIA_METHODS: &[&str] = &[
+    "send.image",
+    "send.video",
+    "send.audio",
+    "send.voice",
+    "send.sticker",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +92,21 @@ mod tests {
                 "method {m:?} not registered in build_registry()"
             );
         }
-        assert_eq!(reg.methods().len(), PHASE1_METHODS.len());
+    }
+
+    #[test]
+    fn phase2_media_methods_all_registered() {
+        let reg = build_registry();
+        for m in PHASE2_MEDIA_METHODS {
+            assert!(
+                reg.contains(m),
+                "method {m:?} not registered in build_registry()"
+            );
+        }
+        assert_eq!(
+            reg.methods().len(),
+            PHASE1_METHODS.len() + PHASE2_MEDIA_METHODS.len(),
+            "registry size must equal Phase 1 + Phase 2 (media) sets",
+        );
     }
 }

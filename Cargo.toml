@@ -25,7 +25,6 @@ exclude = [
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",
-    "crates/octo-whatsapp",
     # MTProto onboard crates are intentionally NOT excluded:
     # unlike the TDLib ones, they do not pull in TDLib. They
     # compile against the pure-Rust `octo-adapter-telegram-mtproto`

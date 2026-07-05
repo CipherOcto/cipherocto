@@ -1,5 +1,8 @@
 //! Peer and group JID normalization. Every CLI/RPC entry point that takes a
 //! peer or group MUST route through these helpers.
+//!
+//! Both functions are pure and deterministic: same input -> same output,
+//! no I/O, safe to use as canonicalization keys.
 
 use thiserror::Error;
 

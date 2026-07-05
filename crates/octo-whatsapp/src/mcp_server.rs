@@ -314,6 +314,44 @@ pub fn tool_descriptors() -> Vec<Value> {
             &["media_ref_token"],
         ),
     ));
+    // ─── Envelope (4) ─────────────────────────────────────────────────
+    v.push(td(
+        "envelope.encode",
+        "Wrap raw bytes in a DOT/1 envelope (stdin or --file).",
+        schema_props_optional(&[("file", "string")]),
+    ));
+    v.push(td(
+        "envelope.decode",
+        "Decode a DOT/1 envelope from stdin (prints payload).",
+        schema_empty(),
+    ));
+    v.push(td(
+        "envelope.send",
+        "Send a DOT/1 envelope file as a message.",
+        schema_props_required(
+            &[("peer", "string"), ("file", "string")],
+            &["peer", "file"],
+        ),
+    ));
+    v.push(td(
+        "envelope.send-native",
+        "Send a DOT/1 envelope via the native transport.",
+        schema_props_required(
+            &[("peer", "string"), ("file", "string")],
+            &["peer", "file"],
+        ),
+    ));
+    // ─── Capabilities + domain (2) ────────────────────────────────────
+    v.push(td(
+        "capabilities",
+        "Return platform capabilities (payload sizes, media caps, flags).",
+        schema_empty(),
+    ));
+    v.push(td(
+        "domain.compute-hash",
+        "Compute the deterministic domain id for a group JID.",
+        schema_props_required(&[("group_jid", "string")], &["group_jid"]),
+    ));
     v
 }
 
@@ -360,6 +398,12 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "chats.delete" => "chats.delete",
         "chats.typing" => "chats.typing",
         "media.info" => "media.info",
+        "envelope.encode" => "envelope.encode",
+        "envelope.decode" => "envelope.decode",
+        "envelope.send" => "envelope.send",
+        "envelope.send-native" => "envelope.send-native",
+        "capabilities" => "capabilities",
+        "domain.compute-hash" => "domain.compute-hash",
         other => {
             return Ok(jsonrpc_error(
                 id,
@@ -493,6 +537,26 @@ mod tests {
             "chats.delete",
             "chats.typing",
             "media.info",
+        ] {
+            assert!(names.contains(m), "tool {m:?} not advertised");
+        }
+    }
+
+    /// Task 53: envelope.* + capabilities + domain.compute-hash.
+    #[test]
+    fn envelope_capabilities_domain_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "envelope.encode",
+            "envelope.decode",
+            "envelope.send",
+            "envelope.send-native",
+            "capabilities",
+            "domain.compute-hash",
         ] {
             assert!(names.contains(m), "tool {m:?} not advertised");
         }

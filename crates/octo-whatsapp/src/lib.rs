@@ -1,0 +1,19 @@
+//! `octo-whatsapp` — long-lived daemon for the WhatsApp adapter.
+//!
+//! See `docs/plans/2026-07-04-whatsapp-runtime-cli-mcp-design.md` for the
+//! full design. Phase 1 (MVP) covers the daemon + unix socket + JSON-RPC +
+//! the 12 method surfaces listed in §Rollout, plus CLI and MCP mirrors.
+
+#![deny(rust_2018_idioms)]
+#![warn(missing_debug_implementations)]
+
+pub mod cli;
+pub mod config;
+pub mod daemon;
+pub mod events;
+pub mod ipc;
+pub mod jids;
+pub mod mcp_server;
+pub mod onboarding;
+pub mod rules;
+pub mod triggers;

@@ -20,6 +20,16 @@ pub struct HandlerRegistry {
     handlers: HashMap<&'static str, Arc<dyn RpcHandler>>,
 }
 
+impl std::fmt::Debug for HandlerRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut v: Vec<&'static str> = self.handlers.keys().copied().collect();
+        v.sort_unstable();
+        f.debug_struct("HandlerRegistry")
+            .field("methods", &v)
+            .finish()
+    }
+}
+
 impl HandlerRegistry {
     pub fn new() -> Self {
         Self {

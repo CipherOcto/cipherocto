@@ -12,7 +12,7 @@ name = "octo_whatsapp"
 path = "src/lib.rs"
 
 [dependencies]
-# Internal — adapter is the only thing we depend on for protocol; onboard-core
+# Internal - adapter is the only thing we depend on for protocol; onboard-core
 # is for delegation; network is for trait types only (we use them through the
 # adapter); runtime is for the supervisor primitive if it exists.
 octo-adapter-whatsapp      = { path = "../octo-adapter-whatsapp" }

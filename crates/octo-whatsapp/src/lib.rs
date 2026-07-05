@@ -1,4 +1,4 @@
-//! `octo-whatsapp` — long-lived daemon for the WhatsApp adapter.
+//! `octo-whatsapp` - long-lived daemon for the WhatsApp adapter.
 //!
 //! See `docs/plans/2026-07-04-whatsapp-runtime-cli-mcp-design.md` for the
 //! full design. Phase 1 (MVP) covers the daemon + unix socket + JSON-RPC +

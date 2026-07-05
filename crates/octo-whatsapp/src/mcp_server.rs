@@ -208,6 +208,112 @@ pub fn tool_descriptors() -> Vec<Value> {
             &["peer", "msg_id", "msg_timestamp"],
         ),
     ));
+    // ─── Messages (6) ─────────────────────────────────────────────────
+    v.push(td(
+        "messages.list",
+        "List recent messages, optionally filtered by peer.",
+        schema_props_optional(
+            &[("peer", "string"), ("since", "integer"), ("limit", "integer")],
+        ),
+    ));
+    v.push(td(
+        "messages.get",
+        "Get a single message by id.",
+        schema_props_required(&[("msg_id", "string")], &["msg_id"]),
+    ));
+    v.push(td(
+        "messages.search",
+        "Full-text search across message history.",
+        schema_props_required(
+            &[("query", "string"), ("peer", "string")],
+            &["query"],
+        ),
+    ));
+    v.push(td(
+        "messages.edit",
+        "Edit a previously sent text message.",
+        schema_props_required(
+            &[
+                ("peer", "string"),
+                ("msg_id", "string"),
+                ("msg_timestamp", "integer"),
+                ("new_text", "string"),
+            ],
+            &["peer", "msg_id", "msg_timestamp", "new_text"],
+        ),
+    ));
+    v.push(td(
+        "messages.mark_read",
+        "Mark messages up to a given id as read.",
+        schema_props_required(
+            &[("peer", "string"), ("up_to", "string")],
+            &["peer", "up_to"],
+        ),
+    ));
+    v.push(td(
+        "messages.download",
+        "Download a media reference to a local path.",
+        schema_props_required(
+            &[("media_ref_token", "string"), ("out", "string")],
+            &["media_ref_token", "out"],
+        ),
+    ));
+    // ─── Chats (8) ────────────────────────────────────────────────────
+    v.push(td(
+        "chats.list",
+        "List known chats (optionally filtered by kind/limit).",
+        schema_props_optional(&[("kind", "string"), ("limit", "integer")]),
+    ));
+    v.push(td(
+        "chats.info",
+        "Get info about a single chat by JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "chats.pin",
+        "Pin a chat to the top of the list.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "chats.unpin",
+        "Unpin a previously pinned chat.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "chats.mute",
+        "Mute a chat until a given epoch-seconds timestamp.",
+        schema_props_required(
+            &[("jid", "string"), ("until_epoch_secs", "integer")],
+            &["jid", "until_epoch_secs"],
+        ),
+    ));
+    v.push(td(
+        "chats.archive",
+        "Archive a chat (hide from default list).",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "chats.delete",
+        "Delete a chat and its history locally.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "chats.typing",
+        "Set or clear the typing indicator on a chat.",
+        schema_props_required(
+            &[("jid", "string"), ("on", "boolean")],
+            &["jid", "on"],
+        ),
+    ));
+    // ─── Media (1) ────────────────────────────────────────────────────
+    v.push(td(
+        "media.info",
+        "Return metadata for a media-ref token.",
+        schema_props_required(
+            &[("media_ref_token", "string")],
+            &["media_ref_token"],
+        ),
+    ));
     v
 }
 
@@ -239,6 +345,21 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "send.contact" => "send.contact",
         "send.location" => "send.location",
         "send.delete" => "send.delete",
+        "messages.list" => "messages.list",
+        "messages.get" => "messages.get",
+        "messages.search" => "messages.search",
+        "messages.edit" => "messages.edit",
+        "messages.mark_read" => "messages.mark_read",
+        "messages.download" => "messages.download",
+        "chats.list" => "chats.list",
+        "chats.info" => "chats.info",
+        "chats.pin" => "chats.pin",
+        "chats.unpin" => "chats.unpin",
+        "chats.mute" => "chats.mute",
+        "chats.archive" => "chats.archive",
+        "chats.delete" => "chats.delete",
+        "chats.typing" => "chats.typing",
+        "media.info" => "media.info",
         other => {
             return Ok(jsonrpc_error(
                 id,
@@ -308,6 +429,17 @@ fn schema_props_required(props: &[(&str, &str)], required: &[&str]) -> Value {
     })
 }
 
+fn schema_props_optional(props: &[(&str, &str)]) -> Value {
+    let mut p = serde_json::Map::new();
+    for (k, ty) in props {
+        p.insert((*k).to_string(), serde_json::json!({"type": *ty}));
+    }
+    serde_json::json!({
+        "type": "object",
+        "properties": Value::Object(p),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +466,35 @@ mod tests {
             "send.delete",
         ] {
             assert!(names.contains(m), "send tool {m:?} not advertised");
+        }
+    }
+
+    /// Task 52: messages.* + chats.* + media.info tool descriptors.
+    #[test]
+    fn messages_chats_media_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "messages.list",
+            "messages.get",
+            "messages.search",
+            "messages.edit",
+            "messages.mark_read",
+            "messages.download",
+            "chats.list",
+            "chats.info",
+            "chats.pin",
+            "chats.unpin",
+            "chats.mute",
+            "chats.archive",
+            "chats.delete",
+            "chats.typing",
+            "media.info",
+        ] {
+            assert!(names.contains(m), "tool {m:?} not advertised");
         }
     }
 }

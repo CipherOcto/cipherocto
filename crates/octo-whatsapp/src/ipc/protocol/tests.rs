@@ -71,3 +71,31 @@ fn from_json_helper_matches_serde() {
 fn from_json_helper_rejects_missing_method() {
     assert!(RpcRequest::from_json(br#"{"id":1}"#).is_err());
 }
+
+#[test]
+fn busy_serializes_to_minus_32005() {
+    assert_eq!(RpcErrorCode::Busy.as_i32(), -32005);
+}
+
+#[test]
+fn disk_unreachable_serializes_to_minus_32006() {
+    assert_eq!(RpcErrorCode::DiskUnreachable.as_i32(), -32006);
+}
+
+#[test]
+fn busy_and_group_not_admin_share_wire_code() {
+    // Both are "capacity exhausted" from the client's perspective; the
+    // variant distinction is for the Rust side, the wire side collapses.
+    assert_eq!(
+        RpcErrorCode::Busy.as_i32(),
+        RpcErrorCode::GroupNotAdmin.as_i32(),
+    );
+}
+
+#[test]
+fn disk_unreachable_and_fallback_exhausted_share_wire_code() {
+    assert_eq!(
+        RpcErrorCode::DiskUnreachable.as_i32(),
+        RpcErrorCode::FallbackExhausted.as_i32(),
+    );
+}

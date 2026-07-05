@@ -54,3 +54,33 @@ fn peer_to_jid_rejects_arbitrary_at_sign() {
         Err(JidError::InvalidPeerFormat(_))
     ));
 }
+
+#[test]
+fn group_to_jid_accepts_canonical() {
+    let jid = group_to_jid("120363123456789@g.us").unwrap();
+    assert_eq!(jid, "120363123456789@g.us");
+}
+
+#[test]
+fn group_to_jid_rejects_dm_jid() {
+    assert!(matches!(
+        group_to_jid("15551234567@s.whatsapp.net"),
+        Err(JidError::InvalidGroupFormat(_))
+    ));
+}
+
+#[test]
+fn group_to_jid_rejects_lid() {
+    assert!(matches!(
+        group_to_jid("1234@lid"),
+        Err(JidError::InvalidGroupFormat(_))
+    ));
+}
+
+#[test]
+fn group_to_jid_rejects_bare_digits() {
+    assert!(matches!(
+        group_to_jid("120363123456789"),
+        Err(JidError::InvalidGroupFormat(_))
+    ));
+}

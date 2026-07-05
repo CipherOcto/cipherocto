@@ -47,22 +47,19 @@ pub enum RpcErrorCode {
     NotConfigured = -32002,
     RateLimited = -32003,
     PayloadTooLarge = -32004,
-    /// Group-send attempted without admin/owner role.
-    GroupNotAdmin = -32005,
-    /// All fallback providers exhausted.
-    FallbackExhausted = -32006,
     /// Media-upload pre-flight: in-flight upload semaphore saturated.
-    /// Stored as a distinct Rust discriminant (-32007); serializes to
-    /// the same wire code as `GroupNotAdmin` (-32005) — both are
-    /// "capacity exhausted" from the client's perspective.
-    Busy = -32007,
+    /// Per design §Large outbound media.
+    Busy = -32005,
     /// Media-upload pre-flight: scratch-disk root unreachable.
-    /// Stored as a distinct Rust discriminant (-32008); serializes to
-    /// the same wire code as `FallbackExhausted` (-32006).
-    DiskUnreachable = -32008,
+    /// Per design §Large outbound media.
+    DiskUnreachable = -32006,
     NotConnected = -32012,
     EditWindowExpired = -32013,
     DeleteWindowExpired = -32014,
+    /// Group-send attempted without admin/owner role.
+    GroupNotAdmin = -32015,
+    /// All fallback providers exhausted.
+    FallbackExhausted = -32016,
     Internal = -32050,
     Unimplemented = -32060,
     ShuttingDown = -32099,
@@ -84,13 +81,13 @@ impl RpcErrorCode {
             RpcErrorCode::NotConfigured => -32002,
             RpcErrorCode::RateLimited => -32003,
             RpcErrorCode::PayloadTooLarge => -32004,
-            RpcErrorCode::GroupNotAdmin => -32005,
-            RpcErrorCode::FallbackExhausted => -32006,
             RpcErrorCode::Busy => -32005,
             RpcErrorCode::DiskUnreachable => -32006,
             RpcErrorCode::NotConnected => -32012,
             RpcErrorCode::EditWindowExpired => -32013,
             RpcErrorCode::DeleteWindowExpired => -32014,
+            RpcErrorCode::GroupNotAdmin => -32015,
+            RpcErrorCode::FallbackExhausted => -32016,
             RpcErrorCode::Internal => -32050,
             RpcErrorCode::Unimplemented => -32060,
             RpcErrorCode::ShuttingDown => -32099,

@@ -83,21 +83,13 @@ fn disk_unreachable_serializes_to_minus_32006() {
 }
 
 #[test]
-fn busy_and_group_not_admin_share_wire_code() {
-    // Both are "capacity exhausted" from the client's perspective; the
-    // variant distinction is for the Rust side, the wire side collapses.
-    assert_eq!(
-        RpcErrorCode::Busy.as_i32(),
-        RpcErrorCode::GroupNotAdmin.as_i32(),
-    );
+fn group_not_admin_serializes_to_minus_32015() {
+    assert_eq!(RpcErrorCode::GroupNotAdmin.as_i32(), -32015);
 }
 
 #[test]
-fn disk_unreachable_and_fallback_exhausted_share_wire_code() {
-    assert_eq!(
-        RpcErrorCode::DiskUnreachable.as_i32(),
-        RpcErrorCode::FallbackExhausted.as_i32(),
-    );
+fn fallback_exhausted_serializes_to_minus_32016() {
+    assert_eq!(RpcErrorCode::FallbackExhausted.as_i32(), -32016);
 }
 
 #[test]

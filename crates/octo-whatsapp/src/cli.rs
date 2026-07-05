@@ -366,3 +366,29 @@ pub fn dispatch_simple(cli: &Cli, method: &str) -> anyhow::Result<()> {
     let result = RpcClient::new(resolve_socket_path(cli)).call(method, serde_json::Value::Null)?;
     print_result(cli.json, &result)
 }
+
+/// Wire `send text <peer> --text "..."` (Task 42) and `groups *` (Task 43).
+pub fn dispatch_send(cli: &Cli, args: &SendArgs) -> anyhow::Result<()> {
+    match &args.kind {
+        SendKind::Text { peer, text } => {
+            let params = serde_json::json!({"peer": peer, "text": text});
+            let result = RpcClient::new(resolve_socket_path(cli)).call("send.text", params)?;
+            print_result(cli.json, &result)
+        }
+    }
+}
+
+pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        GroupsAction::Create { subject, members } => (
+            "groups.create",
+            serde_json::json!({"subject": subject, "members": members}),
+        ),
+        GroupsAction::List => ("groups.list", serde_json::Value::Null),
+        GroupsAction::Info { jid } => ("groups.info", serde_json::json!({"jid": jid})),
+        GroupsAction::Leave { jid } => ("groups.leave", serde_json::json!({"jid": jid})),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}

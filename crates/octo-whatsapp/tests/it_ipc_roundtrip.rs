@@ -42,7 +42,9 @@ async fn ipc_roundtrip_via_unix_socket() {
     let server_handle = handle.clone();
     let server_registry = registry.clone();
     let server_task = tokio::spawn(async move {
-        server.serve(server_handle, server_registry, server_cancel).await
+        server
+            .serve(server_handle, server_registry, server_cancel)
+            .await
     });
 
     // The listener is bound before serve() is called, so connect should

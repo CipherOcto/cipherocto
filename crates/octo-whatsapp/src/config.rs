@@ -37,6 +37,25 @@ impl Default for MediaBufferConfig {
     }
 }
 
+/// Phase 3: in-memory events retention. Bounded by `max_rows` (cap)
+/// and `retention_days` (TTL, currently advisory — `max_rows` is the
+/// primary bound). Default `max_rows = 1_000_000` and
+/// `retention_days = 30` per design §InboundEvent retention.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EventsConfig {
+    pub max_rows: usize,
+    pub retention_days: u32,
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            max_rows: 1_000_000,
+            retention_days: 30,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WhatsAppRuntimeConfig {
     pub name: String,
@@ -50,6 +69,9 @@ pub struct WhatsAppRuntimeConfig {
     /// `$TMPDIR/octo-whatsapp` (safe production default).
     #[serde(default)]
     pub media_buffer: MediaBufferConfig,
+    /// Phase 3: events retention. Default 1M rows, 30 days.
+    #[serde(default)]
+    pub events: EventsConfig,
 }
 
 impl Default for WhatsAppRuntimeConfig {
@@ -60,6 +82,7 @@ impl Default for WhatsAppRuntimeConfig {
             log_dir: default_log_dir(),
             socket_dir: default_socket_dir(),
             media_buffer: MediaBufferConfig::default(),
+            events: EventsConfig::default(),
         }
     }
 }
@@ -111,6 +134,16 @@ impl WhatsAppRuntimeConfig {
         if self.media_buffer.root.as_os_str().is_empty() {
             return Err(ConfigError::InvalidName(
                 "media_buffer.root must be non-empty".into(),
+            ));
+        }
+        if self.events.max_rows == 0 {
+            return Err(ConfigError::InvalidName(
+                "events.max_rows must be > 0 (got 0)".to_string(),
+            ));
+        }
+        if self.events.retention_days == 0 {
+            return Err(ConfigError::InvalidName(
+                "events.retention_days must be > 0 (got 0)".to_string(),
             ));
         }
         Ok(())

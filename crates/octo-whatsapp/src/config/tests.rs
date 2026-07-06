@@ -85,6 +85,7 @@ fn media_buffer_config_validates() {
             max_concurrent_uploads: 4,
             root: std::env::temp_dir().join("mb"),
         },
+        events: EventsConfig::default(),
     };
     assert!(cfg.validate().is_ok());
     let bad = WhatsAppRuntimeConfig {
@@ -96,6 +97,7 @@ fn media_buffer_config_validates() {
             max_concurrent_uploads: 0,
             root: std::env::temp_dir(),
         },
+        events: EventsConfig::default(),
     };
     assert!(bad.validate().is_err());
 }

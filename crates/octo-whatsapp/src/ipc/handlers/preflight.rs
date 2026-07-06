@@ -76,7 +76,7 @@ pub async fn preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{MediaBufferConfig, WhatsAppRuntimeConfig};
+    use crate::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
     use crate::daemon::Daemon;
     use std::io::Write as _;
 
@@ -90,6 +90,7 @@ mod tests {
                 max_concurrent_uploads: cap,
                 root: std::env::temp_dir().join(format!("octo-pf-{}-{}", std::process::id(), cap)),
             },
+            events: EventsConfig::default(),
         };
         Daemon::new(cfg).handle()
     }

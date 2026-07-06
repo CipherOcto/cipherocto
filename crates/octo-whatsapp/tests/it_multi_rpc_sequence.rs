@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use octo_whatsapp::config::{MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
 use octo_whatsapp::daemon::Daemon;
 
 fn rpc_call(stream: &mut UnixStream, method: &str, params: serde_json::Value) -> serde_json::Value {
@@ -38,6 +38,7 @@ async fn multi_rpc_sequence_on_single_connection() {
         log_dir: tmp.path().join("log"),
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
+        events: EventsConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

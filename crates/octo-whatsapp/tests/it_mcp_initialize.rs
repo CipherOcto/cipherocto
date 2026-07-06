@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use octo_whatsapp::config::{MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
 use octo_whatsapp::daemon::Daemon;
 use octo_whatsapp::mcp_server::EXPECTED_TOOL_COUNT;
 
@@ -17,6 +17,7 @@ async fn mcp_initialize_returns_protocol_version_2025_06_18() {
         log_dir: tmp.path().join("log"),
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
+        events: EventsConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -92,6 +93,7 @@ async fn mcp_tools_list_advertises_full_surface() {
         log_dir: tmp.path().join("log"),
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
+        events: EventsConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

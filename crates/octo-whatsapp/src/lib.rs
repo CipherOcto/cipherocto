@@ -17,6 +17,7 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod events;
+pub mod events_persister;
 pub mod ipc;
 pub mod jids;
 pub mod limits;

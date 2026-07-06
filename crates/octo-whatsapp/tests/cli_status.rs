@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use assert_cmd::Command;
-use octo_whatsapp::config::{MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
 use octo_whatsapp::daemon::Daemon;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -21,6 +21,7 @@ async fn cli_status_reads_daemon() {
         log_dir: tmp.path().join("log"),
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
+        events: EventsConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

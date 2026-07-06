@@ -8,6 +8,7 @@ use tracing::info;
 
 use crate::adapter_trait::OctoWhatsAppAdapter;
 use crate::config::WhatsAppRuntimeConfig;
+use crate::events_persister::EventsBuffer;
 use crate::media_buffer::MediaBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -53,6 +54,10 @@ struct DaemonInner {
     /// reasons as `phase` above — RPC handlers must not block a tokio
     /// runtime, and writes (bind / unbind) are instantaneous.
     adapter: std::sync::RwLock<Option<Arc<dyn OctoWhatsAppAdapter>>>,
+    /// Phase 3: in-memory events ring buffer. Populated by the event
+    /// router (sinks receive InboundEvent) and queried by
+    /// `events.list/show/replay` handlers.
+    events_buffer: Arc<EventsBuffer>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -70,6 +75,10 @@ impl std::fmt::Debug for DaemonInner {
                 } else {
                     "None"
                 },
+            )
+            .field(
+                "events_buffer",
+                &format_args!("EventsBuffer{{ len={} }}", self.events_buffer.len()),
             )
             .finish()
     }
@@ -148,6 +157,13 @@ impl DaemonHandle {
             .write()
             .unwrap_or_else(|p| p.into_inner()) = Some(a);
     }
+
+    /// Phase 3: read access to the in-memory events ring buffer. The
+    /// event router populates this; `events.list/show/replay` RPC
+    /// handlers consult it.
+    pub fn events_buffer(&self) -> &Arc<EventsBuffer> {
+        &self.inner.events_buffer
+    }
 }
 
 pub struct Daemon {
@@ -177,6 +193,7 @@ impl Daemon {
             self.config.media_buffer.max_concurrent_uploads,
             self.config.media_buffer.root.clone(),
         );
+        let events_buffer = EventsBuffer::new(self.config.events.max_rows);
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
@@ -184,6 +201,7 @@ impl Daemon {
                 phase: std::sync::RwLock::new(DaemonPhase::Booting),
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
+                events_buffer,
             }),
         }
     }

@@ -74,6 +74,10 @@ pub enum Command {
     Shutdown,
     /// Onboarding passthrough (delegates to octo-whatsapp-onboard-core).
     Onboard(OnboardCmd),
+    /// Client session discovery (Phase 3).
+    Clients(ClientsCmd),
+    /// Daemon method discovery (Phase 3). `methods list|help METHOD`.
+    Methods(MethodsCmd),
 }
 
 #[derive(Debug, Args)]
@@ -353,16 +357,67 @@ pub struct EventsCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum EventsAction {
-    /// List recent events.
-    List,
+    /// List recent events (most recent first).
+    List {
+        /// Maximum number of events to return (1..=10000, default 100).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     /// Show a single event by id.
-    Show { id: String },
+    Show {
+        /// Event id (1-based, returned by `events.list`).
+        id: String,
+    },
+    /// Replay events since a given id (Loss recovery).
+    Replay {
+        /// Start id (exclusive lower bound).
+        #[arg(long)]
+        since_id: Option<u64>,
+        /// Maximum number of events to return (1..=10000, default 100).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Tail the event stream (returns recent buffer snapshot).
+    Tail {
+        /// Maximum number of events to return (1..=10000, default 100).
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Args)]
 pub struct OnboardCmd {
     #[command(subcommand)]
     pub action: OnboardAction,
+}
+
+#[derive(Debug, Args)]
+pub struct ClientsCmd {
+    #[command(subcommand)]
+    pub action: ClientsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ClientsAction {
+    /// List active MCP client sessions.
+    List,
+}
+
+#[derive(Debug, Args)]
+pub struct MethodsCmd {
+    #[command(subcommand)]
+    pub action: MethodsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MethodsAction {
+    /// Print every method name.
+    List,
+    /// Print help for a single method.
+    Show {
+        /// Method name (e.g. `send.text`).
+        method: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -819,8 +874,39 @@ pub fn dispatch_triggers(cli: &Cli, cmd: &TriggersCmd) -> anyhow::Result<()> {
 pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
     let (method, params) = match &cmd.action {
-        EventsAction::List => ("events.list", serde_json::Value::Null),
+        EventsAction::List { limit } => ("events.list", serde_json::json!({ "limit": limit })),
         EventsAction::Show { id } => ("events.show", serde_json::json!({"id": id})),
+        EventsAction::Replay { since_id, limit } => (
+            "events.replay",
+            serde_json::json!({
+                "since_id": since_id.unwrap_or(0),
+                "limit": limit,
+            }),
+        ),
+        EventsAction::Tail { limit } => ("events.tail", serde_json::json!({ "limit": limit })),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Phase 3: `clients list` discovery.
+pub fn dispatch_clients(cli: &Cli, cmd: &ClientsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        ClientsAction::List => ("clients.list", serde_json::Value::Null),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Phase 3: `methods list|show` discovery.
+pub fn dispatch_methods(cli: &Cli, cmd: &MethodsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        MethodsAction::List => ("daemon.methods.list", serde_json::Value::Null),
+        MethodsAction::Show { method } => {
+            ("daemon.methods.help", serde_json::json!({ "method": method }))
+        }
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
@@ -922,6 +1008,8 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Reconnect => dispatch_reconnect(&cli),
         Command::Shutdown => dispatch_shutdown(&cli),
         Command::Onboard(ref cmd) => dispatch_onboard(&cli, cmd),
+        Command::Clients(ref cmd) => dispatch_clients(&cli, cmd),
+        Command::Methods(ref cmd) => dispatch_methods(&cli, cmd),
     }
 }
 
@@ -1325,7 +1413,7 @@ mod tests {
         let l = Cli::try_parse_from(["octo-whatsapp", "events", "list"]).unwrap();
         match l.command {
             Command::Events(cmd) => match cmd.action {
-                EventsAction::List => {}
+                EventsAction::List { .. } => {}
                 _ => panic!("expected EventsAction::List"),
             },
             _ => panic!("expected Command::Events"),
@@ -1339,6 +1427,70 @@ mod tests {
                 _ => panic!("expected EventsAction::Show"),
             },
             _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_events_replay_and_tail() {
+        let r = Cli::try_parse_from([
+            "octo-whatsapp",
+            "events",
+            "replay",
+            "--since-id",
+            "42",
+            "--limit",
+            "200",
+        ])
+        .unwrap();
+        match r.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::Replay { since_id, limit } => {
+                    assert_eq!(since_id, Some(42));
+                    assert_eq!(limit, 200);
+                }
+                _ => panic!("expected EventsAction::Replay"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+        let t = Cli::try_parse_from(["octo-whatsapp", "events", "tail", "--limit", "50"]).unwrap();
+        match t.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::Tail { limit } => assert_eq!(limit, 50),
+                _ => panic!("expected EventsAction::Tail"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_clients_list() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "clients", "list"]).unwrap();
+        assert!(matches!(
+            c.command,
+            Command::Clients(ClientsCmd { action: ClientsAction::List })
+        ));
+    }
+
+    #[test]
+    fn cli_parses_methods_list_and_show() {
+        let l = Cli::try_parse_from(["octo-whatsapp", "methods", "list"]).unwrap();
+        match l.command {
+            Command::Methods(cmd) => match cmd.action {
+                MethodsAction::List => {}
+                _ => panic!("expected MethodsAction::List"),
+            },
+            _ => panic!("expected Command::Methods"),
+        }
+        let h =
+            Cli::try_parse_from(["octo-whatsapp", "methods", "show", "send.text"]).unwrap();
+        match h.command {
+            Command::Methods(cmd) => match cmd.action {
+                MethodsAction::Show { method } => {
+                    assert_eq!(method, "send.text");
+                }
+                _ => panic!("expected MethodsAction::Show"),
+            },
+            _ => panic!("expected Command::Methods"),
         }
     }
 

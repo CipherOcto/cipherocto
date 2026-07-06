@@ -904,9 +904,10 @@ pub fn dispatch_methods(cli: &Cli, cmd: &MethodsCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
     let (method, params) = match &cmd.action {
         MethodsAction::List => ("daemon.methods.list", serde_json::Value::Null),
-        MethodsAction::Show { method } => {
-            ("daemon.methods.help", serde_json::json!({ "method": method }))
-        }
+        MethodsAction::Show { method } => (
+            "daemon.methods.help",
+            serde_json::json!({ "method": method }),
+        ),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
@@ -1467,7 +1468,9 @@ mod tests {
         let c = Cli::try_parse_from(["octo-whatsapp", "clients", "list"]).unwrap();
         assert!(matches!(
             c.command,
-            Command::Clients(ClientsCmd { action: ClientsAction::List })
+            Command::Clients(ClientsCmd {
+                action: ClientsAction::List
+            })
         ));
     }
 
@@ -1481,8 +1484,7 @@ mod tests {
             },
             _ => panic!("expected Command::Methods"),
         }
-        let h =
-            Cli::try_parse_from(["octo-whatsapp", "methods", "show", "send.text"]).unwrap();
+        let h = Cli::try_parse_from(["octo-whatsapp", "methods", "show", "send.text"]).unwrap();
         match h.command {
             Command::Methods(cmd) => match cmd.action {
                 MethodsAction::Show { method } => {

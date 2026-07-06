@@ -113,6 +113,16 @@ impl EventsRouter {
         })
     }
 
+    /// Construct from owned parts. Used by `DaemonHandle::build_event_router`
+    /// in test-helpers mode where the broadcast source is not bound.
+    pub fn from_parts(buffer: Arc<EventsBuffer>, cancel: CancellationToken) -> Self {
+        Self {
+            buffer,
+            sinks: parking_lot::Mutex::new(Vec::new()),
+            cancel,
+        }
+    }
+
     /// Register a new sink. The returned `EventsSubscriber` is the
     /// consumer side. Each sink has its own bounded mpsc; the
     /// capacity is `capacity` events (drops beyond that increment

@@ -62,7 +62,7 @@ async fn concurrent_clients_each_get_correct_responses() {
                 reader.read_line(&mut resp_line).unwrap();
                 let resp: serde_json::Value = serde_json::from_str(resp_line.trim()).unwrap();
                 assert_eq!(resp["id"], client_id * 100 + call_id);
-                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase2");
+                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase3");
             }
         }));
     }

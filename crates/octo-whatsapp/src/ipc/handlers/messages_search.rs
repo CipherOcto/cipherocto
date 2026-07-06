@@ -64,6 +64,11 @@ mod tests {
     use octo_adapter_whatsapp::MessageHit;
     use std::sync::Arc;
 
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
+
     fn handle_with_mock() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         let h = Daemon::new(cfg).handle();
@@ -119,5 +124,20 @@ mod tests {
         assert_eq!(r["hits"].as_array().unwrap().len(), 1);
         assert_eq!(r["hits"][0]["msg_id"], "msg-1");
         assert_eq!(r["hits"][0]["snippet"], "hello world");
+    }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let err = MessagesSearch
+            .call(
+                handle(),
+                serde_json::json!({
+                    "query": "hello",
+                    "peer": "1234567890@s.whatsapp.net",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
     }
 }

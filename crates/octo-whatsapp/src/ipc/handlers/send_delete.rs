@@ -136,4 +136,24 @@ mod tests {
         let elapsed = r["elapsed_seconds"].as_i64().unwrap();
         assert!((0..=DELETE_WINDOW_SECONDS).contains(&elapsed));
     }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let err = SendDelete
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "msg_id": "ABCDEFG",
+                    "msg_timestamp": now - 60, // 1 minute ago — inside the window
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
 }

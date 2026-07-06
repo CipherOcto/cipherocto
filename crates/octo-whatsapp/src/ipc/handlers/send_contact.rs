@@ -62,11 +62,35 @@ mod tests {
     use crate::test_mock_adapter::MockAdapter;
     use std::sync::Arc;
 
-    fn handle_with_mock() -> DaemonHandle {
+    fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
         h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
         h
+    }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        // Adapter is None — pre-flight passes (small real file), but
+        // h.adapter().ok_or(NotConnected)? must fire before any adapter call.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("contact.vcf");
+        std::fs::write(&f, b"BEGIN:VCARD\nEND:VCARD\n").unwrap();
+        let err = SendContact
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "vcard": f,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
     }
 
     #[tokio::test]

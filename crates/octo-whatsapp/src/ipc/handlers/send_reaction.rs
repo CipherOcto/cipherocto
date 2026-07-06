@@ -121,4 +121,20 @@ mod tests {
         assert_eq!(r["message_id"], "fake-rxn-msg-id");
         assert_eq!(r["kind"], "reaction");
     }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let err = SendReaction
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "msg_id": "3EB0B1234567890ABCDEF",
+                    "emoji": "\u{1F44D}",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
 }

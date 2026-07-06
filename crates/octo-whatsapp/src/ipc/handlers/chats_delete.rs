@@ -52,11 +52,29 @@ mod tests {
     use crate::test_mock_adapter::MockAdapter;
     use std::sync::Arc;
 
-    fn handle_with_mock() -> DaemonHandle {
+    fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
         h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
         h
+    }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let err = ChatsDelete
+            .call(
+                handle(),
+                serde_json::json!({
+                    "jid": "1234567890@s.whatsapp.net",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
     }
 
     #[tokio::test]
@@ -72,5 +90,40 @@ mod tests {
             .unwrap();
         assert_eq!(r["status"], "deleted");
         assert_eq!(r["jid"], "1234567890@s.whatsapp.net");
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        let err = ChatsDelete
+            .call(handle(), serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn adapter_error_returns_minus_32012() {
+        let h = handle();
+        let mock = Arc::new(MockAdapter::new());
+        mock.set_unit_err(
+            "delete_chat",
+            octo_network::dot::error::PlatformAdapterError::Unreachable {
+                platform: "mock".into(),
+                reason: "test".into(),
+            },
+        );
+        h.set_adapter_for_tests(mock);
+        let err = ChatsDelete
+            .call(
+                h,
+                serde_json::json!({
+                    "jid": "1234567890@s.whatsapp.net",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+        let data = err.data.unwrap();
+        assert_eq!(data["jid"], "1234567890@s.whatsapp.net");
     }
 }

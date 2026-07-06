@@ -139,4 +139,25 @@ mod tests {
         assert_eq!(r["msg_id"], "ABCDEFG");
         assert!(r["elapsed_seconds"].as_i64().unwrap() >= 60);
     }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let err = MessagesEdit
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "msg_id": "ABCDEFG",
+                    "msg_timestamp": now - 60, // 1 minute ago — inside the window
+                    "new_text": "replacement",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
 }

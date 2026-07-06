@@ -123,4 +123,21 @@ mod tests {
         assert_eq!(r["message_id"], "fake-loc-msg-id");
         assert_eq!(r["kind"], "location");
     }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let err = SendLocation
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "lat": 51.5074,
+                    "lon": -0.1278,
+                    "name": "London",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
 }

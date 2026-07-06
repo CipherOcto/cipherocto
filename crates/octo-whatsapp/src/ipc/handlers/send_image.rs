@@ -99,6 +99,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        // Adapter is None — pre-flight passes (small real file), but
+        // h.adapter().ok_or(NotConnected)? must fire before any adapter call.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("img.bin");
+        std::fs::write(&f, b"hello").unwrap();
+        let err = SendImage
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
     async fn success_path_with_mock() {
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("img.bin");

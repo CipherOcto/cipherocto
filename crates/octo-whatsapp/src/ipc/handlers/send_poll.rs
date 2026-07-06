@@ -125,4 +125,21 @@ mod tests {
         assert_eq!(r["option_count"], 2);
         assert_eq!(r["kind"], "poll");
     }
+
+    #[tokio::test]
+    async fn not_connected_returns_minus_32012() {
+        let err = SendPoll
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "question": "Pick one?",
+                    "options": ["A", "B"],
+                    "multi": false,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
 }

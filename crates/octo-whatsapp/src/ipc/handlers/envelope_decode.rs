@@ -65,9 +65,54 @@ impl RpcHandler for EnvelopeDecode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
 
     #[test]
     fn name_is_envelope_decode() {
         assert_eq!(EnvelopeDecode.name(), "envelope.decode");
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        // Missing required `encoded` field.
+        let err = EnvelopeDecode
+            .call(handle(), serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn invalid_payload_returns_minus_32602() {
+        // Garbage string without the DOT/1/ prefix.
+        let err = EnvelopeDecode
+            .call(handle(), serde_json::json!({"encoded": "not-an-envelope"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_returns_decoded_envelope() {
+        // Build a valid DOT/1/{b64} envelope and decode it.
+        let wire = vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
+        let encoded = octo_adapter_whatsapp::WhatsAppWebAdapter::encode_envelope(&wire);
+        let r = EnvelopeDecode
+            .call(handle(), serde_json::json!({"encoded": encoded}))
+            .await
+            .unwrap();
+        assert_eq!(r["wire_bytes"], wire.len());
+        assert_eq!(r["wire_hex"], "deadbeef0102");
+        // Base64 must round-trip.
+        let decoded_b64 = base64::engine::general_purpose::STANDARD
+            .decode(r["wire_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(decoded_b64, wire);
     }
 }

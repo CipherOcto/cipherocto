@@ -688,3 +688,330 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         <Self as PlatformAdapter>::download_media(self, media_ref_token).await
     }
 }
+
+// ===========================================================================
+// Tests — delegation coverage
+// ===========================================================================
+//
+// `OctoWhatsAppAdapter` is consumed by the runtime's `DaemonHandle` via an
+// `Arc<dyn OctoWhatsAppAdapter>`. In production the daemon either binds a
+// `MockAdapter` (in tests) or a live `WhatsAppWebAdapter` (in production),
+// so the `impl OctoWhatsAppAdapter for WhatsAppWebAdapter` block above
+// (330 lines) is never exercised by `DaemonHandle` test paths. Result:
+// `adapter_trait.rs` shows 0% line coverage in `cargo llvm-cov ... -p
+// octo-whatsapp` — the runtime always binds the mock.
+//
+// These tests close that gap by direct-calling each method on a
+// `WhatsAppWebAdapter::new_unconnected_for_tests()` fixture (an unconnected
+// adapter with no live wacore client). Each method that needs a connected
+// client returns `Err(PlatformAdapterError::Unreachable { reason:
+// "client not connected", .. })`; `delete_chat` returns `Ok(())` (pure
+// client-side op, no client required); `capabilities()` returns a static
+// `CapabilityReport`. Proving the `impl` body runs end-to-end is the goal
+// — not exhaustively re-testing the inherent method bodies (those are
+// already pinned by `inherent.rs`'s `mod tests`).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octo_adapter_whatsapp::WhatsAppWebAdapter;
+    use octo_network::dot::error::PlatformAdapterError;
+
+    fn adapter() -> WhatsAppWebAdapter {
+        // Inlines the same minimal config used by the adapter's own
+        // `#[cfg(any(test, feature = "test-helpers"))]`
+        // `new_unconnected_for_tests()` — duplicated here so this test
+        // module can build against `octo-adapter-whatsapp`'s public API
+        // without flipping any feature flag on the dep crate.
+        // `session_path` is required by `WhatsAppConfig`; `start_bot` is
+        // never called from here so the path is never opened or written.
+        let cfg_json =
+            br#"{"session_path":"/tmp/octo-whatsapp-trait-test.session.db","groups":[]}"#;
+        WhatsAppWebAdapter::from_config_bytes(cfg_json)
+            .expect("test adapter: from_config_bytes should accept the minimal JSON")
+    }
+
+    /// Build a temp file with `size` zero bytes; returns its `PathBuf`.
+    fn tmp_file(name: &str, size: usize) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("octo-octowa-traits-{name}"));
+        std::fs::write(&p, vec![0u8; size]).unwrap();
+        p
+    }
+
+    /// A peer JID with the canonical shape `<digits>@s.whatsapp.net` —
+    /// passes the `wacore_binary::Jid::parse` precondition that several
+    /// inherent methods enforce before the client lock check.
+    const JID: &str = "1234567890@s.whatsapp.net";
+
+    /// Assert the inherent client-gate fired: every method that needs a
+    /// live `wacore` client short-circuits with
+    /// `Unreachable { reason: "client not connected" }`.
+    fn assert_client_not_connected<T: std::fmt::Debug>(r: Result<T, PlatformAdapterError>) {
+        match r {
+            Err(PlatformAdapterError::Unreachable { reason, .. }) => {
+                assert!(
+                    reason.contains("client not connected"),
+                    "expected reason containing 'client not connected', got {reason:?}"
+                );
+            }
+            Err(other) => {
+                panic!("expected Err(Unreachable {{ client not connected }}), got {other:?}")
+            }
+            Ok(v) => panic!("expected Err(Unreachable {{ client not connected }}), got Ok({v:?})"),
+        }
+    }
+
+    // ── Group A: file-based send (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_send_image() {
+        let p = tmp_file("img.jpg", 16);
+        let r = adapter().send_image(JID, &p, None).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_video() {
+        let p = tmp_file("vid.mp4", 16);
+        let r = adapter().send_video(JID, &p, None).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_audio() {
+        let p = tmp_file("aud.mp3", 16);
+        let r = adapter().send_audio(JID, &p).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_voice() {
+        let p = tmp_file("vo.ogg", 16);
+        let r = adapter().send_voice(JID, &p).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_sticker() {
+        let p = tmp_file("stk.webp", 16);
+        let r = adapter().send_sticker(JID, &p).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+
+    // ── Group B: payload-only send (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_send_reaction() {
+        assert_client_not_connected(adapter().send_reaction(JID, "msg-1", "\u{1f44d}").await);
+    }
+    #[tokio::test]
+    async fn delegation_send_poll() {
+        let opts = vec!["A".to_string(), "B".to_string()];
+        assert_client_not_connected(adapter().send_poll(JID, "Q?", &opts, false).await);
+    }
+    #[tokio::test]
+    async fn delegation_send_contact() {
+        let p = tmp_file("contact.vcf", 16);
+        let r = adapter().send_contact(JID, &p).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_location() {
+        assert_client_not_connected(
+            adapter()
+                .send_location(JID, 37.7749, -122.4194, "San Francisco")
+                .await,
+        );
+    }
+
+    // ── Group C: message lifecycle (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_edit_message() {
+        assert_client_not_connected(adapter().edit_message(JID, "msg-1", "edited").await);
+    }
+    #[tokio::test]
+    async fn delegation_delete_message() {
+        assert_client_not_connected(adapter().delete_message(JID, "msg-1").await);
+    }
+    #[tokio::test]
+    async fn delegation_mark_read() {
+        assert_client_not_connected(adapter().mark_read(JID, "msg-1").await);
+    }
+
+    // ── Group D: search + chat metadata (unchecked) ──
+    //
+    // `message_search` and `chat_info` consult the local store, not the
+    // client — they return `Ok` with empty / minimal data when no store
+    // is bound. We assert no panic and a successful Ok to prove the trait
+    // dispatch reached the inherent body.
+
+    #[tokio::test]
+    async fn delegation_message_search() {
+        let r = adapter().message_search("query", Some(JID)).await;
+        assert!(r.is_ok(), "message_search returned error: {r:?}");
+    }
+    #[tokio::test]
+    async fn delegation_chat_info() {
+        let r = adapter().chat_info(JID).await;
+        assert!(r.is_ok(), "chat_info returned error: {r:?}");
+    }
+
+    // ── Group E: chat ops (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_set_chat_pinned() {
+        // The inherent body short-circuits BEFORE the client-lock check
+        // with `Unreachable { reason: "chat pinning not yet supported by
+        // wacore 0.6" }`. That's still proof the trait dispatch reached
+        // the inherent method — accept any `Unreachable` variant.
+        match adapter().set_chat_pinned(JID, true).await {
+            Err(PlatformAdapterError::Unreachable { .. }) => {}
+            other => panic!("expected Err(Unreachable {{ .. }}), got {other:?}"),
+        }
+    }
+    #[tokio::test]
+    async fn delegation_set_chat_muted() {
+        match adapter().set_chat_muted(JID, 0).await {
+            Err(PlatformAdapterError::Unreachable { .. }) => {}
+            other => panic!("expected Err(Unreachable {{ .. }}), got {other:?}"),
+        }
+    }
+    #[tokio::test]
+    async fn delegation_set_chat_archived() {
+        match adapter().set_chat_archived(JID, true).await {
+            Err(PlatformAdapterError::Unreachable { .. }) => {}
+            other => panic!("expected Err(Unreachable {{ .. }}), got {other:?}"),
+        }
+    }
+    #[tokio::test]
+    async fn delegation_delete_chat() {
+        // `delete_chat` is a pure client-side cache clear — succeeds even
+        // with no client bound.
+        assert_eq!(adapter().delete_chat(JID).await, Ok(()));
+    }
+
+    // ── Group F: presence (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_send_typing() {
+        assert_client_not_connected(adapter().send_typing(JID, true).await);
+    }
+
+    // ── Group G: size-gated wrappers ──
+    //
+    // These read the file (or compute a payload size) BEFORE calling the
+    // unchecked inherent method. We pass a small file / well-sized text
+    // so the size check passes and the inherent body runs (which then
+    // short-circuits on the missing client).
+
+    #[tokio::test]
+    async fn delegation_send_image_checked() {
+        let p = tmp_file("img-c.jpg", 16);
+        let r = adapter().send_image_checked(JID, &p, None, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_video_checked() {
+        let p = tmp_file("vid-c.mp4", 16);
+        let r = adapter().send_video_checked(JID, &p, None, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_audio_checked() {
+        let p = tmp_file("aud-c.mp3", 16);
+        let r = adapter().send_audio_checked(JID, &p, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_voice_checked() {
+        let p = tmp_file("vo-c.ogg", 16);
+        let r = adapter().send_voice_checked(JID, &p, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_sticker_checked() {
+        let p = tmp_file("stk-c.webp", 16);
+        let r = adapter().send_sticker_checked(JID, &p, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_reaction_checked() {
+        // payload = msg_id.len() + emoji.len() + 16 = 5 + 4 + 16 = 25; max 1024 OK.
+        assert_client_not_connected(
+            adapter()
+                .send_reaction_checked(JID, "msg-1", "\u{1f44d}", 1024)
+                .await,
+        );
+    }
+    #[tokio::test]
+    async fn delegation_send_poll_checked() {
+        let opts = vec!["A".to_string()];
+        // payload = 2 + 1 + 32 = 35; max 1024 OK.
+        assert_client_not_connected(
+            adapter()
+                .send_poll_checked(JID, "Q?", &opts, false, 1024)
+                .await,
+        );
+    }
+    #[tokio::test]
+    async fn delegation_send_contact_checked() {
+        let p = tmp_file("cont-c.vcf", 16);
+        let r = adapter().send_contact_checked(JID, &p, 1024).await;
+        let _ = std::fs::remove_file(&p);
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_send_location_checked() {
+        // payload = name.len() + 64 = 13 + 64 = 77; max 1024 OK.
+        assert_client_not_connected(
+            adapter()
+                .send_location_checked(JID, 0.0, 0.0, "Anywhere", 1024)
+                .await,
+        );
+    }
+    #[tokio::test]
+    async fn delegation_edit_message_checked() {
+        // payload = new_text.len() = 3; max 1024 OK.
+        assert_client_not_connected(
+            adapter()
+                .edit_message_checked(JID, "msg-1", "new", 1024)
+                .await,
+        );
+    }
+
+    // ── Non-async: capabilities delegation ──
+
+    #[test]
+    fn delegation_capabilities() {
+        // capabilities() returns a static CapabilityReport — must not
+        // depend on client state.
+        let r = adapter().capabilities();
+        assert!(
+            r.max_payload_bytes > 0,
+            "capabilities().max_payload_bytes must be > 0, got {}",
+            r.max_payload_bytes
+        );
+    }
+
+    // ── Non-async: download_media delegation ──
+    //
+    // `download_media` decodes the base64url token first; an invalid token
+    // short-circuits to `ApiError` BEFORE the client-lock check. So we
+    // accept any `Err` variant here — the goal is to prove the trait
+    // wrapper reached the inherent body (which it did: the inherent
+    // `download_via_media_ref` ran and returned `Err`, surfaced through
+    // the trait wrapper).
+
+    #[tokio::test]
+    async fn delegation_download_media() {
+        let r = adapter().download_media("not-base64!!!").await;
+        assert!(r.is_err(), "download_media must error on bad token, got Ok");
+    }
+}

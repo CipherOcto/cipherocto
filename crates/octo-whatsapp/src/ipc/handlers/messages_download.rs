@@ -55,3 +55,79 @@ impl RpcHandler for MessagesDownload {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
+
+    #[test]
+    fn name_is_messages_download() {
+        assert_eq!(MessagesDownload.name(), "messages.download");
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        // No `media_ref_token` field — params deserialization fails.
+        let tmp = tempfile::tempdir().unwrap();
+        let err = MessagesDownload
+            .call(
+                handle(),
+                serde_json::json!({"out_path": tmp.path().join("out.bin")}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn no_adapter_returns_not_connected() {
+        // Valid params but no adapter bound — early NotConnected (-32012).
+        let tmp = tempfile::tempdir().unwrap();
+        let err = MessagesDownload
+            .call(
+                handle(),
+                serde_json::json!({
+                    "media_ref_token": "tok-abc",
+                    "out_path": tmp.path().join("out.bin"),
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock_returns_decoded_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("dl.bin");
+        let h = handle();
+        // Override mock to return a known payload.
+        let mock = MockAdapter::new();
+        mock.set_download_media_result("download_media", vec![1, 2, 3, 4, 5]);
+        h.set_adapter_for_tests(Arc::new(mock));
+        let r = MessagesDownload
+            .call(
+                h,
+                serde_json::json!({
+                    "media_ref_token": "tok-xyz",
+                    "out_path": out.clone(),
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "downloaded");
+        assert_eq!(r["size_bytes"], 5);
+        assert_eq!(r["out_path"], serde_json::json!(out));
+        // Verify file was actually written.
+        assert_eq!(std::fs::read(&out).unwrap(), vec![1, 2, 3, 4, 5]);
+    }
+}

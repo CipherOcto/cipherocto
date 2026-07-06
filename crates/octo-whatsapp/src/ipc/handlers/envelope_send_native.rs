@@ -116,9 +116,133 @@ impl RpcHandler for EnvelopeSendNative {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
 
     #[test]
     fn name_is_envelope_send_native() {
         assert_eq!(EnvelopeSendNative.name(), "envelope.send-native");
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        // Missing `file`.
+        let err = EnvelopeSendNative
+            .call(handle(), serde_json::json!({"peer": "+15551234567"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn invalid_peer_returns_minus_32602_with_data() {
+        let err = EnvelopeSendNative
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "abc",  // contains '@' but not a valid suffix
+                    "file": "/tmp/whatever.bin",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+        assert!(err.data.is_some());
+    }
+
+    #[tokio::test]
+    async fn dot_prefixed_input_rejected_at_boundary() {
+        // Pre-flight guard: refuse bytes that already start with DOT/.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("encoded.txt");
+        std::fs::write(&f, b"DOT/1/AAAAalready_encoded_payload").unwrap();
+        let err = EnvelopeSendNative
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+        assert!(err.message.contains("raw wire bytes"));
+        assert!(err.data.is_some());
+        assert_eq!(
+            err.data.unwrap()["hint"],
+            "use envelope.send for already-encoded DOT/1/{b64} payloads"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversize_payload_returns_minus_32004() {
+        // Payload over MAX_NATIVE_BYTES triggers PayloadTooLarge (-32004).
+        // We don't actually write 100 MiB to disk — use a sparse file or
+        // skip if file doesn't exist after we create the path. Instead,
+        // assert with a missing file path that produces the InvalidParams
+        // error first, then test size enforcement via a fresh file.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("huge.bin");
+        // Write a 1 MiB payload and assert it succeeds (well under ceiling).
+        // Then for the oversize branch, write a small file but assert via
+        // a smaller mock ceiling: instead, validate the early-exit branch
+        // by feeding wire bytes that DO start with "DOT/" (covered above).
+        // The oversize branch requires a real 100 MiB allocation; cover it
+        // by writing a stub that exceeds the ceiling through a test helper
+        // — see `dot_prefixed_input_rejected_at_boundary` for the prefix
+        // path.
+        //
+        // We exercise the oversize branch by writing a real 100 MiB + 1
+        // byte file. This is slow but covers the only remaining branch.
+        let huge = vec![0u8; MAX_NATIVE_BYTES + 1];
+        std::fs::write(&f, &huge).unwrap();
+        let err = EnvelopeSendNative
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::PayloadTooLarge.as_i32());
+        assert!(err.data.is_some());
+        assert_eq!(
+            err.data.as_ref().unwrap()["size_bytes"].as_u64().unwrap(),
+            (MAX_NATIVE_BYTES + 1) as u64
+        );
+        assert_eq!(
+            err.data.unwrap()["max_bytes"].as_u64().unwrap(),
+            MAX_NATIVE_BYTES as u64
+        );
+    }
+
+    #[tokio::test]
+    async fn success_path_reports_native_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("raw.bin");
+        let wire = vec![0xCC; 1024];
+        std::fs::write(&f, &wire).unwrap();
+        let r = EnvelopeSendNative
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "queued_for_phase2");
+        assert_eq!(r["mode"], "native");
+        assert_eq!(r["wire_bytes"], wire.len());
+        assert_eq!(r["peer"], "1234567890@s.whatsapp.net");
     }
 }

@@ -88,9 +88,59 @@ impl RpcHandler for EnvelopeEncode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
 
     #[test]
     fn name_is_envelope_encode() {
         assert_eq!(EnvelopeEncode.name(), "envelope.encode");
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        // `file` must be a string path (not a number) — type mismatch fails
+        // deserialization.
+        let err = EnvelopeEncode
+            .call(handle(), serde_json::json!({"file": 12345}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn missing_file_returns_minus_32602() {
+        // No `file` provided AND no stdin piped — file-read branch fails.
+        // We avoid stdin by passing a path that does not exist.
+        let err = EnvelopeEncode
+            .call(
+                handle(),
+                serde_json::json!({"file": "/nonexistent/path/envelope_encode_test.bin"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_returns_dot1_form() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("wire.bin");
+        let wire = vec![0x01, 0x02, 0x03, 0x04];
+        std::fs::write(&f, &wire).unwrap();
+        let r = EnvelopeEncode
+            .call(handle(), serde_json::json!({"file": f}))
+            .await
+            .unwrap();
+        assert_eq!(r["wire_bytes"], 4);
+        let encoded = r["encoded"].as_str().unwrap();
+        assert!(encoded.starts_with("DOT/1/"));
+        // Must round-trip via decode_envelope.
+        let decoded = octo_adapter_whatsapp::WhatsAppWebAdapter::decode_envelope(encoded).unwrap();
+        assert_eq!(decoded, wire);
     }
 }

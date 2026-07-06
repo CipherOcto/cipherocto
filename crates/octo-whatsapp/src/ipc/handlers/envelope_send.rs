@@ -100,6 +100,13 @@ impl RpcHandler for EnvelopeSend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
 
     #[test]
     fn name_is_envelope_send() {
@@ -112,5 +119,84 @@ mod tests {
         // here is a wire-format bug; assert equality at compile-time
         // so the test runner flags divergence.
         assert_eq!(MAX_TEXT_BYTES, super::super::send_text::MAX_TEXT_BYTES);
+    }
+
+    #[tokio::test]
+    async fn invalid_params_returns_minus_32602() {
+        // Missing `file` field — Params deserialization fails.
+        let err = EnvelopeSend
+            .call(handle(), serde_json::json!({"peer": "+15551234567"}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn invalid_peer_returns_minus_32602_with_data() {
+        // Valid params shape but malformed peer (too few digits).
+        let err = EnvelopeSend
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "123",  // under 7-digit minimum
+                    "file": "/tmp/whatever.bin",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
+        // data hints at the expected peer format.
+        assert!(err.data.is_some());
+        assert_eq!(
+            err.data.unwrap()["expected_format"],
+            "E.164 or <digits>@s.whatsapp.net or <digits>@lid or <digits>@g.us"
+        );
+    }
+
+    #[tokio::test]
+    async fn text_mode_path_reports_queued_for_phase2() {
+        // Small file → encoded_len <= MAX_TEXT_BYTES → mode = "text".
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("wire.bin");
+        let wire = vec![0xAA; 32]; // tiny payload
+        std::fs::write(&f, &wire).unwrap();
+        let r = EnvelopeSend
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "queued_for_phase2");
+        assert_eq!(r["peer"], "+15551234567");
+        assert_eq!(r["mode"], "text");
+        assert_eq!(r["wire_bytes"], wire.len());
+        // encoded_len > 0 because the DOT/1/ prefix adds bytes.
+        assert!(r["encoded_len"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn native_mode_path_reports_queued_for_phase2() {
+        // File larger than MAX_TEXT_BYTES once base64-encoded → mode = "native".
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("wire.bin");
+        // Use raw bytes that base64-encode to > 65_536 chars.
+        let wire = vec![0xBB; 50_000];
+        std::fs::write(&f, &wire).unwrap();
+        let r = EnvelopeSend
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["mode"], "native");
+        assert_eq!(r["wire_bytes"], wire.len());
     }
 }

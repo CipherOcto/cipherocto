@@ -12,7 +12,9 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 
+pub mod actions;
 pub mod adapter_trait;
+pub mod audit;
 pub mod cli;
 pub mod config;
 pub mod daemon;

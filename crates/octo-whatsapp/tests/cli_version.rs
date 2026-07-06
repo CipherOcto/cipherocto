@@ -9,7 +9,9 @@
 use std::time::Duration;
 
 use assert_cmd::Command;
-use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{
+    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+};
 use octo_whatsapp::daemon::Daemon;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -22,6 +24,7 @@ async fn cli_version_reads_daemon() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -60,7 +63,7 @@ async fn cli_version_reads_daemon() {
     let output = assert_output.get_output().clone();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("1.0.0+phase3"),
+        stdout.contains("1.0.0+phase4"),
         "expected daemon_api_version marker in stdout, got: {stdout}"
     );
     assert!(

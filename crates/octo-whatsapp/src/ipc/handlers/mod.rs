@@ -1,6 +1,8 @@
 //! Concrete RPC method handlers. One file per logical group; all wired into
 //! `build_registry()` at the bottom of this module.
 
+pub mod actions_escalate;
+pub mod audit;
 pub mod capabilities;
 pub mod chats_archive;
 pub mod chats_delete;
@@ -78,8 +80,22 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(messages_get::MessagesGet))
         .register(Arc::new(rules::RulesList))
         .register(Arc::new(rules::RulesGet))
+        .register(Arc::new(rules::RulesCreate))
+        .register(Arc::new(rules::RulesUpdate))
+        .register(Arc::new(rules::RulesPatch))
+        .register(Arc::new(rules::RulesDelete))
+        .register(Arc::new(rules::RulesEnable))
+        .register(Arc::new(rules::RulesDisable))
+        .register(Arc::new(rules::RulesApprove))
+        .register(Arc::new(rules::RulesReload))
+        .register(Arc::new(rules::RulesFlush))
+        .register(Arc::new(rules::RulesTest))
         .register(Arc::new(triggers::TriggersList))
         .register(Arc::new(triggers::TriggersGet))
+        .register(Arc::new(triggers::TriggersCreate))
+        .register(Arc::new(triggers::TriggersUpdate))
+        .register(Arc::new(triggers::TriggersDelete))
+        .register(Arc::new(triggers::TriggersRun))
         .register(Arc::new(events::EventsList))
         .register(Arc::new(events::EventsShow))
         .register(Arc::new(events::EventsReplay))
@@ -104,6 +120,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(envelope_send_native::EnvelopeSendNative))
         .register(Arc::new(capabilities::Capabilities))
         .register(Arc::new(domain_compute_hash::DomainComputeHash))
+        .register(Arc::new(audit::AuditTail))
+        .register(Arc::new(audit::AuditVerify))
+        .register(Arc::new(actions_escalate::ActionsEscalate))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -189,6 +208,35 @@ pub const PHASE3_EVENTS_METHODS: &[&str] =
 pub const PHASE3_DISCOVERY_METHODS: &[&str] =
     &["clients.list", "daemon.methods.list", "daemon.methods.help"];
 
+/// RPC method names added in Phase 4 (rules + triggers + audit + escalate).
+pub const PHASE4_RULES_METHODS: &[&str] = &[
+    "rules.list",
+    "rules.get",
+    "rules.create",
+    "rules.update",
+    "rules.patch",
+    "rules.delete",
+    "rules.enable",
+    "rules.disable",
+    "rules.approve",
+    "rules.reload",
+    "rules.flush",
+    "rules.test",
+];
+
+pub const PHASE4_TRIGGERS_METHODS: &[&str] = &[
+    "triggers.list",
+    "triggers.get",
+    "triggers.create",
+    "triggers.update",
+    "triggers.delete",
+    "triggers.run",
+];
+
+pub const PHASE4_AUDIT_METHODS: &[&str] = &["audit.tail", "audit.verify"];
+
+pub const PHASE4_ACTIONS_METHODS: &[&str] = &["actions.escalate"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +298,10 @@ mod tests {
             .chain(PHASE2_ENVELOPE_METHODS.iter())
             .chain(PHASE3_EVENTS_METHODS.iter())
             .chain(PHASE3_DISCOVERY_METHODS.iter())
+            .chain(PHASE4_RULES_METHODS.iter())
+            .chain(PHASE4_TRIGGERS_METHODS.iter())
+            .chain(PHASE4_AUDIT_METHODS.iter())
+            .chain(PHASE4_ACTIONS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

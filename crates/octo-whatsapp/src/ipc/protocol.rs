@@ -96,6 +96,56 @@ impl RpcErrorCode {
     }
 }
 
+impl RpcError {
+    pub fn method_not_found<E: std::fmt::Display>(m: E) -> Self {
+        Self {
+            code: RpcErrorCode::MethodNotFound.as_i32(),
+            message: m.to_string(),
+            data: None,
+        }
+    }
+    pub fn invalid_params<E: std::fmt::Display>(m: E) -> Self {
+        Self {
+            code: RpcErrorCode::InvalidParams.as_i32(),
+            message: m.to_string(),
+            data: None,
+        }
+    }
+    pub fn rate_limited<E: std::fmt::Display>(m: E) -> Self {
+        Self {
+            code: RpcErrorCode::RateLimited.as_i32(),
+            message: m.to_string(),
+            data: None,
+        }
+    }
+    pub fn conflict_with_etag(id: String, current_etag: String, current_version: u64) -> Self {
+        let data = serde_json::json!({
+            "resource_id": id,
+            "current_etag": current_etag,
+            "current_version": current_version,
+        });
+        Self {
+            code: -32020,
+            message: format!("etag conflict on {id}"),
+            data: Some(data),
+        }
+    }
+    pub fn exec_failed<E: std::fmt::Display>(m: E) -> Self {
+        Self {
+            code: RpcErrorCode::InternalError.as_i32(),
+            message: m.to_string(),
+            data: None,
+        }
+    }
+    pub fn not_supported<E: std::fmt::Display>(m: E) -> Self {
+        Self {
+            code: RpcErrorCode::Unimplemented.as_i32(),
+            message: m.to_string(),
+            data: None,
+        }
+    }
+}
+
 impl RpcRequest {
     pub fn from_json(bytes: &[u8]) -> Result<Self, RpcParseError> {
         let v: serde_json::Value = serde_json::from_slice(bytes)?;

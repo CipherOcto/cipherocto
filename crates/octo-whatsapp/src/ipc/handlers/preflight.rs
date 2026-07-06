@@ -76,7 +76,7 @@ pub async fn preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
+    use crate::config::{EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig};
     use crate::daemon::Daemon;
     use std::io::Write as _;
 
@@ -91,6 +91,7 @@ mod tests {
                 root: std::env::temp_dir().join(format!("octo-pf-{}-{}", std::process::id(), cap)),
             },
             events: EventsConfig::default(),
+            security: SecurityConfig::default(),
         };
         Daemon::new(cfg).handle()
     }

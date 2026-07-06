@@ -8,7 +8,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{
+    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+};
 use octo_whatsapp::daemon::Daemon;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -26,6 +28,7 @@ async fn messages_edit_expired_window_returns_minus_32013() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

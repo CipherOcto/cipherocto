@@ -46,11 +46,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender   = "0.2"
 
 # Unix socket + SO_PEERCRED (Linux-only; we test on Linux only)
-nix = { version = "0.29", features = ["fs", "socket", "uio", "feature"] }
+nix = { version = "0.29", features = ["fs", "socket", "uio", "feature", "process", "signal"] }
 
 # Error mapping
 thiserror = "1"
 anyhow    = "1"
+
+# Phase 4: rules engine, action dispatchers, audit hash chain
+regex       = "1"
+hex         = "0.4"
+sha2        = "0.10"
+subtle      = "2"
+uuid        = { version = "1.6", features = ["v4", "serde"] }
+landlock    = { version = "0.4", optional = true }                      # Linux-only sandbox
+seccompiler = { version = "0.5", optional = true }                      # Linux-only sandbox
 
 # Mutex used by the `MockAdapter` (compiled only under `test-helpers`)
 # to track call counts and per-method canned responses.
@@ -67,6 +76,8 @@ default       = []
 # See `docs/plans/2026-07-05-whatsapp-runtime-cli-mcp-phase2.md` Phase A.
 test-helpers = []
 live-whatsapp = ["octo-adapter-whatsapp/live-whatsapp"]
+landlock       = ["dep:landlock"]                          # Linux-only sandbox
+seccomp        = ["dep:seccompiler"]                       # Linux-only sandbox
 
 [dev-dependencies]
 tempfile   = "3"

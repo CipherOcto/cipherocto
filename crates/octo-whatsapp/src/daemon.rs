@@ -7,10 +7,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::adapter_trait::OctoWhatsAppAdapter;
+use crate::audit::AuditLog;
 use crate::config::WhatsAppRuntimeConfig;
 use crate::events_persister::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
+use crate::rules::{MutationRateLimiter, RuleStore};
+use crate::triggers::TriggerStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +65,15 @@ struct DaemonInner {
     /// Phase 3: MCP client registry for agent discovery
     /// (`clients.list` returns a snapshot of this).
     clients: McpClientRegistry,
+    /// Phase 4: rules engine. `ArcSwap<Ruleset>` + cooldown map +
+    /// mutation rate-limiter (per-caller 10/min).
+    rules: Arc<RuleStore>,
+    /// Per-caller rate-limiter for `rules.create|update|patch|delete`.
+    mutation_rl: Arc<MutationRateLimiter>,
+    /// Phase 4: triggers registry (ArcSwap-backed, same shape as rules).
+    triggers: Arc<TriggerStore>,
+    /// Phase 4: audit log with SHA-256 hash chain + ring buffer.
+    audit_log: Arc<AuditLog>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -177,6 +189,30 @@ impl DaemonHandle {
         &self.inner.clients
     }
 
+    /// Phase 4: rules engine. `rules.list|get|create|update|patch|
+    /// delete|enable|disable|reload|test|flush|approve` all read or
+    /// mutate this store.
+    pub fn rules(&self) -> &Arc<RuleStore> {
+        &self.inner.rules
+    }
+
+    /// Phase 4: per-caller rate-limiter for rule mutations
+    /// (`create|update|patch|delete`).
+    pub fn mutation_rl(&self) -> &Arc<MutationRateLimiter> {
+        &self.inner.mutation_rl
+    }
+
+    /// Phase 4: triggers registry. `triggers.list|get|create|update|
+    /// delete|run` read or mutate this store.
+    pub fn triggers(&self) -> &Arc<TriggerStore> {
+        &self.inner.triggers
+    }
+
+    /// Phase 4: audit log with hash chain + ring buffer.
+    pub fn audit_log(&self) -> &Arc<AuditLog> {
+        &self.inner.audit_log
+    }
+
     /// Phase 3: build an `EventsRouter` that subscribes to the
     /// bound adapter's `raw_event_tx` and pipes events into this
     /// handle's `events_buffer`. Returns `None` if no adapter is
@@ -231,6 +267,13 @@ impl Daemon {
             self.config.media_buffer.root.clone(),
         );
         let events_buffer = EventsBuffer::new(self.config.events.max_rows);
+        let audit_log = AuditLog::new(
+            self.config.security.audit_max_rows,
+            self.config.security.audit_anchor_every,
+        );
+        let rule_store = Arc::new(RuleStore::new(self.config.security.auto_approve_rules));
+        let mutation_rl = Arc::new(MutationRateLimiter::new(10)); // 10/min per caller
+        let trigger_store = Arc::new(TriggerStore::new());
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
@@ -240,6 +283,10 @@ impl Daemon {
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
                 clients: McpClientRegistry::new(),
+                rules: rule_store,
+                mutation_rl,
+                triggers: trigger_store,
+                audit_log: Arc::new(audit_log),
             }),
         }
     }

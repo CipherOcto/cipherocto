@@ -72,6 +72,44 @@ pub struct WhatsAppRuntimeConfig {
     /// Phase 3: events retention. Default 1M rows, 30 days.
     #[serde(default)]
     pub events: EventsConfig,
+    /// Phase 4: security/audit knobs. All optional with safe defaults.
+    #[serde(default)]
+    pub security: SecurityConfig,
+}
+
+/// Phase 4: security-related runtime configuration.
+///
+/// Design §Security + §Hot mutation safety:
+/// - `auto_approve_rules` — when true, rules with no manual-approval
+///   actions enter as `Approved` instead of `Draft`.
+/// - `audit_max_rows` — ring-buffer cap. Default 100_000 per design.
+/// - `audit_anchor_every` — every Nth chain head is appended to the
+///   external anchor file. Default 100.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub auto_approve_rules: bool,
+    #[serde(default = "default_audit_max_rows")]
+    pub audit_max_rows: usize,
+    #[serde(default = "default_audit_anchor_every")]
+    pub audit_anchor_every: u64,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            auto_approve_rules: false,
+            audit_max_rows: 100_000,
+            audit_anchor_every: 100,
+        }
+    }
+}
+
+fn default_audit_max_rows() -> usize {
+    100_000
+}
+fn default_audit_anchor_every() -> u64 {
+    100
 }
 
 impl Default for WhatsAppRuntimeConfig {
@@ -83,6 +121,7 @@ impl Default for WhatsAppRuntimeConfig {
             socket_dir: default_socket_dir(),
             media_buffer: MediaBufferConfig::default(),
             events: EventsConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -144,6 +183,16 @@ impl WhatsAppRuntimeConfig {
         if self.events.retention_days == 0 {
             return Err(ConfigError::InvalidName(
                 "events.retention_days must be > 0 (got 0)".to_string(),
+            ));
+        }
+        if self.security.audit_max_rows == 0 {
+            return Err(ConfigError::InvalidName(
+                "security.audit_max_rows must be > 0 (got 0)".to_string(),
+            ));
+        }
+        if self.security.audit_anchor_every == 0 {
+            return Err(ConfigError::InvalidName(
+                "security.audit_anchor_every must be > 0 (got 0)".to_string(),
             ));
         }
         Ok(())

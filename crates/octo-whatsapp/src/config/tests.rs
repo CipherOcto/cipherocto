@@ -86,6 +86,7 @@ fn media_buffer_config_validates() {
             root: std::env::temp_dir().join("mb"),
         },
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     assert!(cfg.validate().is_ok());
     let bad = WhatsAppRuntimeConfig {
@@ -98,6 +99,7 @@ fn media_buffer_config_validates() {
             root: std::env::temp_dir(),
         },
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     assert!(bad.validate().is_err());
 }

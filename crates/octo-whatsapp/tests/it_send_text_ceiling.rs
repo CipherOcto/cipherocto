@@ -9,7 +9,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{
+    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+};
 use octo_whatsapp::daemon::Daemon;
 use octo_whatsapp::ipc::handlers::send_text::MAX_TEXT_BYTES;
 
@@ -22,6 +24,7 @@ async fn drive_daemon_send(text: String) -> serde_json::Value {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

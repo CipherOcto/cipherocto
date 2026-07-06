@@ -11,7 +11,9 @@ use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::time::Duration;
 
-use octo_whatsapp::config::{EventsConfig, MediaBufferConfig, WhatsAppRuntimeConfig};
+use octo_whatsapp::config::{
+    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+};
 use octo_whatsapp::daemon::Daemon;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -24,6 +26,7 @@ async fn concurrent_clients_each_get_correct_responses() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
+        security: SecurityConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -62,7 +65,7 @@ async fn concurrent_clients_each_get_correct_responses() {
                 reader.read_line(&mut resp_line).unwrap();
                 let resp: serde_json::Value = serde_json::from_str(resp_line.trim()).unwrap();
                 assert_eq!(resp["id"], client_id * 100 + call_id);
-                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase3");
+                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase4");
             }
         }));
     }

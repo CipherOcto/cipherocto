@@ -35,7 +35,7 @@ unix-socket JSON-RPC surface, the MCP handshake, and the 65,536-byte
 
 | Method | Phase 1 status |
 |---|---|
-| `version.get` | Returns `daemon_api_version: "1.0.0+phase3"` |
+| `version.get` | Returns `daemon_api_version: "1.0.0+phase4"` |
 | `status.get` | Returns 4-signal readiness (Connected/SessionValid/Synced/Ready) |
 | `health.get` | Returns `{ok: true}` |
 | `send.text` | Pre-flight 65,536-byte ceiling enforced |

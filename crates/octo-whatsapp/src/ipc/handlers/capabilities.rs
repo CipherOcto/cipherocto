@@ -112,6 +112,8 @@ mod tests {
     use super::*;
     use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn static_report_has_expected_shape() {
@@ -132,5 +134,34 @@ mod tests {
             v["media_capabilities"]["supported_mime_types"][0],
             "application/octet-stream"
         );
+    }
+
+    #[tokio::test]
+    async fn bound_mock_adapter_passthrough_branch() {
+        // Exercises the `if let Some(adapter) = h.adapter()` branch —
+        // the report must come from the mock's `capabilities()` impl,
+        // not the static fallback. The mock advertises max_payload_bytes
+        // = 65_536 and a non-trivial media_capabilities object, so we
+        // can detect the Some-bound path via the populated mime list.
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        let v = Capabilities.call(h, serde_json::json!({})).await.unwrap();
+        assert_eq!(v["platform"], "whatsapp");
+        assert_eq!(v["max_payload_bytes"], 65_536);
+        // Mock returns a populated media_capabilities with multiple mimes
+        // (image/jpeg, image/png, video/mp4, audio/ogg, audio/mpeg).
+        assert_eq!(
+            v["media_capabilities"]["max_upload_bytes"],
+            100 * 1024 * 1024
+        );
+        let mimes = v["media_capabilities"]["supported_mime_types"]
+            .as_array()
+            .expect("mime array");
+        assert!(mimes.len() >= 2, "mock path should yield >1 mime");
+        assert!(mimes.iter().any(|m| m == "image/jpeg"));
+        // The static path uses "application/octet-stream" only;
+        // its absence here proves we hit the Some-bound branch.
+        assert!(!mimes.iter().any(|m| m == "application/octet-stream"));
     }
 }

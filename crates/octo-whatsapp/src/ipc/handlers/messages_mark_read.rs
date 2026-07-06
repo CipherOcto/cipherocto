@@ -48,3 +48,36 @@ impl RpcHandler for MessagesMarkRead {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle_with_mock() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let r = MessagesMarkRead
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "up_to_msg_id": "ABCDEFG",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "marked_read");
+        assert_eq!(r["peer"], "1234567890@s.whatsapp.net");
+        assert_eq!(r["up_to_msg_id"], "ABCDEFG");
+    }
+}

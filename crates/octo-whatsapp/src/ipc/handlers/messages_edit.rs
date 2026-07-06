@@ -78,10 +78,19 @@ mod tests {
     use super::*;
     use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
     }
 
     #[tokio::test]
@@ -106,5 +115,28 @@ mod tests {
         assert_eq!(err.code, -32013);
         let data = err.data.unwrap();
         assert_eq!(data["window_seconds"], EDIT_WINDOW_SECONDS);
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let r = MessagesEdit
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "msg_id": "ABCDEFG",
+                    "msg_timestamp": now - 60, // 1 minute ago — inside the window
+                    "new_text": "replacement",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "edited");
+        assert_eq!(r["msg_id"], "ABCDEFG");
+        assert!(r["elapsed_seconds"].as_i64().unwrap() >= 60);
     }
 }

@@ -67,3 +67,60 @@ impl RpcHandler for SendLocation {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
+    }
+
+    #[tokio::test]
+    async fn ceiling_is_enforced_pre_flight() {
+        // Location max is 1 KiB; flood the `name` field to overshoot.
+        let err = SendLocation
+            .call(
+                handle(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "lat": 0.0,
+                    "lon": 0.0,
+                    "name": "X".repeat(MediaKind::Location.max_bytes() + 100),
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::PayloadTooLarge.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let r = SendLocation
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "lat": 51.5074,
+                    "lon": -0.1278,
+                    "name": "London",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["message_id"], "fake-loc-msg-id");
+        assert_eq!(r["kind"], "location");
+    }
+}

@@ -54,3 +54,42 @@ impl RpcHandler for SendSticker {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle_with_mock() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        // Sticker ceiling is 1 MiB; tiny file is well within ceiling.
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("stk.webp");
+        std::fs::write(&f, b"hello").unwrap();
+        let r = SendSticker
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "file": f,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["message_id"], "fake-stk-msg-id");
+        assert_eq!(r["media_ref_token"], "fake-stk-token");
+        assert_eq!(r["size_bytes"], 5);
+        assert_eq!(r["kind"], "sticker");
+    }
+}

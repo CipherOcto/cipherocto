@@ -66,10 +66,18 @@ mod tests {
     use super::*;
     use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
     }
 
     #[tokio::test]
@@ -88,5 +96,28 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::PayloadTooLarge.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("img.bin");
+        std::fs::write(&f, b"hello").unwrap();
+        let r = SendImage
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "file": f,
+                    "caption": "look at this",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["message_id"], "fake-img-msg-id");
+        assert_eq!(r["media_ref_token"], "fake-img-token");
+        assert_eq!(r["size_bytes"], 5);
+        assert_eq!(r["kind"], "image");
     }
 }

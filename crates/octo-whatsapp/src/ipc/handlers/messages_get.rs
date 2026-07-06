@@ -48,3 +48,37 @@ impl RpcHandler for MessagesGet {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle_with_mock() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let r = MessagesGet
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "msg_id": "ABCDEFG",
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(r.is_object());
+        assert_eq!(r["msg_id"], "ABCDEFG");
+        assert!(r["messages"].is_array());
+        // Default mock returns empty Vec, so the filtered list is also empty.
+        assert_eq!(r["messages"].as_array().unwrap().len(), 0);
+    }
+}

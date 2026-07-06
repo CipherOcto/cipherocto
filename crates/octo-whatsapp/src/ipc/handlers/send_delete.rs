@@ -76,10 +76,18 @@ mod tests {
     use super::*;
     use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
     }
 
     #[tokio::test]
@@ -103,5 +111,29 @@ mod tests {
         assert_eq!(err.code, -32014);
         let data = err.data.unwrap();
         assert_eq!(data["window_seconds"], DELETE_WINDOW_SECONDS);
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let r = SendDelete
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "+15551234567",
+                    "msg_id": "ABCDEFG",
+                    "msg_timestamp": now - 60, // 1 minute ago, well within window
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "deleted");
+        assert_eq!(r["msg_id"], "ABCDEFG");
+        // elapsed_seconds should be ~60 (between 0 and the 3600 window)
+        let elapsed = r["elapsed_seconds"].as_i64().unwrap();
+        assert!((0..=DELETE_WINDOW_SECONDS).contains(&elapsed));
     }
 }

@@ -73,10 +73,18 @@ mod tests {
     use super::*;
     use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         Daemon::new(cfg).handle()
+    }
+
+    fn handle_with_mock() -> DaemonHandle {
+        let h = handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
     }
 
     #[tokio::test]
@@ -96,5 +104,25 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::PayloadTooLarge.as_i32());
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let r = SendPoll
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "question": "Pick one?",
+                    "options": ["A", "B"],
+                    "multi": false,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["message_id"], "fake-poll-msg-id");
+        assert_eq!(r["option_count"], 2);
+        assert_eq!(r["kind"], "poll");
     }
 }

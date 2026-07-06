@@ -53,3 +53,40 @@ impl RpcHandler for SendContact {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use std::sync::Arc;
+
+    fn handle_with_mock() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
+        let h = Daemon::new(cfg).handle();
+        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h
+    }
+
+    #[tokio::test]
+    async fn success_path_with_mock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("contact.vcf");
+        std::fs::write(&f, b"BEGIN:VCARD\nVERSION:3.0\nFN:Alice\nEND:VCARD\n").unwrap();
+        let r = SendContact
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "vcard": f,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["message_id"], "fake-contact-msg-id");
+        assert_eq!(r["kind"], "contact");
+        assert!(r["media_ref_token"].is_null());
+    }
+}

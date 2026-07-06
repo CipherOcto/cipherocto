@@ -9,6 +9,7 @@ use tracing::info;
 use crate::adapter_trait::OctoWhatsAppAdapter;
 use crate::config::WhatsAppRuntimeConfig;
 use crate::events_persister::EventsBuffer;
+use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -58,6 +59,9 @@ struct DaemonInner {
     /// router (sinks receive InboundEvent) and queried by
     /// `events.list/show/replay` handlers.
     events_buffer: Arc<EventsBuffer>,
+    /// Phase 3: MCP client registry for agent discovery
+    /// (`clients.list` returns a snapshot of this).
+    clients: McpClientRegistry,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -80,6 +84,7 @@ impl std::fmt::Debug for DaemonInner {
                 "events_buffer",
                 &format_args!("EventsBuffer{{ len={} }}", self.events_buffer.len()),
             )
+            .field("clients", &self.clients.count())
             .finish()
     }
 }
@@ -164,6 +169,38 @@ impl DaemonHandle {
     pub fn events_buffer(&self) -> &Arc<EventsBuffer> {
         &self.inner.events_buffer
     }
+
+    /// Phase 3: read access to the MCP client registry. `clients.list`
+    /// RPC handler snapshots this; future `clients.subscribe` will
+    /// register/unregister entries here.
+    pub fn clients(&self) -> &McpClientRegistry {
+        &self.inner.clients
+    }
+
+    /// Phase 3: build an `EventsRouter` that subscribes to the
+    /// bound adapter's `raw_event_tx` and pipes events into this
+    /// handle's `events_buffer`. Returns `None` if no adapter is
+    /// bound. Caller spawns `router.run(rx)` on a tokio task.
+    ///
+    /// Gated on `#[cfg(any(test, feature = "test-helpers"))]` for
+    /// now — production wiring happens via `Daemon::start` after the
+    /// adapter connects.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn build_event_router(&self) -> Option<crate::events_router::EventsRouter> {
+        // Adapter may not be bound; if it is, take a broadcast::Receiver
+        // for the raw event stream. (Production wiring in
+        // `Daemon::start` will use a different mechanism.)
+        let _adapter = self.adapter()?;
+        // For the test-helpers path we don't have a real adapter
+        // handle. Production callers should drive the router off
+        // `adapter.subscribe_raw_events()`. Returning a router
+        // without a bound source is fine for tests that exercise
+        // the subscribe/fanout surface but not the broadcast source.
+        Some(crate::events_router::EventsRouter::from_parts(
+            self.inner.events_buffer.clone(),
+            self.inner.cancel.clone(),
+        ))
+    }
 }
 
 pub struct Daemon {
@@ -202,6 +239,7 @@ impl Daemon {
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
+                clients: McpClientRegistry::new(),
             }),
         }
     }

@@ -12,7 +12,7 @@ use serde_json::Value;
 
 /// Number of MCP tools registered (Phase 1 + Phase 2 RPC surface).
 /// Used by integration tests to assert `tools/list` advertises the full set.
-pub const EXPECTED_TOOL_COUNT: usize = 39;
+pub const EXPECTED_TOOL_COUNT: usize = 46;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -368,6 +368,43 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Compute the deterministic domain id for a group JID.",
         schema_props_required(&[("group_jid", "string")], &["group_jid"]),
     ));
+    // ─── Events (4) — Phase 3 ─────────────────────────────────────────
+    v.push(td(
+        "events.list",
+        "List recent events (most recent first).",
+        schema_props_optional(&[("limit", "integer")]),
+    ));
+    v.push(td(
+        "events.show",
+        "Show a single event by id.",
+        schema_props_required(&[("id", "integer")], &["id"]),
+    ));
+    v.push(td(
+        "events.replay",
+        "Replay events since a given id (Loss recovery).",
+        schema_props_optional(&[("since_id", "integer"), ("limit", "integer")]),
+    ));
+    v.push(td(
+        "events.tail",
+        "Tail the event stream (returns recent buffer snapshot; per-sink stream + Lagged arrives with the live router).",
+        schema_props_optional(&[("limit", "integer")]),
+    ));
+    // ─── Agent discovery (3) — Phase 3 ────────────────────────────────
+    v.push(td(
+        "clients.list",
+        "List active MCP client sessions.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "daemon.methods.list",
+        "List every daemon RPC method (agent discovery).",
+        schema_empty(),
+    ));
+    v.push(td(
+        "daemon.methods.help",
+        "Return schema + one-line help for a single RPC method.",
+        schema_props_required(&[("method", "string")], &["method"]),
+    ));
     v
 }
 
@@ -424,11 +461,18 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "envelope.send-native" => "envelope.send-native",
         "capabilities" => "capabilities",
         "domain.compute-hash" => "domain.compute-hash",
+        "events.list" => "events.list",
+        "events.show" => "events.show",
+        "events.replay" => "events.replay",
+        "events.tail" => "events.tail",
+        "clients.list" => "clients.list",
+        "daemon.methods.list" => "daemon.methods.list",
+        "daemon.methods.help" => "daemon.methods.help",
         other => {
             return Ok(jsonrpc_error(
                 id,
                 -32601,
-                &format!("tool {:?} not implemented in Phase 2", other),
+                &format!("tool {:?} not implemented", other),
             ));
         }
     };

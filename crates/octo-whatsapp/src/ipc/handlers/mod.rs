@@ -10,6 +10,8 @@ pub mod chats_mute;
 pub mod chats_pin;
 pub mod chats_typing;
 pub mod chats_unpin;
+pub mod clients;
+pub mod daemon_methods;
 pub mod daemon_ops;
 pub mod domain_compute_hash;
 pub mod envelope_decode;
@@ -82,6 +84,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(events::EventsShow))
         .register(Arc::new(events::EventsReplay))
         .register(Arc::new(events::EventsTail))
+        .register(Arc::new(clients::ClientsList))
+        .register(Arc::new(daemon_methods::DaemonMethodsList))
+        .register(Arc::new(daemon_methods::DaemonMethodsHelp))
         .register(Arc::new(daemon_ops::ReconnectNow))
         .register(Arc::new(daemon_ops::Shutdown))
         .register(Arc::new(chats_list::ChatsList))
@@ -179,6 +184,11 @@ pub const PHASE2_ENVELOPE_METHODS: &[&str] = &[
 pub const PHASE3_EVENTS_METHODS: &[&str] =
     &["events.list", "events.show", "events.replay", "events.tail"];
 
+/// RPC method names added in Phase 3 (agent discovery): clients.list,
+/// daemon.methods.list, daemon.methods.help.
+pub const PHASE3_DISCOVERY_METHODS: &[&str] =
+    &["clients.list", "daemon.methods.list", "daemon.methods.help"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +249,7 @@ mod tests {
             .chain(PHASE2_CHATS_METHODS.iter())
             .chain(PHASE2_ENVELOPE_METHODS.iter())
             .chain(PHASE3_EVENTS_METHODS.iter())
+            .chain(PHASE3_DISCOVERY_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

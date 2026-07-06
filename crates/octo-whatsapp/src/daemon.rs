@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use crate::adapter_trait::OctoWhatsAppAdapter;
 use crate::config::WhatsAppRuntimeConfig;
 use crate::media_buffer::MediaBuffer;
 
@@ -24,7 +25,6 @@ pub struct DaemonHandle {
     inner: Arc<DaemonInner>,
 }
 
-#[derive(Debug)]
 struct DaemonInner {
     config: WhatsAppRuntimeConfig,
     cancel: CancellationToken,
@@ -41,6 +41,38 @@ struct DaemonInner {
     phase: std::sync::RwLock<DaemonPhase>,
     /// Concurrency-capped scratch disk for outbound media uploads.
     media_buffer: MediaBuffer,
+    /// Bound adapter (live or `MockAdapter`).
+    ///
+    /// Dispatch path: RPC handlers call
+    /// `h.adapter()?.send_audio_checked(...)`. `send_audio_checked`
+    /// exists as both an inherent method on `WhatsAppWebAdapter` and an
+    /// `OctoWhatsAppAdapter` trait method here, so handlers compile
+    /// unchanged against either the concrete type or this trait object.
+    ///
+    /// `std::sync::RwLock` (not `tokio::sync::RwLock`) for the same
+    /// reasons as `phase` above — RPC handlers must not block a tokio
+    /// runtime, and writes (bind / unbind) are instantaneous.
+    adapter: std::sync::RwLock<Option<Arc<dyn OctoWhatsAppAdapter>>>,
+}
+
+impl std::fmt::Debug for DaemonInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let adapter_bound = self.adapter.read().map(|g| g.is_some()).unwrap_or(false);
+        f.debug_struct("DaemonInner")
+            .field("config", &self.config)
+            .field("cancel", &self.cancel)
+            .field("phase", &"*DaemonPhase (locked)")
+            .field("media_buffer", &"MediaBuffer { .. }")
+            .field(
+                "adapter",
+                &if adapter_bound {
+                    "Some(Arc<dyn OctoWhatsAppAdapter>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl DaemonHandle {
@@ -78,8 +110,18 @@ impl DaemonHandle {
     /// Bound adapter, if any. Runtime RPC handlers consult this for
     /// every outbound call; pre-flight checks happen BEFORE this lookup
     /// so ceiling tests don't need a live adapter.
-    pub fn adapter(&self) -> Option<Arc<octo_adapter_whatsapp::WhatsAppWebAdapter>> {
-        None
+    ///
+    /// Returns a `dyn OctoWhatsAppAdapter` trait object so callers can
+    /// swap in a `MockAdapter` (under `feature = "test-helpers"`) without
+    /// instantiating a live WhatsApp Web session. The concrete
+    /// `WhatsAppWebAdapter` impl in `crate::adapter_trait` satisfies the
+    /// trait, so production code is unchanged.
+    pub fn adapter(&self) -> Option<Arc<dyn OctoWhatsAppAdapter>> {
+        self.inner
+            .adapter
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Async-marked for API symmetry with future async setters, but the
@@ -90,6 +132,21 @@ impl DaemonHandle {
     pub async fn set_phase(&self, p: DaemonPhase) {
         let mut g = self.inner.phase.write().unwrap_or_else(|p| p.into_inner());
         *g = p;
+    }
+
+    /// Test/feature helper for binding a mock adapter. Sync write —
+    /// call before any await point. Mirrors the sync `RwLock` pattern
+    /// of `set_phase`.
+    ///
+    /// Gated on `#[cfg(any(test, feature = "test-helpers"))]` so the
+    /// setter never ships in default builds.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn set_adapter_for_tests(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
+        *self
+            .inner
+            .adapter
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Some(a);
     }
 }
 
@@ -126,6 +183,7 @@ impl Daemon {
                 cancel: self.cancel.clone(),
                 phase: std::sync::RwLock::new(DaemonPhase::Booting),
                 media_buffer,
+                adapter: std::sync::RwLock::new(None),
             }),
         }
     }

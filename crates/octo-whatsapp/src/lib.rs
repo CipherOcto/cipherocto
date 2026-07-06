@@ -12,6 +12,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 
+pub mod adapter_trait;
 pub mod cli;
 pub mod config;
 pub mod daemon;
@@ -24,3 +25,6 @@ pub mod media_buffer;
 pub mod onboarding;
 pub mod rules;
 pub mod triggers;
+
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_mock_adapter;

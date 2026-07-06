@@ -3,8 +3,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use octo_network::dot::adapters::PlatformAdapter;
-
 use super::super::protocol::{RpcError, RpcErrorCode};
 use super::super::server::RpcHandler;
 use crate::daemon::DaemonHandle;

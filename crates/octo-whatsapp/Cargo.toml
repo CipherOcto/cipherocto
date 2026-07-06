@@ -54,6 +54,14 @@ anyhow    = "1"
 
 [features]
 default       = []
+# Test helpers: enables the `MockAdapter` in `crate::test_mock_adapter`
+# and `DaemonHandle::set_adapter_for_tests`. Off by default so neither
+# the stub nor the test-only setter ships to consumers. Enable with:
+#
+#   cargo check -p octo-whatsapp --features test-helpers
+#
+# See `docs/plans/2026-07-05-whatsapp-runtime-cli-mcp-phase2.md` Phase A.
+test-helpers = []
 live-whatsapp = ["octo-adapter-whatsapp/live-whatsapp"]
 
 [dev-dependencies]

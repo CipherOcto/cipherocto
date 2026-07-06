@@ -991,4 +991,701 @@ mod tests {
         let c = Cli::try_parse_from(["octo-whatsapp", "--json", "version"]).expect("parse");
         assert!(c.json);
     }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage: pure-function + clap parse + print_result tests.
+    // -----------------------------------------------------------------------
+    //
+    // These cover the bulk of `cli.rs` without ever opening a unix socket.
+    // Variant names are kept in sync with the `Command`/`SendKind`/etc.
+    // definitions above; if a clap enum variant is renamed, these tests must
+    // be updated alongside it.
+
+    #[test]
+    fn resolve_socket_path_with_env_uses_xdg_when_set() {
+        let p = resolve_socket_path_with_env("test", Some("/tmp/xdg"));
+        assert!(p.ends_with("octo-whatsapp-test.sock"));
+        assert!(p.starts_with("/tmp/xdg/"));
+    }
+
+    #[test]
+    fn resolve_socket_path_with_env_falls_back_to_tmp_when_xdg_unset() {
+        let p = resolve_socket_path_with_env("test", None);
+        assert!(p.ends_with("octo-whatsapp-test.sock"));
+        // Falls back to /tmp when xdg_runtime_dir is None.
+        assert!(
+            p.starts_with("/tmp/"),
+            "expected /tmp fallback, got {}",
+            p.display()
+        );
+    }
+
+    #[test]
+    fn resolve_socket_path_honors_socket_override() {
+        // When `--socket` is provided, the override must win over both the
+        // env-derived default and the name. This guards the most common
+        // operator workflow (manual debugging on a non-default port).
+        let cli = Cli::try_parse_from([
+            "octo-whatsapp",
+            "--socket",
+            "/var/run/octo.sock",
+            "--name",
+            "myinstance",
+            "version",
+        ])
+        .unwrap();
+        assert_eq!(
+            resolve_socket_path(&cli),
+            PathBuf::from("/var/run/octo.sock")
+        );
+    }
+
+    #[test]
+    fn resolve_socket_path_uses_cli_name_when_no_socket_or_env() {
+        // Default name is "default"; with no env set and no --socket, the
+        // socket path should still include the chosen instance name.
+        let cli =
+            Cli::try_parse_from(["octo-whatsapp", "--name", "myinstance", "version"]).unwrap();
+        let p = resolve_socket_path(&cli);
+        assert!(
+            p.to_string_lossy().contains("myinstance"),
+            "expected instance name in socket path, got {}",
+            p.display()
+        );
+    }
+
+    // ---- clap parse tests ----
+
+    #[test]
+    fn cli_parses_daemon() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "daemon"]).unwrap();
+        assert!(matches!(c.command, Command::Daemon));
+    }
+
+    #[test]
+    fn cli_parses_mcp() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "mcp"]).unwrap();
+        assert!(matches!(c.command, Command::Mcp));
+    }
+
+    #[test]
+    fn cli_parses_capabilities() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "capabilities"]).unwrap();
+        assert!(matches!(c.command, Command::Capabilities));
+    }
+
+    #[test]
+    fn cli_parses_reconnect() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "reconnect"]).unwrap();
+        assert!(matches!(c.command, Command::Reconnect));
+    }
+
+    #[test]
+    fn cli_parses_shutdown() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "shutdown"]).unwrap();
+        assert!(matches!(c.command, Command::Shutdown));
+    }
+
+    #[test]
+    fn cli_parses_groups_list() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "groups", "list"]).unwrap();
+        assert!(matches!(c.command, Command::Groups(_)));
+    }
+
+    #[test]
+    fn cli_parses_groups_create_with_members() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "groups",
+            "create",
+            "--subject",
+            "My Group",
+            "--members",
+            "111,222,333",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Groups(cmd) => match cmd.action {
+                GroupsAction::Create {
+                    ref subject,
+                    ref members,
+                } => {
+                    assert_eq!(subject, "My Group");
+                    assert_eq!(members, &vec!["111", "222", "333"]);
+                }
+                _ => panic!("expected GroupsAction::Create"),
+            },
+            _ => panic!("expected Command::Groups"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_messages_list_no_filters() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "messages", "list"]).unwrap();
+        match c.command {
+            Command::Messages(cmd) => match cmd.action {
+                MessagesAction::List {
+                    ref peer,
+                    ref since,
+                    ref limit,
+                } => {
+                    assert!(peer.is_none());
+                    assert!(since.is_none());
+                    assert!(limit.is_none());
+                }
+                _ => panic!("expected MessagesAction::List"),
+            },
+            _ => panic!("expected Command::Messages"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_messages_edit() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "messages",
+            "edit",
+            "+15551234567",
+            "msg-1",
+            "--msg-timestamp",
+            "1700000000",
+            "--new-text",
+            "fixed",
+        ])
+        .unwrap();
+        assert!(matches!(c.command, Command::Messages(_)));
+    }
+
+    #[test]
+    fn cli_parses_chats_pin() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "chats",
+            "pin",
+            "12025550100@s.whatsapp.net",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Chats(cmd) => match cmd.action {
+                ChatsAction::Pin { ref jid } => {
+                    assert_eq!(jid, "12025550100@s.whatsapp.net");
+                }
+                _ => panic!("expected ChatsAction::Pin"),
+            },
+            _ => panic!("expected Command::Chats"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_chats_typing_on_and_off() {
+        // `on` is a clap `bool` flag (action = SetTrue). Bare `--on` enables;
+        // absence leaves it at the default `false`. Negative form is not
+        // accepted because the type is `bool`, not `bool` with override.
+        let on = Cli::try_parse_from(["octo-whatsapp", "chats", "typing", "jid", "--on"]).unwrap();
+        match on.command {
+            Command::Chats(cmd) => match cmd.action {
+                ChatsAction::Typing { ref jid, on } => {
+                    assert_eq!(jid, "jid");
+                    assert!(on, "--on flag must set bool to true");
+                }
+                _ => panic!("expected ChatsAction::Typing"),
+            },
+            _ => panic!("expected Command::Chats"),
+        }
+
+        let off = Cli::try_parse_from(["octo-whatsapp", "chats", "typing", "jid"]).unwrap();
+        match off.command {
+            Command::Chats(cmd) => match cmd.action {
+                ChatsAction::Typing { ref jid, on } => {
+                    assert_eq!(jid, "jid");
+                    assert!(!on, "absence of --on must default to false");
+                }
+                _ => panic!("expected ChatsAction::Typing"),
+            },
+            _ => panic!("expected Command::Chats"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_envelope_encode_with_file() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "envelope",
+            "encode",
+            "--file",
+            "/tmp/blob.bin",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Envelope(cmd) => match cmd.action {
+                EnvelopeAction::Encode { ref file } => {
+                    assert_eq!(file.as_deref(), Some(std::path::Path::new("/tmp/blob.bin")));
+                }
+                _ => panic!("expected EnvelopeAction::Encode"),
+            },
+            _ => panic!("expected Command::Envelope"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_envelope_decode_no_args() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "envelope", "decode"]).unwrap();
+        match c.command {
+            Command::Envelope(cmd) => match cmd.action {
+                EnvelopeAction::Decode => {}
+                _ => panic!("expected EnvelopeAction::Decode"),
+            },
+            _ => panic!("expected Command::Envelope"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_envelope_send() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "envelope",
+            "send",
+            "+15551234567",
+            "/tmp/dot.env",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Envelope(cmd) => match cmd.action {
+                EnvelopeAction::Send { ref peer, .. } => {
+                    assert_eq!(peer, "+15551234567");
+                }
+                _ => panic!("expected EnvelopeAction::Send"),
+            },
+            _ => panic!("expected Command::Envelope"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_media_info() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "media", "info", "tok-abc"]).unwrap();
+        match c.command {
+            Command::Media(cmd) => match cmd.action {
+                MediaAction::Info {
+                    ref media_ref_token,
+                } => {
+                    assert_eq!(media_ref_token, "tok-abc");
+                }
+            },
+            _ => panic!("expected Command::Media"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_domain_compute_hash() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "domain", "compute-hash", "groupjid-xyz"])
+            .unwrap();
+        match c.command {
+            Command::Domain(cmd) => match cmd.action {
+                DomainAction::ComputeHash { ref group_jid } => {
+                    assert_eq!(group_jid, "groupjid-xyz");
+                }
+            },
+            _ => panic!("expected Command::Domain"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_rules_list_and_get() {
+        let l = Cli::try_parse_from(["octo-whatsapp", "rules", "list"]).unwrap();
+        match l.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::List => {}
+                _ => panic!("expected RulesAction::List"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+        let g = Cli::try_parse_from(["octo-whatsapp", "rules", "get", "rule-1"]).unwrap();
+        match g.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Get { ref id } => {
+                    assert_eq!(id, "rule-1");
+                }
+                _ => panic!("expected RulesAction::Get"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_triggers_list_and_get() {
+        let l = Cli::try_parse_from(["octo-whatsapp", "triggers", "list"]).unwrap();
+        assert!(matches!(l.command, Command::Triggers(_)));
+
+        let g = Cli::try_parse_from(["octo-whatsapp", "triggers", "get", "trig-1"]).unwrap();
+        assert!(matches!(g.command, Command::Triggers(_)));
+    }
+
+    #[test]
+    fn cli_parses_events_list_and_show() {
+        let l = Cli::try_parse_from(["octo-whatsapp", "events", "list"]).unwrap();
+        match l.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::List => {}
+                _ => panic!("expected EventsAction::List"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+        let s = Cli::try_parse_from(["octo-whatsapp", "events", "show", "ev-1"]).unwrap();
+        match s.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::Show { ref id } => {
+                    assert_eq!(id, "ev-1");
+                }
+                _ => panic!("expected EventsAction::Show"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_onboard_qr_link_with_default_timeout() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "onboard", "qr-link"]).unwrap();
+        match c.command {
+            Command::Onboard(cmd) => match cmd.action {
+                OnboardAction::QrLink { timeout } => {
+                    assert_eq!(timeout, 120, "default timeout must be 120s");
+                }
+                _ => panic!("expected OnboardAction::QrLink"),
+            },
+            _ => panic!("expected Command::Onboard"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_onboard_pair_link() {
+        let c =
+            Cli::try_parse_from(["octo-whatsapp", "onboard", "pair-link", "+15551234567"]).unwrap();
+        match c.command {
+            Command::Onboard(cmd) => match cmd.action {
+                OnboardAction::PairLink { ref phone } => {
+                    assert_eq!(phone, "+15551234567");
+                }
+                _ => panic!("expected OnboardAction::PairLink"),
+            },
+            _ => panic!("expected Command::Onboard"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_onboard_session_remove() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "onboard",
+            "session",
+            "remove",
+            "old-session",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Onboard(cmd) => match cmd.action {
+                OnboardAction::Session {
+                    action: SessionCmd::Remove { ref name },
+                } => {
+                    assert_eq!(name, "old-session");
+                }
+                _ => panic!("expected OnboardAction::Session::Remove"),
+            },
+            _ => panic!("expected Command::Onboard"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_text() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "text",
+            "+15551234567",
+            "--text",
+            "hello",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Text { ref peer, ref text } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert_eq!(text, "hello");
+                }
+                _ => panic!("expected SendKind::Text"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_image_with_caption() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "image",
+            "+15551234567",
+            "/tmp/x.jpg",
+            "--caption",
+            "my image",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Image {
+                    ref peer,
+                    ref file,
+                    ref caption,
+                } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert_eq!(file, &PathBuf::from("/tmp/x.jpg"));
+                    assert_eq!(caption.as_deref(), Some("my image"));
+                }
+                _ => panic!("expected SendKind::Image"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_reaction() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "reaction",
+            "+15551234567",
+            "msg-1",
+            "--emoji",
+            ":heart:",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Reaction {
+                    ref peer,
+                    ref msg_id,
+                    ref emoji,
+                } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert_eq!(msg_id, "msg-1");
+                    assert_eq!(emoji, ":heart:");
+                }
+                _ => panic!("expected SendKind::Reaction"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_poll_multi() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "poll",
+            "+15551234567",
+            "--question",
+            "yes or no?",
+            "--options",
+            "yes,no",
+            "--multi",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Poll {
+                    ref peer,
+                    ref question,
+                    ref options,
+                    multi,
+                } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert_eq!(question, "yes or no?");
+                    assert_eq!(options, &vec!["yes", "no"]);
+                    assert!(multi);
+                }
+                _ => panic!("expected SendKind::Poll"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_location() {
+        // Negative longitude needs `=` syntax (clap's leading-`-` guard):
+        // `--lon=-122.4194`. This is the canonical way operators invoke it.
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "location",
+            "+15551234567",
+            "--lat",
+            "37.7749",
+            "--lon=-122.4194",
+            "--name",
+            "SF",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Location {
+                    ref peer,
+                    lat,
+                    lon,
+                    ref name,
+                } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert!((lat - 37.7749).abs() < 1e-6);
+                    assert!((lon - -122.4194).abs() < 1e-6);
+                    assert_eq!(name, "SF");
+                }
+                _ => panic!("expected SendKind::Location"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_send_delete() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "send",
+            "delete",
+            "+15551234567",
+            "msg-1",
+            "--msg-timestamp",
+            "1700000000",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Send(args) => match args.kind {
+                SendKind::Delete {
+                    ref peer,
+                    ref msg_id,
+                    msg_timestamp,
+                } => {
+                    assert_eq!(peer, "+15551234567");
+                    assert_eq!(msg_id, "msg-1");
+                    assert_eq!(msg_timestamp, 1_700_000_000);
+                }
+                _ => panic!("expected SendKind::Delete"),
+            },
+            _ => panic!("expected Command::Send"),
+        }
+    }
+
+    #[test]
+    fn cli_global_name_flag_default() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "version"]).unwrap();
+        assert_eq!(c.name, "default", "name default is 'default'");
+    }
+
+    #[test]
+    fn cli_global_socket_flag_optional() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "version"]).unwrap();
+        assert!(c.socket.is_none(), "socket defaults to None");
+    }
+
+    // ---- print_result: smoke tests for both branches ----
+
+    /// `print_result(as_json=true)` round-trips through `serde_json::to_string_pretty`,
+    /// independent of value shape. We exercise both scalar and object cases because
+    /// the JSON branch is unconditional (no fallback).
+    #[test]
+    fn print_result_json_scalar_object_object() {
+        let v = serde_json::json!({"hello": "world"});
+        print_result(true, &v).expect("json path must succeed for object");
+    }
+
+    #[test]
+    fn print_result_human_readable_scalar() {
+        // Human-readable branches: scalars (Null/Bool/Number/String) print
+        // the bare value; objects/arrays fall back to pretty JSON. Cover both.
+        print_result(false, &serde_json::Value::Null).expect("print Null");
+        print_result(false, &serde_json::json!(true)).expect("print bool");
+        print_result(false, &serde_json::json!(42)).expect("print number");
+        print_result(false, &serde_json::json!("hi")).expect("print string");
+    }
+
+    #[test]
+    fn print_result_human_readable_object_falls_back_to_pretty() {
+        let v = serde_json::json!({"status": "ok", "n": 1});
+        print_result(false, &v).expect("object/array fallback must succeed");
+    }
+
+    // ---- onboard_passthrough_message (pure print, no socket) ----
+
+    #[test]
+    fn onboard_passthrough_message_runs_for_all_variants() {
+        // The Onboard dispatcher delegates to this pure function — we verify
+        // it succeeds for every shape of args without ever touching a socket.
+        onboard_passthrough_message("qr-link", &["--timeout=120"]).expect("qr-link");
+        onboard_passthrough_message("pair-link", &["+15551234567"]).expect("pair-link");
+        onboard_passthrough_message("whoami", &[]).expect("whoami");
+        onboard_passthrough_message("session", &["list"]).expect("session list");
+        onboard_passthrough_message("session", &["verify", "name"]).expect("session verify");
+        onboard_passthrough_message("session", &["remove", "name"]).expect("session remove");
+    }
+
+    // ---- dispatch_onboard (pure, daemon-free) ----
+
+    /// The only dispatcher that does NOT touch the daemon socket. We invoke it
+    /// directly with all five `OnboardAction` variants to validate the
+    /// passthrough wiring without needing a live daemon.
+    #[test]
+    fn dispatch_onboard_runs_all_variants_without_daemon() {
+        let cli = cli_with(None, "default");
+        let cmds = vec![
+            OnboardCmd {
+                action: OnboardAction::QrLink { timeout: 60 },
+            },
+            OnboardCmd {
+                action: OnboardAction::PairLink { phone: "+1".into() },
+            },
+            OnboardCmd {
+                action: OnboardAction::Whoami,
+            },
+            OnboardCmd {
+                action: OnboardAction::Session {
+                    action: SessionCmd::List,
+                },
+            },
+            OnboardCmd {
+                action: OnboardAction::Session {
+                    action: SessionCmd::Verify { name: "x".into() },
+                },
+            },
+            OnboardCmd {
+                action: OnboardAction::Session {
+                    action: SessionCmd::Remove { name: "x".into() },
+                },
+            },
+        ];
+        for cmd in cmds {
+            dispatch_onboard(&cli, &cmd).expect("onboard passthrough must succeed");
+        }
+    }
+
+    // ---- rpc client error path (no socket) ----
+
+    #[test]
+    fn rpc_client_debug_includes_socket_path() {
+        // The Debug impl intentionally surfaces `socket_path` so failures in
+        // production can be diagnosed from `eprintln!({err:?})`. Lock that in.
+        let c = RpcClient::new(PathBuf::from("/tmp/octo-cli-test.sock"));
+        let s = format!("{c:?}");
+        assert!(s.contains("/tmp/octo-cli-test.sock"), "got: {s}");
+    }
+
+    #[test]
+    fn rpc_client_call_unreachable_socket_mentions_hint() {
+        // Repros the existing `rpc_client_call_reports_socket_unreachable`
+        // test with a more specific connection-refused scenario to ensure the
+        // friendly hint always appears, even when the path is well-formed.
+        let c = RpcClient::new(PathBuf::from("/this/path/does/not/exist.sock"));
+        let err = c.call("version.get", serde_json::Value::Null).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("is the daemon running"),
+            "expected operator hint in error, got: {msg}"
+        );
+    }
 }

@@ -52,6 +52,10 @@ nix = { version = "0.29", features = ["fs", "socket", "uio", "feature"] }
 thiserror = "1"
 anyhow    = "1"
 
+# Mutex used by the `MockAdapter` (compiled only under `test-helpers`)
+# to track call counts and per-method canned responses.
+parking_lot = { workspace = true }
+
 [features]
 default       = []
 # Test helpers: enables the `MockAdapter` in `crate::test_mock_adapter`

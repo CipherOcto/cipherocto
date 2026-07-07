@@ -68,7 +68,18 @@ fn inter_call_delay_ms() -> u64 {
 }
 
 async fn inter_call_delay() {
-    tokio::time::sleep(Duration::from_millis(inter_call_delay_ms())).await;
+    inter_call_delay_for("").await;
+}
+
+/// Like [`inter_call_delay`] but routes through [`should_delay`] so
+/// idempotent / local-only methods (`health.get`, `version.get`,
+/// `status.get`, `daemon.methods.*`) skip the throttle. Chain call
+/// sites should pass the RPC method name to avoid burning the full
+/// delay on idempotent ops.
+async fn inter_call_delay_for(method: &str) {
+    if should_delay(method) {
+        tokio::time::sleep(Duration::from_millis(inter_call_delay_ms())).await;
+    }
 }
 
 /// Idempotent / local-only methods skip the inter-call delay. WA

@@ -1,0 +1,74 @@
+[Unit]
+Description=Octo WhatsApp Runtime Daemon
+Documentation=https://github.com/cipherocto/octo-whatsapp
+After=network-online.target
+Wants=network-online.target
+# Wait for any previous instance to fully shut down before starting.
+After=octo-whatsapp-shutdown.service
+
+[Service]
+# ---- Process model ----
+Type=simple
+ExecStart=/usr/bin/octo-whatsapp daemon --name default
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# SIGTERM → graceful shutdown (drain + persist).
+
+# ---- User / directories ----
+# DynamicUser=yes: allocate a transient UID/GID per boot. Combined with
+# StateDirectory, this provides a clean, non-root, ephemeral runtime.
+DynamicUser=yes
+StateDirectory=octo/whatsapp
+LogsDirectory=octo/whatsapp
+ConfigurationDirectory=octo/whatsapp
+CacheDirectory=octo/whatsapp
+WorkingDirectory=/var/lib/octo/whatsapp
+
+# ---- Hardening ----
+# Strict system protection: /usr, /boot read-only; only StateDirectory
+# is writable.
+ProtectSystem=strict
+ProtectHome=read-only
+# Refuse to grant new privileges (no setuid binaries).
+NoNewPrivileges=true
+# Deny writes to executable memory regions.
+MemoryDenyWriteExecute=true
+# Private /tmp.
+PrivateTmp=true
+# Hide kernel tunables from the daemon.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Restrict address families to unix sockets + ipv4/ipv6.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Deny namespace creation (no unshare, no setns).
+RestrictNamespaces=true
+# Deny realtime scheduling.
+RestrictRealtime=true
+# Only allow native architecture syscalls.
+SystemCallArchitectures=native
+# Allow @system-service syscall set; deny privileged + resources.
+SystemCallFilter=@system-service ~@privileged ~@resources
+# Drop all capabilities (no special kernel privileges needed).
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Filesystem umask for any created files.
+UMask=0077
+
+# ---- Resource limits ----
+# 1 GiB virtual address space ceiling per process.
+MemoryMax=1G
+# 512 MiB resident set limit (soft).
+MemoryHigh=512M
+# 1024 file descriptors.
+LimitNOFILE=1024
+
+# ---- Observability ----
+# Stdout/stderr → journald (no log file).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=octo-whatsapp
+
+[Install]
+WantedBy=multi-user.target

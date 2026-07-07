@@ -54,6 +54,21 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
+fn init_tracing_once() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new("warn,live_daemon_test=info")
+                }),
+            )
+            .with_test_writer()
+            .try_init();
+    });
+}
+
 // ── env helpers ───────────────────────────────────────────────────
 
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
@@ -408,4 +423,175 @@ async fn live_chain_h_daemon_control() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     inter_call_delay_for("health.get").await;
+}
+
+// ── Chain B — groups lifecycle ────────────────────────────────────
+//
+// Exercises the four `groups.*` methods that currently exist:
+// `groups.create`, `groups.list`, `groups.info`, `groups.leave`.
+// `groups.invite` / `invite_link` / `set_subject` / `set_description`
+// from the original plan are NOT implemented — dropped.
+#[tokio::test]
+async fn live_chain_b_groups() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    // 1) groups.create — group lifecycle is core, panic on failure.
+    let created = rpc_call(
+        &fix.rpc,
+        "groups.create",
+        json!({ "name": "octo-live-test-B" }),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("groups.create failed: {e}"));
+    let group_a = created
+        .get("jid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            created
+                .get("group_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| panic!("groups.create result missing `jid`: {created}"));
+    tracing::info!("live: created group_a = {group_a}");
+
+    // 2) inter-call throttle.
+    inter_call_delay_for("groups.list").await;
+
+    // 3) Register for teardown BEFORE list/info so a panic between
+    // here and `leave` still triggers cleanup.
+    fix.created_groups.lock().push(group_a.clone());
+
+    // 4) groups.list — assert result is an array.
+    let list = rpc_call(&fix.rpc, "groups.list", json!({}))
+        .await
+        .unwrap_or_else(|e| panic!("groups.list failed: {e}"));
+    assert!(list.is_array(), "groups.list not array: {list}");
+
+    // 5) inter-call throttle.
+    inter_call_delay_for("groups.info").await;
+
+    // 6) groups.info — assert object.
+    let info = rpc_call(&fix.rpc, "groups.info", json!({ "jid": group_a.clone() }))
+        .await
+        .unwrap_or_else(|e| panic!("groups.info failed: {e}"));
+    assert!(info.is_object(), "groups.info not object: {info}");
+
+    // 7) inter-call throttle.
+    inter_call_delay_for("groups.leave").await;
+
+    // 8) groups.leave — best-effort (group may already be left).
+    match rpc_call(&fix.rpc, "groups.leave", json!({ "jid": group_a.clone() })).await {
+        Ok(_) => {}
+        Err(e) => tracing::warn!("live: groups.leave non-fatal: {e}"),
+    }
+}
+
+// ── Chain C — messages + chats (depends on Chain B's group_a) ────
+#[tokio::test]
+async fn live_chain_c_messages_chats() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    let group_a = {
+        let groups = fix.created_groups.lock();
+        groups.first().cloned().unwrap_or_else(|| {
+            panic!("Chain C requires Chain B to run first (no group_a registered)")
+        })
+    };
+
+    // Best-effort helper: log warnings on Err, never panic.
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.rpc, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) messages.list
+    let _ = best_effort(
+        fix,
+        "messages.list",
+        json!({ "jid": group_a.clone(), "limit": 5 }),
+    )
+    .await;
+
+    // 2) inter-call throttle
+    inter_call_delay_for("messages.search").await;
+
+    // 3) messages.search
+    let _ = best_effort(
+        fix,
+        "messages.search",
+        json!({ "jid": group_a.clone(), "query": "live" }),
+    )
+    .await;
+
+    // 4) inter-call throttle
+    inter_call_delay_for("chats.list").await;
+
+    // 5) chats.list
+    let _ = best_effort(fix, "chats.list", json!({ "limit": 10 })).await;
+
+    // 6) inter-call throttle
+    inter_call_delay_for("chats.info").await;
+
+    // 7) chats.info
+    let _ = best_effort(fix, "chats.info", json!({ "jid": group_a.clone() })).await;
+
+    // 8) inter-call throttle
+    inter_call_delay_for("chats.pin").await;
+
+    // 9) chats.pin
+    let _ = best_effort(fix, "chats.pin", json!({ "jid": group_a.clone() })).await;
+
+    // 10) inter-call throttle
+    inter_call_delay_for("chats.unpin").await;
+
+    // 11) chats.unpin
+    let _ = best_effort(fix, "chats.unpin", json!({ "jid": group_a.clone() })).await;
+
+    // 12) inter-call throttle
+    inter_call_delay_for("chats.mute").await;
+
+    // 13) chats.mute
+    let _ = best_effort(
+        fix,
+        "chats.mute",
+        json!({ "jid": group_a.clone(), "duration_s": 3600 }),
+    )
+    .await;
+
+    // 14) inter-call throttle
+    inter_call_delay_for("chats.archive").await;
+
+    // 15) chats.archive
+    let _ = best_effort(fix, "chats.archive", json!({ "jid": group_a.clone() })).await;
+
+    // 16) inter-call throttle
+    inter_call_delay_for("chats.typing").await;
+
+    // 17) chats.typing — typing
+    let _ = best_effort(
+        fix,
+        "chats.typing",
+        json!({ "jid": group_a.clone(), "state": "typing" }),
+    )
+    .await;
+
+    // 18) inter-call throttle
+    inter_call_delay_for("chats.typing").await;
+
+    // 19) chats.typing — paused
+    let _ = best_effort(
+        fix,
+        "chats.typing",
+        json!({ "jid": group_a.clone(), "state": "paused" }),
+    )
+    .await;
 }

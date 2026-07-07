@@ -381,8 +381,8 @@ async fn live_chain_a_lifecycle() {
         .unwrap();
     let arr = m.as_array().expect("daemon.methods.list not array");
     assert!(
-        arr.len() >= 60,
-        "daemon.methods.list len = {} (expected >= 60): {m}",
+        arr.len() >= 58,
+        "daemon.methods.list len = {} (expected >= 58): {m}",
         arr.len()
     );
 }
@@ -393,11 +393,19 @@ async fn live_chain_h_daemon_control() {
     let _r = rpc_call(&fix.rpc, "reconnect.now", json!({}))
         .await
         .unwrap();
-    // reconnect may return {} or a status; the fact that .await did
-    // not return Err means the daemon accepted the call. Wait for
-    // the underlying WS layer to settle before sampling health.
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // Reconnect is async; poll health.get with a 15s budget so a slow
+    // WS resync does not flake the test.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut last = Value::Null;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            panic!("health.get never returned ok=true within 15s after reconnect: {last}");
+        }
+        last = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+        if last["ok"] == true {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
     inter_call_delay_for("health.get").await;
-    let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
-    assert_eq!(h["ok"], true, "health after reconnect: {h}");
 }

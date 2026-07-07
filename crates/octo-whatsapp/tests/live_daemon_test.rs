@@ -91,6 +91,8 @@ fn should_delay(method: &str) -> bool {
         "health.get"
             | "version.get"
             | "status.get"
+            | "capabilities"
+            | "capabilities.list"
             | "daemon.methods"
             | "daemon.methods.help"
             | "daemon.methods.list"
@@ -357,4 +359,45 @@ async fn teardown_final() {
 #[tokio::test]
 async fn zzz_teardown_runs_last() {
     teardown_final().await;
+}
+
+#[tokio::test]
+async fn live_chain_a_lifecycle() {
+    let fix = fixture().await;
+    let v = rpc_call(&fix.rpc, "version.get", json!({})).await.unwrap();
+    assert!(v["daemon_version"].is_string(), "version: {v}");
+    inter_call_delay_for("health.get").await;
+    let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+    assert_eq!(h["ok"], true, "health: {h}");
+    inter_call_delay_for("status.get").await;
+    let s = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+    assert!(s["phase"].is_string(), "status: {s}");
+    inter_call_delay_for("capabilities").await;
+    let c = rpc_call(&fix.rpc, "capabilities", json!({})).await.unwrap();
+    assert!(c.is_object(), "capabilities: {c}");
+    inter_call_delay_for("daemon.methods.list").await;
+    let m = rpc_call(&fix.rpc, "daemon.methods.list", json!({}))
+        .await
+        .unwrap();
+    let arr = m.as_array().expect("daemon.methods.list not array");
+    assert!(
+        arr.len() >= 60,
+        "daemon.methods.list len = {} (expected >= 60): {m}",
+        arr.len()
+    );
+}
+
+#[tokio::test]
+async fn live_chain_h_daemon_control() {
+    let fix = fixture().await;
+    let _r = rpc_call(&fix.rpc, "reconnect.now", json!({}))
+        .await
+        .unwrap();
+    // reconnect may return {} or a status; the fact that .await did
+    // not return Err means the daemon accepted the call. Wait for
+    // the underlying WS layer to settle before sampling health.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    inter_call_delay_for("health.get").await;
+    let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+    assert_eq!(h["ok"], true, "health after reconnect: {h}");
 }

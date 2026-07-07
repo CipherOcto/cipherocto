@@ -21,6 +21,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use octo_adapter_whatsapp::{ChatInfo, MessageHit};
+use octo_network::dot::adapters::coordinator_admin::{
+    AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
+    GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+};
 use octo_network::dot::adapters::{CapabilityReport, MediaCapabilities};
 use octo_network::dot::error::PlatformAdapterError;
 
@@ -62,12 +66,18 @@ struct MockState {
 #[derive(Debug)]
 pub struct MockAdapter {
     state: Arc<Mutex<MockState>>,
+    /// Inner `CoordinatorAdmin` mock (Phase 6.12) — exposed via
+    /// `as_coordinator_admin` so hermetic tests can exercise the
+    /// membership / mode / admin RPC surface without a live WhatsApp
+    /// session.
+    pub coord_admin: MockCoordinatorAdmin,
 }
 
 impl MockAdapter {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(MockState::default())),
+            coord_admin: MockCoordinatorAdmin::new(),
         }
     }
 
@@ -454,6 +464,326 @@ impl OctoWhatsAppAdapter for MockAdapter {
             .remove("download_media")
             .unwrap_or_default())
     }
+
+    // ── CoordinatorAdmin probe (Phase 6.12) ──────────────────────────────
+
+    fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+        Some(&self.coord_admin)
+    }
+}
+
+// ===========================================================================
+// MockCoordinatorAdmin — Phase 6.12
+// ===========================================================================
+//
+// In-memory `CoordinatorAdmin` paired with `MockAdapter` so hermetic
+// tests can exercise the membership / mode / admin handler surface
+// without a live WhatsApp session. Mirrors `MockState` for the
+// adapter: per-method counters + canned response maps.
+
+/// Inner state for `MockCoordinatorAdmin`.
+#[derive(Debug, Default)]
+struct MockCoordState {
+    /// Method name (static str) -> number of calls.
+    call_counts: HashMap<&'static str, usize>,
+    /// Per-method response override for `GroupHandle`-returning methods.
+    canned_handles: HashMap<&'static str, GroupHandle>,
+    /// Per-id canned metadata returned by `get_group_metadata`.
+    canned_metadata: HashMap<String, GroupMetadata>,
+    /// Per-method response override for unit-result (`()`) methods.
+    /// Consumed on next call (single-shot).
+    canned_unit_err: HashMap<&'static str, PlatformAdapterError>,
+}
+
+/// Mock `CoordinatorAdmin` — in-memory, `Send + Sync`, `Arc`-shareable.
+#[derive(Debug, Clone)]
+pub struct MockCoordinatorAdmin {
+    state: Arc<Mutex<MockCoordState>>,
+}
+
+impl MockCoordinatorAdmin {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(MockCoordState::default())),
+        }
+    }
+
+    /// Returns the number of times `method` has been invoked.
+    pub fn call_count(&self, method: &'static str) -> usize {
+        self.state
+            .lock()
+            .call_counts
+            .get(method)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Pre-seed an error to be returned on the NEXT call to `method`.
+    /// Subsequent calls return `Ok(())` again unless re-seeded.
+    pub fn set_canned_err(&self, method: &'static str, e: PlatformAdapterError) {
+        self.state.lock().canned_unit_err.insert(method, e);
+    }
+
+    /// Pre-seed a `GroupHandle` returned by `create_group` (and similar).
+    pub fn set_canned_handle(&self, method: &'static str, h: GroupHandle) {
+        self.state.lock().canned_handles.insert(method, h);
+    }
+
+    /// Pre-seed a `GroupMetadata` returned by `get_group_metadata`
+    /// when the id matches `id`.
+    pub fn set_canned_metadata(&self, id: &str, m: GroupMetadata) {
+        self.state.lock().canned_metadata.insert(id.to_string(), m);
+    }
+}
+
+impl Default for MockCoordinatorAdmin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl CoordinatorAdmin for MockCoordinatorAdmin {
+    fn admin_capabilities(&self) -> AdminCapabilityReport {
+        AdminCapabilityReport {
+            can_create: true,
+            can_join_by_id: true,
+            can_join_by_invite: true,
+            can_leave: true,
+            can_destroy: true,
+            can_add_member: true,
+            can_remove_member: true,
+            can_ban: true,
+            can_promote: true,
+            can_demote: true,
+            can_approve_join: true,
+            can_rename: true,
+            can_describe: true,
+            can_lock: true,
+            can_announce: true,
+            can_set_ephemeral: true,
+            can_require_approval: true,
+            can_list_own_groups: true,
+            can_get_metadata: true,
+            can_resolve_invite: true,
+            can_transfer_ownership: true,
+        }
+    }
+
+    async fn create_group(
+        &self,
+        subject: &str,
+        members: &[GroupMemberSpec],
+    ) -> Result<GroupHandle, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("create_group").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("create_group") {
+            return Err(e);
+        }
+        if let Some(h) = s.canned_handles.get("create_group").cloned() {
+            return Ok(h);
+        }
+        Ok(GroupHandle {
+            id: GroupId::new("mock-create@g.us"),
+            subject: Some(subject.to_string()),
+            invite_url: Some("https://chat.whatsapp.com/MOCK".into()),
+            is_admin: true,
+            member_count: Some(members.len() as u32 + 1),
+            mode_flags: None,
+            initial_admins_promoted: true,
+        })
+    }
+
+    async fn leave_group(&self, _id: &GroupId) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("leave_group")
+    }
+    async fn destroy_group(&self, _id: &GroupId) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("destroy_group")
+    }
+
+    async fn add_member(
+        &self,
+        _id: &GroupId,
+        _m: &GroupMemberSpec,
+    ) -> Result<AddMemberOutput, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("add_member").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("add_member") {
+            return Err(e);
+        }
+        Ok(AddMemberOutput {
+            added: true,
+            promoted: None,
+        })
+    }
+
+    async fn remove_member(&self, _id: &GroupId, _p: &PeerId) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("remove_member")
+    }
+    async fn ban_member(
+        &self,
+        _id: &GroupId,
+        _p: &PeerId,
+        _d: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("ban_member")
+    }
+    async fn promote_to_admin(
+        &self,
+        _id: &GroupId,
+        _p: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("promote_to_admin")
+    }
+    async fn demote_from_admin(
+        &self,
+        _id: &GroupId,
+        _p: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("demote_from_admin")
+    }
+    async fn approve_join_request(
+        &self,
+        _id: &GroupId,
+        _p: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("approve_join_request")
+    }
+    async fn rename_group(
+        &self,
+        _id: &GroupId,
+        _subject: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("rename_group")
+    }
+    async fn set_group_description(
+        &self,
+        _id: &GroupId,
+        _desc: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("set_group_description")
+    }
+    async fn set_locked(&self, _id: &GroupId, _locked: bool) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("set_locked")
+    }
+    async fn set_announce(
+        &self,
+        _id: &GroupId,
+        _announce: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("set_announce")
+    }
+    async fn set_ephemeral(
+        &self,
+        _id: &GroupId,
+        _ttl: Option<std::time::Duration>,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("set_ephemeral")
+    }
+    async fn set_require_approval(
+        &self,
+        _id: &GroupId,
+        _require: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("set_require_approval")
+    }
+    async fn list_own_groups(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        self.record_unit_handle_vec("list_own_groups")
+    }
+    async fn list_own_groups_with_invites(&self) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        self.record_unit_handle_vec("list_own_groups_with_invites")
+    }
+    async fn get_group_metadata(
+        &self,
+        id: &GroupId,
+    ) -> Result<GroupMetadata, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_group_metadata").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("get_group_metadata") {
+            return Err(e);
+        }
+        if let Some(m) = s.canned_metadata.get(id.as_str()).cloned() {
+            return Ok(m);
+        }
+        Ok(GroupMetadata {
+            id: id.clone(),
+            subject: Some("mock".into()),
+            description: Some("mock description".into()),
+            members: vec![PeerId::new("mock-member")],
+            admins: vec![PeerId::new("mock-admin")],
+            invite_url: Some("https://chat.whatsapp.com/MOCK".into()),
+            mode_flags: GroupModeFlags::default(),
+        })
+    }
+    async fn resolve_invite(&self, _inv: &InviteRef) -> Result<GroupHandle, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("resolve_invite").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("resolve_invite") {
+            return Err(e);
+        }
+        Ok(GroupHandle {
+            id: GroupId::new("resolved@g.us"),
+            subject: Some("resolved".into()),
+            invite_url: None,
+            is_admin: false,
+            member_count: Some(42),
+            mode_flags: None,
+            initial_admins_promoted: false,
+        })
+    }
+    async fn join_by_invite(&self, _inv: &InviteRef) -> Result<GroupHandle, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "mock".into(),
+            action: "join_by_invite".into(),
+        })
+    }
+    async fn join_by_id(&self, _id: &GroupId) -> Result<GroupHandle, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "mock".into(),
+            action: "join_by_id".into(),
+        })
+    }
+    async fn transfer_ownership(
+        &self,
+        _id: &GroupId,
+        _p: &PeerId,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("transfer_ownership")
+    }
+    fn platform_name(&self) -> String {
+        "mock".into()
+    }
+}
+
+impl MockCoordinatorAdmin {
+    fn record_unit_call(&self, method: &'static str) -> Result<(), PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry(method).or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove(method) {
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    fn record_unit_handle_vec(
+        &self,
+        method: &'static str,
+    ) -> Result<Vec<GroupHandle>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry(method).or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove(method) {
+            return Err(e);
+        }
+        Ok(vec![GroupHandle {
+            id: GroupId::new("mock-list@g.us"),
+            subject: Some("mock".into()),
+            invite_url: Some("https://chat.whatsapp.com/MOCK".into()),
+            is_admin: true,
+            member_count: Some(2),
+            mode_flags: None,
+            initial_admins_promoted: true,
+        }])
+    }
 }
 
 // === Internal helpers ===
@@ -747,5 +1077,95 @@ mod tests {
         assert_eq!(m.call_count("set_chat_archived"), 1);
         assert_eq!(m.call_count("delete_chat"), 1);
         assert_eq!(m.call_count("send_typing"), 1);
+    }
+
+    // ── Phase 6.12: CoordinatorAdmin probe ───────────────────────────────
+
+    #[tokio::test]
+    async fn mock_as_coordinator_admin_returns_some() {
+        let m = MockAdapter::new();
+        let coord = m.as_coordinator_admin();
+        assert!(coord.is_some(), "MockAdapter must expose CoordinatorAdmin");
+    }
+
+    #[tokio::test]
+    async fn mock_coord_admin_capabilities_all_true() {
+        let m = MockAdapter::new();
+        let coord = m.as_coordinator_admin().expect("some");
+        let caps = coord.admin_capabilities();
+        assert!(caps.can_create);
+        assert!(caps.can_add_member);
+        assert!(caps.can_remove_member);
+        assert!(caps.can_ban);
+        assert!(caps.can_promote);
+        assert!(caps.can_demote);
+        assert!(caps.can_rename);
+        assert!(caps.can_lock);
+        assert!(caps.can_announce);
+        assert!(caps.can_set_ephemeral);
+        assert!(caps.can_require_approval);
+        assert!(caps.can_list_own_groups);
+        assert!(caps.can_get_metadata);
+        assert!(caps.can_resolve_invite);
+        assert!(caps.can_join_by_id);
+        assert!(caps.can_join_by_invite);
+        assert!(caps.can_transfer_ownership);
+    }
+
+    #[tokio::test]
+    async fn mock_coord_admin_unit_methods_record_and_override() {
+        let m = MockAdapter::new();
+        // Call through the trait-object surface (the public API), but
+        // observe counts via the concrete `MockCoordinatorAdmin` field
+        // (which owns the counter state).
+        let coord_trait = m.as_coordinator_admin().expect("some");
+        coord_trait
+            .leave_group(&GroupId::new("g@g.us"))
+            .await
+            .unwrap();
+        coord_trait
+            .rename_group(&GroupId::new("g@g.us"), "new")
+            .await
+            .unwrap();
+        assert_eq!(m.coord_admin.call_count("leave_group"), 1);
+        assert_eq!(m.coord_admin.call_count("rename_group"), 1);
+
+        m.coord_admin.set_canned_err(
+            "rename_group",
+            PlatformAdapterError::Unreachable {
+                platform: "mock".into(),
+                reason: "override".into(),
+            },
+        );
+        let r = coord_trait.rename_group(&GroupId::new("g@g.us"), "x").await;
+        assert!(matches!(r, Err(PlatformAdapterError::Unreachable { .. })));
+        // The single-shot error is consumed — next call returns Ok.
+        let r2 = coord_trait.rename_group(&GroupId::new("g@g.us"), "x").await;
+        assert!(r2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn mock_coord_admin_add_member_default_ok() {
+        let m = MockAdapter::new();
+        let coord = m.as_coordinator_admin().expect("some");
+        let spec = GroupMemberSpec::new("+15555550100");
+        let out = coord
+            .add_member(&GroupId::new("g@g.us"), &spec)
+            .await
+            .unwrap();
+        assert!(out.added);
+        assert!(out.promoted.is_none());
+        assert_eq!(m.coord_admin.call_count("add_member"), 1);
+    }
+
+    #[tokio::test]
+    async fn mock_coord_admin_create_group_default_handle() {
+        let m = MockAdapter::new();
+        let coord = m.as_coordinator_admin().expect("some");
+        let h = coord.create_group("subj", &[]).await.unwrap();
+        assert_eq!(h.subject.as_deref(), Some("subj"));
+        assert!(h.is_admin);
+        assert!(h.initial_admins_promoted);
+        assert_eq!(m.coord_admin.call_count("create_group"), 1);
     }
 }

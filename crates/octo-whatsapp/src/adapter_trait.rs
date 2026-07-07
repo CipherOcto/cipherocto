@@ -36,6 +36,7 @@ use std::path::Path;
 use async_trait::async_trait;
 
 use octo_adapter_whatsapp::{ChatInfo, MessageHit};
+use octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin;
 use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::error::PlatformAdapterError;
 
@@ -293,6 +294,22 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// keep the handler compile-error-free once the daemon stores its
     /// adapter as `dyn OctoWhatsAppAdapter`.
     async fn download_media(&self, media_ref_token: &str) -> Result<Vec<u8>, PlatformAdapterError>;
+
+    /// Runtime-side escape hatch to reach the
+    /// [`CoordinatorAdmin`](octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin)
+    /// trait object. Default: `None`.
+    ///
+    /// `WhatsAppWebAdapter` overrides to `Some(self)`. `MockAdapter`
+    /// overrides to `Some(&self.coord_admin)` so hermetic tests can
+    /// exercise the membership/mode/admin handler surface (Phase 6.12).
+    ///
+    /// Default-`None` is safe for adapters that don't implement
+    /// `CoordinatorAdmin` (e.g. Matrix, Telegram adapters). Callers
+    /// must handle the `None` arm by returning a `NotConnected`-style
+    /// RpcError to the RPC caller.
+    fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+        None
+    }
 }
 
 // ===========================================================================
@@ -686,6 +703,19 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         // logic lives on `WhatsAppWebAdapter`'s `PlatformAdapter` impl
         // (in `adapter.rs`), so this trait wrapper just forwards.
         <Self as PlatformAdapter>::download_media(self, media_ref_token).await
+    }
+
+    // ── CoordinatorAdmin probe (Phase 6.12) ──────────────────────────────
+
+    fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+        // `WhatsAppWebAdapter` already implements `CoordinatorAdmin` in
+        // `adapter.rs:2592`, with its `PlatformAdapter::as_coordinator_admin`
+        // probe returning `Some(self)`. We forward through that probe so
+        // a single source of truth decides the answer — if a future
+        // change makes the live adapter conditional, the trait surface
+        // tracks it automatically.
+        use octo_network::dot::PlatformAdapter;
+        <Self as PlatformAdapter>::as_coordinator_admin(self)
     }
 }
 

@@ -403,3 +403,71 @@ fn cli_groups_transfer_ownership_help() {
         "groups transfer-ownership --help must mention --member, got:\n{help}"
     );
 }
+
+// ---- Phase 6.12.1 Task 2: groups completion (6 new) ----
+//
+// `groups set-announce | set-ephemeral | set-require-approval |
+// list-with-invites | join-by-invite | join-by-id`
+
+#[test]
+fn cli_groups_set_announce_help() {
+    let help = cli_help(&["groups", "set-announce"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-announce --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--announce"),
+        "groups set-announce --help must mention --announce, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_set_ephemeral_help() {
+    let help = cli_help(&["groups", "set-ephemeral"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-ephemeral --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--ttl-seconds"),
+        "groups set-ephemeral --help must mention --ttl-seconds, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_set_require_approval_help() {
+    let help = cli_help(&["groups", "set-require-approval"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-require-approval --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--require"),
+        "groups set-require-approval --help must mention --require, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_list_with_invites_help_takes_no_args() {
+    // Success here means the subcommand parses with zero args + zero flags.
+    cli_help(&["groups", "list-with-invites"]);
+}
+
+#[test]
+fn cli_groups_join_by_invite_help() {
+    let help = cli_help(&["groups", "join-by-invite"]);
+    assert!(
+        help.contains("<CODE>") || help.contains("code"),
+        "groups join-by-invite --help must mention code, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_join_by_id_help() {
+    let help = cli_help(&["groups", "join-by-id"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups join-by-id --help must mention jid, got:\n{help}"
+    );
+}

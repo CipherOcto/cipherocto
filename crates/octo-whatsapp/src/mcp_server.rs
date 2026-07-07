@@ -12,14 +12,17 @@ use serde_json::Value;
 
 /// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
 /// Part A + Phase 5 Part E RPC surfaces + Phase 6.12 groups coordinator
-/// surface). Used by integration tests to assert `tools/list` advertises
-/// the full set. The Phase 4 Phase 5 Part E additions are 17 tools
-/// (10 rule CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1 action). The
-/// Phase 6.12 additions are 14 `groups.*` coordinator tools
-/// (destroy, resolve_invite, add_member, add_members, remove_member,
-/// remove_members, promote, demote, ban, approve_join, rename,
-/// set_description, set_locked, transfer_ownership).
-pub const EXPECTED_TOOL_COUNT: usize = 80;
+/// surface + Phase 6.12.1 groups completion surface). Used by integration
+/// tests to assert `tools/list` advertises the full set. The Phase 4
+/// Phase 5 Part E additions are 17 tools (10 rule CRUD/dry-run + 4
+/// trigger CRUD/run + 2 audit + 1 action). The Phase 6.12 additions
+/// are 14 `groups.*` coordinator tools (destroy, resolve_invite,
+/// add_member, add_members, remove_member, remove_members, promote,
+/// demote, ban, approve_join, rename, set_description, set_locked,
+/// transfer_ownership). The Phase 6.12.1 completion surface adds 6 more
+/// (set_announce, set_ephemeral, set_require_approval, list_with_invites,
+/// join_by_invite, join_by_id).
+pub const EXPECTED_TOOL_COUNT: usize = 86;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -456,6 +459,43 @@ pub fn tool_descriptors() -> Vec<Value> {
             &["jid", "member"],
         ),
     ));
+    // ─── Groups completion (Phase 6.12.1 — 6) ─────────────────────────
+    v.push(td(
+        "groups.set_announce",
+        "Set announce-only mode (only admins can post when on).",
+        schema_props_required(
+            &[("jid", "string"), ("announce", "boolean")],
+            &["jid", "announce"],
+        ),
+    ));
+    v.push(td(
+        "groups.set_ephemeral",
+        "Set message expiry timer. Omit ttl_seconds to disable.",
+        schema_props_required(&[("jid", "string"), ("ttl_seconds", "integer")], &["jid"]),
+    ));
+    v.push(td(
+        "groups.set_require_approval",
+        "Require admin approval for new joiners.",
+        schema_props_required(
+            &[("jid", "string"), ("require", "boolean")],
+            &["jid", "require"],
+        ),
+    ));
+    v.push(td(
+        "groups.list_with_invites",
+        "List groups the daemon belongs to plus pending invites.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "groups.join_by_invite",
+        "Join a group via invite link or short code.",
+        schema_props_required(&[("code", "string")], &["code"]),
+    ));
+    v.push(td(
+        "groups.join_by_id",
+        "Join a group by JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
     // ─── Media (1) ────────────────────────────────────────────────────
     v.push(td(
         "media.info",
@@ -763,6 +803,13 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "groups.set_description" => "groups.set_description",
         "groups.set_locked" => "groups.set_locked",
         "groups.transfer_ownership" => "groups.transfer_ownership",
+        // Phase 6.12.1: groups completion surface.
+        "groups.set_announce" => "groups.set_announce",
+        "groups.set_ephemeral" => "groups.set_ephemeral",
+        "groups.set_require_approval" => "groups.set_require_approval",
+        "groups.list_with_invites" => "groups.list_with_invites",
+        "groups.join_by_invite" => "groups.join_by_invite",
+        "groups.join_by_id" => "groups.join_by_id",
         "media.info" => "media.info",
         "envelope.encode" => "envelope.encode",
         "envelope.decode" => "envelope.decode",
@@ -1034,5 +1081,37 @@ mod tests {
                 "Phase 6.12 groups coordinator tool {m:?} not advertised"
             );
         }
+    }
+
+    /// Phase 6.12.1: 6 `groups.*` completion RPCs (announce / ephemeral /
+    /// require_approval / list_with_invites / join_by_invite / join_by_id)
+    /// now exposed as MCP tools. Mirrors the prior coordinator test.
+    #[test]
+    fn phase612_1_groups_completion_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "groups.set_announce",
+            "groups.set_ephemeral",
+            "groups.set_require_approval",
+            "groups.list_with_invites",
+            "groups.join_by_invite",
+            "groups.join_by_id",
+        ] {
+            assert!(
+                names.contains(m),
+                "Phase 6.12.1 groups completion tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
     }
 }

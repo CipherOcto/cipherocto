@@ -267,6 +267,39 @@ pub enum GroupsAction {
         #[arg(long)]
         member: String,
     },
+    /// Lock or unlock announce-only mode (only admins can post when on).
+    SetAnnounce {
+        jid: String,
+        /// True to enable announce-only, false to allow all members to post.
+        #[arg(long)]
+        announce: bool,
+    },
+    /// Set message expiry timer. Omit `--ttl-seconds` (pass an empty value)
+    /// to disable; otherwise pass the lifetime in seconds (0 = disable).
+    SetEphemeral {
+        jid: String,
+        /// Message lifetime in seconds. When omitted/zero the timer is disabled.
+        #[arg(long)]
+        ttl_seconds: Option<u32>,
+    },
+    /// Require admin approval before members can join.
+    SetRequireApproval {
+        jid: String,
+        #[arg(long)]
+        require: bool,
+    },
+    /// List groups the daemon belongs to plus pending join invites.
+    ListWithInvites,
+    /// Join a group via invite link or short code.
+    JoinByInvite {
+        /// Invite link (`https://chat.whatsapp.com/…`) or short code (e.g. `CXYZ…`).
+        code: String,
+    },
+    /// Join a known group by JID.
+    JoinById {
+        /// Group JID to join (group must allow on-demand joins).
+        jid: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -976,6 +1009,23 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
             "groups.transfer_ownership",
             serde_json::json!({"jid": jid, "member": member}),
         ),
+        GroupsAction::SetAnnounce { jid, announce } => (
+            "groups.set_announce",
+            serde_json::json!({"jid": jid, "announce": announce}),
+        ),
+        GroupsAction::SetEphemeral { jid, ttl_seconds } => (
+            "groups.set_ephemeral",
+            serde_json::json!({"jid": jid, "ttl_seconds": ttl_seconds}),
+        ),
+        GroupsAction::SetRequireApproval { jid, require } => (
+            "groups.set_require_approval",
+            serde_json::json!({"jid": jid, "require": require}),
+        ),
+        GroupsAction::ListWithInvites => ("groups.list_with_invites", serde_json::json!({})),
+        GroupsAction::JoinByInvite { code } => {
+            ("groups.join_by_invite", serde_json::json!({"code": code}))
+        }
+        GroupsAction::JoinById { jid } => ("groups.join_by_id", serde_json::json!({"jid": jid})),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)

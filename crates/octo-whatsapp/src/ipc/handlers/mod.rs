@@ -87,6 +87,12 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(groups::GroupsSetDescription))
         .register(Arc::new(groups::GroupsSetLocked))
         .register(Arc::new(groups::GroupsTransferOwnership))
+        .register(Arc::new(groups::GroupsSetAnnounce))
+        .register(Arc::new(groups::GroupsSetEphemeral))
+        .register(Arc::new(groups::GroupsSetRequireApproval))
+        .register(Arc::new(groups::GroupsListWithInvites))
+        .register(Arc::new(groups::GroupsJoinByInvite))
+        .register(Arc::new(groups::GroupsJoinById))
         .register(Arc::new(messages_list::MessagesList))
         .register(Arc::new(messages_search::MessagesSearch))
         .register(Arc::new(messages_edit::MessagesEdit))
@@ -283,6 +289,13 @@ pub const PHASE6_12_GROUPS_METHODS: &[&str] = &[
     "groups.resolve_invite",
     // ownership transfer (added with mode/admin batch)
     "groups.transfer_ownership",
+    // T6.12.1-1: completion surface (TTL/announce/approval + joins)
+    "groups.set_announce",
+    "groups.set_ephemeral",
+    "groups.set_require_approval",
+    "groups.list_with_invites",
+    "groups.join_by_invite",
+    "groups.join_by_id",
 ];
 
 #[cfg(test)]

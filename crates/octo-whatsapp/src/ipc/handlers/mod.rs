@@ -73,6 +73,20 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(groups::GroupsList))
         .register(Arc::new(groups::GroupsInfo))
         .register(Arc::new(groups::GroupsLeave))
+        .register(Arc::new(groups::GroupsDestroy))
+        .register(Arc::new(groups::GroupsResolveInvite))
+        .register(Arc::new(groups::GroupsAddMember))
+        .register(Arc::new(groups::GroupsAddMembers))
+        .register(Arc::new(groups::GroupsRemoveMember))
+        .register(Arc::new(groups::GroupsRemoveMembers))
+        .register(Arc::new(groups::GroupsPromote))
+        .register(Arc::new(groups::GroupsDemote))
+        .register(Arc::new(groups::GroupsBan))
+        .register(Arc::new(groups::GroupsApproveJoin))
+        .register(Arc::new(groups::GroupsRename))
+        .register(Arc::new(groups::GroupsSetDescription))
+        .register(Arc::new(groups::GroupsSetLocked))
+        .register(Arc::new(groups::GroupsTransferOwnership))
         .register(Arc::new(messages_list::MessagesList))
         .register(Arc::new(messages_search::MessagesSearch))
         .register(Arc::new(messages_edit::MessagesEdit))
@@ -248,6 +262,29 @@ pub const PHASE5_SECURITY_METHODS: &[&str] = &[
     "security.list_tokens",
 ];
 
+/// RPC method names added in Phase 6.12 (groups member-management
+/// + invite resolution).
+pub const PHASE6_12_GROUPS_METHODS: &[&str] = &[
+    // T6.12-3: membership
+    "groups.add_member",
+    "groups.add_members",
+    "groups.remove_member",
+    "groups.remove_members",
+    "groups.promote",
+    "groups.demote",
+    // T6.12-4: mode / admin
+    "groups.destroy",
+    "groups.ban",
+    "groups.approve_join",
+    "groups.rename",
+    "groups.set_description",
+    "groups.set_locked",
+    // T6.12-5: invite
+    "groups.resolve_invite",
+    // ownership transfer (added with mode/admin batch)
+    "groups.transfer_ownership",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +351,7 @@ mod tests {
             .chain(PHASE4_AUDIT_METHODS.iter())
             .chain(PHASE4_ACTIONS_METHODS.iter())
             .chain(PHASE5_SECURITY_METHODS.iter())
+            .chain(PHASE6_12_GROUPS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

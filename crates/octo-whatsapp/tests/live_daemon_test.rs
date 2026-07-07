@@ -36,7 +36,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1233,3 +1233,205 @@ fn cli_exec(fix: &LiveFixture, args: &[&str]) -> (i32, String, String) {
         String::from_utf8_lossy(&out.stderr).to_string(),
     )
 }
+
+// ── Chain T7 — MCP server over stdio JSON-RPC ──────────────────────
+//
+// Drives the real `octo-whatsapp mcp` binary against the live daemon
+// socket. The MCP framing is newline-delimited JSON on both sides (see
+// `forward_to_daemon` in `mcp_server.rs` and the BufReader::read_line
+// loop in `serve`); LSP / Content-Length is **not** used.
+//
+// Each MCP call sends one line + reads one response. The shared id
+// counter (`MCP_ID`) is `AtomicU32` so successive calls within the same
+// test fn are race-free without locking. A 15s read deadline caps any
+// individual MCP round-trip; the test is not under thundering-herd
+// load, so the limit is generous.
+//
+// Both the `initialize` handshake and `tools/list` are hard-required.
+// Subsequent `tools/call` rounds are best-effort: a tool that 4xx's
+// (e.g. `rules.test` with a stub event, `send.text` over a no-network
+// hermetic fixture) logs a warning and moves on. Hard panic on the
+// `tools/list` count drifting from `EXPECTED_TOOL_COUNT = 66` so a
+// silent surface deletion is caught immediately.
+#[tokio::test]
+async fn live_mcp_integration() {
+    use octo_whatsapp::mcp_server::EXPECTED_TOOL_COUNT;
+
+    init_tracing_once();
+    let fix = fixture().await;
+
+    // 1) Spawn the MCP server, attached to the live fixture's socket.
+    let mut child = mcp_spawn(fix).await;
+
+    // 2) initialize handshake — the MCP server returns the response on
+    //    the next line; do not sleep (the handshake is local).
+    let init_v = mcp_call(
+        &mut child,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "live-test", "version": "0"},
+        }),
+    )
+    .await;
+    assert!(
+        init_v["result"]["serverInfo"].is_object(),
+        "initialize did not return serverInfo: {init_v}"
+    );
+    assert_eq!(
+        init_v["result"]["serverInfo"]["name"], "octo-whatsapp",
+        "initialize server name drifted: {init_v}"
+    );
+
+    // 3) notifications/initialized — MCP says this is a *notification*
+    //    (no id), and the server simply ignores unknown methods with a
+    //    JSON-RPC error. We treat either a success echo (legacy) or an
+    //    error envelope as "OK"; the goal is just to prime the server.
+    let _ = mcp_call(&mut child, "notifications/initialized", json!({})).await;
+    inter_call_delay_for("capabilities.list").await;
+
+    // 4) tools/list — assert the full 66-tool surface is advertised.
+    let list_v = mcp_call(&mut child, "tools/list", json!({})).await;
+    let tools = list_v["result"]["tools"]
+        .as_array()
+        .expect("tools/list result.tools missing or not an array");
+    assert_eq!(
+        tools.len(),
+        EXPECTED_TOOL_COUNT,
+        "tools/list count drifted: got {} expected {}",
+        tools.len(),
+        EXPECTED_TOOL_COUNT
+    );
+
+    // 5) Representative tools/call sweep. Names are the **actual MCP
+    //    tool names** registered in `mcp_server::tool_descriptors` —
+    //    not the daemon RPC method names — and the bridge's match
+    //    arms forward them as-is. Hard-required: every call here must
+    //    resolve to a known tool; otherwise the tool-name mapping has
+    //    drifted and the rest of the sweep is meaningless. We collect
+    //    the registered names first, then validate each entry.
+    let registered: std::collections::BTreeSet<String> = tools
+        .iter()
+        .filter_map(|t| t.get("name").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+
+    let cases: &[&str] = &[
+        "version",
+        "status",
+        "health",
+        "capabilities",
+        "groups.list",
+        "messages.list",
+        "chats.list",
+        "envelope.encode",
+        "media.info",
+        "domain.compute-hash",
+        "events.list",
+        "clients.list",
+        "daemon.methods.list",
+        "security.list_tokens",
+        "audit.tail",
+        "audit.verify",
+        "rules.reload",
+        "triggers.delete",
+        "actions.escalate",
+    ];
+    for tool in cases {
+        assert!(
+            registered.contains(*tool),
+            "tool {tool:?} missing from tools/list; registered={:?}",
+            registered
+        );
+        inter_call_delay_for("mcp").await;
+        let v = mcp_call(
+            &mut child,
+            "tools/call",
+            json!({ "name": tool, "arguments": {} }),
+        )
+        .await;
+        if v.get("error").is_some() {
+            tracing::warn!(
+                "live_mcp: tools/call {tool} non-fatal error: {}",
+                v["error"]
+            );
+        }
+    }
+
+    // 6) Shutdown — best-effort. The MCP server may also handle EOF
+    //    on stdin by exiting its loop; we send `shutdown` for
+    //    cleanliness, then kill the process to ensure no zombie.
+    let _ = mcp_call(&mut child, "shutdown", json!({})).await;
+    let _ = child.kill().await;
+}
+
+// Spawn `octo-whatsapp mcp --socket <fix.socket>` with piped stdio.
+// Mirrors `cli_exec` for the dispatch side: sets `XDG_RUNTIME_DIR` to
+// the fixture's tmp dir (so the CLI's default-resolution branch would
+// also land on the right socket) and strips `OCTO_WHATSAPP_BEARER`
+// (the hermetic fixture has `bearer_required: false /
+// hermetic_bypass: true`, so no token is needed).
+async fn mcp_spawn(fix: &LiveFixture) -> tokio::process::Child {
+    let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_octo-whatsapp"));
+    tokio::process::Command::new(bin)
+        .env("XDG_RUNTIME_DIR", fix.tmp.path())
+        .env_remove("OCTO_WHATSAPP_BEARER")
+        .arg("mcp")
+        .arg("--socket")
+        .arg(fix.socket.to_string_lossy().into_owned())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn octo-whatsapp mcp")
+}
+
+// Send one JSON-RPC line on stdin and read one response on stdout.
+// Newline-delimited framing on both sides (see mcp_server::serve +
+// forward_to_daemon); LSP / Content-Length is NOT used.
+//
+// Panics on:
+//   - timeout (15s) — the MCP bridge is hung
+//   - zero-byte read — the MCP server closed stdout unexpectedly
+//   - non-JSON response — the bridge emitted an unparseable line
+async fn mcp_call(child: &mut tokio::process::Child, method: &str, params: Value) -> Value {
+    let id = MCP_ID.fetch_add(1, Ordering::Relaxed);
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    let mut line = serde_json::to_string(&req).expect("serialize jsonrpc request");
+    line.push('\n');
+
+    {
+        let stdin = child.stdin.as_mut().expect("MCP stdin was already taken");
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .expect("MCP write stdin");
+        stdin.flush().await.expect("MCP flush stdin");
+    }
+
+    let stdout = child.stdout.as_mut().expect("MCP stdout was already taken");
+    let mut reader = tokio::io::BufReader::new(stdout);
+    let mut buf = String::new();
+    let n = tokio::time::timeout(Duration::from_secs(15), reader.read_line(&mut buf))
+        .await
+        .unwrap_or_else(|_| panic!("MCP call {method} timed out after 15s"))
+        .unwrap_or_else(|e| panic!("MCP call {method} read error: {e}"));
+    assert!(
+        n > 0,
+        "MCP server closed stdout unexpectedly before {method} response"
+    );
+    serde_json::from_str(&buf)
+        .unwrap_or_else(|e| panic!("MCP bad JSON for {method}: {e}: raw={buf:?}"))
+}
+
+/// Counter shared by `mcp_call` to assign monotonic JSON-RPC ids across
+/// successive calls without locking. Initial value 1 keeps parity with
+/// `RpcStream::next_id` so a debug interleaved run yields overlapping
+/// id ranges that are obviously tool- or socket-local.
+static MCP_ID: AtomicU32 = AtomicU32::new(1);

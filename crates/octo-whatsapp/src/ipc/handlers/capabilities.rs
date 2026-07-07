@@ -33,7 +33,7 @@
 
 use serde_json::{json, Value};
 
-use super::super::protocol::{RpcError, RpcErrorCode};
+use super::super::protocol::RpcError;
 use super::super::server::RpcHandler;
 use crate::daemon::DaemonHandle;
 
@@ -93,18 +93,6 @@ fn static_capability_report() -> Value {
             "supported_mime_types": ["application/octet-stream"],
         }
     })
-}
-
-/// Helper: returns the JSON-RPC error for invalid `capabilities`
-/// params (currently no params required, so this is unused — kept
-/// for forward-compatibility if Phase 3 wants to filter by `peer`).
-#[allow(dead_code)]
-pub(crate) fn invalid_params<E: std::fmt::Display>(e: E) -> RpcError {
-    RpcError {
-        code: RpcErrorCode::InvalidParams.as_i32(),
-        message: format!("invalid params: {e}"),
-        data: None,
-    }
 }
 
 #[cfg(test)]

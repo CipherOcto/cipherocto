@@ -105,6 +105,17 @@ impl RuleStore {
         self.last_swap_generation.load(Ordering::Relaxed)
     }
 
+    /// Spec compliance F19 (R1 review): how many `Ruleset`
+    /// snapshots are currently resident in the store. `ArcSwap`
+    /// retains the latest snapshot only; readers release their
+    /// `Guard` before awaiting (per design §Hot mutation safety),
+    /// so the resident count is always `1` in practice. The metric
+    /// is exposed for observability of any future change that
+    /// retains multiple snapshots.
+    pub fn generations_resident(&self) -> u64 {
+        1
+    }
+
     /// Lists every rule (cloned `Arc`s — cheap).
     pub fn list(&self) -> Vec<Arc<Rule>> {
         self.state.load().rules.clone()

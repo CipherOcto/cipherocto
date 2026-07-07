@@ -14,7 +14,9 @@ use crate::events_persister::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
 use crate::observability::metrics::Metrics;
-use crate::rules::{MutationRateLimiter, RuleStore, RulesPersister};
+use crate::rules::{
+    persister as rules_persister_mod, MutationRateLimiter, RuleStore, RulesPersister,
+};
 use crate::security::TokenStore;
 use crate::triggers::TriggerStore;
 
@@ -25,6 +27,48 @@ pub enum DaemonPhase {
     Connected,
     SessionLost,
     ShuttingDown,
+}
+
+/// 7-variant BotState mirror (spec compliance F18 — R1 review).
+/// The runtime does NOT own a `wacore` adapter; this enum is a
+/// runtime-side mirror updated by the connection watcher when the
+/// adapter transitions. `status.get` reads this and returns the
+/// variant name verbatim per design §Readiness "7-variant BotState
+/// verbatim".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BotStateMirror {
+    #[default]
+    Disconnected,
+    PairingQr,
+    PairingCode,
+    Connected,
+    Replaced,
+    LoggedOut,
+    SessionExpired,
+}
+
+fn encode_bot_state(bs: BotStateMirror) -> u8 {
+    match bs {
+        BotStateMirror::Disconnected => 0,
+        BotStateMirror::PairingQr => 1,
+        BotStateMirror::PairingCode => 2,
+        BotStateMirror::Connected => 3,
+        BotStateMirror::Replaced => 4,
+        BotStateMirror::LoggedOut => 5,
+        BotStateMirror::SessionExpired => 6,
+    }
+}
+
+fn decode_bot_state(v: u8) -> BotStateMirror {
+    match v {
+        1 => BotStateMirror::PairingQr,
+        2 => BotStateMirror::PairingCode,
+        3 => BotStateMirror::Connected,
+        4 => BotStateMirror::Replaced,
+        5 => BotStateMirror::LoggedOut,
+        6 => BotStateMirror::SessionExpired,
+        _ => BotStateMirror::Disconnected,
+    }
 }
 
 /// Shared, cheaply-cloneable handle to daemon state.
@@ -65,6 +109,11 @@ struct DaemonInner {
     /// router (sinks receive InboundEvent) and queried by
     /// `events.list/show/replay` handlers.
     events_buffer: Arc<EventsBuffer>,
+    /// Spec compliance F18 (R1 review): 7-variant `BotState` mirror,
+    /// encoded as `AtomicU8` for lock-free reads. Encoding:
+    /// 0=Disconnected, 1=PairingQr, 2=PairingCode, 3=Connected,
+    /// 4=Replaced, 5=LoggedOut, 6=SessionExpired. 7+ are reserved.
+    bot_state: std::sync::atomic::AtomicU8,
     /// Phase 3: MCP client registry for agent discovery
     /// (`clients.list` returns a snapshot of this).
     clients: McpClientRegistry,
@@ -239,6 +288,27 @@ impl DaemonHandle {
         &self.inner.events_buffer
     }
 
+    /// Spec compliance F18 (R1 review): 7-variant BotState mirror.
+    /// Updated by `set_bot_state`; read by `status.get` and the
+    /// `BotState → error code` mapping for the 3-way SessionLost
+    /// split (Findings F4 — Spec). Defaults to `Disconnected` until
+    /// the connection watcher fires.
+    pub fn bot_state(&self) -> BotStateMirror {
+        decode_bot_state(
+            self.inner
+                .bot_state
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    /// Set the BotState mirror. Called by the connection watcher on
+    /// each `Connection` event.
+    pub fn set_bot_state(&self, bs: BotStateMirror) {
+        self.inner
+            .bot_state
+            .store(encode_bot_state(bs), std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Phase 3: read access to the MCP client registry. `clients.list`
     /// RPC handler snapshots this; future `clients.subscribe` will
     /// register/unregister entries here.
@@ -304,6 +374,13 @@ impl DaemonHandle {
     /// drive `daemon_uptime_seconds`.
     pub fn started_at_unix_ms(&self) -> i64 {
         self.inner.started_at_unix_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn now_unix_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
     }
 
     /// Phase 5 Part F: shared `reqwest::Client` used by the
@@ -479,6 +556,7 @@ impl Daemon {
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
+                bot_state: std::sync::atomic::AtomicU8::new(0), // Disconnected
                 clients: McpClientRegistry::new(),
                 rules: rule_store,
                 mutation_rl,
@@ -506,6 +584,21 @@ impl Daemon {
 
         let cancel = self.cancel.clone();
         let handle = self.handle();
+
+        // Correctness review NIT F34: append a `daemon.started` audit
+        // row so operators tailing the audit log can see the boot
+        // event. Caller uid/pid are recorded as the supervisor's
+        // process info (not a real RPC caller).
+        handle.audit_log().record(crate::audit::AuditEntryInput {
+            ts_unix_ms: crate::security::tokens::now_unix_ms(),
+            ts_mono_ns: 0,
+            caller_uid: format!("supervisor:{}", std::process::id()),
+            caller_pid: std::process::id(),
+            method: "daemon.started".to_string(),
+            args_canonical_sha256: String::new(),
+            result_status: "ok".to_string(),
+            latency_ms: 0,
+        });
 
         let registry = std::sync::Arc::new(crate::ipc::handlers::build_registry());
         let sock = self.config.socket_path();
@@ -753,6 +846,25 @@ fn load_initial_rules_from_disk(
     // Seed the persister's in-memory snapshot so subsequent upserts
     // reflect the loaded baseline.
     RulesPersister::seed_snapshot_static(&persister, validated.clone());
+    // Correctness review F7/F32/F37: restore `next_seq` to the
+    // highest valid seq in the existing WAL so a restart does not
+    // collide with prior chain entries. `seed_snapshot` resets the
+    // counter to 1; we bump it back from disk.
+    let wal_path = storage_path.with_file_name(
+        storage_path
+            .file_name()
+            .map(|s| {
+                let mut s = s.to_os_string();
+                s.push(".wal");
+                s
+            })
+            .unwrap_or_default(),
+    );
+    if let Ok(max) = rules_persister_mod::max_wal_seq(&wal_path) {
+        if max > 0 {
+            persister.bump_seq(max + 1);
+        }
+    }
     validated
 }
 

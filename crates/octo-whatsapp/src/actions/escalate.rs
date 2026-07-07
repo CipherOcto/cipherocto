@@ -23,11 +23,7 @@ pub async fn execute(target: &str, reason: &str, _ctx: &ActionContext) -> Result
 /// observability. The actual transport (PagerDuty, Slack) is
 /// out-of-band for Part F — this module emits a `daemon.escalated`
 /// event into the events buffer that an operator can tail.
-pub async fn dispatch(
-    target: &str,
-    reason: &str,
-    ctx: &ActionContext,
-) -> Result<(), ActionError> {
+pub async fn dispatch(target: &str, reason: &str, ctx: &ActionContext) -> Result<(), ActionError> {
     if target.is_empty() {
         return Err(ActionError::ExecFailed("empty target".into()));
     }
@@ -52,27 +48,29 @@ pub async fn dispatch(
     }
 
     // 2) emit an audit row.
-    ctx.daemon.audit_log().record(crate::audit::AuditEntryInput {
-        ts_unix_ms: now_ms,
-        ts_mono_ns: 0,
-        caller_uid: ctx.caller_uid.clone(),
-        caller_pid: 0,
-        method: "action.escalate".into(),
-        args_canonical_sha256: {
-            use sha2::{Digest, Sha256};
-            let payload = format!("{target}|{reason}|{token}");
-            hex::encode(Sha256::digest(payload.as_bytes()))
-        },
-        result_status: "ok".into(),
-        latency_ms: 0,
-    });
+    ctx.daemon
+        .audit_log()
+        .record(crate::audit::AuditEntryInput {
+            ts_unix_ms: now_ms,
+            ts_mono_ns: 0,
+            caller_uid: ctx.caller_uid.clone(),
+            caller_pid: 0,
+            method: "action.escalate".into(),
+            args_canonical_sha256: {
+                use sha2::{Digest, Sha256};
+                let payload = format!("{target}|{reason}|{token}");
+                hex::encode(Sha256::digest(payload.as_bytes()))
+            },
+            result_status: "ok".into(),
+            latency_ms: 0,
+        });
 
     // 3) emit a daemon.escalated event into the events buffer so
     // operators can tail + correlate. The body is a JSON value
     // carried as a marker; the events buffer stores it via its
     // existing push path. We construct a synthetic
     // InboundEvent::Unknown so it lands in the same ring.
-    use crate::events::{InboundEvent, EventEnvelope};
+    use crate::events::{EventEnvelope, InboundEvent};
     let raw_envelope = format!(
         "DaemonEscalated(rule_id={}, target={}, reason={}, token={})",
         ctx.rule_id, target, reason, token

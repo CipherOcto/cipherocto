@@ -30,8 +30,9 @@ pub struct RpcError {
     pub data: Option<Value>,
 }
 
-/// Standard JSON-RPC 2.0 codes + CIPHEROCTO custom codes (-32001 .. -32099).
-/// See design §Error codes.
+/// Standard JSON-RPC 2.0 codes + CipherOcto custom codes (-32001 .. -32099).
+/// See design §Error codes. Wire numbers are a load-bearing contract —
+/// every code below maps 1:1 to the design's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum RpcErrorCode {
@@ -42,26 +43,61 @@ pub enum RpcErrorCode {
     InvalidParams = -32602,
     InternalError = -32603,
 
-    // CipherOcto custom
-    SessionLost = -32001,
+    // CipherOcto custom — design §Error codes
+    /// `BotState::Replaced` observed (design line 619).
+    SessionLostReplaced = -32001,
+    /// `BotState::LoggedOut` observed (design line 620).
+    SessionLostLoggedOut = -32000,
+    /// `BotState::SessionExpired` observed (design line 621).
+    SessionLostExpired = -31999,
     NotConfigured = -32002,
     RateLimited = -32003,
     PayloadTooLarge = -32004,
-    /// Media-upload pre-flight: in-flight upload semaphore saturated.
-    /// Per design §Large outbound media.
-    Busy = -32005,
-    /// Media-upload pre-flight: scratch-disk root unreachable.
-    /// Per design §Large outbound media.
-    DiskUnreachable = -32006,
+    /// `groups.*` admin operation by non-admin (design line 625).
+    GroupNotAdmin = -32005,
+    /// `send.*` native mode — all fallbacks exhausted (design line 626).
+    FallbackExhausted = -32006,
+    /// `triggers.run` — text exceeds ARG_MAX (design line 627).
+    PayloadTooLargeForTrigger = -32007,
+    /// `actions.escalate` — target unreachable after retries (design line 628).
+    EscalationFailed = -32008,
+    /// MCP `tools/call` — tool toggled off after `tools/list` (design line 629).
+    ToolDisabled = -32009,
+    /// Outbound RPC — JID not in peer_allowlist (design line 630).
+    PeerNotAllowed = -32010,
+    /// Stoolap-backed RPC before `start_bot()` populated `DaemonState.store`
+    /// (design line 631).
+    StoreNotReady = -32011,
     NotConnected = -32012,
     EditWindowExpired = -32013,
     DeleteWindowExpired = -32014,
-    /// Group-send attempted without admin/owner role.
-    GroupNotAdmin = -32015,
-    /// All fallback providers exhausted.
-    FallbackExhausted = -32016,
+    /// `reconnect.now` — operator forced immediate reconnect while one was
+    /// in progress (design line 635).
+    BackoffCancelled = -32015,
+    /// `rules.update` / `rules.patch` — etag mismatch (design line 636).
+    RuleConflict = -32020,
+    /// `rules.create` / `rules.update` — regex fails ReDoS classifier
+    /// (design line 637).
+    RuleRegexUnsafe = -32021,
+    /// `rules.match` — predicate exceeded regex timeout (design line 638).
+    RuleMatchTimeout = -32022,
+    /// `triggers.run` — trigger.enabled = false (design line 639).
+    TriggerDisabled = -32030,
+    /// `media.upload` / `send.* --file` / `profile.picture` / `groups.icon` —
+    /// path outside `allowed_upload_roots` (design line 640).
+    UploadPathDenied = -32040,
+    /// RPC adapter — uncategorized adapter error (design line 641).
     Internal = -32050,
+    /// Media-upload pre-flight: in-flight upload semaphore saturated.
+    /// Internal-state code (no design slot, kept post-R1).
+    Busy = -32052,
+    /// Media-upload pre-flight: scratch-disk root unreachable.
+    /// Internal-state code (no design slot, kept post-R1).
+    DiskUnreachable = -32053,
+    /// `CoordinatorAdmin::*` — `PlatformAdapterError::Unimplemented`
+    /// (design line 642).
     Unimplemented = -32060,
+    /// SIGTERM in flight; refusing new RPCs (design line 643).
     ShuttingDown = -32099,
 
     /// Generic / unknown — only used for forward-compatibility with codes
@@ -77,18 +113,31 @@ impl RpcErrorCode {
             RpcErrorCode::MethodNotFound => -32601,
             RpcErrorCode::InvalidParams => -32602,
             RpcErrorCode::InternalError => -32603,
-            RpcErrorCode::SessionLost => -32001,
+            RpcErrorCode::SessionLostReplaced => -32001,
+            RpcErrorCode::SessionLostLoggedOut => -32000,
+            RpcErrorCode::SessionLostExpired => -31999,
             RpcErrorCode::NotConfigured => -32002,
             RpcErrorCode::RateLimited => -32003,
             RpcErrorCode::PayloadTooLarge => -32004,
-            RpcErrorCode::Busy => -32005,
-            RpcErrorCode::DiskUnreachable => -32006,
+            RpcErrorCode::GroupNotAdmin => -32005,
+            RpcErrorCode::FallbackExhausted => -32006,
+            RpcErrorCode::PayloadTooLargeForTrigger => -32007,
+            RpcErrorCode::EscalationFailed => -32008,
+            RpcErrorCode::ToolDisabled => -32009,
+            RpcErrorCode::PeerNotAllowed => -32010,
+            RpcErrorCode::StoreNotReady => -32011,
             RpcErrorCode::NotConnected => -32012,
             RpcErrorCode::EditWindowExpired => -32013,
             RpcErrorCode::DeleteWindowExpired => -32014,
-            RpcErrorCode::GroupNotAdmin => -32015,
-            RpcErrorCode::FallbackExhausted => -32016,
+            RpcErrorCode::BackoffCancelled => -32015,
+            RpcErrorCode::RuleConflict => -32020,
+            RpcErrorCode::RuleRegexUnsafe => -32021,
+            RpcErrorCode::RuleMatchTimeout => -32022,
+            RpcErrorCode::TriggerDisabled => -32030,
+            RpcErrorCode::UploadPathDenied => -32040,
             RpcErrorCode::Internal => -32050,
+            RpcErrorCode::Busy => -32052,
+            RpcErrorCode::DiskUnreachable => -32053,
             RpcErrorCode::Unimplemented => -32060,
             RpcErrorCode::ShuttingDown => -32099,
             RpcErrorCode::Other(c) => c,
@@ -125,7 +174,7 @@ impl RpcError {
             "current_version": current_version,
         });
         Self {
-            code: -32020,
+            code: RpcErrorCode::RuleConflict.as_i32(),
             message: format!("etag conflict on {id}"),
             data: Some(data),
         }

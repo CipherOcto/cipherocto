@@ -134,7 +134,9 @@ mod tests {
 
     #[tokio::test]
     async fn empty_argv_errors() {
-        let err = execute(&[], 1000, &[], &ctx_with_text("x")).await.unwrap_err();
+        let err = execute(&[], 1000, &[], &ctx_with_text("x"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, ActionError::ExecFailed(_)));
     }
 

@@ -19,12 +19,14 @@ fn packaging_dockerfile_exists_and_mentions_healthcheck() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(REPO_ROOT_FROM_CRATE)
         .join("packaging/docker/Dockerfile");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let body =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     assert!(body.contains("FROM "), "Dockerfile lacks FROM");
     assert!(body.contains("HEALTHCHECK"), "Dockerfile lacks HEALTHCHECK");
-    assert!(body.contains("USER octo") || body.contains("USER 1000"),
-            "Dockerfile lacks non-root user");
+    assert!(
+        body.contains("USER octo") || body.contains("USER 1000"),
+        "Dockerfile lacks non-root user"
+    );
     assert!(body.contains("VOLUME"), "Dockerfile lacks VOLUME");
 }
 
@@ -33,15 +35,30 @@ fn packaging_systemd_unit_has_required_sections() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(REPO_ROOT_FROM_CRATE)
         .join("packaging/systemd/octo-whatsapp.service");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let body =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     for section in &["[Unit]", "[Service]", "[Install]"] {
-        assert!(body.contains(section), "systemd unit missing section {section}");
+        assert!(
+            body.contains(section),
+            "systemd unit missing section {section}"
+        );
     }
-    assert!(body.contains("DynamicUser=yes"), "systemd unit lacks DynamicUser=yes");
-    assert!(body.contains("ProtectSystem=strict"), "systemd unit lacks ProtectSystem=strict");
-    assert!(body.contains("NoNewPrivileges=true"), "systemd unit lacks NoNewPrivileges=true");
-    assert!(body.contains("StateDirectory=octo/whatsapp"), "systemd unit lacks StateDirectory");
+    assert!(
+        body.contains("DynamicUser=yes"),
+        "systemd unit lacks DynamicUser=yes"
+    );
+    assert!(
+        body.contains("ProtectSystem=strict"),
+        "systemd unit lacks ProtectSystem=strict"
+    );
+    assert!(
+        body.contains("NoNewPrivileges=true"),
+        "systemd unit lacks NoNewPrivileges=true"
+    );
+    assert!(
+        body.contains("StateDirectory=octo/whatsapp"),
+        "systemd unit lacks StateDirectory"
+    );
 }
 
 #[test]
@@ -49,13 +66,18 @@ fn packaging_man_page_has_th_header() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(REPO_ROOT_FROM_CRATE)
         .join("packaging/man/octo-whatsapp.1");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    assert!(body.starts_with(".TH OCTO-WHATSAPP"),
-            "man page lacks .TH OCTO-WHATSAPP header");
+    let body =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        body.starts_with(".TH OCTO-WHATSAPP"),
+        "man page lacks .TH OCTO-WHATSAPP header"
+    );
     assert!(body.contains("SH NAME"), "man page lacks NAME section");
     assert!(body.contains("SH SYNOPSIS"), "man page lacks SYNOPSIS");
-    assert!(body.contains("SH DESCRIPTION"), "man page lacks DESCRIPTION");
+    assert!(
+        body.contains("SH DESCRIPTION"),
+        "man page lacks DESCRIPTION"
+    );
 }
 
 #[test]
@@ -63,10 +85,12 @@ fn packaging_bash_completion_has_complete_directive() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(REPO_ROOT_FROM_CRATE)
         .join("packaging/completions/octo-whatsapp.bash");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    assert!(body.contains("complete -F _octo_whatsapp octo-whatsapp"),
-            "bash completion missing complete directive");
+    let body =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        body.contains("complete -F _octo_whatsapp octo-whatsapp"),
+        "bash completion missing complete directive"
+    );
 }
 
 #[test]
@@ -74,9 +98,12 @@ fn packaging_deb_metadata_includes_required_fields() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(REPO_ROOT_FROM_CRATE)
         .join("packaging/deb/cargo-deb.toml");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    assert!(body.contains("name = \"octo-whatsapp\""), "deb metadata missing name");
+    let body =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        body.contains("name = \"octo-whatsapp\""),
+        "deb metadata missing name"
+    );
     assert!(body.contains("assets"), "deb metadata missing assets");
 }
 

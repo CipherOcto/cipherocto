@@ -68,18 +68,37 @@ pub fn derive_token_id(secret_hex: &str) -> String {
     hex::encode(&digest[..4])
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TokenDescriptor {
     pub token_id: String,
-    /// Hex-encoded secret. Copied by value; the store does NOT mutate
-    /// the descriptor's secret on rotate/revoke (the secret copy in the
-    /// internal `secrets` map is what gets cleared).
+    /// Hex-encoded secret. **Never serialized to logs** — the
+    /// `Debug` impl is hand-rolled to redact this field
+    /// (security review F5).
     #[serde(skip_serializing_if = "String::is_empty", default)]
     pub secret: String,
     pub label: String,
     pub created_at_unix_ms: i64,
     pub expires_at_unix_ms: Option<i64>,
     pub revoked: bool,
+}
+
+// Hand-rolled `Debug` to redact the `secret` field. A derived
+// `Debug` would print the secret in any panic, tracing event, or
+// `format!("{:?}", desc)` site. Security review F5.
+impl std::fmt::Debug for TokenDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenDescriptor")
+            .field("token_id", &self.token_id)
+            .field(
+                "secret",
+                &format_args!("<redacted {} chars>", self.secret.len()),
+            )
+            .field("label", &self.label)
+            .field("created_at_unix_ms", &self.created_at_unix_ms)
+            .field("expires_at_unix_ms", &self.expires_at_unix_ms)
+            .field("revoked", &self.revoked)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -489,7 +508,7 @@ fn clamp_grace(grace_ms: i64) -> i64 {
     grace_ms.clamp(MIN_GRACE_MS, MAX_GRACE_MS)
 }
 
-fn now_unix_ms() -> i64 {
+pub fn now_unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

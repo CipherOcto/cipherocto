@@ -98,9 +98,7 @@ pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionRe
             url,
             signing_secret_env,
             allowed_domains,
-        } => {
-            webhook::dispatch(url, signing_secret_env.as_deref(), allowed_domains, ctx).await
-        }
+        } => webhook::dispatch(url, signing_secret_env.as_deref(), allowed_domains, ctx).await,
         ActionSpec::AgentRun { trigger_id } => agent_run::dispatch(trigger_id, ctx).await,
         ActionSpec::Shell {
             argv,
@@ -108,9 +106,7 @@ pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionRe
             env_passthrough,
         } => shell::dispatch(argv, *timeout_ms, env_passthrough, ctx).await,
         ActionSpec::McpNotify { template } => mcp_notify::dispatch(template, ctx).await,
-        ActionSpec::Escalate { target, reason } => {
-            escalate::dispatch(target, reason, ctx).await
-        }
+        ActionSpec::Escalate { target, reason } => escalate::dispatch(target, reason, ctx).await,
     };
     let latency_ms = start.elapsed().as_millis() as u64;
     // Phase 5 Part B: increment outbound metric once per dispatch.
@@ -151,9 +147,7 @@ pub async fn dispatch_structural(
             url,
             signing_secret_env,
             allowed_domains,
-        } => {
-            webhook::execute(url, signing_secret_env.as_deref(), allowed_domains, ctx).await
-        }
+        } => webhook::execute(url, signing_secret_env.as_deref(), allowed_domains, ctx).await,
         ActionSpec::AgentRun { trigger_id } => agent_run::execute(trigger_id, ctx).await,
         ActionSpec::Shell {
             argv,

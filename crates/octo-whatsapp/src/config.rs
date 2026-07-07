@@ -187,6 +187,20 @@ pub struct SecurityConfig {
     pub grace_period_ms: i64,
     #[serde(default)]
     pub bearer_required: bool,
+    /// **Security review F1, F10.** When `bearer_token_env` is unset
+    /// and `bearer_required = true`, the daemon enters "hermetic
+    /// mode". Pure read-only RPCs (`health.get`, `daemon.*`) continue
+    /// to work; mutating RPCs (`rules.*`, `triggers.*`, `audit.*`,
+    /// `actions.*`, `security.*`, outbound `send.*` / `messages.*`,
+    /// chat mutations) are refused with `-32050 unauthorized`.
+    ///
+    /// When `hermetic_bypass = true` AND `bearer_required = false`
+    /// AND `bearer_token_env` is unset, ALL RPCs are accepted
+    /// unconditionally — this is the pre-Phase 5 hermetic-test
+    /// contract. **Production deployments must set
+    /// `hermetic_bypass = false`** (the default).
+    #[serde(default)]
+    pub hermetic_bypass: bool,
 }
 
 impl Default for SecurityConfig {
@@ -199,6 +213,7 @@ impl Default for SecurityConfig {
             grace_path: None,
             grace_period_ms: default_grace_period_ms(),
             bearer_required: false,
+            hermetic_bypass: false,
         }
     }
 }

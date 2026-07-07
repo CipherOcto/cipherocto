@@ -63,8 +63,16 @@ impl MediaBuffer {
             .collect();
         self.inner.root.join(format!("{safe}.bin"))
     }
-    #[allow(unused_variables)]
+    /// Verify the media buffer root is reachable AND that the
+    /// filesystem has at least `payload_bytes + SAFETY_MARGIN` free.
+    /// Returns `MediaBufferError::DiskUnreachable` if the probe write
+    /// fails or the free-space check fails. Previously the parameter
+    /// was annotated `#[allow(unused_variables)]` (YAGNI F18) —
+    /// real statfs-based check now uses it.
     pub async fn check_free_space(&self, payload_bytes: u64) -> Result<(), MediaBufferError> {
+        const SAFETY_MARGIN_BYTES: u64 = 16 * 1024 * 1024; // 16 MiB
+        let required = payload_bytes.saturating_add(SAFETY_MARGIN_BYTES);
+        // Probe writability first.
         let probe = self.inner.root.join(".free-probe");
         match tokio::fs::write(&probe, [0u8]).await {
             Ok(()) => {
@@ -74,6 +82,39 @@ impl MediaBuffer {
                 return Err(MediaBufferError::DiskUnreachable {
                     path: self.inner.root.clone(),
                 });
+            }
+        }
+        // Stat the FS for available bytes. tokio's `metadata()` returns
+        // size info on a file; for the containing filesystem we use
+        // `statvfs` via nix (Linux-only — fall through silently on
+        // other platforms).
+        #[cfg(target_os = "linux")]
+        {
+            match tokio::fs::metadata(&self.inner.root).await {
+                Ok(_) => {
+                    // nix::sys::statvfs is sync; run via spawn_blocking
+                    // so we don't block the runtime.
+                    let root = self.inner.root.clone();
+                    let res = tokio::task::spawn_blocking(move || {
+                        nix::sys::statvfs::statvfs(&root)
+                            .map(|s| s.blocks_available() * s.fragment_size())
+                    })
+                    .await
+                    .ok()
+                    .and_then(|inner| inner.ok());
+                    if let Some(avail) = res {
+                        if avail < required {
+                            return Err(MediaBufferError::DiskUnreachable {
+                                path: self.inner.root.clone(),
+                            });
+                        }
+                    }
+                }
+                Err(_) => {
+                    return Err(MediaBufferError::DiskUnreachable {
+                        path: self.inner.root.clone(),
+                    });
+                }
             }
         }
         Ok(())

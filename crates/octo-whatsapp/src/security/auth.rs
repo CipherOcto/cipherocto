@@ -6,21 +6,33 @@
 //! "unauthorized"` (operator hint: re-issue a token via
 //! `security.rotate_token` on a privileged path).
 //!
-//! ## Hermetic-test bypass
+//! ## Hermetic-test bypass (security review F1, F8, F10)
 //!
 //! When `[security] bearer_token_env` is unset on the daemon config
-//! (and the TokenStore is empty), the middleware accepts every
-//! request unconditionally and logs at debug level. This matches the
-//! pre-Phase 5 contract: hermetic tests in CI do not need to plumb
-//! bearer tokens. Production deployments ALWAYS set the env var.
+//! (and the TokenStore is empty), the middleware behaviour depends on
+//! `[security] hermetic_bypass`:
 //!
-//! ## Per-IP backoff
+//! - `true` (default for tests, OFF in production) — accept every
+//!   request unconditionally and log at debug level.
+//! - `false` (production default) — refuse ALL mutation RPCs (rules.*,
+//!   triggers.*, audit.*, actions.*, security.*) with `-32050
+//!   unauthorized`. Pure read-only RPCs (`health.get`, `daemon.*`)
+//!   continue to work so operators can still observe state.
+//!
+//! The config layer REJECTS a daemon start where
+//! `bearer_token_env = unset` AND `hermetic_bypass = false` AND
+//! `[security] bearer_required = true` — there is no path where a
+//! production daemon silently accepts unauthenticated mutations.
+//!
+//! ## Per-IP backoff (security review F13)
 //!
 //! Failed attempts per source peer IP are tracked in a
-//! `HashMap<IpAddr, VecDeque<i64>>`. If a peer exceeds 1 failure/sec
-//! sustained over a 60-second window, the middleware short-circuits
-//! with `Unauthorized` WITHOUT invoking `TokenStore::verify` (to
-//! avoid letting an attacker burn CPU on a constant-time comparison).
+//! `HashMap<IpAddr, VecDeque<i64>>` capped at `MAX_BACKOFF_ENTRIES`
+//! (10k IPs). The LRU eviction drops the oldest IP entry when the
+//! map is full. If a peer exceeds 1 failure/sec sustained over a
+//! 60-second window, the middleware short-circuits with
+//! `Unauthorized` WITHOUT invoking `TokenStore::verify` (to avoid
+//! letting an attacker burn CPU on a constant-time comparison).
 //!
 //! On the unix socket path, the "peer IP" is `127.0.0.1` (or `::1`)
 //! since unix sockets don't carry a real network peer — but the
@@ -42,12 +54,17 @@ use crate::ipc::protocol::{RpcError, RpcErrorCode, RpcRequest, RpcResponse};
 pub const BACKOFF_CAP_PER_SEC: usize = 1;
 /// Window for backoff measurement (seconds).
 pub const BACKOFF_WINDOW_SECS: i64 = 60;
+/// Hard cap on tracked IPs to bound memory under attack (F13).
+pub const MAX_BACKOFF_ENTRIES: usize = 10_000;
 
-/// Per-IP failure tracker.
+/// Per-IP failure tracker. Bounded by `MAX_BACKOFF_ENTRIES`; oldest
+/// IP is evicted when the cap is reached.
 #[derive(Debug)]
 pub struct AuthBackoff {
     by_ip: Mutex<HashMap<IpAddr, VecDeque<i64>>>,
     cap_per_sec: usize,
+    /// Insertion order for LRU eviction (security review F13).
+    insertion_order: Mutex<VecDeque<IpAddr>>,
 }
 
 impl Default for AuthBackoff {
@@ -61,24 +78,54 @@ impl AuthBackoff {
         Self {
             by_ip: Mutex::new(HashMap::new()),
             cap_per_sec: BACKOFF_CAP_PER_SEC,
+            insertion_order: Mutex::new(VecDeque::new()),
         }
     }
 
     /// Record one failure for `ip`. Returns the new failure count
-    /// within the rolling window.
+    /// within the rolling window. Evicts the oldest tracked IP if
+    /// the entry cap is reached.
     pub fn record_failure(&self, ip: IpAddr, now_secs: i64) -> usize {
-        let mut g = self.by_ip.lock();
-        let q = g.entry(ip).or_default();
-        q.push_back(now_secs);
-        let cutoff = now_secs - BACKOFF_WINDOW_SECS;
-        while let Some(&front) = q.front() {
-            if front < cutoff {
-                q.pop_front();
-            } else {
-                break;
+        // Compute the eviction list under one lock acquisition to
+        // avoid the nested-mut-borrow issue from holding both
+        // `by_ip` and `insertion_order` at once. The LRU list is
+        // authoritative; the `by_ip` map is rebuilt to match.
+        let (new_q_len, eviction_needed) = {
+            let mut g = self.by_ip.lock();
+            let q = g.entry(ip).or_default();
+            q.push_back(now_secs);
+            let cutoff = now_secs - BACKOFF_WINDOW_SECS;
+            while let Some(&front) = q.front() {
+                if front < cutoff {
+                    q.pop_front();
+                } else {
+                    break;
+                }
             }
+            // Touch the now-updated queue length before potentially
+            // dropping the borrow below.
+            let new_q_len = q.len();
+            (new_q_len, false)
+        };
+        // Update insertion order under its own lock; if the cap is
+        // exceeded, drop the oldest entry from BOTH `by_ip` and
+        // `insertion_order`.
+        let mut ord = self.insertion_order.lock();
+        ord.retain(|x| *x != ip);
+        ord.push_back(ip);
+        let mut evict: Option<IpAddr> = None;
+        if ord.len() > MAX_BACKOFF_ENTRIES {
+            evict = ord.pop_front();
         }
-        q.len()
+        drop(ord);
+        if let Some(oldest) = evict {
+            let mut g = self.by_ip.lock();
+            g.remove(&oldest);
+        }
+        // Suppress the unused-binding warning while keeping the
+        // borrow pattern self-documenting.
+        let _ = eviction_needed;
+        new_q_len
     }
 
     /// Returns true if the IP has exceeded `cap_per_sec` sustained
@@ -96,19 +143,66 @@ impl AuthBackoff {
         let g = self.by_ip.lock();
         g.get(&ip).map(|q| q.len()).unwrap_or(0)
     }
+
+    /// Total tracked IPs (for tests + metrics).
+    pub fn tracked_ip_count(&self) -> usize {
+        self.insertion_order.lock().len()
+    }
+}
+
+/// Methods that mutate daemon state and require a valid bearer
+/// even when in hermetic mode (security review F10). The IPC layer
+/// consults `is_mutating_method()` before deciding whether to allow
+/// the request under hermetic bypass.
+pub fn is_mutating_method(method: &str) -> bool {
+    matches!(
+        method,
+        // security.* — even security.rotate_token requires a token
+        // issued by an out-of-band mechanism.
+        m if m.starts_with("security.")
+            // rules.*
+            || m.starts_with("rules.")
+            // triggers.*
+            || m.starts_with("triggers.")
+            // audit.*
+            || m.starts_with("audit.")
+            // actions.*
+            || m.starts_with("actions.")
+            // outbound RPCs that hit the adapter
+            || m.starts_with("send.")
+            || m.starts_with("messages.edit")
+            || m.starts_with("messages.mark_read")
+            || m.starts_with("send.delete")
+            // chat mutations
+            || m.starts_with("chats.pin")
+            || m.starts_with("chats.unpin")
+            || m.starts_with("chats.mute")
+            || m.starts_with("chats.archive")
+            || m.starts_with("chats.delete")
+            // envelope.send
+            || m == "envelope.send"
+            || m == "envelope.send-native"
+    )
 }
 
 /// Decide whether `bearer` (the raw `Authorization` header value,
 /// `None` when missing) authenticates successfully against `tokens`.
 /// Records failures on `backoff` keyed by `peer_ip`.
 ///
+/// `method` is the RPC method name (used for hermetic-mode
+/// mutating-method gating — security review F10).
+/// `hermetic_bypass` is the operator-controlled flag (default `false`
+/// in production builds).
+///
 /// Returns `Ok(())` on success. On failure returns the `RpcError`
 /// shape the middleware will surface to the client.
 pub fn authenticate(
+    method: &str,
     bearer: Option<&str>,
     tokens: &TokenStore,
     backoff: &AuthBackoff,
     peer_ip: IpAddr,
+    hermetic_bypass: bool,
 ) -> Result<(), RpcError> {
     // Backoff short-circuit: do not even attempt verification if the
     // caller is already over the rate cap.
@@ -116,9 +210,6 @@ pub fn authenticate(
         return Err(unauthorized_error("backoff"));
     }
 
-    // Hermetic bypass: when the store is empty (no env var was set
-    // during boot), accept unconditionally. This preserves the
-    // pre-Phase 5 test contract.
     let active_count = {
         let active = tokens.list_active();
         active.len()
@@ -126,11 +217,30 @@ pub fn authenticate(
     let presented = bearer
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(|s| s.trim());
+
+    // Hermetic bypass branch (security review F1, F8, F10).
     if active_count == 0 {
-        // Debug-only log; production deployments always have ≥ 1 token.
+        if !hermetic_bypass {
+            // Refuse mutating RPCs unconditionally; allow pure reads.
+            if is_mutating_method(method) {
+                return Err(unauthorized_error(
+                    "hermetic mode: mutating RPCs require a bearer token",
+                ));
+            }
+            // Pure read-only: allow and log a warning so operators
+            // see "auth: hermetic, read-only" in the journal.
+            tracing::warn!(
+                peer = %peer_ip,
+                method = %method,
+                "auth: hermetic mode active (no tokens loaded); read-only RPCs permitted"
+            );
+            return Ok(());
+        }
+        // Hermetic bypass enabled (tests + explicit operator opt-in):
+        // accept unconditionally.
         tracing::debug!(
             peer = %peer_ip,
-            "auth: bypass active (no tokens loaded — hermetic mode)"
+            "auth: bypass active (no tokens loaded — hermetic_bypass = true)"
         );
         return Ok(());
     }
@@ -171,10 +281,9 @@ pub fn authenticate(
             Err(unauthorized_error(&format!("grace invalid: {msg}")))
         }
         Err(TokenError::Storage(msg)) => {
-            // Storage failures are not "wrong credential" — surface as
-            // internal error so operators investigate, but still record
-            // the failure to avoid log-spam loops.
-            backoff.record_failure(peer_ip, unix_secs_now());
+            // Storage failures are NOT "wrong credential" — do NOT
+            // record into the backoff (security review F14). Surface
+            // as Internal so operators investigate disk / IO.
             Err(RpcError {
                 code: RpcErrorCode::InternalError.as_i32(),
                 message: format!("auth storage: {msg}"),
@@ -281,10 +390,30 @@ mod tests {
     fn hermetic_bypass_accepts_when_no_tokens_loaded() {
         let s = TokenStore::new(None, 60_000);
         let b = AuthBackoff::new();
-        // No bearer presented, no active tokens → OK.
-        assert!(authenticate(None, &s, &b, ip()).is_ok());
-        // Garbage bearer, still no tokens → OK.
-        assert!(authenticate(Some("Bearer garbage"), &s, &b, ip()).is_ok());
+        // hermetic_bypass = true (test default): mutating methods allowed.
+        assert!(authenticate("rules.create", None, &s, &b, ip(), true).is_ok());
+        assert!(authenticate("rules.create", Some("Bearer garbage"), &s, &b, ip(), true).is_ok());
+    }
+
+    #[test]
+    fn hermetic_mode_refuses_mutating_when_no_tokens() {
+        // Security review F10: hermetic_bypass = false (production
+        // default) MUST refuse mutating RPCs even with no tokens
+        // loaded.
+        let s = TokenStore::new(None, 60_000);
+        let b = AuthBackoff::new();
+        let err = authenticate("rules.create", None, &s, &b, ip(), false).unwrap_err();
+        assert_eq!(err.code, RpcErrorCode::Internal.as_i32());
+        assert!(err.data.as_ref().unwrap()["kind"] == "unauthorized");
+    }
+
+    #[test]
+    fn hermetic_mode_allows_read_only_when_no_tokens() {
+        let s = TokenStore::new(None, 60_000);
+        let b = AuthBackoff::new();
+        // Pure read RPCs still work in hermetic mode.
+        assert!(authenticate("health.get", None, &s, &b, ip(), false).is_ok());
+        assert!(authenticate("daemon.status", None, &s, &b, ip(), false).is_ok());
     }
 
     #[test]
@@ -294,7 +423,7 @@ mod tests {
         let secret = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
         let id = crate::security::tokens::derive_token_id(secret);
         s.load_from_value(&format!("{id}.{secret}"), None).unwrap();
-        let err = authenticate(None, &s, &b, ip()).unwrap_err();
+        let err = authenticate("rules.list", None, &s, &b, ip(), false).unwrap_err();
         assert_eq!(err.code, RpcErrorCode::Internal.as_i32());
         assert!(err.data.as_ref().unwrap()["kind"] == "unauthorized");
     }
@@ -307,12 +436,14 @@ mod tests {
         let id = crate::security::tokens::derive_token_id(secret);
         s.load_from_value(&format!("{id}.{secret}"), None).unwrap();
         let err = authenticate(
+            "rules.list",
             Some(&format!(
                 "Bearer {id}.0000000000000000000000000000000000000000000000000000000000000000"
             )),
             &s,
             &b,
             ip(),
+            false,
         )
         .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::Internal.as_i32());
@@ -327,7 +458,7 @@ mod tests {
         let id = crate::security::tokens::derive_token_id(secret);
         s.load_from_value(&format!("{id}.{secret}"), None).unwrap();
         let bearer = format!("Bearer {id}.{secret}");
-        authenticate(Some(&bearer), &s, &b, ip()).unwrap();
+        authenticate("rules.list", Some(&bearer), &s, &b, ip(), false).unwrap();
     }
 
     #[test]
@@ -337,7 +468,29 @@ mod tests {
         let secret = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
         let id = crate::security::tokens::derive_token_id(secret);
         s.load_from_value(&format!("{id}.{secret}"), None).unwrap();
-        let err = authenticate(Some(&format!("Basic {id}:{secret}")), &s, &b, ip()).unwrap_err();
+        let err = authenticate(
+            "rules.list",
+            Some(&format!("Basic {id}:{secret}")),
+            &s,
+            &b,
+            ip(),
+            false,
+        )
+        .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::Internal.as_i32());
+    }
+
+    #[test]
+    fn backoff_caps_tracked_ips_at_max_entries() {
+        // Security review F13: bounded LRU on the per-IP map.
+        let b = AuthBackoff::new();
+        // Insert MAX_BACKOFF_ENTRIES + 100 distinct IPs.
+        let extra = MAX_BACKOFF_ENTRIES + 100;
+        for i in 0..extra {
+            let ip = std::net::IpAddr::from([10, 0, (i >> 8) as u8, (i & 0xff) as u8]);
+            b.record_failure(ip, 1_000);
+        }
+        // Map must be capped.
+        assert!(b.tracked_ip_count() <= MAX_BACKOFF_ENTRIES);
     }
 }

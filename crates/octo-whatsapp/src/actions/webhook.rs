@@ -59,8 +59,8 @@ pub async fn dispatch(
     // rustls-tls so http:// would fail at the URL parse stage when
     // we get to `.send()`). Explicitly reject http(s):// URLs that
     // are not parseable here.
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| ActionError::Http(format!("url parse: {e}")))?;
+    let parsed =
+        reqwest::Url::parse(url).map_err(|e| ActionError::Http(format!("url parse: {e}")))?;
     if parsed.scheme() != "https" {
         return Err(ActionError::Http(format!(
             "webhook scheme must be https, got {}",
@@ -178,7 +178,15 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
             "text": text,
             "is_group": is_group,
         }),
-        InboundEvent::Reaction { id, peer, from, ts_unix_ms, target_msg_id, emoji, .. } => {
+        InboundEvent::Reaction {
+            id,
+            peer,
+            from,
+            ts_unix_ms,
+            target_msg_id,
+            emoji,
+            ..
+        } => {
             json!({
                 "kind": "reaction",
                 "id": id,
@@ -189,7 +197,13 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "reaction": emoji,
             })
         }
-        InboundEvent::Receipt { msg_id, peer, ts_unix_ms, kind, .. } => {
+        InboundEvent::Receipt {
+            msg_id,
+            peer,
+            ts_unix_ms,
+            kind,
+            ..
+        } => {
             json!({
                 "kind": "receipt",
                 "id": msg_id,
@@ -198,7 +212,13 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "receipt_kind": kind,
             })
         }
-        InboundEvent::GroupChange { group_jid, actor, ts_unix_ms, kind, .. } => {
+        InboundEvent::GroupChange {
+            group_jid,
+            actor,
+            ts_unix_ms,
+            kind,
+            ..
+        } => {
             json!({
                 "kind": "group_change",
                 "group_jid": group_jid,
@@ -214,14 +234,22 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "presence_kind": kind,
             })
         }
-        InboundEvent::Connection { kind, ts_unix_ms, .. } => {
+        InboundEvent::Connection {
+            kind, ts_unix_ms, ..
+        } => {
             json!({
                 "kind": "connection",
                 "connection_kind": kind,
                 "ts_unix_ms": ts_unix_ms,
             })
         }
-        InboundEvent::Call { id, peer, kind, ts_unix_ms, .. } => {
+        InboundEvent::Call {
+            id,
+            peer,
+            kind,
+            ts_unix_ms,
+            ..
+        } => {
             json!({
                 "kind": "call",
                 "id": id,
@@ -230,7 +258,13 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "ts_unix_ms": ts_unix_ms,
             })
         }
-        InboundEvent::Story { id, peer, kind, ts_unix_ms, .. } => {
+        InboundEvent::Story {
+            id,
+            peer,
+            kind,
+            ts_unix_ms,
+            ..
+        } => {
             json!({
                 "kind": "story",
                 "id": id,
@@ -239,7 +273,9 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "ts_unix_ms": ts_unix_ms,
             })
         }
-        InboundEvent::Unknown { raw, ts_unix_ms, .. } => {
+        InboundEvent::Unknown {
+            raw, ts_unix_ms, ..
+        } => {
             json!({
                 "kind": "unknown",
                 "ts_unix_ms": ts_unix_ms,
@@ -298,7 +334,10 @@ mod tests {
     fn domain_match_wildcard() {
         assert!(domain_allowed("api.example.com", &["*.example.com".into()]));
         assert!(!domain_allowed("example.com", &["*.example.com".into()]));
-        assert!(!domain_allowed("evil-example.com", &["*.example.com".into()]));
+        assert!(!domain_allowed(
+            "evil-example.com",
+            &["*.example.com".into()]
+        ));
     }
 
     #[tokio::test]
@@ -316,14 +355,9 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_empty_allowlist() {
-        let err = dispatch(
-            "https://example.com/h",
-            Some("WH_SECRET"),
-            &[],
-            &ctx(),
-        )
-        .await
-        .unwrap_err();
+        let err = dispatch("https://example.com/h", Some("WH_SECRET"), &[], &ctx())
+            .await
+            .unwrap_err();
         assert!(matches!(err, ActionError::WebhookNotConfigured(_)));
     }
 

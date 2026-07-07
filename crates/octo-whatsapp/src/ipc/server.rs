@@ -274,18 +274,27 @@ async fn handle_conn(
             .or_else(|| bearer_from_file.clone())
             .or_else(|| extract_bearer_from_first_line(&line));
 
-        // Auth check (no-op when no active tokens are loaded or when
-        // `bearer_required = false`).
-        if bearer_required && active_token_count > 0 {
+        // Auth check. Runs when:
+        //   - bearer_required is true and tokens are loaded, OR
+        //   - bearer_required is true and the method is mutating
+        //     (security review F10: hermetic mode refuses mutating
+        //     RPCs unconditionally even when no tokens are loaded).
+        let hermetic_bypass = handle.config().security.hermetic_bypass;
+        let must_auth = bearer_required
+            && (active_token_count > 0 || crate::security::auth::is_mutating_method(&req.method));
+        if must_auth {
             if let Err(e) = authenticate(
+                &req.method,
                 bearer.as_deref(),
                 handle.tokens().as_ref(),
                 &backoff,
                 peer_ip,
+                hermetic_bypass,
             ) {
                 // Phase 5 Part B: surface bearer failures to
                 // `auth_failed_total{ip=...}`. Unix-socket clients all
-                // map to loopback from the daemon's POV.
+                // map to loopback from the daemon's POV. The label is
+                // HMAC-hashed inside the metrics layer.
                 handle.metrics().inc_auth_failed(&peer_ip.to_string());
                 let resp = RpcResponse {
                     id: req.id,

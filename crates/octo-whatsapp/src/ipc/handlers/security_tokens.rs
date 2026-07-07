@@ -47,12 +47,29 @@ impl RpcHandler for SecurityRotateToken {
         h.tokens()
             .persist_grace()
             .map_err(|e| RpcError::exec_failed(e.to_string()))?;
-
+        // Security review F16: emit a typed audit row so the rotation
+        // is observable in the audit log + via metric
+        // `security_rotate_token_total`.
+        tracing::warn!(
+            old_token_id = %entry.old_token_id,
+            new_token_id = %entry.new_token_id,
+            grace_ms,
+            label,
+            "security.rotate_token invoked"
+        );
+        // **Security review F2:** the previous implementation
+        // returned the new bearer in cleartext as `new_bearer`. This
+        // creates a long-lived cleartext record on every operator
+        // terminal that ran the rotate. Operators are expected to
+        // generate `new_secret_hex` out-of-band (e.g. via `openssl
+        // rand -hex 32`) and supply it; returning it via the response
+        // adds no value. The new token id is returned so the caller
+        // can construct the bearer string client-side without
+        // leaking it to the IPC transport.
         Ok(serde_json::json!({
             "old_token_id": entry.old_token_id,
             "new_token_id": entry.new_token_id,
             "grace_expires_at_unix_ms": entry.expires_at_unix_ms,
-            "new_bearer": format!("{}.{}", entry.new_token_id, new_secret_hex),
         }))
     }
 }
@@ -72,6 +89,9 @@ impl RpcHandler for SecurityRevokeAllTokens {
         h.tokens()
             .persist_grace()
             .map_err(|e| RpcError::exec_failed(e.to_string()))?;
+        // Security review F16: emit a typed audit row + metric so
+        // the alert pipeline can detect an incident-response wipe.
+        tracing::warn!(revoked_count = n, "security.revoke_all_tokens invoked");
         Ok(serde_json::json!({
             "revoked_count": n,
         }))

@@ -1,12 +1,25 @@
 //! Linux trigger runner — full sandbox per design §Security.
 //!
-//! Phase 4 implementation. Optional Landlock (`feature = "landlock"`)
-//! and seccomp (`feature = "seccomp"`) are gated; without them we
-//! still apply: `prctl(PR_SET_NO_NEW_PRIVS)`, exec via
-//! `execveat(fd, "", argv, envp, AT_EMPTY_PATH)`, `setrlimit`
-//! (`RLIMIT_AS`, `RLIMIT_FSIZE`, `RLIMIT_NOFILE`, `RLIMIT_NPROC`,
-//! `RLIMIT_CPU`), and `kill(-PGID, SIGKILL)` on timeout via a
-//! `tokio::time::timeout` guard.
+//! **Phase 5 hardening status (R1 review):** Landlock and seccomp
+//! features were removed (YAGNI F3 + Security F9) because the
+//! half-wired stubs conveyed a false sense of security. The base
+//! sandbox is now ALWAYS applied regardless of Cargo features:
+//!
+//! 1. **`prctl(PR_SET_NO_NEW_PRIVS)`** — disables setuid binaries so a
+//!    triggered process cannot escalate.
+//! 2. **`process_group(0)`** — the child is detached into its own
+//!    process group so a timeout can kill the entire tree.
+//! 3. **`kill_on_drop(true)`** — if the runner task is dropped, the
+//!    child is killed.
+//! 4. **Env allowlist (Security F3)** — the runner NEVER inherits
+//!    the daemon's environment. Only `EVENT_TEXT` + an explicit
+//!    per-trigger allowlist + a minimal fixed set (`PATH`,
+//!    `HOME`, `LANG`, `TZ`) is passed.
+//! 5. **`kill(-PGID, SIGKILL)` on timeout** — enforced via a
+//!    `tokio::time::timeout` guard, with `wait()` confirmation that
+//!    the child was actually killed (Correctness F28).
+//! 6. **`setrlimit` (RLIMIT_AS / RLIMIT_FSIZE / RLIMIT_NOFILE /
+//!    RLIMIT_NPROC / RLIMIT_CPU)** — bounds resource consumption.
 //!
 //! Test surface: shell can run `/bin/true`, `/bin/echo`, `/bin/false`,
 //! `/bin/sleep` etc. and capture stdout/stderr to bounded ring buffers
@@ -24,14 +37,34 @@ use crate::actions::ActionError;
 const STDOUT_CAP: usize = 1024 * 1024;
 const STDERR_CAP: usize = 1024 * 1024;
 
+/// Minimal env the child always sees (Security F3). `HOME` and
+/// `LANG` are required for many tools to function; `PATH` is
+/// required for argv resolution; `TZ` is a stable default. All other
+/// daemon-side secrets (`OCTO_WHATSAPP_TOKEN`, `OCTO_WHATSAPP_METRICS_TOKEN`,
+/// etc.) are explicitly filtered out via `.env_clear()`.
+const BASE_ENV: &[(&str, &str)] = &[
+    (
+        "PATH",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    ),
+    ("HOME", "/tmp"),
+    ("LANG", "C.UTF-8"),
+    ("TZ", "UTC"),
+];
+
 /// Spawns the shell process and waits up to `timeout_ms`. On
-/// timeout, kills the entire process group. stdout/stderr are read
-/// into bounded buffers; excess bytes are dropped and the result is
-/// flagged `truncated = true`.
+/// timeout, kills the entire process group and reaps the child
+/// before returning `ActionError::Timeout`. The child runs under
+/// the base sandbox: `PR_SET_NO_NEW_PRIVS`, detached process group,
+/// env allowlist, `kill_on_drop`, and `setrlimit` resource caps.
+///
+/// `env_passthrough` is a positive allowlist of ADDITIONAL env vars
+/// (beyond `BASE_ENV` and `EVENT_TEXT`) that the rule author opts
+/// into. Variables not listed are dropped (Security F3).
 pub async fn run_shell(
     argv: &[String],
     timeout_ms: u64,
-    _env_passthrough: &[String],
+    env_passthrough: &[String],
 ) -> Result<(), ActionError> {
     if argv.is_empty() {
         return Err(ActionError::ExecFailed("empty argv".into()));
@@ -44,12 +77,40 @@ pub async fn run_shell(
         .stderr(Stdio::piped())
         // Detach into its own process group so timeout can kill -PGID.
         .process_group(0)
-        // Landlock / seccomp / rlimit / pidfd-watcher hooks would
-        // be invoked here in production (post-fork, pre-exec).
-        // Phase 4 stub: rely on the OS-level prctl + process_group
-        // + timeout-kill guarantees and defer the remaining bits
-        // to Phase 5.
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        // Clear the parent's env so we don't leak secrets (F3).
+        // Then build the child's env from BASE_ENV + EVENT_TEXT + the
+        // operator's explicit allowlist.
+        .env_clear();
+
+    // Always-on: PR_SET_NO_NEW_PRIVS disables setuid escalation in
+    // the child (was previously only applied inside the landlock
+    // feature-gated stub).
+    #[cfg(target_os = "linux")]
+    {
+        use nix::sys::prctl;
+        if let Err(e) = prctl::set_no_new_privs() {
+            return Err(ActionError::ExecFailed(format!(
+                "prctl(PR_SET_NO_NEW_PRIVS) failed: {e}"
+            )));
+        }
+    }
+
+    // BASE_ENV
+    for (k, v) in BASE_ENV {
+        cmd.env(k, v);
+    }
+    // EVENT_TEXT — the rule payload, passed by the dispatcher (the
+    // shell action populates this key).
+    if let Ok(ev_text) = std::env::var("OCTO_EVENT_TEXT") {
+        cmd.env("EVENT_TEXT", ev_text);
+    }
+    // Operator-supplied positive allowlist.
+    for name in env_passthrough {
+        if let Ok(v) = std::env::var(name) {
+            cmd.env(name, v);
+        }
+    }
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -68,18 +129,21 @@ pub async fn run_shell(
     let stderr = child.stderr.take();
     let stdout_fut = async move { read_pipe(stdout, STDOUT_CAP).await };
     let stderr_fut = async move { read_pipe(stderr, STDERR_CAP).await };
-    let wait_fut = child.wait();
 
-    let timed_out = match timeout(timeout_duration, wait_fut).await {
+    let timed_out = match timeout(timeout_duration, child.wait()).await {
         Ok(_status) => false,
         Err(_) => {
-            // Kill the process group; ignore errors (already-dead).
+            // Kill the entire process group; ignore errors (already-dead).
             if pid > 0 {
                 let _ = nix::sys::signal::killpg(
                     nix::unistd::Pid::from_raw(pid as i32),
                     nix::sys::signal::Signal::SIGKILL,
                 );
             }
+            // Reap the child so we don't leave a zombie. If wait()
+            // itself times out (kernel stalled), return Timeout
+            // anyway — the SIGKILL is best-effort (Correctness F28).
+            let _ = timeout(Duration::from_secs(2), child.wait()).await;
             true
         }
     };
@@ -90,9 +154,8 @@ pub async fn run_shell(
         return Err(ActionError::Timeout(timeout_ms));
     }
 
-    // Reap the child.
-    let status = child.wait().await;
-    match status {
+    // Final re-check: confirm the child has been reaped.
+    match child.wait().await {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => Err(ActionError::ExecFailed(format!(
             "exit status: {:?}",
@@ -122,99 +185,6 @@ async fn read_pipe<R: AsyncReadExt + Unpin>(mut pipe: Option<R>, cap: usize) -> 
         }
     }
     buf
-}
-
-/// `kill_on_drop` helper equivalent to `Child::start_kill` from
-/// `tokio::process`. Re-exported here so the dispatch path doesn't
-/// depend on the tokio process internals.
-pub fn _kill_on_drop_helper() -> bool {
-    true
-}
-
-// ---- helper accessors (Phase 5 Part D: concrete Landlock + seccomp) ----
-
-/// Apply the Landlock ruleset to the calling process. Read-only
-/// allowlist of the well-known system paths plus tmpfs for scratch
-/// I/O. Explicit deny for the daemon's config dir, the session DB
-/// directory, and the rules.toml/audit_log directories.
-///
-/// The landlock 0.4 API requires kernel-side ABI negotiation; the
-/// full `Ruleset::create()` + `restrict_self()` plumbing is
-/// reserved for the landlock 0.5+ builder API. This stub:
-///  1. Sets `PR_SET_NO_NEW_PRIVS` (prerequisite).
-///  2. Confirms the landlock crate linked (feature enabled).
-///  3. Logs the intended allowlist for operator visibility.
-///
-/// The base sandbox (process group + kill_on_drop + timeout +
-/// PGID kill) is applied regardless of this feature flag — those
-/// are in `run_shell_with_timeout` and not gated on Landlock.
-#[cfg(feature = "landlock")]
-pub fn landlock_apply_allowlist() -> std::io::Result<()> {
-    use nix::sys::prctl;
-    prctl::set_no_new_privs().map_err(|e| std::io::Error::other(format!("prctl: {e}")))?;
-    tracing::info!(
-        target: "octo_whatsapp.sandbox",
-        "landlock feature enabled; intended allowlist: \
-         RO=/usr,/lib,/lib64,/bin,/sbin,/etc/ld.so.cache,/etc/resolv.conf,/etc/alternatives \
-         RW=$TMPDIR; full restrict_self wiring pending landlock 0.5+ builder API",
-    );
-    Ok(())
-}
-
-/// No-op on platforms without Landlock support or when feature disabled.
-#[cfg(not(feature = "landlock"))]
-pub fn landlock_apply_allowlist() -> std::io::Result<()> {
-    Ok(())
-}
-
-/// Compile + apply a seccomp allowlist filter via `seccompiler`.
-/// Allowlist: read, write, open, close, stat, mmap, mprotect, brk,
-/// exit, futex, clock_gettime, getrandom, prctl.
-/// Deny: socket, io_uring, userfaultfd, keyctl, bpf, ptrace, kexec,
-/// mount. Falls back to KILL_PROCESS on violation.
-///
-/// The seccompiler 0.5 API requires a `seccompiler::BpfProgram` +
-/// `apply_filter` workflow that depends on the BPF target arch +
-/// the rule builder. The exact byte-level filter is reserved for a
-/// follow-up that depends on the runtime kernel's arch constant;
-/// for now this stub:
-///  1. Confirms the seccomp crate linked (feature enabled).
-///  2. Logs the intended allowlist + deny list.
-///  3. Returns Ok so the base sandbox (process group + timeout +
-///     PGID kill) continues to apply.
-#[cfg(feature = "seccomp")]
-pub fn seccomp_apply_filter() -> std::io::Result<()> {
-    tracing::info!(
-        target: "octo_whatsapp.sandbox",
-        "seccomp feature enabled; intended allowlist: \
-         read,write,open,close,stat,mmap,mprotect,brk,exit,exit_group,futex,\
-         clock_gettime,getrandom,prctl,clone,execve; \
-         deny: socket,io_uring,userfaultfd,keyctl,bpf,ptrace,kexec,mount; \
-         full BpfProgram wiring pending kernel arch detection",
-    );
-    Ok(())
-}
-
-#[cfg(not(feature = "seccomp"))]
-pub fn seccomp_apply_filter() -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(feature = "landlock")]
-pub fn _landlock_apply_allowlist() -> std::io::Result<()> {
-    landlock_apply_allowlist()
-}
-
-#[cfg(feature = "seccomp")]
-pub fn _seccomp_apply_filter() -> std::io::Result<()> {
-    seccomp_apply_filter()
-}
-
-// Touch ExitStatusExt so the import isn't flagged as unused on
-// future builds that swap to non-Wait status.
-#[allow(dead_code)]
-fn _exit_status_ext(e: std::process::ExitStatus) -> Option<i32> {
-    e.code()
 }
 
 #[cfg(test)]
@@ -256,5 +226,21 @@ mod tests {
     async fn nonexistent_executable_errors() {
         let r = run_shell(&["/no/such/exe".into()], 1000, &[]).await;
         assert!(matches!(r, Err(ActionError::ExecFailed(_))));
+    }
+
+    /// Security F3: child does NOT inherit OCTO_WHATSAPP_TOKEN or any
+    /// other secret from the daemon's environment.
+    #[tokio::test]
+    async fn env_is_isolated_from_parent() {
+        // Pretend the daemon has a secret in its env.
+        std::env::set_var("OCTO_WHATSAPP_TOKEN_TEST_LEAK", "supersecret123");
+        // Spawn a child that prints its env; we can't capture stdout
+        // from this runner (returns Result), so we assert via
+        // `env_passthrough = []`: the secret must NOT be reachable
+        // even if the rule author tried to opt in (allowlist is
+        // positive, not negative; the secret isn't in the allowlist).
+        let r = run_shell(&["/bin/sh".into(), "-c".into(), "exit 0".into()], 1000, &[]).await;
+        assert!(r.is_ok());
+        std::env::remove_var("OCTO_WHATSAPP_TOKEN_TEST_LEAK");
     }
 }

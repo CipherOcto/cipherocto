@@ -21,15 +21,21 @@
 //!
 //! 3. **Atomic write.** Each flush serializes the current ruleset to
 //!    a `tempfile::NamedTempFile` in the parent directory, calls
-//!    `sync_all()`, then `persist(...)` (atomic rename). The
-//!    published file is always either the prior version or the new
-//!    full version — never a half-written document.
+//!    `sync_all()`, then `persist(...)` (atomic rename). After the
+//!    rename succeeds, the parent directory is `fsync`'d so the
+//!    rename is durable on power loss. The published file is always
+//!    either the prior version or the new full version — never a
+//!    half-written document.
 //!
-//! 4. **WAL.** Every successful flush appends a line
-//!    `<seq>\t<json>\t<sha>` to the WAL with `fsync`. The SHA
-//!    chains the previous tail line (tamper-evident). On startup
-//!    the daemon calls `recover_from_wal` to reconcile the in-memory
-//!    state with the disk record.
+//! 4. **WAL — audit trail (NOT source of truth).** Every successful
+//!    flush appends a line `<seq>\t<json>\t<sha>` to the WAL with
+//!    `fsync`. The SHA chains the previous tail line
+//!    (tamper-evident). On startup the daemon calls
+//!    `recover_from_wal` to **verify chain integrity** and seed the
+//!    `next_seq` counter; the canonical state is **always**
+//!    `rules.toml` (atomic writes). A WAL line whose chain is
+//!    broken is rewritten out — the broken tail is dropped but the
+//!    good lines are preserved.
 //!
 //! 5. **Cancel-safe.** `CancellationToken` triggers drain (write
 //!    pending state, exit). Join handle completes; drop is
@@ -83,6 +89,11 @@ pub enum PersistError {
     TomlDecode(#[from] toml::de::Error),
     #[error("persister channel closed")]
     ChannelClosed,
+    /// Distinguishes "persister is slow / disk is wedged" from "the
+    /// channel is genuinely dead". RPC handlers can retry on
+    /// `FlushTimeout` but must not retry on `ChannelClosed`.
+    #[error("flush timed out after {elapsed_ms}ms")]
+    FlushTimeout { elapsed_ms: u64 },
     #[error("wal chain integrity broken at seq {0}")]
     WalChainBroken(u64),
 }
@@ -230,32 +241,41 @@ impl RulesPersister {
 
     /// Force a sync flush; returns when the disk write completes.
     pub async fn flush_sync(&self) -> Result<(), PersistError> {
-        // Build the oneshot here. We stash the SENDER; the loop will
-        // call `take_pending_sync()` after the next flush and ack by
-        // sending `()` to it. We send a `FlushSync` unit message to
-        // wake the loop immediately (skip the debounce window).
-        let (tx, _rx) = tokio::sync::oneshot::channel();
+        // Build the oneshot and stash the SENDER before sending the
+        // Flush message — the persister loop reads `pending_sync`
+        // after the next flush and acks by sending `()` to the
+        // receiver. We hold the receiver locally and `await` it
+        // directly (no polling), so the ack is delivered as soon as
+        // the persister loop runs.
+        let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut g = self.state.lock();
             g.pending_sync = Some(tx);
         }
-        self.tx
+        if self
+            .tx
             .send(PersistMessage::Flush(FlushSync))
             .await
-            .map_err(|_| PersistError::ChannelClosed)?;
-        // Wait until the loop acks by clearing `pending_sync`.
-        let start = std::time::Instant::now();
-        loop {
-            {
-                let g = self.state.lock();
-                if g.pending_sync.is_none() {
-                    return Ok(());
-                }
+            .is_err()
+        {
+            // Channel closed — clear the stashed sender so a later
+            // `take_pending_sync` does not see a leaked tx.
+            let _ = self.take_pending_sync();
+            return Err(PersistError::ChannelClosed);
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_oneshot_recv_err)) => {
+                // Persister dropped the sender without sending — treat
+                // as channel closed (the loop is exiting).
+                Err(PersistError::ChannelClosed)
             }
-            if start.elapsed() > std::time::Duration::from_secs(30) {
-                return Err(PersistError::ChannelClosed);
+            Err(_elapsed) => {
+                // Persister is alive but slow / disk wedged. Clear
+                // the stale sender so the next flush is not blocked.
+                let _ = self.take_pending_sync();
+                Err(PersistError::FlushTimeout { elapsed_ms: 30_000 })
             }
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
     }
 
@@ -305,8 +325,9 @@ impl RulesPersister {
     }
 
     /// Bump the next_seq counter to `at_least`. Used by
-    /// `recover_from_wal`.
-    #[allow(dead_code)]
+    /// `recover_from_wal` and `load_initial_rules_from_disk` to
+    /// restore the chain counter after restart so new WAL lines do
+    /// not collide with prior entries (correctness review F7).
     pub(crate) fn bump_seq(&self, at_least: u64) {
         let mut g = self.state.lock();
         if at_least > g.next_seq {
@@ -429,21 +450,41 @@ fn parse_state_label(s: &str) -> Option<RuleState> {
 /// line. Returns an empty ruleset when the file is missing or
 /// contains no valid lines (the expected state for a fresh boot).
 ///
-/// The WAL is used for crash recovery; the canonical state lives in
-/// `rules.toml` (atomic writes). The persister's own in-memory
-/// snapshot is rebuilt from `rules.toml` on startup; this function
-/// exists as a belt-and-braces recovery hook for future use (and
-/// so the integration test can verify WAL replay logic).
+/// **Source of truth:** `rules.toml` (atomic writes via rename). The
+/// WAL is a tamper-evident **audit trail**; on startup this function
+/// verifies chain integrity, drops any corrupted tail, and returns
+/// the highest valid seq so the persister can resume the chain
+/// without colliding with prior entries. The actual rule state is
+/// loaded from `rules.toml` by the caller (see `load_initial_rules_from_disk`).
+///
+/// On chain mismatch: the WAL is rewritten with ONLY the valid lines
+/// (atomic temp + rename) so future appends continue at the right
+/// seq and the good chain is preserved for forensic review.
 pub async fn recover_from_wal(wal_path: &Path) -> Result<Vec<Rule>, PersistError> {
     let bytes = match tokio::fs::read(wal_path).await {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(PersistError::Io(e)),
     };
-    let content = String::from_utf8_lossy(&bytes);
+    // Strict UTF-8 decode — lossy decode hides half-line corruption
+    // (correctness review F4). If the WAL has a half-line, we report
+    // it as a broken tail.
+    let content = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            tracing::warn!(
+                valid_up_to = e.valid_up_to(),
+                "rules_persister: WAL has invalid UTF-8; truncating at boundary"
+            );
+            let valid = String::from_utf8_lossy(&bytes[..e.valid_up_to()]).into_owned();
+            rewrite_wal_valid_lines(wal_path, &valid).await?;
+            return Ok(Vec::new());
+        }
+    };
     let mut last_good_chain: Vec<String> = Vec::new();
     let mut last_valid_seq: u64 = 0;
     let mut valid_rules: Vec<Rule> = Vec::new();
+    let mut valid_lines_buf = String::new();
     for line in content.lines() {
         if line.is_empty() {
             continue;
@@ -469,17 +510,13 @@ pub async fn recover_from_wal(wal_path: &Path) -> Result<Vec<Rule>, PersistError
             tracing::warn!(
                 seq_no = seq,
                 last_valid = last_valid_seq,
-                "rules_persister: WAL chain mismatch; truncating tail"
+                "rules_persister: WAL chain mismatch; truncating tail and rewriting good lines"
             );
-            // Truncate the WAL at this point so future appends are
-            // contiguous with the last good line.
-            let _ = tokio::fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(wal_path)
-                .await;
+            rewrite_wal_valid_lines(wal_path, &valid_lines_buf).await?;
             return Ok(valid_rules);
         }
+        valid_lines_buf.push_str(line);
+        valid_lines_buf.push('\n');
         if let Some(rules) = apply_wal_payload(payload)? {
             valid_rules = rules;
         }
@@ -487,6 +524,52 @@ pub async fn recover_from_wal(wal_path: &Path) -> Result<Vec<Rule>, PersistError
         last_good_chain.push(claimed_sha.to_string());
     }
     Ok(valid_rules)
+}
+
+/// Read the WAL and return the highest valid seq (0 if missing or
+/// empty). Used at startup to seed `next_seq` so a daemon restart
+/// does not collide with prior chain entries (correctness review F7).
+pub fn max_wal_seq(wal_path: &Path) -> Result<u64, PersistError> {
+    let bytes = match std::fs::read(wal_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(PersistError::Io(e)),
+    };
+    let content = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return Ok(0),
+    };
+    let mut max_seq = 0u64;
+    for line in content.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(seq) = line.split('\t').next().and_then(|s| s.parse().ok()) {
+            if seq > max_seq {
+                max_seq = seq;
+            }
+        }
+    }
+    Ok(max_seq)
+}
+
+/// Rewrite the WAL with only the already-verified good lines. Atomic
+/// temp + rename so a crash mid-rewrite leaves the original intact.
+async fn rewrite_wal_valid_lines(wal_path: &Path, valid_lines: &str) -> Result<(), PersistError> {
+    let parent = wal_path.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.as_os_str().is_empty() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::Write::write_all(tmp.as_file_mut(), valid_lines.as_bytes())?;
+    tmp.as_file_mut().sync_all()?;
+    tmp.persist(wal_path)
+        .map_err(|e| PersistError::Io(e.error))?;
+    // fsync the parent directory so the rename is durable.
+    if let Ok(dir) = tokio::fs::File::open(parent).await {
+        let _ = dir.sync_all().await;
+    }
+    Ok(())
 }
 
 /// Decode a WAL payload. Returns `Some(new_ruleset)` for
@@ -659,9 +742,32 @@ async fn write_rules_atomic(path: &Path, content: &str) -> Result<(), PersistErr
     }
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    // Explicit 0600 on the temp file so the grace window cannot be
+    // observed by other users (security review F7).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(tmp.path(), perms);
+    }
     std::io::Write::write_all(tmp.as_file_mut(), content.as_bytes())?;
     tmp.as_file_mut().sync_all()?;
     tmp.persist(path).map_err(|e| PersistError::Io(e.error))?;
+    // After the rename, fsync the parent directory so the directory
+    // entry is durable across power loss. Without this, the rename
+    // may not survive a crash (correctness review F5).
+    if let Ok(dir) = tokio::fs::File::open(parent).await {
+        let _ = dir.sync_all().await;
+    }
+    // Enforce 0600 on the published file (security review F7).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            let _ = meta; // suppress unused
+        }
+    }
     Ok(())
 }
 

@@ -310,6 +310,23 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
         None
     }
+
+    /// Runtime-side escape hatch to subscribe to the adapter's raw
+    /// lifecycle event stream. Returns the `format!("{:?}", event)`
+    /// strings the underlying SDK emits (`Event::Connected(_)`, etc.).
+    ///
+    /// Default: `None`. `WhatsAppWebAdapter` overrides to forward to
+    /// its internal `broadcast::Sender` (`adapter.rs:500`). `MockAdapter`
+    /// keeps the default — hermetic tests don't drive a real event
+    /// stream.
+    ///
+    /// Consumed by the daemon's connection-watcher task (Phase 6.12.4)
+    /// to translate WA events into `BotStateMirror` transitions.
+    /// Adapters without a single bot lifecycle (Matrix, Telegram)
+    /// keep the default `None` and the watcher simply does nothing.
+    fn subscribe_raw_events(&self) -> Option<tokio::sync::broadcast::Receiver<String>> {
+        None
+    }
 }
 
 // ===========================================================================
@@ -716,6 +733,17 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         // tracks it automatically.
         use octo_network::dot::PlatformAdapter;
         <Self as PlatformAdapter>::as_coordinator_admin(self)
+    }
+
+    // ── Raw event stream forwarder (Phase 6.12.4) ────────────────────────
+
+    fn subscribe_raw_events(&self) -> Option<tokio::sync::broadcast::Receiver<String>> {
+        // `WhatsAppWebAdapter::subscribe_raw_events` lives on the
+        // concrete type (`adapter.rs:500`) rather than on the
+        // `PlatformAdapter` trait (which serves 5+ adapter impls).
+        // The trait impl here is targeted specifically at the WA
+        // backend, so calling the concrete method is appropriate.
+        Some(octo_adapter_whatsapp::WhatsAppWebAdapter::subscribe_raw_events(self))
     }
 }
 

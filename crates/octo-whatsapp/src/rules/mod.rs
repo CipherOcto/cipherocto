@@ -10,12 +10,17 @@
 //!   match_event with cooldown + priority sort.
 
 pub mod etag;
+pub mod persister;
 pub mod predicate;
 pub mod rule;
 pub mod rule_store;
 
 // Public re-exports — keep the surface narrow.
 pub use etag::canonical_etag;
+pub use persister::{
+    resolve_storage_path, validate_persisted_rule, PersistError, PersistOp, PersistedRule,
+    PersistedRuleset, RulesPersister,
+};
 pub use predicate::{classify_regex, event_kind, glob_match, Predicate, ReDoSError};
 pub use rule::{ActionSpec, Rule, RuleState};
 pub use rule_store::{MutationRateLimiter, RuleDraft, RuleError, RulePatch, RuleStore, Ruleset};

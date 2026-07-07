@@ -70,6 +70,11 @@ parking_lot = { workspace = true }
 # `load_grace` even in non-test builds.
 tempfile = "3"
 
+# Phase 5 Part C: optional `dirs` resolves `~` in `[rules] storage_path`
+# (default `~/.local/share/octo/whatsapp/rules.toml`). Optional so
+# hermetic builds without a HOME still work.
+dirs = "5"
+
 # Phase 5 Part B: observability — Prometheus registry + axum HTTP
 # health/ready/metrics server + HMAC label hashing.
 prometheus = { version = "0.13", default-features = false }

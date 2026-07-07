@@ -81,6 +81,74 @@ pub struct WhatsAppRuntimeConfig {
     /// All optional with safe defaults (off / loopback-only).
     #[serde(default)]
     pub observability: ObservabilityConfig,
+    /// Phase 5 Part C: rules persistence knobs (storage path,
+    /// WAL path, debounce window). Defaults are explicit
+    /// (no silent fallbacks).
+    #[serde(default)]
+    pub rules: RulesConfig,
+}
+
+/// Phase 5 Part C: rules persistence configuration. Discovers the
+/// on-disk location of `rules.toml`, the WAL file, and the
+/// debounce window for coalescing rapid mutations into a single
+/// atomic write. Defaults are safe-but-explicit.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RulesConfig {
+    /// Path to `rules.toml`. Default
+    /// `~/.local/share/octo/whatsapp/rules.toml` (`~` is resolved
+    /// via `dirs::home_dir()` at startup).
+    #[serde(default = "default_rules_storage_path")]
+    pub storage_path: PathBuf,
+    /// Coalescing window in milliseconds for rapid mutations.
+    /// Multiple writes within this window collapse into one disk
+    /// write. Default 100ms.
+    #[serde(default = "default_rules_debounce_ms")]
+    pub debounce_ms: u64,
+    /// WAL path. Default = `storage_path` with `.wal` extension.
+    #[serde(default)]
+    pub wal_path: Option<PathBuf>,
+}
+
+impl Default for RulesConfig {
+    fn default() -> Self {
+        Self {
+            storage_path: default_rules_storage_path(),
+            debounce_ms: default_rules_debounce_ms(),
+            wal_path: None,
+        }
+    }
+}
+
+fn default_rules_storage_path() -> PathBuf {
+    PathBuf::from("~/.local/share/octo/whatsapp/rules.toml")
+}
+
+fn default_rules_debounce_ms() -> u64 {
+    100
+}
+
+impl RulesConfig {
+    /// Resolve the effective storage path (expanding `~`).
+    pub fn resolved_storage_path(&self) -> PathBuf {
+        crate::rules::resolve_storage_path(&self.storage_path)
+    }
+
+    /// Resolve the effective WAL path (defaults to
+    /// `<storage>.wal` when the user did not set one).
+    pub fn resolved_wal_path(&self) -> PathBuf {
+        match &self.wal_path {
+            Some(p) => crate::rules::resolve_storage_path(p),
+            None => {
+                let mut stem = self.resolved_storage_path();
+                let new_ext = match stem.extension() {
+                    Some(e) => format!("{}.wal", e.to_string_lossy()),
+                    None => "wal".to_string(),
+                };
+                stem.set_extension(new_ext);
+                stem
+            }
+        }
+    }
 }
 
 /// Phase 4: security-related runtime configuration.
@@ -260,6 +328,7 @@ impl Default for WhatsAppRuntimeConfig {
             events: EventsConfig::default(),
             security: SecurityConfig::default(),
             observability: ObservabilityConfig::default(),
+            rules: RulesConfig::default(),
         }
     }
 }
@@ -365,6 +434,13 @@ impl WhatsAppRuntimeConfig {
                     "observability.tracing.otlp_endpoint cannot be an empty string".into(),
                 ));
             }
+        }
+        // Phase 5 Part C: validate rules config knobs.
+        if self.rules.debounce_ms == 0 {
+            return Err(ConfigError::InvalidObservability(
+                "rules.debounce_ms must be > 0 (got 0); debouncing disabled is forbidden"
+                    .to_string(),
+            ));
         }
         Ok(())
     }

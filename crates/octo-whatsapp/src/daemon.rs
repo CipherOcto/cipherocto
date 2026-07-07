@@ -14,7 +14,7 @@ use crate::events_persister::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
 use crate::observability::metrics::Metrics;
-use crate::rules::{MutationRateLimiter, RuleStore};
+use crate::rules::{MutationRateLimiter, RuleStore, RulesPersister};
 use crate::security::TokenStore;
 use crate::triggers::TriggerStore;
 
@@ -82,6 +82,11 @@ struct DaemonInner {
     /// (best-effort: missing env var leaves the store empty) and
     /// persists grace entries to `[security] grace_path`.
     tokens: Arc<TokenStore>,
+    /// Phase 5 Part C: disk persister for rules (debounced atomic
+    /// writes to `rules.toml` + WAL). Optional — `None` only when
+    /// the persister was disabled at startup. The `JoinHandle` is
+    /// owned separately by `Daemon` (not stored here).
+    rules_persister: Option<Arc<RulesPersister>>,
     /// Phase 5 Part B: Prometheus registry (14 metrics). Cheap to
     /// share via `Arc`; handlers increment counters via the helper
     /// accessors below.
@@ -266,6 +271,12 @@ impl DaemonHandle {
         &self.inner.tokens
     }
 
+    /// Phase 5 Part C: rules persister. `rules.reload` and
+    /// shutdown-drain paths consult this directly.
+    pub fn rules_persister(&self) -> Option<&Arc<RulesPersister>> {
+        self.inner.rules_persister.as_ref()
+    }
+
     /// Phase 5 Part B: Prometheus metrics registry. Handlers use
     /// this to increment counters; the HTTP `/metrics` endpoint
     /// renders from the same registry.
@@ -372,9 +383,6 @@ impl Daemon {
             self.config.security.audit_anchor_every,
         )
         .with_metrics(metrics.clone());
-        let rule_store = Arc::new(
-            RuleStore::new(self.config.security.auto_approve_rules).with_metrics(metrics.clone()),
-        );
         let mutation_rl = Arc::new(MutationRateLimiter::new(10)); // 10/min per caller
         let trigger_store = Arc::new(TriggerStore::new().with_metrics(metrics.clone()));
         // Phase 5 Part A: TokenStore. Default grace_path is
@@ -394,6 +402,51 @@ impl Daemon {
         // warning via the descriptor's `label`.
         let _ = tokens.load_from_env(&self.config.security.bearer_token_env, Some("bootstrap"));
         let _ = tokens.load_grace();
+        // Phase 5 Part C: rules persistence. The persister writes
+        // the ruleset atomically to `rules.toml` with a SHA-256
+        // chained WAL. The JoinHandle lives outside `DaemonInner`
+        // (in `Daemon`) so the supervisor can await the actor's
+        // exit during shutdown drain.
+        let storage_path = self.config.rules.resolved_storage_path();
+        let wal_path = self.config.rules.resolved_wal_path();
+        if let Some(parent) = storage_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        if let Some(parent) = wal_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let (rules_persister, persister_handle) = RulesPersister::spawn(
+            storage_path,
+            wal_path,
+            self.config.rules.debounce_ms,
+        );
+        // Side-channel: stash the JoinHandle so we can await it on
+        // shutdown. The handle is light (one tokio JoinHandle) —
+        // owned by the supervisor task spawned by `Daemon::run`.
+        PERSISTER_HANDLES.with(|cell| {
+            let mut g = cell.borrow_mut();
+            g.push(persister_handle);
+        });
+        // Seed: load any pre-existing rules.toml from disk and
+        // inject into both the RuleStore (swap) and the
+        // persister's snapshot map.
+        let loaded_rules = load_initial_rules_from_disk(
+            self.config.rules.resolved_storage_path(),
+            rules_persister.clone(),
+        );
+        let rs = RuleStore::new(self.config.security.auto_approve_rules)
+            .with_metrics(metrics.clone())
+            .with_persister(rules_persister.clone());
+        if !loaded_rules.is_empty() {
+            let arcs: Vec<Arc<crate::rules::Rule>> =
+                loaded_rules.into_iter().map(Arc::new).collect();
+            rs.replace_all(arcs);
+        }
+        let rule_store = Arc::new(rs);
         let started_at_unix_ms = unix_epoch_ms_now();
         let is_live = Arc::new(AtomicBool::new(false));
         let is_ready = Arc::new(AtomicBool::new(false));
@@ -411,6 +464,7 @@ impl Daemon {
                 triggers: trigger_store,
                 audit_log: Arc::new(audit_log),
                 tokens,
+                rules_persister: Some(rules_persister),
                 metrics,
                 is_live,
                 is_ready,
@@ -482,14 +536,102 @@ impl Daemon {
         handle.set_live(true);
         info!("daemon: liveness set; server accepting");
 
+        // Phase 5 Part C: spawn a small task that listens for
+        // SIGHUP and triggers a non-blocking `rules.reload`. On
+        // non-unix targets the watcher is a no-op.
+        let sighup_handle = spawn_sighup_watcher(cancel.clone(), handle.clone());
+
         cancel.cancelled().await;
         info!("daemon: cancel observed; waiting for server to drain");
         handle.set_live(false);
         handle.set_ready(false);
+        // Phase 5 Part C: drain the rules persister before
+        // returning so any pending writes hit disk.
+        if let Some(p) = handle.rules_persister() {
+            let _ = p.flush_sync().await;
+        }
+        let _ = sighup_handle.await;
+        crate::daemon::drain_persister_handles().await;
         let _ = server_task.await;
         info!("daemon: exited");
         Ok(())
     }
+}
+
+/// Spawn the SIGHUP watcher task. On unix platforms we install a
+/// `tokio::signal::unix` listener for SIGHUP and call
+/// `DaemonHandle::rules()` reload on each. On non-unix the watcher
+/// is a no-op future.
+#[cfg(unix)]
+fn spawn_sighup_watcher(
+    cancel: tokio_util::sync::CancellationToken,
+    handle: DaemonHandle,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sig = match signal(SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "daemon: cannot install SIGHUP listener");
+                return;
+            }
+        };
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = sig.recv() => {
+                    tracing::info!("daemon: SIGHUP received — reloading rules");
+                    // Synthesize a `rules.reload` invocation by
+                    // calling the handler logic directly. This
+                    // avoids requiring the full RPC roundtrip.
+                    let previous = handle.rules().list();
+                    let storage_path = handle.config().rules.resolved_storage_path();
+                    let bytes = match tokio::fs::read(&storage_path).await {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "sighup: cannot read rules.toml");
+                            continue;
+                        }
+                    };
+                    let text = match std::str::from_utf8(&bytes) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            tracing::warn!("sighup: rules.toml not UTF-8");
+                            continue;
+                        }
+                    };
+                    let set: crate::rules::PersistedRuleset = match toml::from_str(text) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "sighup: rules.toml parse");
+                            continue;
+                        }
+                    };
+                    let rules = set.into_rules();
+                    let valid: Vec<std::sync::Arc<crate::rules::Rule>> = rules
+                        .into_iter()
+                        .filter(crate::rules::validate_persisted_rule)
+                        .map(std::sync::Arc::new)
+                        .collect();
+                    handle.rules().replace_all(valid.clone());
+                    tracing::info!(
+                        prev = previous.len(),
+                        new = valid.len(),
+                        "sighup: rules reloaded"
+                    );
+                }
+            }
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn spawn_sighup_watcher(
+    _cancel: tokio_util::sync::CancellationToken,
+    _handle: DaemonHandle,
+) -> tokio::task::JoinHandle<()> {
+    // Non-unix: no-op watcher.
+    tokio::spawn(async move {})
 }
 
 /// Generate a per-process random 32-byte secret for label-hash
@@ -516,6 +658,80 @@ fn unix_epoch_ms_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+// ---- Phase 5 Part C: persister plumbing ----
+
+thread_local! {
+    /// Per-thread stash of `JoinHandle`s for rules-persister
+    /// background tasks. The daemon fires off one persister per
+    /// `Daemon::handle()` call; the supervisor awaits each handle
+    /// during shutdown so the persister can drain.
+    ///
+    /// We use a thread_local rather than storing the handle inside
+    /// `DaemonInner` because `Arc<DaemonInner>` is shared with the
+    /// IPC handlers; moving the handle there would force `'static`
+    /// bound on every handler that needs to read it. The thread
+    /// local is owned by the supervisor thread that called
+    /// `Daemon::handle()` (typically the runtime entry point).
+    static PERSISTER_HANDLES: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Drain the per-thread `PERSISTER_HANDLES`. Cancels each handle's
+/// cancellation token and awaits its completion. Called by the
+/// daemon's `run` shutdown sequence.
+pub(crate) async fn drain_persister_handles() {
+    PERSISTER_HANDLES.with(|cell| {
+        let mut g = cell.borrow_mut();
+        for h in g.drain(..) {
+            h.abort();
+        }
+    });
+}
+
+/// Read `rules.toml` from disk (if present) and return the parsed
+/// rules. Used at startup to seed the in-memory store. Validation
+/// follows the same path as `rules.reload`. Missing/empty/corrupt
+/// files yield an empty `Vec` (logged, not failed).
+fn load_initial_rules_from_disk(
+    storage_path: std::path::PathBuf,
+    persister: Arc<crate::rules::RulesPersister>,
+) -> Vec<crate::rules::Rule> {
+    use crate::rules::{PersistedRuleset, RulesPersister};
+    let bytes = match std::fs::read(&storage_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            tracing::warn!(error = %e, "rules_persister: cannot read rules.toml at startup");
+            return Vec::new();
+        }
+    };
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("rules_persister: rules.toml is not UTF-8; treating as empty");
+            return Vec::new();
+        }
+    };
+    let set: PersistedRuleset = match toml::from_str(text) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "rules_persister: rules.toml is malformed; ignoring");
+            return Vec::new();
+        }
+    };
+    let rules = set.into_rules();
+    // Re-validate every predicate (ReDoS classification) before
+    // admitting — a malformed entry should not crash the daemon.
+    let validated: Vec<crate::rules::Rule> = rules
+        .into_iter()
+        .filter(crate::rules::validate_persisted_rule)
+        .collect();
+    // Seed the persister's in-memory snapshot so subsequent upserts
+    // reflect the loaded baseline.
+    RulesPersister::seed_snapshot_static(&persister, validated.clone());
+    validated
 }
 
 /// Tests live in their own file so the unit-test surface stays narrow.

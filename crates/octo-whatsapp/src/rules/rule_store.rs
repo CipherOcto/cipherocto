@@ -10,6 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use super::etag::canonical_etag;
+use super::persister::{PersistOp, RulesPersister};
 use super::predicate::Predicate;
 use super::rule::{ActionSpec, Rule, RuleState};
 use crate::events::InboundEvent;
@@ -35,6 +36,13 @@ impl Ruleset {
 /// `RuleStore` wraps an `ArcSwap<Ruleset>` and exposes the CRUD +
 /// match surface that handlers call. Mutations never block the
 /// matcher hot path: the matcher only reads.
+///
+/// Phase 5 Part C: every mutation (besides the in-memory ArcSwap)
+/// is enqueued into the supplied `RulesPersister` for debounced
+/// disk persistence. The mutator performs the swap FIRST so readers
+/// observe writes without waiting for `fsync`. The persister is
+/// optional — set to `None` only in hermetic tests where no on-disk
+/// state is wanted.
 #[derive(Debug)]
 pub struct RuleStore {
     state: ArcSwap<Ruleset>,
@@ -45,9 +53,14 @@ pub struct RuleStore {
     /// Phase 5 Part B: optional Prometheus hook. When set,
     /// `match_event` increments `rule_matches_total{rule_id=hash}`.
     metrics: Option<Arc<Metrics>>,
+    /// Phase 5 Part C: optional disk persister. `None` keeps the
+    /// store in-memory-only (hermetic tests, transient unit tests).
+    persister: Option<Arc<RulesPersister>>,
 }
 
 impl RuleStore {
+    /// Hermetic in-memory store (no disk persistence). Use
+    /// `RuleStore::with_persister` for production wiring.
     pub fn new(auto_approve_rules: bool) -> Self {
         Self {
             state: ArcSwap::from_pointee(Ruleset::default()),
@@ -56,13 +69,25 @@ impl RuleStore {
             last_fire_ms: Mutex::new(HashMap::new()),
             auto_approve_rules,
             metrics: None,
+            persister: None,
         }
+    }
+
+    /// Phase 5 Part C: attach the disk persister.
+    pub fn with_persister(mut self, p: Arc<RulesPersister>) -> Self {
+        self.persister = Some(p);
+        self
     }
 
     /// Phase 5 Part B: attach the Prometheus registry. Idempotent.
     pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
         self.metrics = Some(m);
         self
+    }
+
+    /// Phase 5 Part C: accessor for the disk persister (if any).
+    pub fn persister(&self) -> Option<&Arc<RulesPersister>> {
+        self.persister.as_ref()
     }
 
     /// Loads the current `Arc<Ruleset>` snapshot for read-side use.
@@ -124,6 +149,7 @@ impl RuleStore {
         rule.etag = compute_etag(&rule);
         let rule = Arc::new(rule);
         self.insert(rule.clone())?;
+        self.enqueue_persist_op(PersistOp::Upsert((*rule).clone()));
         Ok(rule)
     }
 
@@ -173,7 +199,9 @@ impl RuleStore {
             r
         };
         new_rule.etag = compute_etag(&new_rule);
-        self.replace(new_rule)
+        let new_arc = self.replace(new_rule.clone())?;
+        self.enqueue_persist_op(PersistOp::Upsert(new_rule));
+        Ok(new_arc)
     }
 
     /// Deletes a rule. Optimistic concurrency: `caller_etag` must
@@ -207,6 +235,7 @@ impl RuleStore {
         };
         self.state.store(new_snapshot);
         self.last_swap_generation.fetch_add(1, Ordering::Relaxed);
+        self.enqueue_persist_op(PersistOp::Delete(id.to_string()));
         Ok(())
     }
 
@@ -229,7 +258,9 @@ impl RuleStore {
             r
         };
         new_rule.etag = compute_etag(&new_rule);
-        self.replace(new_rule)
+        let arc = self.replace(new_rule.clone())?;
+        self.enqueue_persist_op(PersistOp::Upsert(new_rule));
+        Ok(arc)
     }
 
     /// Approves a draft rule (Draft → Approved). Returns the new
@@ -252,14 +283,18 @@ impl RuleStore {
             r
         };
         new_rule.etag = compute_etag(&new_rule);
-        self.replace(new_rule)
+        let arc = self.replace(new_rule.clone())?;
+        self.enqueue_persist_op(PersistOp::Upsert(new_rule));
+        Ok(arc)
     }
 
     /// Replaces the entire ruleset with a new one (used by
     /// `rules.reload` to read rules.toml from disk). The supplied
     /// `Vec<Arc<Rule>>` is the new full set; existing rules not in
-    /// the new set are dropped.
+    /// the new set are dropped. Phase 5 Part C: forwards the new
+    /// set to the persister (if any).
     pub fn replace_all(&self, new_rules: Vec<Arc<Rule>>) {
+        let owned: Vec<Rule> = new_rules.iter().map(|r| (**r).clone()).collect();
         let by_id = rebuild_by_id(&new_rules);
         let snap = Arc::new(Ruleset {
             rules: new_rules,
@@ -268,6 +303,7 @@ impl RuleStore {
         });
         self.state.store(snap);
         self.last_swap_generation.fetch_add(1, Ordering::Relaxed);
+        self.enqueue_persist_op(PersistOp::ReplaceAll(owned));
     }
 
     /// Returns rules that:
@@ -311,6 +347,27 @@ impl RuleStore {
     }
 
     // ---- private helpers ----
+
+    /// Phase 5 Part C: enqueue a `PersistOp` into the persister.
+    /// Failures are logged but never propagated — the in-memory
+    /// swap has already happened, so the operator's mutation
+    /// succeeds even if the disk write ultimately fails (the WAL
+    /// ensures eventual consistency on the next reconciliation).
+    fn enqueue_persist_op(&self, op: PersistOp) {
+        let Some(p) = self.persister.clone() else {
+            return;
+        };
+        let p2 = p.clone();
+        let op_clone = op;
+        // The persister is async; we spawn the enqueue on the
+        // global executor. Cloning the Op moves every owned Rule
+        // through the channel payload — cheap.
+        tokio::spawn(async move {
+            if let Err(e) = p2.enqueue_op(op_clone).await {
+                tracing::warn!(error = %e, "RuleStore: persister enqueue failed");
+            }
+        });
+    }
 
     fn insert(&self, rule: Arc<Rule>) -> Result<(), RuleError> {
         let new_snapshot = {

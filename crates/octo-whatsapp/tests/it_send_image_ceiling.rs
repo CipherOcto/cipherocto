@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use octo_whatsapp::config::{
     EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    RulesConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 use octo_whatsapp::limits::MediaKind;
@@ -25,6 +26,7 @@ async fn send_image_one_byte_over_ceiling_is_rejected() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

@@ -44,7 +44,7 @@ impl RpcHandler for ActionsEscalate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig};
+    use crate::config::{EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig};
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {
@@ -57,6 +57,7 @@ mod tests {
             events: EventsConfig::default(),
             security: SecurityConfig::default(),
             observability: Default::default(),
+            rules: RulesConfig::default(),
         };
         Daemon::new(cfg).handle()
     }

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use octo_whatsapp::config::{
     EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    RulesConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 
@@ -27,6 +28,7 @@ async fn unknown_method_returns_method_not_found_with_api_version() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

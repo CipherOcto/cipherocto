@@ -396,11 +396,86 @@ impl RpcHandler for RulesReload {
     fn name(&self) -> &'static str {
         "rules.reload"
     }
-    async fn call(&self, _h: DaemonHandle, _p: Value) -> Result<Value, RpcError> {
-        // Phase 4 stub: rules.toml reader is a Phase 5 feature
-        // (disk persistence + debounce). For now this is a noop
-        // returning success.
-        Ok(serde_json::json!({"reloaded": false, "noop": true}))
+    async fn call(&self, h: DaemonHandle, _p: Value) -> Result<Value, RpcError> {
+        // Phase 5 Part C: re-read rules.toml from the configured
+        // storage path, parse + ReDoS-classify the predicates,
+        // then call `replace_all` on the RuleStore. The diff is
+        // computed against the previous snapshot for observability.
+        let storage_path = h.config().rules.resolved_storage_path();
+        let previous = h.rules().list();
+        let bytes = match tokio::fs::read(&storage_path).await {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(serde_json::json!({
+                    "loaded_count": 0,
+                    "previous_count": previous.len(),
+                    "diff": [],
+                    "noop_reason": "rules.toml not found",
+                }));
+            }
+            Err(e) => {
+                return Err(RpcError::exec_failed(format!(
+                    "read rules.toml: {e}"
+                )));
+            }
+        };
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err(RpcError::invalid_params(
+                    "rules.toml is not UTF-8".to_string(),
+                ));
+            }
+        };
+        let set: crate::rules::PersistedRuleset = toml::from_str(text)
+            .map_err(|e| RpcError::invalid_params(format!("rules.toml parse: {e}")))?;
+        let rules = set.into_rules();
+        // Validate each rule (id + ReDoS). Drop any invalid ones
+        // with a tracing warning — reload should never crash the
+        // daemon because of one bad row.
+        let mut valid: Vec<std::sync::Arc<crate::rules::Rule>> = Vec::new();
+        let mut dropped: u64 = 0;
+        for r in rules {
+            if crate::rules::validate_persisted_rule(&r) {
+                valid.push(std::sync::Arc::new(r));
+            } else {
+                dropped += 1;
+                tracing::warn!(id = %r.id, "rules.reload: rejected invalid rule row");
+            }
+        }
+        // Compute diff (added/modified/removed) before swap.
+        let mut diff: Vec<Value> = Vec::new();
+        // Build a map by id for both sides.
+        let prev: std::collections::HashMap<String, std::sync::Arc<crate::rules::Rule>> = previous
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect();
+        let new_ids: std::collections::HashSet<String> =
+            valid.iter().map(|r| r.id.clone()).collect();
+        // Removed: in prev but not new.
+        for (id, _) in prev.iter() {
+            if !new_ids.contains(id) {
+                diff.push(serde_json::json!({"id": id, "change": "removed"}));
+            }
+        }
+        // Added or modified: walk new list.
+        for nr in valid.iter() {
+            match prev.get(&nr.id) {
+                None => diff.push(serde_json::json!({"id": nr.id, "change": "added"})),
+                Some(pr) if pr.etag != nr.etag || pr.version != nr.version => {
+                    diff.push(serde_json::json!({"id": nr.id, "change": "modified"}));
+                }
+                _ => {}
+            }
+        }
+        // Apply.
+        h.rules().replace_all(valid.clone());
+        Ok(serde_json::json!({
+            "loaded_count": valid.len(),
+            "previous_count": prev.len(),
+            "dropped_invalid": dropped,
+            "diff": diff,
+        }))
     }
 }
 
@@ -414,8 +489,16 @@ impl RpcHandler for RulesFlush {
     fn name(&self) -> &'static str {
         "rules.flush"
     }
-    async fn call(&self, _h: DaemonHandle, _p: Value) -> Result<Value, RpcError> {
-        Ok(serde_json::json!({"flushed": true, "noop": true}))
+    async fn call(&self, h: DaemonHandle, _p: Value) -> Result<Value, RpcError> {
+        let pending_before = h.rules().persister().map(|p| p.pending_len()).unwrap_or(0);
+        let flushed = match h.rules().persister() {
+            Some(p) => p.flush_sync().await.is_ok(),
+            None => true, // no-op
+        };
+        Ok(serde_json::json!({
+            "flushed": flushed,
+            "had_pending": pending_before > 0,
+        }))
     }
 }
 
@@ -461,7 +544,7 @@ impl RpcHandler for RulesTest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig};
+    use crate::config::{EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig};
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {
@@ -474,6 +557,7 @@ mod tests {
             events: EventsConfig::default(),
             security: SecurityConfig::default(),
             observability: Default::default(),
+            rules: RulesConfig::default(),
         };
         Daemon::new(cfg).handle()
     }
@@ -614,10 +698,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reload_returns_noop() {
+    async fn reload_missing_file_is_noop() {
         let h = handle();
         let r = RulesReload.call(h, Value::Null).await.unwrap();
-        assert_eq!(r["noop"], true);
+        assert_eq!(r["loaded_count"], 0);
     }
 
     #[tokio::test]

@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use octo_whatsapp::config::{
     EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    RulesConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 
@@ -28,6 +29,7 @@ async fn concurrent_clients_each_get_correct_responses() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

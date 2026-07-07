@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use octo_whatsapp::config::{
     EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    RulesConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 
@@ -23,6 +24,7 @@ async fn send_reaction_reaches_handler_and_returns_not_connected() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

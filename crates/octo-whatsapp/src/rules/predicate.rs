@@ -870,15 +870,24 @@ mod tests {
             "event_kind"
         );
         assert_eq!(
-            serde_json::to_value(Predicate::PeerGlob { pattern: "x".into() }).unwrap()["kind"],
+            serde_json::to_value(Predicate::PeerGlob {
+                pattern: "x".into()
+            })
+            .unwrap()["kind"],
             "peer_glob"
         );
         assert_eq!(
-            serde_json::to_value(Predicate::SenderGlob { pattern: "x".into() }).unwrap()["kind"],
+            serde_json::to_value(Predicate::SenderGlob {
+                pattern: "x".into()
+            })
+            .unwrap()["kind"],
             "sender_glob"
         );
         assert_eq!(
-            serde_json::to_value(Predicate::TextRegex { pattern: "x".into() }).unwrap()["kind"],
+            serde_json::to_value(Predicate::TextRegex {
+                pattern: "x".into()
+            })
+            .unwrap()["kind"],
             "text_regex"
         );
         assert_eq!(
@@ -906,42 +915,43 @@ mod tests {
     #[test]
     fn deserialize_each_variant() {
         let cases: Vec<(&str, Predicate)> = vec![
-            (
-                r#"{"kind":"true"}"#,
-                Predicate::True,
-            ),
+            (r#"{"kind":"true"}"#, Predicate::True),
             (
                 r#"{"kind":"event_kind","kinds":["message"]}"#,
-                Predicate::EventKind { kinds: vec!["message".into()] },
+                Predicate::EventKind {
+                    kinds: vec!["message".into()],
+                },
             ),
             (
                 r#"{"kind":"peer_glob","pattern":"*@g.us"}"#,
-                Predicate::PeerGlob { pattern: "*@g.us".into() },
+                Predicate::PeerGlob {
+                    pattern: "*@g.us".into(),
+                },
             ),
             (
                 r#"{"kind":"sender_glob","pattern":"*"}"#,
-                Predicate::SenderGlob { pattern: "*".into() },
+                Predicate::SenderGlob {
+                    pattern: "*".into(),
+                },
             ),
             (
                 r#"{"kind":"text_regex","pattern":"hi"}"#,
-                Predicate::TextRegex { pattern: "hi".into() },
+                Predicate::TextRegex {
+                    pattern: "hi".into(),
+                },
             ),
             (
                 r#"{"kind":"from_jid","jid":"alice"}"#,
-                Predicate::FromJid { jid: "alice".into() },
+                Predicate::FromJid {
+                    jid: "alice".into(),
+                },
             ),
             (
                 r#"{"kind":"group_only","value":true}"#,
                 Predicate::GroupOnly { value: true },
             ),
-            (
-                r#"{"kind":"and","children":[]}"#,
-                Predicate::And(vec![]),
-            ),
-            (
-                r#"{"kind":"or","children":[]}"#,
-                Predicate::Or(vec![]),
-            ),
+            (r#"{"kind":"and","children":[]}"#, Predicate::And(vec![])),
+            (r#"{"kind":"or","children":[]}"#, Predicate::Or(vec![])),
             (
                 r#"{"kind":"not","inner":{"kind":"true"}}"#,
                 Predicate::Not(Box::new(Predicate::True)),
@@ -992,16 +1002,14 @@ mod tests {
     fn nested_predicate_round_trip_with_recursion() {
         // Build a nested Not-of-Or-of-And. Multiples of 2 depth,
         // exercises `Some(prev_char)` in adjacent-quant state.
-        let p = Predicate::Not(Box::new(Predicate::Or(vec![
-            Predicate::And(vec![
-                Predicate::EventKind {
-                    kinds: vec!["message".into(), "reaction".into()],
-                },
-                Predicate::PeerGlob {
-                    pattern: "*".into(),
-                },
-            ]),
-        ])));
+        let p = Predicate::Not(Box::new(Predicate::Or(vec![Predicate::And(vec![
+            Predicate::EventKind {
+                kinds: vec!["message".into(), "reaction".into()],
+            },
+            Predicate::PeerGlob {
+                pattern: "*".into(),
+            },
+        ])])));
         let json = serde_json::to_string(&p).unwrap();
         let back: Predicate = serde_json::from_str(&json).unwrap();
         assert_eq!(p, back);
@@ -1012,14 +1020,14 @@ mod tests {
         // Patterns where classify either accepts or rejects at the
         // boundary. These pin behavior for future engine changes.
         // Accepts:
-        assert!(classify_regex("").is_ok());     // empty = trivial
-        assert!(classify_regex("a").is_ok());    // single literal
+        assert!(classify_regex("").is_ok()); // empty = trivial
+        assert!(classify_regex("a").is_ok()); // single literal
         assert!(classify_regex("[a-z]").is_ok()); // single char class
-        assert!(classify_regex("a+b?").is_ok());  // bounded quantifier
-        assert!(classify_regex("a?b+").is_ok());  // alternation of quants, both bounded once
+        assert!(classify_regex("a+b?").is_ok()); // bounded quantifier
+        assert!(classify_regex("a?b+").is_ok()); // alternation of quants, both bounded once
         assert!(classify_regex("a{2,5}").is_ok()); // explicit bounded quantifier range
-        // Rejects:
-        assert!(classify_regex("()").is_ok());   // empty group, no quant
+                                                   // Rejects:
+        assert!(classify_regex("()").is_ok()); // empty group, no quant
         assert!(classify_regex("(a)+").is_ok()); // single group quantified once — alternation count zero
     }
 

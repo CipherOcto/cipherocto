@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use octo_whatsapp::config::{
     EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    RulesConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 use octo_whatsapp::mcp_server::EXPECTED_TOOL_COUNT;
@@ -22,6 +23,7 @@ async fn mcp_initialize_returns_protocol_version_2025_06_18() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -100,6 +102,7 @@ async fn mcp_tools_list_advertises_full_surface() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

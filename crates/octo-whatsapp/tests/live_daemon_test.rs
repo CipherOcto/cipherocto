@@ -425,13 +425,39 @@ async fn live_chain_h_daemon_control() {
     inter_call_delay_for("health.get").await;
 }
 
+/// Read `OCTO_WHATSAPP_TEST_MEMBER` (E.164 phone for the test member).
+/// Panics with a helpful message if unset. The chain reads this as the
+/// "real" member that must be reachable from the operator's WA account.
+fn test_member_phone() -> String {
+    std::env::var("OCTO_WHATSAPP_TEST_MEMBER").unwrap_or_else(|_| {
+        panic!(
+            "OCTO_WHATSAPP_TEST_MEMBER env var required for live_chain_b_groups; \
+             set it to an E.164 phone (e.g. +15551234567) reachable on the operator's WA account"
+        )
+    })
+}
+
+/// Read `OCTO_WHATSAPP_TEST_MEMBER_2/3/4` (additional phones for
+/// add/remove/promote/demote/ban/approve_join tests). Each must be a
+/// distinct phone reachable from the operator's WA account — WA rejects
+/// duplicate adds and duplicate promotes.
+fn test_member_phone_n(n: u8) -> String {
+    let var = format!("OCTO_WHATSAPP_TEST_MEMBER_{n}");
+    std::env::var(&var).unwrap_or_else(|_| {
+        panic!(
+            "{var} env var required for live_chain_b_groups; \
+             set it to an E.164 phone (e.g. +15551234567) reachable on the operator's WA account"
+        )
+    })
+}
+
 // ── Chain B — groups lifecycle (all 18 `groups.*` RPCs) ──────────
 //
 // Phase 6.12 walks the full `CoordinatorAdmin` member-management surface
 // against a real WhatsApp Web session. Prerequisite: a real test
 // member handle reachable from the operator's WA account, exported as
 // `OCTO_WHATSAPP_TEST_MEMBER` (E.164, e.g. `+15551234567`). The chain
-// derives 3 additional dummy handles for members that don't need to be
+// derives 3 additional handles for members that don't need to be
 // in the operator's contacts (`groups.add_member`/`approve_join`/...).
 //
 // Skipped (irreversible on WA server-side):
@@ -440,15 +466,10 @@ async fn live_chain_h_daemon_control() {
 #[tokio::test]
 async fn live_chain_b_groups() {
     init_tracing_once();
-    let member = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").unwrap_or_else(|_| {
-        panic!(
-            "OCTO_WHATSAPP_TEST_MEMBER env var required for live_chain_b_groups; \
-             set it to an E.164 phone (e.g. +15551234567) reachable on the operator's WA account"
-        )
-    });
-    let dummy2 = "+15550000001".to_string();
-    let dummy3 = "+15550000002".to_string();
-    let dummy4 = "+15550000003".to_string();
+    let member = test_member_phone();
+    let member_2 = test_member_phone_n(2);
+    let member_3 = test_member_phone_n(3);
+    let member_4 = test_member_phone_n(4);
     let fix = fixture().await;
 
     // 1) groups.create — group lifecycle is core, panic on failure.
@@ -510,7 +531,7 @@ async fn live_chain_b_groups() {
         "groups.add_member",
         json!({
             "jid": group_a.clone(),
-            "member": dummy2.clone(),
+            "member": member_2.clone(),
             "is_admin": false,
         }),
     )
@@ -529,7 +550,7 @@ async fn live_chain_b_groups() {
         "groups.add_members",
         json!({
             "jid": group_a.clone(),
-            "members": [{ "handle": dummy3.clone() }],
+            "members": [{ "handle": member_3.clone() }],
         }),
     )
     .await
@@ -545,7 +566,7 @@ async fn live_chain_b_groups() {
     let _ = rpc_call(
         &fix.rpc,
         "groups.promote",
-        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
     )
     .await
     .unwrap_or_else(|e| {
@@ -560,7 +581,7 @@ async fn live_chain_b_groups() {
     let _ = rpc_call(
         &fix.rpc,
         "groups.demote",
-        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
     )
     .await
     .unwrap_or_else(|e| {
@@ -638,7 +659,7 @@ async fn live_chain_b_groups() {
         "groups.ban",
         json!({
             "jid": group_a.clone(),
-            "member": dummy3.clone(),
+            "member": member_3.clone(),
             "duration_seconds": 3600,
         }),
     )
@@ -652,11 +673,11 @@ async fn live_chain_b_groups() {
     inter_call_delay_for("groups.approve_join").await;
 
     // 26) groups.approve_join — expected to error (no pending join
-    //     request from dummy4). Best-effort.
+    //     request from member_4). Best-effort.
     let _ = rpc_call(
         &fix.rpc,
         "groups.approve_join",
-        json!({ "jid": group_a.clone(), "member": dummy4.clone() }),
+        json!({ "jid": group_a.clone(), "member": member_4.clone() }),
     )
     .await
     .unwrap_or_else(|e| {
@@ -686,7 +707,7 @@ async fn live_chain_b_groups() {
     let _ = rpc_call(
         &fix.rpc,
         "groups.remove_member",
-        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
     )
     .await
     .unwrap_or_else(|e| {

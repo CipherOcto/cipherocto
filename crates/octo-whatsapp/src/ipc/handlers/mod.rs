@@ -46,6 +46,7 @@ pub mod send_video;
 pub mod send_voice;
 pub mod status;
 pub mod triggers;
+pub mod util;
 pub mod version;
 
 use super::server::HandlerRegistry;

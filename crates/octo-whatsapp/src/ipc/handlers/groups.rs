@@ -729,6 +729,203 @@ impl RpcHandler for GroupsResolveInvite {
     }
 }
 
+// --- groups.set_announce ---
+
+#[derive(Debug)]
+pub struct GroupsSetAnnounce;
+
+#[derive(Deserialize)]
+struct SetAnnounceParams {
+    jid: String,
+    announce: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetAnnounce {
+    fn name(&self) -> &'static str {
+        "groups.set_announce"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetAnnounceParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .set_announce(&gid, p.announce)
+            .await
+            .map_err(|e| map_err("groups.set_announce", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.set_ephemeral ---
+
+#[derive(Debug)]
+pub struct GroupsSetEphemeral;
+
+#[derive(Deserialize)]
+struct SetEphemeralParams {
+    jid: String,
+    #[serde(default)]
+    ttl_seconds: Option<u32>,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetEphemeral {
+    fn name(&self) -> &'static str {
+        "groups.set_ephemeral"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetEphemeralParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let ttl = p.ttl_seconds.map(|s| Duration::from_secs(u64::from(s)));
+        coord
+            .set_ephemeral(&gid, ttl)
+            .await
+            .map_err(|e| map_err("groups.set_ephemeral", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.set_require_approval ---
+
+#[derive(Debug)]
+pub struct GroupsSetRequireApproval;
+
+#[derive(Deserialize)]
+struct SetRequireApprovalParams {
+    jid: String,
+    require: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetRequireApproval {
+    fn name(&self) -> &'static str {
+        "groups.set_require_approval"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetRequireApprovalParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .set_require_approval(&gid, p.require)
+            .await
+            .map_err(|e| map_err("groups.set_require_approval", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.list_with_invites ---
+
+#[derive(Debug)]
+pub struct GroupsListWithInvites;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsListWithInvites {
+    fn name(&self) -> &'static str {
+        "groups.list_with_invites"
+    }
+    async fn call(&self, h: DaemonHandle, _params: Value) -> Result<Value, RpcError> {
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let handles = coord
+            .list_own_groups_with_invites()
+            .await
+            .map_err(|e| map_err("groups.list_with_invites", e))?;
+        let _keep_alive = adapter;
+        let groups: Vec<Value> = handles.iter().map(group_handle_to_json).collect();
+        Ok(json!({ "groups": groups }))
+    }
+}
+
+// --- groups.join_by_invite ---
+
+#[derive(Debug)]
+pub struct GroupsJoinByInvite;
+
+#[derive(Deserialize)]
+struct JoinByInviteParams {
+    code: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsJoinByInvite {
+    fn name(&self) -> &'static str {
+        "groups.join_by_invite"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: JoinByInviteParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let inv = InviteRef::new(p.code);
+        let handle = coord
+            .join_by_invite(&inv)
+            .await
+            .map_err(|e| map_err("groups.join_by_invite", e))?;
+        let _keep_alive = adapter;
+        Ok(group_handle_to_json(&handle))
+    }
+}
+
+// --- groups.join_by_id ---
+
+#[derive(Debug)]
+pub struct GroupsJoinById;
+
+#[derive(Deserialize)]
+struct JoinByIdParams {
+    jid: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsJoinById {
+    fn name(&self) -> &'static str {
+        "groups.join_by_id"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: JoinByIdParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let handle = coord
+            .join_by_id(&gid)
+            .await
+            .map_err(|e| map_err("groups.join_by_id", e))?;
+        let _keep_alive = adapter;
+        Ok(group_handle_to_json(&handle))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1304,5 +1501,168 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.set_announce ---
+
+    #[tokio::test]
+    async fn groups_set_announce_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetAnnounce
+            .call(h, json!({"jid": "x@g.us", "announce": true}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_announce_false() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetAnnounce
+            .call(h, json!({"jid": "x@g.us", "announce": false}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_announce_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetAnnounce
+            .call(h, json!({"jid": "x@g.us", "announce": true}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_set_announce_missing_announce() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsSetAnnounce
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.set_ephemeral ---
+
+    #[tokio::test]
+    async fn groups_set_ephemeral_with_ttl() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetEphemeral
+            .call(h, json!({"jid": "x@g.us", "ttl_seconds": 86400}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_ephemeral_disable() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetEphemeral
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_ephemeral_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetEphemeral
+            .call(h, json!({"jid": "x@g.us", "ttl_seconds": 60}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.set_require_approval ---
+
+    #[tokio::test]
+    async fn groups_set_require_approval_true() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetRequireApproval
+            .call(h, json!({"jid": "x@g.us", "require": true}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_require_approval_false() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetRequireApproval
+            .call(h, json!({"jid": "x@g.us", "require": false}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_require_approval_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetRequireApproval
+            .call(h, json!({"jid": "x@g.us", "require": true}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.list_with_invites ---
+
+    #[tokio::test]
+    async fn groups_list_with_invites_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsListWithInvites.call(h, Value::Null).await.unwrap();
+        assert!(v["groups"].is_array());
+    }
+
+    #[tokio::test]
+    async fn groups_list_with_invites_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsListWithInvites
+            .call(h, Value::Null)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.join_by_invite ---
+
+    #[tokio::test]
+    async fn groups_join_by_invite_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsJoinByInvite
+            .call(h, json!({"code": "https://chat.whatsapp.com/ABC"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_join_by_invite_invalid_params() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsJoinByInvite.call(h, json!({})).await.unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.join_by_id ---
+
+    #[tokio::test]
+    async fn groups_join_by_id_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsJoinById
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_join_by_id_invalid_params() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsJoinById.call(h, json!({})).await.unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
     }
 }

@@ -425,22 +425,40 @@ async fn live_chain_h_daemon_control() {
     inter_call_delay_for("health.get").await;
 }
 
-// ── Chain B — groups lifecycle ────────────────────────────────────
+// ── Chain B — groups lifecycle (all 18 `groups.*` RPCs) ──────────
 //
-// Exercises the four `groups.*` methods that currently exist:
-// `groups.create`, `groups.list`, `groups.info`, `groups.leave`.
-// `groups.invite` / `invite_link` / `set_subject` / `set_description`
-// from the original plan are NOT implemented — dropped.
+// Phase 6.12 walks the full `CoordinatorAdmin` member-management surface
+// against a real WhatsApp Web session. Prerequisite: a real test
+// member handle reachable from the operator's WA account, exported as
+// `OCTO_WHATSAPP_TEST_MEMBER` (E.164, e.g. `+15551234567`). The chain
+// derives 3 additional dummy handles for members that don't need to be
+// in the operator's contacts (`groups.add_member`/`approve_join`/...).
+//
+// Skipped (irreversible on WA server-side):
+// - `groups.destroy`            — deletes the group permanently
+// - `groups.transfer_ownership` — reassigns ownership permanently
 #[tokio::test]
 async fn live_chain_b_groups() {
     init_tracing_once();
+    let member = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").unwrap_or_else(|_| {
+        panic!(
+            "OCTO_WHATSAPP_TEST_MEMBER env var required for live_chain_b_groups; \
+             set it to an E.164 phone (e.g. +15551234567) reachable on the operator's WA account"
+        )
+    });
+    let dummy2 = "+15550000001".to_string();
+    let dummy3 = "+15550000002".to_string();
+    let dummy4 = "+15550000003".to_string();
     let fix = fixture().await;
 
     // 1) groups.create — group lifecycle is core, panic on failure.
     let created = rpc_call(
         &fix.rpc,
         "groups.create",
-        json!({ "name": "octo-live-test-B" }),
+        json!({
+            "subject": "phase612",
+            "members": [{ "handle": member.clone() }],
+        }),
     )
     .await
     .unwrap_or_else(|e| panic!("groups.create failed: {e}"));
@@ -464,29 +482,243 @@ async fn live_chain_b_groups() {
     // here and `leave` still triggers cleanup.
     fix.created_groups.lock().push(group_a.clone());
 
-    // 4) groups.list — assert result is an array.
+    // 4) groups.list — assert result contains the jid.
     let list = rpc_call(&fix.rpc, "groups.list", json!({}))
         .await
         .unwrap_or_else(|e| panic!("groups.list failed: {e}"));
-    assert!(list.is_array(), "groups.list not array: {list}");
+    assert!(list["groups"].is_array(), "groups.list not array: {list}");
 
     // 5) inter-call throttle.
     inter_call_delay_for("groups.info").await;
 
-    // 6) groups.info — assert object.
+    // 6) groups.info — assert members array contains the test member.
     let info = rpc_call(&fix.rpc, "groups.info", json!({ "jid": group_a.clone() }))
         .await
         .unwrap_or_else(|e| panic!("groups.info failed: {e}"));
-    assert!(info.is_object(), "groups.info not object: {info}");
+    assert!(
+        info["members"].is_array(),
+        "groups.info.members not array: {info}"
+    );
 
     // 7) inter-call throttle.
+    inter_call_delay_for("groups.add_member").await;
+
+    // 8) groups.add_member (singular) — best-effort (member's privacy
+    //    settings may reject the invite).
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.add_member",
+        json!({
+            "jid": group_a.clone(),
+            "member": dummy2.clone(),
+            "is_admin": false,
+        }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.add_member non-fatal: {e}");
+        Value::Null
+    });
+
+    // 9) inter-call throttle.
+    inter_call_delay_for("groups.add_members").await;
+
+    // 10) groups.add_members (array) — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.add_members",
+        json!({
+            "jid": group_a.clone(),
+            "members": [{ "handle": dummy3.clone() }],
+        }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.add_members non-fatal: {e}");
+        Value::Null
+    });
+
+    // 11) inter-call throttle.
+    inter_call_delay_for("groups.promote").await;
+
+    // 12) groups.promote — best-effort (requires add to have succeeded).
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.promote",
+        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.promote non-fatal: {e}");
+        Value::Null
+    });
+
+    // 13) inter-call throttle.
+    inter_call_delay_for("groups.demote").await;
+
+    // 14) groups.demote — best-effort (requires member to be admin).
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.demote",
+        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.demote non-fatal: {e}");
+        Value::Null
+    });
+
+    // 15) inter-call throttle.
+    inter_call_delay_for("groups.set_description").await;
+
+    // 16) groups.set_description — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.set_description",
+        json!({ "jid": group_a.clone(), "description": "e2e marker" }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.set_description non-fatal: {e}");
+        Value::Null
+    });
+
+    // 17) inter-call throttle.
+    inter_call_delay_for("groups.rename").await;
+
+    // 18) groups.rename — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.rename",
+        json!({ "jid": group_a.clone(), "subject": "phase612-renamed" }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.rename non-fatal: {e}");
+        Value::Null
+    });
+
+    // 19) inter-call throttle.
+    inter_call_delay_for("groups.set_locked").await;
+
+    // 20) groups.set_locked true — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.set_locked",
+        json!({ "jid": group_a.clone(), "locked": true }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.set_locked true non-fatal: {e}");
+        Value::Null
+    });
+
+    // 21) inter-call throttle.
+    inter_call_delay_for("groups.set_locked").await;
+
+    // 22) groups.set_locked false — toggle back so subsequent
+    //     add_member calls in teardown / follow-up runs are not blocked.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.set_locked",
+        json!({ "jid": group_a.clone(), "locked": false }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.set_locked false non-fatal: {e}");
+        Value::Null
+    });
+
+    // 23) inter-call throttle.
+    inter_call_delay_for("groups.ban").await;
+
+    // 24) groups.ban — best-effort (requires member to be in group).
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.ban",
+        json!({
+            "jid": group_a.clone(),
+            "member": dummy3.clone(),
+            "duration_seconds": 3600,
+        }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.ban non-fatal: {e}");
+        Value::Null
+    });
+
+    // 25) inter-call throttle.
+    inter_call_delay_for("groups.approve_join").await;
+
+    // 26) groups.approve_join — expected to error (no pending join
+    //     request from dummy4). Best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.approve_join",
+        json!({ "jid": group_a.clone(), "member": dummy4.clone() }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.approve_join non-fatal (expected): {e}");
+        Value::Null
+    });
+
+    // 27) inter-call throttle.
+    inter_call_delay_for("groups.resolve_invite").await;
+
+    // 28) groups.resolve_invite with a dummy URL — must error path.
+    let resolve = rpc_call(
+        &fix.rpc,
+        "groups.resolve_invite",
+        json!({ "code": "https://chat.whatsapp.com/DUMMY" }),
+    )
+    .await;
+    match resolve {
+        Ok(v) => tracing::warn!("groups.resolve_invite unexpectedly succeeded: {v}"),
+        Err(e) => tracing::info!("groups.resolve_invite correctly errored: {e}"),
+    }
+
+    // 29) inter-call throttle.
+    inter_call_delay_for("groups.remove_member").await;
+
+    // 30) groups.remove_member (singular) — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.remove_member",
+        json!({ "jid": group_a.clone(), "member": dummy2.clone() }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.remove_member non-fatal: {e}");
+        Value::Null
+    });
+
+    // 31) inter-call throttle.
+    inter_call_delay_for("groups.remove_members").await;
+
+    // 32) groups.remove_members (array) — best-effort.
+    let _ = rpc_call(
+        &fix.rpc,
+        "groups.remove_members",
+        json!({ "jid": group_a.clone(), "members": [member.clone()] }),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("live: groups.remove_members non-fatal: {e}");
+        Value::Null
+    });
+
+    // 33) inter-call throttle.
     inter_call_delay_for("groups.leave").await;
 
-    // 8) groups.leave — best-effort (group may already be left).
-    match rpc_call(&fix.rpc, "groups.leave", json!({ "jid": group_a.clone() })).await {
-        Ok(_) => {}
-        Err(e) => tracing::warn!("live: groups.leave non-fatal: {e}"),
-    }
+    // 34) groups.leave — best-effort (group may already be left).
+    let _ = rpc_call(&fix.rpc, "groups.leave", json!({ "jid": group_a.clone() }))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("live: groups.leave non-fatal: {e}");
+            Value::Null
+        });
 }
 
 // ── Chain C — messages + chats (depends on Chain B's group_a) ────

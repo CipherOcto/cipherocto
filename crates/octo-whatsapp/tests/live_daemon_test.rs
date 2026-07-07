@@ -369,6 +369,97 @@ async fn teardown_final() {
     );
 }
 
+// ── bad-shape fixture (Phase 6.12.3) ──────────────────────────────
+//
+// Variant of `fixture()` that does NOT panic when the bot can't
+// connect. Used by `live_chain_i_bad_shape_session` to exercise the
+// case where the operator's default session is stale, replaced, or
+// otherwise unusable. The daemon-side RPC layer is up regardless —
+// we want to assert on what status.get / health.get / send.text
+// report in that state.
+//
+// `bad_fixture` does NOT touch the global FIXTURE cell. Each call
+// gets a fresh tmpdir + fresh daemon, so it can run alongside the
+// happy-path chains without poisoning them.
+
+struct BadLiveFixture {
+    rpc: Mutex<Option<RpcStream>>,
+    cancel: CancellationToken,
+    daemon_task: Arc<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    socket: PathBuf,
+    tmp: TempDir,
+}
+
+async fn connect_adapter_unchecked(timeout: Duration) -> Arc<WhatsAppWebAdapter> {
+    let cfg = live_adapter_config();
+    let _ = cfg.validate();
+    let adapter = WhatsAppWebAdapter::new(cfg);
+    // Don't `.expect()` on start_bot — it may return Err with the
+    // specific cause (Replaced, SessionExpired). We log-and-continue
+    // so the test can introspect whatever state the boot produced.
+    if let Err(e) = adapter.start_bot().await {
+        tracing::warn!("bad_fixture: start_bot returned Err: {e}");
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if adapter.self_handle().is_some() {
+            tracing::warn!(
+                "bad_fixture: adapter unexpectedly reached self_handle(); \
+                 session is alive after all — assertions will skip negative branch"
+            );
+            return Arc::new(adapter);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    tracing::warn!(
+        "bad_fixture: timeout after {timeout:?}; adapter is stuck — \
+         this is exactly the case live_chain_i exercises"
+    );
+    Arc::new(adapter)
+}
+
+async fn bad_fixture() -> BadLiveFixture {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cfg = make_test_config(&tmp);
+    std::fs::create_dir_all(cfg.data_dir.clone()).expect("mkdir data_dir");
+    std::fs::create_dir_all(cfg.log_dir.clone()).expect("mkdir log_dir");
+
+    // 30s budget: long enough that a healthy session would have
+    // connected, short enough to keep test runtime bounded.
+    let adapter = connect_adapter_unchecked(Duration::from_secs(30)).await;
+
+    let daemon = Daemon::new(cfg.clone());
+    daemon.handle().set_adapter_for_tests(adapter.clone());
+
+    let cancel = daemon.cancel_token();
+    let daemon_task = Arc::new(tokio::spawn(daemon.run()));
+
+    let sock = cfg.socket_path();
+    for _ in 0..50 {
+        if sock.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(sock.exists(), "socket {sock:?} was never created");
+
+    // Sanity: boot succeeded → daemon is reachable.
+    let rpc = Mutex::new(Some(RpcStream::new(sock.clone()).await));
+    {
+        let mut stream = rpc.lock().take().expect("rpc present");
+        let _ = stream.call("health.get", json!({})).await;
+        *rpc.lock() = Some(stream);
+    }
+
+    BadLiveFixture {
+        rpc,
+        cancel,
+        daemon_task,
+        socket: sock,
+        tmp,
+    }
+}
+
 // Empty placeholder: the body is added in T2..T7. This test exists
 // only to run `teardown_final` last under alphabetical ordering.
 #[tokio::test]
@@ -1389,6 +1480,90 @@ async fn live_chain_g_tokens() {
 // but skip it for the 4 known-idempotent commands (`version`,
 // `status`, `health`, `capabilities`) so the test stays fast.
 //
+// ── Chain I — bad-shape session behavior ─────────────────────────
+//
+// Phase 6.12.3: assert daemon reports correctly when the boot-time
+// session cannot reach `BotState::Connected`. This is the operator
+// gotcha where a 60s timeout would otherwise mask the real problem
+// (old chat replay, replaced pairing, expired creds) and let later
+// tests proceed against a dead adapter.
+//
+// No third-party phone required. Reads from `default_persist_dir()`
+// exactly like `live_chain_a_lifecycle`, but uses `bad_fixture`
+// which does NOT panic on the 30s connect timeout.
+//
+// Skips negative assertions gracefully if the session is healthy
+// (operator may have re-paired in another shell between runs).
+
+#[tokio::test]
+async fn live_chain_i_bad_shape_session() {
+    init_tracing_once();
+    let fix = bad_fixture().await;
+
+    // Probe daemon-side status; the daemon's RPC layer is up
+    // regardless of whether the bot reached Connected.
+    let s = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+    let bot_state = s["bot_state"].as_str().unwrap_or("?").to_string();
+    let connected = s["connected"].as_bool().unwrap_or(true);
+    let phase = s["phase"].as_str().unwrap_or("?").to_string();
+    tracing::info!(
+        "live_chain_i: initial probe phase={phase} connected={connected} bot_state={bot_state}"
+    );
+
+    if connected {
+        tracing::info!(
+            "live_chain_i: session is healthy (operator likely re-paired); \
+             skipping negative assertions"
+        );
+    } else {
+        // Negative branch — bot is stuck somewhere in the 7-state
+        // BotState enum. Must NOT be `Connected` (already gated by
+        // `if connected` above). The 6 non-Connected variants are:
+        assert!(
+            matches!(
+                bot_state.as_str(),
+                "Disconnected"
+                    | "PairingQr"
+                    | "PairingCode"
+                    | "Replaced"
+                    | "LoggedOut"
+                    | "SessionExpired"
+            ),
+            "bot_state should be a non-Connected variant, got {bot_state}"
+        );
+        assert_eq!(s["session_valid"], false);
+        assert_eq!(s["ready"], false);
+
+        // Liveness probe — daemon process is up, even when bot is dead.
+        let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+        assert_eq!(
+            h["ok"], true,
+            "daemon must report health.ok=true even when bot is dead"
+        );
+
+        // Stateful RPC must surface NotConnected, not panic or hang.
+        let r = rpc_call(
+            &fix.rpc,
+            "send.text",
+            json!({ "to": "selftest-no-such-jid@s.whatsapp.net", "text": "selftest" }),
+        )
+        .await;
+        match r {
+            Err(_msg) => {
+                tracing::info!("live_chain_i: send.text returned Err (expected on dead session)");
+            }
+            Ok(v) => panic!("send.text must not succeed on dead session, got Ok({v:?})"),
+        }
+    }
+
+    // Teardown: cancel and let daemon task settle. Don't try to
+    // unwrap the JoinHandle Arc (it may have other strong refs
+    // inside the daemon task); the tmpdir drop at function exit
+    // removes the socket regardless.
+    fix.cancel.cancel();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+
 // CLI flag corrections from the plan (verified against
 // `crates/octo-whatsapp/src/cli.rs`):
 // - `envelope encode` takes `--file <PATH>` (reads bytes from disk),

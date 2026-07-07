@@ -220,6 +220,225 @@ impl RpcHandler for GroupsLeave {
     }
 }
 
+// --- groups.destroy ---
+
+#[derive(Debug)]
+pub struct GroupsDestroy;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsDestroy {
+    fn name(&self) -> &'static str {
+        "groups.destroy"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: InfoParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .destroy_group(&gid)
+            .await
+            .map_err(|e| map_err("groups.destroy", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.add_member (singular) ---
+
+#[derive(Debug)]
+pub struct GroupsAddMember;
+
+#[derive(Deserialize)]
+struct AddMemberParams {
+    jid: String,
+    member: String,
+    #[serde(default)]
+    is_admin: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsAddMember {
+    fn name(&self) -> &'static str {
+        "groups.add_member"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: AddMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid.clone());
+        let spec = GroupMemberSpec {
+            handle: p.member.clone(),
+            display_name: None,
+            is_admin: p.is_admin,
+        };
+        let out = coord
+            .add_member(&gid, &spec)
+            .await
+            .map_err(|e| map_err("groups.add_member", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({
+            "jid": p.jid,
+            "member": p.member,
+            "added": out.added,
+            "promoted": out.promoted.map(|r| r.is_ok()),
+        }))
+    }
+}
+
+// --- groups.add_members (array, partial-success) ---
+
+#[derive(Debug)]
+pub struct GroupsAddMembers;
+
+#[derive(Deserialize)]
+struct AddMembersParams {
+    jid: String,
+    #[serde(default)]
+    members: Vec<AddMemberBatchEntry>,
+}
+
+#[derive(Deserialize)]
+struct AddMemberBatchEntry {
+    handle: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    is_admin: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsAddMembers {
+    fn name(&self) -> &'static str {
+        "groups.add_members"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: AddMembersParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid.clone());
+        let mut added: Vec<Value> = Vec::new();
+        let mut errors: Vec<Value> = Vec::new();
+        for m in p.members.iter() {
+            let spec = GroupMemberSpec {
+                handle: m.handle.clone(),
+                display_name: m.display_name.clone(),
+                is_admin: m.is_admin,
+            };
+            match coord.add_member(&gid, &spec).await {
+                Ok(out) => added.push(json!({
+                    "handle": m.handle,
+                    "is_admin": m.is_admin,
+                    "added": out.added,
+                })),
+                Err(e) => errors.push(json!({
+                    "handle": m.handle,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        let _keep_alive = adapter;
+        Ok(json!({
+            "added": added,
+            "errors": errors,
+            "group_id": p.jid,
+        }))
+    }
+}
+
+// --- groups.remove_member (singular) ---
+
+#[derive(Debug)]
+pub struct GroupsRemoveMember;
+
+#[derive(Deserialize)]
+struct RemoveMemberParams {
+    jid: String,
+    member: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsRemoveMember {
+    fn name(&self) -> &'static str {
+        "groups.remove_member"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        coord
+            .remove_member(&gid, &peer)
+            .await
+            .map_err(|e| map_err("groups.remove_member", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.remove_members (array, partial-success) ---
+
+#[derive(Debug)]
+pub struct GroupsRemoveMembers;
+
+#[derive(Deserialize)]
+struct RemoveMembersParams {
+    jid: String,
+    #[serde(default)]
+    members: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsRemoveMembers {
+    fn name(&self) -> &'static str {
+        "groups.remove_members"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMembersParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let mut removed: Vec<String> = Vec::new();
+        let mut errors: Vec<Value> = Vec::new();
+        for handle in p.members.iter() {
+            let peer = PeerId::new(handle.clone());
+            match coord.remove_member(&gid, &peer).await {
+                Ok(()) => removed.push(handle.clone()),
+                Err(e) => errors.push(json!({
+                    "member": handle,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        let _keep_alive = adapter;
+        Ok(json!({
+            "removed": removed,
+            "errors": errors,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +558,227 @@ mod tests {
         let h = fresh_daemon_with_mock();
         let e = GroupsLeave.call(h, json!({})).await.unwrap_err();
         assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.destroy ---
+
+    #[tokio::test]
+    async fn groups_destroy_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsDestroy
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_destroy_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsDestroy
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_destroy_missing_jid() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsDestroy.call(h, json!({})).await.unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.add_member (singular) ---
+
+    #[tokio::test]
+    async fn groups_add_member_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsAddMember
+            .call(
+                h,
+                json!({"jid": "x@g.us", "member": "5511", "is_admin": false}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["jid"], "x@g.us");
+        assert_eq!(v["member"], "5511");
+        assert_eq!(v["added"], true);
+        assert_eq!(v["promoted"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn groups_add_member_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsAddMember
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_add_member_missing_member() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsAddMember
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.add_members (array) ---
+
+    #[tokio::test]
+    async fn groups_add_members_empty_array() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsAddMembers
+            .call(h, json!({"jid": "x@g.us", "members": []}))
+            .await
+            .unwrap();
+        assert_eq!(v["added"].as_array().unwrap().len(), 0);
+        assert_eq!(v["errors"].as_array().unwrap().len(), 0);
+        assert_eq!(v["group_id"], "x@g.us");
+    }
+
+    #[tokio::test]
+    async fn groups_add_members_partial_success() {
+        // First member succeeds (no canned error), second member
+        // fails because `set_canned_err` is single-shot and gets
+        // consumed by whichever call hits it first. To force the
+        // second to fail, we issue one warm-up add_member so the
+        // canned error is consumed, then expect the next two calls
+        // (members 0 and 1) to both succeed.
+        //
+        // Real partial-success test: pre-seed the error AFTER the
+        // first element has been processed. We do that by spawning
+        // the loop, but `set_canned_err` is global, not per-call.
+        //
+        // Workaround: seed the canned error and have the first
+        // element FAIL; verify partial-success by checking that the
+        // array reports both `added` (empty) and `errors` (populated).
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
+        let daemon = Daemon::new(cfg);
+        let h = daemon.handle();
+        let mock = Arc::new(MockAdapter::new());
+        // Pre-seed error so EVERY add_member call returns Err until
+        // consumed. Single-shot semantics: first call fails, rest succeed.
+        mock.coord_admin.set_canned_err(
+            "add_member",
+            octo_network::dot::error::PlatformAdapterError::Unreachable {
+                platform: "mock".into(),
+                reason: "test".into(),
+            },
+        );
+        h.set_adapter_for_tests(mock);
+        let v = GroupsAddMembers
+            .call(
+                h,
+                json!({
+                    "jid": "x@g.us",
+                    "members": [
+                        {"handle": "5511"},
+                        {"handle": "5522"}
+                    ]
+                }),
+            )
+            .await
+            .unwrap();
+        // First call consumes the error → fails. Second call succeeds.
+        assert_eq!(v["added"].as_array().unwrap().len(), 1);
+        assert_eq!(v["errors"].as_array().unwrap().len(), 1);
+        assert_eq!(v["errors"][0]["handle"], "5511");
+        assert_eq!(v["added"][0]["handle"], "5522");
+        assert_eq!(v["group_id"], "x@g.us");
+    }
+
+    #[tokio::test]
+    async fn groups_add_members_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsAddMembers
+            .call(h, json!({"jid": "x@g.us", "members": [{"handle": "5511"}]}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.remove_member (singular) ---
+
+    #[tokio::test]
+    async fn groups_remove_member_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsRemoveMember
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_remove_member_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsRemoveMember
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_remove_member_missing_member() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsRemoveMember
+            .call(h, json!({"jid": "x@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- groups.remove_members (array) ---
+
+    #[tokio::test]
+    async fn groups_remove_members_empty_array() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsRemoveMembers
+            .call(h, json!({"jid": "x@g.us", "members": []}))
+            .await
+            .unwrap();
+        assert_eq!(v["removed"].as_array().unwrap().len(), 0);
+        assert_eq!(v["errors"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn groups_remove_members_partial_success() {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
+        let daemon = Daemon::new(cfg);
+        let h = daemon.handle();
+        let mock = Arc::new(MockAdapter::new());
+        mock.coord_admin.set_canned_err(
+            "remove_member",
+            octo_network::dot::error::PlatformAdapterError::Unreachable {
+                platform: "mock".into(),
+                reason: "test".into(),
+            },
+        );
+        h.set_adapter_for_tests(mock);
+        let v = GroupsRemoveMembers
+            .call(h, json!({"jid": "x@g.us", "members": ["5511", "5522"]}))
+            .await
+            .unwrap();
+        // First call consumes the canned error → fails. Second succeeds.
+        assert_eq!(v["removed"].as_array().unwrap().len(), 1);
+        assert_eq!(v["errors"].as_array().unwrap().len(), 1);
+        assert_eq!(v["errors"][0]["member"], "5511");
+        assert_eq!(v["removed"][0], "5522");
+    }
+
+    #[tokio::test]
+    async fn groups_remove_members_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsRemoveMembers
+            .call(h, json!({"jid": "x@g.us", "members": ["5511"]}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
     }
 }

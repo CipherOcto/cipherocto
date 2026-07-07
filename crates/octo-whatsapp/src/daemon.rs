@@ -3,6 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -158,6 +159,12 @@ struct DaemonInner {
     /// this client to amortize TLS handshakes and respect the
     /// Rustls-only default features.
     http_client: reqwest::Client,
+    /// Phase 6.12.4: connection-watcher task handle. Spawned when an
+    /// adapter is bound (live test fixture or production `start`
+    /// path); awaitable during shutdown so the watcher doesn't outlive
+    /// the daemon. `None` when no adapter is bound — typical during
+    /// very early boot or hermetic tests that never bind.
+    connection_watcher: TokioMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -266,19 +273,45 @@ impl DaemonHandle {
         self.inner.is_live.store(live, Ordering::SeqCst);
     }
 
-    /// Test/feature helper for binding a mock adapter. Sync write —
-    /// call before any await point. Mirrors the sync `RwLock` pattern
-    /// of `set_phase`.
+    /// Bind an adapter to the daemon. Sync write — call before any
+    /// await point. Mirrors the sync `RwLock` pattern of `set_phase`.
     ///
-    /// Gated on `#[cfg(any(test, feature = "test-helpers"))]` so the
-    /// setter never ships in default builds.
-    #[cfg(any(test, feature = "test-helpers"))]
+    /// Phase 6.12.4: de-gated from `cfg(test)` so production can use
+    /// it too. The companion connection-watcher task is spawned here
+    /// when the adapter exposes `subscribe_raw_events()` (default
+    /// `None` on `MockAdapter`, real broadcast on `WhatsAppWebAdapter`).
+    ///
+    /// Existing `set_adapter_for_tests` callers (handlers' unit tests,
+    /// live test fixture) compile unchanged because the method
+    /// signature is identical.
     pub fn set_adapter_for_tests(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
         *self
             .inner
             .adapter
             .write()
-            .unwrap_or_else(|p| p.into_inner()) = Some(a);
+            .unwrap_or_else(|p| p.into_inner()) = Some(a.clone());
+
+        // Spawn the connection-watcher if the adapter exposes a raw
+        // event stream. `MockAdapter` returns `None` (default trait
+        // impl) — the watcher silently no-ops in that case, which is
+        // exactly what hermetic tests want (no real WA lifecycle).
+        let Some(rx) = a.subscribe_raw_events() else {
+            return;
+        };
+        let cancel = self.inner.cancel.clone();
+        let handle = self.clone();
+        let join = tokio::spawn(async move {
+            run_connection_watcher(rx, handle, cancel).await;
+        });
+        // Replace any prior watcher (single-bind-per-daemon assumption;
+        // multi-bind would leak old tasks — documented limitation).
+        // The `blocking_lock` here is fine because the call site is a
+        // synchronous setup function, not on a hot RPC path.
+        let mut slot = self.inner.connection_watcher.blocking_lock();
+        if let Some(prev) = slot.take() {
+            prev.abort();
+        }
+        *slot = Some(join);
     }
 
     /// Phase 3: read access to the in-memory events ring buffer. The
@@ -569,6 +602,7 @@ impl Daemon {
                 is_ready,
                 started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
                 http_client,
+                connection_watcher: TokioMutex::new(None),
             }),
         }
     }
@@ -866,6 +900,101 @@ fn load_initial_rules_from_disk(
         }
     }
     validated
+}
+
+// ===========================================================================
+// Connection watcher (Phase 6.12.4)
+// ===========================================================================
+//
+// Consumes the adapter's raw event stream (typically `format!("{:?}",
+// event)` from the underlying SDK) and translates lifecycle variants
+// into `BotStateMirror` transitions on the daemon's atomic state. This
+// is what makes `status.get` truthful when the bot gets logged out,
+// replaced, or expires mid-life — without the watcher the cached
+// "Connected" state would mask the failure.
+//
+// The classifier matches the first identifier after `Event::` because
+// the SDK's `Debug` impl is stable for the 7 lifecycle variants we
+// care about. Non-lifecycle events (Message, Receipt, ...) fall
+// through with `None` and the watcher simply ignores them.
+
+/// Map a raw `format!("{:?}", event)` string to a `BotStateMirror`
+/// transition. Returns `None` for non-lifecycle events.
+fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
+    // `Event::Connected(_)`, `Event::LoggedOut(LoggedOutCause { ... })`, ...
+    let rest = raw.strip_prefix("Event::")?;
+    let ident = rest
+        .split(|c: char| c == '(' || c == ' ' || c == '{' || c == '<')
+        .next()?;
+    match ident {
+        // `phase_changed = true` means the caller should also flip
+        // `DaemonPhase` (Connected ↔ SessionLost). Pairing/PairingQr
+        // don't move phase — boot is in progress, daemon is already
+        // in Booting/SessionLost.
+        "Connected" => Some((BotStateMirror::Connected, true)),
+        "Disconnected" => Some((BotStateMirror::Disconnected, true)),
+        "PairingQr" => Some((BotStateMirror::PairingQr, false)),
+        "PairingCode" => Some((BotStateMirror::PairingCode, false)),
+        "LoggedOut" => Some((BotStateMirror::LoggedOut, true)),
+        "Replaced" => Some((BotStateMirror::Replaced, true)),
+        "SessionExpired" => Some((BotStateMirror::SessionExpired, true)),
+        _ => None,
+    }
+}
+
+/// Long-running task spawned at adapter-bind time. Loops over the
+/// broadcast receiver, applies `BotStateMirror` transitions, and
+/// observes cancellation. Survives `Event::Lagged` (channel overflow)
+/// by continuing — events lost during overflow are non-critical.
+async fn run_connection_watcher(
+    mut rx: tokio::sync::broadcast::Receiver<String>,
+    handle: DaemonHandle,
+    cancel: CancellationToken,
+) {
+    use tokio::sync::broadcast::error::RecvError;
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                tracing::info!("connection watcher: cancel observed");
+                break;
+            }
+            recv = rx.recv() => {
+                match recv {
+                    Ok(raw) => {
+                        if let Some((mirror, phase_changed)) = classify_event(&raw) {
+                            tracing::info!(
+                                bot_state = ?mirror,
+                                raw = %raw,
+                                "connection watcher: bot state transition"
+                            );
+                            handle.set_bot_state(mirror);
+                            if phase_changed {
+                                let phase = match mirror {
+                                    BotStateMirror::Connected => DaemonPhase::Connected,
+                                    _ => DaemonPhase::SessionLost,
+                                };
+                                handle.set_phase(phase).await;
+                            }
+                        }
+                        // Non-lifecycle events are deliberately ignored.
+                    }
+                    Err(RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            dropped = n,
+                            "connection watcher: broadcast lag; some events skipped"
+                        );
+                        // Continue — next iteration resumes from current tip.
+                    }
+                    Err(RecvError::Closed) => {
+                        tracing::info!(
+                            "connection watcher: broadcast channel closed; exiting"
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Tests live in their own file so the unit-test surface stays narrow.

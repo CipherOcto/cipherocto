@@ -595,3 +595,361 @@ async fn live_chain_c_messages_chats() {
     )
     .await;
 }
+
+// ── helpers shared by Chain D + Chain E ──────────────────────────
+
+/// Write a 1-byte dummy file under the fixture tmp dir and return
+/// the path. Used by `send.image`/`send.video`/... handlers that
+/// require an existing `file` param. Live adapter may reject the
+/// placeholder bytes; the call-site logs warn and moves on.
+fn write_dummy_file(fix: &LiveFixture, name: &str) -> PathBuf {
+    let p = fix.tmp.path().join(name);
+    std::fs::write(&p, b"x").expect("write dummy");
+    p
+}
+
+/// `now` as unix seconds (for `messages.edit.msg_timestamp`, which
+/// must be within `EDIT_WINDOW_SECONDS` of now).
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Best-effort: call `method` with `{peer, file}` from a wire path,
+/// log warn on Err, return Value::Null on Err.
+async fn best_effort_envelope(
+    fix: &LiveFixture,
+    method: &str,
+    peer: String,
+    wire_path: PathBuf,
+) -> Value {
+    match rpc_call(
+        &fix.rpc,
+        method,
+        json!({
+            "peer": peer,
+            "file": wire_path.to_string_lossy().into_owned(),
+        }),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("live: {method} non-fatal: {e}");
+            Value::Null
+        }
+    }
+}
+
+// ── Chain D — 11 send.* + media.info + messages.edit ─────────────
+//
+// Most handlers take `peer: String` (not `jid`) and accept the
+// `<digits>@g.us` group JID that Chain B's `groups.create` yields.
+// `send.text` is a hermetic stub that returns `queued_for_phase2`
+// without dispatching — it will not carry a real `message_id`. The
+// chain therefore extracts `message_id` defensively and gates the
+// reaction/delete/edit follow-ups on its presence.
+#[tokio::test]
+async fn live_chain_d_sends() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    let group_a = {
+        let groups = fix.created_groups.lock();
+        groups.first().cloned().unwrap_or_else(|| {
+            panic!("Chain D requires Chain B to run first (no group_a registered)")
+        })
+    };
+
+    // Best-effort helper.
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.rpc, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) send.text — foundational. Spec says panic on Err. `send.text`
+    // is a hermetic stub that does NOT actually dispatch and returns
+    // `status: queued_for_phase2` without a `message_id`. We accept
+    // the result and defensively extract `message_id` (may be absent).
+    let text_res = rpc_call(
+        &fix.rpc,
+        "send.text",
+        json!({ "peer": group_a.clone(), "text": "live-test-text" }),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("send.text failed: {e}"));
+    let text_id = text_res
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if text_id.is_empty() {
+        tracing::warn!(
+            "live: send.text returned no message_id (stub path); reaction/delete/edit gated on id"
+        );
+    }
+
+    // 2) inter-call throttle
+    inter_call_delay_for("send.text").await;
+
+    // 3) media sends (5 kinds: image, video, audio, voice, sticker).
+    // Each writes a 1-byte dummy file and `send.*` best-effort.
+    for (kind, filename) in [
+        ("send.image", "live_img.bin"),
+        ("send.video", "live_vid.bin"),
+        ("send.audio", "live_aud.bin"),
+        ("send.voice", "live_voi.bin"),
+        ("send.sticker", "live_stk.bin"),
+    ] {
+        let file_path = write_dummy_file(fix, filename);
+        let _ = best_effort(
+            fix,
+            kind,
+            json!({
+                "peer": group_a.clone(),
+                "file": file_path.to_string_lossy().into_owned(),
+                "caption": "live",
+            }),
+        )
+        .await;
+        inter_call_delay_for(kind).await;
+    }
+
+    // 4) send.contact — `vcard` is a PathBuf per handler signature,
+    // so write a tiny vcard file rather than passing the raw string.
+    let vcard_path = fix.tmp.path().join("live.vcard");
+    std::fs::write(
+        &vcard_path,
+        b"BEGIN:VCARD\nVERSION:3.0\nFN:live\nEND:VCARD\n",
+    )
+    .expect("write vcard");
+    let _ = best_effort(
+        fix,
+        "send.contact",
+        json!({
+            "peer": group_a.clone(),
+            "vcard": vcard_path.to_string_lossy().into_owned(),
+        }),
+    )
+    .await;
+    inter_call_delay_for("send.contact").await;
+
+    // 5) send.location
+    let _ = best_effort(
+        fix,
+        "send.location",
+        json!({ "peer": group_a.clone(), "lat": 0.0, "lon": 0.0 }),
+    )
+    .await;
+    inter_call_delay_for("send.location").await;
+
+    // 6) send.poll
+    let _ = best_effort(
+        fix,
+        "send.poll",
+        json!({
+            "peer": group_a.clone(),
+            "question": "live?",
+            "options": ["yes", "no"],
+        }),
+    )
+    .await;
+    inter_call_delay_for("send.poll").await;
+
+    // 7) send.reaction — gates on text_id (see note at chain head).
+    if !text_id.is_empty() {
+        let _ = best_effort(
+            fix,
+            "send.reaction",
+            json!({
+                "peer": group_a.clone(),
+                "msg_id": text_id.clone(),
+                "emoji": "\u{1f44d}",
+            }),
+        )
+        .await;
+    } else {
+        tracing::warn!("live: skip send.reaction (no text_id)");
+    }
+    inter_call_delay_for("send.reaction").await;
+
+    // 8) send.delete
+    if !text_id.is_empty() {
+        let _ = best_effort(
+            fix,
+            "send.delete",
+            json!({ "peer": group_a.clone(), "msg_id": text_id.clone() }),
+        )
+        .await;
+    } else {
+        tracing::warn!("live: skip send.delete (no text_id)");
+    }
+    inter_call_delay_for("send.delete").await;
+
+    // 9) media.info — handler takes `media_ref_token`, NOT `id`.
+    // No real media token available; pass an empty string and
+    // best-effort (adapter will likely reject).
+    let _ = best_effort(
+        fix,
+        "media.info",
+        json!({ "media_ref_token": text_id.clone() }),
+    )
+    .await;
+    inter_call_delay_for("media.info").await;
+
+    // 10) messages.edit — needs `msg_timestamp` (within 1h) and `new_text`.
+    if !text_id.is_empty() {
+        let _ = best_effort(
+            fix,
+            "messages.edit",
+            json!({
+                "peer": group_a.clone(),
+                "msg_id": text_id,
+                "msg_timestamp": now_secs(),
+                "new_text": "live-test-edited",
+            }),
+        )
+        .await;
+    } else {
+        tracing::warn!("live: skip messages.edit (no text_id)");
+    }
+}
+
+// ── Chain E — envelopes (DOT/1 path) ─────────────────────────────
+//
+// `domain.compute_hash` takes `jid` (NOT `payload`) and returns
+// `domain_id` (NOT `hash`). `envelope.encode` takes a `file` path
+// of wire bytes. `envelope.decode` takes `encoded` string.
+// `envelope.send` / `envelope.send_native` take `file` of wire
+// bytes. We adapt the call sites to the actual handler shapes and
+// warn-skip on Err (envelope methods may not be implemented for
+// live groups yet).
+#[tokio::test]
+async fn live_chain_e_envelopes() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    let group_a = {
+        let groups = fix.created_groups.lock();
+        groups.first().cloned().unwrap_or_else(|| {
+            panic!("Chain E requires Chain B to run first (no group_a registered)")
+        })
+    };
+
+    // 1) domain.compute_hash — computes a deterministic id for the
+    // given group JID. Warn-skip on Err.
+    let domain_hash = match rpc_call(
+        &fix.rpc,
+        "domain.compute-hash",
+        json!({ "jid": group_a.clone() }),
+    )
+    .await
+    {
+        Ok(v) => v
+            .get("domain_id")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("live: domain.compute-hash non-fatal: {e}");
+            String::new()
+        }
+    };
+
+    // 2) inter-call throttle
+    inter_call_delay_for("domain.compute-hash").await;
+
+    // 3) envelope.encode — needs a `file` of raw wire bytes. We write
+    // a tiny wire-blob file. The `type: "TEXT"` field from the spec is
+    // NOT a recognized param (handler only takes `file`), so omit it.
+    let wire_path = write_dummy_file(fix, "live_wire.bin");
+    let envelope = match rpc_call(
+        &fix.rpc,
+        "envelope.encode",
+        json!({ "file": wire_path.to_string_lossy().into_owned() }),
+    )
+    .await
+    {
+        Ok(v) => v
+            .get("encoded")
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("live: envelope.encode non-fatal: {e}");
+            String::new()
+        }
+    };
+    if envelope.is_empty() {
+        tracing::warn!(
+            "live: envelope.encode returned no `encoded`; downstream operations gated on it"
+        );
+    }
+
+    // 4) inter-call throttle
+    inter_call_delay_for("envelope.encode").await;
+
+    // 5) envelope.send — handler takes `peer` + `file`. The spec
+    // passes `envelope` directly, but the handler ignores any
+    // already-encoded envelope; it reads wire bytes from `file` and
+    // re-encodes inside. Pass the same wire path; warn-skip on Err.
+    if envelope.is_empty() {
+        tracing::warn!("live: skip envelope.send (no envelope)");
+    } else {
+        let _ =
+            best_effort_envelope(fix, "envelope.send", group_a.clone(), wire_path.clone()).await;
+    }
+
+    // 6) inter-call throttle
+    inter_call_delay_for("envelope.send").await;
+
+    // 7) envelope.send_native — handler takes `peer` + `file` of raw
+    // wire bytes (must NOT start with "DOT/"). Our dummy blob is
+    // plain bytes; the `envelope` string from step 3 starts with
+    // "DOT/" so we cannot repurpose it.
+    if envelope.is_empty() {
+        tracing::warn!("live: skip envelope.send-native (no envelope)");
+    } else {
+        let _ = best_effort_envelope(
+            fix,
+            "envelope.send-native",
+            group_a.clone(),
+            wire_path.clone(),
+        )
+        .await;
+    }
+
+    // 8) inter-call throttle
+    inter_call_delay_for("envelope.send-native").await;
+
+    // 9) envelope.decode — handler takes `encoded` (DOT/1/... string),
+    // NOT `wire`. Pass the encoded envelope we built.
+    if envelope.is_empty() {
+        tracing::warn!("live: skip envelope.decode (no envelope)");
+    } else {
+        let _ = match rpc_call(
+            &fix.rpc,
+            "envelope.decode",
+            json!({ "encoded": envelope.clone() }),
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: envelope.decode non-fatal: {e}");
+                Value::Null
+            }
+        };
+    }
+
+    // domain_hash is computed but unused by current handlers — keep
+    // it referenced in a trace so a future field addition picks it up.
+    tracing::debug!("live: domain_hash={domain_hash}");
+}

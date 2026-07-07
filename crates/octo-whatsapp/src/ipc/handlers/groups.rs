@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use octo_network::dot::adapters::coordinator_admin::{
-    GroupHandle, GroupId, GroupMemberSpec, GroupMetadata, PeerId,
+    GroupHandle, GroupId, GroupMemberSpec, GroupMetadata, InviteRef, PeerId,
 };
 
 use super::super::protocol::{RpcError, RpcErrorCode};
@@ -696,6 +696,39 @@ impl RpcHandler for GroupsTransferOwnership {
     }
 }
 
+// --- groups.resolve_invite ---
+
+#[derive(Debug)]
+pub struct GroupsResolveInvite;
+
+#[derive(Deserialize)]
+struct ResolveInviteParams {
+    code: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsResolveInvite {
+    fn name(&self) -> &'static str {
+        "groups.resolve_invite"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: ResolveInviteParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let inv = InviteRef::new(p.code);
+        let handle = coord
+            .resolve_invite(&inv)
+            .await
+            .map_err(|e| map_err("groups.resolve_invite", e))?;
+        let _keep_alive = adapter;
+        Ok(group_handle_to_json(&handle))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1233,6 +1266,41 @@ mod tests {
         let h = fresh_daemon_no_adapter();
         let e = GroupsTransferOwnership
             .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.resolve_invite ---
+
+    #[tokio::test]
+    async fn groups_resolve_invite_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsResolveInvite
+            .call(h, json!({"code": "https://chat.whatsapp.com/ABC123"}))
+            .await
+            .unwrap();
+        let jid = v["jid"].as_str().expect("jid should be a string");
+        assert!(
+            jid.contains("@g.us"),
+            "jid should look like a group jid, got {jid}"
+        );
+        assert_eq!(v["subject"], "resolved");
+        assert_eq!(v["member_count"], 42);
+    }
+
+    #[tokio::test]
+    async fn groups_resolve_invite_invalid_params() {
+        let h = fresh_daemon_with_mock();
+        let e = GroupsResolveInvite.call(h, json!({})).await.unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    #[tokio::test]
+    async fn groups_resolve_invite_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsResolveInvite
+            .call(h, json!({"code": "x"}))
             .await
             .unwrap_err();
         assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());

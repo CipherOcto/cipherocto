@@ -11,11 +11,15 @@ use std::path::Path;
 use serde_json::Value;
 
 /// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
-/// Part A + Phase 5 Part E RPC surfaces). Used by integration tests to
-/// assert `tools/list` advertises the full set. The Phase 4 Phase 5 Part E
-/// additions are 17 tools (10 rule CRUD/dry-run + 4 trigger CRUD/run +
-/// 2 audit + 1 action).
-pub const EXPECTED_TOOL_COUNT: usize = 66;
+/// Part A + Phase 5 Part E RPC surfaces + Phase 6.12 groups coordinator
+/// surface). Used by integration tests to assert `tools/list` advertises
+/// the full set. The Phase 4 Phase 5 Part E additions are 17 tools
+/// (10 rule CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1 action). The
+/// Phase 6.12 additions are 14 `groups.*` coordinator tools
+/// (destroy, resolve_invite, add_member, add_members, remove_member,
+/// remove_members, promote, demote, ban, approve_join, rename,
+/// set_description, set_locked, transfer_ownership).
+pub const EXPECTED_TOOL_COUNT: usize = 80;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -333,6 +337,125 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Leave a group.",
         schema_props_required(&[("jid", "string")], &["jid"]),
     ));
+    // ─── Groups coordinator (Phase 6.12 — 14) ────────────────────────
+    v.push(td(
+        "groups.destroy",
+        "Destroy (delete) a group. Irreversible server-side.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "groups.resolve_invite",
+        "Resolve an invite link or short code to a group handle.",
+        schema_props_required(&[("code", "string")], &["code"]),
+    ));
+    v.push(td(
+        "groups.add_member",
+        "Add a single member to a group.",
+        schema_props_required(
+            &[
+                ("jid", "string"),
+                ("member", "string"),
+                ("is_admin", "boolean"),
+            ],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.add_members",
+        "Add multiple members to a group (partial-success per element).",
+        schema_props_required(
+            &[
+                ("jid", "string"),
+                ("members", "array"),
+                ("is_admin", "boolean"),
+            ],
+            &["jid", "members"],
+        ),
+    ));
+    v.push(td(
+        "groups.remove_member",
+        "Remove a single member from a group.",
+        schema_props_required(
+            &[("jid", "string"), ("member", "string")],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.remove_members",
+        "Remove multiple members from a group (partial-success per element).",
+        schema_props_required(
+            &[("jid", "string"), ("members", "array")],
+            &["jid", "members"],
+        ),
+    ));
+    v.push(td(
+        "groups.promote",
+        "Promote a member to admin.",
+        schema_props_required(
+            &[("jid", "string"), ("member", "string")],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.demote",
+        "Demote an admin back to member.",
+        schema_props_required(
+            &[("jid", "string"), ("member", "string")],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.ban",
+        "Ban a member. Default indefinite; pass duration_seconds for timed.",
+        schema_props_required(
+            &[
+                ("jid", "string"),
+                ("member", "string"),
+                ("duration_seconds", "integer"),
+            ],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.approve_join",
+        "Approve a pending join request.",
+        schema_props_required(
+            &[("jid", "string"), ("member", "string")],
+            &["jid", "member"],
+        ),
+    ));
+    v.push(td(
+        "groups.rename",
+        "Rename the group subject.",
+        schema_props_required(
+            &[("jid", "string"), ("subject", "string")],
+            &["jid", "subject"],
+        ),
+    ));
+    v.push(td(
+        "groups.set_description",
+        "Set the group description.",
+        schema_props_required(
+            &[("jid", "string"), ("description", "string")],
+            &["jid", "description"],
+        ),
+    ));
+    v.push(td(
+        "groups.set_locked",
+        "Lock or unlock the group (admins-only messaging when locked).",
+        schema_props_required(
+            &[("jid", "string"), ("locked", "boolean")],
+            &["jid", "locked"],
+        ),
+    ));
+    v.push(td(
+        "groups.transfer_ownership",
+        "Transfer group ownership to another member. Irreversible.",
+        schema_props_required(
+            &[("jid", "string"), ("member", "string")],
+            &["jid", "member"],
+        ),
+    ));
     // ─── Media (1) ────────────────────────────────────────────────────
     v.push(td(
         "media.info",
@@ -625,6 +748,21 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "groups.list" => "groups.list",
         "groups.info" => "groups.info",
         "groups.leave" => "groups.leave",
+        // Phase 6.12 groups coordinator surface.
+        "groups.destroy" => "groups.destroy",
+        "groups.resolve_invite" => "groups.resolve_invite",
+        "groups.add_member" => "groups.add_member",
+        "groups.add_members" => "groups.add_members",
+        "groups.remove_member" => "groups.remove_member",
+        "groups.remove_members" => "groups.remove_members",
+        "groups.promote" => "groups.promote",
+        "groups.demote" => "groups.demote",
+        "groups.ban" => "groups.ban",
+        "groups.approve_join" => "groups.approve_join",
+        "groups.rename" => "groups.rename",
+        "groups.set_description" => "groups.set_description",
+        "groups.set_locked" => "groups.set_locked",
+        "groups.transfer_ownership" => "groups.transfer_ownership",
         "media.info" => "media.info",
         "envelope.encode" => "envelope.encode",
         "envelope.decode" => "envelope.decode",
@@ -823,9 +961,10 @@ mod tests {
     }
 
     /// Phase 5 Part E: 17 Phase 4 RPC methods now exposed as MCP tools.
-    /// The exact count is locked via `EXPECTED_TOOL_COUNT` (66 = previous 49
-    /// + 17). This test asserts each name is present so a typo in a tool
-    ///   descriptor fails fast in CI rather than at consumer time.
+    /// The exact count is locked via `EXPECTED_TOOL_COUNT` (80 = 49 + 17
+    /// Phase 5 Part E + 14 Phase 6.12 coordinator). This test asserts
+    /// each name is present so a typo in a tool descriptor fails fast in
+    /// CI rather than at consumer time.
     #[test]
     fn phase4_tools_are_advertised() {
         let descs = tool_descriptors();
@@ -861,5 +1000,39 @@ mod tests {
             descs.len(),
             EXPECTED_TOOL_COUNT
         );
+    }
+
+    /// Phase 6.12: 14 `groups.*` coordinator RPCs now exposed as MCP
+    /// tools. Mirrors the Phase 5 Part E test — asserts each name is
+    /// advertised so a typo in a tool descriptor fails in CI rather than
+    /// at consumer time.
+    #[test]
+    fn phase612_groups_coordinator_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "groups.destroy",
+            "groups.resolve_invite",
+            "groups.add_member",
+            "groups.add_members",
+            "groups.remove_member",
+            "groups.remove_members",
+            "groups.promote",
+            "groups.demote",
+            "groups.ban",
+            "groups.approve_join",
+            "groups.rename",
+            "groups.set_description",
+            "groups.set_locked",
+            "groups.transfer_ownership",
+        ] {
+            assert!(
+                names.contains(m),
+                "Phase 6.12 groups coordinator tool {m:?} not advertised"
+            );
+        }
     }
 }

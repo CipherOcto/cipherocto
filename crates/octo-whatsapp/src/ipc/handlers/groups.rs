@@ -8,6 +8,7 @@
 //! fails with `NotConnected`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -439,6 +440,262 @@ impl RpcHandler for GroupsRemoveMembers {
     }
 }
 
+// --- groups.promote ---
+
+#[derive(Debug)]
+pub struct GroupsPromote;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsPromote {
+    fn name(&self) -> &'static str {
+        "groups.promote"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        coord
+            .promote_to_admin(&gid, &peer)
+            .await
+            .map_err(|e| map_err("groups.promote", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.demote ---
+
+#[derive(Debug)]
+pub struct GroupsDemote;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsDemote {
+    fn name(&self) -> &'static str {
+        "groups.demote"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        coord
+            .demote_from_admin(&gid, &peer)
+            .await
+            .map_err(|e| map_err("groups.demote", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.ban ---
+
+#[derive(Debug)]
+pub struct GroupsBan;
+
+#[derive(Deserialize)]
+struct BanParams {
+    jid: String,
+    member: String,
+    #[serde(default)]
+    duration_seconds: Option<u64>,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsBan {
+    fn name(&self) -> &'static str {
+        "groups.ban"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: BanParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        let duration = p.duration_seconds.map(Duration::from_secs);
+        coord
+            .ban_member(&gid, &peer, duration)
+            .await
+            .map_err(|e| map_err("groups.ban", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.approve_join ---
+
+#[derive(Debug)]
+pub struct GroupsApproveJoin;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsApproveJoin {
+    fn name(&self) -> &'static str {
+        "groups.approve_join"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        coord
+            .approve_join_request(&gid, &peer)
+            .await
+            .map_err(|e| map_err("groups.approve_join", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.rename ---
+
+#[derive(Debug)]
+pub struct GroupsRename;
+
+#[derive(Deserialize)]
+struct RenameParams {
+    jid: String,
+    subject: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsRename {
+    fn name(&self) -> &'static str {
+        "groups.rename"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RenameParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .rename_group(&gid, &p.subject)
+            .await
+            .map_err(|e| map_err("groups.rename", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.set_description ---
+
+#[derive(Debug)]
+pub struct GroupsSetDescription;
+
+#[derive(Deserialize)]
+struct SetDescriptionParams {
+    jid: String,
+    description: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetDescription {
+    fn name(&self) -> &'static str {
+        "groups.set_description"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetDescriptionParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .set_group_description(&gid, &p.description)
+            .await
+            .map_err(|e| map_err("groups.set_description", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.set_locked ---
+
+#[derive(Debug)]
+pub struct GroupsSetLocked;
+
+#[derive(Deserialize)]
+struct SetLockedParams {
+    jid: String,
+    locked: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetLocked {
+    fn name(&self) -> &'static str {
+        "groups.set_locked"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetLockedParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .set_locked(&gid, p.locked)
+            .await
+            .map_err(|e| map_err("groups.set_locked", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.transfer_ownership ---
+
+#[derive(Debug)]
+pub struct GroupsTransferOwnership;
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsTransferOwnership {
+    fn name(&self) -> &'static str {
+        "groups.transfer_ownership"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveMemberParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let peer = PeerId::new(p.member);
+        coord
+            .transfer_ownership(&gid, &peer)
+            .await
+            .map_err(|e| map_err("groups.transfer_ownership", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,6 +1034,205 @@ mod tests {
         let h = fresh_daemon_no_adapter();
         let e = GroupsRemoveMembers
             .call(h, json!({"jid": "x@g.us", "members": ["5511"]}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.promote ---
+
+    #[tokio::test]
+    async fn groups_promote_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsPromote
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_promote_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsPromote
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.demote ---
+
+    #[tokio::test]
+    async fn groups_demote_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsDemote
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_demote_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsDemote
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.ban ---
+
+    #[tokio::test]
+    async fn groups_ban_with_duration() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsBan
+            .call(
+                h,
+                json!({"jid": "x@g.us", "member": "5511", "duration_seconds": 3600}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_ban_indefinite() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsBan
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_ban_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsBan
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.approve_join ---
+
+    #[tokio::test]
+    async fn groups_approve_join_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsApproveJoin
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_approve_join_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsApproveJoin
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.rename ---
+
+    #[tokio::test]
+    async fn groups_rename_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsRename
+            .call(h, json!({"jid": "x@g.us", "subject": "new name"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_rename_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsRename
+            .call(h, json!({"jid": "x@g.us", "subject": "x"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.set_description ---
+
+    #[tokio::test]
+    async fn groups_set_description_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetDescription
+            .call(h, json!({"jid": "x@g.us", "description": "new desc"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_description_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetDescription
+            .call(h, json!({"jid": "x@g.us", "description": "x"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.set_locked ---
+
+    #[tokio::test]
+    async fn groups_set_locked_true() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetLocked
+            .call(h, json!({"jid": "x@g.us", "locked": true}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_locked_false() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsSetLocked
+            .call(h, json!({"jid": "x@g.us", "locked": false}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_set_locked_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetLocked
+            .call(h, json!({"jid": "x@g.us", "locked": true}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- groups.transfer_ownership ---
+
+    #[tokio::test]
+    async fn groups_transfer_ownership_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsTransferOwnership
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_transfer_ownership_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsTransferOwnership
+            .call(h, json!({"jid": "x@g.us", "member": "5511"}))
             .await
             .unwrap_err();
         assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());

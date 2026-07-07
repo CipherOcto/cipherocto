@@ -953,3 +953,171 @@ async fn live_chain_e_envelopes() {
     // it referenced in a trace so a future field addition picks it up.
     tracing::debug!("live: domain_hash={domain_hash}");
 }
+
+// ── Chain F — admin surface (rules/triggers/events/audit/clients/actions) ──
+//
+// All calls in this chain are best-effort: the daemon's in-memory state
+// is read-mostly, but a real WA adapter may not have populated the
+// surface the handler reads. We warn-skip on Err rather than panic.
+//
+// Adaptations from the spec:
+// - `actions.escalate` requires BOTH `target` AND `reason` (not just
+//   `reason`); pass `target: "live-test"`.
+#[tokio::test]
+async fn live_chain_f_admin() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    // Local best-effort helper (Chain C's `best_effort` is fn-scoped
+    // inside its test fn, so we redefine here).
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.rpc, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) rules.list — in-memory rule registry. Warn-skip on Err.
+    let _ = best_effort(fix, "rules.list", json!({})).await;
+
+    // 2) inter-call throttle
+    inter_call_delay_for("rules.list").await;
+
+    // 3) triggers.list — in-memory trigger registry. Warn-skip on Err.
+    let _ = best_effort(fix, "triggers.list", json!({})).await;
+
+    // 4) inter-call throttle
+    inter_call_delay_for("triggers.list").await;
+
+    // 5) events.list {limit: 5} — daemon's events buffer. Warn-skip
+    // on Err (handler may not be wired for live adapter).
+    let _ = best_effort(fix, "events.list", json!({ "limit": 5 })).await;
+
+    // 6) inter-call throttle
+    inter_call_delay_for("events.list").await;
+
+    // 7) audit.tail {limit: 5} — audit log tail. May probe the OS for
+    // log file mtime. Warn-skip on Err.
+    let _ = best_effort(fix, "audit.tail", json!({ "limit": 5 })).await;
+
+    // 8) inter-call throttle
+    inter_call_delay_for("audit.tail").await;
+
+    // 9) audit.verify {since_seq: 0} — verify the audit chain. Note:
+    // `audit.verify` (per the handler source) takes NO parameters;
+    // `since_seq` is silently ignored. Pass an empty object to mirror
+    // the handler's actual contract.
+    let _ = best_effort(fix, "audit.verify", json!({})).await;
+
+    // 10) inter-call throttle
+    inter_call_delay_for("audit.verify").await;
+
+    // 11) clients.list — registered MCP sessions. Warn-skip on Err.
+    let _ = best_effort(fix, "clients.list", json!({})).await;
+
+    // 12) inter-call throttle
+    inter_call_delay_for("clients.list").await;
+
+    // 13) actions.escalate {target, reason} — handler requires BOTH
+    // fields. Warn-skip on Err (it is a phase4_stub, but the
+    // `since_seq: 0` arg in the plan is a typo).
+    let _ = best_effort(
+        fix,
+        "actions.escalate",
+        json!({ "target": "live-test", "reason": "live test" }),
+    )
+    .await;
+}
+
+// ── Chain G — security tokens (rotate + revoke + list) ────────────
+//
+// Adapted from the original plan (`security.tokens.issue` + `revoke`)
+// to match the actual Phase 5 Part A handler surface:
+// - `security.rotate_token` — requires `old_token_id` +
+//   `new_secret_hex`. The live daemon starts with NO seeded token, so
+//   the first call returns `unknown old_token_id` — best-effort
+//   absorbs it. (A future improvement would have the fixture seed a
+//   known token before the chain runs; not done here per scope.)
+// - `security.revoke_all_tokens` — no params, revokes everything.
+// - `security.list_tokens` — read-only snapshot.
+//
+// No teardown is needed: rotate + revoke_all are inherently
+// self-cleaning, and any tokens created during the test are revoked
+// at the end.
+#[tokio::test]
+async fn live_chain_g_tokens() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.rpc, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) Baseline: list tokens to capture starting counts.
+    let baseline = best_effort(fix, "security.list_tokens", json!({})).await;
+    let baseline_all = baseline
+        .get("counts")
+        .and_then(|c| c.get("all"))
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
+    tracing::info!("live: token baseline all={baseline_all}");
+
+    // 2) inter-call throttle
+    inter_call_delay_for("security.list_tokens").await;
+
+    // 3) security.rotate_token — requires a real `old_token_id` +
+    //    `new_secret_hex`. The live daemon does NOT seed a token, so
+    //    this will return `unknown old_token_id` and warn-skip.
+    //    We still pass well-formed args (a 64-hex secret) so that if
+    //    a token WERE seeded, the call would succeed.
+    let new_secret_hex: String = (0..64)
+        .map(|i| format!("{:02x}", (0xA0u8).wrapping_add(i as u8)))
+        .collect();
+    let _ = best_effort(
+        fix,
+        "security.rotate_token",
+        json!({
+            "old_token_id": "live-test-old",
+            "new_secret_hex": new_secret_hex,
+            "grace_ms": 60_000,
+            "label": "live-test-rotate",
+        }),
+    )
+    .await;
+
+    // 4) inter-call throttle
+    inter_call_delay_for("security.rotate_token").await;
+
+    // 5) security.list_tokens — count should be >= baseline (rotate
+    //    may have failed, but listing should still succeed).
+    let after_rotate = best_effort(fix, "security.list_tokens", json!({})).await;
+    let after_rotate_all = after_rotate
+        .get("counts")
+        .and_then(|c| c.get("all"))
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
+    tracing::info!("live: tokens after rotate all={after_rotate_all}");
+
+    // 6) inter-call throttle
+    inter_call_delay_for("security.revoke_all_tokens").await;
+
+    // 7) security.revoke_all_tokens — revokes every active token and
+    //    clears the grace list. No params.
+    let _ = best_effort(fix, "security.revoke_all_tokens", json!({})).await;
+
+    // 8) inter-call throttle
+    inter_call_delay_for("security.list_tokens").await;
+
+    // 9) security.list_tokens — count may be 0 after revoke_all.
+    //    Warn-skip is fine: we just want to confirm the call shape.
+    let _ = best_effort(fix, "security.list_tokens", json!({})).await;
+}

@@ -11,15 +11,28 @@
 //! is exercised by the live tests under `--features live-whatsapp` (see
 //! `tests/live_2_5_wiring.rs`).
 
-use octo_adapter_whatsapp::PlatformAdapterError;
-use octo_adapter_whatsapp::WhatsAppWebAdapter;
+use octo_adapter_whatsapp::{PlatformAdapterError, WhatsAppConfig, WhatsAppWebAdapter};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const JID: &str = "1234567890@s.whatsapp.net";
 const MSG_ID: &str = "3EB0B1234567890ABCDEF";
 
+/// Construct a `WhatsAppWebAdapter` without calling `start_bot()` so
+/// operations return `Unreachable { reason: "client not connected" }`.
+/// Replaces the previously gated `new_unconnected_for_tests()` ctor
+/// (which required `--features test-helpers`); uses the public
+/// `WhatsAppWebAdapter::new(WhatsAppConfig)` with a dummy session path
+/// that is never opened since the adapter never boots.
 fn adapter() -> WhatsAppWebAdapter {
-    WhatsAppWebAdapter::new_unconnected_for_tests()
+    WhatsAppWebAdapter::new(WhatsAppConfig {
+        session_path: "/tmp/octo-smoke-unused.db".into(),
+        pair_phone: None,
+        pair_code: None,
+        ws_url: None,
+        groups: vec![],
+        sender_allowlist: BTreeMap::new(),
+    })
 }
 
 fn tmp_with_size(name: &str, size: usize) -> PathBuf {

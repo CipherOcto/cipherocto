@@ -495,8 +495,14 @@ fn apply_wal_payload(payload: &str) -> Result<Option<Vec<Rule>>, PersistError> {
     #[derive(Debug, Deserialize)]
     #[serde(tag = "op", rename_all = "snake_case")]
     enum WalOp {
-        Upsert { #[allow(dead_code)] rule: serde_json::Value },
-        Delete { #[allow(dead_code)] id: String },
+        Upsert {
+            #[allow(dead_code)]
+            rule: serde_json::Value,
+        },
+        Delete {
+            #[allow(dead_code)]
+            id: String,
+        },
         ReplaceAll {
             #[serde(default)]
             rules: Vec<PersistedRule>,
@@ -505,9 +511,9 @@ fn apply_wal_payload(payload: &str) -> Result<Option<Vec<Rule>>, PersistError> {
     let parsed: WalOp = serde_json::from_str(payload)
         .map_err(|e| PersistError::Io(std::io::Error::other(format!("wal json: {e}"))))?;
     match parsed {
-        WalOp::ReplaceAll { rules } => Ok(Some(
-            rules.into_iter().map(PersistedRule::into).collect(),
-        )),
+        WalOp::ReplaceAll { rules } => {
+            Ok(Some(rules.into_iter().map(PersistedRule::into).collect()))
+        }
         WalOp::Upsert { .. } | WalOp::Delete { .. } => Ok(None),
     }
 }
@@ -605,11 +611,7 @@ async fn run_persister(
     }
 }
 
-async fn drain_and_exit(
-    persister: &RulesPersister,
-    storage_path: &Path,
-    wal_path: &Path,
-) {
+async fn drain_and_exit(persister: &RulesPersister, storage_path: &Path, wal_path: &Path) {
     let _ = flush_state(persister, storage_path, wal_path).await;
     if let Some(ack) = persister.take_pending_sync() {
         let _ = ack.send(());
@@ -704,7 +706,10 @@ async fn read_last_wal_sha(wal_path: &Path) -> Result<String, PersistError> {
         Err(e) => return Err(PersistError::Io(e)),
     };
     let content = String::from_utf8_lossy(&bytes);
-    let last = content.lines().rfind(|l| !l.is_empty()).map(|s| s.to_string());
+    let last = content
+        .lines()
+        .rfind(|l| !l.is_empty())
+        .map(|s| s.to_string());
     let Some(line) = last else {
         return Ok(String::new());
     };
@@ -795,7 +800,10 @@ mod tests {
         }
     }
 
-    fn spawn_for(dir: &TempDir, debounce_ms: u64) -> (Arc<RulesPersister>, tokio::task::JoinHandle<()>) {
+    fn spawn_for(
+        dir: &TempDir,
+        debounce_ms: u64,
+    ) -> (Arc<RulesPersister>, tokio::task::JoinHandle<()>) {
         let storage = dir.path().join("rules.toml");
         let wal = dir.path().join("rules.wal");
         RulesPersister::spawn(storage, wal, debounce_ms)
@@ -822,9 +830,13 @@ mod tests {
     async fn upsert_coalesces_two_updates_within_debounce() {
         let dir = TempDir::new().unwrap();
         let (p, h) = spawn_for(&dir, 100);
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 0))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 0)))
+            .await
+            .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 99))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 99)))
+            .await
+            .unwrap();
         // flush_sync forces it onto disk now (bypasses debounce).
         p.flush_sync().await.unwrap();
         assert_eq!(p.snapshot().len(), 1);
@@ -840,10 +852,14 @@ mod tests {
     async fn delete_then_upsert_resolves_to_upsert() {
         let dir = TempDir::new().unwrap();
         let (p, h) = spawn_for(&dir, 50);
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 1))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 1)))
+            .await
+            .unwrap();
         p.flush_sync().await.unwrap();
         p.enqueue_op(PersistOp::Delete("r1".into())).await.unwrap();
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 5))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 5)))
+            .await
+            .unwrap();
         p.flush_sync().await.unwrap();
         let toml = read_toml(p.storage_path());
         assert_eq!(toml.rules.len(), 1);
@@ -857,8 +873,12 @@ mod tests {
     async fn replace_all_flushes_pending() {
         let dir = TempDir::new().unwrap();
         let (p, h) = spawn_for(&dir, 50);
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("a", 1))).await.unwrap();
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("b", 2))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("a", 1)))
+            .await
+            .unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("b", 2)))
+            .await
+            .unwrap();
         p.flush_sync().await.unwrap();
         // Now replace with [{c}] — should drop a and b.
         p.enqueue_op(PersistOp::ReplaceAll(vec![dummy_rule("c", 3)]))
@@ -931,7 +951,9 @@ mod tests {
     async fn shutdown_flushes_pending_via_flush_sync() {
         let dir = TempDir::new().unwrap();
         let (p, h) = spawn_for(&dir, 5_000);
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 7))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 7)))
+            .await
+            .unwrap();
         // Force-flush (bypasses debounce).
         p.flush_sync().await.unwrap();
         let bytes = std::fs::read(p.storage_path()).unwrap();
@@ -947,7 +969,8 @@ mod tests {
         let storage = dir.path().join("rules.toml");
         std::fs::write(&storage, b"this is { not valid toml ==").unwrap();
         let bytes = std::fs::read(&storage).unwrap();
-        let result: Result<PersistedRuleset, _> = toml::from_str(std::str::from_utf8(&bytes).unwrap());
+        let result: Result<PersistedRuleset, _> =
+            toml::from_str(std::str::from_utf8(&bytes).unwrap());
         assert!(result.is_err());
     }
 
@@ -988,10 +1011,7 @@ mod tests {
 
     #[test]
     fn schema_round_trip_toml_byte_stable() {
-        let ruleset = PersistedRuleset::from_rules(vec![
-            dummy_rule("a", 1),
-            dummy_rule("b", 2),
-        ]);
+        let ruleset = PersistedRuleset::from_rules(vec![dummy_rule("a", 1), dummy_rule("b", 2)]);
         let s = toml::to_string(&ruleset).unwrap();
         let back: PersistedRuleset = toml::from_str(&s).unwrap();
         assert_eq!(ruleset, back);
@@ -1003,7 +1023,9 @@ mod tests {
     async fn debounce_idle_writes_after_window() {
         let dir = TempDir::new().unwrap();
         let (p, h) = spawn_for(&dir, 50);
-        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 1))).await.unwrap();
+        p.enqueue_op(PersistOp::Upsert(dummy_rule("r1", 1)))
+            .await
+            .unwrap();
         // Wait for debounce to fire (no manual flush).
         let ok = wait_until(
             || p.storage_path().exists() && p.snapshot().contains_key("r1"),

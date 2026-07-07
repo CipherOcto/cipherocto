@@ -80,6 +80,10 @@ pub enum Command {
     Methods(MethodsCmd),
     /// Security token operations (Phase 5 Part A).
     Tokens(TokenCmd),
+    /// Audit log operations (Phase 5 Part E; Phase 4 RPC surface).
+    Audit(AuditCmd),
+    /// Action dispatcher operations (Phase 5 Part E; Phase 4 RPC surface).
+    Actions(ActionsCmd),
 }
 
 #[derive(Debug, Args)]
@@ -335,6 +339,43 @@ pub enum RulesAction {
     List,
     /// Show a single rule by id.
     Get { id: String },
+    /// Create a new rule (Phase 4). Pass a JSON body via --body.
+    Create {
+        /// JSON body for the new rule (e.g. `{"id":"r1","predicate":{...}}`).
+        body: String,
+    },
+    /// Replace a rule (full etag-guarded update). Pass new body + etag.
+    Update {
+        id: String,
+        /// Current etag (use `rules get` to read).
+        etag: String,
+        /// JSON body with new fields.
+        body: String,
+    },
+    /// Apply a subset patch to a rule (etag-guarded).
+    Patch {
+        id: String,
+        etag: String,
+        /// JSON body with the subset of fields to change.
+        body: String,
+    },
+    /// Delete a rule (etag-guarded).
+    Delete { id: String, etag: String },
+    /// Enable a rule (no etag required).
+    Enable { id: String },
+    /// Disable a rule (no etag required).
+    Disable { id: String },
+    /// Approve a Draft rule, transitioning it to Approved.
+    Approve { id: String },
+    /// Re-read rules.toml from disk.
+    Reload,
+    /// Force a sync of debounced disk writes.
+    Flush,
+    /// Evaluate an event against the ruleset (no-execute dry-run).
+    Test {
+        /// JSON body containing the inbound event under `event`.
+        event_json: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -349,6 +390,66 @@ pub enum TriggersAction {
     List,
     /// Show a single trigger by id.
     Get { id: String },
+    /// Create a new trigger (Phase 4). Pass a JSON body via --body.
+    Create {
+        /// JSON body for the new trigger.
+        body: String,
+    },
+    /// Replace a trigger (etag-guarded update).
+    Update {
+        id: String,
+        etag: String,
+        /// JSON body with new fields.
+        body: String,
+    },
+    /// Delete a trigger (etag-guarded).
+    Delete { id: String, etag: String },
+    /// Invoke a trigger and return the RunRecord.
+    Run {
+        id: String,
+        /// Optional JSON payload to wrap in an inbound event.
+        payload_json: Option<String>,
+    },
+}
+
+/// Phase 5 Part E: audit log operations (Phase 4 RPC surface).
+#[derive(Debug, Args)]
+pub struct AuditCmd {
+    #[command(subcommand)]
+    pub action: AuditAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditAction {
+    /// Tail audit log entries since a given sequence number.
+    Tail {
+        /// Lower-bound sequence number (exclusive).
+        #[arg(long)]
+        since_seq: Option<u64>,
+        /// Max entries to return (1..=10000).
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Walk the in-memory hash chain and verify each entry.
+    Verify,
+}
+
+/// Phase 5 Part E: dispatch an escalation (Phase 4 RPC surface).
+#[derive(Debug, Args)]
+pub struct ActionsCmd {
+    #[command(subcommand)]
+    pub action: ActionsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ActionsAction {
+    /// Escalate to a target (e.g. oncall) with a free-text reason.
+    Escalate {
+        /// Escalation target identifier (e.g. `oncall`, `sre`).
+        target: String,
+        /// Reason / context for the escalation.
+        reason: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -883,23 +984,139 @@ pub fn dispatch_domain(cli: &Cli, cmd: &DomainCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
-/// Wire `rules list` and `rules get <id>` (Task 45).
+/// Wire `rules *` subcommands. Phase 5 Part E adds the Phase 4 CRUD/dry-run
+/// surface (`create`/`update`/`patch`/`delete`/`enable`/`disable`/`approve`/
+/// `reload`/`flush`/`test`) on top of the Phase 1 read-only list/get.
 pub fn dispatch_rules(cli: &Cli, cmd: &RulesCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
     let (method, params) = match &cmd.action {
         RulesAction::List => ("rules.list", serde_json::Value::Null),
         RulesAction::Get { id } => ("rules.get", serde_json::json!({"id": id})),
+        RulesAction::Create { body } => {
+            // The CLI accepts a raw JSON literal for `create` so operators
+            // can pipe `jq`/heredocs without argument gymnastics. The
+            // daemon validates every field.
+            let body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| anyhow::anyhow!("invalid body for rules create: {e}"))?;
+            ("rules.create", body)
+        }
+        RulesAction::Update { id, etag, body } => {
+            let mut body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| anyhow::anyhow!("invalid body for rules update: {e}"))?;
+            if let Some(o) = body.as_object_mut() {
+                o.insert("id".into(), serde_json::Value::String(id.clone()));
+                o.insert("etag".into(), serde_json::Value::String(etag.clone()));
+            } else {
+                anyhow::bail!("rules update body must be a JSON object");
+            }
+            ("rules.update", body)
+        }
+        RulesAction::Patch { id, etag, body } => {
+            let mut body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| anyhow::anyhow!("invalid body for rules patch: {e}"))?;
+            if let Some(o) = body.as_object_mut() {
+                o.insert("id".into(), serde_json::Value::String(id.clone()));
+                o.insert("etag".into(), serde_json::Value::String(etag.clone()));
+            } else {
+                anyhow::bail!("rules patch body must be a JSON object");
+            }
+            ("rules.patch", body)
+        }
+        RulesAction::Delete { id, etag } => {
+            ("rules.delete", serde_json::json!({"id": id, "etag": etag}))
+        }
+        RulesAction::Enable { id } => ("rules.enable", serde_json::json!({"id": id})),
+        RulesAction::Disable { id } => ("rules.disable", serde_json::json!({"id": id})),
+        RulesAction::Approve { id } => ("rules.approve", serde_json::json!({"id": id})),
+        RulesAction::Reload => ("rules.reload", serde_json::Value::Null),
+        RulesAction::Flush => ("rules.flush", serde_json::Value::Null),
+        RulesAction::Test { event_json } => {
+            // `rules.test` expects `{ "event": {...} }`. The CLI accepts the
+            // raw inbound event blob and wraps it here so the operator
+            // can pipe the same JSON the daemon itself emits.
+            let mut wrapper = serde_json::Map::new();
+            let ev: serde_json::Value = serde_json::from_str(event_json)
+                .map_err(|e| anyhow::anyhow!("invalid event-json for rules test: {e}"))?;
+            wrapper.insert("event".into(), ev);
+            ("rules.test", serde_json::Value::Object(wrapper))
+        }
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
 }
 
-/// Wire `triggers list` and `triggers get <id>` (Task 46).
+/// Wire `triggers *` subcommands. Phase 5 Part E adds Phase 4 CRUD
+/// (`create`/`update`/`delete`) and the `run` dry-run.
 pub fn dispatch_triggers(cli: &Cli, cmd: &TriggersCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
     let (method, params) = match &cmd.action {
         TriggersAction::List => ("triggers.list", serde_json::Value::Null),
         TriggersAction::Get { id } => ("triggers.get", serde_json::json!({"id": id})),
+        TriggersAction::Create { body } => {
+            let body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| anyhow::anyhow!("invalid body for triggers create: {e}"))?;
+            ("triggers.create", body)
+        }
+        TriggersAction::Update { id, etag, body } => {
+            let mut body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| anyhow::anyhow!("invalid body for triggers update: {e}"))?;
+            if let Some(o) = body.as_object_mut() {
+                o.insert("id".into(), serde_json::Value::String(id.clone()));
+                o.insert("etag".into(), serde_json::Value::String(etag.clone()));
+            } else {
+                anyhow::bail!("triggers update body must be a JSON object");
+            }
+            ("triggers.update", body)
+        }
+        TriggersAction::Delete { id, etag } => (
+            "triggers.delete",
+            serde_json::json!({"id": id, "etag": etag}),
+        ),
+        TriggersAction::Run { id, payload_json } => {
+            let mut p = serde_json::Map::new();
+            p.insert("id".into(), serde_json::Value::String(id.clone()));
+            if let Some(raw) = payload_json {
+                let ev: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|e| anyhow::anyhow!("invalid --payload-json for triggers run: {e}"))?;
+                p.insert("event".into(), ev);
+            }
+            ("triggers.run", serde_json::Value::Object(p))
+        }
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `audit *` subcommands. Phase 5 Part E exposes the Phase 4 audit
+/// hash-chain surface (`tail` + `verify`).
+pub fn dispatch_audit(cli: &Cli, cmd: &AuditCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        AuditAction::Tail { since_seq, limit } => {
+            let mut p = serde_json::Map::new();
+            if let Some(s) = since_seq {
+                p.insert("since_seq".into(), serde_json::Value::Number((*s).into()));
+            }
+            if let Some(l) = limit {
+                p.insert("limit".into(), serde_json::Value::Number((*l).into()));
+            }
+            ("audit.tail", serde_json::Value::Object(p))
+        }
+        AuditAction::Verify => ("audit.verify", serde_json::Value::Null),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
+/// Wire `actions *` subcommands. Phase 5 Part E exposes the Phase 4
+/// `actions.escalate` RPC (currently a stub that returns a token).
+pub fn dispatch_actions(cli: &Cli, cmd: &ActionsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        ActionsAction::Escalate { target, reason } => (
+            "actions.escalate",
+            serde_json::json!({"target": target, "reason": reason}),
+        ),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
@@ -1072,6 +1289,8 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Clients(ref cmd) => dispatch_clients(&cli, cmd),
         Command::Methods(ref cmd) => dispatch_methods(&cli, cmd),
         Command::Tokens(ref cmd) => dispatch_tokens(&cli, cmd),
+        Command::Audit(ref cmd) => dispatch_audit(&cli, cmd),
+        Command::Actions(ref cmd) => dispatch_actions(&cli, cmd),
     }
 }
 
@@ -1462,12 +1681,269 @@ mod tests {
     }
 
     #[test]
+    fn cli_parses_rules_create_update_patch_delete() {
+        let body_json = r#"{"predicate":{"kind":"event_kind","kinds":["message"]},"actions":[]}"#;
+        let c = Cli::try_parse_from(["octo-whatsapp", "rules", "create", body_json]).unwrap();
+        match c.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Create { ref body } => assert_eq!(body, body_json),
+                _ => panic!("expected RulesAction::Create"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+
+        let c2 = Cli::try_parse_from([
+            "octo-whatsapp",
+            "rules",
+            "update",
+            "r1",
+            "etag-1",
+            body_json,
+        ])
+        .unwrap();
+        match c2.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Update {
+                    ref id,
+                    ref etag,
+                    ref body,
+                } => {
+                    assert_eq!(id, "r1");
+                    assert_eq!(etag, "etag-1");
+                    assert_eq!(body, body_json);
+                }
+                _ => panic!("expected RulesAction::Update"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+
+        let c3 =
+            Cli::try_parse_from(["octo-whatsapp", "rules", "patch", "r1", "etag-1", body_json])
+                .unwrap();
+        match c3.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Patch {
+                    ref id, ref etag, ..
+                } => {
+                    assert_eq!(id, "r1");
+                    assert_eq!(etag, "etag-1");
+                }
+                _ => panic!("expected RulesAction::Patch"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+
+        let c4 = Cli::try_parse_from(["octo-whatsapp", "rules", "delete", "r1", "etag-1"]).unwrap();
+        match c4.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Delete { ref id, ref etag } => {
+                    assert_eq!(id, "r1");
+                    assert_eq!(etag, "etag-1");
+                }
+                _ => panic!("expected RulesAction::Delete"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_rules_enable_disable_approve() {
+        for (verb, expected) in [
+            ("enable", "RulesAction::Enable"),
+            ("disable", "RulesAction::Disable"),
+            ("approve", "RulesAction::Approve"),
+        ] {
+            let c = Cli::try_parse_from(["octo-whatsapp", "rules", verb, "r1"]).expect(verb);
+            match c.command {
+                Command::Rules(cmd) => {
+                    let got = match &cmd.action {
+                        RulesAction::Enable { id }
+                        | RulesAction::Disable { id }
+                        | RulesAction::Approve { id } => {
+                            assert_eq!(id, "r1");
+                            expected
+                        }
+                        _ => panic!("unexpected variant"),
+                    };
+                    let _ = got;
+                }
+                _ => panic!("expected Command::Rules"),
+            }
+        }
+    }
+
+    #[test]
+    fn cli_parses_rules_reload_flush_test() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "rules", "reload"]).unwrap();
+        match c.command {
+            Command::Rules(cmd) => assert!(matches!(cmd.action, RulesAction::Reload)),
+            _ => panic!("expected Command::Rules"),
+        }
+        let c = Cli::try_parse_from(["octo-whatsapp", "rules", "flush"]).unwrap();
+        match c.command {
+            Command::Rules(cmd) => assert!(matches!(cmd.action, RulesAction::Flush)),
+            _ => panic!("expected Command::Rules"),
+        }
+        let c = Cli::try_parse_from(["octo-whatsapp", "rules", "test", "{}"]).unwrap();
+        match c.command {
+            Command::Rules(cmd) => match cmd.action {
+                RulesAction::Test { ref event_json } => assert_eq!(event_json, "{}"),
+                _ => panic!("expected RulesAction::Test"),
+            },
+            _ => panic!("expected Command::Rules"),
+        }
+    }
+
+    #[test]
     fn cli_parses_triggers_list_and_get() {
         let l = Cli::try_parse_from(["octo-whatsapp", "triggers", "list"]).unwrap();
         assert!(matches!(l.command, Command::Triggers(_)));
 
         let g = Cli::try_parse_from(["octo-whatsapp", "triggers", "get", "trig-1"]).unwrap();
         assert!(matches!(g.command, Command::Triggers(_)));
+    }
+
+    #[test]
+    fn cli_parses_triggers_create_update_delete_run() {
+        let body_json = r#"{"runner":{"kind":"agent","agent_id":"a1"}}"#;
+        let c = Cli::try_parse_from(["octo-whatsapp", "triggers", "create", body_json]).unwrap();
+        match c.command {
+            Command::Triggers(cmd) => match cmd.action {
+                TriggersAction::Create { ref body } => assert_eq!(body, body_json),
+                _ => panic!("expected TriggersAction::Create"),
+            },
+            _ => panic!("expected Command::Triggers"),
+        }
+
+        let c2 = Cli::try_parse_from([
+            "octo-whatsapp",
+            "triggers",
+            "update",
+            "t1",
+            "etag-1",
+            body_json,
+        ])
+        .unwrap();
+        match c2.command {
+            Command::Triggers(cmd) => match cmd.action {
+                TriggersAction::Update {
+                    ref id, ref etag, ..
+                } => {
+                    assert_eq!(id, "t1");
+                    assert_eq!(etag, "etag-1");
+                }
+                _ => panic!("expected TriggersAction::Update"),
+            },
+            _ => panic!("expected Command::Triggers"),
+        }
+
+        let c3 =
+            Cli::try_parse_from(["octo-whatsapp", "triggers", "delete", "t1", "etag-1"]).unwrap();
+        match c3.command {
+            Command::Triggers(cmd) => match cmd.action {
+                TriggersAction::Delete { ref id, ref etag } => {
+                    assert_eq!(id, "t1");
+                    assert_eq!(etag, "etag-1");
+                }
+                _ => panic!("expected TriggersAction::Delete"),
+            },
+            _ => panic!("expected Command::Triggers"),
+        }
+
+        let c4 = Cli::try_parse_from(["octo-whatsapp", "triggers", "run", "t1"]).unwrap();
+        match c4.command {
+            Command::Triggers(cmd) => match cmd.action {
+                TriggersAction::Run {
+                    ref id,
+                    ref payload_json,
+                } => {
+                    assert_eq!(id, "t1");
+                    assert!(payload_json.is_none());
+                }
+                _ => panic!("expected TriggersAction::Run"),
+            },
+            _ => panic!("expected Command::Triggers"),
+        }
+
+        let c5 =
+            Cli::try_parse_from(["octo-whatsapp", "triggers", "run", "t1", "{\"k\":1}"]).unwrap();
+        match c5.command {
+            Command::Triggers(cmd) => match cmd.action {
+                TriggersAction::Run {
+                    ref payload_json, ..
+                } => {
+                    assert_eq!(payload_json.as_deref(), Some("{\"k\":1}"));
+                }
+                _ => panic!("expected TriggersAction::Run"),
+            },
+            _ => panic!("expected Command::Triggers"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_audit_tail_and_verify() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "audit", "tail"]).unwrap();
+        match c.command {
+            Command::Audit(cmd) => match cmd.action {
+                AuditAction::Tail { since_seq, limit } => {
+                    assert!(since_seq.is_none());
+                    assert!(limit.is_none());
+                }
+                _ => panic!("expected AuditAction::Tail"),
+            },
+            _ => panic!("expected Command::Audit"),
+        }
+
+        let c2 = Cli::try_parse_from([
+            "octo-whatsapp",
+            "audit",
+            "tail",
+            "--since-seq",
+            "42",
+            "--limit",
+            "200",
+        ])
+        .unwrap();
+        match c2.command {
+            Command::Audit(cmd) => match cmd.action {
+                AuditAction::Tail { since_seq, limit } => {
+                    assert_eq!(since_seq, Some(42));
+                    assert_eq!(limit, Some(200));
+                }
+                _ => panic!("expected AuditAction::Tail"),
+            },
+            _ => panic!("expected Command::Audit"),
+        }
+
+        let c3 = Cli::try_parse_from(["octo-whatsapp", "audit", "verify"]).unwrap();
+        match c3.command {
+            Command::Audit(cmd) => assert!(matches!(cmd.action, AuditAction::Verify)),
+            _ => panic!("expected Command::Audit"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_actions_escalate() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "actions",
+            "escalate",
+            "oncall",
+            "alert: db down",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Actions(cmd) => match cmd.action {
+                ActionsAction::Escalate {
+                    ref target,
+                    ref reason,
+                } => {
+                    assert_eq!(target, "oncall");
+                    assert_eq!(reason, "alert: db down");
+                }
+            },
+            _ => panic!("expected Command::Actions"),
+        }
     }
 
     #[test]

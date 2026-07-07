@@ -76,7 +76,9 @@ pub async fn preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig};
+    use crate::config::{
+        EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    };
     use crate::daemon::Daemon;
     use std::io::Write as _;
 

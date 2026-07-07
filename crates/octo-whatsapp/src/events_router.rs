@@ -94,6 +94,11 @@ pub struct EventsRouter {
     /// Phase 5 Part B: optional Prometheus hook. Increments
     /// `inbound_events_total{kind=hash}` per parsed event.
     metrics: Option<Arc<Metrics>>,
+    /// Phase 5 Part F: optional action-dispatch hook. Called once per
+    /// parsed event after buffer push + sink fanout. Closure runs
+    /// synchronously in the router's own task — slow dispatchers must
+    /// themselves spawn work to avoid stalling the event loop.
+    action_hook: Option<Arc<dyn Fn(crate::events::InboundEvent) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for EventsRouter {
@@ -116,6 +121,7 @@ impl EventsRouter {
             sinks: parking_lot::Mutex::new(Vec::new()),
             cancel,
             metrics: None,
+            action_hook: None,
         })
     }
 
@@ -127,12 +133,25 @@ impl EventsRouter {
             sinks: parking_lot::Mutex::new(Vec::new()),
             cancel,
             metrics: None,
+            action_hook: None,
         }
     }
 
     /// Phase 5 Part B: attach the Prometheus registry. Idempotent.
     pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
         self.metrics = Some(m);
+        self
+    }
+
+    /// Phase 5 Part F: register an action dispatch hook. Called for
+    /// every parsed inbound event after buffer push + sink fanout.
+    /// The hook runs on the router's own task (fire-and-forget — the
+    /// event loop must not block on slow action latencies).
+    pub fn with_action_dispatcher<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(crate::events::InboundEvent) + Send + Sync + 'static,
+    {
+        self.action_hook = Some(Arc::new(hook));
         self
     }
 
@@ -186,7 +205,17 @@ impl EventsRouter {
                                 m.inc_inbound_event(&kind);
                             }
                             self.buffer.push(ev.clone());
-                            self.fanout(ev);
+                            self.fanout(ev.clone());
+                            // Phase 5 Part F: fire the action-dispatch hook
+                            // (if registered) on a clone so the buffer
+                            // entry + sink fan-out are unaffected.
+                            if let Some(hook) = self.action_hook.as_ref() {
+                                let hook = hook.clone();
+                                let ev2 = ev.clone();
+                                tokio::spawn(async move {
+                                    hook(ev2);
+                                });
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                             // The raw bus is lossy by design (capacity 1000).

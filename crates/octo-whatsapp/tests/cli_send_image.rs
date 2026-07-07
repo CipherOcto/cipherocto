@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use assert_cmd::Command;
 use octo_whatsapp::config::{
-    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
-    RulesConfig,
+    EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 

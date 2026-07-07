@@ -103,6 +103,12 @@ struct DaemonInner {
     /// Phase 5 Part B: Unix-epoch millis when the daemon started —
     /// used for `daemon_uptime_seconds` updates.
     started_at_unix_ms: AtomicI64,
+    /// Phase 5 Part F: shared `reqwest::Client` for the webhook action
+    /// dispatcher. Constructed once at boot with a 10s timeout and a
+    /// shared connection pool; all `Webhook` action dispatches reuse
+    /// this client to amortize TLS handshakes and respect the
+    /// Rustls-only default features.
+    http_client: reqwest::Client,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -300,6 +306,13 @@ impl DaemonHandle {
         self.inner.started_at_unix_ms.load(Ordering::Relaxed)
     }
 
+    /// Phase 5 Part F: shared `reqwest::Client` used by the
+    /// `Webhook` action dispatcher. Returned by `Arc` clone so the
+    /// dispatcher can borrow without holding a `&DaemonHandle`.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.inner.http_client
+    }
+
     /// Phase 3: build an `EventsRouter` that subscribes to the
     /// bound adapter's `raw_event_tx` and pipes events into this
     /// handle's `events_buffer`. Returns `None` if no adapter is
@@ -419,11 +432,8 @@ impl Daemon {
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        let (rules_persister, persister_handle) = RulesPersister::spawn(
-            storage_path,
-            wal_path,
-            self.config.rules.debounce_ms,
-        );
+        let (rules_persister, persister_handle) =
+            RulesPersister::spawn(storage_path, wal_path, self.config.rules.debounce_ms);
         // Side-channel: stash the JoinHandle so we can await it on
         // shutdown. The handle is light (one tokio JoinHandle) —
         // owned by the supervisor task spawned by `Daemon::run`.
@@ -450,6 +460,17 @@ impl Daemon {
         let started_at_unix_ms = unix_epoch_ms_now();
         let is_live = Arc::new(AtomicBool::new(false));
         let is_ready = Arc::new(AtomicBool::new(false));
+        // Phase 5 Part F: build a shared `reqwest::Client` with
+        // conservative defaults suitable for webhook dispatches.
+        // 10s connect timeout, 30s request timeout. Constructed once
+        // at boot; rule handlers MUST reuse this via
+        // `DaemonHandle::http_client()`.
+        let http_client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent(concat!("octo-whatsapp/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("reqwest::Client::builder build is infallible in practice");
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
@@ -469,6 +490,7 @@ impl Daemon {
                 is_live,
                 is_ready,
                 started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
+                http_client,
             }),
         }
     }

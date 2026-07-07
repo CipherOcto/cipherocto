@@ -88,6 +88,7 @@ fn media_buffer_config_validates() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     assert!(cfg.validate().is_ok());
     let bad = WhatsAppRuntimeConfig {
@@ -102,6 +103,7 @@ fn media_buffer_config_validates() {
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
         observability: Default::default(),
+        rules: RulesConfig::default(),
     };
     assert!(bad.validate().is_err());
 }

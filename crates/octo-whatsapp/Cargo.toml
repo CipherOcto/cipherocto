@@ -80,6 +80,10 @@ dirs = "5"
 prometheus = { version = "0.13", default-features = false }
 axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 hmac       = "0.12"
+# Phase 5 Part F: shared reqwest::Client for the webhook action dispatcher.
+# Default features off, rustls-tls only — keeps hermetic builds linkable
+# without OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Phase 5 Part B: optional OTLP tracing. Off by default; enable with
 # `--features otlp`. The library compiles cleanly with the feature

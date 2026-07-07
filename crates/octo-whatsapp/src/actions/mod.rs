@@ -1,4 +1,4 @@
-//! Action dispatchers. Phase 4 of
+//! Action dispatchers. Phase 5 Part F of
 //! `docs/plans/2026-07-04-whatsapp-runtime-cli-mcp-design.md` §Triggers
 //! + §Security.
 //!
@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::daemon::DaemonHandle;
 use crate::events::InboundEvent;
 use crate::observability::metrics::Metrics;
 use crate::rules::ActionSpec;
@@ -32,12 +33,24 @@ pub mod webhook;
 
 /// Per-action execution context. The rule engine builds one of these
 /// and passes it to the dispatcher.
+///
+/// Phase 5 Part F: carries a `DaemonHandle` clone so dispatchers can
+/// reach the `reqwest::Client` (webhook), the `TriggerStore` (agent_run),
+/// the MCP client registry (mcp_notify), the audit log, and the events
+/// buffer. The handle is cheap to clone (Arc-bumped inner).
 #[derive(Debug, Clone)]
 pub struct ActionContext {
     pub rule_id: String,
+    /// Phase 5 Part F: monotonically increasing version of the rule
+    /// that fired this action. Captured for audit purposes.
+    pub rule_version: u64,
     pub event: Arc<InboundEvent>,
     pub caller_uid: String,
     pub now_ms: i64,
+    /// Phase 5 Part F: cheap-clone handle to the daemon. Set by
+    /// `EventsRouter`/rule dispatcher in production; tests may
+    /// pass a minimal handle from `Daemon::new(test_cfg).handle()`.
+    pub daemon: DaemonHandle,
     /// Phase 5 Part B: optional Prometheus registry. When set,
     /// `dispatch()` increments `outbound_messages_total{kind,result}`.
     /// Existing callers (tests) pass `None`.
@@ -71,6 +84,13 @@ pub enum ActionError {
 
 /// Executes a single `ActionSpec`. The rule engine drives this in a
 /// `tokio::time::timeout(deadline)` wrapper.
+///
+/// Phase 5 Part F: dispatchers now read & mutate daemon state via
+/// `ctx.daemon` — webhook hits the shared `reqwest::Client`,
+/// `agent_run` invokes `TriggerStore::run`, `shell` runs the
+/// Linux/Other sandbox, `mcp_notify` fans out to subscribed MCP
+/// clients, `escalate` bumps the rule's priority and emits an audit
+/// row.
 pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionResult, ActionError> {
     let start = std::time::Instant::now();
     let res = match spec {
@@ -78,15 +98,19 @@ pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionRe
             url,
             signing_secret_env,
             allowed_domains,
-        } => webhook::execute(url, signing_secret_env.as_deref(), allowed_domains, ctx).await,
-        ActionSpec::AgentRun { trigger_id } => agent_run::execute(trigger_id, ctx).await,
+        } => {
+            webhook::dispatch(url, signing_secret_env.as_deref(), allowed_domains, ctx).await
+        }
+        ActionSpec::AgentRun { trigger_id } => agent_run::dispatch(trigger_id, ctx).await,
         ActionSpec::Shell {
             argv,
             timeout_ms,
             env_passthrough,
-        } => shell::execute(argv, *timeout_ms, env_passthrough, ctx).await,
-        ActionSpec::McpNotify { template } => mcp_notify::execute(template, ctx).await,
-        ActionSpec::Escalate { target, reason } => escalate::execute(target, reason, ctx).await,
+        } => shell::dispatch(argv, *timeout_ms, env_passthrough, ctx).await,
+        ActionSpec::McpNotify { template } => mcp_notify::dispatch(template, ctx).await,
+        ActionSpec::Escalate { target, reason } => {
+            escalate::dispatch(target, reason, ctx).await
+        }
     };
     let latency_ms = start.elapsed().as_millis() as u64;
     // Phase 5 Part B: increment outbound metric once per dispatch.
@@ -111,14 +135,61 @@ pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionRe
     }
 }
 
+/// Backwards-compatible wrapper for tests/handlers that haven't been
+/// updated to thread a `DaemonHandle`. Builds an `ActionContext`
+/// without a daemon handle — only valid for dispatch paths that
+/// don't touch shared state (e.g. unit tests with structural-only
+/// dispatchers).
+#[cfg(any(test, feature = "test-helpers"))]
+pub async fn dispatch_structural(
+    spec: &ActionSpec,
+    ctx: &ActionContext,
+) -> Result<ActionResult, ActionError> {
+    let start = std::time::Instant::now();
+    let res = match spec {
+        ActionSpec::Webhook {
+            url,
+            signing_secret_env,
+            allowed_domains,
+        } => {
+            webhook::execute(url, signing_secret_env.as_deref(), allowed_domains, ctx).await
+        }
+        ActionSpec::AgentRun { trigger_id } => agent_run::execute(trigger_id, ctx).await,
+        ActionSpec::Shell {
+            argv,
+            timeout_ms,
+            env_passthrough,
+        } => shell::execute(argv, *timeout_ms, env_passthrough, ctx).await,
+        ActionSpec::McpNotify { template } => mcp_notify::execute(template, ctx).await,
+        ActionSpec::Escalate { target, reason } => escalate::execute(target, reason, ctx).await,
+    };
+    let latency_ms = start.elapsed().as_millis() as u64;
+    match res {
+        Ok(()) => Ok(ActionResult {
+            status: "ok".into(),
+            detail: None,
+            latency_ms,
+        }),
+        Err(e) => Err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WhatsAppRuntimeConfig;
+    use crate::daemon::Daemon;
     use crate::events::MessageKind;
+
+    fn handle() -> DaemonHandle {
+        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "actx""#).unwrap();
+        Daemon::new(cfg).handle()
+    }
 
     fn ctx() -> ActionContext {
         ActionContext {
             rule_id: "r1".into(),
+            rule_version: 1,
             event: Arc::new(InboundEvent::Message {
                 id: "M".into(),
                 mentions_truncated: false,
@@ -135,12 +206,13 @@ mod tests {
             }),
             caller_uid: "test".into(),
             now_ms: 0,
+            daemon: handle(),
             metrics: None,
         }
     }
 
     #[tokio::test]
-    async fn mcp_notify_succeeds_with_no_clients() {
+    async fn mcp_notify_production_dispatch_with_no_clients() {
         let r = dispatch(
             &ActionSpec::McpNotify {
                 template: "msg".into(),
@@ -153,7 +225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn escalate_succeeds() {
+    async fn escalate_production_dispatch_succeeds() {
         let r = dispatch(
             &ActionSpec::Escalate {
                 target: "oncall".into(),

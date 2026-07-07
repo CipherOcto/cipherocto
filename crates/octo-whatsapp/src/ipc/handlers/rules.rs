@@ -414,9 +414,7 @@ impl RpcHandler for RulesReload {
                 }));
             }
             Err(e) => {
-                return Err(RpcError::exec_failed(format!(
-                    "read rules.toml: {e}"
-                )));
+                return Err(RpcError::exec_failed(format!("read rules.toml: {e}")));
             }
         };
         let text = match std::str::from_utf8(&bytes) {
@@ -446,10 +444,8 @@ impl RpcHandler for RulesReload {
         // Compute diff (added/modified/removed) before swap.
         let mut diff: Vec<Value> = Vec::new();
         // Build a map by id for both sides.
-        let prev: std::collections::HashMap<String, std::sync::Arc<crate::rules::Rule>> = previous
-            .into_iter()
-            .map(|r| (r.id.clone(), r))
-            .collect();
+        let prev: std::collections::HashMap<String, std::sync::Arc<crate::rules::Rule>> =
+            previous.into_iter().map(|r| (r.id.clone(), r)).collect();
         let new_ids: std::collections::HashSet<String> =
             valid.iter().map(|r| r.id.clone()).collect();
         // Removed: in prev but not new.
@@ -544,7 +540,9 @@ impl RpcHandler for RulesTest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig};
+    use crate::config::{
+        EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
+    };
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {

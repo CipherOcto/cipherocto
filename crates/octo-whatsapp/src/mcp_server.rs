@@ -10,9 +10,12 @@ use std::path::Path;
 
 use serde_json::Value;
 
-/// Number of MCP tools registered (Phase 1 + Phase 2 RPC surface).
-/// Used by integration tests to assert `tools/list` advertises the full set.
-pub const EXPECTED_TOOL_COUNT: usize = 49;
+/// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
+/// Part A + Phase 5 Part E RPC surfaces). Used by integration tests to
+/// assert `tools/list` advertises the full set. The Phase 4 Phase 5 Part E
+/// additions are 17 tools (10 rule CRUD/dry-run + 4 trigger CRUD/run +
+/// 2 audit + 1 action).
+pub const EXPECTED_TOOL_COUNT: usize = 66;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -429,6 +432,150 @@ pub fn tool_descriptors() -> Vec<Value> {
         "List active and grace-period tokens.",
         schema_empty(),
     ));
+    // ─── Rules CRUD + dry-run (10) — Phase 5 Part E (Phase 4 RPC) ─────
+    v.push(td(
+        "rules.create",
+        "Create a new rule. The body is the full rule object (id, enabled, priority, predicate, actions, cooldown_ms, ttl_until).",
+        schema_props_optional(&[
+            ("id", "string"),
+            ("enabled", "boolean"),
+            ("priority", "integer"),
+            ("predicate", "object"),
+            ("actions", "array"),
+            ("cooldown_ms", "integer"),
+            ("ttl_until", "integer"),
+        ]),
+    ));
+    v.push(td(
+        "rules.update",
+        "Replace an existing rule (etag-guarded optimistic concurrency).",
+        schema_props_required(
+            &[
+                ("id", "string"),
+                ("etag", "string"),
+                ("predicate", "object"),
+                ("actions", "array"),
+                ("priority", "integer"),
+                ("enabled", "boolean"),
+                ("cooldown_ms", "integer"),
+                ("ttl_until", "integer"),
+            ],
+            &["id", "etag"],
+        ),
+    ));
+    v.push(td(
+        "rules.patch",
+        "Apply a subset patch to a rule (etag-guarded).",
+        schema_props_required(
+            &[
+                ("id", "string"),
+                ("etag", "string"),
+                ("predicate", "object"),
+                ("actions", "array"),
+                ("priority", "integer"),
+                ("enabled", "boolean"),
+                ("cooldown_ms", "integer"),
+                ("ttl_until", "integer"),
+            ],
+            &["id", "etag"],
+        ),
+    ));
+    v.push(td(
+        "rules.delete",
+        "Delete a rule (etag-guarded).",
+        schema_props_required(&[("id", "string"), ("etag", "string")], &["id", "etag"]),
+    ));
+    v.push(td(
+        "rules.enable",
+        "Enable a rule (no etag required).",
+        schema_props_required(&[("id", "string")], &["id"]),
+    ));
+    v.push(td(
+        "rules.disable",
+        "Disable a rule (no etag required).",
+        schema_props_required(&[("id", "string")], &["id"]),
+    ));
+    v.push(td(
+        "rules.approve",
+        "Transition a Draft rule to Approved.",
+        schema_props_required(&[("id", "string")], &["id"]),
+    ));
+    v.push(td(
+        "rules.reload",
+        "Re-read rules.toml from disk and atomically swap into the live ruleset.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "rules.flush",
+        "Force a sync of any debounced pending rule mutations to disk.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "rules.test",
+        "Dry-run: evaluate an inbound event against the live ruleset without executing actions.",
+        schema_props_required(&[("event", "object")], &["event"]),
+    ));
+    // ─── Triggers CRUD + run (4) — Phase 5 Part E (Phase 4 RPC) ────────
+    v.push(td(
+        "triggers.create",
+        "Create a new trigger.",
+        schema_props_optional(&[
+            ("id", "string"),
+            ("enabled", "boolean"),
+            ("runner", "object"),
+            ("rate_limit", "object"),
+            ("timeout_ms", "integer"),
+            ("retries", "integer"),
+            ("history_cap", "integer"),
+        ]),
+    ));
+    v.push(td(
+        "triggers.update",
+        "Update an existing trigger (etag-guarded optimistic concurrency).",
+        schema_props_required(
+            &[
+                ("id", "string"),
+                ("etag", "string"),
+                ("runner", "object"),
+                ("rate_limit", "object"),
+                ("timeout_ms", "integer"),
+                ("retries", "integer"),
+                ("history_cap", "integer"),
+                ("enabled", "boolean"),
+            ],
+            &["id", "etag"],
+        ),
+    ));
+    v.push(td(
+        "triggers.delete",
+        "Delete a trigger (etag-guarded).",
+        schema_props_required(&[("id", "string"), ("etag", "string")], &["id", "etag"]),
+    ));
+    v.push(td(
+        "triggers.run",
+        "Invoke a trigger and return the RunRecord.",
+        schema_props_optional(&[("id", "string"), ("event", "object")]),
+    ));
+    // ─── Audit hash chain (2) — Phase 5 Part E (Phase 4 RPC) ───────────
+    v.push(td(
+        "audit.tail",
+        "Tail audit log entries since a given sequence number (loss-recovery).",
+        schema_props_optional(&[("since_seq", "integer"), ("limit", "integer")]),
+    ));
+    v.push(td(
+        "audit.verify",
+        "Walk the in-memory audit hash chain and verify each row's prev_hash matches the previous row's this_hash.",
+        schema_empty(),
+    ));
+    // ─── Actions (1) — Phase 5 Part E (Phase 4 RPC) ────────────────────
+    v.push(td(
+        "actions.escalate",
+        "Dispatch an escalation to a target (e.g. oncall) with a reason.",
+        schema_props_required(
+            &[("target", "string"), ("reason", "string")],
+            &["target", "reason"],
+        ),
+    ));
     v
 }
 
@@ -495,6 +642,24 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "security.rotate_token" => "security.rotate_token",
         "security.revoke_all_tokens" => "security.revoke_all_tokens",
         "security.list_tokens" => "security.list_tokens",
+        // Phase 4 RPC surface exposed via Phase 5 Part E wrappers.
+        "rules.create" => "rules.create",
+        "rules.update" => "rules.update",
+        "rules.patch" => "rules.patch",
+        "rules.delete" => "rules.delete",
+        "rules.enable" => "rules.enable",
+        "rules.disable" => "rules.disable",
+        "rules.approve" => "rules.approve",
+        "rules.reload" => "rules.reload",
+        "rules.flush" => "rules.flush",
+        "rules.test" => "rules.test",
+        "triggers.create" => "triggers.create",
+        "triggers.update" => "triggers.update",
+        "triggers.delete" => "triggers.delete",
+        "triggers.run" => "triggers.run",
+        "audit.tail" => "audit.tail",
+        "audit.verify" => "audit.verify",
+        "actions.escalate" => "actions.escalate",
         other => {
             return Ok(jsonrpc_error(
                 id,
@@ -655,5 +820,46 @@ mod tests {
         ] {
             assert!(names.contains(m), "tool {m:?} not advertised");
         }
+    }
+
+    /// Phase 5 Part E: 17 Phase 4 RPC methods now exposed as MCP tools.
+    /// The exact count is locked via `EXPECTED_TOOL_COUNT` (66 = previous 49
+    /// + 17). This test asserts each name is present so a typo in a tool
+    ///   descriptor fails fast in CI rather than at consumer time.
+    #[test]
+    fn phase4_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "rules.create",
+            "rules.update",
+            "rules.patch",
+            "rules.delete",
+            "rules.enable",
+            "rules.disable",
+            "rules.approve",
+            "rules.reload",
+            "rules.flush",
+            "rules.test",
+            "triggers.create",
+            "triggers.update",
+            "triggers.delete",
+            "triggers.run",
+            "audit.tail",
+            "audit.verify",
+            "actions.escalate",
+        ] {
+            assert!(names.contains(m), "Phase 4 tool {m:?} not advertised");
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
     }
 }

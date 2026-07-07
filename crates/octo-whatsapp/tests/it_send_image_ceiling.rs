@@ -8,8 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use octo_whatsapp::config::{
-    EventsConfig, MediaBufferConfig, SecurityConfig, WhatsAppRuntimeConfig,
-    RulesConfig,
+    EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
 };
 use octo_whatsapp::daemon::Daemon;
 use octo_whatsapp::limits::MediaKind;

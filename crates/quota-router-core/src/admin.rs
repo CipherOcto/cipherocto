@@ -2495,16 +2495,10 @@ mod tests {
         Arc::new(std::sync::RwLock::new(crate::prompts::PromptRegistry::new()))
     }
 
-    async fn do_request(
-        method: &str,
-        path: &str,
-        body: Option<String>,
-    ) -> Response<String> {
+    async fn do_request(method: &str, path: &str, body: Option<String>) -> Response<String> {
         let storage = make_storage();
         let registry = make_prompt_registry();
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(path);
+        let mut builder = Request::builder().method(method).uri(path);
         if let Some(b) = body {
             builder = builder.header("content-type", "application/json");
             let req = builder.body(b).unwrap();
@@ -2711,7 +2705,12 @@ mod tests {
     #[tokio::test]
     async fn test_route_put_key_invalid_json() {
         let key_id = uuid::Uuid::new_v4().to_string();
-        let resp = do_request("PUT", &format!("/key/{}", key_id), Some("not json".to_string())).await;
+        let resp = do_request(
+            "PUT",
+            &format!("/key/{}", key_id),
+            Some("not json".to_string()),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -2862,7 +2861,12 @@ mod tests {
         let body = serde_json::json!({
             "name": "updated-provider"
         });
-        let resp = do_request("PUT", "/auth/providers/test-provider", Some(body.to_string())).await;
+        let resp = do_request(
+            "PUT",
+            "/auth/providers/test-provider",
+            Some(body.to_string()),
+        )
+        .await;
         let _status = resp.status();
     }
 
@@ -2891,7 +2895,12 @@ mod tests {
         let body = serde_json::json!({
             "budget_limit": 2000
         });
-        let resp = do_request("POST", &format!("/key/{}/regenerate", key_id), Some(body.to_string())).await;
+        let resp = do_request(
+            "POST",
+            &format!("/key/{}/regenerate", key_id),
+            Some(body.to_string()),
+        )
+        .await;
         assert!(resp.status().is_success());
     }
 }

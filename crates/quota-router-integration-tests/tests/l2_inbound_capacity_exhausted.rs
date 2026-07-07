@@ -26,7 +26,9 @@ use std::time::Duration;
 
 use octo_transport::receiver::ReceiveContext;
 use quota_router_core::node::announce::SignedPayload;
-use quota_router_core::node::forward::{ForwardRejectPayload, ForwardRejectReason, ForwardRequestPayload};
+use quota_router_core::node::forward::{
+    ForwardRejectPayload, ForwardRejectReason, ForwardRequestPayload,
+};
 use quota_router_core::node::provider::{NetworkId, RouterNodeId};
 use quota_router_core::node::request::RequestContext;
 use quota_router_core::node::{envelope, DISC_FORWARD_REQUEST};

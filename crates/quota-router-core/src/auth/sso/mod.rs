@@ -653,8 +653,20 @@ mod tests {
             (SsoError::TokenInvalid("test".into()), 401),
             (SsoError::TokenAlgorithmUnsupported("test".into()), 401),
             (SsoError::TokenAlgorithmNone, 401),
-            (SsoError::AudienceMismatch { expected: "a".into(), actual: "b".into() }, 401),
-            (SsoError::IssuerMismatch { expected: "a".into(), actual: "b".into() }, 401),
+            (
+                SsoError::AudienceMismatch {
+                    expected: "a".into(),
+                    actual: "b".into(),
+                },
+                401,
+            ),
+            (
+                SsoError::IssuerMismatch {
+                    expected: "a".into(),
+                    actual: "b".into(),
+                },
+                401,
+            ),
             (SsoError::SamlSignatureInvalid("test".into()), 401),
             (SsoError::SamlAssertionExpired, 401),
             (SsoError::SamlAudienceMismatch, 401),

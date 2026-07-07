@@ -755,9 +755,7 @@ mod tests {
 
     #[test]
     fn test_provider_factory_register_and_create() {
-        HttpProviderFactory::register("test_provider", || {
-            Box::new(OpenAIProvider::new())
-        });
+        HttpProviderFactory::register("test_provider", || Box::new(OpenAIProvider::new()));
         let provider = HttpProviderFactory::create("test_provider");
         assert!(provider.is_some());
         assert_eq!(provider.unwrap().name(), "openai");
@@ -781,7 +779,8 @@ mod tests {
     #[test]
     fn test_provider_factory_create_with_api_base() {
         HttpProviderFactory::register("test_api_base", || Box::new(OpenAIProvider::new()));
-        let provider = HttpProviderFactory::create_with_api_base("test_api_base", Some("http://custom"));
+        let provider =
+            HttpProviderFactory::create_with_api_base("test_api_base", Some("http://custom"));
         assert!(provider.is_some());
     }
 
@@ -969,8 +968,8 @@ mod tests {
 
     #[test]
     fn test_openai_provider_with_api_base() {
-        let provider = openai::OpenAIProvider::new()
-            .with_api_base("https://custom.api.com/v1".into());
+        let provider =
+            openai::OpenAIProvider::new().with_api_base("https://custom.api.com/v1".into());
         assert_eq!(provider.name(), "openai");
     }
 

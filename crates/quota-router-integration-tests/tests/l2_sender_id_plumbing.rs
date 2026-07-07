@@ -5,8 +5,7 @@ use octo_transport::receiver::ReceiveContext;
 use quota_router_core::node::announce::SignedPayload;
 use quota_router_core::node::gossip::{monotonic_now, CapacityGossipPayload};
 use quota_router_core::node::provider::{
-    ModelPricing, ProviderCapacity, ProviderHealth, ProviderId,
-    RouterNodeId,
+    ModelPricing, ProviderCapacity, ProviderHealth, ProviderId, RouterNodeId,
 };
 use quota_router_core::node::{envelope, DISC_CAPACITY_GOSSIP};
 use quota_router_integration_tests::TestCluster;
@@ -58,7 +57,12 @@ async fn l2_sender_id_known_peer_gossip_accepted() {
         r
     );
 
-    let snap = cluster.nodes[1].node.gossip_cache.lock().unwrap().snapshot();
+    let snap = cluster.nodes[1]
+        .node
+        .gossip_cache
+        .lock()
+        .unwrap()
+        .snapshot();
     assert_eq!(snap.len(), 1);
     assert_eq!(snap[0].1[0].requests_remaining, 50);
 }
@@ -163,7 +167,12 @@ async fn l2_sender_id_gossip_cache_uses_payload_sender() {
 
     let _ = cluster.nodes[0].node.receive(&framed, &ctx).await;
 
-    let snap = cluster.nodes[0].node.gossip_cache.lock().unwrap().snapshot();
+    let snap = cluster.nodes[0]
+        .node
+        .gossip_cache
+        .lock()
+        .unwrap()
+        .snapshot();
     assert_eq!(snap.len(), 1);
     // The cache key should be the payload sender, not the transport sender
     assert_eq!(

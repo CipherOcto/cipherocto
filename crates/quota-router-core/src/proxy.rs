@@ -3107,10 +3107,7 @@ mod tests {
             .header("x-anyllm-key", "anyllm-key")
             .body(())
             .unwrap();
-        assert_eq!(
-            extract_client_key(&req),
-            Some("anyllm-key".to_string())
-        );
+        assert_eq!(extract_client_key(&req), Some("anyllm-key".to_string()));
     }
 
     #[test]
@@ -3171,8 +3168,8 @@ mod tests {
         let db = stoolap::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_storage(storage);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_storage(storage);
         assert!(server.storage.is_some());
     }
 
@@ -3190,8 +3187,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_rate_limiter(rl);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_rate_limiter(rl);
         assert!(server.rate_limiter.is_some());
     }
 
@@ -3200,8 +3197,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let pr = Arc::new(std::sync::RwLock::new(crate::prompts::PromptRegistry::new()));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_prompt_registry(pr);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_prompt_registry(pr);
         assert!(server.prompt_registry.is_some());
     }
 
@@ -4140,8 +4137,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let metrics = Arc::new(Metrics::new());
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_metrics(metrics);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_metrics(metrics);
         assert!(server.metrics.is_some());
     }
 
@@ -4149,11 +4146,10 @@ mod tests {
     fn test_proxy_server_with_fallback() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_fallback(fallback);
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_fallback(fallback);
         assert!(server.fallback.is_some());
     }
 
@@ -4162,8 +4158,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let cache = crate::cache::ResponseCache::new(std::time::Duration::from_secs(300));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_response_cache(cache);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_response_cache(cache);
         assert!(server.response_cache.is_some());
     }
 
@@ -4186,9 +4182,8 @@ mod tests {
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let metrics = Arc::new(Metrics::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
         let cache = crate::cache::ResponseCache::new(std::time::Duration::from_secs(300));
         let executor = crate::callbacks::CallbackExecutor::new(100);
 
@@ -4349,9 +4344,8 @@ mod tests {
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
 
         let req = Request::builder()
             .uri("/v1/chat/completions")

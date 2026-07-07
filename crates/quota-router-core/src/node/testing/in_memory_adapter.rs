@@ -16,11 +16,8 @@ use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::{DeterministicEnvelope, ENVELOPE_WIRE_LEN};
 use octo_network::dot::error::PlatformAdapterError;
 
-pub type PeerInboxMap = Arc<
-    Mutex<
-        BTreeMap<[u8; 32], tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>,
-    >,
->;
+pub type PeerInboxMap =
+    Arc<Mutex<BTreeMap<[u8; 32], tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>;
 
 #[allow(clippy::type_complexity)]
 pub struct InMemoryChannelAdapter {
@@ -39,10 +36,7 @@ impl InMemoryChannelAdapter {
         platform_id: &str,
     ) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(256);
-        peer_inboxes
-            .lock()
-            .unwrap()
-            .insert(self_id, tx);
+        peer_inboxes.lock().unwrap().insert(self_id, tx);
         Self {
             peer_inboxes,
             self_id,
@@ -81,8 +75,7 @@ impl PlatformAdapter for InMemoryChannelAdapter {
         let mut rx = self.rx.lock().await;
         let mut messages = Vec::new();
         while let Ok((envelope_bytes, payload_bytes)) = rx.try_recv() {
-            let mut combined =
-                Vec::with_capacity(envelope_bytes.len() + payload_bytes.len());
+            let mut combined = Vec::with_capacity(envelope_bytes.len() + payload_bytes.len());
             combined.extend_from_slice(&envelope_bytes);
             combined.extend_from_slice(&payload_bytes);
             messages.push(RawPlatformMessage {
@@ -170,12 +163,8 @@ mod tests {
     #[tokio::test]
     async fn no_self_delivery() {
         let inboxes: PeerInboxMap = Arc::new(Mutex::new(BTreeMap::new()));
-        let adapter = InMemoryChannelAdapter::new(
-            inboxes,
-            [1u8; 32],
-            PlatformType::NativeP2P,
-            "lonely",
-        );
+        let adapter =
+            InMemoryChannelAdapter::new(inboxes, [1u8; 32], PlatformType::NativeP2P, "lonely");
 
         let domain = BroadcastDomainId::new(PlatformType::NativeP2P, "test");
         let envelope = DeterministicEnvelope::default();
@@ -191,12 +180,7 @@ mod tests {
     #[test]
     fn canonicalize_short_frame_errors() {
         let inboxes: PeerInboxMap = Arc::new(Mutex::new(BTreeMap::new()));
-        let adapter = InMemoryChannelAdapter::new(
-            inboxes,
-            [1u8; 32],
-            PlatformType::NativeP2P,
-            "t",
-        );
+        let adapter = InMemoryChannelAdapter::new(inboxes, [1u8; 32], PlatformType::NativeP2P, "t");
         let raw = RawPlatformMessage {
             platform_id: "t".into(),
             payload: vec![0u8; 10],

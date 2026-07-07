@@ -334,8 +334,16 @@ mod tests {
     fn test_rate_limit_result_methods() {
         assert!(RateLimitResult::Allowed.is_allowed());
         assert!(!RateLimitResult::Allowed.is_blocked());
-        assert!(!RateLimitResult::Blocked { reason: "test".into(), retry_after: None }.is_allowed());
-        assert!(RateLimitResult::Blocked { reason: "test".into(), retry_after: None }.is_blocked());
+        assert!(!RateLimitResult::Blocked {
+            reason: "test".into(),
+            retry_after: None
+        }
+        .is_allowed());
+        assert!(RateLimitResult::Blocked {
+            reason: "test".into(),
+            retry_after: None
+        }
+        .is_blocked());
     }
 
     #[test]

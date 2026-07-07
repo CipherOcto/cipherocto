@@ -187,6 +187,86 @@ pub enum GroupsAction {
     Info { jid: String },
     /// Leave a group.
     Leave { jid: String },
+    /// Destroy (delete) a group. Irreversible server-side.
+    Destroy { jid: String },
+    /// Resolve an invite link/code to a group handle.
+    ResolveInvite { code: String },
+    /// Add a single member to a group.
+    AddMember {
+        jid: String,
+        #[arg(long)]
+        member: String,
+        #[arg(long, default_value_t = false)]
+        is_admin: bool,
+    },
+    /// Add multiple members to a group (partial-success per element).
+    AddMembers {
+        jid: String,
+        #[arg(long, value_delimiter = ',')]
+        members: Vec<String>,
+    },
+    /// Remove a single member from a group.
+    RemoveMember {
+        jid: String,
+        #[arg(long)]
+        member: String,
+    },
+    /// Remove multiple members from a group (partial-success per element).
+    RemoveMembers {
+        jid: String,
+        #[arg(long, value_delimiter = ',')]
+        members: Vec<String>,
+    },
+    /// Promote a member to admin.
+    Promote {
+        jid: String,
+        #[arg(long)]
+        member: String,
+    },
+    /// Demote an admin to member.
+    Demote {
+        jid: String,
+        #[arg(long)]
+        member: String,
+    },
+    /// Ban a member. Pass `--duration-seconds` for a timed ban; omit for indefinite.
+    Ban {
+        jid: String,
+        #[arg(long)]
+        member: String,
+        #[arg(long)]
+        duration_seconds: Option<u64>,
+    },
+    /// Approve a pending join request.
+    ApproveJoin {
+        jid: String,
+        #[arg(long)]
+        member: String,
+    },
+    /// Rename the group subject.
+    Rename {
+        jid: String,
+        #[arg(long)]
+        subject: String,
+    },
+    /// Set the group description.
+    SetDescription {
+        jid: String,
+        #[arg(long)]
+        description: String,
+    },
+    /// Lock or unlock the group (admins-only messaging when locked).
+    SetLocked {
+        jid: String,
+        #[arg(long)]
+        locked: bool,
+    },
+    /// Transfer group ownership (irreversible).
+    TransferOwnership {
+        jid: String,
+        #[arg(long)]
+        member: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -817,13 +897,85 @@ pub fn dispatch_send(cli: &Cli, args: &SendArgs) -> anyhow::Result<()> {
 pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
     let (method, params) = match &cmd.action {
-        GroupsAction::Create { subject, members } => (
-            "groups.create",
-            serde_json::json!({"subject": subject, "members": members}),
-        ),
+        GroupsAction::Create { subject, members } => {
+            let member_specs: Vec<serde_json::Value> = members
+                .iter()
+                .map(|h| serde_json::json!({"handle": h, "is_admin": false}))
+                .collect();
+            (
+                "groups.create",
+                serde_json::json!({"subject": subject, "members": member_specs}),
+            )
+        }
         GroupsAction::List => ("groups.list", serde_json::Value::Null),
         GroupsAction::Info { jid } => ("groups.info", serde_json::json!({"jid": jid})),
         GroupsAction::Leave { jid } => ("groups.leave", serde_json::json!({"jid": jid})),
+        GroupsAction::Destroy { jid } => ("groups.destroy", serde_json::json!({"jid": jid})),
+        GroupsAction::ResolveInvite { code } => {
+            ("groups.resolve_invite", serde_json::json!({"code": code}))
+        }
+        GroupsAction::AddMember {
+            jid,
+            member,
+            is_admin,
+        } => (
+            "groups.add_member",
+            serde_json::json!({"jid": jid, "member": member, "is_admin": is_admin}),
+        ),
+        GroupsAction::AddMembers { jid, members } => {
+            let member_specs: Vec<serde_json::Value> = members
+                .iter()
+                .map(|h| serde_json::json!({"handle": h, "is_admin": false}))
+                .collect();
+            (
+                "groups.add_members",
+                serde_json::json!({"jid": jid, "members": member_specs}),
+            )
+        }
+        GroupsAction::RemoveMember { jid, member } => (
+            "groups.remove_member",
+            serde_json::json!({"jid": jid, "member": member}),
+        ),
+        GroupsAction::RemoveMembers { jid, members } => (
+            "groups.remove_members",
+            serde_json::json!({"jid": jid, "members": members}),
+        ),
+        GroupsAction::Promote { jid, member } => (
+            "groups.promote",
+            serde_json::json!({"jid": jid, "member": member}),
+        ),
+        GroupsAction::Demote { jid, member } => (
+            "groups.demote",
+            serde_json::json!({"jid": jid, "member": member}),
+        ),
+        GroupsAction::Ban {
+            jid,
+            member,
+            duration_seconds,
+        } => (
+            "groups.ban",
+            serde_json::json!({"jid": jid, "member": member, "duration_seconds": duration_seconds}),
+        ),
+        GroupsAction::ApproveJoin { jid, member } => (
+            "groups.approve_join",
+            serde_json::json!({"jid": jid, "member": member}),
+        ),
+        GroupsAction::Rename { jid, subject } => (
+            "groups.rename",
+            serde_json::json!({"jid": jid, "subject": subject}),
+        ),
+        GroupsAction::SetDescription { jid, description } => (
+            "groups.set_description",
+            serde_json::json!({"jid": jid, "description": description}),
+        ),
+        GroupsAction::SetLocked { jid, locked } => (
+            "groups.set_locked",
+            serde_json::json!({"jid": jid, "locked": locked}),
+        ),
+        GroupsAction::TransferOwnership { jid, member } => (
+            "groups.transfer_ownership",
+            serde_json::json!({"jid": jid, "member": member}),
+        ),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)

@@ -211,3 +211,195 @@ fn top_level_help_lists_audit_and_actions() {
         "top-level --help must list `actions`, got:\n{help}"
     );
 }
+
+// ---- Phase 6.12 Task 7: groups.* subcommands (14 new + 4 existing) ----
+//
+// `groups` was the pre-existing top-level command. Phase 6.12 extends it
+// with 14 new subcommands matching the new RPC methods: `destroy`,
+// `resolve-invite`, `add-member`, `add-members`, `remove-member`,
+// `remove-members`, `promote`, `demote`, `ban`, `approve-join`,
+// `rename`, `set-description`, `set-locked`, `transfer-ownership`.
+// These tests verify the clap surface (subcommand exists, flags parse)
+// without spawning a daemon.
+
+#[test]
+fn cli_groups_destroy_help() {
+    let help = cli_help(&["groups", "destroy"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups destroy --help must mention jid, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_resolve_invite_help() {
+    let help = cli_help(&["groups", "resolve-invite"]);
+    assert!(
+        help.contains("<CODE>") || help.contains("code"),
+        "groups resolve-invite --help must mention code, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_add_member_help() {
+    let help = cli_help(&["groups", "add-member"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups add-member --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups add-member --help must mention --member, got:\n{help}"
+    );
+    assert!(
+        help.contains("--is-admin"),
+        "groups add-member --help must mention --is-admin, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_add_members_help() {
+    let help = cli_help(&["groups", "add-members"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups add-members --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--members"),
+        "groups add-members --help must mention --members, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_remove_member_help() {
+    let help = cli_help(&["groups", "remove-member"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups remove-member --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups remove-member --help must mention --member, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_remove_members_help() {
+    let help = cli_help(&["groups", "remove-members"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups remove-members --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--members"),
+        "groups remove-members --help must mention --members, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_promote_help() {
+    let help = cli_help(&["groups", "promote"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups promote --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups promote --help must mention --member, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_demote_help() {
+    let help = cli_help(&["groups", "demote"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups demote --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups demote --help must mention --member, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_ban_help() {
+    let help = cli_help(&["groups", "ban"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups ban --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups ban --help must mention --member, got:\n{help}"
+    );
+    assert!(
+        help.contains("--duration-seconds"),
+        "groups ban --help must mention --duration-seconds, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_approve_join_help() {
+    let help = cli_help(&["groups", "approve-join"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups approve-join --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups approve-join --help must mention --member, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_rename_help() {
+    let help = cli_help(&["groups", "rename"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups rename --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--subject"),
+        "groups rename --help must mention --subject, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_set_description_help() {
+    let help = cli_help(&["groups", "set-description"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-description --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--description"),
+        "groups set-description --help must mention --description, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_set_locked_help() {
+    let help = cli_help(&["groups", "set-locked"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-locked --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--locked"),
+        "groups set-locked --help must mention --locked, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_transfer_ownership_help() {
+    let help = cli_help(&["groups", "transfer-ownership"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups transfer-ownership --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--member"),
+        "groups transfer-ownership --help must mention --member, got:\n{help}"
+    );
+}

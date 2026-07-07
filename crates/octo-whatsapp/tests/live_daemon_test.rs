@@ -1531,8 +1531,55 @@ async fn live_chain_i_bad_shape_session() {
             ),
             "bot_state should be a non-Connected variant, got {bot_state}"
         );
+
+        // Phase 6.12.4: connection-watcher flips DaemonPhase to
+        // SessionLost when any non-Connected lifecycle event fires
+        // (LoggedOut, Replaced, SessionExpired, Disconnected). For
+        // the boot-time "never reached Connected" case, the watcher
+        // may not yet have fired by the time we probe — so allow
+        // either "booting" or "session_lost" as valid. Either way the
+        // daemon must NOT be reporting "connected" or "shutting_down".
+        assert!(
+            matches!(phase.as_str(), "booting" | "session_lost"),
+            "phase should be booting|session_lost on bad-shape session, got {phase}"
+        );
+
         assert_eq!(s["session_valid"], false);
         assert_eq!(s["ready"], false);
+
+        // Phase 6.12.4: re-probe after a short wait. The connection
+        // watcher may transition from Disconnected → LoggedOut/
+        // Replaced/SessionExpired once the WA client emits its first
+        // real lifecycle event post-handshake. Either way the
+        // invariant (non-Connected variant) must hold.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let s2 = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+        let bot_state2 = s2["bot_state"].as_str().unwrap_or("?").to_string();
+        let phase2 = s2["phase"].as_str().unwrap_or("?").to_string();
+        let connected2 = s2["connected"].as_bool().unwrap_or(true);
+        tracing::info!(
+            "live_chain_i: re-probe phase={phase2} connected={connected2} bot_state={bot_state2}"
+        );
+        assert!(
+            !connected2,
+            "re-probe connected must remain false on bad-shape session"
+        );
+        assert!(
+            matches!(
+                bot_state2.as_str(),
+                "Disconnected"
+                    | "PairingQr"
+                    | "PairingCode"
+                    | "Replaced"
+                    | "LoggedOut"
+                    | "SessionExpired"
+            ),
+            "re-probe bot_state should be a non-Connected variant, got {bot_state2}"
+        );
+        assert!(
+            matches!(phase2.as_str(), "booting" | "session_lost"),
+            "re-probe phase should be booting|session_lost, got {phase2}"
+        );
 
         // Liveness probe — daemon process is up, even when bot is dead.
         let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();

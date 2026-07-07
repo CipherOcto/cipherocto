@@ -1,10 +1,9 @@
 //! Long-lived daemon. Owns the adapter, the unix-socket server, the
 //! event router stub, and the shared stoolap handle.
 
+use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
-
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -164,7 +163,7 @@ struct DaemonInner {
     /// path); awaitable during shutdown so the watcher doesn't outlive
     /// the daemon. `None` when no adapter is bound — typical during
     /// very early boot or hermetic tests that never bind.
-    connection_watcher: TokioMutex<Option<tokio::task::JoinHandle<()>>>,
+    connection_watcher: SyncMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -307,7 +306,7 @@ impl DaemonHandle {
         // multi-bind would leak old tasks — documented limitation).
         // The `blocking_lock` here is fine because the call site is a
         // synchronous setup function, not on a hot RPC path.
-        let mut slot = self.inner.connection_watcher.blocking_lock();
+        let mut slot = self.inner.connection_watcher.lock();
         if let Some(prev) = slot.take() {
             prev.abort();
         }
@@ -602,7 +601,7 @@ impl Daemon {
                 is_ready,
                 started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
                 http_client,
-                connection_watcher: TokioMutex::new(None),
+                connection_watcher: SyncMutex::new(None),
             }),
         }
     }
@@ -923,9 +922,7 @@ fn load_initial_rules_from_disk(
 fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
     // `Event::Connected(_)`, `Event::LoggedOut(LoggedOutCause { ... })`, ...
     let rest = raw.strip_prefix("Event::")?;
-    let ident = rest
-        .split(|c: char| c == '(' || c == ' ' || c == '{' || c == '<')
-        .next()?;
+    let ident = rest.split(['(', ' ', '{', '<']).next()?;
     match ident {
         // `phase_changed = true` means the caller should also flip
         // `DaemonPhase` (Connected ↔ SessionLost). Pairing/PairingQr

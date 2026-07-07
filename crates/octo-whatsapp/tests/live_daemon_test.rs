@@ -1121,3 +1121,115 @@ async fn live_chain_g_tokens() {
     //    Warn-skip is fine: we just want to confirm the call shape.
     let _ = best_effort(fix, "security.list_tokens", json!({})).await;
 }
+
+// ── Chain I — CLI binary dispatch ─────────────────────────────────
+//
+// Drives the real `octo-whatsapp` CLI binary against the live daemon
+// socket and asserts each top-level subcommand exits 0. The point is
+// to confirm that the clap tree wires correctly to the JSON-RPC
+// dispatch layer for the full Phase 1+2+4+5 surface.
+//
+// Throttling: each subprocess connect→RPC→exit costs ~50ms, and the
+// `cli_exec` helper invokes `cargo_bin` which is a single-shot path
+// (no cargo metadata round-trip inside the test runner). We use the
+// `inter_call_delay_for` throttle to stay polite on the live socket
+// but skip it for the 4 known-idempotent commands (`version`,
+// `status`, `health`, `capabilities`) so the test stays fast.
+//
+// CLI flag corrections from the plan (verified against
+// `crates/octo-whatsapp/src/cli.rs`):
+// - `envelope encode` takes `--file <PATH>` (reads bytes from disk),
+//   not `--bytes <BASE64>`. We write a tiny tmp file.
+// - `media info` takes a POSITIONAL `media_ref_token`, not `--id`.
+// - `domain compute-hash` takes a POSITIONAL `group_jid`, not
+//   `--payload`.
+//
+// Skipped from the plan:
+// - `send text --jid self --text ...`: clap arg shape varies per
+//   send kind; per T4 deviations, parameter shapes are uncertain.
+// - `cli_unknown_subcommand`: already covered by the hermetic
+//   `cli_unknown_subcommand.rs` test.
+#[tokio::test]
+async fn live_cli_dispatch() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    // Pre-create an envelope input file (3 bytes "abc") so the
+    // `envelope encode --file <path>` call has something to encode.
+    let envelope_bytes: &[u8] = b"abc";
+    let envelope_path = fix.tmp.path().join("envelope-input.bin");
+    std::fs::write(&envelope_path, envelope_bytes).expect("write envelope input");
+
+    // Each entry: (test_name, cli_argv_pieces_after_socket_and_name).
+    // `--socket` is prepended in `cli_exec` so it doesn't repeat
+    // here. The CLI resolves the socket path via
+    // `cli::resolve_socket_path(cli)` (src/cli.rs:593), preferring
+    // `--socket` over `$XDG_RUNTIME_DIR/octo-whatsapp-{name}.sock`.
+    let calls: &[(&str, &[&str])] = &[
+        ("version", &["version"]),
+        ("status", &["status"]),
+        ("health", &["health"]),
+        ("capabilities", &["capabilities"]),
+        ("groups_list", &["groups", "list"]),
+        ("messages_list", &["messages", "list", "--peer", "self"]),
+        ("chats_list", &["chats", "list"]),
+        (
+            "envelope_encode",
+            &[
+                "envelope",
+                "encode",
+                "--file",
+                envelope_path.to_str().expect("utf8 path"),
+            ],
+        ),
+        ("media_info", &["media", "info", "x"]),
+        ("domain_hash", &["domain", "compute-hash", "x"]),
+        ("rules_list", &["rules", "list"]),
+        ("triggers_list", &["triggers", "list"]),
+        ("events_list", &["events", "list"]),
+        ("clients_list", &["clients", "list"]),
+        ("methods_list", &["methods", "list"]),
+        ("tokens_list", &["tokens", "list"]),
+        ("audit_query", &["audit", "tail"]),
+    ];
+
+    for (name, args) in calls {
+        // Local-only RPCs skip the inter-call throttle. Everything
+        // else (groups.list, messages.list, etc.) hits the live
+        // adapter, so we throttle to be polite.
+        inter_call_delay_for(name).await;
+        let (code, stdout, stderr) = cli_exec(fix, args);
+        assert_eq!(
+            code, 0,
+            "cli {name} failed (exit {code}): stderr={stderr} stdout={stdout}"
+        );
+    }
+}
+
+/// Spawn the `octo-whatsapp` CLI binary with the live fixture's
+/// socket, capture (exit, stdout, stderr), and return.
+///
+/// Resolves the binary via `env!("CARGO_BIN_EXE_octo-whatsapp")`
+/// (set by cargo at build time for integration tests in the same
+/// crate). Sets `XDG_RUNTIME_DIR` to the fixture tmp dir so the
+/// default-resolve branch in `cli::resolve_socket_path` would also
+/// land on the right socket — belt-and-suspenders with `--socket`.
+/// Strips `OCTO_WHATSAPP_BEARER` so the hermetic daemon's
+/// `hermetic_bypass` flag is what gates auth (no token needed).
+fn cli_exec(fix: &LiveFixture, args: &[&str]) -> (i32, String, String) {
+    let sock = fix.socket.to_string_lossy().into_owned();
+    let bin = env!("CARGO_BIN_EXE_octo-whatsapp");
+    let out = std::process::Command::new(bin)
+        .env("XDG_RUNTIME_DIR", fix.tmp.path())
+        .env_remove("OCTO_WHATSAPP_BEARER")
+        .args(args)
+        .arg("--socket")
+        .arg(&sock)
+        .output()
+        .expect("spawn octo-whatsapp");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}

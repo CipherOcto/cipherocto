@@ -67,6 +67,7 @@ mod tests {
             media_buffer: MediaBufferConfig::default(),
             events: EventsConfig::default(),
             security: SecurityConfig::default(),
+            observability: Default::default(),
         };
         Daemon::new(cfg).handle()
     }

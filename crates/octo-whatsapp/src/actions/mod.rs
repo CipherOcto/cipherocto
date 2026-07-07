@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::events::InboundEvent;
+use crate::observability::metrics::Metrics;
 use crate::rules::ActionSpec;
 
 pub mod agent_run;
@@ -37,6 +38,10 @@ pub struct ActionContext {
     pub event: Arc<InboundEvent>,
     pub caller_uid: String,
     pub now_ms: i64,
+    /// Phase 5 Part B: optional Prometheus registry. When set,
+    /// `dispatch()` increments `outbound_messages_total{kind,result}`.
+    /// Existing callers (tests) pass `None`.
+    pub metrics: Option<Arc<Metrics>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +89,18 @@ pub async fn dispatch(spec: &ActionSpec, ctx: &ActionContext) -> Result<ActionRe
         ActionSpec::Escalate { target, reason } => escalate::execute(target, reason, ctx).await,
     };
     let latency_ms = start.elapsed().as_millis() as u64;
+    // Phase 5 Part B: increment outbound metric once per dispatch.
+    if let Some(m) = &ctx.metrics {
+        let kind = match spec {
+            ActionSpec::Webhook { .. } => "webhook",
+            ActionSpec::AgentRun { .. } => "agent_run",
+            ActionSpec::Shell { .. } => "shell",
+            ActionSpec::McpNotify { .. } => "mcp_notify",
+            ActionSpec::Escalate { .. } => "escalate",
+        };
+        let result_label = if res.is_ok() { "ok" } else { "error" };
+        m.inc_outbound(kind, result_label);
+    }
     match res {
         Ok(()) => Ok(ActionResult {
             status: "ok".into(),
@@ -118,6 +135,7 @@ mod tests {
             }),
             caller_uid: "test".into(),
             now_ms: 0,
+            metrics: None,
         }
     }
 

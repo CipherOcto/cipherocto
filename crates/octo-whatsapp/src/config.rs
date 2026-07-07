@@ -17,6 +17,8 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
     #[error("invalid name {0:?}: must match [a-z0-9_-]+")]
     InvalidName(String),
+    #[error("invalid observability config: {0}")]
+    InvalidObservability(String),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -75,6 +77,10 @@ pub struct WhatsAppRuntimeConfig {
     /// Phase 4: security/audit knobs. All optional with safe defaults.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Phase 5 Part B: Prometheus + /health + /ready + OTLP knobs.
+    /// All optional with safe defaults (off / loopback-only).
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 /// Phase 4: security-related runtime configuration.
@@ -142,6 +148,107 @@ fn default_grace_period_ms() -> i64 {
     60_000
 }
 
+/// Phase 5 Part B: Prometheus + HTTP health/ready + OTLP tracing knobs.
+///
+/// Each sub-section is optional; nothing is enabled by default.
+/// Operators enable the surfaces they want (metrics scrape via the
+/// HTTP `/metrics` endpoint; readiness via `/ready`; OTLP via the
+/// `[observability.tracing]` block).
+///
+/// **Loopback-only binding:** `health.http_listen` MUST resolve to a
+/// loopback IP. Non-loopback binds are rejected at startup. Plan §A7.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ObservabilityConfig {
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub health: HealthConfig,
+    #[serde(default)]
+    pub tracing: TracingConfig,
+}
+
+/// `[observability.metrics]` — label-hash secret + optional
+/// bearer-token ENV var for the `/metrics` HTTP endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MetricsConfig {
+    /// Hex-encoded HMAC secret used to hash high-cardinality labels.
+    /// Operators may set this to a 32-byte hex string; defaults to
+    /// random-on-boot bytes. **Rotating changes all label hashes**
+    /// — Prometheus series reappear with new label values, doubling
+    /// cardinality briefly.
+    #[serde(default)]
+    pub label_hash_secret: Option<String>,
+    /// Name of the env var holding the bearer token for the
+    /// `/metrics` HTTP endpoint. The env-var value is the literal
+    /// token (any length, kept opaque to the daemon). When the env
+    /// var is unset AND `health.bearer_required = false`, `/metrics`
+    /// is reachable without a bearer — this is the hermetic-test
+    /// default; production deployments MUST set the env var.
+    #[serde(default = "default_metrics_bearer_token_env")]
+    pub bearer_token_env: String,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            label_hash_secret: None,
+            bearer_token_env: default_metrics_bearer_token_env(),
+        }
+    }
+}
+
+/// `[observability.health]` — HTTP `/health`, `/ready`, `/metrics`.
+///
+/// `http_listen` is the only knob. When `None`, the HTTP server is
+/// not started and `health.get` reports the operator-decided state.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HealthConfig {
+    /// Loopback bind address (`<ip>:<port>`). Default is
+    /// `127.0.0.1:7778`. The daemon refuses to start if the
+    /// resolved address is not loopback (plan §A7).
+    #[serde(default = "default_health_http_listen")]
+    pub http_listen: Option<String>,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            http_listen: default_health_http_listen(),
+        }
+    }
+}
+
+/// `[observability.tracing]` — OTLP exporter config.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TracingConfig {
+    /// OTLP gRPC endpoint (e.g. `http://localhost:4317`). `None`
+    /// means tracing export is disabled.
+    #[serde(default)]
+    pub otlp_endpoint: Option<String>,
+    /// OTLP service name. Default `octo-whatsapp`.
+    #[serde(default = "default_tracing_service_name")]
+    pub service_name: String,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            otlp_endpoint: None,
+            service_name: default_tracing_service_name(),
+        }
+    }
+}
+
+fn default_metrics_bearer_token_env() -> String {
+    "OCTO_WHATSAPP_METRICS_TOKEN".to_string()
+}
+fn default_health_http_listen() -> Option<String> {
+    Some("127.0.0.1:7778".to_string())
+}
+fn default_tracing_service_name() -> String {
+    "octo-whatsapp".to_string()
+}
+
 impl Default for WhatsAppRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -152,6 +259,7 @@ impl Default for WhatsAppRuntimeConfig {
             media_buffer: MediaBufferConfig::default(),
             events: EventsConfig::default(),
             security: SecurityConfig::default(),
+            observability: ObservabilityConfig::default(),
         }
     }
 }
@@ -235,6 +343,28 @@ impl WhatsAppRuntimeConfig {
                 "security.grace_period_ms must be in 1000..=300000 (got {})",
                 self.security.grace_period_ms
             )));
+        }
+        // Phase 5 Part B: validate the observability config —
+        // strictly enforce loopback-only binds for the health server.
+        if let Some(addr_str) = self.observability.health.http_listen.as_deref() {
+            let addr: std::net::SocketAddr = addr_str.parse().map_err(|e| {
+                ConfigError::InvalidObservability(format!(
+                    "observability.health.http_listen {addr_str:?} is not a valid socket address: {e}"
+                ))
+            })?;
+            if !addr.ip().is_loopback() {
+                return Err(ConfigError::InvalidObservability(format!(
+                    "observability.health.http_listen {addr} is not loopback; refusing to start \
+                     (health surfaces must be loopback-only, plan §A7)"
+                )));
+            }
+        }
+        if let Some(endpoint) = self.observability.tracing.otlp_endpoint.as_deref() {
+            if endpoint.is_empty() {
+                return Err(ConfigError::InvalidObservability(
+                    "observability.tracing.otlp_endpoint cannot be an empty string".into(),
+                ));
+            }
         }
         Ok(())
     }

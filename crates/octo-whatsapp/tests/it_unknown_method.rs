@@ -26,6 +26,7 @@ async fn unknown_method_returns_method_not_found_with_api_version() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

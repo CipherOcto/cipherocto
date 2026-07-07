@@ -21,6 +21,7 @@ async fn mcp_initialize_returns_protocol_version_2025_06_18() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -98,6 +99,7 @@ async fn mcp_tools_list_advertises_full_surface() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

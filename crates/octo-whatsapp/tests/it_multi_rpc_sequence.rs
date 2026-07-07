@@ -42,6 +42,7 @@ async fn multi_rpc_sequence_on_single_connection() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -72,7 +73,7 @@ async fn multi_rpc_sequence_on_single_connection() {
     .await
     .unwrap();
 
-    assert_eq!(results.0["result"]["daemon_api_version"], "1.0.0+phase4");
+    assert_eq!(results.0["result"]["daemon_api_version"], "1.0.0+phase5");
     assert_eq!(results.1["result"]["ok"], true);
     assert_eq!(results.2["result"]["ok"], true);
 

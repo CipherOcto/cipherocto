@@ -22,6 +22,7 @@ async fn cli_send_image_without_adapter_reports_not_connected() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

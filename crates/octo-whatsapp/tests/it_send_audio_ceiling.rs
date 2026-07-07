@@ -21,6 +21,7 @@ async fn send_audio_one_byte_over_ceiling_is_rejected() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

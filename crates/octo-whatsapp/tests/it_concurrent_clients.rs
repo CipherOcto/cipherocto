@@ -27,6 +27,7 @@ async fn concurrent_clients_each_get_correct_responses() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -65,7 +66,7 @@ async fn concurrent_clients_each_get_correct_responses() {
                 reader.read_line(&mut resp_line).unwrap();
                 let resp: serde_json::Value = serde_json::from_str(resp_line.trim()).unwrap();
                 assert_eq!(resp["id"], client_id * 100 + call_id);
-                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase4");
+                assert_eq!(resp["result"]["daemon_api_version"], "1.0.0+phase5");
             }
         }));
     }

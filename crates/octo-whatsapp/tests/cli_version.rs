@@ -4,7 +4,7 @@
 //! Pattern: spawn a `Daemon` in a tmpdir, wait for the socket to appear,
 //! then drive the actual `octo-whatsapp` binary against that socket via
 //! `assert_cmd`. Asserts the JSON-formatted stdout contains the Phase 1
-//! marker `1.0.0+phase1`.
+//! marker `1.0.0+phase5`.
 
 use std::time::Duration;
 
@@ -25,6 +25,7 @@ async fn cli_version_reads_daemon() {
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
         security: SecurityConfig::default(),
+        observability: Default::default(),
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();
@@ -63,7 +64,7 @@ async fn cli_version_reads_daemon() {
     let output = assert_output.get_output().clone();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("1.0.0+phase4"),
+        stdout.contains("1.0.0+phase5"),
         "expected daemon_api_version marker in stdout, got: {stdout}"
     );
     assert!(

@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 
 use super::trigger::{RunRecord, RunnerSpec, Trigger};
 use crate::events::InboundEvent;
+use crate::observability::metrics::Metrics;
 use crate::rules::canonical_etag;
 use sha2::{Digest, Sha256};
 
@@ -78,6 +79,10 @@ pub struct TriggerStore {
     state: ArcSwap<Triggerset>,
     last_swap_generation: AtomicU64,
     last_fire_ms: Mutex<HashMap<String, i64>>,
+    /// Phase 5 Part B: optional Prometheus hook. When set, `run()`
+    /// increments `trigger_runs_total{trigger_id=hash,result}` on
+    /// every invocation outcome.
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl TriggerStore {
@@ -86,7 +91,14 @@ impl TriggerStore {
             state: ArcSwap::from_pointee(Triggerset::default()),
             last_swap_generation: AtomicU64::new(0),
             last_fire_ms: Mutex::new(HashMap::new()),
+            metrics: None,
         }
+    }
+
+    /// Phase 5 Part B: attach the Prometheus registry. Idempotent.
+    pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
+        self.metrics = Some(m);
+        self
     }
 
     pub fn swap_generation(&self) -> u64 {
@@ -266,13 +278,16 @@ impl TriggerStore {
         _event: &InboundEvent,
         now_ms: i64,
     ) -> Result<RunRecord, TriggerError> {
-        let t = self
-            .get(id)
-            .ok_or(TriggerError::NotFound { id: id.to_string() })?;
+        let t = self.get(id).ok_or_else(|| {
+            self.record_trigger_metric(id, "error");
+            TriggerError::NotFound { id: id.to_string() }
+        })?;
         if !t.is_fireable() {
+            self.record_trigger_metric(id, "error");
             return Err(TriggerError::Disabled { id: id.to_string() });
         }
         if !self.check_fireable(id, now_ms) {
+            self.record_trigger_metric(id, "error");
             return Err(TriggerError::ExecFailed("trigger in cooldown".into()));
         }
         // Synthetic record for Phase 4 Part B. Real dispatch comes
@@ -288,7 +303,16 @@ impl TriggerStore {
             bytes_stderr: 0,
         };
         self.record_run(id, record.clone())?;
+        self.record_trigger_metric(id, "ok");
         Ok(record)
+    }
+
+    /// Phase 5 Part B: helper to centralize the metric increments
+    /// without peppering `if let Some(m) = ...` everywhere.
+    fn record_trigger_metric(&self, id: &str, result: &str) {
+        if let Some(m) = &self.metrics {
+            m.inc_trigger_run(id, result);
+        }
     }
 
     fn replace(&self, new_trigger: Trigger) -> Result<Arc<Trigger>, TriggerError> {

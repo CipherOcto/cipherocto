@@ -39,6 +39,7 @@ mod tests {
             }),
             caller_uid: "test".into(),
             now_ms: 0,
+            metrics: None,
         }
     }
 

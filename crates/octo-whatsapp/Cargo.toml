@@ -70,6 +70,21 @@ parking_lot = { workspace = true }
 # `load_grace` even in non-test builds.
 tempfile = "3"
 
+# Phase 5 Part B: observability — Prometheus registry + axum HTTP
+# health/ready/metrics server + HMAC label hashing.
+prometheus = { version = "0.13", default-features = false }
+axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+hmac       = "0.12"
+
+# Phase 5 Part B: optional OTLP tracing. Off by default; enable with
+# `--features otlp`. The library compiles cleanly with the feature
+# DISABLED — `observability/tracing.rs` is a no-op stub when `otlp`
+# is absent.
+opentelemetry         = { version = "0.27", optional = true }
+opentelemetry-otlp    = { version = "0.27", optional = true, features = ["grpc-tonic"] }
+opentelemetry_sdk     = { version = "0.27", optional = true, features = ["rt-tokio"] }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
 [features]
 default       = []
 # Test helpers: enables the `MockAdapter` in `crate::test_mock_adapter`
@@ -83,6 +98,15 @@ test-helpers = []
 live-whatsapp = ["octo-adapter-whatsapp/live-whatsapp"]
 landlock       = ["dep:landlock"]                          # Linux-only sandbox
 seccomp        = ["dep:seccompiler"]                       # Linux-only sandbox
+
+# Phase 5 Part B: enable OTLP tracing exporter build.
+# Off in default `cargo build` per plan §A8.
+otlp = [
+  "dep:opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
+  "dep:tracing-opentelemetry",
+] # placeholder for future expansion
 
 [dev-dependencies]
 tempfile   = "3"

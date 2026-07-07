@@ -26,6 +26,7 @@ pub mod jids;
 pub mod limits;
 pub mod mcp_server;
 pub mod media_buffer;
+pub mod observability;
 pub mod onboarding;
 pub mod rules;
 pub mod security;

@@ -1,6 +1,7 @@
 //! Long-lived daemon. Owns the adapter, the unix-socket server, the
 //! event router stub, and the shared stoolap handle.
 
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -12,6 +13,7 @@ use crate::config::WhatsAppRuntimeConfig;
 use crate::events_persister::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
+use crate::observability::metrics::Metrics;
 use crate::rules::{MutationRateLimiter, RuleStore};
 use crate::security::TokenStore;
 use crate::triggers::TriggerStore;
@@ -80,6 +82,22 @@ struct DaemonInner {
     /// (best-effort: missing env var leaves the store empty) and
     /// persists grace entries to `[security] grace_path`.
     tokens: Arc<TokenStore>,
+    /// Phase 5 Part B: Prometheus registry (14 metrics). Cheap to
+    /// share via `Arc`; handlers increment counters via the helper
+    /// accessors below.
+    metrics: Arc<Metrics>,
+    /// Phase 5 Part B: liveness flag for HTTP `/health`. Set true
+    /// after the daemon has finished the bind phase + spawned the
+    /// IPC server; cleared on shutdown. Read by the axum
+    /// `/health` route.
+    is_live: Arc<AtomicBool>,
+    /// Phase 5 Part B: readiness flag for HTTP `/ready`. Reflects
+    /// `connected && session_valid`. Set/cleared by the connection
+    /// watcher at the same boundary as `DaemonPhase`.
+    is_ready: Arc<AtomicBool>,
+    /// Phase 5 Part B: Unix-epoch millis when the daemon started —
+    /// used for `daemon_uptime_seconds` updates.
+    started_at_unix_ms: AtomicI64,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -164,6 +182,28 @@ impl DaemonHandle {
     pub async fn set_phase(&self, p: DaemonPhase) {
         let mut g = self.inner.phase.write().unwrap_or_else(|p| p.into_inner());
         *g = p;
+        // Phase 5 Part B: keep `bot_state` and `is_live` in sync
+        // with the canonical phase. Cheap & instantaneous.
+        let state_label = match p {
+            DaemonPhase::Booting => "booting",
+            DaemonPhase::Connected => "connected",
+            DaemonPhase::SessionLost => "reconnecting",
+            DaemonPhase::ShuttingDown => "shutting_down",
+        };
+        self.inner.metrics.set_bot_state(state_label);
+    }
+
+    /// Phase 5 Part B: set the readiness flag (HTTP `/ready`).
+    /// True when the adapter is bound AND session_valid.
+    pub fn set_ready(&self, ready: bool) {
+        self.inner.is_ready.store(ready, Ordering::SeqCst);
+        self.inner.metrics.set_connected(ready);
+    }
+
+    /// Phase 5 Part B: set the liveness flag (HTTP `/health`).
+    /// True while the process is up and the IPC listener is bound.
+    pub fn set_live(&self, live: bool) {
+        self.inner.is_live.store(live, Ordering::SeqCst);
     }
 
     /// Test/feature helper for binding a mock adapter. Sync write —
@@ -226,6 +266,29 @@ impl DaemonHandle {
         &self.inner.tokens
     }
 
+    /// Phase 5 Part B: Prometheus metrics registry. Handlers use
+    /// this to increment counters; the HTTP `/metrics` endpoint
+    /// renders from the same registry.
+    pub fn metrics(&self) -> &Arc<Metrics> {
+        &self.inner.metrics
+    }
+
+    /// Phase 5 Part B: HTTP `/health` liveness flag.
+    pub fn is_live_flag(&self) -> Arc<AtomicBool> {
+        self.inner.is_live.clone()
+    }
+
+    /// Phase 5 Part B: HTTP `/ready` readiness flag.
+    pub fn is_ready_flag(&self) -> Arc<AtomicBool> {
+        self.inner.is_ready.clone()
+    }
+
+    /// Phase 5 Part B: Unix-epoch millis at daemon boot — used to
+    /// drive `daemon_uptime_seconds`.
+    pub fn started_at_unix_ms(&self) -> i64 {
+        self.inner.started_at_unix_ms.load(Ordering::Relaxed)
+    }
+
     /// Phase 3: build an `EventsRouter` that subscribes to the
     /// bound adapter's `raw_event_tx` and pipes events into this
     /// handle's `events_buffer`. Returns `None` if no adapter is
@@ -267,11 +330,20 @@ impl std::fmt::Debug for Daemon {
 }
 
 impl Daemon {
+    /// Build a new `Daemon` from a validated [`WhatsAppRuntimeConfig`].
     pub fn new(config: WhatsAppRuntimeConfig) -> Self {
         Self {
             config,
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Phase 5 Part B: canonical API version string. Bumped from
+    /// `1.0.0+phase4` when Part A landed. The phase suffix
+    /// communicates to operators which observability/security
+    /// surfaces are guaranteed to exist.
+    pub const fn version() -> &'static str {
+        "1.0.0+phase5"
     }
 
     pub fn handle(&self) -> DaemonHandle {
@@ -280,13 +352,31 @@ impl Daemon {
             self.config.media_buffer.root.clone(),
         );
         let events_buffer = EventsBuffer::new(self.config.events.max_rows);
+        // Phase 5 Part B: Prometheus registry materialized first so
+        // we can attach it to AuditLog / RuleStore / TriggerStore.
+        let label_secret = self
+            .config
+            .observability
+            .metrics
+            .label_hash_secret
+            .as_deref()
+            .map(|s| s.as_bytes().to_vec())
+            .unwrap_or_else(random_label_secret);
+        let metrics = Metrics::new(&label_secret).expect("Metrics::new is infallible in practice");
+        // Initial bot_state = booting so the metric has a sample even
+        // before the first `set_phase(Connected)`.
+        metrics.set_bot_state("booting");
+        metrics.set_connected(false);
         let audit_log = AuditLog::new(
             self.config.security.audit_max_rows,
             self.config.security.audit_anchor_every,
+        )
+        .with_metrics(metrics.clone());
+        let rule_store = Arc::new(
+            RuleStore::new(self.config.security.auto_approve_rules).with_metrics(metrics.clone()),
         );
-        let rule_store = Arc::new(RuleStore::new(self.config.security.auto_approve_rules));
         let mutation_rl = Arc::new(MutationRateLimiter::new(10)); // 10/min per caller
-        let trigger_store = Arc::new(TriggerStore::new());
+        let trigger_store = Arc::new(TriggerStore::new().with_metrics(metrics.clone()));
         // Phase 5 Part A: TokenStore. Default grace_path is
         // `$data_dir/tokens/grace.json` if the user did not override.
         let grace_path = self
@@ -304,6 +394,9 @@ impl Daemon {
         // warning via the descriptor's `label`.
         let _ = tokens.load_from_env(&self.config.security.bearer_token_env, Some("bootstrap"));
         let _ = tokens.load_grace();
+        let started_at_unix_ms = unix_epoch_ms_now();
+        let is_live = Arc::new(AtomicBool::new(false));
+        let is_ready = Arc::new(AtomicBool::new(false));
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
@@ -318,6 +411,10 @@ impl Daemon {
                 triggers: trigger_store,
                 audit_log: Arc::new(audit_log),
                 tokens,
+                metrics,
+                is_live,
+                is_ready,
+                started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
             }),
         }
     }
@@ -343,12 +440,82 @@ impl Daemon {
             tokio::spawn(async move { server.serve(handle, registry, cancel).await })
         };
 
+        // Phase 5 Part B: spin up the HTTP health server (if
+        // configured) + flip `is_live = true` once the daemon has
+        // both the unix socket bound AND, optionally, an HTTP
+        // surface answering.
+        let _health_handle = match self.config.observability.health.http_listen.as_deref() {
+            Some(addr_str) => {
+                let addr: std::net::SocketAddr = addr_str.parse().map_err(|e| {
+                    anyhow::anyhow!("observability.health.http_listen {addr_str:?} invalid: {e}")
+                })?;
+                let bearer = crate::observability::health_server::BearerConfig::from_env_or_config(
+                    &self.config.observability.metrics.bearer_token_env,
+                    self.config.security.bearer_required,
+                );
+                let is_live = handle.is_live_flag();
+                let is_ready = handle.is_ready_flag();
+                let metrics = handle.metrics().clone();
+                let cancel_clone = cancel.clone();
+                let bind_result = crate::observability::run_health_server(
+                    addr,
+                    metrics,
+                    is_ready,
+                    is_live,
+                    bearer,
+                    cancel_clone,
+                )
+                .await;
+                match bind_result {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "daemon: health server failed to start; continuing without /health/ready/metrics"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        handle.set_live(true);
+        info!("daemon: liveness set; server accepting");
+
         cancel.cancelled().await;
         info!("daemon: cancel observed; waiting for server to drain");
+        handle.set_live(false);
+        handle.set_ready(false);
         let _ = server_task.await;
         info!("daemon: exited");
         Ok(())
     }
+}
+
+/// Generate a per-process random 32-byte secret for label-hash
+/// isolation across restart cycles. Operationally this means label
+/// hashes change across restarts (intended: bounded cardinality is
+/// the only invariant; operators pinning `label_hash_secret` get a
+/// stable secret instead).
+fn random_label_secret() -> Vec<u8> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let mut bytes = [0u8; 32];
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id() as u128;
+    bytes[..16].copy_from_slice(&nanos.to_le_bytes());
+    bytes[16..].copy_from_slice(&pid.to_le_bytes());
+    bytes.to_vec()
+}
+
+fn unix_epoch_ms_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Tests live in their own file so the unit-test surface stays narrow.

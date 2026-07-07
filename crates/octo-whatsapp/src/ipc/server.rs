@@ -283,6 +283,10 @@ async fn handle_conn(
                 &backoff,
                 peer_ip,
             ) {
+                // Phase 5 Part B: surface bearer failures to
+                // `auth_failed_total{ip=...}`. Unix-socket clients all
+                // map to loopback from the daemon's POV.
+                handle.metrics().inc_auth_failed(&peer_ip.to_string());
                 let resp = RpcResponse {
                     id: req.id,
                     result: None,
@@ -295,7 +299,15 @@ async fn handle_conn(
             }
         }
 
+        let method_for_metric = req.method.clone();
+        let dispatch_start = std::time::Instant::now();
         let resp = registry.dispatch(handle.clone(), req).await;
+        // Phase 5 Part B: per-method RPC latency histogram. The
+        // label is HMAC-hashed inside `observe_rpc_latency`.
+        let latency_secs = dispatch_start.elapsed().as_secs_f64();
+        handle
+            .metrics()
+            .observe_rpc_latency(&method_for_metric, latency_secs);
         let mut s = serde_json::to_string(&resp)?;
         s.push('\n');
         write_half.write_all(s.as_bytes()).await?;

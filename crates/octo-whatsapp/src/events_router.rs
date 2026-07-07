@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::events::{EventEnvelope, InboundEvent};
 use crate::events_persister::EventsBuffer;
+use crate::observability::metrics::Metrics;
 
 /// Per-sink mpsc channel + Lagged counter. `EventsSink` is the
 /// producer-side handle; `EventsSubscriber` is the consumer-side
@@ -90,6 +91,9 @@ pub struct EventsRouter {
     buffer: Arc<EventsBuffer>,
     sinks: parking_lot::Mutex<Vec<Arc<EventsSink>>>,
     cancel: CancellationToken,
+    /// Phase 5 Part B: optional Prometheus hook. Increments
+    /// `inbound_events_total{kind=hash}` per parsed event.
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl std::fmt::Debug for EventsRouter {
@@ -97,6 +101,7 @@ impl std::fmt::Debug for EventsRouter {
         f.debug_struct("EventsRouter")
             .field("sinks", &self.sink_count())
             .field("total_lagged", &self.total_lagged())
+            .field("metrics", &self.metrics.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -110,6 +115,7 @@ impl EventsRouter {
             buffer,
             sinks: parking_lot::Mutex::new(Vec::new()),
             cancel,
+            metrics: None,
         })
     }
 
@@ -120,7 +126,14 @@ impl EventsRouter {
             buffer,
             sinks: parking_lot::Mutex::new(Vec::new()),
             cancel,
+            metrics: None,
         }
+    }
+
+    /// Phase 5 Part B: attach the Prometheus registry. Idempotent.
+    pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
+        self.metrics = Some(m);
+        self
     }
 
     /// Register a new sink. The returned `EventsSubscriber` is the
@@ -168,6 +181,10 @@ impl EventsRouter {
                     match recv {
                         Ok(raw) => {
                             let ev = parse_or_unknown(&raw, 0, 0);
+                            if let Some(m) = &self.metrics {
+                                let kind = event_kind_label(&ev);
+                                m.inc_inbound_event(&kind);
+                            }
                             self.buffer.push(ev.clone());
                             self.fanout(ev);
                         }
@@ -219,6 +236,22 @@ fn parse_or_unknown(raw: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent
         ts_unix_ms,
         ts_mono_ns,
     })
+}
+
+/// Phase 5 Part B: stable per-event-kind string used as the
+/// `inbound_events_total{kind}` label pre-hash.
+fn event_kind_label(ev: &InboundEvent) -> String {
+    match ev {
+        InboundEvent::Message { .. } => "message".into(),
+        InboundEvent::Reaction { .. } => "reaction".into(),
+        InboundEvent::Receipt { .. } => "receipt".into(),
+        InboundEvent::GroupChange { .. } => "group_change".into(),
+        InboundEvent::Presence { .. } => "presence".into(),
+        InboundEvent::Connection { .. } => "connection".into(),
+        InboundEvent::Call { .. } => "call".into(),
+        InboundEvent::Story { .. } => "story".into(),
+        InboundEvent::Unknown { .. } => "unknown".into(),
+    }
 }
 
 #[cfg(test)]

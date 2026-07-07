@@ -20,10 +20,13 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::observability::metrics::Metrics;
 
 /// Single audit row. Persisted shape is the in-memory record plus a
 /// computed `this_hash`; the disk anchor file appends the same shape.
@@ -73,6 +76,10 @@ pub struct AuditLog {
     truncated_total: AtomicU64,
     anchor_every: u64,
     anchor_path: Option<PathBuf>,
+    /// Phase 5 Part B: optional Prometheus hook. When set,
+    /// `record()` increments `audit_rows_total`. Stays `None` in
+    /// unit tests for hermetic simplicity.
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl AuditLog {
@@ -84,11 +91,20 @@ impl AuditLog {
             truncated_total: AtomicU64::new(0),
             anchor_every: anchor_every.max(1),
             anchor_path: None,
+            metrics: None,
         }
     }
 
     pub fn with_anchor_path(mut self, path: PathBuf) -> Self {
         self.anchor_path = Some(path);
+        self
+    }
+
+    /// Phase 5 Part B: attach the Prometheus registry. Increments
+    /// `audit_rows_total` per record. Idempotent — calling twice
+    /// replaces the previous handle.
+    pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
+        self.metrics = Some(m);
         self
     }
 
@@ -140,6 +156,9 @@ impl AuditLog {
         }
         if seq_no.is_multiple_of(self.anchor_every) {
             self.write_anchor(&entry);
+        }
+        if let Some(m) = &self.metrics {
+            m.inc_audit_row();
         }
         seq_no
     }

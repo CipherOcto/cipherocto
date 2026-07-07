@@ -13,6 +13,7 @@ use super::etag::canonical_etag;
 use super::predicate::Predicate;
 use super::rule::{ActionSpec, Rule, RuleState};
 use crate::events::InboundEvent;
+use crate::observability::metrics::Metrics;
 
 /// `Ruleset` is the immutable snapshot stored inside the `ArcSwap`.
 /// Every mutation produces a new `Arc<Ruleset>` and swaps it
@@ -41,6 +42,9 @@ pub struct RuleStore {
     swap_skipped: AtomicU64,
     last_fire_ms: Mutex<HashMap<String, i64>>,
     auto_approve_rules: bool,
+    /// Phase 5 Part B: optional Prometheus hook. When set,
+    /// `match_event` increments `rule_matches_total{rule_id=hash}`.
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl RuleStore {
@@ -51,7 +55,14 @@ impl RuleStore {
             swap_skipped: AtomicU64::new(0),
             last_fire_ms: Mutex::new(HashMap::new()),
             auto_approve_rules,
+            metrics: None,
         }
+    }
+
+    /// Phase 5 Part B: attach the Prometheus registry. Idempotent.
+    pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
+        self.metrics = Some(m);
+        self
     }
 
     /// Loads the current `Arc<Ruleset>` snapshot for read-side use.
@@ -291,6 +302,9 @@ impl RuleStore {
                 continue;
             }
             cooldown_map.insert(r.id.clone(), now_ms);
+            if let Some(m) = &self.metrics {
+                m.inc_rule_match(&r.id);
+            }
             filtered.push(r);
         }
         filtered

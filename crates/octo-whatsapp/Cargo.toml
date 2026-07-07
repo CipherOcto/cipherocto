@@ -65,6 +65,11 @@ seccompiler = { version = "0.5", optional = true }                      # Linux-
 # to track call counts and per-method canned responses.
 parking_lot = { workspace = true }
 
+# Token-rotation grace file persistence (Phase 5 Part A). Available
+# in dev-dependencies too, but the lib needs it for `persist_grace` /
+# `load_grace` even in non-test builds.
+tempfile = "3"
+
 [features]
 default       = []
 # Test helpers: enables the `MockAdapter` in `crate::test_mock_adapter`

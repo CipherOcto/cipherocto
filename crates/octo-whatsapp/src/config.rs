@@ -85,6 +85,18 @@ pub struct WhatsAppRuntimeConfig {
 /// - `audit_max_rows` — ring-buffer cap. Default 100_000 per design.
 /// - `audit_anchor_every` — every Nth chain head is appended to the
 ///   external anchor file. Default 100.
+/// - `bearer_token_env` — env var name holding the initial bearer
+///   token (`<id>.<secret_hex>`). Default `OCTO_WHATSAPP_TOKEN`.
+///   Empty value disables bearer auth entirely (hermetic tests).
+/// - `grace_path` — on-disk path for `grace.json`. Default
+///   `$data_dir/tokens/grace.json`.
+/// - `grace_period_ms` — default rotation grace window. Clamped to
+///   1000..=300_000 ms. Default 60_000.
+/// - `bearer_required` — if true, every RPC method MUST present a
+///   valid bearer token. If false (default), bearer is optional —
+///   hermetic tests and operator tools work without ceremony. Per
+///   plan §A1: full enforcement is part of Part B (observability
+///   surfaces), Part A provides the plumbing.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SecurityConfig {
     #[serde(default)]
@@ -93,6 +105,14 @@ pub struct SecurityConfig {
     pub audit_max_rows: usize,
     #[serde(default = "default_audit_anchor_every")]
     pub audit_anchor_every: u64,
+    #[serde(default = "default_bearer_token_env")]
+    pub bearer_token_env: String,
+    #[serde(default)]
+    pub grace_path: Option<PathBuf>,
+    #[serde(default = "default_grace_period_ms")]
+    pub grace_period_ms: i64,
+    #[serde(default)]
+    pub bearer_required: bool,
 }
 
 impl Default for SecurityConfig {
@@ -101,6 +121,10 @@ impl Default for SecurityConfig {
             auto_approve_rules: false,
             audit_max_rows: 100_000,
             audit_anchor_every: 100,
+            bearer_token_env: default_bearer_token_env(),
+            grace_path: None,
+            grace_period_ms: default_grace_period_ms(),
+            bearer_required: false,
         }
     }
 }
@@ -110,6 +134,12 @@ fn default_audit_max_rows() -> usize {
 }
 fn default_audit_anchor_every() -> u64 {
     100
+}
+fn default_bearer_token_env() -> String {
+    "OCTO_WHATSAPP_TOKEN".to_string()
+}
+fn default_grace_period_ms() -> i64 {
+    60_000
 }
 
 impl Default for WhatsAppRuntimeConfig {
@@ -194,6 +224,17 @@ impl WhatsAppRuntimeConfig {
             return Err(ConfigError::InvalidName(
                 "security.audit_anchor_every must be > 0 (got 0)".to_string(),
             ));
+        }
+        if self.security.bearer_token_env.is_empty() {
+            return Err(ConfigError::InvalidName(
+                "security.bearer_token_env must be non-empty".to_string(),
+            ));
+        }
+        if !(1_000..=300_000).contains(&self.security.grace_period_ms) {
+            return Err(ConfigError::InvalidName(format!(
+                "security.grace_period_ms must be in 1000..=300000 (got {})",
+                self.security.grace_period_ms
+            )));
         }
         Ok(())
     }

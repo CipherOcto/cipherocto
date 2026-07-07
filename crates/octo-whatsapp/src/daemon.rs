@@ -13,6 +13,7 @@ use crate::events_persister::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
 use crate::rules::{MutationRateLimiter, RuleStore};
+use crate::security::TokenStore;
 use crate::triggers::TriggerStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -74,6 +75,11 @@ struct DaemonInner {
     triggers: Arc<TriggerStore>,
     /// Phase 4: audit log with SHA-256 hash chain + ring buffer.
     audit_log: Arc<AuditLog>,
+    /// Phase 5 Part A: bearer-token store with rotation, grace period,
+    /// and revocation list. Initialized from `[security] bearer_token_env`
+    /// (best-effort: missing env var leaves the store empty) and
+    /// persists grace entries to `[security] grace_path`.
+    tokens: Arc<TokenStore>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -213,6 +219,13 @@ impl DaemonHandle {
         &self.inner.audit_log
     }
 
+    /// Phase 5 Part A: bearer-token store. `security.rotate_token`,
+    /// `security.revoke_all_tokens`, and `security.list_tokens`
+    /// handlers consult this store.
+    pub fn tokens(&self) -> &Arc<TokenStore> {
+        &self.inner.tokens
+    }
+
     /// Phase 3: build an `EventsRouter` that subscribes to the
     /// bound adapter's `raw_event_tx` and pipes events into this
     /// handle's `events_buffer`. Returns `None` if no adapter is
@@ -274,6 +287,23 @@ impl Daemon {
         let rule_store = Arc::new(RuleStore::new(self.config.security.auto_approve_rules));
         let mutation_rl = Arc::new(MutationRateLimiter::new(10)); // 10/min per caller
         let trigger_store = Arc::new(TriggerStore::new());
+        // Phase 5 Part A: TokenStore. Default grace_path is
+        // `$data_dir/tokens/grace.json` if the user did not override.
+        let grace_path = self
+            .config
+            .security
+            .grace_path
+            .clone()
+            .unwrap_or_else(|| self.config.data_dir.join("tokens").join("grace.json"));
+        let tokens = Arc::new(TokenStore::new(
+            Some(grace_path),
+            self.config.security.grace_period_ms,
+        ));
+        // Best-effort initial load: env var unset leaves the store empty
+        // (hermetic tests). Env var set with malformed contents logs a
+        // warning via the descriptor's `label`.
+        let _ = tokens.load_from_env(&self.config.security.bearer_token_env, Some("bootstrap"));
+        let _ = tokens.load_grace();
         DaemonHandle {
             inner: Arc::new(DaemonInner {
                 config: self.config.clone(),
@@ -287,6 +317,7 @@ impl Daemon {
                 mutation_rl,
                 triggers: trigger_store,
                 audit_log: Arc::new(audit_log),
+                tokens,
             }),
         }
     }

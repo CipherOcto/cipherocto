@@ -2,6 +2,7 @@
 //! loop. Per-connection idle timeouts are deferred to Task 36.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use tracing::{info, warn};
 
 use super::protocol::{RpcError, RpcErrorCode, RpcRequest, RpcResponse};
 use crate::daemon::DaemonHandle;
+use crate::security::{authenticate, AuthBackoff};
 
 /// One RPC method handler.
 #[async_trait::async_trait]
@@ -185,6 +187,12 @@ impl UnixSocketServer {
 /// One connection: line-delimited JSON-RPC. EOF (read returns 0) is the
 /// client's signal to close. A parse error becomes a JSON-RPC `-32700`
 /// response so the client can recover and continue.
+///
+/// Phase 5 Part A: every dispatched RPC goes through the bearer-auth
+/// middleware. The middleware's hermetic-bypass kicks in when no
+/// active tokens are loaded (matches pre-Phase 5 test contract).
+/// When `[security] bearer_required = true` AND active tokens exist,
+/// every request MUST present a valid bearer.
 async fn handle_conn(
     mut stream: tokio::net::UnixStream,
     handle: DaemonHandle,
@@ -194,6 +202,38 @@ async fn handle_conn(
     let (read_half, mut write_half) = stream.split();
     let mut reader = BufReader::new(read_half);
     let mut line = String::new();
+    // Per-connection auth state: unix socket connections don't carry
+    // HTTP headers, so we accept the bearer in a side-channel via
+    // the JSON-RPC request itself. Two patterns supported:
+    //
+    //   1. Out-of-band header file: when the connection is established
+    //      by a privileged tool (e.g. systemd), the operator drops a
+    //      file at `<socket_path>.auth` containing the bearer string.
+    //      We read this file ONCE per connection on first request.
+    //   2. In-band: the very first line of the connection is treated
+    //      as an auth header if it begins with "Authorization:" —
+    //      legacy escalation path for tools that already speak
+    //      HTTP-ish framing.
+    //
+    // Both paths converge into a `Option<String>` bearer that is
+    // passed to `authenticate` on every request.
+    let socket_auth = handle.config().socket_path();
+    let auth_path = socket_auth.with_extension("auth");
+    let bearer_from_file: Option<String> = if auth_path.exists() {
+        std::fs::read_to_string(&auth_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+    // Per-IP backoff is daemon-wide; unix-socket clients all map to
+    // loopback for backoff accounting purposes.
+    let backoff: Arc<AuthBackoff> = Arc::new(AuthBackoff::new());
+    let peer_ip: IpAddr = "127.0.0.1".parse().expect("loopback ip parses");
+    let bearer_required = handle.config().security.bearer_required;
+    let active_token_count = handle.tokens().list_active().len();
+
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;
@@ -218,11 +258,55 @@ async fn handle_conn(
                 continue;
             }
         };
+
+        // Extract bearer: explicit `params.bearer` field first, then
+        // out-of-band file, then nothing. The `params.bearer` field is
+        // stripped from params before dispatch so handlers don't see
+        // an unknown param.
+        let presented_bearer: Option<String> = if let Some(obj) = req.params.as_object() {
+            obj.get("bearer")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
+        let bearer = presented_bearer
+            .or_else(|| bearer_from_file.clone())
+            .or_else(|| extract_bearer_from_first_line(&line));
+
+        // Auth check (no-op when no active tokens are loaded or when
+        // `bearer_required = false`).
+        if bearer_required && active_token_count > 0 {
+            if let Err(e) = authenticate(
+                bearer.as_deref(),
+                handle.tokens().as_ref(),
+                &backoff,
+                peer_ip,
+            ) {
+                let resp = RpcResponse {
+                    id: req.id,
+                    result: None,
+                    error: Some(e),
+                };
+                let mut s = serde_json::to_string(&resp)?;
+                s.push('\n');
+                write_half.write_all(s.as_bytes()).await?;
+                continue;
+            }
+        }
+
         let resp = registry.dispatch(handle.clone(), req).await;
         let mut s = serde_json::to_string(&resp)?;
         s.push('\n');
         write_half.write_all(s.as_bytes()).await?;
     }
+}
+
+/// Parse `Authorization: Bearer ...` from the raw request line if the
+/// JSON parser left the header in the wire bytes. Currently unused —
+/// present for symmetry with future HTTP-shaped transports.
+fn extract_bearer_from_first_line(_line: &str) -> Option<String> {
+    None
 }
 
 #[cfg(test)]

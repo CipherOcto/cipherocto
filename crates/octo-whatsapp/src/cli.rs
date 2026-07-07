@@ -78,6 +78,8 @@ pub enum Command {
     Clients(ClientsCmd),
     /// Daemon method discovery (Phase 3). `methods list|help METHOD`.
     Methods(MethodsCmd),
+    /// Security token operations (Phase 5 Part A).
+    Tokens(TokenCmd),
 }
 
 #[derive(Debug, Args)]
@@ -418,6 +420,39 @@ pub enum MethodsAction {
         /// Method name (e.g. `send.text`).
         method: String,
     },
+}
+
+/// Phase 5 Part A: bearer-token operations. Mirrors the
+/// `security.rotate_token`, `security.revoke_all_tokens`, and
+/// `security.list_tokens` RPC methods.
+#[derive(Debug, Args)]
+pub struct TokenCmd {
+    #[command(subcommand)]
+    pub action: TokenAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TokenAction {
+    /// Rotate the active bearer token. The OLD token continues to
+    /// verify until the grace window expires.
+    Rotate {
+        /// Existing token_id to rotate from. (Required.)
+        old_token_id: String,
+        /// New 256-bit (or larger) hex secret. (Required.)
+        new_secret_hex: String,
+        /// Grace window in milliseconds. Clamped to 1000..=300000.
+        /// Default 60000.
+        #[arg(long, default_value_t = 60_000)]
+        grace_ms: i64,
+        /// Human-readable label for the rotated token.
+        #[arg(long, default_value = "rotated")]
+        label: String,
+    },
+    /// Revoke every active token (incident response). Persists an
+    /// empty grace file.
+    RevokeAll,
+    /// List active + grace tokens.
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -913,6 +948,31 @@ pub fn dispatch_methods(cli: &Cli, cmd: &MethodsCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Phase 5 Part A: bearer-token operations.
+pub fn dispatch_tokens(cli: &Cli, cmd: &TokenCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        TokenAction::Rotate {
+            old_token_id,
+            new_secret_hex,
+            grace_ms,
+            label,
+        } => (
+            "security.rotate_token",
+            serde_json::json!({
+                "old_token_id": old_token_id,
+                "new_secret_hex": new_secret_hex,
+                "grace_ms": grace_ms,
+                "label": label,
+            }),
+        ),
+        TokenAction::RevokeAll => ("security.revoke_all_tokens", serde_json::Value::Null),
+        TokenAction::List => ("security.list_tokens", serde_json::Value::Null),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
 /// Wire `reconnect` and `shutdown` (Task 48).
 pub fn dispatch_reconnect(cli: &Cli) -> anyhow::Result<()> {
     let result =
@@ -1011,6 +1071,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Onboard(ref cmd) => dispatch_onboard(&cli, cmd),
         Command::Clients(ref cmd) => dispatch_clients(&cli, cmd),
         Command::Methods(ref cmd) => dispatch_methods(&cli, cmd),
+        Command::Tokens(ref cmd) => dispatch_tokens(&cli, cmd),
     }
 }
 

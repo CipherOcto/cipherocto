@@ -28,6 +28,7 @@ pub mod mcp_server;
 pub mod media_buffer;
 pub mod onboarding;
 pub mod rules;
+pub mod security;
 pub mod triggers;
 
 #[cfg(any(test, feature = "test-helpers"))]

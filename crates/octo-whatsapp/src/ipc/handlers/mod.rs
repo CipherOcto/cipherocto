@@ -32,6 +32,7 @@ pub mod messages_mark_read;
 pub mod messages_search;
 pub mod preflight;
 pub mod rules;
+pub mod security_tokens;
 pub mod send_audio;
 pub mod send_contact;
 pub mod send_delete;
@@ -123,6 +124,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(audit::AuditTail))
         .register(Arc::new(audit::AuditVerify))
         .register(Arc::new(actions_escalate::ActionsEscalate))
+        .register(Arc::new(security_tokens::SecurityRotateToken))
+        .register(Arc::new(security_tokens::SecurityRevokeAllTokens))
+        .register(Arc::new(security_tokens::SecurityListTokens))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -237,6 +241,13 @@ pub const PHASE4_AUDIT_METHODS: &[&str] = &["audit.tail", "audit.verify"];
 
 pub const PHASE4_ACTIONS_METHODS: &[&str] = &["actions.escalate"];
 
+/// RPC method names added in Phase 5 Part A (security).
+pub const PHASE5_SECURITY_METHODS: &[&str] = &[
+    "security.rotate_token",
+    "security.revoke_all_tokens",
+    "security.list_tokens",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +313,7 @@ mod tests {
             .chain(PHASE4_TRIGGERS_METHODS.iter())
             .chain(PHASE4_AUDIT_METHODS.iter())
             .chain(PHASE4_ACTIONS_METHODS.iter())
+            .chain(PHASE5_SECURITY_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

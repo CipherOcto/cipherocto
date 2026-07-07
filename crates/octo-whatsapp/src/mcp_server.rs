@@ -12,7 +12,7 @@ use serde_json::Value;
 
 /// Number of MCP tools registered (Phase 1 + Phase 2 RPC surface).
 /// Used by integration tests to assert `tools/list` advertises the full set.
-pub const EXPECTED_TOOL_COUNT: usize = 46;
+pub const EXPECTED_TOOL_COUNT: usize = 49;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -405,6 +405,30 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Return schema + one-line help for a single RPC method.",
         schema_props_required(&[("method", "string")], &["method"]),
     ));
+    // ─── Security tokens (3) — Phase 5 Part A ─────────────────────────
+    v.push(td(
+        "security.rotate_token",
+        "Rotate the active bearer token; old token remains valid through grace window.",
+        schema_props_required(
+            &[
+                ("old_token_id", "string"),
+                ("new_secret_hex", "string"),
+                ("grace_ms", "integer"),
+                ("label", "string"),
+            ],
+            &["old_token_id", "new_secret_hex"],
+        ),
+    ));
+    v.push(td(
+        "security.revoke_all_tokens",
+        "Revoke every active bearer token (incident response).",
+        schema_empty(),
+    ));
+    v.push(td(
+        "security.list_tokens",
+        "List active and grace-period tokens.",
+        schema_empty(),
+    ));
     v
 }
 
@@ -468,6 +492,9 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "clients.list" => "clients.list",
         "daemon.methods.list" => "daemon.methods.list",
         "daemon.methods.help" => "daemon.methods.help",
+        "security.rotate_token" => "security.rotate_token",
+        "security.revoke_all_tokens" => "security.revoke_all_tokens",
+        "security.list_tokens" => "security.list_tokens",
         other => {
             return Ok(jsonrpc_error(
                 id,

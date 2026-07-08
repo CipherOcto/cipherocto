@@ -52,3 +52,23 @@ async fn bind_adapter_is_idempotent_when_no_events_stream() {
     handle.bind_adapter(adapter.clone());
     assert!(handle.adapter().is_some());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_new_initializes_accounts_store() {
+    // Phase 6.1 T6.1.2: DaemonInner owns a `MultiAccountStore` opened at
+    // startup via `MultiAccountStore::open_default()`. `DaemonHandle::accounts()`
+    // returns a guard that exposes `list`/`info`/`use_account`. On a fresh
+    // machine the index file does not exist; `open_default()` returns an
+    // empty in-memory store, so `.list()` yields `[]`. We only assert the
+    // accessor does not panic and returns without error. `tokio::test` is
+    // required because `Daemon::new` spawns the rules-persister actor,
+    // which needs a Tokio runtime.
+    let cfg = WhatsAppRuntimeConfig {
+        name: "test-acct-init".into(),
+        ..Default::default()
+    };
+    let daemon = Daemon::new(cfg);
+    let _entries = daemon.handle().accounts().list();
+    // No panic → store opened successfully (or fell back to `None`; both
+    // cases yield an empty Vec via the guard's `unwrap_or_default()`).
+}

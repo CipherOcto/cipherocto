@@ -20,6 +20,8 @@ use crate::rules::{
 use crate::security::TokenStore;
 use crate::triggers::TriggerStore;
 
+use octo_whatsapp_onboard_core::{AccountEntry, CoreError, MultiAccountStore};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DaemonPhase {
@@ -164,6 +166,15 @@ struct DaemonInner {
     /// the daemon. `None` when no adapter is bound — typical during
     /// very early boot or hermetic tests that never bind.
     connection_watcher: SyncMutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Phase 6.1 T6.1.2: multi-account index store. Opened at
+    /// startup via `MultiAccountStore::open_default()` —
+    /// best-effort: if the call fails (e.g. HOME unset and
+    /// `dirs::home_dir()` returns `None`), the daemon still starts
+    /// with `None` here, and `accounts().use_account()` will return
+    /// a `CoreError` from the guard. Read-only accessors (`list`,
+    /// `info`) degrade silently to empty Vec / `None` so handlers
+    /// never panic on a missing index file.
+    accounts: parking_lot::Mutex<Option<MultiAccountStore>>,
 }
 
 impl std::fmt::Debug for DaemonInner {
@@ -448,6 +459,69 @@ impl DaemonHandle {
             self.inner.cancel.clone(),
         ))
     }
+
+    /// Phase 6.1 T6.1.2: borrow the multi-account index store.
+    /// Returns a guard that exposes `list` / `info` / `use_account`
+    /// without leaking the underlying `parking_lot::Mutex`. The
+    /// lock is held for the lifetime of the returned guard; inner
+    /// ops do blocking filesystem I/O (the index file is read/written
+    /// synchronously by `MultiAccountStore`), so handlers should NOT
+    /// hold the guard across an `.await`.
+    pub fn accounts(&self) -> AccountStoreGuard<'_> {
+        AccountStoreGuard {
+            inner: self.inner.accounts.lock(),
+        }
+    }
+}
+
+/// Phase 6.1 T6.1.2: thin wrapper that exposes `MultiAccountStore`
+/// methods through `&self` and `&mut self`, without leaking the
+/// `parking_lot::Mutex` internals to handlers. Read-only methods
+/// (`list`, `info`) degrade silently when the underlying store
+/// failed to initialize; mutating methods (`use_account`) return a
+/// `CoreError::InvalidSessionPath` so callers can react uniformly.
+pub struct AccountStoreGuard<'a> {
+    inner: parking_lot::MutexGuard<'a, Option<MultiAccountStore>>,
+}
+
+impl std::fmt::Debug for AccountStoreGuard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountStoreGuard")
+            .field("initialized", &self.inner.is_some())
+            .finish()
+    }
+}
+
+impl<'a> AccountStoreGuard<'a> {
+    /// List every account in the index, sorted by `account_id`.
+    /// Returns an empty Vec if the store failed to initialize at
+    /// boot (e.g. unwriteable `~/.local/share/octo/whatsapp/`).
+    pub fn list(&self) -> Vec<AccountEntry> {
+        self.inner.as_ref().map(|s| s.list()).unwrap_or_default()
+    }
+
+    /// Look up one account by `account_id`. Returns `None` if not in
+    /// the index OR if the store failed to initialize — handlers
+    /// cannot tell the two apart and should treat both identically.
+    pub fn info(&self, account_id: &str) -> Option<AccountEntry> {
+        self.inner.as_ref().and_then(|s| s.get(account_id).cloned())
+    }
+
+    /// Mark `account_id` as the active account. Returns the entry on
+    /// success; returns `CoreError::InvalidSessionPath` if the store
+    /// failed to initialize or `MultiAccountStore::use_account`
+    /// rejects the id (unknown / session path missing).
+    pub fn use_account(&mut self, account_id: &str) -> Result<AccountEntry, CoreError> {
+        let store = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| CoreError::InvalidSessionPath {
+                path: std::path::PathBuf::from("(no MultiAccountStore)"),
+                reason: "store not initialized (MultiAccountStore::open_default failed at boot)"
+                    .to_string(),
+            })?;
+        store.use_account(account_id)
+    }
 }
 
 pub struct Daemon {
@@ -571,6 +645,24 @@ impl Daemon {
         let started_at_unix_ms = unix_epoch_ms_now();
         let is_live = Arc::new(AtomicBool::new(false));
         let is_ready = Arc::new(AtomicBool::new(false));
+        // Phase 6.1 T6.1.2: open the multi-account index store.
+        // Best-effort: `open_default()` resolves
+        // `~/.local/share/octo/whatsapp/index.json` via
+        // `dirs::home_dir()` and creates an empty in-memory index
+        // when the file is absent. If the call errors out (e.g.
+        // HOME unset, unwritable data dir), the daemon still
+        // starts: handlers will report a `CoreError` for mutating
+        // ops and empty results for read-only ops.
+        let accounts = match MultiAccountStore::open_default() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "MultiAccountStore::open_default failed; daemon starts without accounts API"
+                );
+                None
+            }
+        };
         // Phase 5 Part F: build a shared `reqwest::Client` with
         // conservative defaults suitable for webhook dispatches.
         // 10s connect timeout, 30s request timeout. Constructed once
@@ -604,6 +696,7 @@ impl Daemon {
                 started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
                 http_client,
                 connection_watcher: SyncMutex::new(None),
+                accounts: parking_lot::Mutex::new(accounts),
             }),
         }
     }

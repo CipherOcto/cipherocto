@@ -27,7 +27,9 @@
 //! - Captured live URI from official WA phone (2026-07-08): see
 //!   `docs/plans/.../phase5-passkey.md` for the full analysis.
 
+pub mod assert;
 pub mod base10;
+pub mod ctap2;
 pub mod discovery;
 pub mod error;
 pub mod framing;
@@ -35,12 +37,14 @@ pub mod handshake;
 pub mod noise;
 pub mod tunnel;
 
+pub use assert::{assert_via_cable, assert_via_cable_with_timeout, run_assertion, DEFAULT_TIMEOUT};
+pub use ctap2::{build_get_assertion, decode_assertion_response};
 pub use discovery::{build_eid, build_tunnel_url, derive_psk, derive_tunnel_id, get_domain};
 pub use error::CableError;
 pub use framing::{CableFrame, MessageType, SHUTDOWN_COMMAND_BYTES};
 pub use handshake::{HandshakeV2, RequestType};
 pub use noise::{build_initiator_message, CableNoiseInitiator, Crypter, InitiatorResult};
-pub use tunnel::{connect_initiator, CableTunnel};
+pub use tunnel::{connect_initiator, CablePostHandshake, CableTunnel};
 // Re-export the base10 codec so callers don't have to know the module path.
 // `URL_PREFIX` is the FIDO URI scheme per caBLE spec.
 pub use base10::{decode as decode_base10, encode as encode_base10, URL_PREFIX as FIDO_PREFIX};

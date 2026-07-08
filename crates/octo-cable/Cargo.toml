@@ -7,11 +7,13 @@ description = "caBLE (Cloud Assisted BLE) hybrid authenticator transport for Web
 [dependencies]
 # CTAP2 canonical CBOR encoder/decoder.
 ciborium = "0.2"
-# Base64 for secondary URI formats.
+# Base64 for secondary URI formats + WebAuthn `id` / `rawId` encoding.
 base64 = "0.22"
 thiserror = "1"
 # hex for tunnel_id upper-hex formatting in tunnel URLs
 hex = "0.4"
+# WebAuthn JSON ↔ CTAP2 CBOR mapping (Session 7+)
+serde_json = "1"
 
 # Tunnel transport (Session 6+)
 # Async runtime + WebSocket. We use rustls because OpenSSL is heavier and

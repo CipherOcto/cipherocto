@@ -162,6 +162,50 @@ pub async fn connect_initiator(handshake: &HandshakeV2) -> Result<CableTunnel, C
     Ok(CableTunnel { ws, crypter })
 }
 
+/// Decoded `CablePostHandshake` message — the first encrypted payload
+/// the authenticator sends after the Noise handshake completes. Per
+/// Chromium's `fido_tunnel_device.cc::OnTunnelReady`, the post-handshake
+/// is a CBOR map with one mandatory entry: `0x01 → GetInfoResponse bytes`.
+/// `0x02` (`linking_info`) is optional and currently ignored.
+#[derive(Debug, Clone)]
+pub struct CablePostHandshake {
+    /// Raw CBOR bytes of the authenticator's `GetInfoResponse`. Parse
+    /// with the CTAP2 client if you need structured fields.
+    pub info: Vec<u8>,
+}
+
+impl CableTunnel {
+    /// Receive the next encrypted frame and parse it as the
+    /// post-handshake info message. Should be called once
+    /// immediately after [`connect_initiator`] returns.
+    pub async fn recv_post_handshake(&mut self) -> Result<CablePostHandshake, CableError> {
+        let raw = self
+            .ws
+            .next()
+            .await
+            .ok_or_else(|| CableError::Cbor("ws closed before post-handshake".into()))?
+            .map_err(|e| CableError::Cbor(format!("ws recv phm: {e}")))?;
+        let bytes = match raw {
+            Message::Binary(b) => b,
+            other => {
+                return Err(CableError::Cbor(format!(
+                    "unexpected ws message type for phm: {other:?}"
+                )))
+            }
+        };
+        let plaintext = self.crypter.decrypt(&bytes)?;
+        let map: std::collections::BTreeMap<u32, ciborium::value::Value> =
+            ciborium::de::from_reader(plaintext.as_slice())
+                .map_err(|e| CableError::Cbor(format!("phm cbor: {e}")))?;
+        let info = match map.get(&0x01) {
+            Some(ciborium::value::Value::Bytes(b)) => b.clone(),
+            Some(other) => return Err(CableError::Cbor(format!("phm 0x01 wrong type: {other:?}"))),
+            None => return Err(CableError::Cbor("phm missing 0x01".into())),
+        };
+        Ok(CablePostHandshake { info })
+    }
+}
+
 /// An established caBLE tunnel. Single-shot: the phone hangs up after
 /// one CTAP2 command. Caller must either [`send_ctap`] + [`shutdown`]
 /// or drop without sending (which silently fails the auth).

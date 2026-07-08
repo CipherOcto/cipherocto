@@ -31,12 +31,13 @@ pub enum DaemonPhase {
     ShuttingDown,
 }
 
-/// 7-variant BotState mirror (spec compliance F18 — R1 review).
-/// The runtime does NOT own a `wacore` adapter; this enum is a
-/// runtime-side mirror updated by the connection watcher when the
-/// adapter transitions. `status.get` reads this and returns the
-/// variant name verbatim per design §Readiness "7-variant BotState
-/// verbatim".
+/// 8-variant BotState mirror (spec compliance F18 — R1 review, plus
+/// Session 4 of wacore-webauthn plan). The runtime does NOT own a
+/// `wacore` adapter; this enum is a runtime-side mirror updated by
+/// the connection watcher when the adapter transitions. `status.get`
+/// reads this and returns the variant name verbatim per design
+/// §Readiness "7-variant BotState verbatim" — the 8th variant is
+/// `AwaitingPasskey` for SHORTCAKE_PASSKEY link flows (RFC-0909).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BotStateMirror {
     #[default]
@@ -54,6 +55,14 @@ pub enum BotStateMirror {
     /// the prompt on the phone (security key, passkey, or 2FA PIN)
     /// to advance the state machine.
     AwaitingUserAction,
+    /// Server requested a WebAuthn assertion (SHORTCAKE_PASSKEY
+    /// link flow, RFC-0909). The phone must scan the displayed QR
+    /// to drive `PasskeyAuthenticator::get_assertion`; if no
+    /// authenticator is registered the operator must complete the
+    /// assertion manually on the phone. Stays in this state until
+    /// either `PairPasskeyConfirmation` (still waiting) or
+    /// `PairPasskeyError` (terminal: `LoggedOut`) arrives.
+    AwaitingPasskey,
 }
 
 fn encode_bot_state(bs: BotStateMirror) -> u8 {
@@ -66,6 +75,7 @@ fn encode_bot_state(bs: BotStateMirror) -> u8 {
         BotStateMirror::LoggedOut => 5,
         BotStateMirror::SessionExpired => 6,
         BotStateMirror::AwaitingUserAction => 7,
+        BotStateMirror::AwaitingPasskey => 8,
     }
 }
 
@@ -78,6 +88,7 @@ fn decode_bot_state(v: u8) -> BotStateMirror {
         5 => BotStateMirror::LoggedOut,
         6 => BotStateMirror::SessionExpired,
         7 => BotStateMirror::AwaitingUserAction,
+        8 => BotStateMirror::AwaitingPasskey,
         _ => BotStateMirror::Disconnected,
     }
 }
@@ -87,6 +98,13 @@ fn decode_bot_state(v: u8) -> BotStateMirror {
 /// every second-verification case the wacore SDK hides from us
 /// (WebAuthn, security key, 2FA PIN, multi-device toggle, etc.).
 pub const AWAITING_USER_ACTION_HINT: &str = "pairing stalled: check phone for a second-verification prompt (passkey, security key, 2FA PIN, or multi-device toggle)";
+
+/// Hint surfaced to operators when `BotStateMirror::AwaitingPasskey`
+/// fires. Shorter than `AWAITING_USER_ACTION_HINT` because the
+/// SHORTCAKE_PASSKEY flow has a specific resolution path: a phone-
+/// side WA app scan of the displayed QR (or a registered
+/// `PasskeyAuthenticator` driving the assertion in-Rust).
+pub const AWAITING_PASSKEY_HINT: &str = "server requested WebAuthn assertion (SHORTCAKE_PASSKEY): scan the QR displayed in the CLI/daemon logs with your phone's WhatsApp app to complete the link";
 
 /// Shared, cheaply-cloneable handle to daemon state.
 #[derive(Clone, Debug)]
@@ -126,10 +144,11 @@ struct DaemonInner {
     /// router (sinks receive InboundEvent) and queried by
     /// `events.list/show/replay` handlers.
     events_buffer: Arc<EventsBuffer>,
-    /// Spec compliance F18 (R1 review): 7-variant `BotState` mirror,
-    /// encoded as `AtomicU8` for lock-free reads. Encoding:
-    /// 0=Disconnected, 1=PairingQr, 2=PairingCode, 3=Connected,
-    /// 4=Replaced, 5=LoggedOut, 6=SessionExpired. 7+ are reserved.
+    /// Spec compliance F18 (R1 review) + Session 4 (RFC-0909):
+    /// 8-variant `BotState` mirror, encoded as `AtomicU8` for
+    /// lock-free reads. Encoding: 0=Disconnected, 1=PairingQr,
+    /// 2=PairingCode, 3=Connected, 4=Replaced, 5=LoggedOut,
+    /// 6=SessionExpired, 7=AwaitingUserAction, 8=AwaitingPasskey.
     bot_state: std::sync::atomic::AtomicU8,
     /// Phase 3: MCP client registry for agent discovery
     /// (`clients.list` returns a snapshot of this).
@@ -1229,6 +1248,17 @@ fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
         "LoggedOut" => Some((BotStateMirror::LoggedOut, true)),
         "Replaced" => Some((BotStateMirror::Replaced, true)),
         "SessionExpired" => Some((BotStateMirror::SessionExpired, true)),
+        // Session 4 (RFC-0909, wacore-webauthn plan): the three
+        // SHORTCAKE_PASSKEY events. The server asked for a WebAuthn
+        // assertion (Request) or reached the final verification
+        // stage (Confirmation); both keep us in `AwaitingPasskey`
+        // until the assertion resolves. `PairPasskeyError` is
+        // terminal — the link failed and the operator must restart,
+        // so we advance to `LoggedOut` and move the daemon phase to
+        // `SessionLost`.
+        "PairPasskeyRequest" => Some((BotStateMirror::AwaitingPasskey, false)),
+        "PairPasskeyConfirmation" => Some((BotStateMirror::AwaitingPasskey, false)),
+        "PairPasskeyError" => Some((BotStateMirror::LoggedOut, true)),
         _ => None,
     }
 }
@@ -1349,7 +1379,8 @@ async fn run_connection_watcher_inner(
                                 | BotStateMirror::Replaced
                                 | BotStateMirror::LoggedOut
                                 | BotStateMirror::SessionExpired
-                                | BotStateMirror::AwaitingUserAction => {
+                                | BotStateMirror::AwaitingUserAction
+                                | BotStateMirror::AwaitingPasskey => {
                                     pairing_started_at = None;
                                 }
                             }

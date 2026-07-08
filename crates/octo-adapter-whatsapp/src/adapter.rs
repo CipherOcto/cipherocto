@@ -1271,22 +1271,50 @@ impl WhatsAppWebAdapter {
                                  the code, complete it on the phone.\n"
                             );
                         }
-                        // SHORTCAKE_PASSKEY (Session 3 of wacore-webauthn
+                        // SHORTCAKE_PASSKEY (Session 3+4 of wacore-webauthn
                         // plan, RFC-0909): the server asked for a WebAuthn
                         // assertion. The full `request_options_json`
                         // already reached the connection-watcher broadcast
                         // via the unconditional `format!("{:?}", event)`
                         // above; here we surface a structured diagnostic so
                         // operators can see the request without grepping
-                        // the raw broadcast. If a `PasskeyAuthenticator`
-                        // is registered (Session 2 wiring), the SDK will
-                        // auto-drive the assertion; this event is then
-                        // a passive notification that the gate fired.
+                        // the raw broadcast, AND (Session 4) render the
+                        // payload as a terminal QR so the operator can
+                        // hand-scan it from the phone's WA app. If a
+                        // `PasskeyAuthenticator` is registered (Session 2
+                        // wiring), the SDK will auto-drive the assertion;
+                        // this event is then a passive notification that
+                        // the gate fired.
                         Event::PairPasskeyRequest(req) => {
                             tracing::info!(
                                 request_options_json_len = req.request_options_json.len(),
                                 "SHORTCAKE_PASSKEY: server requested WebAuthn assertion"
                             );
+                            // Session 4: render a terminal QR from the
+                            // payload so the operator can scan it with
+                            // the phone's WA app. Falls back to dumping
+                            // the JSON verbatim if the encoder rejects
+                            // it (public-key-credential JSON usually
+                            // exceeds qrcode's version-40 capacity — but
+                            // the typical WPkRequestOptions JSON is well
+                            // under that limit, so this rarely fires).
+                            let payload = req.request_options_json.as_str();
+                            match qrcode::QrCode::new(payload.as_bytes()) {
+                                Ok(qr) => {
+                                    let rendered = qr
+                                        .render::<qrcode::render::unicode::Dense1x2>()
+                                        .quiet_zone(true)
+                                        .build();
+                                    eprintln!(
+                                        "\nWhatsApp passkey request (scan with phone WA app):\n{rendered}\n"
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "\nWhatsApp passkey request (could not render QR: {e}):\n{payload}\n"
+                                    );
+                                }
+                            }
                         }
                         Event::PairPasskeyConfirmation(inner) => {
                             tracing::info!(

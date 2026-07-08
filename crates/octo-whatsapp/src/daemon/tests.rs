@@ -251,3 +251,148 @@ async fn pairing_stall_does_not_fire_without_pairing_prompt() {
 
     handle.cancel_token().cancel();
 }
+
+// ── SHORTCAKE_PASSKEY classifier arms (Session 4 of wacore-webauthn
+//    plan, RFC-0909) ───────────────────────────────────────────────
+//
+// The server sends three event variants during a SHORTCAKE_PASSKEY
+// link flow. Each must transition the BotState mirror to the right
+// value so `status.get` reflects what the operator sees on the
+// phone. The Debug format used here mirrors the upstream wacore
+// `Event` enum's auto-derived `Debug` (escape characters preserved
+// as `\"` in the stringified JSON field).
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pair_passkey_request_event_marks_awaiting_passkey() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    // The wacore `Event::PairPasskeyRequest` Debug form (verified by
+    // Session 3's contract test in `octo-adapter-whatsapp`):
+    //   Event::PairPasskeyRequest(PairPasskeyRequest { \
+    //       request_options_json: "{\"challenge\":\"abc\"}" })
+    // Note: in Rust source this is written as `r#"..."#` so the
+    // backslashes and inner `"` are literal; the classifier only
+    // sees the `ident` after stripping the `Event::` prefix.
+    tx.send(
+        r#"Event::PairPasskeyRequest(PairPasskeyRequest { request_options_json: "{\"challenge\":\"abc\"}" })"#
+            .to_string(),
+    )
+    .expect("send PairPasskeyRequest");
+
+    // Brief yield — the watcher's recv loop runs in the same tokio
+    // runtime; 10ms is enough for the spawn-and-receive cycle on
+    // every CI box we've tuned for.
+    tokio::time::sleep(TEST_STALL / 2).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::AwaitingPasskey,
+        "PairPasskeyRequest must transition BotStateMirror to AwaitingPasskey"
+    );
+
+    // Surface via status.get: handler reads BotStateMirror and
+    // returns the matching label + hint.
+    let status = StatusGet
+        .call(handle.clone(), serde_json::Value::Null)
+        .await
+        .expect("status.get");
+    assert_eq!(status["bot_state"], "AwaitingPasskey");
+    let hint = status["bot_state_hint"]
+        .as_str()
+        .expect("bot_state_hint must be a string");
+    assert!(
+        hint.contains("SHORTCAKE_PASSKEY"),
+        "hint must mention SHORTCAKE_PASSKEY; got {hint:?}"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pair_passkey_confirmation_event_keeps_awaiting_passkey() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    tx.send(
+        r#"Event::PairPasskeyConfirmation(PairPasskeyConfirmation { code: "ABCD1234", skip_handoff_ux: false })"#
+            .to_string(),
+    )
+    .expect("send PairPasskeyConfirmation");
+
+    tokio::time::sleep(TEST_STALL / 2).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::AwaitingPasskey,
+        "PairPasskeyConfirmation must keep BotStateMirror at AwaitingPasskey (still waiting for phone-side handoff)"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pair_passkey_error_event_advances_to_logged_out() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    tx.send(
+        r#"Event::PairPasskeyError(PairPasskeyError { error: "user_cancelled", continuation: false })"#
+            .to_string(),
+    )
+    .expect("send PairPasskeyError");
+
+    tokio::time::sleep(TEST_STALL / 2).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::LoggedOut,
+        "PairPasskeyError is terminal: BotStateMirror must advance to LoggedOut"
+    );
+    // Phase also flips — the classify_event arm returned
+    // `phase_changed = true`. Daemon is no longer in Booting.
+    assert_ne!(
+        handle.phase(),
+        DaemonPhase::Booting,
+        "PairPasskeyError must move DaemonPhase out of Booting (terminal session-lost)"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn awaiting_passkey_clears_pairing_stall_timer() {
+    // Regression guard: if the pairing stall timer fires AFTER a
+    // PairPasskeyRequest, it would overwrite AwaitingPasskey with
+    // AwaitingUserAction. The watcher's `pairing_started_at`
+    // management must clear the timer when AwaitingPasskey is set.
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    // Pairing prompt arms the timer.
+    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
+        .expect("send PairingQrCode");
+    // Server asks for passkey (well within the stall window).
+    tokio::time::sleep(TEST_STALL / 4).await;
+    tx.send(
+        r#"Event::PairPasskeyRequest(PairPasskeyRequest { request_options_json: "{\"challenge\":\"abc\"}" })"#
+            .to_string(),
+    )
+    .expect("send PairPasskeyRequest");
+
+    // Wait well past the stall window. If the timer had not been
+    // cleared, it would fire here and flip state to
+    // AwaitingUserAction.
+    tokio::time::sleep(TEST_STALL * 3).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::AwaitingPasskey,
+        "AwaitingPasskey must not be clobbered by the pairing stall timer"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+// Helper trait used by the SHORTCAKE_PASSKEY hermetic tests to
+// render a `status.get` Value from a handle. Defined here (not
+// in `ipc/handlers/status.rs`) because the tests own the call
+// site to avoid a public-API addition for one test helper.
+use crate::ipc::handlers::status::StatusGet;
+use crate::ipc::server::RpcHandler;

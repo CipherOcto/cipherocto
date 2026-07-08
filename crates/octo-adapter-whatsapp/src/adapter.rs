@@ -63,6 +63,13 @@ pub struct WhatsAppConfig {
     /// for existing configs that don't set the field.
     #[serde(default)]
     pub sender_allowlist: BTreeMap<String, Vec<String>>,
+    /// SHORTCAKE_PASSKEY authenticator (Session 2 of the wacore-webauthn plan,
+    /// RFC-0909). When `Some(auth)`, the SDK auto-drives the WebAuthn assertion
+    /// step on `<notification type="passkey_prologue_request">` arrivals.
+    /// When `None`, the SDK emits `Event::PairPasskeyRequest` and waits for the
+    /// host to drive the handshake manually.
+    #[serde(default, skip)]
+    pub passkey_authenticator: Option<Arc<dyn crate::passkey::PasskeyAuthenticator>>,
 }
 
 impl std::fmt::Debug for WhatsAppConfig {
@@ -86,6 +93,14 @@ impl std::fmt::Debug for WhatsAppConfig {
                         .map(|v| v.len())
                         .sum::<usize>()
                 ),
+            )
+            .field(
+                "passkey_authenticator",
+                &if self.passkey_authenticator.is_some() {
+                    "Some(<redacted>)"
+                } else {
+                    "None"
+                },
             )
             .finish()
     }
@@ -1271,6 +1286,27 @@ impl WhatsAppWebAdapter {
         }
 
         let bot = builder.build().await?;
+
+        // SHORTCAKE_PASSKEY (Session 2 of the wacore-webauthn plan, RFC-0909):
+        // if a `PasskeyAuthenticator` is registered on the config, install it on
+        // the `Client` BEFORE the WebSocket run loop starts. The SDK consumes
+        // the authenticator synchronously on the first
+        // `<notification type="passkey_prologue_request">` arrival — if we
+        // install after `bot.spawn()`, the request may already be in flight.
+        //
+        // With `passkey_authenticator = None`, the SDK leaves the slot empty
+        // and emits `Event::PairPasskeyRequest` for the host to drive
+        // manually (Session 3 of the plan surfaces those events).
+        //
+        // `UpstreamBridge` wraps our `Arc<dyn crate::passkey::PasskeyAuthenticator>`
+        // in an `Arc<dyn whatsapp_rust::passkey::PasskeyAuthenticator>` so
+        // the SDK accepts it. See `passkey/authenticator.rs` for the field
+        // mapping (shapes already mirror upstream).
+        if let Some(auth) = self.config.passkey_authenticator.clone() {
+            let upstream = crate::passkey::authenticator::UpstreamBridge::wrap(auth);
+            bot.client().set_passkey_authenticator(upstream).await;
+        }
+
         *self.client.lock() = Some(bot.client());
 
         // Run the bot on its runtime in the background; `spawn()` returns
@@ -3551,6 +3587,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         let caps = adapter.capabilities();
@@ -3569,6 +3606,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.health_check().await.is_err());
@@ -3583,6 +3621,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.self_handle().is_none());
@@ -3600,6 +3639,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(!adapter.has_valid_session());
@@ -3619,6 +3659,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         let notify = adapter.connected();
@@ -3666,6 +3707,7 @@ mod tests {
             ws_url: ws_url.map(str::to_string),
             groups: groups.into_iter().map(str::to_string).collect(),
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         }
     }
 

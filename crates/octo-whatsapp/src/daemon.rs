@@ -413,6 +413,7 @@ impl DaemonHandle {
             pair_code: None,
             groups: cfg.groups.clone(),
             sender_allowlist: cfg.sender_allowlist.clone(),
+            passkey_authenticator: None,
         };
         let new_adapter = std::sync::Arc::new(WhatsAppWebAdapter::new(new_adapter_cfg));
         tracing::info!(

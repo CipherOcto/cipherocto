@@ -17,6 +17,9 @@ pub mod adapter;
 /// Phase 2 — 18 new inherent methods on `WhatsAppWebAdapter`
 /// (`send_image`, `edit_message`, `mark_read`, ...).
 pub mod inherent;
+/// Session 2 of the wacore-webauthn plan (RFC-0909): `PasskeyAuthenticator`
+/// trait seam + `CallbackAuthenticator` for the SHORTCAKE_PASSKEY link flow.
+pub mod passkey;
 /// Re-export of `PlatformAdapterError` from `octo-network::dot::error`.
 /// Provides a stable import path for inherent methods and runtime code.
 pub use octo_network::dot::error::PlatformAdapterError as AdapterError;

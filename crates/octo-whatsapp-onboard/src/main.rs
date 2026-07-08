@@ -121,6 +121,7 @@ fn run_pair_link_ci(args: &PairLinkArgs) -> std::result::Result<(), OnboardError
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
+        passkey_authenticator: None,
     };
     let adapter = octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg);
     if !adapter.has_valid_session() {
@@ -476,6 +477,7 @@ fn build_adapter(
         ws_url: None,
         groups: groups.to_vec(),
         sender_allowlist: Default::default(),
+        passkey_authenticator: None,
     };
     // Validate field shape (R1-H1 + R2-L2). For link flows, the
     // binary has already validated inputs via clap; this is

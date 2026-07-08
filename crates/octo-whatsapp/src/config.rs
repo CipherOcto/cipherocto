@@ -416,6 +416,7 @@ impl WhatsAppRuntimeConfig {
             pair_code: None,
             groups: self.groups.clone(),
             sender_allowlist: self.sender_allowlist.clone(),
+            passkey_authenticator: None,
         }
     }
 

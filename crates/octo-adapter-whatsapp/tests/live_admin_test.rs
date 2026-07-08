@@ -70,6 +70,7 @@ fn live_config() -> WhatsAppConfig {
         pair_code: None,
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
+        passkey_authenticator: None,
     }
 }
 

@@ -149,6 +149,7 @@ fn live_adapter_config() -> WhatsAppConfig {
         pair_code: None,
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
+        passkey_authenticator: None,
     }
 }
 

@@ -97,6 +97,7 @@ fn live_config() -> WhatsAppConfig {
         // group can inject" semantics apply (see RFC-0850p-a v1.15
         // §Adversary Analysis D-WA-10 and the accept_message contract).
         sender_allowlist: std::collections::BTreeMap::new(),
+        passkey_authenticator: None,
     }
 }
 

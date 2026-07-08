@@ -32,6 +32,7 @@ fn adapter() -> WhatsAppWebAdapter {
         ws_url: None,
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
+        passkey_authenticator: None,
     })
 }
 

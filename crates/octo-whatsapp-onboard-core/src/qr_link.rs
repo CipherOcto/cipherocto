@@ -32,6 +32,7 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
+        passkey_authenticator: None,
     };
     config
         .validate()

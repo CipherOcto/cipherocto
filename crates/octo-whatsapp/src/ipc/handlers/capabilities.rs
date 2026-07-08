@@ -133,7 +133,7 @@ mod tests {
         // can detect the Some-bound path via the populated mime list.
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         let h = Daemon::new(cfg).handle();
-        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h.bind_adapter(Arc::new(MockAdapter::new()));
         let v = Capabilities.call(h, serde_json::json!({})).await.unwrap();
         assert_eq!(v["platform"], "whatsapp");
         assert_eq!(v["max_payload_bytes"], 65_536);

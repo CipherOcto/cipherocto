@@ -101,7 +101,7 @@ default       = []
 #
 #   cargo check -p octo-whatsapp --features test-helpers
 #
-# Note (Phase 6.12.4): `DaemonHandle::set_adapter_for_tests` is no
+# Note (Phase 6.12.4): `DaemonHandle::bind_adapter` is no
 # longer gated on this feature — production startup paths use it too
 # to bind the live `WhatsAppWebAdapter` and spawn the connection-watcher.
 # Only the `MockAdapter` stub remains test-only.

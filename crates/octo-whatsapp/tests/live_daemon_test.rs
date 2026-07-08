@@ -12,7 +12,7 @@
 //! - Network access to `web.whatsapp.com` / `wss://web.whatsapp.com`.
 //! - The `live-whatsapp` feature on both `octo-whatsapp` and
 //!   `octo-adapter-whatsapp`. The test also pulls in `test-helpers`
-//!   so `DaemonHandle::set_adapter_for_tests` is callable from an
+//!   so `DaemonHandle::bind_adapter` is callable from an
 //!   integration test under `tests/` (the helper is normally gated
 //!   on `cfg(any(test, feature = "test-helpers"))`).
 //!
@@ -278,7 +278,7 @@ async fn init_fixture() -> LiveFixture {
     let adapter = connect_adapter().await;
 
     let daemon = Daemon::new(cfg.clone());
-    daemon.handle().set_adapter_for_tests(adapter.clone());
+    daemon.handle().bind_adapter(adapter.clone());
 
     let cancel = daemon.cancel_token();
     let daemon_task = Arc::new(tokio::spawn(daemon.run()));
@@ -429,7 +429,7 @@ async fn bad_fixture() -> BadLiveFixture {
     let adapter = connect_adapter_unchecked(Duration::from_secs(30)).await;
 
     let daemon = Daemon::new(cfg.clone());
-    daemon.handle().set_adapter_for_tests(adapter.clone());
+    daemon.handle().bind_adapter(adapter.clone());
 
     let cancel = daemon.cancel_token();
     let daemon_task = Arc::new(tokio::spawn(daemon.run()));

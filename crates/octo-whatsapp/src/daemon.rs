@@ -279,11 +279,7 @@ impl DaemonHandle {
     /// it too. The companion connection-watcher task is spawned here
     /// when the adapter exposes `subscribe_raw_events()` (default
     /// `None` on `MockAdapter`, real broadcast on `WhatsAppWebAdapter`).
-    ///
-    /// Existing `set_adapter_for_tests` callers (handlers' unit tests,
-    /// live test fixture) compile unchanged because the method
-    /// signature is identical.
-    pub fn set_adapter_for_tests(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
+    pub fn bind_adapter(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
         *self
             .inner
             .adapter
@@ -311,6 +307,12 @@ impl DaemonHandle {
             prev.abort();
         }
         *slot = Some(join);
+    }
+
+    /// Deprecated alias. Use `bind_adapter` instead.
+    #[deprecated(note = "renamed to bind_adapter; will be removed in Phase 6.4")]
+    pub fn set_adapter_for_tests(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
+        self.bind_adapter(a);
     }
 
     /// Phase 3: read access to the in-memory events ring buffer. The

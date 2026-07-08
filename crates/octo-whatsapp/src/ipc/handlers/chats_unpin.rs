@@ -62,7 +62,7 @@ mod tests {
 
     fn handle_with_mock() -> DaemonHandle {
         let h = handle();
-        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h.bind_adapter(Arc::new(MockAdapter::new()));
         h
     }
 
@@ -115,7 +115,7 @@ mod tests {
                 reason: "test".into(),
             },
         );
-        h.set_adapter_for_tests(mock);
+        h.bind_adapter(mock);
         let err = ChatsUnpin
             .call(
                 h,

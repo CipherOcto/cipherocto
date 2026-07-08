@@ -72,7 +72,7 @@ mod tests {
     fn handle_with_mock() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
         let h = Daemon::new(cfg).handle();
-        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h.bind_adapter(Arc::new(MockAdapter::new()));
         h
     }
 
@@ -109,7 +109,7 @@ mod tests {
                 snippet: "hello world".into(),
             }],
         );
-        h.set_adapter_for_tests(mock);
+        h.bind_adapter(mock);
 
         let r = MessagesSearch
             .call(

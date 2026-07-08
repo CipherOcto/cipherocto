@@ -113,7 +113,7 @@ mod tests {
         // Override mock to return a known payload.
         let mock = MockAdapter::new();
         mock.set_download_media_result("download_media", vec![1, 2, 3, 4, 5]);
-        h.set_adapter_for_tests(Arc::new(mock));
+        h.bind_adapter(Arc::new(mock));
         let r = MessagesDownload
             .call(
                 h,

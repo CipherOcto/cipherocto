@@ -936,7 +936,7 @@ mod tests {
     fn fresh_daemon_with_mock() -> DaemonHandle {
         let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
         let h = Daemon::new(cfg).handle();
-        h.set_adapter_for_tests(Arc::new(MockAdapter::new()));
+        h.bind_adapter(Arc::new(MockAdapter::new()));
         h
     }
 
@@ -1157,7 +1157,7 @@ mod tests {
                 reason: "test".into(),
             },
         );
-        h.set_adapter_for_tests(mock);
+        h.bind_adapter(mock);
         let v = GroupsAddMembers
             .call(
                 h,
@@ -1247,7 +1247,7 @@ mod tests {
                 reason: "test".into(),
             },
         );
-        h.set_adapter_for_tests(mock);
+        h.bind_adapter(mock);
         let v = GroupsRemoveMembers
             .call(h, json!({"jid": "x@g.us", "members": ["5511", "5522"]}))
             .await

@@ -333,6 +333,50 @@ impl DaemonHandle {
         *slot = Some(join);
     }
 
+    /// Bind an adapter AND spawn its `start_bot` on the daemon's runtime,
+    /// in that order. This is the **chokepoint** that prevents the
+    /// connection-watcher's subscription race: the raw-event broadcast
+    /// channel emits boot-time events (Connected / LoggedOut /
+    /// Replaced / SessionExpired) from inside `start_bot`'s on_event
+    /// callback. If the watcher isn't subscribed yet, those events are
+    /// dropped and `bot_state` / `DaemonPhase` stay at their defaults
+    /// (Disconnected / Booting) regardless of what the bot actually
+    /// reached.
+    ///
+    /// Call sites: `cli.rs::daemon` (production), and the two
+    /// `live_daemon_test.rs` fixtures (`init_fixture`, `bad_fixture`).
+    /// No other entry point should pair an adapter with the daemon.
+    ///
+    /// `start` is a closure that returns a `Future<Output = ()>`. The
+    /// caller is responsible for error handling — failures are
+    /// fire-and-forget, the watcher observes whatever state the bot
+    /// ends up in. This is intentional: Phase 6.12.3's
+    /// `live_chain_i_bad_shape_session` exercises the case where
+    /// `start_bot` returns Err (or never reaches Connected); the
+    /// watcher needs to surface that as `phase = session_lost` and
+    /// `bot_state = LoggedOut | Replaced | SessionExpired | Disconnected`.
+    ///
+    /// The closure runs on the current tokio runtime (the same one
+    /// that will run `Daemon::run()`). `bind_adapter` is synchronous —
+    /// it spawns the watcher task before this method returns, so by
+    /// the time `start` is spawned, the watcher is already in its
+    /// `rx.recv()` loop awaiting the first event.
+    pub fn bind_adapter_and_start<F, Fut>(&self, a: Arc<dyn OctoWhatsAppAdapter>, start: F)
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        // Step 1: bind — spawns the connection-watcher, which calls
+        // `subscribe_raw_events()` on the adapter and waits on the
+        // returned broadcast::Receiver.
+        self.bind_adapter(a);
+
+        // Step 2: spawn start. By this point a Receiver is subscribed
+        // to `raw_event_tx`, so any event the WA client emits during
+        // the handshake is delivered to the watcher.
+        tokio::spawn(start());
+    }
+
     /// Rebind the running adapter to a new account's session path.
     ///
     /// Constructs a fresh `WhatsAppWebAdapter` from `new_session_path`
@@ -1138,9 +1182,18 @@ fn load_initial_rules_from_disk(
 /// Map a raw `format!("{:?}", event)` string to a `BotStateMirror`
 /// transition. Returns `None` for non-lifecycle events.
 fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
-    // `Event::Connected(_)`, `Event::LoggedOut(LoggedOutCause { ... })`, ...
-    let rest = raw.strip_prefix("Event::")?;
-    let ident = rest.split(['(', ' ', '{', '<']).next()?;
+    // The adapter broadcasts `format!("{:?}", event)` for every WA
+    // lifecycle event. The actual format depends on the wacore
+    // `Event` enum's Debug derive. Empirically, in current wacore
+    // versions, the Debug impl produces `LoggedOut(LoggedOut { ... })`
+    // WITHOUT a leading `Event::` prefix (i.e. only the variant name,
+    // not the qualified type path). Other libraries or future
+    // versions may produce `Event::LoggedOut(...)`. Accept both.
+    //
+    // Anchor: split on the first `(`, ` `, `{`, or `<` to get just
+    // the identifier; strip the optional `Event::` prefix first.
+    let without_prefix = raw.strip_prefix("Event::").unwrap_or(raw);
+    let ident = without_prefix.split(['(', ' ', '{', '<']).next()?.trim();
     match ident {
         // `phase_changed = true` means the caller should also flip
         // `DaemonPhase` (Connected ↔ SessionLost). Pairing/PairingQr
@@ -1167,6 +1220,7 @@ async fn run_connection_watcher(
     cancel: CancellationToken,
 ) {
     use tokio::sync::broadcast::error::RecvError;
+    tracing::info!("connection watcher: task spawned, awaiting events");
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -1176,6 +1230,10 @@ async fn run_connection_watcher(
             recv = rx.recv() => {
                 match recv {
                     Ok(raw) => {
+                        tracing::debug!(
+                            raw = %raw,
+                            "connection watcher: raw event received"
+                        );
                         if let Some((mirror, phase_changed)) = classify_event(&raw) {
                             tracing::info!(
                                 bot_state = ?mirror,
@@ -1190,8 +1248,16 @@ async fn run_connection_watcher(
                                 };
                                 handle.set_phase(phase).await;
                             }
+                        } else {
+                            // DEBUG (Phase 6.12.5): log unclassified events so
+                            // we can diagnose format mismatches between the
+                            // adapter's `format!("{:?}", event)` and the
+                            // classify_event prefix-based matcher.
+                            tracing::warn!(
+                                raw = %raw,
+                                "connection watcher: received event did not classify"
+                            );
                         }
-                        // Non-lifecycle events are deliberately ignored.
                     }
                     Err(RecvError::Lagged(n)) => {
                         tracing::warn!(

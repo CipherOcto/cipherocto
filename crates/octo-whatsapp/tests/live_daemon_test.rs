@@ -153,23 +153,15 @@ fn live_adapter_config() -> WhatsAppConfig {
 }
 
 async fn connect_adapter() -> Arc<WhatsAppWebAdapter> {
+    // Phase 6.12.5: bind-first-then-start-bot is the chokepoint; the
+    // adapter itself is constructed here, but `start_bot` is now driven
+    // by the caller via `bind_adapter_and_start`. This helper just
+    // returns the un-started adapter; the fixture does bind + spawn.
     let cfg = live_adapter_config();
     if let Err(e) = cfg.validate() {
         panic!("invalid live WhatsAppConfig: {e}");
     }
-    let adapter = WhatsAppWebAdapter::new(cfg);
-    adapter
-        .start_bot()
-        .await
-        .expect("WhatsAppWebAdapter::start_bot failed; is the session mounted?");
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    while std::time::Instant::now() < deadline {
-        if adapter.self_handle().is_some() {
-            return Arc::new(adapter);
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    panic!("adapter self_handle() never resolved within 60s; connected never propagated");
+    Arc::new(WhatsAppWebAdapter::new(cfg))
 }
 
 // ── hermetic runtime config ───────────────────────────────────────
@@ -277,9 +269,39 @@ async fn init_fixture() -> LiveFixture {
     std::fs::create_dir_all(cfg.log_dir.clone()).expect("mkdir log_dir");
 
     let adapter = connect_adapter().await;
+    let adapter_for_start = adapter.clone();
 
     let daemon = Daemon::new(cfg.clone());
-    daemon.handle().bind_adapter(adapter.clone());
+
+    // Phase 6.12.5: bind BEFORE start_bot so the connection-watcher
+    // subscribes before any boot-time lifecycle events fire. The
+    // chokepoint spawns `start` on the daemon's tokio runtime after
+    // `bind_adapter` has wired up the broadcast Receiver.
+    daemon
+        .handle()
+        .bind_adapter_and_start(adapter.clone(), move || async move {
+            adapter_for_start
+                .start_bot()
+                .await
+                .expect("WhatsAppWebAdapter::start_bot failed; is the session mounted?");
+        });
+
+    // Wait up to 60s for self_handle() to resolve — this is the
+    // signal that the WA client finished its handshake and the bot
+    // is now Connected. On healthy sessions this resolves inside a
+    // few seconds; the budget is generous to absorb WhatsApp server
+    // latency.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        if adapter.self_handle().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        adapter.self_handle().is_some(),
+        "adapter self_handle() never resolved within 60s; connected never propagated"
+    );
 
     let cancel = daemon.cancel_token();
     let daemon_task = Arc::new(tokio::spawn(daemon.run()));
@@ -391,32 +413,13 @@ struct BadLiveFixture {
     tmp: TempDir,
 }
 
-async fn connect_adapter_unchecked(timeout: Duration) -> Arc<WhatsAppWebAdapter> {
+async fn connect_adapter_unchecked(_timeout: Duration) -> Arc<WhatsAppWebAdapter> {
+    // Phase 6.12.5: like `connect_adapter`, this helper now returns
+    // an un-started adapter. The caller (`bad_fixture`) drives the
+    // bind-first-then-spawn-start sequence.
     let cfg = live_adapter_config();
     let _ = cfg.validate();
-    let adapter = WhatsAppWebAdapter::new(cfg);
-    // Don't `.expect()` on start_bot — it may return Err with the
-    // specific cause (Replaced, SessionExpired). We log-and-continue
-    // so the test can introspect whatever state the boot produced.
-    if let Err(e) = adapter.start_bot().await {
-        tracing::warn!("bad_fixture: start_bot returned Err: {e}");
-    }
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if adapter.self_handle().is_some() {
-            tracing::warn!(
-                "bad_fixture: adapter unexpectedly reached self_handle(); \
-                 session is alive after all — assertions will skip negative branch"
-            );
-            return Arc::new(adapter);
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    tracing::warn!(
-        "bad_fixture: timeout after {timeout:?}; adapter is stuck — \
-         this is exactly the case live_chain_i exercises"
-    );
-    Arc::new(adapter)
+    Arc::new(WhatsAppWebAdapter::new(cfg))
 }
 
 async fn bad_fixture() -> BadLiveFixture {
@@ -428,9 +431,47 @@ async fn bad_fixture() -> BadLiveFixture {
     // 30s budget: long enough that a healthy session would have
     // connected, short enough to keep test runtime bounded.
     let adapter = connect_adapter_unchecked(Duration::from_secs(30)).await;
+    let adapter_for_start = adapter.clone();
 
     let daemon = Daemon::new(cfg.clone());
-    daemon.handle().bind_adapter(adapter.clone());
+
+    // Phase 6.12.5: bind BEFORE start_bot. The watcher subscribes to
+    // raw_event_tx here; any event the WA client emits during the
+    // (likely-failed) handshake (LoggedOut, Replaced, SessionExpired,
+    // or Disconnected for a bad session) is delivered to the watcher
+    // and surfaces as `phase = session_lost` /
+    // `bot_state = LoggedOut | ... | Disconnected`.
+    //
+    // Don't `.expect()` on start_bot — it may return Err with the
+    // specific cause (Replaced, SessionExpired). We log-and-continue
+    // so the test can introspect whatever state the boot produced.
+    daemon
+        .handle()
+        .bind_adapter_and_start(adapter.clone(), move || async move {
+            if let Err(e) = adapter_for_start.start_bot().await {
+                tracing::warn!("bad_fixture: start_bot returned Err: {e}");
+            }
+        });
+
+    // Wait up to 30s for either healthy (unexpected on bad session)
+    // or stuck (the expected outcome for chain I).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if adapter.self_handle().is_some() {
+            tracing::warn!(
+                "bad_fixture: adapter unexpectedly reached self_handle(); \
+                 session is alive after all — assertions will skip negative branch"
+            );
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    if adapter.self_handle().is_none() {
+        tracing::warn!(
+            "bad_fixture: timeout after 30s; adapter is stuck — \
+             this is exactly the case live_chain_i exercises"
+        );
+    }
 
     let cancel = daemon.cancel_token();
     let daemon_task = Arc::new(tokio::spawn(daemon.run()));
@@ -1539,16 +1580,20 @@ async fn live_chain_i_bad_shape_session() {
             "bot_state should be a non-Connected variant, got {bot_state}"
         );
 
-        // Phase 6.12.4: connection-watcher flips DaemonPhase to
-        // SessionLost when any non-Connected lifecycle event fires
-        // (LoggedOut, Replaced, SessionExpired, Disconnected). For
-        // the boot-time "never reached Connected" case, the watcher
-        // may not yet have fired by the time we probe — so allow
-        // either "booting" or "session_lost" as valid. Either way the
-        // daemon must NOT be reporting "connected" or "shutting_down".
+        // Phase 6.12.5: bind-first-then-start-bot ensures the watcher
+        // subscribes BEFORE start_bot emits any boot-time lifecycle
+        // event. For a logged-out session, the WA client emits
+        // `Event::LoggedOut` during the handshake, the watcher
+        // classifies it as `BotStateMirror::LoggedOut` and flips
+        // `DaemonPhase` to `SessionLost`. The 30s budget inside
+        // `bad_fixture` gives the watcher plenty of time to process
+        // the event before our probe — so phase MUST be `session_lost`,
+        // not the default `booting`. If we ever see `booting` here,
+        // either the watcher failed to subscribe, the broadcast dropped
+        // the event, or `bind_adapter_and_start` was bypassed.
         assert!(
-            matches!(phase.as_str(), "booting" | "session_lost"),
-            "phase should be booting|session_lost on bad-shape session, got {phase}"
+            phase == "session_lost",
+            "phase should be session_lost on bad-shape session, got {phase}"
         );
 
         assert_eq!(s["session_valid"], false);
@@ -1584,8 +1629,8 @@ async fn live_chain_i_bad_shape_session() {
             "re-probe bot_state should be a non-Connected variant, got {bot_state2}"
         );
         assert!(
-            matches!(phase2.as_str(), "booting" | "session_lost"),
-            "re-probe phase should be booting|session_lost, got {phase2}"
+            phase2 == "session_lost",
+            "re-probe phase should be session_lost, got {phase2}"
         );
 
         // Liveness probe — daemon process is up, even when bot is dead.

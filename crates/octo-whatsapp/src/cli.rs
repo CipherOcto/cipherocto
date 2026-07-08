@@ -1514,23 +1514,27 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
 
                 let daemon = crate::daemon::Daemon::new(config.clone());
 
-                // Construct the live WhatsApp Web adapter and call start_bot.
-                // Phase 6.0: fail fast on start_bot error so operators notice
-                // immediately. Phase 6.1+ will revisit if multi-account boot
-                // needs a "started but not connected" state.
+                // Construct the live WhatsApp Web adapter. Phase 6.12.5:
+                // bind BEFORE start_bot so the connection-watcher
+                // subscribes before any boot-time lifecycle events fire.
+                // `start_bot` is now fire-and-forget; failures are logged
+                // but the daemon continues — the watcher observes
+                // whatever state the bot reaches (Connected or any of
+                // the 6 non-Connected BotState variants).
                 let adapter_cfg = config.adapter_config();
                 let adapter = std::sync::Arc::new(octo_adapter_whatsapp::WhatsAppWebAdapter::new(
                     adapter_cfg.clone(),
                 ));
-                if let Err(e) = adapter.start_bot().await {
-                    tracing::error!(
-                        account = %config.name,
-                        session = %adapter_cfg.session_path,
-                        "start_bot failed; aborting daemon startup: {e}"
-                    );
-                    return Err(anyhow::anyhow!("start_bot failed: {e}"));
-                }
-                daemon.handle().bind_adapter(adapter);
+                let adapter_for_start = adapter.clone();
+                daemon.handle().bind_adapter_and_start(adapter, move || async move {
+                    if let Err(e) = adapter_for_start.start_bot().await {
+                        tracing::error!(
+                            account = %config.name,
+                            session = %adapter_cfg.session_path,
+                            "start_bot failed; daemon continues (watcher will observe state): {e}"
+                        );
+                    }
+                });
 
                 daemon.run().await
             })

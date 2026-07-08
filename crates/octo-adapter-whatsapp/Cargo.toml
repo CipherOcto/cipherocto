@@ -43,12 +43,12 @@ live-whatsapp = ["test-helpers"]
 
 [dependencies]
 # WhatsApp Web protocol (oxidezap/whatsapp-rust)
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7", default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7", default-features = false }
+waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7", default-features = false }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6e0f241dc0265add92e1abff0203ec115b8fa4a7" }
 qrcode = "0.14"
 serde-big-array = "0.5"
 bytes = "1"

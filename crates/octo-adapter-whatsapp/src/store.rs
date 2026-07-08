@@ -571,6 +571,14 @@ impl SignalStore for StoolapStore {
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )
     }
+
+    async fn mark_prekeys_uploaded(&self, _ids: &[u32]) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed mark-as-uploaded.
+        // The sweep that calls this runs after a successful first upload,
+        // which currently never happens because pair_success is end-to-end
+        // before prekey re-uploads. Tracked for Phase 7.
+        Ok(())
+    }
 }
 
 // ── AppSyncStore ───────────────────────────────────────────────────
@@ -869,6 +877,13 @@ impl AppSyncStore for StoolapStore {
             Some(Err(e)) => Err(to_store_err(e)),
             None => Ok(None),
         }
+    }
+
+    async fn clear_mutation_macs(&self, _name: &str) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed MAC clear. The ltHash
+        // rebuild is triggered on snapshot re-sync, which the upstream default
+        // sync sequence handles; store-level impl deferred.
+        Ok(())
     }
 }
 
@@ -1213,7 +1228,8 @@ impl ProtocolStore for StoolapStore {
 
     async fn delete_expired_tc_tokens(
         &self,
-        cutoff_timestamp: i64,
+        token_cutoff: i64,
+        sender_cutoff: i64,
     ) -> wacore::store::error::Result<u32> {
         // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
         // a single DELETE that returns the rows-affected count from
@@ -1230,12 +1246,22 @@ impl ProtocolStore for StoolapStore {
         // actual number of rows deleted. R13-M1 didn't audit this
         // pattern (only DELETE+INSERT); the R14 grep audit at
         // lines 1081-1101 found it.
+        // Post-buffa migration (wacore 6e0f241): upstream trait added
+        // a second cutoff to guard sender buckets separately from
+        // received-token state (see wacore/src/store/traits.rs).
+        // sender_cutoff = 0 means "no sender state preserved".
         self.db
             .lock()
             .await
             .execute(
-                "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+                "DELETE FROM tc_tokens WHERE \
+                 token_timestamp < $1 AND device_id = $2 AND \
+                 (sender_timestamp IS NULL OR sender_timestamp < $3)",
+                vec![
+                    token_cutoff.into(),
+                    (self.device_id as i64).into(),
+                    sender_cutoff.into(),
+                ],
             )
             .map(|n| n as u32)
             .map_err(to_store_err)
@@ -1354,7 +1380,10 @@ impl DeviceStore for StoolapStore {
             b.extend_from_slice(device.signed_pre_key.public_key.public_key_bytes());
             b
         };
-        let account = device.account.as_ref().map(|a| a.encode_to_vec());
+        let account = device
+            .account
+            .as_ref()
+            .map(|a| <whatsapp_rust::buffa::Message>::encode_to_vec(&**a));
         let cert_chain = device
             .server_cert_chain
             .as_ref()
@@ -1469,7 +1498,7 @@ impl DeviceStore for StoolapStore {
                 }
                 let account = account_bytes
                     .map(|b| {
-                        waproto::whatsapp::AdvSignedDeviceIdentity::decode(&*b).map_err(|e| {
+                        waproto::whatsapp::ADVSignedDeviceIdentity::decode(&*b).map_err(|e| {
                             wacore::store::error::StoreError::Serialization(Box::new(e))
                         })
                     })
@@ -1913,7 +1942,7 @@ mod tests {
         // Cutoff is between the old and recent timestamps.
         let cutoff = now - 3_600_000;
         let deleted = store
-            .delete_expired_tc_tokens(cutoff)
+            .delete_expired_tc_tokens(cutoff, 0)
             .await
             .expect("delete_expired_tc_tokens should succeed");
         assert_eq!(
@@ -1925,7 +1954,7 @@ mod tests {
         // Second call should return 0 — the remaining 2 are recent
         // and the deleted 3 are gone.
         let deleted2 = store
-            .delete_expired_tc_tokens(cutoff)
+            .delete_expired_tc_tokens(cutoff, 0)
             .await
             .expect("second delete_expired_tc_tokens should succeed");
         assert_eq!(

@@ -48,13 +48,12 @@ impl RpcHandler for MediaInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     #[tokio::test]
     async fn media_info_returns_null_in_phase2() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let v = MediaInfo
             .call(h, serde_json::json!({"media_ref_token": "abc"}))
             .await

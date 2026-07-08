@@ -81,7 +81,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            image_message: Some(Box::new(img_msg)),
+            image_message: whatsapp_rust::buffa::MessageField::some(img_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -176,7 +176,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            video_message: Some(Box::new(vid_msg)),
+            video_message: whatsapp_rust::buffa::MessageField::some(vid_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -268,7 +268,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            audio_message: Some(Box::new(aud_msg)),
+            audio_message: whatsapp_rust::buffa::MessageField::some(aud_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -360,7 +360,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            audio_message: Some(Box::new(aud_msg)),
+            audio_message: whatsapp_rust::buffa::MessageField::some(aud_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -451,7 +451,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            sticker_message: Some(Box::new(stk_msg)),
+            sticker_message: whatsapp_rust::buffa::MessageField::some(stk_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -514,17 +514,19 @@ impl WhatsAppWebAdapter {
             .unwrap_or_default()
             .as_millis() as i64;
         let msg = waproto::whatsapp::Message {
-            reaction_message: Some(waproto::whatsapp::message::ReactionMessage {
-                key: Some(waproto::whatsapp::MessageKey {
+            reaction_message: waproto::whatsapp::message::ReactionMessage {
+                key: waproto::whatsapp::MessageKey {
                     remote_jid: Some(to_jid.to_string()),
                     from_me: Some(false),
                     id: Some(msg_id.to_string()),
                     ..Default::default()
-                }),
+                }
+                .into(),
                 text: Some(emoji.to_string()),
                 sender_timestamp_ms: Some(sender_timestamp_ms),
                 ..Default::default()
-            }),
+            }
+            .into(),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, msg)).await.map_err(|e| {
@@ -594,7 +596,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let msg = waproto::whatsapp::Message {
-            poll_creation_message: Some(Box::new(poll_msg)),
+            poll_creation_message: whatsapp_rust::buffa::MessageField::some(poll_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, msg)).await.map_err(|e| {
@@ -669,7 +671,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            contact_message: Some(Box::new(cm)),
+            contact_message: whatsapp_rust::buffa::MessageField::some(cm),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -735,7 +737,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            location_message: Some(Box::new(loc)),
+            location_message: whatsapp_rust::buffa::MessageField::some(loc),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))
@@ -811,14 +813,14 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let proto = waproto::whatsapp::message::ProtocolMessage {
-            key: Some(key),
-            r#type: Some(waproto::whatsapp::message::protocol_message::Type::MessageEdit as i32),
-            edited_message: Some(Box::new(inner)),
+            key: key.into(),
+            r#type: Some(waproto::whatsapp::message::protocol_message::Type::MessageEdit),
+            edited_message: whatsapp_rust::buffa::MessageField::some(inner),
             timestamp_ms: Some(epoch_millis() as i64),
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            protocol_message: Some(Box::new(proto)),
+            protocol_message: whatsapp_rust::buffa::MessageField::some(proto),
             ..Default::default()
         };
         Box::pin(client.send_message(jid, outgoing))
@@ -880,12 +882,12 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let proto = waproto::whatsapp::message::ProtocolMessage {
-            key: Some(key),
-            r#type: Some(waproto::whatsapp::message::protocol_message::Type::Revoke as i32),
+            key: key.into(),
+            r#type: Some(waproto::whatsapp::message::protocol_message::Type::Revoke),
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            protocol_message: Some(Box::new(proto)),
+            protocol_message: whatsapp_rust::buffa::MessageField::some(proto),
             ..Default::default()
         };
         Box::pin(client.send_message(jid, outgoing))
@@ -934,7 +936,7 @@ impl WhatsAppWebAdapter {
         let is_group = chat.is_group();
         let sender: Option<wacore_binary::Jid> = if is_group { None } else { Some(chat.clone()) };
         client
-            .mark_as_read(&chat, sender.as_ref(), vec![up_to_msg_id.to_string()])
+            .mark_as_read(&chat, sender.as_ref(), &[&up_to_msg_id[..]])
             .await
             .map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "whatsapp".into(),

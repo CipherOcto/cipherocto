@@ -1,5 +1,4 @@
 use super::*;
-use crate::config::WhatsAppRuntimeConfig;
 use crate::daemon::Daemon;
 
 struct EchoHandler;
@@ -17,8 +16,8 @@ impl RpcHandler for EchoHandler {
 #[tokio::test]
 async fn dispatch_routes_to_registered_handler() {
     let reg = HandlerRegistry::new().register(Arc::new(EchoHandler));
-    let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-    let handle = Daemon::new(cfg).handle();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let handle = Daemon::new_for_tests(tmp.path()).1;
     let req = RpcRequest {
         id: 7,
         method: "echo".to_string(),
@@ -33,8 +32,8 @@ async fn dispatch_routes_to_registered_handler() {
 #[tokio::test]
 async fn unknown_method_returns_method_not_found() {
     let reg = HandlerRegistry::new();
-    let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-    let handle = Daemon::new(cfg).handle();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let handle = Daemon::new_for_tests(tmp.path()).1;
     let req = RpcRequest {
         id: 8,
         method: "no.such.method".to_string(),

@@ -219,6 +219,11 @@ impl DaemonHandle {
         }
     }
 
+    /// Read access to the boot-time runtime config. Read-only borrow; the
+    /// config is set once at `Daemon::new` and not mutated thereafter.
+    /// Callers that need the *active* account_id should consult
+    /// `accounts().info(active_id)` instead — the boot-time value here
+    /// does not reflect runtime account switches.
     pub fn config(&self) -> &WhatsAppRuntimeConfig {
         &self.inner.config
     }
@@ -290,6 +295,13 @@ impl DaemonHandle {
     /// it too. The companion connection-watcher task is spawned here
     /// when the adapter exposes `subscribe_raw_events()` (default
     /// `None` on `MockAdapter`, real broadcast on `WhatsAppWebAdapter`).
+    ///
+    /// Phase 6.1.1.1: this is an *atomic replace* — any prior
+    /// connection-watcher join-handle is aborted before the new one
+    /// is stored, so successive calls (including `rebind_adapter_for`)
+    /// do not leak watcher tasks. Callers that need the
+    /// pre-replacement adapter reference (e.g. to log which account
+    /// was just unbound) should consult `adapter()` first.
     pub fn bind_adapter(&self, a: Arc<dyn OctoWhatsAppAdapter>) {
         *self
             .inner
@@ -309,15 +321,47 @@ impl DaemonHandle {
         let join = tokio::spawn(async move {
             run_connection_watcher(rx, handle, cancel).await;
         });
-        // Replace any prior watcher (single-bind-per-daemon assumption;
-        // multi-bind would leak old tasks — documented limitation).
-        // The `blocking_lock` here is fine because the call site is a
-        // synchronous setup function, not on a hot RPC path.
+        // Replace any prior watcher — atomic swap: aborts the
+        // prior connection-watcher if any, so re-binding under a
+        // new account does not leak tasks. The `blocking_lock`
+        // here is fine because the call site is a synchronous
+        // setup function, not on a hot RPC path.
         let mut slot = self.inner.connection_watcher.lock();
         if let Some(prev) = slot.take() {
             prev.abort();
         }
         *slot = Some(join);
+    }
+
+    /// Rebind the running adapter to a new account's session path.
+    ///
+    /// Constructs a fresh `WhatsAppWebAdapter` from `new_session_path`
+    /// (taken from the just-activated `AccountEntry`) + the current runtime
+    /// config's `groups` / `sender_allowlist`, then atomically swaps the
+    /// adapter slot via `bind_adapter` (which aborts the prior
+    /// connection-watcher).
+    ///
+    /// The new adapter is NOT `start_bot()`-ed. The caller is expected
+    /// to invoke `reconnect.now` afterwards to establish a fresh
+    /// connection under the new account.
+    pub fn rebind_adapter_for(&self, account_id: &str, new_session_path: &std::path::Path) {
+        use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+        let cfg = self.config();
+        let new_adapter_cfg = WhatsAppConfig {
+            session_path: new_session_path.to_string_lossy().into_owned(),
+            ws_url: None,
+            pair_phone: None,
+            pair_code: None,
+            groups: cfg.groups.clone(),
+            sender_allowlist: cfg.sender_allowlist.clone(),
+        };
+        let new_adapter = std::sync::Arc::new(WhatsAppWebAdapter::new(new_adapter_cfg));
+        tracing::info!(
+            account_id,
+            session = %new_session_path.display(),
+            "rebinding adapter to new account"
+        );
+        self.bind_adapter(new_adapter);
     }
 
     /// Deprecated alias. Use `bind_adapter` instead.

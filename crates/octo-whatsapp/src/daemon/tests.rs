@@ -70,5 +70,45 @@ async fn daemon_new_initializes_accounts_store() {
     let daemon = Daemon::new(cfg);
     let _entries = daemon.handle().accounts().list();
     // No panic → store opened successfully (or fell back to `None`; both
-    // cases yield an empty Vec via the guard's `unwrap_or_default()`).
+    // cases yield an empty Vec via the guard's `unwrap_or_default()`);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rebind_adapter_for_replaces_slot_with_new_adapter() {
+    let cfg = crate::config::WhatsAppRuntimeConfig {
+        name: "test-rebind".into(),
+        ..Default::default()
+    };
+    let daemon = Daemon::new(cfg);
+    let handle = daemon.handle();
+
+    let adapter_a = std::sync::Arc::new(crate::test_mock_adapter::MockAdapter::new());
+    handle.bind_adapter(adapter_a.clone());
+    assert!(handle.adapter().is_some(), "first bind must populate slot");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let new_session = tmp.path().join("account-b.session.db");
+    handle.rebind_adapter_for("account-b", &new_session);
+
+    assert!(
+        handle.adapter().is_some(),
+        "slot must remain populated after rebind"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rebind_adapter_for_works_when_no_adapter_bound_yet() {
+    let cfg = crate::config::WhatsAppRuntimeConfig {
+        name: "test-rebind-empty".into(),
+        ..Default::default()
+    };
+    let daemon = Daemon::new(cfg);
+    let handle = daemon.handle();
+    assert!(handle.adapter().is_none(), "slot starts empty");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let new_session = tmp.path().join("default.session.db");
+    handle.rebind_adapter_for("default", &new_session);
+
+    assert!(handle.adapter().is_some());
 }

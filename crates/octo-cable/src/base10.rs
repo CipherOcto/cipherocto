@@ -15,17 +15,16 @@
 //! `cable/handshake.rs::tests::decode_chrome` so future drift is
 //! caught at unit-test time.
 //!
-//! **Scope:** Encoding only — the `[adapter.rs::Event::PairPasskeyRequest]`
-//! arm produces the FIDO URI; the phone-side decoder is the WA app
-//! (out of process), so this module does not need a decoder for
-//! production. A decoder is included for round-trip testing.
+//! **Scope:** Both encoder and decoder. The encoder produces the
+//! `FIDO:/<digits>` URI the QR carries; the decoder is needed by the
+//! CLI's QR scanner pipeline so we can verify a scanned URI before
+//! passing it to `HandshakeV2::from_fido_uri`.
 
 use std::fmt::Write;
 
 /// Prefix for a caBLE / WebAuthn hybrid transport URL: the FIDO URI
 /// scheme registered as an Android intent filter by WA / Chrome /
 /// Safari / Edge for cross-device authenticator handoff.
-#[allow(dead_code)] // kept for Session 5+ (in-Rust authenticator driver)
 pub const URL_PREFIX: &str = "FIDO:/";
 
 /// Size of a chunk of data in its original form
@@ -35,7 +34,6 @@ const CHUNK_SIZE: usize = 7;
 const CHUNK_DIGITS: usize = 17;
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)] // decoder is used by the round-trip tests; production is encode-only
 pub enum DecodeError {
     /// The input value contained non-ASCII-digit characters.
     ContainsNonDigitChars,
@@ -46,7 +44,6 @@ pub enum DecodeError {
 }
 
 /// Encodes binary data into Base10 format. See Chromium's `BytesToDigits`.
-#[allow(dead_code)] // kept for Session 5+ (in-Rust authenticator driver)
 pub fn encode(i: &[u8]) -> String {
     i.chunks(CHUNK_SIZE).fold(String::new(), |mut out, c| {
         let chunk_len = c.len();
@@ -72,10 +69,6 @@ pub fn encode(i: &[u8]) -> String {
 
 /// Decodes Base10 formatted data into binary form. See Chromium's
 /// `DigitsToBytes`.
-///
-/// Mirror of `encode()` for round-trip testing only — production
-/// always encodes (the phone-side decoder is the WA app).
-#[allow(dead_code)] // consumed only by #[cfg(test)] round-trip cases
 pub fn decode(i: &str) -> Result<Vec<u8>, DecodeError> {
     // Check that i only contains ASCII digits
     if i.chars().any(|c| !c.is_ascii_digit()) {

@@ -74,6 +74,12 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }
+# caBLE transport (HandshakeV2 + base10 + future QR-only relay).
+# The previous in-crate `mod base10` was lifted into this crate when
+# the HandshakeV2 codec landed; we re-export through
+# `octo_cable::base10` so anything outside the adapter that needed
+# `crate::base10` should switch to the new path.
+octo-cable = { path = "../octo-cable" }
 
 [dev-dependencies]
 tempfile = "3"

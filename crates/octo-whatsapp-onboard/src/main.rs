@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use cli::{
-    Cli, Command, OutputArgs, PairLinkArgs, QrLinkArgs, SessionAction, SessionListArgs,
-    SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
+    Cli, Command, CompanionLinkArgs, OutputArgs, PairLinkArgs, QrLinkArgs, SessionAction,
+    SessionListArgs, SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
 use octo_network::dot::adapters::PlatformAdapter;
@@ -32,6 +32,7 @@ async fn main() -> ExitCode {
             Command::QrLink(args) => run_qr_link(args).await,
             Command::PairLink(args) => run_pair_link(args).await,
             Command::Whoami(args) => run_whoami(args).await,
+            Command::CompanionLink(args) => run_companion_link(args).await,
             Command::Session { action } => match action {
                 SessionAction::List(args) => run_session_list(args).await,
                 SessionAction::Verify(args) => run_session_verify(args).await,
@@ -220,6 +221,98 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
         Err(e) => Err(e.into()),
     }
 }
+
+/// Session 9 — drive the caBLE v2 tunnel against a phone whose
+/// `FIDO:/<digits>` QR was scanned (operator flow: pipe the QR
+/// decoder's stdout into stdin, or pass `--qr-file <path>`).
+/// Decodes the URI, connects to `wss://cable.ua5v.com`, runs a
+/// CTAP2 GetAssertion over the encrypted tunnel using the
+/// WebAuthn JSON from `--options-file` (or a built-in mirror of
+/// the WA Web bot-verification payload), and prints the resulting
+/// PublicKeyCredential JSON.
+///
+/// The CLI binary doesn't itself drive wacore's SHORTCAKE flow
+/// (that's wired in Session 10 via `CablePasskeyAuthenticator`
+/// on the adapter's `PasskeyAuthenticator` trait). This command
+/// is the operator-facing canary that proves the caBLE transport
+/// itself works against the operator's live phone.
+async fn run_companion_link(args: CompanionLinkArgs) -> std::result::Result<(), OnboardError> {
+    // rustls 0.23+ requires an explicit crypto provider before TLS.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Read the FIDO:/ URI from --qr-file or stdin.
+    let uri = match args.qr_file.as_ref() {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| OnboardError::BadConfig(format!("read qr_file {:?}: {e}", path)))?,
+        None => {
+            let mut s = String::new();
+            std::io::stdin()
+                .read_to_string(&mut s)
+                .map_err(|e| OnboardError::BadConfig(format!("read stdin: {e}")))?;
+            s
+        }
+    };
+    let uri = uri.trim().to_string();
+    if !uri.starts_with("FIDO:/") {
+        return Err(OnboardError::BadConfig(format!(
+            "expected FIDO:/ URI, got {uri:?}"
+        )));
+    }
+
+    // Decode the HandshakeV2.
+    let handshake = octo_cable::HandshakeV2::from_fido_uri(&uri)
+        .map_err(|e| OnboardError::BadConfig(format!("decode HandshakeV2: {e:?}")))?;
+    tracing::info!(
+        peer_identity_bytes = handshake.peer_identity.len(),
+        secret_bytes = handshake.secret.len(),
+        request_type = ?handshake.request_type,
+        "decoded HandshakeV2"
+    );
+
+    // Load the WebAuthn request_options_json (wacore would supply
+    // this via Event::PairPasskeyRequest).
+    let options_json = match args.options_file.as_ref() {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|e| OnboardError::BadConfig(format!("read options_file {:?}: {e}", path)))?,
+        None => BUILTIN_REQUEST_OPTIONS_JSON.to_string(),
+    };
+
+    // Drive the caBLE pipeline under the operator's timeout.
+    let limit = std::time::Duration::from_secs(args.timeout);
+    let credential = tokio::time::timeout(
+        limit,
+        octo_cable::assert_via_cable(&handshake, &options_json),
+    )
+    .await
+    .map_err(|_| {
+        OnboardError::Cancelled(format!(
+            "companion-link timeout after {}s — phone never scanned the QR?",
+            args.timeout
+        ))
+    })?
+    .map_err(|e| OnboardError::Generic(anyhow::anyhow!("assert_via_cable: {e:?}")))?;
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&credential)
+            .map_err(|e| OnboardError::Generic(anyhow::anyhow!("re-serialize credential: {e}")))?
+    );
+    Ok(())
+}
+
+/// Built-in mirror of the WA Web bot-verification payload we captured
+/// live on 2026-07-08. Used when `--options-file` is omitted so the
+/// canary can run without a wacore session attached.
+const BUILTIN_REQUEST_OPTIONS_JSON: &str = r#"{
+    "challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "rpId": "whatsapp.com",
+    "timeout": 60000,
+    "allowCredentials": [],
+    "userVerification": "required",
+    "extensions": {"uvm": true}
+}"#;
+
+use std::io::Read;
 
 async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), OnboardError> {
     // R4-L1: no clone needed; args is by-value and args.base_dir

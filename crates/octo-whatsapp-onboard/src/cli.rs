@@ -34,6 +34,14 @@ pub enum Command {
     PairLink(PairLinkArgs),
     /// Verify existing session.
     Whoami(WhoamiArgs),
+    /// Drive the caBLE v2 tunnel against a phone whose
+    /// `FIDO:/<digits>` QR was scanned (Session 9). Reads the URI
+    /// from stdin or `--qr-file`, decodes it as a HandshakeV2,
+    /// connects to `wss://cable.ua5v.com`, and runs a CTAP2
+    /// GetAssertion over the encrypted tunnel using the WebAuthn
+    /// JSON from `--options-file` (or a built-in sample). Prints
+    /// the resulting PublicKeyCredential JSON on success.
+    CompanionLink(CompanionLinkArgs),
     /// Multi-account session store operations.
     Session {
         #[command(subcommand)]
@@ -212,6 +220,36 @@ pub struct SessionRemoveArgs {
     /// Skip the interactive confirmation (for CI).
     #[arg(long)]
     pub yes: bool,
+}
+
+/// Session 9 — drive the caBLE v2 tunnel against a phone whose
+/// `FIDO:/<digits>` QR was scanned (e.g. via `zbarcam --raw -q |
+/// companion-link`). Decodes the URI, connects to
+/// `wss://cable.ua5v.com`, and runs a CTAP2 GetAssertion over the
+/// encrypted tunnel using the WebAuthn JSON shape from
+/// `--options-file` (or a built-in mirror of the WA Web bot-verification
+/// publicKey). On success prints the resulting PublicKeyCredential
+/// JSON. The operator must have the phone scanning the same QR
+/// during the run window.
+#[derive(Args, Debug)]
+pub struct CompanionLinkArgs {
+    /// Path to a file containing the `FIDO:/<digits>` URI. If
+    /// omitted, read from stdin.
+    #[arg(long)]
+    pub qr_file: Option<PathBuf>,
+    /// Path to a file containing the WebAuthn
+    /// `PublicKeyCredentialRequestOptions` JSON wacore would have
+    /// emitted via `Event::PairPasskeyRequest.request_options_json`.
+    /// If omitted, a built-in mirror of the WA Web bot-verification
+    /// payload is used (rpId=whatsapp.com, 32B challenge, no
+    /// allowCredentials, uvm extension).
+    #[arg(long)]
+    pub options_file: Option<PathBuf>,
+    /// Timeout in seconds for the full connect + handshake + assertion
+    /// (default: 120 — generous for the operator to scan with the
+    /// phone).
+    #[arg(long, default_value_t = 120)]
+    pub timeout: u64,
 }
 
 #[cfg(test)]

@@ -72,13 +72,12 @@ impl RpcHandler for HealthGet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     #[tokio::test]
     async fn health_get_returns_phase5_fields() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let v = HealthGet.call(h.clone(), Value::Null).await.unwrap();
         assert_eq!(v["api_version"], "1.0.0+phase5");
         assert_eq!(v["phase"], "booting");
@@ -93,8 +92,8 @@ mod tests {
 
     #[tokio::test]
     async fn health_get_flips_to_connected_when_phase_set() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         h.set_phase(DaemonPhase::Connected).await;
         h.set_ready(true);
         h.set_live(true);

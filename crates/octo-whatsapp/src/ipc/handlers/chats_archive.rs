@@ -50,14 +50,13 @@ impl RpcHandler for ChatsArchive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::test_mock_adapter::MockAdapter;
     use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn handle_with_mock() -> DaemonHandle {

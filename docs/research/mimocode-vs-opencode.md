@@ -2343,7 +2343,7 @@ Specific validation rules:
 For a more rigorous comparison, the next step would be:
 - A line-level `diff` of the 5 largest shared files (`session/prompt.ts`, `session/checkpoint.ts`, `provider/provider.ts`, `tool/actor.ts`, `acp/agent.ts`).
 - A test pass — run the upstream test suite on the MiMo-Code binary (and vice versa) to see what breaks.
-- A static call graph analysis using the MiMo-Code's GitNexus index (which would reveal all callers of the new subsystems).
+- A static call graph analysis using a symbol-level index over the MiMo-Code source (which would reveal all callers of the new subsystems).
 
 ---
 

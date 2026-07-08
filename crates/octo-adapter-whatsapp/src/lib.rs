@@ -14,6 +14,10 @@
 //! ```
 
 pub mod adapter;
+/// caBLE Base10 encoder/decoder used to build the `FIDO:/<digits>`
+/// URL the phone's WA app expects for cross-device passkey assertion.
+/// Ported from webauthn-rs's `webauthn-authenticator-rs/src/cable/base10.rs`.
+mod base10;
 /// Phase 2 — 18 new inherent methods on `WhatsAppWebAdapter`
 /// (`send_image`, `edit_message`, `mark_read`, ...).
 pub mod inherent;

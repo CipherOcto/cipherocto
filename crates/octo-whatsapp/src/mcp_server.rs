@@ -12,17 +12,19 @@ use serde_json::Value;
 
 /// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
 /// Part A + Phase 5 Part E RPC surfaces + Phase 6.12 groups coordinator
-/// surface + Phase 6.12.1 groups completion surface). Used by integration
-/// tests to assert `tools/list` advertises the full set. The Phase 4
-/// Phase 5 Part E additions are 17 tools (10 rule CRUD/dry-run + 4
-/// trigger CRUD/run + 2 audit + 1 action). The Phase 6.12 additions
-/// are 14 `groups.*` coordinator tools (destroy, resolve_invite,
-/// add_member, add_members, remove_member, remove_members, promote,
-/// demote, ban, approve_join, rename, set_description, set_locked,
-/// transfer_ownership). The Phase 6.12.1 completion surface adds 6 more
-/// (set_announce, set_ephemeral, set_require_approval, list_with_invites,
-/// join_by_invite, join_by_id).
-pub const EXPECTED_TOOL_COUNT: usize = 86;
+/// surface + Phase 6.12.1 groups completion surface + Phase 6.1 multi-
+/// account surface). Used by integration tests to assert `tools/list`
+/// advertises the full set. The Phase 4 / Phase 5 Part E additions are
+/// 17 tools (10 rule CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1
+/// action). The Phase 6.12 additions are 14 `groups.*` coordinator tools
+/// (destroy, resolve_invite, add_member, add_members, remove_member,
+/// remove_members, promote, demote, ban, approve_join, rename,
+/// set_description, set_locked, transfer_ownership). The Phase 6.12.1
+/// completion surface adds 6 more (set_announce, set_ephemeral,
+/// set_require_approval, list_with_invites, join_by_invite, join_by_id).
+/// The Phase 6.1 multi-account surface adds 3 `daemon.accounts.*` tools
+/// (list, use, info).
+pub const EXPECTED_TOOL_COUNT: usize = 89;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -739,6 +741,22 @@ pub fn tool_descriptors() -> Vec<Value> {
             &["target", "reason"],
         ),
     ));
+    // ─── Accounts (3) — Phase 6.1 ──────────────────────────────────────
+    v.push(td(
+        "daemon.accounts.list",
+        "List all linked WhatsApp accounts.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "daemon.accounts.use",
+        "Set the active WhatsApp account (writes the `active` symlink).",
+        schema_props_required(&[("account_id", "string")], &["account_id"]),
+    ));
+    v.push(td(
+        "daemon.accounts.info",
+        "Show details for one linked WhatsApp account.",
+        schema_props_required(&[("account_id", "string")], &["account_id"]),
+    ));
     v
 }
 
@@ -822,6 +840,9 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "events.replay" => "events.replay",
         "events.tail" => "events.tail",
         "clients.list" => "clients.list",
+        "daemon.accounts.list" => "daemon.accounts.list",
+        "daemon.accounts.use" => "daemon.accounts.use",
+        "daemon.accounts.info" => "daemon.accounts.info",
         "daemon.methods.list" => "daemon.methods.list",
         "daemon.methods.help" => "daemon.methods.help",
         "security.rotate_token" => "security.rotate_token",
@@ -1104,6 +1125,34 @@ mod tests {
             assert!(
                 names.contains(m),
                 "Phase 6.12.1 groups completion tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
+    }
+
+    /// Phase 6.1: 3 `daemon.accounts.*` RPCs (list, use, info) now exposed
+    /// as MCP tools. Mirrors the prior coordinator / completion tests.
+    #[test]
+    fn phase61_accounts_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "daemon.accounts.list",
+            "daemon.accounts.use",
+            "daemon.accounts.info",
+        ] {
+            assert!(
+                names.contains(m),
+                "Phase 6.1 accounts tool {m:?} not advertised"
             );
         }
         assert_eq!(

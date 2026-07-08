@@ -76,6 +76,8 @@ pub enum Command {
     Onboard(OnboardCmd),
     /// Client session discovery (Phase 3).
     Clients(ClientsCmd),
+    /// Phase 6.1: multi-account management.
+    Accounts(AccountsCmd),
     /// Daemon method discovery (Phase 3). `methods list|help METHOD`.
     Methods(MethodsCmd),
     /// Security token operations (Phase 5 Part A).
@@ -633,6 +635,30 @@ pub enum MethodsAction {
     Show {
         /// Method name (e.g. `send.text`).
         method: String,
+    },
+}
+
+/// Phase 6.1: multi-account management. Mirrors `daemon.accounts.list`,
+/// `daemon.accounts.use`, and `daemon.accounts.info`.
+#[derive(Debug, Args)]
+pub struct AccountsCmd {
+    #[command(subcommand)]
+    pub action: AccountsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccountsAction {
+    /// List all linked WhatsApp accounts.
+    List,
+    /// Set the active account (writes the `active` symlink).
+    Use {
+        /// Account ID (e.g. E.164 phone without leading "+").
+        account_id: String,
+    },
+    /// Show details for one account.
+    Info {
+        /// Account ID to look up.
+        account_id: String,
     },
 }
 
@@ -1392,6 +1418,24 @@ pub fn dispatch_tokens(cli: &Cli, cmd: &TokenCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Phase 6.1: multi-account management RPCs.
+pub fn dispatch_accounts(cli: &Cli, cmd: &AccountsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        AccountsAction::List => ("daemon.accounts.list", serde_json::Value::Null),
+        AccountsAction::Use { account_id } => (
+            "daemon.accounts.use",
+            serde_json::json!({ "account_id": account_id }),
+        ),
+        AccountsAction::Info { account_id } => (
+            "daemon.accounts.info",
+            serde_json::json!({ "account_id": account_id }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
 /// Wire `reconnect` and `shutdown` (Task 48).
 pub fn dispatch_reconnect(cli: &Cli) -> anyhow::Result<()> {
     let result =
@@ -1521,6 +1565,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Shutdown => dispatch_shutdown(&cli),
         Command::Onboard(ref cmd) => dispatch_onboard(&cli, cmd),
         Command::Clients(ref cmd) => dispatch_clients(&cli, cmd),
+        Command::Accounts(ref cmd) => dispatch_accounts(&cli, cmd),
         Command::Methods(ref cmd) => dispatch_methods(&cli, cmd),
         Command::Tokens(ref cmd) => dispatch_tokens(&cli, cmd),
         Command::Audit(ref cmd) => dispatch_audit(&cli, cmd),
@@ -2264,6 +2309,43 @@ mod tests {
                 _ => panic!("expected MethodsAction::Show"),
             },
             _ => panic!("expected Command::Methods"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_accounts_list() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "accounts", "list"]).unwrap();
+        match c.command {
+            Command::Accounts(AccountsCmd {
+                action: AccountsAction::List,
+            }) => {}
+            other => panic!("expected Command::Accounts(List), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_accounts_use_captures_account_id_arg() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "accounts", "use", "work-account"]).unwrap();
+        match c.command {
+            Command::Accounts(AccountsCmd {
+                action: AccountsAction::Use { account_id },
+            }) => {
+                assert_eq!(account_id, "work-account");
+            }
+            other => panic!("expected Command::Accounts(Use), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_accounts_info_captures_account_id_arg() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "accounts", "info", "personal"]).unwrap();
+        match c.command {
+            Command::Accounts(AccountsCmd {
+                action: AccountsAction::Info { account_id },
+            }) => {
+                assert_eq!(account_id, "personal");
+            }
+            other => panic!("expected Command::Accounts(Info), got {other:?}"),
         }
     }
 

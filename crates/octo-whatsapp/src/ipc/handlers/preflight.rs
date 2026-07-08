@@ -76,34 +76,20 @@ pub async fn preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
-    };
     use crate::daemon::Daemon;
     use std::io::Write as _;
 
-    fn handle_with_cap(cap: usize) -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig {
-            name: "pf".into(),
-            data_dir: std::env::temp_dir(),
-            log_dir: std::env::temp_dir(),
-            socket_dir: std::env::temp_dir(),
-            media_buffer: MediaBufferConfig {
-                max_concurrent_uploads: cap,
-                root: std::env::temp_dir().join(format!("octo-pf-{}-{}", std::process::id(), cap)),
-            },
-            events: EventsConfig::default(),
-            security: SecurityConfig::default(),
-            observability: Default::default(),
-            rules: RulesConfig::default(),
-            ..Default::default()
-        };
-        Daemon::new(cfg).handle()
+    /// Hermetic helper. Uses `Daemon::new_for_tests` which routes all
+    /// filesystem paths (data_dir, rules, accounts index, media buffer)
+    /// into the supplied tmpdir.
+    fn hermetic_handle() -> DaemonHandle {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     #[tokio::test]
     async fn rejects_oversize() {
-        let h = handle_with_cap(4);
+        let h = hermetic_handle();
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("big.bin");
         let mut w = std::fs::File::create(&f).unwrap();
@@ -123,7 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_nonexistent_file() {
-        let h = handle_with_cap(4);
+        let h = hermetic_handle();
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("does-not-exist.bin");
         let err = preflight(&h, MediaKind::Audio, &f).await.unwrap_err();
@@ -132,11 +118,15 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_busy_when_full() {
-        let h = handle_with_cap(1);
-        // Saturate the buffer by taking the only permit via the same
-        // public path the handler uses. The slot lives on the stack and
-        // is dropped at the end of the test, releasing the permit.
-        let _taken = h.media_buffer().try_acquire().expect("first slot");
+        let h = hermetic_handle();
+        // Saturate the buffer (default cap=4) by taking all 4 permits via
+        // the same public path the handler uses. The slots live on the
+        // stack and are dropped at the end of the test, releasing the
+        // permits.
+        let _s1 = h.media_buffer().try_acquire().expect("slot 1");
+        let _s2 = h.media_buffer().try_acquire().expect("slot 2");
+        let _s3 = h.media_buffer().try_acquire().expect("slot 3");
+        let _s4 = h.media_buffer().try_acquire().expect("slot 4");
 
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("ok.bin");
@@ -145,6 +135,6 @@ mod tests {
         let err = preflight(&h, MediaKind::Sticker, &f).await.unwrap_err();
         assert_eq!(err.code, RpcErrorCode::Busy.as_i32());
         let data = err.data.expect("data");
-        assert_eq!(data["max_concurrent_uploads"], 1);
+        assert_eq!(data["max_concurrent_uploads"], 4);
     }
 }

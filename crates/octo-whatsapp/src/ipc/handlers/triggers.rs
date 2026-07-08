@@ -266,25 +266,11 @@ impl RpcHandler for TriggersRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
-    };
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig {
-            name: "p4".into(),
-            data_dir: Default::default(),
-            log_dir: Default::default(),
-            socket_dir: Default::default(),
-            media_buffer: MediaBufferConfig::default(),
-            events: EventsConfig::default(),
-            security: SecurityConfig::default(),
-            observability: Default::default(),
-            rules: RulesConfig::default(),
-            ..Default::default()
-        };
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn basic_trigger(id: &str) -> Value {

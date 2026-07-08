@@ -1030,15 +1030,16 @@ fn unix_epoch_ms_now() -> i64 {
 thread_local! {
     /// Per-thread stash of `JoinHandle`s for rules-persister
     /// background tasks. The daemon fires off one persister per
-    /// `Daemon::handle()` call; the supervisor awaits each handle
-    /// during shutdown so the persister can drain.
+    /// `Daemon` instance (during `Daemon::new` / `new_internal`);
+    /// the supervisor awaits each handle during shutdown so the
+    /// persister can drain.
     ///
     /// We use a thread_local rather than storing the handle inside
     /// `DaemonInner` because `Arc<DaemonInner>` is shared with the
     /// IPC handlers; moving the handle there would force `'static`
     /// bound on every handler that needs to read it. The thread
     /// local is owned by the supervisor thread that called
-    /// `Daemon::handle()` (typically the runtime entry point).
+    /// `Daemon::new` (typically the runtime entry point).
     static PERSISTER_HANDLES: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }

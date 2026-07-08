@@ -126,37 +126,13 @@ impl RpcHandler for SecurityListTokens {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        EventsConfig, MediaBufferConfig, RulesConfig, SecurityConfig, WhatsAppRuntimeConfig,
-    };
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {
         // Each test gets its own temp data_dir so the on-disk grace
         // file does not bleed across parallel test runs.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_path_buf();
-        let cfg = WhatsAppRuntimeConfig {
-            name: "p5a".into(),
-            data_dir: path.clone(),
-            log_dir: Default::default(),
-            socket_dir: Default::default(),
-            media_buffer: MediaBufferConfig::default(),
-            events: EventsConfig::default(),
-            security: SecurityConfig {
-                grace_path: Some(path.join("grace.json")),
-                ..SecurityConfig::default()
-            },
-            observability: Default::default(),
-            rules: RulesConfig::default(),
-            ..Default::default()
-        };
-        let handle = Daemon::new(cfg).handle();
-        // Pin the tempdir to the test's end-of-scope via a leak. The
-        // tests are short-lived; leaked TempDirs are reclaimed at
-        // process exit.
-        std::mem::forget(dir);
-        handle
+        let tmp = tempfile::tempdir().unwrap();
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn strong_hex(seed: u8) -> String {

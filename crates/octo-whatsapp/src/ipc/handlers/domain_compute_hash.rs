@@ -109,12 +109,11 @@ fn hex_lower(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     fn handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     #[tokio::test]

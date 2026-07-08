@@ -28,13 +28,12 @@ impl RpcHandler for VersionGet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     #[tokio::test]
     async fn version_get_returns_phase5() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let v = VersionGet.call(h, Value::Null).await.unwrap();
         assert_eq!(v["daemon_api_version"], "1.0.0+phase5");
         assert_eq!(v["phase"], "phase5");

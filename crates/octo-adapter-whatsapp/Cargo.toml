@@ -74,12 +74,17 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }
-# caBLE transport (HandshakeV2 + base10 + future QR-only relay).
+# caBLE transport (HandshakeV2 + base10 + QR-only relay client).
 # The previous in-crate `mod base10` was lifted into this crate when
 # the HandshakeV2 codec landed; we re-export through
 # `octo_cable::base10` so anything outside the adapter that needed
 # `crate::base10` should switch to the new path.
 octo-cable = { path = "../octo-cable" }
+# p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
+# Same source as octo-cable so we don't pull in a second copy.
+p256 = { version = "0.13", features = ["ecdh"] }
+# ciborium for the post-handshake GetInfoResponse CBOR (responder path).
+ciborium = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -98,3 +103,8 @@ ed25519-dalek = "2.1"
 # unconditional because `[dev-dependencies]` cannot be optional; the
 # cost is purely compile time.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
+# Same source as octo-cable so we don't pull in a second copy.
+p256 = { version = "0.13", features = ["ecdh"] }
+# ciborium for the post-handshake GetInfoResponse CBOR (responder path).
+ciborium = "0.2"

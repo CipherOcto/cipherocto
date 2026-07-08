@@ -197,6 +197,105 @@ impl Crypter {
     }
 }
 
+/// Build the NKpsk0 responder state from the initiator's initial
+/// message. Returns the post-handshake [`Crypter`] + the response
+/// payload to send back to the initiator.
+///
+/// `initial` is the initiator's Noise initial message (the
+/// ephemeral pubkey, 65 bytes uncompressed SEC1 for P-256).
+/// `psk` is the pre-shared key from the QR (32 bytes, derived
+/// from `qr_secret` + `eid`).
+/// `static_key` is the responder's static P-256 private key.
+/// `static_pub_bytes` is the responder's static public key, in
+/// the compressed SEC1 form (33 bytes for P-256).
+pub fn responder_process_initial(
+    initial: &[u8],
+    psk: &[u8; 32],
+    static_key: &p256::SecretKey,
+    static_pub_bytes: &[u8],
+) -> Result<(Crypter, Vec<u8>), CableError> {
+    // 1. Initialize symmetric state from protocol name.
+    let protocol_hash = {
+        use sha2::Digest;
+        let mut h = Sha256::new();
+        h.update(PROTOCOL_NAME);
+        h.finalize().to_vec()
+    };
+    let mut ck = protocol_hash.clone();
+    let mut h = protocol_hash;
+
+    // 2. Mix in the (empty) prologue.
+    if !PROLOGUE.is_empty() {
+        mix_hash(&mut h, PROLOGUE);
+    }
+
+    // 3. Mix in the PSK (NKpsk0).
+    mix_key(&mut ck, &mut CipherState::new(), psk)?;
+
+    // 4. Process the initiator's initial message. For NKpsk0 the
+    //    initiator sends `e` (65 bytes uncompressed SEC1).
+    if initial.len() < 65 {
+        return Err(CableError::Cbor(format!(
+            "responder: initial too short ({} bytes)",
+            initial.len()
+        )));
+    }
+    let ie_bytes = &initial[..65];
+
+    // MixHash(e).
+    mix_hash(&mut h, ie_bytes);
+
+    // MixKey(DH(s, re)) — responder's static with initiator's ephemeral.
+    let ie_public = p256::PublicKey::from_sec1_bytes(ie_bytes)
+        .map_err(|e| CableError::Cbor(format!("responder: initiator pubkey: {e}")))?;
+    let shared = p256::ecdh::diffie_hellman(static_key.to_nonzero_scalar(), ie_public.as_affine());
+    let shared_bytes: [u8; 32] = shared
+        .raw_secret_bytes()
+        .as_slice()
+        .try_into()
+        .map_err(|_| CableError::Cbor("responder: shared secret wrong length".into()))?;
+    mix_key(&mut ck, &mut CipherState::new(), &shared_bytes)?;
+
+    // 5. caBLE NK responder message: re, encrypted static, payload.
+    //    We've processed `e` already; next is `re` (none in NK — no
+    //    initiator static), so we just send encrypted static.
+
+    // 5a. MixHash(rs).
+    mix_hash(&mut h, static_pub_bytes);
+
+    // 5b. Encrypt the static pubkey under the current cipher state.
+    //     Per NKpsk0, we have to MixKey to derive the cipher first,
+    //     then encrypt.
+    let mut cs_enc = CipherState::new();
+    mix_key(&mut ck, &mut cs_enc, &[])?;
+    let encrypted_static = cs_enc.encrypt_with_ad(static_pub_bytes, &OLD_ADDITIONAL_BYTES)?;
+
+    // 5c. MixHash(encrypted_static).
+    mix_hash(&mut h, &encrypted_static);
+
+    // 6. Split to derive send/recv keys.
+    let mut split_out = [0u8; 64];
+    hkdf(&ck, &[], &[], &mut split_out)?;
+    let cs_send_k: EncryptionKey = split_out[0..32].try_into().expect("32 bytes");
+    let cs_recv_k: EncryptionKey = split_out[32..64].try_into().expect("32 bytes");
+
+    let cs_send = CipherState {
+        k: Some(cs_send_k),
+        n: 0,
+    };
+    let cs_recv = CipherState {
+        k: Some(cs_recv_k),
+        n: 0,
+    };
+
+    let crypter = Crypter { cs_send, cs_recv };
+
+    // 7. Response payload = encrypted_static. The post-handshake
+    //    info (CablePostHandshake) is sent separately by the caller
+    //    via tunnel.send_raw.
+    Ok((crypter, encrypted_static))
+}
+
 /// Build the NKpsk0 initiator initial message. The PSK is mixed in
 /// before the ephemeral public key per the NKpsk0 spec.
 ///

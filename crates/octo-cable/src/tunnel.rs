@@ -162,7 +162,112 @@ pub async fn connect_initiator(handshake: &HandshakeV2) -> Result<CableTunnel, C
     Ok(CableTunnel { ws, crypter })
 }
 
-/// Decoded `CablePostHandshake` message — the first encrypted payload
+/// Open caBLE tunnel as the **responder** — the QR-publisher side
+/// (the side that owns a static P-256 key and waits for the phone
+/// to scan + connect). This is what WA Web Browser does: it
+/// generates its own keypair + secret, renders the FIDO QR, then
+/// waits on the relay for the phone's initial Noise message.
+///
+/// Performs the Noise NKpsk0 responder handshake using `static_key`
+/// (the private half of the HandshakeV2's `peer_identity`). On
+/// success the relay has paired us with the phone over the
+/// encrypted tunnel; we then send the post-handshake info +
+/// the GetAssertion request and receive the signed assertion.
+///
+/// Differs from `connect_initiator` (the scanner-side) in two
+/// places: we don't send an initial message (we wait), and the
+/// Noise handshake treats `static_key` as the responder's static
+/// keypair instead of generating an ephemeral.
+pub async fn connect_responder(
+    handshake: &HandshakeV2,
+    static_key: &p256::SecretKey,
+) -> Result<CableTunnel, CableError> {
+    let url = build_tunnel_url(&handshake.secret, TUNNEL_SERVER_ID_GOOGLE)?;
+    let uri: Uri = url
+        .parse()
+        .map_err(|e| CableError::Cbor(format!("bad tunnel URI: {e}")))?;
+
+    let mut request = IntoClientRequest::into_client_request(&uri)
+        .map_err(|e| CableError::Cbor(format!("ws request build: {e}")))?;
+    let headers = request.headers_mut();
+    headers.insert(
+        "Sec-WebSocket-Protocol",
+        HeaderValue::from_static(SUBPROTOCOL),
+    );
+    let origin = format!("wss://{}", uri.host().unwrap_or_default());
+    headers.insert(
+        ORIGIN_HEADER,
+        HeaderValue::from_str(&origin).map_err(|e| CableError::Cbor(format!("origin: {e}")))?,
+    );
+
+    let (mut ws, response) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| CableError::Cbor(format!("websocket connect: {e}")))?;
+
+    // Read the routing id (relay tells us who we are to the phone).
+    let routing_id = response
+        .headers()
+        .get(ROUTING_ID_HEADER)
+        .ok_or_else(|| CableError::Cbor("missing X-caBLE-Routing-ID header".into()))?
+        .to_str()
+        .map_err(|e| CableError::Cbor(format!("routing-id header: {e}")))?;
+    let routing_bytes = hex::decode(routing_id.trim())
+        .map_err(|e| CableError::Cbor(format!("routing-id hex: {e}")))?;
+    if routing_bytes.len() != 3 {
+        return Err(CableError::Cbor(format!(
+            "routing-id wrong length: {} bytes",
+            routing_bytes.len()
+        )));
+    }
+    let routing_id_arr: [u8; 3] = routing_bytes
+        .as_slice()
+        .try_into()
+        .expect("checked length == 3");
+
+    // Eid is from OUR perspective as the responder (we made the QR).
+    // Salt is eid; the phone derives the same PSK by reconstructing
+    // eid from its scan of OUR QR (same nonce + same routing id +
+    // same tunnel_server_id).
+    let mut nonce = [0u8; 10];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    let eid = build_eid(&nonce, &routing_id_arr, TUNNEL_SERVER_ID_GOOGLE);
+    let psk = derive_psk(&handshake.secret, &eid);
+
+    // Wait for the initiator's initial message.
+    let initial = ws
+        .next()
+        .await
+        .ok_or_else(|| CableError::Cbor("ws closed before initial".into()))?
+        .map_err(|e| CableError::Cbor(format!("ws recv initial: {e}")))?;
+    let initial_bytes = match initial {
+        Message::Binary(b) => b,
+        Message::Close(_) => return Err(CableError::Cbor("ws closed by peer".into())),
+        other => {
+            return Err(CableError::Cbor(format!(
+                "unexpected initial message: {other:?}"
+            )))
+        }
+    };
+
+    // Build the Noise responder state from our static key + the
+    // initiator's initial message. Then process the initial message
+    // to derive the shared secrets and get the response payload to
+    // send back.
+    let static_pub_bytes = handshake.peer_identity.clone();
+    let (crypter, response_payload) = crate::noise::responder_process_initial(
+        &initial_bytes,
+        &psk,
+        static_key,
+        &static_pub_bytes,
+    )?;
+
+    // Send the Noise response.
+    ws.send(Message::Binary(response_payload))
+        .await
+        .map_err(|e| CableError::Cbor(format!("ws send response: {e}")))?;
+
+    Ok(CableTunnel { ws, crypter })
+}
 /// the authenticator sends after the Noise handshake completes. Per
 /// Chromium's `fido_tunnel_device.cc::OnTunnelReady`, the post-handshake
 /// is a CBOR map with one mandatory entry: `0x01 → GetInfoResponse bytes`.
@@ -233,6 +338,39 @@ impl CableTunnel {
             .send(Message::Binary(ciphertext))
             .await
             .map_err(|e| CableError::Cbor(format!("ws send ctap: {e}")))
+    }
+
+    /// Send an already-encrypted raw frame (used for the responder
+    /// post-handshake info payload, which is a CBOR map and is NOT
+    /// wrapped in a `CableFrame`). Encrypts with the crypter.
+    pub async fn send_encrypted(&mut self, plaintext: &[u8]) -> Result<(), CableError> {
+        let ciphertext = self.crypter.encrypt(plaintext)?;
+        self.ws
+            .send(Message::Binary(ciphertext))
+            .await
+            .map_err(|e| CableError::Cbor(format!("ws send encrypted: {e}")))
+    }
+
+    /// Receive + decrypt a raw (non-`CableFrame`) encrypted frame
+    /// (used for the initiator's first message after the Noise
+    /// handshake: the initiator sends the first encrypted frame in
+    /// some flows). Returns the decrypted plaintext.
+    pub async fn recv_encrypted(&mut self) -> Result<Vec<u8>, CableError> {
+        let raw = self
+            .ws
+            .next()
+            .await
+            .ok_or_else(|| CableError::Cbor("ws closed".into()))?
+            .map_err(|e| CableError::Cbor(format!("ws recv: {e}")))?;
+        let bytes = match raw {
+            Message::Binary(b) => b,
+            other => {
+                return Err(CableError::Cbor(format!(
+                    "unexpected message type: {other:?}"
+                )))
+            }
+        };
+        self.crypter.decrypt(&bytes)
     }
 
     /// Receive one encrypted CTAP2 response frame and return the

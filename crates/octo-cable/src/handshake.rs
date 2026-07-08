@@ -51,6 +51,11 @@
 use crate::base10;
 use crate::error::CableError;
 use ciborium::value::Value;
+use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::SecretKey as StaticSecret;
+use rand::rngs::OsRng;
+use rand::RngCore;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The kind of WebAuthn operation the phone will perform over the
 /// established tunnel. Encoded as a string ("ga" / "mc") in CBOR per
@@ -113,6 +118,51 @@ pub struct HandshakeV2 {
 }
 
 impl HandshakeV2 {
+    /// Generate a fresh HandshakeV2 + the corresponding P-256 static
+    /// private key for the **QR publisher** side of caBLE v2.
+    ///
+    /// This is what WA Web Browser does: it generates its own
+    /// keypair + random 16-byte secret, encodes the public key +
+    /// secret into a HandshakeV2, and renders that as the FIDO
+    /// QR for the phone (with Google Lens) to scan. The static
+    /// key is needed later for the Noise NKpsk0 responder side
+    /// of the tunnel.
+    ///
+    /// `peer_identity` is the **compressed SEC1** form of the
+    /// static public key (33 bytes for P-256). This matches what
+    /// we observed live from WA Android's Link-a-Device QR (33-byte
+    /// field in key 0 of the decoded CBOR map).
+    pub fn generate_new() -> (Self, StaticSecret) {
+        let static_secret = StaticSecret::random(&mut OsRng);
+        let peer_identity = static_secret
+            .public_key()
+            .to_encoded_point(/* compressed = */ true)
+            .as_bytes()
+            .to_vec();
+        let mut secret = [0u8; 16];
+        OsRng.fill_bytes(&mut secret);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as u32)
+            .unwrap_or(0);
+        let handshake = Self {
+            peer_identity,
+            secret: secret.to_vec(),
+            // Both well-known domains (cable.ua5v.com = 0,
+            // cable.auth.com = 1). The phone picks whichever it
+            // prefers; matching Chromium's QR-publisher behavior.
+            known_domains_count: 2,
+            timestamp,
+            supports_linking_info: false,
+            // SHORTCAKE companion-link is always an assertion
+            // (we already have a session; we need the phone to
+            // sign a fresh GetAssertion challenge for it).
+            request_type: RequestType::GetAssertion,
+            supports_non_discoverable_make_credential: None,
+        };
+        (handshake, static_secret)
+    }
+
     /// Parse a `FIDO:/<digits>` URI directly into a `HandshakeV2`.
     /// Strips the prefix, base10-decodes, then CBOR-decodes.
     pub fn from_fido_uri(uri: &str) -> Result<Self, CableError> {
@@ -324,6 +374,68 @@ fn extract_text(field: u8, v: Value) -> Result<String, CableError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generate_new_round_trips_through_fido_uri() {
+        let (h, _sk) = HandshakeV2::generate_new();
+        // peer_identity must be compressed SEC1 P-256 = 33 bytes, prefix
+        // is 0x02 (even Y) or 0x03 (odd Y).
+        assert_eq!(h.peer_identity.len(), 33);
+        assert!(
+            h.peer_identity[0] == 0x02 || h.peer_identity[0] == 0x03,
+            "compressed SEC1 prefix must be 0x02 or 0x03, got 0x{:02x}",
+            h.peer_identity[0]
+        );
+        // secret is 16 random bytes.
+        assert_eq!(h.secret.len(), 16);
+        // request_type defaults to GetAssertion.
+        assert_eq!(h.request_type, RequestType::GetAssertion);
+        // supports_linking_info defaults to false.
+        assert!(!h.supports_linking_info);
+        // supports_non_discoverable_make_credential defaults to None.
+        assert_eq!(h.supports_non_discoverable_make_credential, None);
+        // Round-trip through the FIDO URI codec.
+        let uri = h.to_fido_uri().expect("encode");
+        assert!(uri.starts_with("FIDO:/"));
+        let h2 = HandshakeV2::from_fido_uri(&uri).expect("decode");
+        assert_eq!(h2.peer_identity, h.peer_identity);
+        assert_eq!(h2.secret, h.secret);
+        assert_eq!(h2.request_type, h.request_type);
+    }
+
+    #[test]
+    fn generate_new_produces_different_secrets_each_call() {
+        let (h1, _) = HandshakeV2::generate_new();
+        let (h2, _) = HandshakeV2::generate_new();
+        assert_ne!(h1.secret, h2.secret, "secret must be fresh per call");
+        assert_ne!(
+            h1.peer_identity, h2.peer_identity,
+            "keypair must be fresh per call"
+        );
+    }
+
+    #[test]
+    fn generate_new_timestamp_is_recent() {
+        let (h, _) = HandshakeV2::generate_new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        // Within 5 seconds of now.
+        assert!(
+            h.timestamp <= now,
+            "timestamp {} > now {}",
+            h.timestamp,
+            now
+        );
+        assert!(
+            now - h.timestamp <= 5,
+            "timestamp {} is {} seconds behind now {}",
+            h.timestamp,
+            now - h.timestamp,
+            now
+        );
+    }
 
     /// The exact URI captured from official WA Android's
     /// "Link a Device" flow on 2026-07-08, scanned with a generic

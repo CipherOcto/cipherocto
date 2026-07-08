@@ -49,13 +49,12 @@ impl RpcHandler for MessagesList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     #[tokio::test]
     async fn messages_list_returns_empty_in_phase2() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let v = MessagesList
             .call(h, serde_json::json!({"limit": 10}))
             .await

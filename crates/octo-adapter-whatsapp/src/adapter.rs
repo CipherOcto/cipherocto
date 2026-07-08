@@ -1292,14 +1292,35 @@ impl WhatsAppWebAdapter {
                             );
                             // Session 4: render a terminal QR from the
                             // payload so the operator can scan it with
-                            // the phone's WA app. Falls back to dumping
-                            // the JSON verbatim if the encoder rejects
-                            // it (public-key-credential JSON usually
-                            // exceeds qrcode's version-40 capacity — but
-                            // the typical WPkRequestOptions JSON is well
-                            // under that limit, so this rarely fires).
+                            // the phone's WA app.
+                            //
+                            // **Encoding**: `FIDO:/<base64url-no-pad(json)>`
+                            // — NOT the raw JSON. The phone's WA app
+                            // registers an Android intent filter for the
+                            // `FIDO` URI scheme and ignores anything else;
+                            // the official WA Web produces the same shape
+                            // (the base64url engine is the same one used
+                            // for file tokens — see wacore's
+                            // `sticker_pack::base64url_encode`).
+                            //
+                            // Falls back to dumping the JSON verbatim if
+                            // the encoder rejects the inner payload
+                            // (unlikely; a typical PubKeyCredReqOptions
+                            // is <200 bytes — well under qrcode's
+                            // version-40 capacity when base64url-encoded).
                             let payload = req.request_options_json.as_str();
-                            match qrcode::QrCode::new(payload.as_bytes()) {
+                            let fido_uri = match base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                .encode(payload.as_bytes())
+                            {
+                                enc if !enc.is_empty() => format!("FIDO:/{enc}"),
+                                _ => String::new(),
+                            };
+                            let render_target = if fido_uri.is_empty() {
+                                payload.as_bytes()
+                            } else {
+                                fido_uri.as_bytes()
+                            };
+                            match qrcode::QrCode::new(render_target) {
                                 Ok(qr) => {
                                     let rendered = qr
                                         .render::<qrcode::render::unicode::Dense1x2>()
@@ -1310,9 +1331,15 @@ impl WhatsAppWebAdapter {
                                     );
                                 }
                                 Err(e) => {
-                                    eprintln!(
-                                        "\nWhatsApp passkey request (could not render QR: {e}):\n{payload}\n"
-                                    );
+                                    if fido_uri.is_empty() {
+                                        eprintln!(
+                                            "\nWhatsApp passkey request (could not render QR: {e}):\n{payload}\n"
+                                        );
+                                    } else {
+                                        eprintln!(
+                                            "\nWhatsApp passkey request (could not render QR: {e}):\n{fido_uri}\n"
+                                        );
+                                    }
                                 }
                             }
                         }

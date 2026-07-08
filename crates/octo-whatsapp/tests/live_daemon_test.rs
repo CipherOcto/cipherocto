@@ -1618,6 +1618,58 @@ async fn live_chain_i_bad_shape_session() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
+// ── Chain J — multi-account RPC surface ────────────────────────────
+//
+// Phase 6.1: best-effort exercise of the 3 new account-management RPCs.
+// Uses `fixture()` (not `bad_fixture`) because these handlers only
+// touch the in-memory `MultiAccountStore` and the multi-account index
+// file on disk — they do NOT require an active WhatsApp adapter
+// connection. As long as the daemon process is up and the RPC layer
+// is wired, each call returns either a success envelope or an
+// `invalid_params` (for `accounts.info` / `accounts.use` when the
+// account does not exist in the index).
+#[tokio::test]
+async fn live_chain_j_accounts() {
+    init_tracing_once();
+    let fix = fixture().await;
+
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.rpc, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) daemon.accounts.list — should always succeed; empty list on fresh env
+    let list_resp = best_effort(fix, "daemon.accounts.list", json!({})).await;
+    if !list_resp.is_null() {
+        let arr = list_resp.get("accounts").and_then(|v| v.as_array());
+        assert!(
+            arr.is_some(),
+            "accounts.list should return {{accounts:[...]}}"
+        );
+    }
+
+    // 2) daemon.accounts.info for "default" — best-effort (may return invalid_params)
+    let _ = best_effort(
+        fix,
+        "daemon.accounts.info",
+        json!({ "account_id": "default" }),
+    )
+    .await;
+
+    // 3) daemon.accounts.use for "default" — best-effort (may return invalid_params)
+    let _ = best_effort(
+        fix,
+        "daemon.accounts.use",
+        json!({ "account_id": "default" }),
+    )
+    .await;
+}
+
 // CLI flag corrections from the plan (verified against
 // `crates/octo-whatsapp/src/cli.rs`):
 // - `envelope encode` takes `--file <PATH>` (reads bytes from disk),

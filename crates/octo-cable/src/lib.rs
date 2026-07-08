@@ -33,12 +33,14 @@ pub mod error;
 pub mod framing;
 pub mod handshake;
 pub mod noise;
+pub mod tunnel;
 
 pub use discovery::{build_eid, build_tunnel_url, derive_psk, derive_tunnel_id, get_domain};
 pub use error::CableError;
 pub use framing::{CableFrame, MessageType, SHUTDOWN_COMMAND_BYTES};
 pub use handshake::{HandshakeV2, RequestType};
 pub use noise::{build_initiator_message, CableNoiseInitiator, Crypter, InitiatorResult};
+pub use tunnel::{connect_initiator, CableTunnel};
 // Re-export the base10 codec so callers don't have to know the module path.
 // `URL_PREFIX` is the FIDO URI scheme per caBLE spec.
 pub use base10::{decode as decode_base10, encode as encode_base10, URL_PREFIX as FIDO_PREFIX};

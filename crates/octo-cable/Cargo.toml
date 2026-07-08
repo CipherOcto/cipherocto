@@ -18,6 +18,10 @@ hex = "0.4"
 # the WA / Chromium caBLE endpoints all support modern TLS.
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# Rustls needs a default crypto provider. We use `ring` (most common)
+# via a direct dep so the `CryptoProvider::install_default()` call in
+# the example / tunnel entry point can pick it up.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 futures = "0.3"
 
 # Noise NKpsk0_P256_AESGCM_SHA256 primitives.

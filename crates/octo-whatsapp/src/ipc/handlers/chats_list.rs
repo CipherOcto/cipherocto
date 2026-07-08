@@ -55,13 +55,12 @@ impl RpcHandler for ChatsList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
 
     #[tokio::test]
     async fn chats_list_returns_not_connected_in_phase2() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let err = ChatsList
             .call(h, serde_json::json!({"kind": "dm"}))
             .await

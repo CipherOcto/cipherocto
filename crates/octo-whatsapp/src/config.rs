@@ -63,6 +63,17 @@ impl Default for EventsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct WhatsAppRuntimeConfig {
     pub name: String,
+    /// Phase 6.1: stable multi-account identifier used to derive the
+    /// per-account `session.db` directory. Distinct from `name`
+    /// (operator-friendly label used for socket paths).
+    #[serde(default = "default_account_id")]
+    pub account_id: String,
+    /// Phase 6.1: list of group JIDs the runtime should subscribe to.
+    #[serde(default)]
+    pub groups: Vec<String>,
+    /// Phase 6.1: per-group sender allowlist (E.164 numbers or JIDs).
+    #[serde(default)]
+    pub sender_allowlist: std::collections::BTreeMap<String, Vec<String>>,
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     #[serde(default = "default_log_dir")]
@@ -338,6 +349,9 @@ impl Default for WhatsAppRuntimeConfig {
     fn default() -> Self {
         Self {
             name: "default".to_string(),
+            account_id: default_account_id(),
+            groups: Vec::new(),
+            sender_allowlist: std::collections::BTreeMap::new(),
             data_dir: default_data_dir(),
             log_dir: default_log_dir(),
             socket_dir: default_socket_dir(),
@@ -352,6 +366,10 @@ impl Default for WhatsAppRuntimeConfig {
 
 fn default_data_dir() -> PathBuf {
     PathBuf::from("/var/lib/octo/whatsapp")
+}
+
+fn default_account_id() -> String {
+    "default".to_string()
 }
 fn default_log_dir() -> PathBuf {
     PathBuf::from("/var/log/octo/whatsapp")
@@ -382,23 +400,22 @@ impl WhatsAppRuntimeConfig {
 
     /// Derive the adapter-layer `WhatsAppConfig` from the runtime config.
     ///
-    /// `session_path` is computed as `$data_dir/{name}/session.db`, paralleling
-    /// the socket-path derivation (`$socket_dir/octo-whatsapp-{name}.sock`).
-    ///
-    /// `groups` and `sender_allowlist` are intentionally empty in Phase 6.0;
-    /// they will be wired through when `WhatsAppRuntimeConfig` gains those
-    /// fields in Phase 6.1 (multi-account plumbing).
+    /// `session_path` is computed as `$data_dir/{account_id}/session.db`,
+    /// paralleling the socket-path derivation (`$socket_dir/octo-whatsapp-{name}.sock`).
+    /// `groups` and `sender_allowlist` flow through directly so the
+    /// adapter subscribes to the configured group set with the per-group
+    /// sender restrictions.
     pub fn adapter_config(&self) -> WhatsAppConfig {
         let mut session_path = self.data_dir.clone();
-        session_path.push(&self.name);
+        session_path.push(&self.account_id);
         session_path.push("session.db");
         WhatsAppConfig {
             session_path: session_path.to_string_lossy().into_owned(),
             ws_url: None,
             pair_phone: None,
             pair_code: None,
-            groups: Vec::new(),
-            sender_allowlist: Default::default(),
+            groups: self.groups.clone(),
+            sender_allowlist: self.sender_allowlist.clone(),
         }
     }
 
@@ -410,6 +427,11 @@ impl WhatsAppRuntimeConfig {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         {
             return Err(ConfigError::InvalidName(self.name.clone()));
+        }
+        if self.account_id.is_empty() {
+            return Err(ConfigError::InvalidName(
+                "account_id must be non-empty".to_string(),
+            ));
         }
         if self.media_buffer.max_concurrent_uploads == 0 {
             return Err(ConfigError::InvalidName(

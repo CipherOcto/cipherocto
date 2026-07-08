@@ -60,6 +60,7 @@ mod tests {
             security: SecurityConfig::default(),
             observability: Default::default(),
             rules: RulesConfig::default(),
+            ..Default::default()
         };
         Daemon::new(cfg).handle()
     }

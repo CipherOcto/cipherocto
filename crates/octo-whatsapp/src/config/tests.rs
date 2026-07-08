@@ -5,9 +5,53 @@ name = "default"
 "#;
 
 #[test]
-fn adapter_config_derives_session_path_from_data_dir_and_name() {
+fn config_default_account_id_is_default() {
+    let cfg = WhatsAppRuntimeConfig::default();
+    assert_eq!(cfg.account_id, "default");
+}
+
+#[test]
+fn config_default_groups_and_allowlist_are_empty() {
+    let cfg = WhatsAppRuntimeConfig::default();
+    assert!(cfg.groups.is_empty());
+    assert!(cfg.sender_allowlist.is_empty());
+}
+
+#[test]
+fn validate_rejects_empty_account_id() {
     let cfg = WhatsAppRuntimeConfig {
-        name: "work".into(),
+        account_id: String::new(),
+        ..Default::default()
+    };
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn adapter_config_passes_groups_and_allowlist_through() {
+    use std::collections::BTreeMap;
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert("group-a@g.us".to_string(), vec!["+15551234567".to_string()]);
+    let cfg = WhatsAppRuntimeConfig {
+        groups: vec!["group-a@g.us".to_string(), "group-b@g.us".to_string()],
+        sender_allowlist: allowlist,
+        ..Default::default()
+    };
+    let ac = cfg.adapter_config();
+    assert_eq!(
+        ac.groups,
+        vec!["group-a@g.us".to_string(), "group-b@g.us".to_string()]
+    );
+    assert_eq!(ac.sender_allowlist.len(), 1);
+    assert_eq!(
+        ac.sender_allowlist.get("group-a@g.us").unwrap(),
+        &vec!["+15551234567".to_string()]
+    );
+}
+
+#[test]
+fn adapter_config_derives_session_path_from_data_dir_and_account_id() {
+    let cfg = WhatsAppRuntimeConfig {
+        account_id: "work".into(),
         data_dir: PathBuf::from("/var/lib/octo/whatsapp"),
         ..Default::default()
     };
@@ -16,7 +60,7 @@ fn adapter_config_derives_session_path_from_data_dir_and_name() {
 }
 
 #[test]
-fn adapter_config_default_name_uses_default_subdir() {
+fn adapter_config_default_account_id_uses_default_subdir() {
     let cfg = WhatsAppRuntimeConfig::default();
     let ac = cfg.adapter_config();
     assert!(
@@ -122,6 +166,7 @@ fn media_buffer_config_validates() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     assert!(cfg.validate().is_ok());
     let bad = WhatsAppRuntimeConfig {
@@ -137,6 +182,7 @@ fn media_buffer_config_validates() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     assert!(bad.validate().is_err());
 }

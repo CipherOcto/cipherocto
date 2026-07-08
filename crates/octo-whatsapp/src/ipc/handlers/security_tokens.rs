@@ -149,6 +149,7 @@ mod tests {
             },
             observability: Default::default(),
             rules: RulesConfig::default(),
+            ..Default::default()
         };
         let handle = Daemon::new(cfg).handle();
         // Pin the tempdir to the test's end-of-scope via a leak. The

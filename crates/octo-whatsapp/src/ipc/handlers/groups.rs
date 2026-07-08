@@ -929,20 +929,19 @@ impl RpcHandler for GroupsJoinById {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::test_mock_adapter::MockAdapter;
 
     fn fresh_daemon_with_mock() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         h.bind_adapter(Arc::new(MockAdapter::new()));
         h
     }
 
     fn fresh_daemon_no_adapter() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     // --- groups.create ---
@@ -1144,9 +1143,8 @@ mod tests {
         // Workaround: seed the canned error and have the first
         // element FAIL; verify partial-success by checking that the
         // array reports both `added` (empty) and `errors` (populated).
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
-        let daemon = Daemon::new(cfg);
-        let h = daemon.handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let mock = Arc::new(MockAdapter::new());
         // Pre-seed error so EVERY add_member call returns Err until
         // consumed. Single-shot semantics: first call fails, rest succeed.
@@ -1236,9 +1234,8 @@ mod tests {
 
     #[tokio::test]
     async fn groups_remove_members_partial_success() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "t""#).unwrap();
-        let daemon = Daemon::new(cfg);
-        let h = daemon.handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let mock = Arc::new(MockAdapter::new());
         mock.coord_admin.set_canned_err(
             "remove_member",

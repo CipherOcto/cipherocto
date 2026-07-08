@@ -97,14 +97,13 @@ fn event_text_truncated(ev: &crate::events::InboundEvent, max_bytes: usize) -> S
 mod tests {
     use super::*;
     use crate::actions::ActionContext;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::events::{InboundEvent, MessageKind};
     use std::sync::Arc;
 
     fn handle() -> crate::daemon::DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "sh""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn ctx_with_text(text: &str) -> ActionContext {

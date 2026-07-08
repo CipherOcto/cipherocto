@@ -38,14 +38,13 @@ pub async fn dispatch(trigger_id: &str, ctx: &ActionContext) -> Result<(), Actio
 mod tests {
     use super::*;
     use crate::actions::ActionContext;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::events::{InboundEvent, MessageKind};
     use std::sync::Arc;
 
     fn handle() -> crate::daemon::DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "arun""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn ctx() -> ActionContext {

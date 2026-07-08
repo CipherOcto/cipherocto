@@ -34,9 +34,9 @@ pub fn rpc_for_bot_state(bs: BotStateMirror) -> RpcError {
         BotStateMirror::LoggedOut => RpcErrorCode::SessionLostLoggedOut,
         BotStateMirror::Replaced => RpcErrorCode::SessionLostReplaced,
         BotStateMirror::SessionExpired => RpcErrorCode::SessionLostExpired,
-        BotStateMirror::Disconnected
-        | BotStateMirror::PairingQr
-        | BotStateMirror::PairingCode => RpcErrorCode::NotConnected,
+        BotStateMirror::Disconnected | BotStateMirror::PairingQr | BotStateMirror::PairingCode => {
+            RpcErrorCode::NotConnected
+        }
     };
     RpcError {
         code: code.as_i32(),

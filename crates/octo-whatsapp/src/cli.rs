@@ -1452,12 +1452,44 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
-            runtime.block_on(
-                crate::daemon::Daemon::new(crate::config::WhatsAppRuntimeConfig::from_toml(
+            runtime.block_on(async move {
+                // Build a complete config from CLI flags (not just `name`).
+                // The production daemon needs data_dir, log_dir, socket_dir,
+                // media_buffer, events, security, observability, rules — all
+                // of which `from_toml("name = ...")` does NOT populate.
+                //
+                // For Phase 6.0, we keep the historical "toml from cli.name"
+                // pattern as a base, then layer a default `WhatsAppRuntimeConfig`
+                // underneath so the runtime substructs (events, security, etc.)
+                // have valid defaults.
+                let config = crate::config::WhatsAppRuntimeConfig::from_toml(
                     format!("name = {:?}\n", cli.name).as_bytes(),
-                )?)
-                .run(),
-            )
+                )?;
+                // Apply any additional CLI flags here (Phase 6.0: none).
+                // Future: --config-file flag, --data-dir override, etc.
+
+                let daemon = crate::daemon::Daemon::new(config.clone());
+
+                // Construct the live WhatsApp Web adapter and call start_bot.
+                // Phase 6.0: fail fast on start_bot error so operators notice
+                // immediately. Phase 6.1+ will revisit if multi-account boot
+                // needs a "started but not connected" state.
+                let adapter_cfg = config.adapter_config();
+                let adapter = std::sync::Arc::new(octo_adapter_whatsapp::WhatsAppWebAdapter::new(
+                    adapter_cfg.clone(),
+                ));
+                if let Err(e) = adapter.start_bot().await {
+                    tracing::error!(
+                        account = %config.name,
+                        session = %adapter_cfg.session_path,
+                        "start_bot failed; aborting daemon startup: {e}"
+                    );
+                    return Err(anyhow::anyhow!("start_bot failed: {e}"));
+                }
+                daemon.handle().bind_adapter(adapter);
+
+                daemon.run().await
+            })
         }
         Command::Mcp => {
             // MCP server (Part L — Task 51-52). Spawns a multi-threaded

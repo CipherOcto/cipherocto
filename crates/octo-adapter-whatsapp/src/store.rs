@@ -5,6 +5,8 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use prost::Message;
+use std::sync::Arc;
+use whatsapp_rust::buffa::Message as BuffaMessage;
 use std::path::Path;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
@@ -220,6 +222,7 @@ impl StoolapStore {
             "CREATE TABLE IF NOT EXISTS base_keys (address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS tc_tokens (jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
             "CREATE TABLE IF NOT EXISTS conversations (jid TEXT NOT NULL, name TEXT, is_group INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, UNIQUE (jid))",
+            "CREATE TABLE IF NOT EXISTS msg_secrets (chat TEXT NOT NULL, sender TEXT NOT NULL, msg_id TEXT NOT NULL, secret BLOB NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0, message_ts INTEGER NOT NULL DEFAULT 0, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (chat, sender, msg_id, device_id))",
         ];
         for stmt in stmts {
             exec(db, stmt, vec![])?;
@@ -1357,6 +1360,131 @@ impl ProtocolStore for StoolapStore {
     }
 }
 
+// ── MsgSecretStore ─────────────────────────────────────────────────
+
+#[async_trait]
+impl MsgSecretStore for StoolapStore {
+    async fn put_msg_secrets(
+        &self,
+        entries: Vec<wacore::store::traits::MsgSecretEntry>,
+    ) -> wacore::store::error::Result<usize> {
+        // Per wacore merge semantics:
+        //   expires_at: 0 ("never") wins; otherwise max of the two
+        //   message_ts: max (0 never clobbers a known parent ts)
+        // Implemented as INSERT ... ON CONFLICT DO UPDATE; we read the
+        // existing row when present, merge in Rust, and UPSERT the merged
+        // value. We also bump `updated_at` so the keepalive cleanup sweep
+        // can age rows correctly.
+        let mut count = 0usize;
+        let now = chrono::Utc::now().timestamp();
+        for entry in entries {
+            let device_id = self.device_id as i64;
+            let existing: Option<(i64, i64)> = {
+                let conn = self.db.lock().await;
+                let mut rows = conn
+                    .query(
+                        "SELECT expires_at, message_ts FROM msg_secrets \
+                         WHERE chat = $1 AND sender = $2 AND msg_id = $3 \
+                         AND device_id = $4",
+                        vec![
+                            entry.chat.clone().into(),
+                            entry.sender.clone().into(),
+                            entry.msg_id.clone().into(),
+                            device_id.into(),
+                        ],
+                    )
+                    .map_err(to_store_err)?;
+                match rows.next() {
+                    Some(Ok(row)) => Some((
+                        row.get::<i64>(0).map_err(to_store_err)?,
+                        row.get::<i64>(1).map_err(to_store_err)?,
+                    )),
+                    _ => None,
+                }
+            };
+            let merged_expires = match existing {
+                Some((e, _)) => wacore::store::traits::merge_msg_secret_expiry(
+                    e,
+                    entry.expires_at,
+                ),
+                None => entry.expires_at,
+            };
+            let merged_msg_ts = match existing {
+                Some((_, t)) => wacore::store::traits::merge_msg_secret_message_ts(
+                    t,
+                    entry.message_ts,
+                ),
+                None => entry.message_ts,
+            };
+            exec(
+                &*self.db.lock().await,
+                "INSERT INTO msg_secrets \
+                 (chat, sender, msg_id, secret, expires_at, message_ts, device_id, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 ON CONFLICT (chat, sender, msg_id, device_id) DO UPDATE SET \
+                 secret = excluded.secret, \
+                 expires_at = excluded.expires_at, \
+                 message_ts = excluded.message_ts, \
+                 updated_at = excluded.updated_at",
+                vec![
+                    entry.chat.into(),
+                    entry.sender.into(),
+                    entry.msg_id.into(),
+                    stoolap::core::Value::blob(entry.secret),
+                    merged_expires.into(),
+                    merged_msg_ts.into(),
+                    device_id.into(),
+                    now.into(),
+                ],
+            )?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    async fn get_msg_secret(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> wacore::store::error::Result<Option<Vec<u8>>> {
+        let conn = self.db.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT secret FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    chat.to_string().into(),
+                    sender.to_string().into(),
+                    msg_id.to_string().into(),
+                    (self.device_id as i64).into(),
+                ],
+            )
+            .map_err(to_store_err)?;
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row.get::<Vec<u8>>(0).map_err(to_store_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    async fn delete_expired_msg_secrets(
+        &self,
+        cutoff_timestamp: i64,
+    ) -> wacore::store::error::Result<u32> {
+        // Rows with expires_at = 0 ("never") are kept.
+        self.db
+            .lock()
+            .await
+            .execute(
+                "DELETE FROM msg_secrets \
+                 WHERE expires_at > 0 AND expires_at <= $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
+    }
+}
+
 // ── DeviceStore ────────────────────────────────────────────────────
 
 #[async_trait]
@@ -1383,7 +1511,7 @@ impl DeviceStore for StoolapStore {
         let account = device
             .account
             .as_ref()
-            .map(|a| <whatsapp_rust::buffa::Message>::encode_to_vec(&**a));
+            .map(|a| BuffaMessage::encode_to_vec(&**a));
         let cert_chain = device
             .server_cert_chain
             .as_ref()
@@ -1498,9 +1626,11 @@ impl DeviceStore for StoolapStore {
                 }
                 let account = account_bytes
                     .map(|b| {
-                        waproto::whatsapp::ADVSignedDeviceIdentity::decode(&*b).map_err(|e| {
-                            wacore::store::error::StoreError::Serialization(Box::new(e))
-                        })
+                        waproto::whatsapp::ADVSignedDeviceIdentity::decode_from_slice(&b)
+                            .map(Arc::new)
+                            .map_err(|e| {
+                                wacore::store::error::StoreError::Serialization(Box::new(e))
+                            })
                     })
                     .transpose()?;
                 let cert_bytes: Option<Vec<u8>> = row.get(21).map_err(to_store_err)?;

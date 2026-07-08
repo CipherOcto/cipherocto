@@ -784,9 +784,12 @@ impl WhatsAppWebAdapter {
         let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
         let storage = StoolapStore::new(&expanded_path)
             .map_err(|e| anyhow::anyhow!("stoolap store init at {expanded_path:?}: {e:#}"))?;
-        let backend = Arc::new(storage);
-        // Save store reference for later use (persist_conversations, etc.)
-        *self.store.lock() = Some(Arc::clone(&backend));
+        // Pass the bare `StoolapStore` to `with_backend` (it wraps in `Arc`
+        // internally) and clone the store for the daemon-side reference.
+        // Post-buffa migration (wacore 6e0f241): upstream `with_backend`
+        // requires `impl Backend + 'static`, not `Arc<StoolapStore>`.
+        let backend = storage;
+        *self.store.lock() = Some(Arc::new(backend.clone()));
 
         // Create transport factory
         let mut transport_factory =
@@ -807,7 +810,7 @@ impl WhatsAppWebAdapter {
         let groups = self.config.groups.clone();
         let runtime_groups = Arc::clone(&self.runtime_groups);
         let conversation_jids = Arc::clone(&self.conversation_jids);
-        let conversation_store = Arc::clone(&backend);
+        let conversation_store = Arc::new(backend.clone());
         let raw_event_tx = self.raw_event_tx.clone();
         let sender_allowlist = self.config.sender_allowlist.clone();
         // Mission 0850p-a-notify-event-connected: clone the Notify
@@ -984,7 +987,10 @@ impl WhatsAppWebAdapter {
                     let _ = raw_event_tx.send(event_desc);
 
                     match &*event {
-                        Event::Message(msg, info) => {
+                        Event::Messages(batch) => {
+                            for m in batch.messages.iter() {
+                            let msg = &m.message;
+                            let info = &m.info;
                             let text = msg.text_content().unwrap_or("").to_string();
                             let chat = info.source.chat.to_string();
                             let sender = info.source.sender.to_string();
@@ -1122,9 +1128,10 @@ impl WhatsAppWebAdapter {
                                 dropped_inbound_count.fetch_add(1, Ordering::Relaxed);
                                 tracing::warn!("inbound channel full or closed: {e}");
                             }
+                            }
                         }
                         Event::Connected(_) => {
-                            let device = client.persistence_manager().get_device_snapshot().await;
+                            let device = client.persistence_manager().get_device_snapshot();
                             if let Some(ref pn) = device.pn {
                                 let pn_str = pn.to_string();
                                 let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
@@ -1146,7 +1153,7 @@ impl WhatsAppWebAdapter {
                             // fallback in case Event::Connected was missed.
                             // Also resolve phone if not yet set.
                             if self_phone.lock().is_none() {
-                                let device = client.persistence_manager().get_device_snapshot().await;
+                                let device = client.persistence_manager().get_device_snapshot();
                                 if let Some(ref pn) = device.pn {
                                     let pn_str = pn.to_string();
                                     let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
@@ -1212,7 +1219,8 @@ impl WhatsAppWebAdapter {
                             connected_notify.notify_waiters();
                             synced_notify.notify_waiters();
                         }
-                        Event::PairingQrCode { code, .. } => {
+                        Event::PairingQrCode(inner) => {
+                            let code = &inner.code;
                             match qrcode::QrCode::new(code.as_bytes()) {
                                 Ok(qr) => {
                                     let rendered = qr.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
@@ -1236,7 +1244,8 @@ impl WhatsAppWebAdapter {
                                  AwaitingUserAction.\n"
                             );
                         }
-                        Event::PairingCode { code, .. } => {
+                        Event::PairingCode(inner) => {
+                            let code = &inner.code;
                             eprintln!("\nWhatsApp pair code: {code}");
                             eprintln!("Enter this in WhatsApp > Linked Devices\n");
                             // Same hint as QR flow — pair-code linking has
@@ -1264,8 +1273,11 @@ impl WhatsAppWebAdapter {
         let mut bot = builder.build().await?;
         *self.client.lock() = Some(bot.client());
 
-        // Run the bot in a background task so start_bot() returns immediately
-        let bot_handle = bot.run().await?;
+        // Run the bot on its runtime in the background; `spawn()` returns
+        // a `BotHandle` for graceful shutdown / abort. Post-buffa migration
+        // (wacore 6e0f241): `run()` now blocks until disconnect (returns `()`);
+        // use `spawn()` for backgrounding.
+        let bot_handle = bot.spawn();
         *self.bot_handle.lock() = Some(bot_handle);
 
         tracing::info!("WhatsApp Web bot started");
@@ -1607,7 +1619,7 @@ impl WhatsAppWebAdapter {
         &self,
         group_jid: &str,
         participants: &[&str],
-    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+    ) -> Result<Vec<wacore_binary::Jid>, String> {
         let client = {
             let guard = self.client.lock();
             guard
@@ -1628,35 +1640,26 @@ impl WhatsAppWebAdapter {
             jids.push(wacore_binary::Jid::pn(digits));
         }
 
-        // whatsapp-rust's `promote_participants` returns `()`. Synthesize a
-        // per-participant success response so callers can reuse the same
-        // `Vec<ParticipantChangeResponse>` shape as `add_members` and
-        // `remove_members` (the per-participant semantics matches the
-        // server's actual processing of each JID).
+        // whatsapp-rust's `promote_participants` returns `()`. We return
+        // the JID list of promoted participants so callers can mirror the
+        // shape of `add_members` / `remove_members` per-participant.
+        // Post-buffa migration: `ParticipantChangeResponse` is upstream-
+        // declared `non_exhaustive` with no public constructor, so we
+        // can't synthesize one in-tree. The JID list is sufficient for
+        // both the in-tree tracing call sites and the (currently
+        // return-discarding) callers in this module.
         client
             .groups()
             .promote_participants(&jid, &jids)
             .await
             .map_err(|e| format!("promote_participants failed: {e:#}"))?;
 
-        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
-            .iter()
-            .map(|j| whatsapp_rust::ParticipantChangeResponse {
-                jid: j.clone(),
-                status: Some("promoted".into()),
-                error: None,
-                phone_number: None,
-                username: None,
-                add_request: None,
-            })
-            .collect();
-
         tracing::info!(
             group_jid = %group_jid,
-            promoted = responses.len(),
+            promoted = jids.len(),
             "WhatsApp participants promoted to admin"
         );
-        Ok(responses)
+        Ok(jids)
     }
 
     /// Demote admins back to regular participants. The bot must remain
@@ -1666,7 +1669,7 @@ impl WhatsAppWebAdapter {
         &self,
         group_jid: &str,
         participants: &[&str],
-    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+    ) -> Result<Vec<wacore_binary::Jid>, String> {
         let client = {
             let guard = self.client.lock();
             guard
@@ -1687,32 +1690,21 @@ impl WhatsAppWebAdapter {
             jids.push(wacore_binary::Jid::pn(digits));
         }
 
-        // whatsapp-rust's `demote_participants` returns `()`. Synthesize a
-        // per-participant success response, same as `promote_participants`.
+        // whatsapp-rust's `demote_participants` returns `()`. See
+        // `promote_participants` for why we return `Vec<Jid>` instead of
+        // the upstream non-exhaustive `ParticipantChangeResponse`.
         client
             .groups()
             .demote_participants(&jid, &jids)
             .await
             .map_err(|e| format!("demote_participants failed: {e:#}"))?;
 
-        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
-            .iter()
-            .map(|j| whatsapp_rust::ParticipantChangeResponse {
-                jid: j.clone(),
-                status: Some("demoted".into()),
-                error: None,
-                phone_number: None,
-                username: None,
-                add_request: None,
-            })
-            .collect();
-
         tracing::info!(
             group_jid = %group_jid,
-            demoted = responses.len(),
+            demoted = jids.len(),
             "WhatsApp participants demoted from admin"
         );
-        Ok(responses)
+        Ok(jids)
     }
 
     /// List the groups the bot currently participates in. Each entry
@@ -1720,7 +1712,8 @@ impl WhatsAppWebAdapter {
     /// reconcile its view of "groups I own" against the platform.
     pub async fn get_participating(
         &self,
-    ) -> Result<std::collections::HashMap<String, whatsapp_rust::GroupMetadata>, String> {
+    ) -> Result<std::collections::HashMap<wacore_binary::Jid, whatsapp_rust::GroupMetadata>, String>
+    {
         let client = {
             let guard = self.client.lock();
             guard
@@ -2473,7 +2466,7 @@ impl WhatsAppWebAdapter {
             ..Default::default()
         };
         let outgoing = waproto::whatsapp::Message {
-            document_message: Some(Box::new(doc_msg)),
+            document_message: whatsapp_rust::buffa::MessageField::some(doc_msg),
             ..Default::default()
         };
         let send_result = Box::pin(client.send_message(jid, outgoing))

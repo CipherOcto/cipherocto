@@ -25,6 +25,7 @@ use std::fmt::Write;
 /// Prefix for a caBLE / WebAuthn hybrid transport URL: the FIDO URI
 /// scheme registered as an Android intent filter by WA / Chrome /
 /// Safari / Edge for cross-device authenticator handoff.
+#[allow(dead_code)] // kept for Session 5+ (in-Rust authenticator driver)
 pub const URL_PREFIX: &str = "FIDO:/";
 
 /// Size of a chunk of data in its original form
@@ -45,6 +46,7 @@ pub enum DecodeError {
 }
 
 /// Encodes binary data into Base10 format. See Chromium's `BytesToDigits`.
+#[allow(dead_code)] // kept for Session 5+ (in-Rust authenticator driver)
 pub fn encode(i: &[u8]) -> String {
     i.chunks(CHUNK_SIZE).fold(String::new(), |mut out, c| {
         let chunk_len = c.len();

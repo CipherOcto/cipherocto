@@ -234,35 +234,33 @@ fn epoch_millis() -> u64 {
         .as_millis() as u64
 }
 
-/// Build a `FIDO:/<base10(CBOR(json))>` URI for a SHORTCAKE_PASSKEY
+/// Build a `FIDO:/<base64url-no-pad(json)>` URI for a SHORTCAKE_PASSKEY
 /// `request_options_json` string. Used by the
 /// `Event::PairPasskeyRequest` arm to render the QR the phone's WA
 /// app scans.
 ///
-/// **Pipeline** (caBLE v2 / WebAuthn hybrid transport convention):
-///   1. Parse the JSON as a generic `serde_json::Value`.
-///   2. Re-encode as CBOR via `ciborium` (preserves string keys).
-///   3. Run `crate::base10::encode` on the CBOR bytes.
-///   4. Prefix with `FIDO:/`.
+/// **Wire format — UNVERIFIED.** The official WhatsApp Web client's
+/// exact body encoding is private. We know from observation that it
+/// uses the `FIDO:/` URI scheme (the phone's WA app registers an
+/// Android intent filter for that scheme), but the inner field
+/// layout — raw JSON vs. CBOR vs. a caBLE-style handshake with
+/// ephemeral keys — is undocumented. References like webauthn-rs
+/// target a Relying-Party / authenticator stack that has fields
+/// (`peer_identity`, `secret`, `known_domains_count`, ...) wacore
+/// does NOT expose to us — wacore gives us only the
+/// `PublicKeyCredentialRequestOptions` JSON.
 ///
-/// Returns `Err(String)` on parse or CBOR-encoder failure — callers
-/// can fall back to dumping the raw JSON if both encoders refuse.
+/// This helper takes the most-likely-correct minimum: base64url of
+/// the verbatim JSON inside the `FIDO:/` prefix. If the phone
+/// rejects it, the next iteration is to inspect an official WA Web
+/// FIDO:/ URI and reverse-engineer the field shape — we should NOT
+/// guess further without evidence (i.e., without scanning an
+/// official URI and asking the user what the phone showed).
 fn build_passkey_fido_uri(request_options_json: &str) -> std::result::Result<String, String> {
-    use crate::base10;
-
-    // 1. JSON parse.
-    let value: serde_json::Value = serde_json::from_str(request_options_json)
-        .map_err(|e| format!("request_options_json parse: {e}"))?;
-
-    // 2. CBOR encode (canonical, definite-length maps/arrays).
-    let mut cbor = Vec::with_capacity(request_options_json.len());
-    ciborium::ser::into_writer(&value, &mut cbor).map_err(|e| format!("cbor encode: {e}"))?;
-
-    // 3. caBLE Base10.
-    let digits = base10::encode(&cbor);
-
-    // 4. Prefix.
-    Ok(format!("{}{}", base10::URL_PREFIX, digits))
+    use base64::Engine;
+    let encoded =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(request_options_json.as_bytes());
+    Ok(format!("FIDO:/{encoded}"))
 }
 
 #[cfg(test)]
@@ -270,67 +268,36 @@ mod passkey_fido_uri_tests {
     use super::build_passkey_fido_uri;
 
     /// Verbatim copy of the `request_options_json` shape wacore sends
-    /// in `Event::PairPasskeyRequest` (captured from the live logs in
-    /// the wacore-webauthn plan, Session 3). The output must:
-    ///   1. Start with `FIDO:/`.
-    ///   2. Contain only ASCII digits after the prefix (Base10).
-    ///   3. Be decodeable back through `base10::decode` to a CBOR
-    ///      byte buffer that round-trips through `serde_json::Value`.
-    ///   4. Be round-trip-stable (running the builder twice produces
-    ///      the same output).
+    /// in `Event::PairPasskeyRequest` (captured from the live logs
+    /// in the wacore-webauthn plan, Session 3).
     const SAMPLE_REQUEST_OPTIONS: &str = r#"{"challenge":"KGnPYVZIwBkl5LP-2H1BBMAT2fVGYbkAnWq4713Ga2Q","timeout":600000,"rpId":"whatsapp.com","allowCredentials":[],"userVerification":"required","extensions":{"uvm":true}}"#;
 
     #[test]
-    fn build_passkey_fido_uri_produces_cable_v2_shape() {
+    fn build_passkey_fido_uri_produces_fido_prefix() {
         let uri = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("must build");
         assert!(uri.starts_with("FIDO:/"), "missing FIDO prefix: {uri}");
-        let digits = &uri["FIDO:/".len()..];
+        let body = &uri["FIDO:/".len()..];
+        assert!(!body.is_empty(), "payload must not be empty");
+        // URL_SAFE_NO_PAD → A-Z, a-z, 0-9, '-', '_'. No padding '='.
         assert!(
-            !digits.is_empty(),
-            "payload must not be empty (got: {uri:?})"
-        );
-        assert!(
-            digits.chars().all(|c| c.is_ascii_digit()),
-            "digits must be ASCII 0-9 only (caBLE base10); got {digits:?}"
+            body.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "base64url chars only; got {body:?}"
         );
     }
 
     #[test]
-    fn build_passkey_fido_uri_round_trips_through_base10_and_cbor() {
+    fn build_passkey_fido_uri_round_trips_through_base64url() {
+        use base64::Engine;
         let uri = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("must build");
-        let digits = &uri["FIDO:/".len()..];
-
-        // Round-trip through the decoder.
-        let bytes = crate::base10::decode(digits).expect("digits must decode");
-
-        // Decode the CBOR back to a serde_json::Value and check the
-        // canonical fields survived.
-        let value: serde_json::Value =
-            ciborium::de::from_reader(&bytes[..]).expect("CBOR must decode");
-        let obj = value.as_object().expect("must be a CBOR map");
+        let body = &uri["FIDO:/".len()..];
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(body)
+            .expect("base64url must decode");
+        let recovered = std::str::from_utf8(&bytes).expect("utf-8 must decode");
         assert_eq!(
-            obj.get("challenge").and_then(|v| v.as_str()),
-            Some("KGnPYVZIwBkl5LP-2H1BBMAT2fVGYbkAnWq4713Ga2Q"),
-            "challenge must round-trip"
-        );
-        assert_eq!(
-            obj.get("rpId").and_then(|v| v.as_str()),
-            Some("whatsapp.com"),
-            "rpId must round-trip"
-        );
-        assert_eq!(
-            obj.get("timeout").and_then(|v| v.as_u64()),
-            Some(600_000),
-            "timeout must round-trip"
-        );
-        assert_eq!(
-            obj.get("userVerification").and_then(|v| v.as_str()),
-            Some("required"),
-            "userVerification must round-trip"
-        );
-        assert!(
-            obj.contains_key("allowCredentials"),
-            "allowCredentials field must be present (even if empty)"
+            recovered, SAMPLE_REQUEST_OPTIONS,
+            "base64url must round-trip the JSON verbatim"
         );
     }
 
@@ -339,12 +306,6 @@ mod passkey_fido_uri_tests {
         let a = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("a");
         let b = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("b");
         assert_eq!(a, b, "encoder must be deterministic");
-    }
-
-    #[test]
-    fn build_passkey_fido_uri_rejects_malformed_json() {
-        let err = build_passkey_fido_uri("not json").expect_err("must fail");
-        assert!(err.contains("parse"), "err should mention parse: {err}");
     }
 }
 
@@ -1404,59 +1365,33 @@ impl WhatsAppWebAdapter {
                                 request_options_json_len = req.request_options_json.len(),
                                 "SHORTCAKE_PASSKEY: server requested WebAuthn assertion"
                             );
-                            // Session 4 (revised after FIDO URI spec
-                            // research): the phone's WA app registers
-                            // an Android intent filter for the `FIDO`
-                            // URI scheme (caBLE v2 / WebAuthn hybrid
-                            // transport convention).
+                            // Session 4 (revised to a minimal,
+                            // unverified encoding): the phone's WA app
+                            // registers an Android intent filter for the
+                            // `FIDO` URI scheme — observation confirms the
+                            // second QR in official WA Web starts with
+                            // `FIDO:/<something-binary>`. The exact body
+                            // format is private to WA; references like
+                            // webauthn-rs target a Relying-Party /
+                            // authenticator stack with bootstrap fields
+                            // (peer_identity, secret, ...) wacore does
+                            // NOT expose. wacore gives us only the
+                            // `PublicKeyCredentialRequestOptions` JSON.
                             //
-                            // **Encoding**:
-                            //   1. Parse the `request_options_json` as
-                            //      a `serde_json::Value` (preserves the
-                            //      string-keyed map shape).
-                            //   2. Re-encode as CBOR (RFC 8949) via
-                            //      `ciborium`. The phone's WA app
-                            //      decodes the CBOR and extracts the
-                            //      standard `PublicKeyCredentialRequest
-                            //      Options` fields.
-                            //   3. Run the caBLE Base10 encoder
-                            //      (webauthn-rs port — see
-                            //      `crate::base10::encode`) on the CBOR
-                            //      bytes. The Base10 layer is the
-                            //      caBLE QR-format convention: 7-byte
-                            //      little-endian u64 chunks become
-                            //      17-digit (or shorter for tail) zero-
-                            //      padded decimal strings, dense in the
-                            //      QR's numeric mode.
-                            //   4. Prefix `FIDO:/` and render the
-                            //      result.
+                            // We render the most-likely-correct minimum:
+                            // `FIDO:/<base64url-no-pad(json)>`. If the
+                            // phone rejects it, the next iteration is to
+                            // inspect an official WA Web FIDO:/ URI and
+                            // reverse-engineer the field shape — we
+                            // should NOT guess further without evidence.
                             //
-                            // **Open question (deferred)**: the
-                            // official WA Web likely uses a custom CBOR
-                            // map shape (perhaps with integer keys per
-                            // wacore's internal protocol) rather than
-                            // the natural JSON→CBOR shape we emit here.
-                            // If the phone's WA app rejects this QR,
-                            // the next step is to inspect the FIDO URI
-                            // an official WA Web session produces for
-                            // the same request_options_json and
-                            // reverse-engineer the exact field
-                            // mapping.
-                            //
-                            // Falls back to dumping the JSON verbatim
-                            // on encoder failure (cbor or qrcode).
+                            // The QR is best-effort: operators who hit
+                            // rejection should scan with a separate WA
+                            // Web session in Chrome (visible FIDO: URI)
+                            // and report the byte shape so we can match.
                             let payload = req.request_options_json.as_str();
-                            let fido_uri = match build_passkey_fido_uri(payload) {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        error = %e,
-                                        "SHORTCAKE_PASSKEY: failed to build FIDO URI; \
-                                         falling back to raw JSON dump"
-                                    );
-                                    format!("FIDO:/{payload}")
-                                }
-                            };
+                            let fido_uri = build_passkey_fido_uri(payload)
+                                .expect("base64url encoding of UTF-8 JSON is infallible");
                             match qrcode::QrCode::new(fido_uri.as_bytes()) {
                                 Ok(qr) => {
                                     let rendered = qr

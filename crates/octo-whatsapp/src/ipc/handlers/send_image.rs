@@ -69,7 +69,12 @@ mod tests {
     use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        // Leak the TempDir so the media buffer root survives the helper
+        // return. `new_for_tests` creates `data` + `sock` but not `media`;
+        // pre-flight writes a probe file under the media buffer root, so
+        // the directory must exist before preflight runs.
+        let tmp = Box::leak(Box::new(tempfile::tempdir().expect("tempdir")));
+        std::fs::create_dir_all(tmp.path().join("media")).expect("mkdir media");
         Daemon::new_for_tests(tmp.path()).1
     }
 

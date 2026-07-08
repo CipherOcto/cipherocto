@@ -25,7 +25,15 @@ use super::super::protocol::{RpcError, RpcErrorCode};
 /// - `LoggedOut`        → `SessionLostLoggedOut`  (-32000)
 /// - `Replaced`         → `SessionLostReplaced`   (-32001)
 /// - `SessionExpired`   → `SessionLostExpired`    (-31999)
-/// - `Disconnected` | `PairingQr` | `PairingCode` → `NotConnected` (-32012)
+/// - `Disconnected` | `PairingQr` | `PairingCode` | `AwaitingUserAction`
+///   → `NotConnected` (-32012)
+///
+/// `AwaitingUserAction` is mapped to `NotConnected` because the bot
+/// is in a non-actionable-from-the-CLI state: the operator must
+/// complete a phone-side prompt (WebAuthn, 2FA PIN, etc.) before any
+/// further RPCs can succeed. The status handler surfaces the
+/// operator-facing hint; this helper just keeps the RPC contract
+/// stable.
 pub fn rpc_for_bot_state(bs: BotStateMirror) -> RpcError {
     let code = match bs {
         BotStateMirror::Connected => {
@@ -34,9 +42,10 @@ pub fn rpc_for_bot_state(bs: BotStateMirror) -> RpcError {
         BotStateMirror::LoggedOut => RpcErrorCode::SessionLostLoggedOut,
         BotStateMirror::Replaced => RpcErrorCode::SessionLostReplaced,
         BotStateMirror::SessionExpired => RpcErrorCode::SessionLostExpired,
-        BotStateMirror::Disconnected | BotStateMirror::PairingQr | BotStateMirror::PairingCode => {
-            RpcErrorCode::NotConnected
-        }
+        BotStateMirror::Disconnected
+        | BotStateMirror::PairingQr
+        | BotStateMirror::PairingCode
+        | BotStateMirror::AwaitingUserAction => RpcErrorCode::NotConnected,
     };
     RpcError {
         code: code.as_i32(),
@@ -57,6 +66,7 @@ fn bot_state_label(bs: BotStateMirror) -> &'static str {
         Replaced => "Replaced",
         LoggedOut => "LoggedOut",
         SessionExpired => "SessionExpired",
+        AwaitingUserAction => "AwaitingUserAction",
     }
 }
 
@@ -83,6 +93,7 @@ mod tests {
             BotStateMirror::Disconnected,
             BotStateMirror::PairingQr,
             BotStateMirror::PairingCode,
+            BotStateMirror::AwaitingUserAction,
         ] {
             let r = rpc_for_bot_state(bs);
             assert_eq!(r.code, -32012, "expected NotConnected for {bs:?}");

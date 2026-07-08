@@ -52,13 +52,25 @@ impl RpcHandler for StatusGet {
         let events = handle.events_buffer();
         let last_event_unix_ms = events.largest_id(); // 0 if buffer empty
         let uptime_secs = (now_unix_ms() - handle.started_at_unix_ms()).max(0) / 1000;
+        let bot_state = handle.bot_state();
+        // `bot_state_hint` carries the operator-facing message when
+        // the daemon has detected a state the operator must act on.
+        // Currently only populated for `AwaitingUserAction` (phone-side
+        // second-verification); other states leave it as `null`.
+        let bot_state_hint: Option<&'static str> = match bot_state {
+            crate::daemon::BotStateMirror::AwaitingUserAction => {
+                Some(crate::daemon::AWAITING_USER_ACTION_HINT)
+            }
+            _ => None,
+        };
         Ok(serde_json::json!({
             "phase": phase,
             "connected": connected,
             "session_valid": session_valid,
             "synced": synced,
             "ready": ready,
-            "bot_state": bot_state_label(handle.bot_state()),
+            "bot_state": bot_state_label(bot_state),
+            "bot_state_hint": bot_state_hint,
             "dropped_inbound": 0u64,
             "last_event_ts_unix_ms": last_event_unix_ms as i64,
             "uptime_secs": uptime_secs,
@@ -81,6 +93,7 @@ fn bot_state_label(bs: crate::daemon::BotStateMirror) -> &'static str {
         Replaced => "Replaced",
         LoggedOut => "LoggedOut",
         SessionExpired => "SessionExpired",
+        AwaitingUserAction => "AwaitingUserAction",
     }
 }
 

@@ -108,3 +108,146 @@ async fn new_for_tests_creates_daemon_with_paths_in_tmpdir() {
         expected_index
     );
 }
+
+// ── Pairing stall timer (Phase 6.12.5) ────────────────────────────
+//
+// The production const `PAIRING_STALL_SECS = 45s` is too slow for
+// hermetic tests; these exercise `run_connection_watcher_inner` with
+// a 150ms threshold instead.
+
+/// 150ms is short enough to keep tests fast (multi-thread runtime
+/// wakeup latency dominates below ~50ms) but long enough to avoid
+/// flake on a busy CI box. Tuned via empirical runs on this
+/// developer's machine; bump up if a slow CI starts flake-ing.
+const TEST_STALL: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Build a `broadcast::Sender<String>` + paired receiver and spawn
+/// `run_connection_watcher_inner` against a fresh daemon. Returns
+/// the sender (caller drives events) and the daemon handle (caller
+/// asserts state).
+async fn spawn_watcher() -> (
+    tokio::sync::broadcast::Sender<String>,
+    DaemonHandle,
+    tempfile::TempDir,
+) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+    let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
+    let cancel = handle.cancel_token().clone();
+    tokio::spawn(super::run_connection_watcher_inner(
+        rx,
+        handle.clone(),
+        cancel,
+        TEST_STALL,
+    ));
+    // Brief yield so the spawned task is scheduled and observing
+    // the broadcast channel before the test publishes.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    (tx, handle, tmp)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_stall_timer_fires_awaiting_user_action() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    // Send a PairingQr-classified event (the wacore Debug form
+    // starts with `Event::PairingQrCode(...)` per the classifier;
+    // we use the inner identifier after `Event::` stripping).
+    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
+        .expect("send PairingQrCode");
+
+    // Wait long enough for the classifier + stall timer to fire.
+    tokio::time::sleep(TEST_STALL * 3).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::AwaitingUserAction,
+        "stall timer must fire AwaitingUserAction when no terminal event follows pairing prompt"
+    );
+
+    // Cancel the watcher to clean up the task.
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_stall_timer_cleared_by_terminal_event() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
+        .expect("send PairingQrCode");
+    // Send Connected before the stall timer fires.
+    tx.send("Event::Connected(Connected { .. })".to_string())
+        .expect("send Connected");
+
+    // Wait > stall threshold — if the timer were still armed it
+    // would fire by now.
+    tokio::time::sleep(TEST_STALL * 3).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::Connected,
+        "terminal event must clear stall timer; Connected state must stick"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_stall_timer_resets_on_re_pair() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    // First pairing attempt: PairingQr then LoggedOut (server
+    // rejected). The LoggedOut is a terminal event that clears the
+    // timer.
+    tx.send("Event::PairingQrCode { code: \"a\", timeout: 60s }".to_string())
+        .expect("send PairingQrCode #1");
+    // Wait less than the stall threshold, then send LoggedOut.
+    tokio::time::sleep(TEST_STALL / 2).await;
+    tx.send("LoggedOut(LoggedOut { on_connect: true, reason: LoggedOut })".to_string())
+        .expect("send LoggedOut");
+    tokio::time::sleep(TEST_STALL / 2).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::LoggedOut,
+        "after server-side rejection, state must be LoggedOut"
+    );
+
+    // Re-pair: new PairingQrCode. The timer must restart from
+    // scratch; without a fresh timeout window it would NOT fire
+    // before the test's total elapsed time.
+    tx.send("Event::PairingQrCode { code: \"b\", timeout: 60s }".to_string())
+        .expect("send PairingQrCode #2");
+
+    // Wait > TEST_STALL so the timer fires for the SECOND pair.
+    tokio::time::sleep(TEST_STALL * 3).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::AwaitingUserAction,
+        "stall timer must reset on re-pair; second PairingQrCode with no terminal must trigger AwaitingUserAction"
+    );
+
+    handle.cancel_token().cancel();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_stall_does_not_fire_without_pairing_prompt() {
+    let (tx, handle, _tmp) = spawn_watcher().await;
+
+    // Send Connected directly with no prior PairingQrCode. The
+    // stall timer is only armed by PairingQr/Code events, so no
+    // timer should fire.
+    tx.send("Event::Connected(Connected { .. })".to_string())
+        .expect("send Connected");
+
+    tokio::time::sleep(TEST_STALL * 3).await;
+
+    assert_eq!(
+        handle.bot_state(),
+        BotStateMirror::Connected,
+        "no pairing prompt -> no stall timer -> Connected sticks"
+    );
+
+    handle.cancel_token().cancel();
+}

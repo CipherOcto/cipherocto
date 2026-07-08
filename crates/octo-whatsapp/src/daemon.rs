@@ -47,6 +47,13 @@ pub enum BotStateMirror {
     Replaced,
     LoggedOut,
     SessionExpired,
+    /// Phone-side second-verification required. wacore 0.6.0 does
+    /// not surface WebAuthn / passkey / 2FA-PIN events, so we detect
+    /// the stall heuristically: 45s after a pairing prompt with no
+    /// terminal event. Hint is a const; the operator must complete
+    /// the prompt on the phone (security key, passkey, or 2FA PIN)
+    /// to advance the state machine.
+    AwaitingUserAction,
 }
 
 fn encode_bot_state(bs: BotStateMirror) -> u8 {
@@ -58,6 +65,7 @@ fn encode_bot_state(bs: BotStateMirror) -> u8 {
         BotStateMirror::Replaced => 4,
         BotStateMirror::LoggedOut => 5,
         BotStateMirror::SessionExpired => 6,
+        BotStateMirror::AwaitingUserAction => 7,
     }
 }
 
@@ -69,9 +77,16 @@ fn decode_bot_state(v: u8) -> BotStateMirror {
         4 => BotStateMirror::Replaced,
         5 => BotStateMirror::LoggedOut,
         6 => BotStateMirror::SessionExpired,
+        7 => BotStateMirror::AwaitingUserAction,
         _ => BotStateMirror::Disconnected,
     }
 }
+
+/// Hint surfaced to operators when `BotStateMirror::AwaitingUserAction`
+/// fires. Const so we never allocate; the message is the same for
+/// every second-verification case the wacore SDK hides from us
+/// (WebAuthn, security key, 2FA PIN, multi-device toggle, etc.).
+pub const AWAITING_USER_ACTION_HINT: &str = "pairing stalled: check phone for a second-verification prompt (passkey, security key, 2FA PIN, or multi-device toggle)";
 
 /// Shared, cheaply-cloneable handle to daemon state.
 #[derive(Clone, Debug)]
@@ -1201,7 +1216,14 @@ fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
         // in Booting/SessionLost.
         "Connected" => Some((BotStateMirror::Connected, true)),
         "Disconnected" => Some((BotStateMirror::Disconnected, true)),
-        "PairingQr" => Some((BotStateMirror::PairingQr, false)),
+        // The wacore variants are `PairingQrCode` and `PairingCode`
+        // (note the `Code` suffix on the QR variant). Earlier phases
+        // had this wrong as `"PairingQr"` and the arm silently never
+        // matched in production — only `LoggedOut` / `Connected` /
+        // `Replaced` / `SessionExpired` paths were reachable. Phase
+        // 6.12.5's hermetic test (`pairing_stall_timer_fires_*`)
+        // exposed the bug.
+        "PairingQrCode" => Some((BotStateMirror::PairingQr, false)),
         "PairingCode" => Some((BotStateMirror::PairingCode, false)),
         "LoggedOut" => Some((BotStateMirror::LoggedOut, true)),
         "Replaced" => Some((BotStateMirror::Replaced, true)),
@@ -1210,22 +1232,88 @@ fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
     }
 }
 
+/// Default stall threshold: if no terminal pairing event arrives
+/// within this window after the QR/code is rendered, fire
+/// `BotStateMirror::AwaitingUserAction`. wacore 0.6.0 does not surface
+/// WebAuthn / passkey / 2FA-PIN events; the operator must complete the
+/// prompt on the phone before the state advances.
+pub const PAIRING_STALL_SECS: u64 = 45;
+
 /// Long-running task spawned at adapter-bind time. Loops over the
 /// broadcast receiver, applies `BotStateMirror` transitions, and
 /// observes cancellation. Survives `Event::Lagged` (channel overflow)
 /// by continuing — events lost during overflow are non-critical.
+///
+/// Maintains a per-task pairing stall timer: set when a `PairingQr` /
+/// `PairingCode` event is observed, cleared by any terminal event
+/// (`Connected` / `Disconnected` / `LoggedOut` / `Replaced` /
+/// `SessionExpired`). If the timer fires before a terminal event, the
+/// state machine advances to `AwaitingUserAction` so operators see a
+/// truthful `status.get` even when the SDK has stalled behind a
+/// phone-side second-verification prompt.
 async fn run_connection_watcher(
-    mut rx: tokio::sync::broadcast::Receiver<String>,
+    rx: tokio::sync::broadcast::Receiver<String>,
     handle: DaemonHandle,
     cancel: CancellationToken,
 ) {
+    run_connection_watcher_inner(
+        rx,
+        handle,
+        cancel,
+        std::time::Duration::from_secs(PAIRING_STALL_SECS),
+    )
+    .await
+}
+
+/// Testable inner: takes the stall threshold explicitly so unit
+/// tests can use a sub-second timeout (the production const is 45s,
+/// which would dominate test wall-clock).
+async fn run_connection_watcher_inner(
+    mut rx: tokio::sync::broadcast::Receiver<String>,
+    handle: DaemonHandle,
+    cancel: CancellationToken,
+    stall_after: std::time::Duration,
+) {
     use tokio::sync::broadcast::error::RecvError;
+    use tokio::time::Instant;
+
     tracing::info!("connection watcher: task spawned, awaiting events");
+
+    // `None` when no pairing is in progress; `Some(t)` otherwise. Set
+    // by `PairingQr` / `PairingCode` classifier arms, cleared by any
+    // terminal classifier arm. The watcher fires `AwaitingUserAction`
+    // when `now - t >= stall_after`.
+    let mut pairing_started_at: Option<Instant> = None;
+
     loop {
+        // Compute the timeout for the current `select!` so the stall
+        // timer fires deterministically per iteration (not via a
+        // separate spawned timer that would race against `rx.recv`).
+        let stall_deadline = pairing_started_at.map(|t| t + stall_after);
         tokio::select! {
             _ = cancel.cancelled() => {
                 tracing::info!("connection watcher: cancel observed");
                 break;
+            }
+            _ = async {
+                match stall_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                tracing::warn!(
+                    stall_secs = ?stall_after,
+                    "connection watcher: pairing stalled (no terminal event); \
+                     firing AwaitingUserAction; hint: {hint}",
+                    hint = AWAITING_USER_ACTION_HINT,
+                );
+                handle.set_bot_state(BotStateMirror::AwaitingUserAction);
+                // Phase is unchanged — daemon remains in `Booting`
+                // until either Connected (happy path) or a terminal
+                // SessionLost-class event arrives. Pairing stall
+                // doesn't move phase because the bot hasn't been
+                // linked yet.
+                pairing_started_at = None;
             }
             recv = rx.recv() => {
                 match recv {
@@ -1247,6 +1335,22 @@ async fn run_connection_watcher(
                                     _ => DaemonPhase::SessionLost,
                                 };
                                 handle.set_phase(phase).await;
+                            }
+                            // Manage the pairing stall timer in lockstep
+                            // with the state machine.
+                            match mirror {
+                                BotStateMirror::PairingQr
+                                | BotStateMirror::PairingCode => {
+                                    pairing_started_at = Some(Instant::now());
+                                }
+                                BotStateMirror::Connected
+                                | BotStateMirror::Disconnected
+                                | BotStateMirror::Replaced
+                                | BotStateMirror::LoggedOut
+                                | BotStateMirror::SessionExpired
+                                | BotStateMirror::AwaitingUserAction => {
+                                    pairing_started_at = None;
+                                }
                             }
                         } else {
                             // DEBUG (Phase 6.12.5): log unclassified events so

@@ -1220,10 +1220,32 @@ impl WhatsAppWebAdapter {
                                 }
                                 Err(e) => { eprintln!("\nWhatsApp QR payload: {code}\n(failed to render: {e})\n"); }
                             }
+                            // Operator hint: wacore 0.6.0 does not surface
+                            // WebAuthn / passkey / 2FA-PIN events. If the
+                            // phone prompts for a second verification after
+                            // the scan, the CLI/daemon will appear stuck
+                            // for ~45s; the daemon's status will report
+                            // `AwaitingUserAction` with a hint. The pairing
+                            // completes as soon as the operator finishes
+                            // the phone-side prompt.
+                            eprintln!(
+                                "[hint] If your phone asks for a passkey, \
+                                 security key, or 2FA PIN after scanning, \
+                                 complete it on the phone. The daemon will \
+                                 stall up to ~45s before reporting \
+                                 AwaitingUserAction.\n"
+                            );
                         }
                         Event::PairingCode { code, .. } => {
                             eprintln!("\nWhatsApp pair code: {code}");
                             eprintln!("Enter this in WhatsApp > Linked Devices\n");
+                            // Same hint as QR flow — pair-code linking has
+                            // the same phone-side second-verification risk.
+                            eprintln!(
+                                "[hint] If your phone asks for a passkey, \
+                                 security key, or 2FA PIN after entering \
+                                 the code, complete it on the phone.\n"
+                            );
                         }
                         Event::StreamError(err) => { tracing::error!("WhatsApp stream error: {err:?}"); }
                         _ => {}

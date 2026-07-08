@@ -2,7 +2,9 @@
 //!
 //! Three handlers round-trip through the daemon's `MultiAccountStore`:
 //! - `daemon.accounts.list`  — enumerate all linked accounts.
-//! - `daemon.accounts.use`   — set the active account (writes `<base>/active` symlink).
+//! - `daemon.accounts.use`   — set the active account (writes `<base>/active` symlink
+//!   AND atomically rebinds the running adapter to the new account's session path).
+//!   Operators may follow up with `reconnect.now` to establish a fresh connection.
 //! - `daemon.accounts.info`  — fetch details for one account.
 
 use serde::Deserialize;
@@ -79,6 +81,7 @@ impl RpcHandler for AccountsUse {
         let p: UseParams = serde_json::from_value(params)
             .map_err(|e| invalid_params(format!("missing/invalid account_id: {e}")))?;
 
+        // Step 1: write the symlink + update the JSON index.
         let mut store = h.accounts();
         let entry = store.use_account(&p.account_id).map_err(|e| match e {
             CoreError::InvalidSessionPath { reason, .. } => {
@@ -86,6 +89,10 @@ impl RpcHandler for AccountsUse {
             }
             other => core_err_to_rpc(other),
         })?;
+
+        // Step 2: atomically rebind the running adapter to the new session path.
+        // (live_chain_j_accounts exercises this path against a real account.)
+        h.rebind_adapter_for(&p.account_id, &entry.session_path);
 
         Ok(json!({
             "active": entry.account_id,

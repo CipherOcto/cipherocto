@@ -98,15 +98,14 @@ fn static_capability_report() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::test_mock_adapter::MockAdapter;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn static_report_has_expected_shape() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let v = Capabilities.call(h, serde_json::json!({})).await.unwrap();
         assert_eq!(v["platform"], "whatsapp");
         assert_eq!(v["max_payload_bytes"], 65_536);
@@ -131,8 +130,8 @@ mod tests {
         // not the static fallback. The mock advertises max_payload_bytes
         // = 65_536 and a non-trivial media_capabilities object, so we
         // can detect the Some-bound path via the populated mime list.
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         h.bind_adapter(Arc::new(MockAdapter::new()));
         let v = Capabilities.call(h, serde_json::json!({})).await.unwrap();
         assert_eq!(v["platform"], "whatsapp");

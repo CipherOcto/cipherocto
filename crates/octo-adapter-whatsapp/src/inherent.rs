@@ -936,7 +936,7 @@ impl WhatsAppWebAdapter {
         let is_group = chat.is_group();
         let sender: Option<wacore_binary::Jid> = if is_group { None } else { Some(chat.clone()) };
         client
-            .mark_as_read(&chat, sender.as_ref(), &[&up_to_msg_id[..]])
+            .mark_as_read(&chat, sender.as_ref(), std::slice::from_ref(&up_to_msg_id))
             .await
             .map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "whatsapp".into(),

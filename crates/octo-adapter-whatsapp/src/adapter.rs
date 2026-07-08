@@ -1270,7 +1270,7 @@ impl WhatsAppWebAdapter {
             });
         }
 
-        let mut bot = builder.build().await?;
+        let bot = builder.build().await?;
         *self.client.lock() = Some(bot.client());
 
         // Run the bot on its runtime in the background; `spawn()` returns

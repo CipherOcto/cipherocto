@@ -4,14 +4,13 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use prost::Message;
-use std::sync::Arc;
-use whatsapp_rust::buffa::Message as BuffaMessage;
 use std::path::Path;
+use std::sync::Arc;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::traits::*;
 use wacore::store::Device as CoreDevice;
+use whatsapp_rust::buffa::Message as BuffaMessage;
 
 /// Helper to convert stoolap errors to StoreError
 fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
@@ -1403,17 +1402,13 @@ impl MsgSecretStore for StoolapStore {
                 }
             };
             let merged_expires = match existing {
-                Some((e, _)) => wacore::store::traits::merge_msg_secret_expiry(
-                    e,
-                    entry.expires_at,
-                ),
+                Some((e, _)) => wacore::store::traits::merge_msg_secret_expiry(e, entry.expires_at),
                 None => entry.expires_at,
             };
             let merged_msg_ts = match existing {
-                Some((_, t)) => wacore::store::traits::merge_msg_secret_message_ts(
-                    t,
-                    entry.message_ts,
-                ),
+                Some((_, t)) => {
+                    wacore::store::traits::merge_msg_secret_message_ts(t, entry.message_ts)
+                }
                 None => entry.message_ts,
             };
             exec(
@@ -2051,6 +2046,11 @@ mod tests {
         // between the SELECT and the DELETE. Pin that the new
         // single-DELETE path returns the EXACT count of rows
         // deleted (3), not a count from a separate SELECT.
+        //
+        // Post-buffa migration (wacore 6e0f241): upstream trait added a
+        // second `sender_cutoff` to guard sender buckets separately from
+        // received-token state. Pass `i64::MAX` here so the test preserves
+        // pre-migration semantics (delete solely on `token_cutoff`).
         use wacore::store::traits::ProtocolStore;
         use wacore::store::traits::TcTokenEntry;
         let store = StoolapStore::new_in_memory().unwrap();
@@ -2072,7 +2072,7 @@ mod tests {
         // Cutoff is between the old and recent timestamps.
         let cutoff = now - 3_600_000;
         let deleted = store
-            .delete_expired_tc_tokens(cutoff, 0)
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
             .await
             .expect("delete_expired_tc_tokens should succeed");
         assert_eq!(
@@ -2084,7 +2084,7 @@ mod tests {
         // Second call should return 0 — the remaining 2 are recent
         // and the deleted 3 are gone.
         let deleted2 = store
-            .delete_expired_tc_tokens(cutoff, 0)
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
             .await
             .expect("second delete_expired_tc_tokens should succeed");
         assert_eq!(

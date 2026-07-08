@@ -571,6 +571,7 @@ impl<'a> AccountStoreGuard<'a> {
 pub struct Daemon {
     config: WhatsAppRuntimeConfig,
     cancel: CancellationToken,
+    handle: DaemonHandle,
 }
 
 impl std::fmt::Debug for Daemon {
@@ -583,12 +584,77 @@ impl std::fmt::Debug for Daemon {
 }
 
 impl Daemon {
-    /// Build a new `Daemon` from a validated [`WhatsAppRuntimeConfig`].
+    /// Production constructor. Opens the default multi-account store
+    /// (best-effort; logs warning on failure, store stays None).
     pub fn new(config: WhatsAppRuntimeConfig) -> Self {
-        Self {
-            config,
-            cancel: CancellationToken::new(),
+        let accounts = match MultiAccountStore::open_default() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "MultiAccountStore::open_default failed; daemon starts without accounts API"
+                );
+                None
+            }
+        };
+        Self::new_internal(config, accounts)
+    }
+
+    /// Hermetic test constructor. Builds a Daemon whose filesystem
+    /// paths (data_dir, socket_dir, MultiAccountStore index, rules.toml
+    /// + wal, media buffer root, observability logs) all live inside
+    ///   `tmpdir`. Returns `(Daemon, DaemonHandle)`.
+    ///
+    /// The returned Daemon is fully usable; no adapter is bound. Tests
+    /// that need an adapter call `handle.bind_adapter(...)` after
+    /// construction.
+    pub fn new_for_tests(tmpdir: &std::path::Path) -> (Self, DaemonHandle) {
+        use crate::config::*;
+        let data_dir = tmpdir.join("data");
+        let _ = std::fs::create_dir_all(&data_dir);
+        let socket_dir = tmpdir.join("sock");
+        let _ = std::fs::create_dir_all(&socket_dir);
+
+        let cfg = WhatsAppRuntimeConfig {
+            name: "test".into(),
+            data_dir,
+            log_dir: tmpdir.join("logs"),
+            socket_dir,
+            media_buffer: MediaBufferConfig {
+                root: tmpdir.join("media"),
+                ..Default::default()
+            },
+            events: EventsConfig::default(),
+            security: SecurityConfig {
+                grace_path: Some(tmpdir.join("data/grace.json")),
+                ..Default::default()
+            },
+            observability: ObservabilityConfig::default(),
+            rules: RulesConfig {
+                storage_path: tmpdir.join("data/rules.toml"),
+                wal_path: Some(tmpdir.join("data/rules.wal")),
+                ..Default::default()
+            },
+            account_id: "default".into(),
+            groups: Vec::new(),
+            sender_allowlist: std::collections::BTreeMap::new(),
+        };
+
+        // Open the store at tmpdir/data/index.json — NOT via open_default().
+        // `MultiAccountStore::open` only materializes the file on the
+        // first mutation; tests assert the path exists immediately
+        // (hermetic invariant: no global filesystem side-effects), so
+        // touch an empty-but-valid index file up-front.
+        let index_path = tmpdir.join("data/index.json");
+        if !index_path.exists() {
+            let _ = std::fs::write(&index_path, br#"{"accounts":{}}"#);
         }
+        let accounts =
+            MultiAccountStore::open(&index_path).expect("MultiAccountStore::open(tmpdir)");
+
+        let daemon = Self::new_internal(cfg, Some(accounts));
+        let handle = daemon.handle();
+        (daemon, handle)
     }
 
     /// Phase 5 Part B: canonical API version string. Bumped from
@@ -599,16 +665,38 @@ impl Daemon {
         "1.0.0+phase5"
     }
 
-    pub fn handle(&self) -> DaemonHandle {
+    /// Private constructor — takes a pre-opened `MultiAccountStore` to
+    /// bypass the `open_default()` filesystem read. Used by both
+    /// `new` (production) and `new_for_tests` (hermetic).
+    fn new_internal(config: WhatsAppRuntimeConfig, accounts: Option<MultiAccountStore>) -> Self {
+        let cancel = CancellationToken::new();
+        let handle = Self::build_handle(&config, &cancel, accounts);
+        Self {
+            config,
+            cancel,
+            handle,
+        }
+    }
+
+    /// Build the [`DaemonHandle`] for `config` + `cancel` + optional
+    /// `accounts` store. All filesystem writes/reads (data dir,
+    /// socket dir, media buffer, observability logs, rules.toml +
+    /// WAL, MultiAccountStore index) are derived from `config` — so
+    /// `new_for_tests` simply passes a config whose paths are rooted
+    /// under `tmpdir`.
+    fn build_handle(
+        config: &WhatsAppRuntimeConfig,
+        cancel: &CancellationToken,
+        accounts: Option<MultiAccountStore>,
+    ) -> DaemonHandle {
         let media_buffer = MediaBuffer::new(
-            self.config.media_buffer.max_concurrent_uploads,
-            self.config.media_buffer.root.clone(),
+            config.media_buffer.max_concurrent_uploads,
+            config.media_buffer.root.clone(),
         );
-        let events_buffer = EventsBuffer::new(self.config.events.max_rows);
+        let events_buffer = EventsBuffer::new(config.events.max_rows);
         // Phase 5 Part B: Prometheus registry materialized first so
         // we can attach it to AuditLog / RuleStore / TriggerStore.
-        let label_secret = self
-            .config
+        let label_secret = config
             .observability
             .metrics
             .label_hash_secret
@@ -621,36 +709,35 @@ impl Daemon {
         metrics.set_bot_state("booting");
         metrics.set_connected(false);
         let audit_log = AuditLog::new(
-            self.config.security.audit_max_rows,
-            self.config.security.audit_anchor_every,
+            config.security.audit_max_rows,
+            config.security.audit_anchor_every,
         )
         .with_metrics(metrics.clone());
         let mutation_rl = Arc::new(MutationRateLimiter::new(10)); // 10/min per caller
         let trigger_store = Arc::new(TriggerStore::new().with_metrics(metrics.clone()));
         // Phase 5 Part A: TokenStore. Default grace_path is
         // `$data_dir/tokens/grace.json` if the user did not override.
-        let grace_path = self
-            .config
+        let grace_path = config
             .security
             .grace_path
             .clone()
-            .unwrap_or_else(|| self.config.data_dir.join("tokens").join("grace.json"));
+            .unwrap_or_else(|| config.data_dir.join("tokens").join("grace.json"));
         let tokens = Arc::new(TokenStore::new(
             Some(grace_path),
-            self.config.security.grace_period_ms,
+            config.security.grace_period_ms,
         ));
         // Best-effort initial load: env var unset leaves the store empty
         // (hermetic tests). Env var set with malformed contents logs a
         // warning via the descriptor's `label`.
-        let _ = tokens.load_from_env(&self.config.security.bearer_token_env, Some("bootstrap"));
+        let _ = tokens.load_from_env(&config.security.bearer_token_env, Some("bootstrap"));
         let _ = tokens.load_grace();
         // Phase 5 Part C: rules persistence. The persister writes
         // the ruleset atomically to `rules.toml` with a SHA-256
         // chained WAL. The JoinHandle lives outside `DaemonInner`
         // (in `Daemon`) so the supervisor can await the actor's
         // exit during shutdown drain.
-        let storage_path = self.config.rules.resolved_storage_path();
-        let wal_path = self.config.rules.resolved_wal_path();
+        let storage_path = config.rules.resolved_storage_path();
+        let wal_path = config.rules.resolved_wal_path();
         if let Some(parent) = storage_path.parent() {
             if !parent.as_os_str().is_empty() {
                 let _ = std::fs::create_dir_all(parent);
@@ -662,7 +749,7 @@ impl Daemon {
             }
         }
         let (rules_persister, persister_handle) =
-            RulesPersister::spawn(storage_path, wal_path, self.config.rules.debounce_ms);
+            RulesPersister::spawn(storage_path, wal_path, config.rules.debounce_ms);
         // Side-channel: stash the JoinHandle so we can await it on
         // shutdown. The handle is light (one tokio JoinHandle) —
         // owned by the supervisor task spawned by `Daemon::run`.
@@ -674,10 +761,10 @@ impl Daemon {
         // inject into both the RuleStore (swap) and the
         // persister's snapshot map.
         let loaded_rules = load_initial_rules_from_disk(
-            self.config.rules.resolved_storage_path(),
+            config.rules.resolved_storage_path(),
             rules_persister.clone(),
         );
-        let rs = RuleStore::new(self.config.security.auto_approve_rules)
+        let rs = RuleStore::new(config.security.auto_approve_rules)
             .with_metrics(metrics.clone())
             .with_persister(rules_persister.clone());
         if !loaded_rules.is_empty() {
@@ -689,24 +776,6 @@ impl Daemon {
         let started_at_unix_ms = unix_epoch_ms_now();
         let is_live = Arc::new(AtomicBool::new(false));
         let is_ready = Arc::new(AtomicBool::new(false));
-        // Phase 6.1 T6.1.2: open the multi-account index store.
-        // Best-effort: `open_default()` resolves
-        // `~/.local/share/octo/whatsapp/index.json` via
-        // `dirs::home_dir()` and creates an empty in-memory index
-        // when the file is absent. If the call errors out (e.g.
-        // HOME unset, unwritable data dir), the daemon still
-        // starts: handlers will report a `CoreError` for mutating
-        // ops and empty results for read-only ops.
-        let accounts = match MultiAccountStore::open_default() {
-            Ok(s) => Some(s),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "MultiAccountStore::open_default failed; daemon starts without accounts API"
-                );
-                None
-            }
-        };
         // Phase 5 Part F: build a shared `reqwest::Client` with
         // conservative defaults suitable for webhook dispatches.
         // 10s connect timeout, 30s request timeout. Constructed once
@@ -720,8 +789,8 @@ impl Daemon {
             .expect("reqwest::Client::builder build is infallible in practice");
         DaemonHandle {
             inner: Arc::new(DaemonInner {
-                config: self.config.clone(),
-                cancel: self.cancel.clone(),
+                config: config.clone(),
+                cancel: cancel.clone(),
                 phase: std::sync::RwLock::new(DaemonPhase::Booting),
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
@@ -743,6 +812,15 @@ impl Daemon {
                 accounts: parking_lot::Mutex::new(accounts),
             }),
         }
+    }
+
+    /// Return the cached [`DaemonHandle`]. The handle is built once
+    /// at construction time (in [`Daemon::new_internal`]) so callers
+    /// may invoke `handle()` repeatedly without re-running the
+    /// expensive boot sequence (rules persister spawn, metrics
+    /// init, audit log anchor, MultiAccountStore open, etc.).
+    pub fn handle(&self) -> DaemonHandle {
+        self.handle.clone()
     }
 
     /// Clone of the daemon's cancellation token. Used by tests and by

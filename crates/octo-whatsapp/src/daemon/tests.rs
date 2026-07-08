@@ -112,3 +112,22 @@ async fn rebind_adapter_for_works_when_no_adapter_bound_yet() {
 
     assert!(handle.adapter().is_some());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_for_tests_creates_daemon_with_paths_in_tmpdir() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+    // The store must be open and queryable.
+    assert_eq!(
+        handle.accounts().list().len(),
+        0,
+        "fresh tmpdir -> empty index"
+    );
+    // The index file must exist at tmpdir, NOT under $HOME/.local/share/octo/whatsapp.
+    let expected_index = tmp.path().join("data/index.json");
+    assert!(
+        expected_index.exists(),
+        "store must live at tmpdir/data/index.json; got {:?}",
+        expected_index
+    );
+}

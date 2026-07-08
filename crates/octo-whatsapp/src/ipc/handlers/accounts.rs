@@ -122,16 +122,12 @@ impl RpcHandler for AccountsInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use serde_json::json;
 
     fn empty_handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig {
-            name: "test-accounts-handlers".into(),
-            ..Default::default()
-        };
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     #[tokio::test(flavor = "multi_thread")]

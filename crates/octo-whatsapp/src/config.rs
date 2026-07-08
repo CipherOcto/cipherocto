@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use octo_adapter_whatsapp::WhatsAppConfig;
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("io: {0}")]
@@ -335,7 +337,7 @@ fn default_tracing_service_name() -> String {
 impl Default for WhatsAppRuntimeConfig {
     fn default() -> Self {
         Self {
-            name: String::new(),
+            name: "default".to_string(),
             data_dir: default_data_dir(),
             log_dir: default_log_dir(),
             socket_dir: default_socket_dir(),
@@ -376,6 +378,28 @@ impl WhatsAppRuntimeConfig {
     pub fn socket_path(&self) -> PathBuf {
         self.socket_dir
             .join(format!("octo-whatsapp-{}.sock", self.name))
+    }
+
+    /// Derive the adapter-layer `WhatsAppConfig` from the runtime config.
+    ///
+    /// `session_path` is computed as `$data_dir/{name}/session.db`, paralleling
+    /// the socket-path derivation (`$socket_dir/octo-whatsapp-{name}.sock`).
+    ///
+    /// `groups` and `sender_allowlist` are intentionally empty in Phase 6.0;
+    /// they will be wired through when `WhatsAppRuntimeConfig` gains those
+    /// fields in Phase 6.1 (multi-account plumbing).
+    pub fn adapter_config(&self) -> WhatsAppConfig {
+        let mut session_path = self.data_dir.clone();
+        session_path.push(&self.name);
+        session_path.push("session.db");
+        WhatsAppConfig {
+            session_path: session_path.to_string_lossy().into_owned(),
+            ws_url: None,
+            pair_phone: None,
+            pair_code: None,
+            groups: Vec::new(),
+            sender_allowlist: Default::default(),
+        }
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {

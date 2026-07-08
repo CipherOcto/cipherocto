@@ -5,6 +5,39 @@ name = "default"
 "#;
 
 #[test]
+fn adapter_config_derives_session_path_from_data_dir_and_name() {
+    let cfg = WhatsAppRuntimeConfig {
+        name: "work".into(),
+        data_dir: PathBuf::from("/var/lib/octo/whatsapp"),
+        ..Default::default()
+    };
+    let ac = cfg.adapter_config();
+    assert_eq!(ac.session_path, "/var/lib/octo/whatsapp/work/session.db");
+}
+
+#[test]
+fn adapter_config_default_name_uses_default_subdir() {
+    let cfg = WhatsAppRuntimeConfig::default();
+    let ac = cfg.adapter_config();
+    assert!(
+        ac.session_path.ends_with("/default/session.db"),
+        "got {:?}",
+        ac.session_path
+    );
+}
+
+#[test]
+fn adapter_config_empty_groups_and_allowlist() {
+    let cfg = WhatsAppRuntimeConfig::default();
+    let ac = cfg.adapter_config();
+    assert!(ac.groups.is_empty());
+    assert!(ac.sender_allowlist.is_empty());
+    assert!(ac.ws_url.is_none());
+    assert!(ac.pair_phone.is_none());
+    assert!(ac.pair_code.is_none());
+}
+
+#[test]
 fn from_toml_parses_minimal() {
     let cfg = WhatsAppRuntimeConfig::from_toml(MINIMAL.as_bytes()).unwrap();
     assert_eq!(cfg.name, "default");

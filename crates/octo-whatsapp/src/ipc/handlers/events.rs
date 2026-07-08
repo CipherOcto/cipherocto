@@ -144,14 +144,13 @@ fn parse_id(params: &Value) -> Result<u64, RpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::events::{EventEnvelope, InboundEvent};
     use serde_json::json;
 
     fn handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "evt""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     #[tokio::test]

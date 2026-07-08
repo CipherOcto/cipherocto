@@ -5,17 +5,28 @@ edition = "2021"
 description = "caBLE (Cloud Assisted BLE) hybrid authenticator transport for WebAuthn cross-device flows. Includes the FIDO:/<digits> QR codec, the HandshakeV2 bootstrap, and the QR-only relay transport."
 
 [dependencies]
-# CTAP2 canonical CBOR encoder/decoder. We construct maps by hand because
-# CTAP2 requires canonical key ordering (sorted by key length then
-# lexicographic), which ciborium's `Value::Map` representation does
-# not guarantee — we sort ourselves before serializing.
+# CTAP2 canonical CBOR encoder/decoder.
 ciborium = "0.2"
-# Base64 for the FIDO:/ URI's secondary transports (some caBLE
-# implementations use base64url instead of base10; we support both
-# here even though the canonical Chromium encoding is base10).
+# Base64 for secondary URI formats.
 base64 = "0.22"
 thiserror = "1"
+# hex for tunnel_id upper-hex formatting in tunnel URLs
+hex = "0.4"
+
+# Tunnel transport (Session 6+)
+# Async runtime + WebSocket. We use rustls because OpenSSL is heavier and
+# the WA / Chromium caBLE endpoints all support modern TLS.
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+
+# Noise NKpsk0_P256_AESGCM_SHA256 primitives.
+p256 = { version = "0.13", features = ["ecdh"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
 
 [dev-dependencies]
-# Round-trip testing only. No runtime dependency.
 hex = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

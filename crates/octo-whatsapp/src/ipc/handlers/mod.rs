@@ -1,6 +1,7 @@
 //! Concrete RPC method handlers. One file per logical group; all wired into
 //! `build_registry()` at the bottom of this module.
 
+pub mod accounts;
 pub mod actions_escalate;
 pub mod audit;
 pub mod capabilities;
@@ -148,6 +149,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(security_tokens::SecurityRotateToken))
         .register(Arc::new(security_tokens::SecurityRevokeAllTokens))
         .register(Arc::new(security_tokens::SecurityListTokens))
+        .register(Arc::new(accounts::AccountsList))
+        .register(Arc::new(accounts::AccountsUse))
+        .register(Arc::new(accounts::AccountsInfo))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -299,6 +303,13 @@ pub const PHASE6_12_GROUPS_METHODS: &[&str] = &[
     "groups.join_by_id",
 ];
 
+/// RPC method names added in Phase 6.1 (multi-account).
+pub const PHASE6_1_ACCOUNTS_METHODS: &[&str] = &[
+    "daemon.accounts.list",
+    "daemon.accounts.use",
+    "daemon.accounts.info",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +377,7 @@ mod tests {
             .chain(PHASE4_ACTIONS_METHODS.iter())
             .chain(PHASE5_SECURITY_METHODS.iter())
             .chain(PHASE6_12_GROUPS_METHODS.iter())
+            .chain(PHASE6_1_ACCOUNTS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

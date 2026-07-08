@@ -1271,6 +1271,37 @@ impl WhatsAppWebAdapter {
                                  the code, complete it on the phone.\n"
                             );
                         }
+                        // SHORTCAKE_PASSKEY (Session 3 of wacore-webauthn
+                        // plan, RFC-0909): the server asked for a WebAuthn
+                        // assertion. The full `request_options_json`
+                        // already reached the connection-watcher broadcast
+                        // via the unconditional `format!("{:?}", event)`
+                        // above; here we surface a structured diagnostic so
+                        // operators can see the request without grepping
+                        // the raw broadcast. If a `PasskeyAuthenticator`
+                        // is registered (Session 2 wiring), the SDK will
+                        // auto-drive the assertion; this event is then
+                        // a passive notification that the gate fired.
+                        Event::PairPasskeyRequest(req) => {
+                            tracing::info!(
+                                request_options_json_len = req.request_options_json.len(),
+                                "SHORTCAKE_PASSKEY: server requested WebAuthn assertion"
+                            );
+                        }
+                        Event::PairPasskeyConfirmation(inner) => {
+                            tracing::info!(
+                                code = %inner.code,
+                                skip_handoff_ux = inner.skip_handoff_ux,
+                                "SHORTCAKE_PASSKEY: link reached verification stage"
+                            );
+                        }
+                        Event::PairPasskeyError(inner) => {
+                            tracing::warn!(
+                                error = %inner.error,
+                                continuation = inner.continuation,
+                                "SHORTCAKE_PASSKEY: passkey link failed"
+                            );
+                        }
                         Event::StreamError(err) => { tracing::error!("WhatsApp stream error: {err:?}"); }
                         _ => {}
                     }

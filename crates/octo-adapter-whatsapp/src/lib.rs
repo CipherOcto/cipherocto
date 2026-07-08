@@ -80,7 +80,10 @@ pub use octo_network::dot::error::PlatformAdapterError;
 
 // (blank line kept for cargo fmt)
 
-// ── Plugin ABI ─────────────────────────────────────────────────────
+// ── SHORTCAKE_PASSKEY event-broadcast contract tests (Session 3) ───
+//
+// (See the test module at the end of this file — it sits past the
+// Plugin ABI so clippy::items_after_test_module doesn't fire.)
 
 #[no_mangle]
 pub extern "C" fn adapter_version() -> u32 {
@@ -120,5 +123,89 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut WhatsAppWebAdapter);
+    }
+}
+
+// ── SHORTCAKE_PASSKEY event-broadcast contract tests (Session 3) ───
+//
+// The adapter's `on_event` closure unconditionally forwards every
+// `wacore::types::events::Event` to the `raw_event_tx` broadcast as a
+// `format!("{:?}", event)` string (see `adapter.rs:1001-1002`). These
+// tests pin the upstream `Debug` shape of the three SHORTCAKE_PASSKEY
+// events so a future wacore bump that renames or reorders fields shows
+// up as a compile/lint break here rather than silently breaking the
+// connection-watcher's classifier arm in `octo-whatsapp`.
+//
+// The hermetic test asserts on the *stringification* (the contract that
+// flows through the broadcast) rather than going through a full adapter
+// instance — that keeps the test free of session-DB / `start_bot`
+// dependencies and verifies the upstream `Debug` shape in one place.
+
+#[cfg(test)]
+mod passkey_event_broadcast_tests {
+    use wacore::types::events::{
+        Event, PairPasskeyConfirmation, PairPasskeyError, PairPasskeyRequest,
+    };
+
+    #[test]
+    fn pair_passkey_request_debug_includes_payload_and_json() {
+        let evt = Event::PairPasskeyRequest(
+            PairPasskeyRequest::builder()
+                .request_options_json(r#"{"challenge":"AA","rpId":"web.whatsapp.com"}"#.to_string())
+                .build(),
+        );
+        let raw = format!("{evt:?}");
+
+        // The event-variant + payload-struct name must both appear so the
+        // existing classifier (`strip_prefix("Event::").unwrap_or(raw)` +
+        // split-on-brace) extracts `ident = "PairPasskeyRequest"`.
+        assert!(
+            raw.contains("PairPasskeyRequest"),
+            "missing variant/payload identifier: {raw}"
+        );
+        // The JSON payload must round-trip across the Debug boundary so
+        // operators can scrape the broadcast channel and feed it to a QR
+        // renderer / authenticator bridge. `Debug` escapes inner `"` to
+        // `\"` (e.g. `\"challenge\":\"AA\"`) — the JSON braces, field
+        // names, and values all survive, so we assert on substrings that
+        // do not span an escape boundary.
+        assert!(raw.contains("challenge"), "challenge field name: {raw}");
+        assert!(raw.contains("AA"), "challenge value: {raw}");
+        assert!(raw.contains("rpId"), "rpId field name: {raw}");
+        assert!(raw.contains("web.whatsapp.com"), "rpId value: {raw}");
+        assert!(
+            raw.contains("request_options_json"),
+            "payload field name: {raw}"
+        );
+    }
+
+    #[test]
+    fn pair_passkey_confirmation_debug_includes_code_and_flag() {
+        let evt = Event::PairPasskeyConfirmation(
+            PairPasskeyConfirmation::builder()
+                .code("ABCD1234".to_string())
+                .skip_handoff_ux(false)
+                .build(),
+        );
+        let raw = format!("{evt:?}");
+
+        assert!(raw.contains("PairPasskeyConfirmation"), "raw: {raw}");
+        assert!(raw.contains("ABCD1234"), "code missing: {raw}");
+        assert!(raw.contains("skip_handoff_ux"), "flag missing: {raw}");
+    }
+
+    #[test]
+    fn pair_passkey_error_debug_includes_error_and_continuation() {
+        let evt = Event::PairPasskeyError(
+            PairPasskeyError::builder()
+                .error("user_cancelled".to_string())
+                .continuation(false)
+                .build(),
+        );
+        let raw = format!("{evt:?}");
+
+        assert!(raw.contains("PairPasskeyError"), "raw: {raw}");
+        assert!(raw.contains("user_cancelled"), "error missing: {raw}");
+        assert!(raw.contains("continuation"), "flag missing: {raw}");
     }
 }

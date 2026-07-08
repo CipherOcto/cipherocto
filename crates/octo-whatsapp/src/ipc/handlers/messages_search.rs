@@ -58,20 +58,19 @@ impl RpcHandler for MessagesSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WhatsAppRuntimeConfig;
     use crate::daemon::Daemon;
     use crate::test_mock_adapter::MockAdapter;
     use octo_adapter_whatsapp::MessageHit;
     use std::sync::Arc;
 
     fn handle() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        Daemon::new(cfg).handle()
+        let tmp = tempfile::tempdir().expect("tempdir");
+        Daemon::new_for_tests(tmp.path()).1
     }
 
     fn handle_with_mock() -> DaemonHandle {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         h.bind_adapter(Arc::new(MockAdapter::new()));
         h
     }
@@ -97,8 +96,8 @@ mod tests {
 
     #[tokio::test]
     async fn success_path_with_mock_and_override_hits() {
-        let cfg = WhatsAppRuntimeConfig::from_toml(br#"name = "x""#).unwrap();
-        let h = Daemon::new(cfg).handle();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let h = Daemon::new_for_tests(tmp.path()).1;
         let mock = Arc::new(MockAdapter::new());
         mock.set_message_search_result(
             "message_search",

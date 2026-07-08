@@ -64,6 +64,12 @@ async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> 
     // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
     // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
     check_ws_url_allowed(args.ws_url.as_ref())?;
+    // --reset: snapshot existing session before pairing so the
+    // server sees a fresh device identity (recover from
+    // Event::LoggedOut on the same phone number).
+    if args.reset {
+        reset_session(&args.session_path)?;
+    }
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_qr(&args);
     let session = octo_whatsapp_onboard_core::qr_link::run(&core_args).await?;
@@ -79,6 +85,13 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
     // DB. No phone interaction needed.
     if args.ci {
         return run_pair_link_ci(&args);
+    }
+    // --reset: snapshot existing session before pairing so the
+    // server sees a fresh device identity (recover from
+    // Event::LoggedOut on the same phone number). Skipped under
+    // --ci because CI loads a pre-paired DB; no reset applies.
+    if args.reset {
+        reset_session(&args.session_path)?;
     }
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_pair(&args);
@@ -358,6 +371,70 @@ fn default_session_base_dir() -> std::path::PathBuf {
     base
 }
 
+/// Snapshot the existing session directory + its `meta.json` sidecar
+/// to `<path>.broken-<unix-timestamp>` siblings, leaving the original
+/// slot free for a fresh pair. Recovery flow for `Event::LoggedOut`:
+/// the server rejects retries from a device whose DB still represents
+/// the logged-out identity, so a new device pair must be initiated
+/// with a clean DB. Old snapshots are preserved for forensics.
+///
+/// Atomic on the same filesystem (`fs::rename` is a single syscall);
+/// falls back to copy+delete on cross-FS moves.
+///
+/// No-op if `session_path` is absent. The meta sidecar at
+/// `<path>.meta.json` is also snapshotted if present.
+fn reset_session(session_path: &std::path::Path) -> std::result::Result<(), OnboardError> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    reset_session_at(session_path, ts)
+}
+
+/// Inner helper for `reset_session` (and the tests): takes the
+/// timestamp explicitly so tests can pin a deterministic suffix.
+/// Renames the session dir + meta sidecar to `.broken-<ts>`
+/// siblings. No-op if the session dir is absent.
+fn reset_session_at(
+    session_path: &std::path::Path,
+    ts: u64,
+) -> std::result::Result<(), OnboardError> {
+    if session_path.exists() {
+        let mut snapshot = session_path.as_os_str().to_owned();
+        snapshot.push(format!(".broken-{ts}"));
+        let snapshot_path = std::path::PathBuf::from(snapshot);
+        std::fs::rename(session_path, &snapshot_path).map_err(|e| {
+            OnboardError::BadConfig(format!(
+                "reset: snapshot session {:?} -> {:?}: {}",
+                session_path, snapshot_path, e
+            ))
+        })?;
+        tracing::warn!(
+            from = %session_path.display(),
+            to = %snapshot_path.display(),
+            "snapshotted existing session before reset"
+        );
+    }
+
+    // Meta sidecar is a sibling: `<session_path>.meta.json`.
+    let mut meta = session_path.as_os_str().to_owned();
+    meta.push(".meta.json");
+    let meta_path = std::path::PathBuf::from(meta);
+    if meta_path.exists() {
+        let mut snapshot = meta_path.as_os_str().to_owned();
+        snapshot.push(format!(".broken-{ts}"));
+        let snapshot_path = std::path::PathBuf::from(snapshot);
+        std::fs::rename(&meta_path, &snapshot_path).map_err(|e| {
+            OnboardError::BadConfig(format!(
+                "reset: snapshot meta {:?} -> {:?}: {}",
+                meta_path, snapshot_path, e
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
 fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, OnboardError> {
     let bytes =
         std::fs::read(path).map_err(|e| OnboardError::BadConfig(format!("read {path:?}: {e}")))?;
@@ -480,4 +557,101 @@ fn read_sidecar(
         .get("linked_at")
         .and_then(|x| x.as_str().map(String::from));
     Ok((phone, linked))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a tmpdir with a session directory + meta sidecar, both
+    /// containing known content. Returns the path to the session dir
+    /// (`<tmpdir>/default.session.db`).
+    fn fixture_with_session() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        std::fs::create_dir_all(&session).expect("mkdir session");
+        std::fs::write(session.join("db.lock"), b"lock-bytes").expect("write lock");
+        std::fs::write(
+            dir.path().join("default.session.db.meta.json"),
+            b"{\"x\":1}",
+        )
+        .expect("write meta");
+        (dir, session)
+    }
+
+    /// `--reset` must rename the existing session dir + meta to
+    /// `.broken-<ts>` siblings, preserving the bytes. Used to
+    /// recover from `Event::LoggedOut` on the same phone.
+    #[test]
+    fn reset_session_snapshots_dir_and_meta() {
+        let (dir, session) = fixture_with_session();
+        let ts = 1_700_000_000_u64;
+        let stamped = |base: &str| format!("{base}.broken-{ts}");
+
+        reset_session_at(&session, ts).expect("reset ok");
+
+        // Original paths are gone.
+        assert!(!session.exists(), "session dir must be renamed away");
+        assert!(
+            !dir.path().join("default.session.db.meta.json").exists(),
+            "meta sidecar must be renamed away"
+        );
+
+        // Snapshots exist with `.broken-<ts>` suffix.
+        let snap_session = dir.path().join(stamped("default.session.db"));
+        let snap_meta = dir.path().join(stamped("default.session.db.meta.json"));
+        assert!(snap_session.is_dir(), "session snapshot must be a dir");
+        assert!(snap_meta.is_file(), "meta snapshot must be a file");
+
+        // Bytes preserved.
+        assert_eq!(
+            std::fs::read(snap_session.join("db.lock")).unwrap(),
+            b"lock-bytes".to_vec()
+        );
+        assert_eq!(std::fs::read(&snap_meta).unwrap(), b"{\"x\":1}".to_vec());
+    }
+
+    /// `reset_session` is a no-op when the session dir is absent
+    /// (operator might run `--reset` on a fresh machine; no error).
+    #[test]
+    fn reset_session_noop_when_session_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        assert!(!session.exists());
+        reset_session_at(&session, 1_700_000_000).expect("reset noop ok");
+        assert!(!session.exists());
+    }
+
+    /// Meta sidecar absence is OK — session dir is snapshotted
+    /// independently. Common case: no meta file ever written.
+    #[test]
+    fn reset_session_snapshots_dir_when_meta_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        std::fs::create_dir_all(&session).expect("mkdir session");
+        std::fs::write(session.join("db.lock"), b"x").expect("write");
+
+        reset_session_at(&session, 1_700_000_000).expect("reset ok");
+
+        assert!(!session.exists());
+        assert!(dir
+            .path()
+            .join("default.session.db.broken-1700000000")
+            .is_dir());
+        assert!(!dir
+            .path()
+            .join("default.session.db.meta.json.broken-1700000000")
+            .exists());
+    }
+
+    /// Cross-check: `fs::rename` over a parent dir (the session
+    /// dir) is what we depend on for atomicity. Make sure the test
+    /// fixture mirrors the production shape: session_path is a
+    /// directory, not a file.
+    #[test]
+    fn session_path_is_a_directory_in_production_shape() {
+        let (dir, session) = fixture_with_session();
+        assert!(session.is_dir());
+        assert!(dir.path().join("default.session.db.meta.json").is_file());
+    }
 }

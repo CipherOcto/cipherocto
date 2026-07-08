@@ -130,6 +130,14 @@ pub struct QrLinkArgs {
     /// before performing operations like creating groups.
     #[arg(long)]
     pub wait_sync: bool,
+    /// Snapshot the existing session DB (and meta sidecar) to
+    /// `<path>.broken-<unix-timestamp>` siblings, then proceed with a
+    /// fresh pair. Use to recover from `Event::LoggedOut` on the same
+    /// phone number — the server rejects retries from a device whose
+    /// DB still represents the logged-out identity. A no-op if no
+    /// existing session is present.
+    #[arg(long)]
+    pub reset: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 
@@ -160,6 +168,14 @@ pub struct PairLinkArgs {
     /// the phone is not available.
     #[arg(long)]
     pub ci: bool,
+    /// Snapshot the existing session DB (and meta sidecar) to
+    /// `<path>.broken-<unix-timestamp>` siblings, then proceed with a
+    /// fresh pair. Use to recover from `Event::LoggedOut` on the same
+    /// phone number. Ignored when `--ci` is set (CI loads a
+    /// pre-paired DB; no reset applies). A no-op if no existing
+    /// session is present.
+    #[arg(long)]
+    pub reset: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 

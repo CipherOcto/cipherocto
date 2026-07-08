@@ -93,3 +93,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Ed25519 signing for the live E2E test (matches `octo-network`'s choice
 # at `crates/octo-network/Cargo.toml`). Only used by the live E2E test.
 ed25519-dalek = "2.1"
+# rustls CryptoProvider for the (#[ignore]d) live caBLE test in
+# `passkey::cable::tests::get_assertion_drives_cable_live`. The dep is
+# unconditional because `[dev-dependencies]` cannot be optional; the
+# cost is purely compile time.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

@@ -31,6 +31,8 @@
 
 pub mod assertion;
 pub mod authenticator;
+pub mod cable;
 
 pub use assertion::{AssertionRequest, PasskeyError, UserVerification};
 pub use authenticator::{Assertion, AssertionFuture, CallbackAuthenticator, PasskeyAuthenticator};
+pub use cable::CablePasskeyAuthenticator;

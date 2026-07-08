@@ -25,6 +25,7 @@ async fn send_poll_over_ceiling_is_rejected_with_payload_too_large() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

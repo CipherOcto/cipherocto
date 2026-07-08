@@ -22,6 +22,7 @@ async fn envelope_encode_decode_round_trip() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

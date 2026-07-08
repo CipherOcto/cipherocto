@@ -31,6 +31,7 @@ async fn send_delete_expired_window_returns_minus_32014() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

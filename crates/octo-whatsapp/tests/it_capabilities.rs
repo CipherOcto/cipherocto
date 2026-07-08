@@ -22,6 +22,7 @@ async fn capabilities_returns_expected_static_report() {
         security: SecurityConfig::default(),
         observability: Default::default(),
         rules: RulesConfig::default(),
+        ..Default::default()
     };
     cfg.validate().unwrap();
     std::fs::create_dir_all(cfg.data_dir.clone()).unwrap();

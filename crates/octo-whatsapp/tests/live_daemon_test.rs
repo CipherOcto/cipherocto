@@ -192,6 +192,7 @@ fn make_test_config(tmp: &TempDir) -> WhatsAppRuntimeConfig {
             ..ObservabilityConfig::default()
         },
         rules: RulesConfig::default(),
+        ..Default::default()
     }
 }
 

@@ -943,12 +943,7 @@ async fn live_chain_c_messages_chats() {
     inter_call_delay_for("chats.delete").await;
 
     // 21) chats.delete (best-effort; some accounts may reject deletes)
-    let _ = best_effort(
-        fix,
-        "chats.delete",
-        json!({ "jid": group_a.clone() }),
-    )
-    .await;
+    let _ = best_effort(fix, "chats.delete", json!({ "jid": group_a.clone() })).await;
 }
 
 // ── helpers shared by Chain D + Chain E ──────────────────────────

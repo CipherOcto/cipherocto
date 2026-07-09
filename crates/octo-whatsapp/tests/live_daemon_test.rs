@@ -514,7 +514,8 @@ async fn zzz_teardown_runs_last() {
 async fn live_chain_a_lifecycle() {
     let fix = fixture().await;
     let v = rpc_call(&fix.rpc, "version.get", json!({})).await.unwrap();
-    assert!(v["daemon_version"].is_string(), "version: {v}");
+    assert!(v["daemon_binary_version"].is_string(), "version: {v}");
+    assert_eq!(v["daemon_api_version"], "1.0.0+phase5", "version: {v}");
     inter_call_delay_for("health.get").await;
     let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
     assert_eq!(h["ok"], true, "health: {h}");
@@ -528,7 +529,9 @@ async fn live_chain_a_lifecycle() {
     let m = rpc_call(&fix.rpc, "daemon.methods.list", json!({}))
         .await
         .unwrap();
-    let arr = m.as_array().expect("daemon.methods.list not array");
+    let arr = m["methods"]
+        .as_array()
+        .expect("daemon.methods.list result not object with `methods` array");
     assert!(
         arr.len() >= 58,
         "daemon.methods.list len = {} (expected >= 58): {m}",

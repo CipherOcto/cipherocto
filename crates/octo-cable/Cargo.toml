@@ -52,7 +52,14 @@ rand = "0.8"
 # `Unsupported` error, which the CLI surfaces as a clear
 # "BLE adapter required" message.
 bluer = { version = "0.17", default-features = false, features = ["bluetoothd"] }
+tracing = "0.1"
 
 [dev-dependencies]
 hex = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "ble_smoke"
+path = "examples/ble_smoke.rs"

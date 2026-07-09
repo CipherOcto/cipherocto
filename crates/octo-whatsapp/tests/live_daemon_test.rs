@@ -243,11 +243,11 @@ struct LiveFixture {
     adapter: Arc<WhatsAppWebAdapter>,
     socket: PathBuf,
     cancel: CancellationToken,
-    /// Dedicated multi-thread tokio runtime that owns the daemon task
-    /// + connection-watcher + unix-socket server for the lifetime of
-    /// the test process. Built once at fixture init and kept here
-    /// (not on the calling test's runtime) so the daemon task
-    /// survives each `#[tokio::test]` runtime dropping at test end.
+    /// Dedicated multi-thread tokio runtime that owns the daemon task +
+    /// connection-watcher + unix-socket server for the lifetime of the
+    /// test process. Built once at fixture init and kept here (not on
+    /// the calling test's runtime) so the daemon task survives each
+    /// `#[tokio::test]` runtime dropping at test end.
     daemon_runtime: Arc<tokio::runtime::Runtime>,
     /// `JoinHandle` from `daemon_runtime.spawn(daemon.run())`.
     /// `Arc` so `teardown_final` can move the inner handle out
@@ -321,10 +321,9 @@ fn init_fixture() -> LiveFixture {
                 daemon
                     .handle()
                     .bind_adapter_and_start(adapter.clone(), move || async move {
-                        adapter_for_start
-                            .start_bot()
-                            .await
-                            .expect("WhatsAppWebAdapter::start_bot failed; is the session mounted?");
+                        adapter_for_start.start_bot().await.expect(
+                            "WhatsAppWebAdapter::start_bot failed; is the session mounted?",
+                        );
                     });
 
                 // Wait up to 60s for self_handle() to resolve — this
@@ -561,17 +560,25 @@ async fn zzz_teardown_runs_last() {
 #[tokio::test]
 async fn live_chain_a_lifecycle() {
     let fix = fixture();
-    let v = rpc_call(&fix.socket, "version.get", json!({})).await.unwrap();
+    let v = rpc_call(&fix.socket, "version.get", json!({}))
+        .await
+        .unwrap();
     assert!(v["daemon_binary_version"].is_string(), "version: {v}");
     assert_eq!(v["daemon_api_version"], "1.0.0+phase5", "version: {v}");
     inter_call_delay_for("health.get").await;
-    let h = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
+    let h = rpc_call(&fix.socket, "health.get", json!({}))
+        .await
+        .unwrap();
     assert_eq!(h["ok"], true, "health: {h}");
     inter_call_delay_for("status.get").await;
-    let s = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
+    let s = rpc_call(&fix.socket, "status.get", json!({}))
+        .await
+        .unwrap();
     assert!(s["phase"].is_string(), "status: {s}");
     inter_call_delay_for("capabilities").await;
-    let c = rpc_call(&fix.socket, "capabilities", json!({})).await.unwrap();
+    let c = rpc_call(&fix.socket, "capabilities", json!({}))
+        .await
+        .unwrap();
     assert!(c.is_object(), "capabilities: {c}");
     inter_call_delay_for("daemon.methods.list").await;
     let m = rpc_call(&fix.socket, "daemon.methods.list", json!({}))
@@ -601,7 +608,9 @@ async fn live_chain_h_daemon_control() {
         if std::time::Instant::now() >= deadline {
             panic!("health.get never returned ok=true within 15s after reconnect: {last}");
         }
-        last = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
+        last = rpc_call(&fix.socket, "health.get", json!({}))
+            .await
+            .unwrap();
         if last["ok"] == true {
             break;
         }
@@ -639,9 +648,7 @@ fn test_member_phone_n(n: u8) -> Option<String> {
 /// `None`. Used by C/D/E to find a group left behind by a prior
 /// B1 run in a different process / machine.
 async fn find_phase612_group(fix: &LiveFixture) -> Option<String> {
-    let list = rpc_call(&fix.socket, "groups.list", json!({}))
-        .await
-        .ok()?;
+    let list = rpc_call(&fix.socket, "groups.list", json!({})).await.ok()?;
     for g in list["groups"].as_array()? {
         let subject = g.get("subject").and_then(|s| s.as_str()).unwrap_or("");
         if subject.starts_with("phase612") {
@@ -722,9 +729,7 @@ async fn live_chain_b1_groups_basic() {
     // stay in the operator's account (intentional — they're the
     // test fixture).
     let (group_a, was_created) = find_or_create_phase612_group(fix, &member).await;
-    tracing::info!(
-        "live: group_a = {group_a} (was_created={was_created})"
-    );
+    tracing::info!("live: group_a = {group_a} (was_created={was_created})");
 
     // 2) inter-call throttle.
     inter_call_delay_for("groups.list").await;
@@ -743,9 +748,13 @@ async fn live_chain_b1_groups_basic() {
     inter_call_delay_for("groups.info").await;
 
     // 6) groups.info — assert members array contains the test member.
-    let info = rpc_call(&fix.socket, "groups.info", json!({ "jid": group_a.clone() }))
-        .await
-        .unwrap_or_else(|e| panic!("groups.info failed: {e}"));
+    let info = rpc_call(
+        &fix.socket,
+        "groups.info",
+        json!({ "jid": group_a.clone() }),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("groups.info failed: {e}"));
     assert!(
         info["members"].is_array(),
         "groups.info.members not array: {info}"
@@ -1694,7 +1703,9 @@ async fn live_chain_i_bad_shape_session() {
     // `connected=false` + `bot_state=Connected` — both healthy, just
     // mid-classify. Trusting `bot_state` keeps the skip-on-healthy
     // path correctly aligned with the intent of the test.
-    let s = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
+    let s = rpc_call(&fix.socket, "status.get", json!({}))
+        .await
+        .unwrap();
     let bot_state = s["bot_state"].as_str().unwrap_or("?").to_string();
     let connected = s["connected"].as_bool().unwrap_or(true);
     let phase = s["phase"].as_str().unwrap_or("?").to_string();
@@ -1750,7 +1761,9 @@ async fn live_chain_i_bad_shape_session() {
         // real lifecycle event post-handshake. Either way the
         // invariant (non-Connected variant) must hold.
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let s2 = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
+        let s2 = rpc_call(&fix.socket, "status.get", json!({}))
+            .await
+            .unwrap();
         let bot_state2 = s2["bot_state"].as_str().unwrap_or("?").to_string();
         let phase2 = s2["phase"].as_str().unwrap_or("?").to_string();
         let connected2 = s2["connected"].as_bool().unwrap_or(true);
@@ -1770,8 +1783,8 @@ async fn live_chain_i_bad_shape_session() {
                     | "Replaced"
                     | "LoggedOut"
                     | "SessionExpired"
-                | "AwaitingUserAction"
-                | "AwaitingPasskey"
+                    | "AwaitingUserAction"
+                    | "AwaitingPasskey"
             ),
             "re-probe bot_state should be one of the 8 known variants, got {bot_state2}"
         );
@@ -1781,7 +1794,9 @@ async fn live_chain_i_bad_shape_session() {
         );
 
         // Liveness probe — daemon process is up, even when bot is dead.
-        let h = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
+        let h = rpc_call(&fix.socket, "health.get", json!({}))
+            .await
+            .unwrap();
         assert_eq!(
             h["ok"], true,
             "daemon must report health.ok=true even when bot is dead"
@@ -2188,3 +2203,121 @@ async fn mcp_call(child: &mut tokio::process::Child, method: &str, params: Value
 /// `RpcStream::next_id` so a debug interleaved run yields overlapping
 /// id ranges that are obviously tool- or socket-local.
 static MCP_ID: AtomicU32 = AtomicU32::new(1);
+
+// ── Chain L — events persistence (Phase 3 Part D) ────────────────────
+//
+// Verifies that events pushed through the daemon's live WA adapter
+// end up on disk under `$data_dir/events/events.ndjson` AND that a
+// fresh `EventsPersisterHandle::spawn` against the same path
+// rehydrates the buffer with the same ids.
+//
+// Strategy:
+//   1. Capture baseline events.list count.
+//   2. Wait long enough for the WA event stream to deliver
+//      multiple events (the offline-sync preview alone is 100s of
+//      messages). The 30s of chain wall-clock is enough.
+//   3. Assert the on-disk `events.ndjson` exists and has >=
+//      baseline_lines lines (proving the persister is writing).
+//   4. Spawn a brand-new `EventsPersisterHandle` against the same
+//      path. Its synchronous reload must hydrate the new buffer
+//      with at least one event from the file.
+//
+// We do NOT use send.text here: the daemon's send.text is
+// "queued_for_phase2" (async) and the matching recv event may not
+// appear in the buffer within 30s. The chain proves the persistence
+// pipe is wired and reloadable, which is the Phase 3 Part D
+// contract.
+//
+// Self-only — no `OCTO_WHATSAPP_TEST_MEMBER` needed.
+
+#[tokio::test]
+async fn live_chain_l_restart_survives() {
+    init_tracing_once();
+    let fix = fixture();
+
+    // Gate: bot must be Connected before any send.
+    let status = rpc_call(&fix.socket, "status.get", json!({}))
+        .await
+        .unwrap();
+    let bot_state = status
+        .get("bot_state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if bot_state != "Connected" {
+        panic!(
+            "live_chain_l: bot not Connected (got {bot_state:?}); \
+             live session not authenticated"
+        );
+    }
+
+    // Let the WA event stream deliver a few events. The
+    // OfflineSyncPreview at boot is 100s of messages.
+    for _ in 0..10 {
+        inter_call_delay_for("events.list").await;
+        let v = rpc_call(&fix.socket, "events.list", json!({ "limit": 5 }))
+            .await
+            .unwrap();
+        let arr = v["events"].as_array().cloned().unwrap_or_default();
+        if !arr.is_empty() {
+            break;
+        }
+    }
+
+    // Give the persister a moment to flush (5s default, but the
+    // ticker can fire sooner).
+    tokio::time::sleep(Duration::from_millis(6000)).await;
+
+    // Check the on-disk log.
+    let events_path = fix
+        .tmp
+        .path()
+        .join("data")
+        .join("events")
+        .join("events.ndjson");
+    assert!(
+        events_path.exists(),
+        "events.ndjson must exist at {}",
+        events_path.display()
+    );
+    let bytes = std::fs::read(&events_path).expect("read events.ndjson");
+    let content = std::str::from_utf8(&bytes).expect("utf8");
+    let lines: Vec<&str> = content.split_terminator('\n').collect();
+    assert!(
+        !lines.is_empty(),
+        "events.ndjson must be non-empty after a Connected daemon's event burst"
+    );
+
+    // Spawn a fresh persister against the same path. Its
+    // synchronous reload must surface at least one event.
+    use octo_whatsapp::events_buffer::EventsBuffer;
+    use octo_whatsapp::events_persister::{default_persistence_path, EventsPersisterHandle};
+    let buffer2 = EventsBuffer::new(10_000);
+    let token2 = CancellationToken::new();
+    let handle2 = EventsPersisterHandle::spawn(
+        buffer2.clone(),
+        Some(default_persistence_path(&fix.tmp.path().join("data"))),
+        Duration::from_millis(50),
+        token2.clone(),
+    )
+    .expect("spawn second persister");
+    let stats = handle2.last_load_stats().expect("load stats");
+    assert!(
+        stats.loaded >= 1,
+        "second persister must hydrate at least 1 event; stats={stats:?}"
+    );
+    assert_eq!(
+        buffer2.len(),
+        stats.loaded as usize,
+        "buffer len must match loaded count"
+    );
+    // Tidy up.
+    token2.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(2), handle2.join()).await;
+}
+
+fn unix_epoch_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}

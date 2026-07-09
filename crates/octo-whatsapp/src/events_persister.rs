@@ -120,6 +120,7 @@ pub struct EventsPersisterHandle {
     tx: mpsc::Sender<InboundEvent>,
     flush: mpsc::Sender<oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
+    cancel: CancellationToken,
     dropped: Arc<DropCounter>,
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
 }
@@ -133,16 +134,113 @@ impl std::fmt::Debug for EventsPersisterHandle {
     }
 }
 
+impl Clone for EventsPersisterHandle {
+    /// Clone the handle. The new handle shares the actor's mpsc
+    /// channels + state but NOT the JoinHandle — callers awaiting
+    /// the original handle's join consume it; the clone's join is a
+    /// no-op stand-in (the actor exits when its single owner
+    /// observes cancellation). Use the clone for ingress wiring
+    /// only.
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            flush: self.flush.clone(),
+            join: noop_join_handle(),
+            cancel: self.cancel.clone(),
+            dropped: self.dropped.clone(),
+            last_load_stats: self.last_load_stats.clone(),
+        }
+    }
+}
+
+/// Build a stand-in `JoinHandle` that resolves immediately. Used
+/// by cloned `EventsPersisterHandle`s that share the actor but
+/// can't share the original join. The clone's join is never
+/// awaited in practice.
+fn noop_join_handle() -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async {})
+}
+
+/// Cheap-clone ingress to a running persister. The daemon stores
+/// one of these on `DaemonInner` so `bind_adapter` can wire the
+/// router's per-sink fan-out into the persister's upstream channel
+/// without taking ownership of the actor's `JoinHandle` (which
+/// `drain_events_persister` needs).
+#[derive(Clone)]
+pub struct PersisterIngress {
+    tx: mpsc::Sender<InboundEvent>,
+    flush: mpsc::Sender<oneshot::Sender<()>>,
+    cancel: CancellationToken,
+    dropped: Arc<DropCounter>,
+    last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+}
+
+impl std::fmt::Debug for PersisterIngress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersisterIngress")
+            .field("dropped_total", &self.dropped.get())
+            .field("last_load_stats", &*self.last_load_stats.lock())
+            .finish()
+    }
+}
+
+impl PersisterIngress {
+    /// Best-effort push. Returns immediately. Same semantics as
+    /// [`EventsPersisterHandle::push`] but exposes them through a
+    /// clone-friendly type. Used by the router's per-sink
+    /// subscriber task.
+    pub fn push(&self, ev: InboundEvent) {
+        match self.tx.try_send(ev) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped.inc();
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Persister actor has exited; silent. The
+                // shutdown drain is the only path to resume.
+            }
+        }
+    }
+
+    /// Same as `EventsPersisterHandle::flush_sync`. Spawns a
+    /// one-shot request and waits for the actor's fsync ack.
+    pub async fn flush_sync(&self, timeout: Duration) -> Result<(), PersistError> {
+        let (ack_tx, ack_rx) = oneshot::channel::<()>();
+        if self.flush.send(ack_tx).await.is_err() {
+            return Err(PersistError::ChannelClosed);
+        }
+        match tokio::time::timeout(timeout, ack_rx).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(PersistError::ChannelClosed),
+            Err(_) => Err(PersistError::FlushTimeout {
+                elapsed_ms: timeout.as_millis() as u64,
+            }),
+        }
+    }
+
+    pub fn dropped_total(&self) -> u64 {
+        self.dropped.get()
+    }
+
+    pub fn last_load_stats(&self) -> Option<LoadStats> {
+        self.last_load_stats.lock().clone()
+    }
+
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+}
+
+/// Spawn the actor. `path = None` disables disk I/O entirely
+/// (the actor still relays events to the buffer; useful for
+/// hermetic tests).
+///
+/// If `path` is `Some`, this function performs the cold-start
+/// reload **synchronously** before returning, so the buffer is
+/// hydrated by the time the caller sees the handle. The reload
+/// is a `block_on` of the `load_initial_events` future, which is
+/// short (a single file read + parse).
 impl EventsPersisterHandle {
-    /// Spawn the actor. `path = None` disables disk I/O entirely
-    /// (the actor still relays events to the buffer; useful for
-    /// hermetic tests).
-    ///
-    /// If `path` is `Some`, this function performs the cold-start
-    /// reload **synchronously** before returning, so the buffer is
-    /// hydrated by the time the caller sees the handle. The reload
-    /// is a `block_on` of the `load_initial_events` future, which is
-    /// short (a single file read + parse).
     pub fn spawn(
         buffer: Arc<EventsBuffer>,
         path: Option<PathBuf>,
@@ -194,6 +292,7 @@ impl EventsPersisterHandle {
         let task_path = path;
         let task_dropped = dropped.clone();
         let task_load_stats = last_load_stats.clone();
+        let _ = task_load_stats; // reserved for future actor-side stats refresh
 
         let join = tokio::spawn(async move {
             if let Err(e) = run_actor(
@@ -218,6 +317,7 @@ impl EventsPersisterHandle {
             tx,
             flush: flush_tx,
             join,
+            cancel,
             dropped,
             last_load_stats,
         })
@@ -269,6 +369,27 @@ impl EventsPersisterHandle {
     /// Reload stats from the last cold-start hydrate, if any.
     pub fn last_load_stats(&self) -> Option<LoadStats> {
         self.last_load_stats.lock().clone()
+    }
+
+    /// Build a `PersisterIngress` that shares the upstream channels +
+    /// state but does NOT take ownership of the JoinHandle. The
+    /// caller (typically the daemon) keeps the original
+    /// `EventsPersisterHandle` for shutdown drain.
+    pub fn ingress(&self) -> PersisterIngress {
+        PersisterIngress {
+            tx: self.tx.clone(),
+            flush: self.flush.clone(),
+            cancel: self.cancel.clone(),
+            dropped: self.dropped.clone(),
+            last_load_stats: self.last_load_stats.clone(),
+        }
+    }
+
+    /// Clone the upstream event-sink sender so a router subscriber
+    /// task can forward parsed events to the persister's actor.
+    /// Used by the daemon's `bind_adapter` wiring.
+    pub fn tx_clone(&self) -> mpsc::Sender<InboundEvent> {
+        self.tx.clone()
     }
 }
 

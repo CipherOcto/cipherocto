@@ -144,6 +144,13 @@ struct DaemonInner {
     /// router (sinks receive InboundEvent) and queried by
     /// `events.list/show/replay` handlers.
     events_buffer: Arc<EventsBuffer>,
+    /// Phase 3 Part D: optional upstream ingress to the
+    /// EventsPersister actor. `None` when persistence is disabled.
+    /// Holds ONLY the upstream `Sender` + stats accessor + the
+    /// cancellation token used by the shutdown drain. Cloning is
+    /// cheap so `bind_adapter` can wire the router sink without
+    /// taking ownership of the actor's JoinHandle.
+    events_persister: Option<crate::events_persister::PersisterIngress>,
     /// Spec compliance F18 (R1 review) + Session 4 (RFC-0909):
     /// 8-variant `BotState` mirror, encoded as `AtomicU8` for
     /// lock-free reads. Encoding: 0=Disconnected, 1=PairingQr,
@@ -355,7 +362,38 @@ impl DaemonHandle {
         let join = tokio::spawn(async move {
             run_connection_watcher(rx, handle, cancel).await;
         });
-        // Replace any prior watcher — atomic swap: aborts the
+
+        // Phase 3 Part C: spawn the EventsRouter. This consumes a
+        // SECOND receiver from the same broadcast (broadcast
+        // supports multiple consumers) and pipes parsed
+        // InboundEvents into the handle's `events_buffer` (which
+        // the in-memory `events.list/show/replay` RPCs serve from)
+        // and to every `EventsSink` subscriber (MCP clients,
+        // rules, the persister, etc.). Without this, the buffer
+        // stays empty even though raw events fire.
+        if let Some(router_rx) = a.subscribe_raw_events() {
+            let router_buffer = self.inner.events_buffer.clone();
+            let router_cancel = self.inner.cancel.clone();
+            let router = Arc::new(crate::events_router::EventsRouter::from_parts(
+                router_buffer,
+                router_cancel,
+            ));
+            // Subscribe the EventsPersister as a sink before we start
+            // the router so we don't lose the first events. The
+            // sink forwards via the persister's `push` (try_send,
+            // non-blocking).
+            if let Some(persister_ingress) = self.events_persister_handle() {
+                let mut sub = router.subscribe(4096);
+                tokio::spawn(async move {
+                    while let Some(ev) = sub.recv().await {
+                        persister_ingress.push(ev);
+                    }
+                });
+            }
+            tokio::spawn(async move {
+                router.run(router_rx).await;
+            });
+        }
         // prior connection-watcher if any, so re-binding under a
         // new account does not leak tasks. The `blocking_lock`
         // here is fine because the call site is a synchronous
@@ -452,6 +490,14 @@ impl DaemonHandle {
     /// Phase 3: read access to the in-memory events ring buffer. The
     /// event router populates this; `events.list/show/replay` RPC
     /// handlers consult it.
+    /// Phase 3 Part D: clone of the events persister handle (or
+    /// `None` if persistence is disabled). Used by `bind_adapter`
+    /// to wire the router's per-sink fan-out into the persister's
+    /// upstream channel. Cloning is cheap (one `mpsc::Sender`).
+    pub fn events_persister_handle(&self) -> Option<crate::events_persister::PersisterIngress> {
+        self.inner.events_persister.clone()
+    }
+
     pub fn events_buffer(&self) -> &Arc<EventsBuffer> {
         &self.inner.events_buffer
     }
@@ -779,6 +825,7 @@ impl Daemon {
         // `events.persistence_path`). Cold-start reload is
         // synchronous inside `spawn` so the buffer is hydrated
         // before this function returns.
+        let mut events_persister: Option<crate::events_persister::PersisterIngress> = None;
         if config.events.persistence_enabled {
             let path = config.events.resolved_persistence_path(&config.data_dir);
             match crate::events_persister::EventsPersisterHandle::spawn(
@@ -789,6 +836,8 @@ impl Daemon {
             ) {
                 Ok(handle) => {
                     let persister_token = cancel.clone();
+                    let ingress = handle.ingress();
+                    events_persister = Some(ingress.clone());
                     EVENTS_PERSISTER.with(|cell| {
                         *cell.borrow_mut() = Some((persister_token, handle));
                     });
@@ -904,6 +953,7 @@ impl Daemon {
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
+                events_persister,
                 bot_state: std::sync::atomic::AtomicU8::new(0), // Disconnected
                 clients: McpClientRegistry::new(),
                 rules: rule_store,

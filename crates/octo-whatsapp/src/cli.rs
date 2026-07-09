@@ -1205,7 +1205,10 @@ pub fn dispatch_domain(cli: &Cli, cmd: &DomainCmd) -> anyhow::Result<()> {
     let (method, params) = match &cmd.action {
         DomainAction::ComputeHash { group_jid } => (
             "domain.compute-hash",
-            serde_json::json!({"group_jid": group_jid}),
+            // Map the CLI's positional `group_jid` to the handler's
+            // canonical `jid` field (consistent with the rest of the
+            // chats/groups/messages RPC surface).
+            serde_json::json!({"jid": group_jid}),
         ),
     };
     let result = client.call(method, params)?;

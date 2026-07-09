@@ -1554,6 +1554,16 @@ async fn live_chain_i_bad_shape_session() {
 
     // Probe daemon-side status; the daemon's RPC layer is up
     // regardless of whether the bot reached Connected.
+    //
+    // Gate on `bot_state`, NOT `connected`. The `connected` flag is the
+    // atomic readiness bit flipped by the connection-watcher on its
+    // FIRST classified event; `bot_state` is the watcher's mirror of
+    // the adapter's 8-variant enum. During the window between
+    // `self_handle().is_some()` (adapter constructed) and the
+    // watcher's first classify pass, the daemon reports
+    // `connected=false` + `bot_state=Connected` — both healthy, just
+    // mid-classify. Trusting `bot_state` keeps the skip-on-healthy
+    // path correctly aligned with the intent of the test.
     let s = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
     let bot_state = s["bot_state"].as_str().unwrap_or("?").to_string();
     let connected = s["connected"].as_bool().unwrap_or(true);
@@ -1562,15 +1572,14 @@ async fn live_chain_i_bad_shape_session() {
         "live_chain_i: initial probe phase={phase} connected={connected} bot_state={bot_state}"
     );
 
-    if connected {
+    if bot_state == "Connected" {
         tracing::info!(
             "live_chain_i: session is healthy (operator likely re-paired); \
              skipping negative assertions"
         );
     } else {
-        // Negative branch — bot is stuck somewhere in the 7-state
-        // BotState enum. Must NOT be `Connected` (already gated by
-        // `if connected` above). The 6 non-Connected variants are:
+        // Negative branch — bot is stuck somewhere in the 8-variant
+        // BotStateMirror enum. The 7 non-Connected variants are:
         assert!(
             matches!(
                 bot_state.as_str(),
@@ -1580,8 +1589,10 @@ async fn live_chain_i_bad_shape_session() {
                     | "Replaced"
                     | "LoggedOut"
                     | "SessionExpired"
+                    | "AwaitingUserAction"
+                    | "AwaitingPasskey"
             ),
-            "bot_state should be a non-Connected variant, got {bot_state}"
+            "bot_state should be one of the 8 known variants, got {bot_state}"
         );
 
         // Phase 6.12.5: bind-first-then-start-bot ensures the watcher
@@ -1617,8 +1628,8 @@ async fn live_chain_i_bad_shape_session() {
             "live_chain_i: re-probe phase={phase2} connected={connected2} bot_state={bot_state2}"
         );
         assert!(
-            !connected2,
-            "re-probe connected must remain false on bad-shape session"
+            bot_state2 != "Connected",
+            "re-probe bot_state must remain non-Connected on bad-shape session, got {bot_state2}"
         );
         assert!(
             matches!(
@@ -1629,8 +1640,10 @@ async fn live_chain_i_bad_shape_session() {
                     | "Replaced"
                     | "LoggedOut"
                     | "SessionExpired"
+                | "AwaitingUserAction"
+                | "AwaitingPasskey"
             ),
-            "re-probe bot_state should be a non-Connected variant, got {bot_state2}"
+            "re-probe bot_state should be one of the 8 known variants, got {bot_state2}"
         );
         assert!(
             phase2 == "session_lost",
@@ -1724,8 +1737,9 @@ async fn live_chain_j_accounts() {
 // - `envelope encode` takes `--file <PATH>` (reads bytes from disk),
 //   not `--bytes <BASE64>`. We write a tiny tmp file.
 // - `media info` takes a POSITIONAL `media_ref_token`, not `--id`.
-// - `domain compute-hash` takes a POSITIONAL `group_jid`, not
-//   `--payload`.
+// - `domain compute-hash` takes a POSITIONAL jid, not `--payload`.
+//   The CLI's field is named `group_jid` (positional) but the
+//   handler expects the canonical `jid` key.
 //
 // Skipped from the plan:
 // - `send text --jid self --text ...`: clap arg shape varies per
@@ -1766,7 +1780,7 @@ async fn live_cli_dispatch() {
             ],
         ),
         ("media_info", &["media", "info", "x"]),
-        ("domain_hash", &["domain", "compute-hash", "x"]),
+        ("domain_hash", &["domain", "compute-hash", "1234567890"]),
         ("rules_list", &["rules", "list"]),
         ("triggers_list", &["triggers", "list"]),
         ("events_list", &["events", "list"]),
@@ -1781,7 +1795,7 @@ async fn live_cli_dispatch() {
         // else (groups.list, messages.list, etc.) hits the live
         // adapter, so we throttle to be polite.
         inter_call_delay_for(name).await;
-        let (code, stdout, stderr) = cli_exec(fix, args);
+        let (code, stdout, stderr) = cli_exec(fix, args).await;
         assert_eq!(
             code, 0,
             "cli {name} failed (exit {code}): stderr={stderr} stdout={stdout}"
@@ -1799,22 +1813,33 @@ async fn live_cli_dispatch() {
 /// land on the right socket — belt-and-suspenders with `--socket`.
 /// Strips `OCTO_WHATSAPP_BEARER` so the hermetic daemon's
 /// `hermetic_bypass` flag is what gates auth (no token needed).
-fn cli_exec(fix: &LiveFixture, args: &[&str]) -> (i32, String, String) {
+///
+/// Wrapped in `tokio::time::timeout(15s)` with `kill_on_drop` so a
+/// live-wire stall (`messages list --peer self`, etc.) cannot hang
+/// the whole chain. Timeout returns exit 124 + diagnostic stderr.
+async fn cli_exec(fix: &LiveFixture, args: &[&str]) -> (i32, String, String) {
     let sock = fix.socket.to_string_lossy().into_owned();
     let bin = env!("CARGO_BIN_EXE_octo-whatsapp");
-    let out = std::process::Command::new(bin)
-        .env("XDG_RUNTIME_DIR", fix.tmp.path())
+    let mut cmd = tokio::process::Command::new(bin);
+    cmd.env("XDG_RUNTIME_DIR", fix.tmp.path())
         .env_remove("OCTO_WHATSAPP_BEARER")
         .args(args)
         .arg("--socket")
         .arg(&sock)
-        .output()
-        .expect("spawn octo-whatsapp");
-    (
-        out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stdout).to_string(),
-        String::from_utf8_lossy(&out.stderr).to_string(),
-    )
+        .kill_on_drop(true);
+    match tokio::time::timeout(Duration::from_secs(15), cmd.output()).await {
+        Ok(Ok(out)) => (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        ),
+        Ok(Err(e)) => (-1, String::new(), format!("spawn failed: {e}")),
+        Err(_) => (
+            124,
+            String::new(),
+            format!("cli_exec timeout after 15s: {}", args.join(" ")),
+        ),
+    }
 }
 
 // ── Chain T7 — MCP server over stdio JSON-RPC ──────────────────────

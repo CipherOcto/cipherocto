@@ -634,6 +634,65 @@ fn test_member_phone_n(n: u8) -> Option<String> {
     std::env::var(&var).ok()
 }
 
+/// Read-only search for an existing "phase612*" group on the
+/// operator's WA account. Returns the JID of the first match, or
+/// `None`. Used by C/D/E to find a group left behind by a prior
+/// B1 run in a different process / machine.
+async fn find_phase612_group(fix: &LiveFixture) -> Option<String> {
+    let list = rpc_call(&fix.socket, "groups.list", json!({}))
+        .await
+        .ok()?;
+    for g in list["groups"].as_array()? {
+        let subject = g.get("subject").and_then(|s| s.as_str()).unwrap_or("");
+        if subject.starts_with("phase612") {
+            return g.get("jid").and_then(|j| j.as_str()).map(String::from);
+        }
+    }
+    None
+}
+
+/// Find an existing "phase612*" group (from a prior B1 run) and
+/// reuse it, or create a fresh one if none exists. Reuse is
+/// critical — `groups.create` is rate-limited and repeated runs
+/// can get the operator's account banned.
+///
+/// When the group is freshly created, register it in
+/// `created_groups` so `teardown_final` leaves it on test-process
+/// exit. Reused groups are NOT registered (they're the test
+/// fixture for future runs and must persist).
+///
+/// Returns `(jid, was_created)`.
+async fn find_or_create_phase612_group(fix: &LiveFixture, member: &str) -> (String, bool) {
+    if let Some(jid) = find_phase612_group(fix).await {
+        tracing::info!("live: reusing existing group_a jid={jid}");
+        return (jid, false);
+    }
+    tracing::info!("live: no existing phase612 group; creating fresh one");
+    let created = rpc_call(
+        &fix.socket,
+        "groups.create",
+        json!({
+            "subject": "phase612",
+            "members": [{ "handle": member }],
+        }),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("groups.create failed: {e}"));
+    let jid = created
+        .get("jid")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| {
+            created
+                .get("group_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| panic!("groups.create result missing `jid`: {created}"));
+    fix.created_groups.lock().push(jid.clone());
+    (jid, true)
+}
+
 // ── Chain B1 — groups basic lifecycle (1 member required) ──────
 //
 // Phase 6.12: subset of `CoordinatorAdmin` that needs only the base
@@ -654,29 +713,18 @@ async fn live_chain_b1_groups_basic() {
     let member = test_member_phone();
     let fix = fixture();
 
-    // 1) groups.create — group lifecycle is core, panic on failure.
-    let created = rpc_call(
-        &fix.socket,
-        "groups.create",
-        json!({
-            "subject": "phase612",
-            "members": [{ "handle": member.clone() }],
-        }),
-    )
-    .await
-    .unwrap_or_else(|e| panic!("groups.create failed: {e}"));
-    let group_a = created
-        .get("jid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            created
-                .get("group_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| panic!("groups.create result missing `jid`: {created}"));
-    tracing::info!("live: created group_a = {group_a}");
+    // Find an existing "phase612*" group from a prior run and reuse
+    // it, or create a fresh one if none exists. Reuse avoids
+    // hammering the WA wire on every test invocation — groups.create
+    // is rate-limited and repeated runs can get the operator's
+    // account banned. When a group is freshly created, register it
+    // in `created_groups` so teardown leaves it; reused groups
+    // stay in the operator's account (intentional — they're the
+    // test fixture).
+    let (group_a, was_created) = find_or_create_phase612_group(fix, &member).await;
+    tracing::info!(
+        "live: group_a = {group_a} (was_created={was_created})"
+    );
 
     // 2) inter-call throttle.
     inter_call_delay_for("groups.list").await;
@@ -779,14 +827,10 @@ async fn live_chain_b1_groups_basic() {
         Err(e) => tracing::info!("groups.resolve_invite correctly errored: {e}"),
     }
 
-    // 16) groups.leave — best-effort (group may already be left).
-    inter_call_delay_for("groups.leave").await;
-    let _ = rpc_call(&fix.socket, "groups.leave", json!({ "jid": group_a.clone() }))
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("live: groups.leave non-fatal: {e}");
-            Value::Null
-        });
+    // Note: NO groups.leave at end of B1. Reused groups MUST stay
+    // (they're the test fixture for future runs); newly-created
+    // groups are tracked in `created_groups` and teardown leaves
+    // them only on test-process exit.
 }
 
 // ── Chain B2 — groups admin ops (4 distinct members required) ────
@@ -831,9 +875,16 @@ async fn live_chain_b2_groups_admin() {
     let fix = fixture();
     let group_a = {
         let groups = fix.created_groups.lock();
-        groups.first().cloned().unwrap_or_else(|| {
-            panic!("Chain B2 requires Chain B1 to run first (no group_a registered)")
-        })
+        groups.first().cloned()
+    };
+    let group_a = match group_a {
+        Some(j) => j,
+        None => find_phase612_group(fix).await.unwrap_or_else(|| {
+            panic!(
+                "Chain B2 requires Chain B1 to run first (no phase612 group \
+                 found on the operator's account; run B1 to create one)"
+            )
+        }),
     };
 
     // Local best-effort helper (Chain B1's is fn-scoped, redefined here).
@@ -941,9 +992,20 @@ async fn live_chain_c_messages_chats() {
 
     let group_a = {
         let groups = fix.created_groups.lock();
-        groups.first().cloned().unwrap_or_else(|| {
-            panic!("Chain C requires Chain B to run first (no group_a registered)")
-        })
+        groups.first().cloned()
+    };
+    let group_a = match group_a {
+        Some(j) => j,
+        // Fall back to a read-only search of the operator's WA
+        // groups so chains C/D/E can run in a fresh process after
+        // B1 has already created (and persisted) a phase612 group
+        // in an earlier invocation.
+        None => find_phase612_group(fix).await.unwrap_or_else(|| {
+            panic!(
+                "Chain C requires Chain B to run first (no phase612 group \
+                 found on the operator's account; run B1 to create one)"
+            )
+        }),
     };
 
     // Best-effort helper: log warnings on Err, never panic.
@@ -1108,9 +1170,16 @@ async fn live_chain_d_sends() {
 
     let group_a = {
         let groups = fix.created_groups.lock();
-        groups.first().cloned().unwrap_or_else(|| {
-            panic!("Chain D requires Chain B to run first (no group_a registered)")
-        })
+        groups.first().cloned()
+    };
+    let group_a = match group_a {
+        Some(j) => j,
+        None => find_phase612_group(fix).await.unwrap_or_else(|| {
+            panic!(
+                "Chain D requires Chain B to run first (no phase612 group \
+                 found on the operator's account; run B1 to create one)"
+            )
+        }),
     };
 
     // Best-effort helper.
@@ -1288,9 +1357,16 @@ async fn live_chain_e_envelopes() {
 
     let group_a = {
         let groups = fix.created_groups.lock();
-        groups.first().cloned().unwrap_or_else(|| {
-            panic!("Chain E requires Chain B to run first (no group_a registered)")
-        })
+        groups.first().cloned()
+    };
+    let group_a = match group_a {
+        Some(j) => j,
+        None => find_phase612_group(fix).await.unwrap_or_else(|| {
+            panic!(
+                "Chain E requires Chain B to run first (no phase612 group \
+                 found on the operator's account; run B1 to create one)"
+            )
+        }),
     };
 
     // 1) domain.compute_hash — computes a deterministic id for the

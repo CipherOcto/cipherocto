@@ -18,6 +18,7 @@ use std::fmt;
 use tracing::field::Visit;
 use tracing::Event;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
+use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
@@ -79,6 +80,18 @@ where
         event: &Event<'_>,
     ) -> fmt::Result {
         let meta = event.metadata();
+        // Session 14: timestamp prefix. tracing-subscriber's default
+        // Format includes one but the redaction layer (R2-H2) had
+        // no timer wired. Without a clock on every line, operators
+        // had no way to correlate a log entry with a phone-side
+        // action (QR scan, Google Lens intent, etc.) — a one-line
+        // log to stderr with no time is useless for live
+        // troubleshooting during a 5-minute timeout. Format: ISO
+        // 8601 UTC with microsecond precision, matching the
+        // tracing-subscriber default for the SystemTime timer.
+        // Cheaper than chrono (no extra dep).
+        SystemTime.format_time(&mut writer)?;
+        write!(writer, " ")?;
         // Header: target + level + event name (mirrors the
         // standard Format's prefix).
         write!(writer, "{} {} {}", meta.target(), meta.level(), meta.name())?;
@@ -292,6 +305,57 @@ mod tests {
         assert!(
             !captured.contains("\"resolved bot identity: +1 555 123 4567\""),
             "message should NOT be surrounded by Debug quotes: {captured}"
+        );
+    }
+
+    // Session 14: the rendered log line must include a
+    // timestamp. The operator pastes log output to debug
+    // "stuck on QR" / "not close enough" reports; without a
+    // clock, a multi-line paste is unreadable. Pin against the
+    // ISO 8601 year prefix (4 digits, dash-separated).
+    #[test]
+    fn rendered_line_has_iso_8601_timestamp() {
+        use std::sync::{Arc, Mutex};
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for CaptureWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for CaptureWriter {
+            type Writer = CaptureWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = CaptureWriter(buf.clone());
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .event_format(RedactingFormat::new())
+                .with_writer(writer),
+        );
+
+        with_default(subscriber, || {
+            tracing::info!("timestamp regression check");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        // tracing-subscriber's SystemTime renders
+        // `2024-01-01T12:00:00.123456Z` — the first 4 chars are
+        // always the ISO year. Anything else means the timer
+        // wasn't installed.
+        assert!(
+            captured.len() >= 4 && captured[..4].chars().all(|c| c.is_ascii_digit()),
+            "captured log must start with a 4-digit year: {captured:?}"
         );
     }
 

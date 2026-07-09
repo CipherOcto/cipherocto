@@ -235,81 +235,6 @@ fn epoch_millis() -> u64 {
         .as_millis() as u64
 }
 
-/// Build a `FIDO:/<base64url-no-pad(json)>` URI for a SHORTCAKE_PASSKEY
-/// `request_options_json` string. Used by the
-/// `Event::PairPasskeyRequest` arm to render the QR the phone's WA
-/// app scans.
-///
-/// **Wire format — UNVERIFIED.** The official WhatsApp Web client's
-/// exact body encoding is private. We know from observation that it
-/// uses the `FIDO:/` URI scheme (the phone's WA app registers an
-/// Android intent filter for that scheme), but the inner field
-/// layout — raw JSON vs. CBOR vs. a caBLE-style handshake with
-/// ephemeral keys — is undocumented. References like webauthn-rs
-/// target a Relying-Party / authenticator stack that has fields
-/// (`peer_identity`, `secret`, `known_domains_count`, ...) wacore
-/// does NOT expose to us — wacore gives us only the
-/// `PublicKeyCredentialRequestOptions` JSON.
-///
-/// This helper takes the most-likely-correct minimum: base64url of
-/// the verbatim JSON inside the `FIDO:/` prefix. If the phone
-/// rejects it, the next iteration is to inspect an official WA Web
-/// FIDO:/ URI and reverse-engineer the field shape — we should NOT
-/// guess further without evidence (i.e., without scanning an
-/// official URI and asking the user what the phone showed).
-fn build_passkey_fido_uri(request_options_json: &str) -> std::result::Result<String, String> {
-    use base64::Engine;
-    let encoded =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(request_options_json.as_bytes());
-    Ok(format!("FIDO:/{encoded}"))
-}
-
-#[cfg(test)]
-mod passkey_fido_uri_tests {
-    use super::build_passkey_fido_uri;
-
-    /// Verbatim copy of the `request_options_json` shape wacore sends
-    /// in `Event::PairPasskeyRequest` (captured from the live logs
-    /// in the wacore-webauthn plan, Session 3).
-    const SAMPLE_REQUEST_OPTIONS: &str = r#"{"challenge":"KGnPYVZIwBkl5LP-2H1BBMAT2fVGYbkAnWq4713Ga2Q","timeout":600000,"rpId":"whatsapp.com","allowCredentials":[],"userVerification":"required","extensions":{"uvm":true}}"#;
-
-    #[test]
-    fn build_passkey_fido_uri_produces_fido_prefix() {
-        let uri = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("must build");
-        assert!(uri.starts_with("FIDO:/"), "missing FIDO prefix: {uri}");
-        let body = &uri["FIDO:/".len()..];
-        assert!(!body.is_empty(), "payload must not be empty");
-        // URL_SAFE_NO_PAD → A-Z, a-z, 0-9, '-', '_'. No padding '='.
-        assert!(
-            body.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-            "base64url chars only; got {body:?}"
-        );
-    }
-
-    #[test]
-    fn build_passkey_fido_uri_round_trips_through_base64url() {
-        use base64::Engine;
-        let uri = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("must build");
-        let body = &uri["FIDO:/".len()..];
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(body)
-            .expect("base64url must decode");
-        let recovered = std::str::from_utf8(&bytes).expect("utf-8 must decode");
-        assert_eq!(
-            recovered, SAMPLE_REQUEST_OPTIONS,
-            "base64url must round-trip the JSON verbatim"
-        );
-    }
-
-    #[test]
-    fn build_passkey_fido_uri_is_stable_across_calls() {
-        let a = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("a");
-        let b = build_passkey_fido_uri(SAMPLE_REQUEST_OPTIONS).expect("b");
-        assert_eq!(a, b, "encoder must be deterministic");
-    }
-}
-
 fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
     PlatformAdapterError::Unreachable {
         platform: "whatsapp".into(),
@@ -1383,12 +1308,32 @@ impl WhatsAppWebAdapter {
                             // `AwaitingUserAction` with a hint. The pairing
                             // completes as soon as the operator finishes
                             // the phone-side prompt.
+                            //
+                            // Session 14: the Google Play Services FIDO
+                            // module (`gms.fido`) does a BLE-proximity
+                            // check on the phone side when the operator
+                            // scans the FIDO QR with Google Lens. On a
+                            // laptop with no BLE advertising (most
+                            // CI / server-class / docked laptops), the
+                            // phone's gms reports "devices not close
+                            // enough" and the relay closes the WS.
+                            // Mitigation: be on the same Wi-Fi SSID
+                            // (gms checks IP /24 match as a fallback),
+                            // or pair a phone-as-BLE-advertiser via a
+                            // USB BLE dongle. There is NO software-only
+                            // workaround for the proximity check — it
+                            // is enforced inside the closed gms binary.
                             eprintln!(
                                 "[hint] If your phone asks for a passkey, \
                                  security key, or 2FA PIN after scanning, \
                                  complete it on the phone. The daemon will \
                                  stall up to ~45s before reporting \
-                                 AwaitingUserAction.\n"
+                                 AwaitingUserAction.\n\
+                                 [hint] If Google Lens reports 'devices not \
+                                 close enough' on the FIDO QR, the phone's \
+                                 gms FIDO module requires BLE proximity. \
+                                 Be on the same Wi-Fi SSID, or attach a \
+                                 USB BLE adapter advertising on this host."
                             );
                         }
                         Event::PairingCode(inner) => {
@@ -1403,68 +1348,30 @@ impl WhatsAppWebAdapter {
                                  the code, complete it on the phone.\n"
                             );
                         }
-                        // SHORTCAKE_PASSKEY (Session 3+4 of wacore-webauthn
-                        // plan, RFC-0909): the server asked for a WebAuthn
-                        // assertion. The full `request_options_json`
-                        // already reached the connection-watcher broadcast
-                        // via the unconditional `format!("{:?}", event)`
-                        // above; here we surface a structured diagnostic so
-                        // operators can see the request without grepping
-                        // the raw broadcast, AND (Session 4) render the
-                        // payload as a terminal QR so the operator can
-                        // hand-scan it from the phone's WA app. If a
-                        // `PasskeyAuthenticator` is registered (Session 2
-                        // wiring), the SDK will auto-drive the assertion;
-                        // this event is then a passive notification that
-                        // the gate fired.
+                        // SHORTCAKE_PASSKEY (RFC-0909, Session 14): the server asked
+                        // for a WebAuthn assertion. The full
+                        // `request_options_json` is broadcast via the
+                        // unconditional `format!("{:?}", event)` line
+                        // above. The QR for the operator to scan is
+                        // rendered by the wired `CablePasskeyAuthenticator`
+                        // in the on-call path below — the handler here is
+                        // a passive diagnostic only. DO NOT render a
+                        // second FIDO QR from this arm: the legacy
+                        // `build_passkey_fido_uri(payload)` produced a
+                        // different (b64url JSON) URI than the authenticator
+                        // (decimal HandshakeV2 CBOR). Rendering both made
+                        // operators unsure which to scan AND tripped
+                        // Google Lens with two near-simultaneous FIDO
+                        // intents on the phone. The authenticator's
+                        // caBLE-responder URI is the only one the WA
+                        // gms FIDO module accepts.
                         Event::PairPasskeyRequest(req) => {
                             tracing::info!(
                                 request_options_json_len = req.request_options_json.len(),
-                                "SHORTCAKE_PASSKEY: server requested WebAuthn assertion"
+                                "SHORTCAKE_PASSKEY: server requested WebAuthn assertion \
+                                 (authenticator wired; QR is rendered by the on_event \
+                                 response, not by this diagnostic)"
                             );
-                            // Session 4 (revised to a minimal,
-                            // unverified encoding): the phone's WA app
-                            // registers an Android intent filter for the
-                            // `FIDO` URI scheme — observation confirms the
-                            // second QR in official WA Web starts with
-                            // `FIDO:/<something-binary>`. The exact body
-                            // format is private to WA; references like
-                            // webauthn-rs target a Relying-Party /
-                            // authenticator stack with bootstrap fields
-                            // (peer_identity, secret, ...) wacore does
-                            // NOT expose. wacore gives us only the
-                            // `PublicKeyCredentialRequestOptions` JSON.
-                            //
-                            // We render the most-likely-correct minimum:
-                            // `FIDO:/<base64url-no-pad(json)>`. If the
-                            // phone rejects it, the next iteration is to
-                            // inspect an official WA Web FIDO:/ URI and
-                            // reverse-engineer the field shape — we
-                            // should NOT guess further without evidence.
-                            //
-                            // The QR is best-effort: operators who hit
-                            // rejection should scan with a separate WA
-                            // Web session in Chrome (visible FIDO: URI)
-                            // and report the byte shape so we can match.
-                            let payload = req.request_options_json.as_str();
-                            let fido_uri = build_passkey_fido_uri(payload)
-                                .expect("base64url encoding of UTF-8 JSON is infallible");
-                            match qrcode::QrCode::new(fido_uri.as_bytes()) {
-                                Ok(qr) => {
-                                    let rendered = qr
-                                        .render::<qrcode::render::unicode::Dense1x2>()
-                                        .quiet_zone(true)
-                                        .build();
-                                    eprintln!(
-                                        "\nWhatsApp passkey request (scan with phone WA app):\n{rendered}\n"
-                                    );
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "\nWhatsApp passkey request (could not render QR: {e}):\n{fido_uri}\n"
-                                    );
-                                }
-                            }
                         }
                         Event::PairPasskeyConfirmation(inner) => {
                             tracing::info!(

@@ -10,13 +10,14 @@
 //! `PairCodeOptions::custom_code`. The flag is `--pair-code` and the
 //! env var is `$OCTO_WHATSAPP_PAIR_CODE` for operator familiarity.
 
-use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_adapter_whatsapp::{passkey::PasskeyAuthenticator, WhatsAppConfig, WhatsAppWebAdapter};
 use octo_network::dot::adapters::PlatformAdapter;
 
 use crate::error::{CoreError, Result};
 use crate::output::PairLinkArgs;
 use crate::output::WhatsAppSession;
 use crate::sidecar::{write_sidecar, SidecarMode};
+use std::sync::Arc;
 
 /// Run the pair-link flow: validate phone, build adapter with
 /// `pair_phone` and `custom_code`, start bot, wait for
@@ -25,7 +26,15 @@ use crate::sidecar::{write_sidecar, SidecarMode};
 /// R1-M4: takes `&PairLinkArgs` (by reference) so the binary can
 /// pass the args struct directly without `clone()`-ing the
 /// `OutputArgs` field.
-pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
+///
+/// Session 12: `passkey_authenticator` is supplied by the binary
+/// (same shape as qr-link). When `Event::PairPasskeyRequest`
+/// fires, wacore invokes it inline; FIDO QR appears on stderr at
+/// that moment. No separate `companion-link` subcommand.
+pub async fn run(
+    args: &PairLinkArgs,
+    passkey_authenticator: Option<Arc<dyn PasskeyAuthenticator>>,
+) -> Result<WhatsAppSession> {
     validate_pair_link_args(args)?;
 
     let config = WhatsAppConfig {
@@ -35,7 +44,7 @@ pub async fn run(args: &PairLinkArgs) -> Result<WhatsAppSession> {
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
-        passkey_authenticator: None,
+        passkey_authenticator,
     };
     config
         .validate()

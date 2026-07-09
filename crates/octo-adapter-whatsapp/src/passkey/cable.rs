@@ -38,52 +38,83 @@ use std::sync::Arc;
 /// or capture closure.
 pub type QrDisplayFn = Arc<dyn Fn(&str) + Send + Sync + 'static>;
 
-/// caBLE-driven [`PasskeyAuthenticator`] as the QR-publisher side.
-///
-/// Constructed with `HandshakeV2::generate_new()` + `display_qr` (typically
-/// a stderr renderer). The first `get_assertion` call drives the full
-/// caBLE handshake + assertion exchange; subsequent calls fail with
-/// `PasskeyError::Upstream` because caBLE is single-shot — for retries
-/// the host should construct a fresh authenticator.
-pub struct CablePasskeyAuthenticator {
+/// Lazy-initialized HandshakeV2 + responder static key. Bundled so
+/// `OnceCell` can hand out a single `&HandshakeState` for the
+/// duration of a `get_assertion` call without re-running the QR
+/// render.
+pub(crate) struct HandshakeState {
     handshake: HandshakeV2,
     static_key: StaticSecret,
-    /// Held so the QR can be re-rendered or inspected by tests.
-    #[allow(dead_code)]
+}
+
+/// caBLE-driven [`PasskeyAuthenticator`] as the QR-publisher side.
+///
+/// Construction is **deferred**: `new()` only stashes the `display_qr`
+/// closure. The P-256 keypair + 16-byte secret are generated and the
+/// FIDO QR is rendered the first time the WA server actually demands
+/// an assertion (`get_assertion`) — i.e. when wacore's
+/// `Event::PairPasskeyRequest` fires during a `qr-link` or `pair-link`
+/// run. This matches the WA Web Browser flow where the FIDO QR is
+/// only shown after the primary companion bootstrap QR is scanned and
+/// the server asks for the passkey step.
+///
+/// caBLE is single-shot: the first `get_assertion` drives the full
+/// handshake + assertion exchange; subsequent calls fail with
+/// `PasskeyError::Upstream`. For retries the host should construct a
+/// fresh authenticator.
+pub struct CablePasskeyAuthenticator {
     display_qr: QrDisplayFn,
+    /// Lazy-initialized by `prepare()`. OnceCell ensures the QR is
+    /// rendered exactly once even under concurrent callers.
+    state: std::sync::OnceLock<HandshakeState>,
     /// Set after the first `get_assertion` so subsequent calls can
-    /// short-circuit (caBLE single-shot, see comment above).
+    /// short-circuit (caBLE single-shot, see struct doc).
     consumed: std::sync::atomic::AtomicBool,
 }
 
 impl CablePasskeyAuthenticator {
-    /// Generate a fresh keypair + secret and return an authenticator
-    /// ready to display its FIDO QR. The QR is rendered synchronously
-    /// via `display_qr` so the operator can scan before any network
-    /// call.
+    /// Build an authenticator with the supplied QR renderer. Does
+    /// NOT generate keys or render the QR — that happens on first
+    /// `prepare()` (which `get_assertion` invokes). The deferral lets
+    /// the same `WhatsAppConfig` be constructed up-front without
+    /// showing an FIDO QR that the operator cannot use yet (the
+    /// primary WA pair has to complete first).
     pub fn new(display_qr: QrDisplayFn) -> Self {
-        let (handshake, static_key) = HandshakeV2::generate_new();
-        let fido_uri = handshake
-            .to_fido_uri()
-            .expect("HandshakeV2::generate_new always produces a valid CBOR");
-        display_qr(&fido_uri);
         Self {
-            handshake,
-            static_key,
             display_qr,
+            state: std::sync::OnceLock::new(),
             consumed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
+    /// Initialize the HandshakeV2 + static key + render the FIDO QR.
+    /// Idempotent: subsequent calls return the cached state without
+    /// re-rendering. Invoked automatically by `get_assertion`; tests
+    /// can call it directly to stage the QR before any network call.
+    pub(crate) fn prepare(&self) -> &HandshakeState {
+        self.state.get_or_init(|| {
+            let (handshake, static_key) = HandshakeV2::generate_new();
+            let fido_uri = handshake
+                .to_fido_uri()
+                .expect("HandshakeV2::generate_new always produces a valid CBOR");
+            (self.display_qr)(&fido_uri);
+            HandshakeState {
+                handshake,
+                static_key,
+            }
+        })
+    }
+
     /// Borrow the inner HandshakeV2 (for CLI tools that want to inspect
-    /// or re-display the QR).
+    /// the QR). Initializes on first call.
     pub fn handshake(&self) -> &HandshakeV2 {
-        &self.handshake
+        &self.prepare().handshake
     }
 
     /// Borrow the static key (for the Noise NKpsk0 responder ECDH).
+    /// Initializes on first call.
     fn static_key(&self) -> &StaticSecret {
-        &self.static_key
+        &self.prepare().static_key
     }
 }
 
@@ -101,10 +132,18 @@ impl PasskeyAuthenticator for CablePasskeyAuthenticator {
             ));
         }
 
+        // Lazy-init: generates the P-256 keypair + secret and renders
+        // the FIDO QR via `display_qr`. Idempotent under concurrent
+        // callers (OnceLock). On the inline path this fires when
+        // wacore's `Event::PairPasskeyRequest` reaches us, i.e. AFTER
+        // the primary WA pair completed — exactly when the operator
+        // can actually use the QR.
+        let _state = self.prepare();
+
         // The phone generates a HandshakeV2 with `request_type =
         // GetAssertion`; CLI's QR mirrors that.
         debug_assert!(matches!(
-            self.handshake.request_type,
+            self.handshake().request_type,
             RequestType::GetAssertion
         ));
 
@@ -115,7 +154,7 @@ impl PasskeyAuthenticator for CablePasskeyAuthenticator {
         // 2. Connect to the relay as the responder and drive the full
         //    handshake + post-handshake + GetAssertion round-trip.
         let credential_json =
-            run_responder_assertion(&self.handshake, self.static_key(), &ctap_request)
+            run_responder_assertion(self.handshake(), self.static_key(), &ctap_request)
                 .await
                 .map_err(|e| PasskeyError::Upstream(format!("cable: {e:?}")))?;
 
@@ -254,9 +293,27 @@ mod tests {
     }
 
     #[test]
-    fn construction_generates_handshake_and_displays_qr() {
+    fn construction_does_not_render_qr() {
+        // Session 12: the FIDO QR must NOT appear at `new()` time —
+        // it shows only when the WA server demands a passkey step
+        // (Event::PairPasskeyRequest), via `prepare()` /
+        // `get_assertion()`. Construction must be cheap and quiet so
+        // that wiring `CablePasskeyAuthenticator` into the QR-link
+        // config does not surprise the operator with an early QR.
+        let (display, log) = capture_display();
+        let _auth = CablePasskeyAuthenticator::new(display);
+        assert!(
+            log.lock().unwrap().is_empty(),
+            "new() must not invoke display_qr"
+        );
+    }
+
+    #[test]
+    fn prepare_initializes_handshake_and_displays_qr() {
         let (display, log) = capture_display();
         let auth = CablePasskeyAuthenticator::new(display);
+        // First prepare() runs the init + renders the QR.
+        let _state = auth.prepare();
         // peer_identity must be 33-byte compressed SEC1.
         assert_eq!(auth.handshake().peer_identity.len(), 33);
         // Secret must be 16 bytes.
@@ -267,6 +324,24 @@ mod tests {
         let log = log.lock().unwrap();
         assert_eq!(log.len(), 1);
         assert!(log[0].starts_with("FIDO:/"));
+    }
+
+    #[test]
+    fn prepare_is_idempotent() {
+        // Two prepare() calls must NOT re-render the QR (the second
+        // call returns the cached OnceLock state). This matters for
+        // concurrent callers and for any code that calls prepare()
+        // then handshake().
+        let (display, log) = capture_display();
+        let auth = CablePasskeyAuthenticator::new(display);
+        let _ = auth.prepare();
+        let _ = auth.prepare();
+        let _ = auth.prepare();
+        assert_eq!(
+            log.lock().unwrap().len(),
+            1,
+            "prepare() must render the QR exactly once"
+        );
     }
 
     #[test]

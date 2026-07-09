@@ -52,6 +52,18 @@ use octo_network::dot::error::PlatformAdapterError;
 pub trait OctoWhatsAppAdapter: Send + Sync {
     // ── Group A: outbound media (file-based, Group A floor) ──
 
+    /// Send a plain-text message. Returns the new message id.
+    ///
+    /// `reply_to` is the message id being quoted (None for plain text).
+    /// `mentions` is a list of JIDs to ping (empty for none).
+    async fn send_text(
+        &self,
+        to_jid: &str,
+        text: &str,
+        reply_to: Option<&str>,
+        mentions: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
     /// Send an image with optional caption. Returns
     /// `(message_id, media_ref_token)`.
     async fn send_image(
@@ -363,6 +375,16 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
 #[async_trait::async_trait]
 impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     // ── Unchecked: forward to `_inner` helpers ──
+
+    async fn send_text(
+        &self,
+        to_jid: &str,
+        text: &str,
+        reply_to: Option<&str>,
+        mentions: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.send_text(to_jid, text, reply_to, mentions).await
+    }
 
     async fn send_image(
         &self,
@@ -819,6 +841,13 @@ mod tests {
     }
 
     // ── Group A: file-based send (unchecked) ──
+
+    #[tokio::test]
+    async fn delegation_send_text() {
+        // Plain text does not need a client file — should still
+        // short-circuit on the client-lock check.
+        assert_client_not_connected(adapter().send_text(JID, "hello", None, &[]).await);
+    }
 
     #[tokio::test]
     async fn delegation_send_image() {

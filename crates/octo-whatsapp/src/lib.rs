@@ -14,6 +14,7 @@
 
 pub mod actions;
 pub mod adapter_trait;
+pub use adapter_trait::OctoWhatsAppAdapter;
 pub mod audit;
 pub mod cli;
 pub mod config;
@@ -21,6 +22,7 @@ pub mod daemon;
 pub mod events;
 pub mod events_buffer;
 pub mod events_persister;
+pub mod events_query;
 pub mod events_router;
 pub mod ipc;
 pub mod jids;

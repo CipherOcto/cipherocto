@@ -1,8 +1,9 @@
-//! `send.text` — pre-flight size ceiling + peer validation.
+//! `send.text` — pre-flight size ceiling + peer validation + real dispatch.
 //!
 //! **Load-bearing test of Phase 1.** The 65,536-byte ceiling MUST be enforced
-//! here, pre-flight, so that over-size text never reaches WhatsApp. Real
-//! adapter dispatch arrives in Phase 2.
+//! here, pre-flight, so that over-size text never reaches WhatsApp. Phase 2
+//! replaced the stub with real adapter dispatch via
+//! `OctoWhatsAppAdapter::send_text`.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -18,7 +19,6 @@ use crate::daemon::DaemonHandle;
 pub const MAX_TEXT_BYTES: usize = 65_536;
 
 #[derive(Deserialize)]
-#[allow(dead_code)] // `reply_to` / `mentions` are reserved for Phase 2 quoting/reply routing.
 struct Params {
     peer: String,
     text: String,
@@ -37,7 +37,7 @@ impl RpcHandler for SendText {
         "send.text"
     }
 
-    async fn call(&self, _h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
         let p: Params = serde_json::from_value(params).map_err(|e| RpcError {
             code: RpcErrorCode::InvalidParams.as_i32(),
             message: format!("invalid params: {e}"),
@@ -62,9 +62,10 @@ impl RpcHandler for SendText {
             });
         }
 
-        // Phase 1: validate peer, do not actually send. The actual call into
-        // CoordinatorAdmin happens in Task 33.
-        let _jid = crate::jids::peer_to_jid(&p.peer).map_err(|e| RpcError {
+        // Validate peer shape — also produces a canonical JID we forward
+        // to the adapter. Phase 1's pre-flight check; still load-bearing
+        // because over-size text must never reach the adapter.
+        let jid = crate::jids::peer_to_jid(&p.peer).map_err(|e| RpcError {
             code: RpcErrorCode::InvalidParams.as_i32(),
             message: format!("invalid peer: {e}"),
             data: Some(serde_json::json!({
@@ -72,10 +73,31 @@ impl RpcHandler for SendText {
             })),
         })?;
 
+        // Real dispatch. Surface adapter errors verbatim — the daemon's
+        // error mapping layer (see `RpcErrorCode::*`) translates the
+        // `PlatformAdapterError` variants the trait returns.
+        let adapter = h.adapter().ok_or_else(|| RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "no adapter bound; daemon.start must precede send.text".into(),
+            data: None,
+        })?;
+        let message_id = adapter
+            .send_text(jid.as_str(), &p.text, p.reply_to.as_deref(), &p.mentions)
+            .await
+            .map_err(|e| RpcError {
+                code: RpcErrorCode::InternalError.as_i32(),
+                message: format!("send.text dispatch failed: {e}"),
+                data: None,
+            })?;
+
         Ok(serde_json::json!({
-            "status": "queued_for_phase2",
+            "message_id": message_id,
             "peer": p.peer,
             "size_bytes": bytes,
+            "ts_unix_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
         }))
     }
 }
@@ -84,34 +106,73 @@ impl RpcHandler for SendText {
 mod tests {
     use super::*;
     use crate::daemon::Daemon;
+    use crate::test_mock_adapter::MockAdapter;
+    use crate::OctoWhatsAppAdapter;
+    use std::sync::Arc;
 
-    fn handle() -> DaemonHandle {
+    fn handle_with_mock() -> (DaemonHandle, Arc<MockAdapter>) {
         let tmp = tempfile::tempdir().expect("tempdir");
-        Daemon::new_for_tests(tmp.path()).1
+        let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+        let mock = Arc::new(MockAdapter::new());
+        handle.bind_adapter(mock.clone() as Arc<dyn OctoWhatsAppAdapter>);
+        (handle, mock)
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_adapter_with_message_id() {
+        let (h, mock) = handle_with_mock();
+        let v = SendText
+            .call(
+                h,
+                serde_json::json!({"peer": "+15551234567", "text": "hello"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["message_id"], "fake-text-msg-id");
+        assert_eq!(v["peer"], "+15551234567");
+        assert_eq!(v["size_bytes"], 5);
+        assert_eq!(mock.call_count("send_text"), 1);
+    }
+
+    #[tokio::test]
+    async fn passes_reply_to_and_mentions_through() {
+        let (h, mock) = handle_with_mock();
+        // The mock doesn't introspect args — we assert only that the
+        // call happened with the right name and returned the canned id.
+        let v = SendText
+            .call(
+                h,
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "text": "reply",
+                    "reply_to": "orig-msg-id",
+                    "mentions": ["1111111111@s.whatsapp.net"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["message_id"], "fake-text-msg-id");
+        assert_eq!(mock.call_count("send_text"), 1);
     }
 
     #[tokio::test]
     async fn accepts_exactly_65536() {
+        let (h, _mock) = handle_with_mock();
         let text = "a".repeat(MAX_TEXT_BYTES);
         let v = SendText
-            .call(
-                handle(),
-                serde_json::json!({"peer": "+15551234567", "text": text}),
-            )
+            .call(h, serde_json::json!({"peer": "+15551234567", "text": text}))
             .await
             .unwrap();
-        assert_eq!(v["status"], "queued_for_phase2");
+        assert_eq!(v["message_id"], "fake-text-msg-id");
         assert_eq!(v["size_bytes"], MAX_TEXT_BYTES);
     }
 
     #[tokio::test]
     async fn rejects_65537() {
+        let (h, _mock) = handle_with_mock();
         let text = "a".repeat(MAX_TEXT_BYTES + 1);
         let err = SendText
-            .call(
-                handle(),
-                serde_json::json!({"peer": "+15551234567", "text": text}),
-            )
+            .call(h, serde_json::json!({"peer": "+15551234567", "text": text}))
             .await
             .unwrap_err();
         assert_eq!(err.code, -32004);
@@ -123,13 +184,25 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_peer() {
+        let (h, _mock) = handle_with_mock();
         let err = SendText
-            .call(
-                handle(),
-                serde_json::json!({"peer": "not-a-peer", "text": "hi"}),
-            )
+            .call(h, serde_json::json!({"peer": "not-a-peer", "text": "hi"}))
             .await
             .unwrap_err();
         assert_eq!(err.code, -32602);
+    }
+
+    #[tokio::test]
+    async fn rejects_when_no_adapter_bound() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+        let err = SendText
+            .call(
+                handle,
+                serde_json::json!({"peer": "+15551234567", "text": "hi"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, -32012); // NotConnected
     }
 }

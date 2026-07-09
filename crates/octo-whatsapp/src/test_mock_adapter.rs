@@ -132,6 +132,16 @@ impl Default for MockAdapter {
 impl OctoWhatsAppAdapter for MockAdapter {
     // ── Group A: outbound media (file-based) — pair-result ──
 
+    async fn send_text(
+        &self,
+        _to_jid: &str,
+        _text: &str,
+        _reply_to: Option<&str>,
+        _mentions: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(&self.state, "send_text", Ok("fake-text-msg-id".into()))
+    }
+
     async fn send_image(
         &self,
         _to_jid: &str,

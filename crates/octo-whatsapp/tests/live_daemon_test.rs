@@ -2014,6 +2014,7 @@ async fn mcp_spawn(fix: &LiveFixture) -> tokio::process::Child {
 //   - zero-byte read — the MCP server closed stdout unexpectedly
 //   - non-JSON response — the bridge emitted an unparseable line
 async fn mcp_call(child: &mut tokio::process::Child, method: &str, params: Value) -> Value {
+    let started = std::time::Instant::now();
     let id = MCP_ID.fetch_add(1, Ordering::Relaxed);
     let req = json!({
         "jsonrpc": "2.0",
@@ -2044,6 +2045,17 @@ async fn mcp_call(child: &mut tokio::process::Child, method: &str, params: Value
         n > 0,
         "MCP server closed stdout unexpectedly before {method} response"
     );
+    let dur = started.elapsed();
+    // For `tools/call`, params carries `{name, arguments}` — surface
+    // the inner tool name so MCP bulk loops (live_mcp_integration
+    // sweeps 19 tools) are distinguishable in logs. Other methods
+    // log the wire method only.
+    let inner = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|n| format!("[{n}]"))
+        .unwrap_or_default();
+    tracing::info!("mcp {method:24}{inner:24} dur={:?}", dur);
     serde_json::from_str(&buf)
         .unwrap_or_else(|e| panic!("MCP bad JSON for {method}: {e}: raw={buf:?}"))
 }

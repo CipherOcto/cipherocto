@@ -15,7 +15,6 @@ use cli::{
     SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
-use octo_network::dot::adapters::PlatformAdapter;
 use octo_whatsapp_onboard_core::{
     wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs, QrLinkArgs as CoreQrLinkArgs,
     SessionInfo, WhatsAppConfig, WHOAMI_TIMEOUT_SECS,
@@ -85,16 +84,9 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
     // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
     // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
     check_ws_url_allowed(args.ws_url.as_ref())?;
-    // Mission 0850p-a-ci-mode-pair-link: --ci bypasses
-    // Event::Connected wait and validates the pre-paired session
-    // DB. No phone interaction needed.
-    if args.ci {
-        return run_pair_link_ci(&args);
-    }
     // --reset: snapshot existing session before pairing so the
     // server sees a fresh device identity (recover from
-    // Event::LoggedOut on the same phone number). Skipped under
-    // --ci because CI loads a pre-paired DB; no reset applies.
+    // Event::LoggedOut on the same phone number).
     if args.reset {
         reset_session(&args.session_path)?;
     }
@@ -107,60 +99,6 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
     let session =
         octo_whatsapp_onboard_core::pair_link::run(&core_args, Some(authenticator)).await?;
     run_link(&args.output, session).await
-}
-
-/// Mission 0850p-a-ci-mode-pair-link: CI mode. Loads the
-/// pre-paired session DB at `--session-path`, validates it via
-/// the adapter's `has_valid_session()`, and writes the sidecar
-/// (so downstream `whoami` works). No phone interaction.
-fn run_pair_link_ci(args: &PairLinkArgs) -> std::result::Result<(), OnboardError> {
-    use octo_whatsapp_onboard_core::sidecar::{write_sidecar, SidecarMode};
-    use octo_whatsapp_onboard_core::WhatsAppSession;
-
-    // Validate parent dir + symlink check (same as interactive flow).
-    octo_whatsapp_onboard_core::validate_session_args(&args.session_path)
-        .map_err(|e| OnboardError::BadConfig(format!("session_path invalid: {e}")))?;
-
-    // Build the adapter and check has_valid_session(). This opens
-    // the session DB; if the DB is empty or the Signal keys are
-    // missing, the check returns false.
-    let cfg = WhatsAppConfig {
-        session_path: format!("{}", args.session_path.display()),
-        pair_phone: Some(args.phone.clone()),
-        pair_code: args.pair_code.clone(),
-        ws_url: args.ws_url.clone(),
-        groups: args.groups.clone(),
-        sender_allowlist: Default::default(),
-        passkey_authenticator: None,
-    };
-    let adapter = octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg);
-    if !adapter.has_valid_session() {
-        return Err(OnboardError::BadConfig(format!(
-            "session DB at {:?} is empty or invalid; cannot use --ci mode without a pre-paired session",
-            args.session_path
-        )));
-    }
-
-    // Build the sidecar so subsequent `whoami` works. The adapter
-    // exposes `self_handle` via the `PlatformAdapter` trait
-    // (imported at the top of this file; mission
-    // 0850p-a-has-valid-session).
-    let phone = adapter.self_handle().unwrap_or_default();
-    let session = WhatsAppSession {
-        self_phone: Some(phone),
-        session_path: args.session_path.clone(),
-        groups: args.groups.clone(),
-        pair_phone: Some(args.phone.clone()),
-    };
-    write_sidecar(&args.session_path, &session, SidecarMode::PairLink)
-        .map_err(|e| OnboardError::BadConfig(format!("write_sidecar: {e}")))?;
-
-    output::write(&args.output, &session)?;
-    println!(
-        "CI mode: pre-paired session at {} accepted",
-        args.session_path.display()
-    );
-    Ok(())
 }
 
 async fn run_link(

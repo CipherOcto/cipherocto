@@ -162,18 +162,10 @@ pub struct PairLinkArgs {
     pub output: OutputArgs,
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
-    /// Mission 0850p-a-ci-mode-pair-link: bypass `Event::Connected`
-    /// wait; load a pre-paired session DB from `--session-path` and
-    /// exit 0 if the session is valid. For CI/CD deployments where
-    /// the phone is not available.
-    #[arg(long)]
-    pub ci: bool,
     /// Snapshot the existing session DB (and meta sidecar) to
     /// `<path>.broken-<unix-timestamp>` siblings, then proceed with a
     /// fresh pair. Use to recover from `Event::LoggedOut` on the same
-    /// phone number. Ignored when `--ci` is set (CI loads a
-    /// pre-paired DB; no reset applies). A no-op if no existing
-    /// session is present.
+    /// phone number. A no-op if no existing session is present.
     #[arg(long)]
     pub reset: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.

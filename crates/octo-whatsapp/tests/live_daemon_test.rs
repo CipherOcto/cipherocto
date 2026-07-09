@@ -1143,3 +1143,318 @@ fn require_test_peer_jid(test_name: &str) -> String {
         panic!("{test_name}: OCTO_WHATSAPP_TEST_MEMBER invalid (need E.164 with leading +): {e}")
     })
 }
+
+// ===========================================================================
+// Tier 4 — Contact + presence live tests
+//
+// Tier 4 wraps 8 new RPCs from the WA crate's `contacts`, `blocking`,
+// and `presence` features. Each test calls the RPC against a real
+// adapter bound to the fixture, asserts the response shape, and (where
+// applicable) waits for the corresponding inbound event to land in the
+// events buffer.
+//
+// Self-only assertions (`live_contacts_is_on_whatsapp_self`,
+// `live_presence_set_*`, `live_chats_typing_emits_presence_event`) run
+// whenever the fixture boots — they do not require a peer device.
+// Tests that depend on TEST_MEMBER (`live_contacts_is_on_whatsapp_peer`,
+// `live_contacts_get_profile_picture_*`, `live_contact_block_unblock`,
+// `live_presence_subscribe_unsubscribe`) skip with `eprintln` + early
+// return when the operator flag is unset. Setting
+// `OCTO_WHATSAPP_TEST_MEMBER=+<phone>` unlocks the full suite.
+// ===========================================================================
+
+/// `live_contacts_is_on_whatsapp_self` — Tier 4 canary.
+///
+/// Asks the WA server whether our own JID is registered. The
+/// canonical self-JID is always present (we are logged in), so the
+/// response must be `{on_whatsapp: true}`. This test ALWAYS runs (no
+/// operator pre-action required) — same role as
+/// `live_receipt_first_for_outbound` for Tier 3.
+#[tokio::test]
+async fn live_contacts_is_on_whatsapp_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("contacts.is_on_whatsapp", json!({"peer": self_jid.clone()}))
+        .await;
+    inter_call_delay_for("contacts.is_on_whatsapp");
+
+    assert_eq!(
+        resp["on_whatsapp"], true,
+        "our own JID must always report on_whatsapp=true; got {resp}"
+    );
+    assert_eq!(resp["jid"], self_jid);
+}
+
+/// `live_contacts_is_on_whatsapp_peer` — Tier 4 cross-device.
+///
+/// Requires `OCTO_WHATSAPP_TEST_MEMBER`. Asserts the peer JID returns
+/// `{on_whatsapp: true}` — proof the WA contacts IQ is wired end-to-end
+/// against a non-self peer.
+#[tokio::test]
+async fn live_contacts_is_on_whatsapp_peer() {
+    let fix = fixture();
+    let Some(peer_phone) = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() else {
+        eprintln!(
+            "live_contacts_is_on_whatsapp_peer: skipping (set \
+             OCTO_WHATSAPP_TEST_MEMBER to a real WA number)"
+        );
+        return;
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("contacts.is_on_whatsapp", json!({"peer": peer_jid.clone()}))
+        .await;
+    inter_call_delay_for("contacts.is_on_whatsapp");
+
+    assert_eq!(
+        resp["on_whatsapp"], true,
+        "TEST_MEMBER must be a registered WA user; got {resp}"
+    );
+    assert_eq!(resp["jid"], peer_jid);
+}
+
+/// `live_contacts_get_profile_picture_self` — Tier 4 self profile pic.
+///
+/// Queries the WA server for our own profile-picture URL. Returns
+/// `{url: <https://...>, found: true}` when set; `{found: false}` when
+/// unset or hidden by privacy. Both outcomes are valid — the test
+/// asserts the response shape is well-formed (URL string when found).
+#[tokio::test]
+async fn live_contacts_get_profile_picture_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "contacts.get_profile_picture",
+            json!({"peer": self_jid.clone(), "preview": true}),
+        )
+        .await;
+    inter_call_delay_for("contacts.get_profile_picture");
+
+    assert_eq!(resp["peer"], self_jid);
+    assert_eq!(resp["preview"], true);
+    assert!(
+        resp["found"].is_boolean(),
+        "found must be a boolean; got {resp}"
+    );
+    if resp["found"] == true {
+        assert!(
+            resp["url"].is_string(),
+            "url must be a string when found=true; got {resp}"
+        );
+        eprintln!(
+            "live_contacts_get_profile_picture_self: url={}",
+            resp["url"]
+        );
+    } else {
+        assert!(
+            resp["url"].is_null(),
+            "url must be null when found=false; got {resp}"
+        );
+        eprintln!("live_contacts_get_profile_picture_self: no profile pic set");
+    }
+}
+
+/// `live_contact_block_unblock` — Tier 4 blocklist mutation.
+///
+/// Requires `OCTO_WHATSAPP_TEST_MEMBER`. Calls `contact.block` then
+/// `contact.unblock` for the peer. Each returns `{status: "blocked" /
+/// "unblocked", peer, jid}`. We do NOT assert that the peer receives
+/// a "you've been blocked" notification (that requires a separate
+/// linked-device session) — the assertion is the local IQ ACK.
+#[tokio::test]
+async fn live_contact_block_unblock() {
+    let fix = fixture();
+    let Some(peer_phone) = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() else {
+        eprintln!(
+            "live_contact_block_unblock: skipping (set \
+             OCTO_WHATSAPP_TEST_MEMBER to a real WA number you are willing \
+             to block for ~5 seconds)"
+        );
+        return;
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    let mut conn = rpc(fix).await;
+    let block_resp = conn
+        .call("contact.block", json!({"peer": peer_jid.clone()}))
+        .await;
+    assert_eq!(
+        block_resp["status"], "blocked",
+        "contact.block must return status=blocked; got {block_resp}"
+    );
+    assert_eq!(block_resp["jid"], peer_jid);
+    inter_call_delay_for("contact.block");
+
+    let unblock_resp = conn
+        .call("contact.unblock", json!({"peer": peer_jid.clone()}))
+        .await;
+    assert_eq!(
+        unblock_resp["status"], "unblocked",
+        "contact.unblock must return status=unblocked; got {unblock_resp}"
+    );
+    assert_eq!(unblock_resp["jid"], peer_jid);
+    inter_call_delay_for("contact.unblock");
+    eprintln!("live_contact_block_unblock: OK peer={peer_jid}");
+}
+
+/// `live_presence_subscribe_unsubscribe` — Tier 4 presence subscription.
+///
+/// Requires `OCTO_WHATSAPP_TEST_MEMBER`. Sends a `<presence
+/// type="subscribe">` stanza to the peer, then a `<presence
+/// type="unsubscribe">`. Each returns `{status: "subscribed" /
+/// "unsubscribed", peer, jid}`. We do NOT assert that inbound
+/// `Presence` events from the peer land in our buffer — that requires
+/// the peer's device to push a presence update AFTER subscribe, which
+/// is non-deterministic without operator setup. The RPC shape is the
+/// load-bearing assertion.
+#[tokio::test]
+async fn live_presence_subscribe_unsubscribe() {
+    let fix = fixture();
+    let Some(peer_phone) = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() else {
+        eprintln!(
+            "live_presence_subscribe_unsubscribe: skipping (set \
+             OCTO_WHATSAPP_TEST_MEMBER to a real WA number)"
+        );
+        return;
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    let mut conn = rpc(fix).await;
+    let sub_resp = conn
+        .call("presence.subscribe", json!({"peer": peer_jid.clone()}))
+        .await;
+    assert_eq!(
+        sub_resp["status"], "subscribed",
+        "presence.subscribe must return status=subscribed; got {sub_resp}"
+    );
+    inter_call_delay_for("presence.subscribe");
+
+    let unsub_resp = conn
+        .call("presence.unsubscribe", json!({"peer": peer_jid.clone()}))
+        .await;
+    assert_eq!(
+        unsub_resp["status"], "unsubscribed",
+        "presence.unsubscribe must return status=unsubscribed; got {unsub_resp}"
+    );
+    inter_call_delay_for("presence.unsubscribe");
+    eprintln!("live_presence_subscribe_unsubscribe: OK peer={peer_jid}");
+}
+
+/// `live_presence_set_available` — Tier 4 outbound presence broadcast.
+///
+/// Calls `presence.set_available`. Returns `{status: "available",
+/// state: "available"}`. The daemon's outbound presence update fires
+/// immediately; we do NOT assert that a peer device receives a
+/// presence event (requires a subscribed peer to be online). The
+/// hermetic assertion is the RPC shape.
+#[tokio::test]
+async fn live_presence_set_available() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("presence.set_available", json!({})).await;
+    inter_call_delay_for("presence.set_available");
+
+    assert_eq!(
+        resp["status"], "available",
+        "presence.set_available must return status=available; got {resp}"
+    );
+    assert_eq!(resp["state"], "available");
+    eprintln!("live_presence_set_available: OK");
+}
+
+/// `live_presence_set_unavailable` — Tier 4 outbound presence broadcast.
+///
+/// Counterpart to `live_presence_set_available`. Reverses the
+/// online state. Returns `{status: "unavailable", state: "unavailable"}`.
+#[tokio::test]
+async fn live_presence_set_unavailable() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("presence.set_unavailable", json!({})).await;
+    inter_call_delay_for("presence.set_unavailable");
+
+    assert_eq!(
+        resp["status"], "unavailable",
+        "presence.set_unavailable must return status=unavailable; got {resp}"
+    );
+    assert_eq!(resp["state"], "unavailable");
+    eprintln!("live_presence_set_unavailable: OK");
+}
+
+/// `live_chats_typing_emits_presence_event` — Tier 4 chat-state
+/// round-trip.
+///
+/// Calls `chats.typing` to our own JID (self-echo). The WA server
+/// routes the typing stanza back to our daemon as a presence event.
+/// Asserts an `InboundEvent::Presence { jid == self, kind: Typing }`
+/// lands in our buffer within 10 s. This is the only Tier 4 test that
+/// waits for an inbound event — chat-state round-trips to self
+/// always succeed, no operator pre-action needed.
+#[tokio::test]
+async fn live_chats_typing_emits_presence_event() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("chats.typing", json!({"jid": self_jid.clone(), "on": true}))
+        .await;
+    assert_eq!(
+        resp["status"], "typing_started",
+        "chats.typing must return status=typing_started; got {resp}"
+    );
+    inter_call_delay_for("chats.typing");
+
+    // Send paused after the assertion window so we don't dominate the
+    // inbound buffer with redundant typing events during long suites.
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Presence {
+                    jid,
+                    kind,
+                    ..
+                } if jid == &self_jid
+                    && matches!(kind, octo_whatsapp::events::PresenceKind::Typing)
+            )
+        },
+        Duration::from_secs(10),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_chats_typing_emits_presence_event: no Typing presence for \
+             self within 10 s. The chats.typing RPC succeeded but the WA \
+             server did not route a presence event back to our own daemon. \
+             Underlying: {e}"
+        )
+    });
+    if let InboundEvent::Presence { jid, kind, .. } = ev {
+        assert_eq!(jid, self_jid);
+        eprintln!("live_chats_typing_emits_presence_event: OK {kind:?} jid={jid}");
+    } else {
+        unreachable!("predicate constrained to Presence")
+    }
+
+    // Send paused as cleanup so the fixture's outbound presence goes
+    // back to idle. Don't bother asserting the inbound — the inbound
+    // Typing was the load-bearing assertion.
+    let _ = conn
+        .call(
+            "chats.typing",
+            json!({"jid": self_jid.clone(), "on": false}),
+        )
+        .await;
+}

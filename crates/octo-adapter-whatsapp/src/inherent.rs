@@ -9,6 +9,7 @@ use crate::media_ref::{encode_base64url, MediaRef};
 use crate::PlatformAdapterError;
 use wacore_binary::JidExt;
 use whatsapp_rust::download::MediaType;
+use whatsapp_rust::prelude::{MessageBuilderExt, MessageExt};
 use whatsapp_rust::upload::UploadOptions;
 
 /// Local copy of `adapter.rs::epoch_millis` (module-private there; duplicated
@@ -23,6 +24,74 @@ fn epoch_millis() -> u64 {
 // ── Group A: send.* with file (Tasks 4-8: image, video, audio, voice, sticker) ──
 
 impl WhatsAppWebAdapter {
+    /// Send a plain-text message. Returns the new message id.
+    ///
+    /// `reply_to` is an optional message id being quoted; when set the
+    /// WA protocol embeds it in the `contextInfo.quotedMessage` slot of
+    /// the outbound envelope. `mentions` is a list of JIDs to ping
+    /// (`@`-mentions in the rendered chat).
+    ///
+    /// Thin wrapper around `wacore::Client::send_text`
+    /// (`whatsapp-rust/src/send/mod.rs:523`).
+    pub async fn send_text(
+        &self,
+        to_jid: &str,
+        text: &str,
+        reply_to: Option<&str>,
+        mentions: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        // Client gate — same precondition as the file-based senders.
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+
+        // Build the text message with optional reply context + mentions.
+        // `Message::text` is a convenience over the protobuf builder;
+        // if reply/mentions are set we attach the context via the
+        // standard `ContextInfo` fields.
+        let mut message = waproto::whatsapp::Message::text(text.to_string());
+        if reply_to.is_some() || !mentions.is_empty() {
+            // Build a `ContextInfo` carrying the quote + mentions. The
+            // `set_context_info` helper from `MessageExt` attaches it to
+            // the first supported message field (text, in our case) and
+            // returns whether it found a slot.
+            let mut ctx = waproto::whatsapp::ContextInfo::default();
+            if let Some(q) = reply_to {
+                ctx.stanza_id = Some(q.to_string());
+                ctx.participant = Some(jid.to_string());
+                // Empty placeholder quoted message — WA renders the reply
+                // badge based on `stanza_id` + `participant` and only
+                // fetches the body lazily.
+                ctx.quoted_message = whatsapp_rust::buffa::MessageField::from_box(Box::new(
+                    waproto::whatsapp::Message::text(String::new()),
+                ));
+            }
+            if !mentions.is_empty() {
+                ctx.mentioned_jid = mentions.to_vec();
+            }
+            message.set_context_info(ctx);
+        }
+
+        let send_result = Box::pin(client.send_message(jid, message))
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_text failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
+
     /// Send an image with optional caption. Returns `(message_id, media_ref_token)`.
     pub async fn send_image(
         &self,

@@ -27,10 +27,7 @@ pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
     // match `group_to_jid`: digits-only local part, >= 10 digits.
     if trimmed.ends_with("@g.us") {
         let digits = trimmed.trim_end_matches("@g.us");
-        if digits.chars().all(|c| c.is_ascii_digit())
-            && !digits.is_empty()
-            && digits.len() >= 10
-        {
+        if digits.chars().all(|c| c.is_ascii_digit()) && !digits.is_empty() && digits.len() >= 10 {
             return Ok(trimmed.to_string());
         }
         return Err(JidError::InvalidPeerFormat(trimmed.to_string()));

@@ -225,13 +225,26 @@ pub async fn connect_responder(
         .expect("checked length == 3");
 
     // Eid is from OUR perspective as the responder (we made the QR).
-    // Salt is eid; the phone derives the same PSK by reconstructing
-    // eid from its scan of OUR QR (same nonce + same routing id +
-    // same tunnel_server_id).
+    // Salt is eid; the phone derives the same PSK by recovering
+    // this same Eid from the BLE service-data advertisement (see
+    // `ble` module) — both sides agree on (nonce, routing_id,
+    // tunnel_server_id) and on the encryption-key derivation.
     let mut nonce = [0u8; 10];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     let eid = build_eid(&nonce, &routing_id_arr, TUNNEL_SERVER_ID_GOOGLE);
     let psk = derive_psk(&handshake.secret, &eid);
+
+    // Session 15: start emitting the caBLE service-data BLE
+    // advertisement so the phone's gms FIDO module can recover
+    // the Eid (and thus the PSK). The ad carries the encrypted
+    // Eid (AES-CTR + HMAC-SHA256) under the EidKey derived from
+    // `handshake.secret`. Without this, the phone's Noise
+    // initial message never arrives (or arrives with a PSK
+    // mismatch) and the tunnel never completes — see ble.rs
+    // for the protocol details.
+    let eid_key = crate::ble::eid_key(&handshake.secret);
+    let advert_bytes = crate::ble::encrypt_advert(&eid, &eid_key);
+    let advert_handle = crate::ble::start_advertisement(advert_bytes).await?;
 
     // Wait for the initiator's initial message.
     let initial = ws
@@ -265,6 +278,14 @@ pub async fn connect_responder(
     ws.send(Message::Binary(response_payload))
         .await
         .map_err(|e| CableError::Cbor(format!("ws send response: {e}")))?;
+
+    // Take the BLE ad down. The phone has the Eid by now (it used
+    // it to derive the PSK and complete Noise); keeping the ad
+    // around is wasteful and confuses Bluetooth scanners. Best-
+    // effort: a stop failure (race with the kernel tearing down
+    // `hci0`, D-Bus hiccup) is logged at debug and otherwise
+    // ignored — the ad will be cleaned up on adapter teardown.
+    advert_handle.stop().await;
 
     Ok(CableTunnel { ws, crypter })
 }

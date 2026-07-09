@@ -69,6 +69,22 @@ pub enum CableError {
     /// Missing `FIDO:/` prefix on the QR string.
     #[error("missing FIDO:/ prefix (got {0:?})")]
     MissingPrefix(String),
+
+    /// Session 15: BLE advertiser could not be started. caBLE v2
+    /// requires the responder to emit a service-data advertisement
+    /// (UUID 0xfff9) carrying the encrypted Eid, which the phone's
+    /// gms FIDO module scans for and uses to derive the matching
+    /// PSK for the Noise handshake. The ad cannot be omitted: without
+    /// it, the phone's Noise initial message either never arrives
+    /// or arrives over a PSK-mismatched tunnel.
+    ///
+    /// Common causes: no Bluetooth adapter present, user not in
+    /// the `bluetooth` group (D-Bus ACL), `bluetoothd` not running,
+    /// adapter not yet powered on. The CLI surfaces a hint pointing
+    /// the operator at `bluetoothctl power on` and the user-group
+    /// fix.
+    #[error("caBLE BLE advertisement failed: {0}")]
+    Ble(String),
 }
 
 // Auto-convert base10 decode failures into `CableError` so callers can

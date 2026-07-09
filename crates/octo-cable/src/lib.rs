@@ -29,6 +29,7 @@
 
 pub mod assert;
 pub mod base10;
+pub mod ble;
 pub mod ctap2;
 pub mod discovery;
 pub mod error;

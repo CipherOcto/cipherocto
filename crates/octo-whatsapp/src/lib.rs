@@ -19,6 +19,7 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod events;
+pub mod events_buffer;
 pub mod events_persister;
 pub mod events_router;
 pub mod ipc;

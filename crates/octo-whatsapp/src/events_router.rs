@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::events::{EventEnvelope, InboundEvent};
-use crate::events_persister::EventsBuffer;
+use crate::events_buffer::EventsBuffer;
 use crate::observability::metrics::Metrics;
 
 /// Per-sink mpsc channel + Lagged counter. `EventsSink` is the

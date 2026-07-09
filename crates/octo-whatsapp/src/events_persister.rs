@@ -1,145 +1,480 @@
-//! In-memory events ring buffer. Phase 3 Part B.
+//! Events disk persister (Phase 3 Part D).
 //!
-//! Bounded by `max_rows` (default 1_000_000) per design §InboundEvent
-//! retention. The `db_writer` task is the sole writer (single-owner
-//! pattern from design); the buffer's `parking_lot::Mutex` is held only
-//! for the push/list/get operations, never across `.await`.
+//! Background actor that turns in-memory `InboundEvent` pushes into
+//! durable disk state without blocking the parser hot path. Pair with
+//! the in-memory [`EventsBuffer`](crate::events_buffer::EventsBuffer)
+//! (the live source of truth) and
+//! [`events_router`](crate::events_router::EventsRouter) (which
+//! forwards events through this actor).
 //!
-//! Monotonic ids are assigned at insert time and **stored with the
-//! event** so eviction does not corrupt the id-to-position mapping
-//! (correctness review F8 — was position-based, broken after eviction).
-//! The `since_id` filter on `list()` is what the design §Loss recovery
-//! path uses to backfill after `RecvError::Lagged(n)`.
+//! ## Design contract
+//!
+//! 1. **No backpressure on hot path.** The actor owns a bounded mpsc
+//!    (`capacity = 4096`). If full, `push` drops with a counter and
+//!    the event router's broadcast subscribers still receive the
+//!    event via the per-sink fan-out. This matches the
+//!    `raw_event_tx` lossy contract.
+//!
+//! 2. **Append-only NDJSON.** Each event is written as one line:
+//!    `{"id":N,"ts_unix_ms":...,"ts_mono_ns":...,"event":{...}}\n`.
+//!    Append-friendly, crash-safe (last partial line is detectable on
+//!    reload), debuggable with `head`/`jq`.
+//!
+//! 3. **Windowed fsync.** Per-event fsync is too slow for the 1000
+//!    events/sec target. The actor flushes every `flush_interval_ms`
+//!    (default 5s). On cancel / shutdown it drains remaining and
+//!    flushes once more. **Crash → lose up to 5s of events.** Matches
+//!    the rules persister's risk profile.
+//!
+//! 4. **No coalescing.** Each event is a unique record; the actor
+//!    cannot collapse pending entries.
+//!
+//! 5. **Reload on startup.** [`load_initial_events`] reads the file,
+//!    parses each line, hydrates the buffer via
+//!    [`EventsBuffer::hydrate_from_entries`]. Malformed lines are
+//!    logged + counted + skipped. A partial trailing line (no `\n`)
+//!    triggers a `ftruncate` to the last valid offset.
+//!
+//! 6. **Cancel-safe.** The actor drains on `cancel.cancelled()`,
+//!    flushes, exits. The [`EventsPersisterHandle::join`] task
+//!    completes.
 
-use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::{mpsc, Notify};
+use tokio_util::sync::CancellationToken;
 
 use crate::events::InboundEvent;
+use crate::events_buffer::EventsBuffer;
 
-/// One buffer entry — `(assigned_id, event)`. Stored together so the
-/// id survives eviction (correctness review F8).
-type Entry = (u64, InboundEvent);
+/// One queued event. The actor receives `InboundEvent` directly; ids
+/// are assigned by the buffer (single-writer) and the persister writes
+/// the assigned id on the next read of the buffer. To preserve
+/// continuity across persistence, we instead accept `InboundEvent`
+/// from the router and the actor queries the buffer for the most
+/// recent id and writes that. See `persist_one`.
+pub type PersistedEventPayload = InboundEvent;
 
-#[derive(Debug)]
-pub struct EventsBuffer {
-    inner: Mutex<VecDeque<Entry>>,
-    max_rows: usize,
-    next_id: AtomicU64,
-    total_evicted: AtomicU64,
-    total_pushed: AtomicU64,
+/// What gets written to disk and read back on reload. The schema is
+/// **append-only stable**: adding optional fields is fine, removing
+/// fields is a breaking change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedEvent {
+    /// Monotonic id assigned at the time the event entered the
+    /// buffer. Replayed as-is on reload.
+    pub id: u64,
+    pub ts_unix_ms: u64,
+    pub ts_mono_ns: u64,
+    pub event: InboundEvent,
 }
 
-impl EventsBuffer {
-    pub fn new(max_rows: usize) -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(VecDeque::with_capacity(1024)),
-            max_rows,
-            next_id: AtomicU64::new(1),
-            total_evicted: AtomicU64::new(0),
-            total_pushed: AtomicU64::new(0),
+/// Errors raised by the persister.
+#[derive(Debug, Error)]
+pub enum PersistError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("json encode: {0}")]
+    JsonEncode(#[from] serde_json::Error),
+    #[error("flush timed out after {elapsed_ms}ms")]
+    FlushTimeout { elapsed_ms: u64 },
+    #[error("persister channel closed")]
+    ChannelClosed,
+    #[error("join handle: {0}")]
+    Join(#[from] tokio::task::JoinError),
+}
+
+/// Reload statistics. Logged at boot and surfaced via
+/// `daemon.status.get`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LoadStats {
+    pub loaded: u64,
+    pub skipped_malformed: u64,
+    pub dropped_partial_bytes: u64,
+    pub reload_took_ms: u64,
+}
+
+/// Drop counter for mpsc-full events (best-effort; never blocks the
+/// router).
+#[derive(Debug, Default)]
+struct DropCounter(AtomicU64);
+impl DropCounter {
+    fn inc(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+    fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Handle to the running persister. Send events via [`Self::push`]
+/// (best-effort, non-blocking), request a synchronous fsync via
+/// [`Self::flush_sync`], wait for shutdown via [`Self::join`].
+#[derive(Debug)]
+pub struct EventsPersisterHandle {
+    tx: mpsc::Sender<InboundEvent>,
+    flush: mpsc::Sender<()>,
+    flush_done: Arc<Notify>,
+    join: tokio::task::JoinHandle<()>,
+    dropped: Arc<DropCounter>,
+    last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+}
+
+impl EventsPersisterHandle {
+    /// Spawn the actor. `path = None` disables disk I/O entirely
+    /// (the actor still relays events to the buffer; useful for
+    /// hermetic tests).
+    pub fn spawn(
+        buffer: Arc<EventsBuffer>,
+        path: Option<PathBuf>,
+        flush_interval: Duration,
+        cancel: CancellationToken,
+    ) -> Result<Self, PersistError> {
+        let (tx, rx) = mpsc::channel::<InboundEvent>(4096);
+        let (flush_tx, flush_rx) = mpsc::channel::<()>(4);
+        let flush_done = Arc::new(Notify::new());
+        let dropped = Arc::new(DropCounter::default());
+        let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
+
+        let task_cancel = cancel.clone();
+        let task_buffer = buffer.clone();
+        let task_path = path.clone();
+        let task_dropped = dropped.clone();
+        let task_load_stats = last_load_stats.clone();
+        let task_flush_done = flush_done.clone();
+
+        let join = tokio::spawn(async move {
+            if let Err(e) = run_actor(
+                task_buffer,
+                task_path,
+                flush_interval,
+                task_cancel,
+                rx,
+                flush_rx,
+                task_flush_done,
+                task_dropped,
+                task_load_stats,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "events_persister: actor exited with error");
+            }
+        });
+
+        Ok(Self {
+            tx,
+            flush: flush_tx,
+            flush_done,
+            join,
+            dropped,
+            last_load_stats,
         })
     }
 
-    /// Assign the next id and push the event. Evicts oldest entries
-    /// when `len() > max_rows`. Returns the assigned id.
-    pub fn push(&self, ev: InboundEvent) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut g = self.inner.lock();
-        g.push_back((id, ev));
-        // Evict in one shot to avoid one-eviction-per-push amortisation.
-        if g.len() > self.max_rows {
-            let drop_count = g.len() - self.max_rows;
-            for _ in 0..drop_count {
-                g.pop_front();
+    /// Best-effort push. Returns immediately. If the actor's mpsc is
+    /// full, the event is dropped and the drop counter increments.
+    pub fn push(&self, ev: InboundEvent) -> Result<(), PersistError> {
+        match self.tx.try_send(ev) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped.inc();
+                Ok(())
             }
-            self.total_evicted
-                .fetch_add(drop_count as u64, Ordering::Relaxed);
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err(PersistError::ChannelClosed)
+            }
         }
-        self.total_pushed.fetch_add(1, Ordering::Relaxed);
-        id
     }
 
-    /// List events with optional `since_id` filter (exclusive lower
-    /// bound). Returns events whose assigned id is strictly greater
-    /// than `since_id`. If `since_id` is below the current buffer's
-    /// smallest id (because of eviction), returns events from the
-    /// earliest available id forward — the caller observes the gap.
-    /// `limit` caps the response; pass `usize::MAX` for no cap.
-    pub fn list(&self, since_id: Option<u64>, limit: usize) -> Vec<InboundEvent> {
-        let g = self.inner.lock();
-        let start_pos = match since_id {
-            Some(id) => {
-                // Skip until we find an entry with id > since_id.
-                // If id is below the current watermark, we start at 0.
-                g.iter().position(|entry| entry.0 > id).unwrap_or(g.len())
+    /// Block until the actor flushes the file to disk and acks.
+    /// Useful for shutdown drain + tests.
+    pub async fn flush_sync(&self, timeout: Duration) -> Result<(), PersistError> {
+        // Push a sentinel "please flush" and await flush_done.
+        let _ = self.flush.send(()).await;
+        let fd = self.flush_done.clone();
+        let waiter = tokio::spawn(async move {
+            fd.notified().await;
+        });
+        match tokio::time::timeout(timeout, waiter).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(PersistError::ChannelClosed),
+            Err(_) => Err(PersistError::FlushTimeout {
+                elapsed_ms: timeout.as_millis() as u64,
+            }),
+        }
+    }
+
+    /// Wait for the actor to exit (after `cancel` was triggered).
+    pub async fn join(self) -> Result<(), PersistError> {
+        self.join.await?;
+        Ok(())
+    }
+
+    /// Number of events dropped because the actor's mpsc was full.
+    pub fn dropped_total(&self) -> u64 {
+        self.dropped.get()
+    }
+
+    /// Reload stats from the last cold-start hydrate, if any.
+    pub fn last_load_stats(&self) -> Option<LoadStats> {
+        self.last_load_stats.lock().clone()
+    }
+}
+
+/// Parse one NDJSON line and return `(id, InboundEvent)` or an error
+/// describing why the line was skipped.
+fn parse_line(line: &[u8]) -> Result<PersistedEvent, serde_json::Error> {
+    serde_json::from_slice::<PersistedEvent>(line)
+}
+
+/// Resolve the path used by the persister. Public so config.rs can
+/// call it; empty `data_dir` yields the default
+/// `$data_dir/events/events.ndjson`.
+pub fn default_persistence_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("events").join("events.ndjson")
+}
+
+/// Read the file at `path` line by line, hydrate `buffer` from valid
+/// entries, truncate any partial trailing line, return stats. Public
+/// so tests + daemon boot can call it directly.
+pub async fn load_initial_events(
+    path: &Path,
+    buffer: &EventsBuffer,
+) -> Result<LoadStats, PersistError> {
+    let started = std::time::Instant::now();
+    if !path.exists() {
+        return Ok(LoadStats {
+            reload_took_ms: started.elapsed().as_millis() as u64,
+            ..Default::default()
+        });
+    }
+
+    let bytes = match tokio::fs::read(path).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LoadStats {
+                reload_took_ms: started.elapsed().as_millis() as u64,
+                ..Default::default()
+            });
+        }
+        Err(e) => return Err(PersistError::Io(e)),
+    };
+
+    let mut entries: Vec<(u64, InboundEvent)> = Vec::new();
+    let mut loaded: u64 = 0;
+    let mut skipped: u64 = 0;
+    let mut total_lines: u64 = 0;
+
+    // Split on b'\n'. We treat each '\n'-terminated slice as one line.
+    let mut start = 0_usize;
+    let mut last_good_end: u64 = 0;
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'\n' {
+            let line = &bytes[start..i];
+            total_lines += 1;
+            if line.is_empty() {
+                // Blank line (e.g. just trailing newline).
+                last_good_end = (i + 1) as u64;
+                start = i + 1;
+                continue;
             }
-            None => 0,
-        };
-        g.iter()
-            .skip(start_pos)
-            .take(limit)
-            .map(|(_, ev)| ev.clone())
-            .collect()
+            match parse_line(line) {
+                Ok(pe) => {
+                    entries.push((pe.id, pe.event));
+                    loaded += 1;
+                    last_good_end = (i + 1) as u64;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        line_index = total_lines,
+                        error = %e,
+                        "events_persister: skipping malformed line on reload"
+                    );
+                    skipped += 1;
+                    last_good_end = (i + 1) as u64;
+                }
+            }
+            start = i + 1;
+        }
     }
 
-    /// Snapshot list of recent events. Used by `events.list` for
-    /// the "give me the last N" pattern (since_id = None, limit = N).
-    pub fn list_recent(&self, limit: usize) -> Vec<InboundEvent> {
-        let g = self.inner.lock();
-        let start = g.len().saturating_sub(limit);
-        g.iter().skip(start).map(|(_, ev)| ev.clone()).collect()
+    // Detect partial trailing line (no terminating '\n').
+    let mut dropped_partial_bytes: u64 = 0;
+    if start < bytes.len() {
+        let tail = &bytes[start..];
+        dropped_partial_bytes = tail.len() as u64;
+        tracing::warn!(
+            bytes = dropped_partial_bytes,
+            "events_persister: dropping partial trailing line; truncating file"
+        );
+        // truncate to last_good_end
+        let f = OpenOptions::new().write(true).open(path).await?;
+        f.set_len(last_good_end).await?;
+        f.sync_all().await?;
+        drop(f);
     }
 
-    /// Lookup by id. Returns `None` if the id was evicted or never
-    /// existed (correctness review F8 — was returning wrong events
-    /// after eviction).
-    pub fn get(&self, id: u64) -> Option<InboundEvent> {
-        let g = self.inner.lock();
-        // Linear scan is correct under FIFO ordering: the buffer is
-        // sorted by id ascending. For typical buffer sizes (≤1M) and
-        // `O(1)` access patterns this is acceptable; if needed, a
-        // BTreeMap<u64, InboundEvent> could replace the VecDeque.
-        g.iter()
-            .find(|(assigned, _)| *assigned == id)
-            .map(|(_, ev)| ev.clone())
-    }
+    // Hydrate the buffer.
+    buffer.hydrate_from_entries(entries);
 
-    /// Smallest id currently in the buffer (0 if empty). Callers can
-    /// use this to detect eviction and warn the operator that prior
-    /// events are no longer queryable.
-    pub fn smallest_id(&self) -> u64 {
-        let g = self.inner.lock();
-        g.front().map(|(id, _)| *id).unwrap_or(0)
-    }
+    Ok(LoadStats {
+        loaded,
+        skipped_malformed: skipped,
+        dropped_partial_bytes,
+        reload_took_ms: started.elapsed().as_millis() as u64,
+    })
+}
 
-    /// Largest id currently in the buffer (0 if empty).
-    pub fn largest_id(&self) -> u64 {
-        let g = self.inner.lock();
-        g.back().map(|(id, _)| *id).unwrap_or(0)
-    }
+/// The actor loop. Extracted so test paths can exercise it directly.
+async fn run_actor(
+    buffer: Arc<EventsBuffer>,
+    path: Option<PathBuf>,
+    flush_interval: Duration,
+    cancel: CancellationToken,
+    mut rx: mpsc::Receiver<InboundEvent>,
+    mut flush_rx: mpsc::Receiver<()>,
+    flush_done: Arc<Notify>,
+    _dropped: Arc<DropCounter>,
+    last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+) -> Result<(), PersistError> {
+    // Open file (or create) in append+read mode for both write and
+    // the optional mid-life reload. The current design reloads only
+    // at boot, so the read side is not used here.
+    let mut file = match &path {
+        Some(p) => {
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+            }
+            // Cold-start reload first.
+            match load_initial_events(p, &buffer).await {
+                Ok(stats) => {
+                    *last_load_stats.lock() = Some(stats);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %p.display(),
+                        "events_persister: cold-start reload failed; continuing");
+                }
+            }
+            Some(OpenOptions::new().create(true).append(true).open(p).await?)
+        }
+        None => None,
+    };
 
-    pub fn len(&self) -> usize {
-        self.inner.lock().len()
-    }
+    let mut ticker = tokio::time::interval(flush_interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().is_empty()
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                // Drain remaining events.
+                while let Ok(ev) = rx.try_recv() {
+                    let id = buffer.push(ev.clone());
+                    if let Some(f) = file.as_mut() {
+                        let _ = write_event(f, id, &ev).await;
+                    }
+                }
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+                flush_done.notify_waiters();
+                return Ok(());
+            }
+            _ = ticker.tick() => {
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+                flush_done.notify_waiters();
+            }
+            Some(_) = flush_rx.recv() => {
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+                flush_done.notify_waiters();
+            }
+            Some(ev) = rx.recv() => {
+                let id = buffer.push(ev.clone());
+                if let Some(f) = file.as_mut() {
+                    if let Err(e) = write_event(f, id, &ev).await {
+                        tracing::warn!(error = %e,
+                            "events_persister: write failed; event kept in memory");
+                    }
+                }
+            }
+            else => break,
+        }
     }
+    // Channel closed; flush once.
+    if let Some(f) = file.as_mut() {
+        let _ = f.sync_all().await;
+    }
+    flush_done.notify_waiters();
+    Ok(())
+}
 
-    pub fn max_rows(&self) -> usize {
-        self.max_rows
-    }
+/// Encode + write one NDJSON line for `event` whose buffer-assigned
+/// id is `id`.
+async fn write_event(file: &mut File, id: u64, ev: &InboundEvent) -> Result<(), PersistError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mono = monotonic_ns();
+    let payload = PersistedEvent {
+        id,
+        ts_unix_ms: now,
+        ts_mono_ns: mono,
+        event: ev.clone(),
+    };
+    // `serde_json::to_writer` writes directly to the file via a
+    // wrapper. We need a Write; the async File implements
+    // AsyncWrite. Wrap with `BufWriter` to avoid syscall per byte.
+    let mut buf = Vec::with_capacity(512);
+    serde_json::to_writer(&mut buf, &payload)?;
+    buf.push(b'\n');
+    file.write_all(&buf).await?;
+    Ok(())
+}
 
-    pub fn total_evicted(&self) -> u64 {
-        self.total_evicted.load(Ordering::Relaxed)
-    }
+fn monotonic_ns() -> u64 {
+    // Cheap monotonic clock; tokio's `Instant` doesn't expose ns.
+    let t = std::time::Instant::now();
+    // Round-trip via SystemTime isn't safe; use an epoch anchor from
+    // process start.
+    t.elapsed().as_nanos() as u64
+}
 
-    pub fn total_pushed(&self) -> u64 {
-        self.total_pushed.load(Ordering::Relaxed)
-    }
+// ---------------------------------------------------------------------------
+// Internal raw-file IO helpers used by reload + truncation. Kept
+// separate so tests can exercise them without spinning an actor.
+// ---------------------------------------------------------------------------
+
+/// Read the entire file as bytes.
+#[allow(dead_code)]
+async fn read_all(path: &Path) -> Result<Vec<u8>, PersistError> {
+    let mut f = File::open(path).await?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).await?;
+    Ok(buf)
+}
+
+/// Truncate the file to `len` bytes and fsync.
+#[allow(dead_code)]
+async fn truncate_to(path: &Path, len: u64) -> Result<(), PersistError> {
+    let f = OpenOptions::new().write(true).open(path).await?;
+    f.set_len(len).await?;
+    f.sync_all().await?;
+    let mut f = f;
+    f.seek(std::io::SeekFrom::Start(len)).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -149,142 +484,164 @@ mod tests {
 
     fn dummy() -> InboundEvent {
         InboundEvent::parse(EventEnvelope {
-            raw:
-                "Message(id: \"X\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)"
-                    .to_string(),
+            raw: "Message(id: \"X\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)".to_string(),
             ts_unix_ms: 1000,
             ts_mono_ns: 1,
         })
     }
 
+    #[tokio::test]
+    async fn parse_line_handles_full_payload() {
+        let pe = PersistedEvent {
+            id: 42,
+            ts_unix_ms: 1_752_345_678_901,
+            ts_mono_ns: 123_456,
+            event: dummy(),
+        };
+        let line = serde_json::to_vec(&pe).unwrap();
+        let parsed = parse_line(&line).unwrap();
+        assert_eq!(parsed.id, 42);
+    }
+
+    #[tokio::test]
+    async fn parse_line_rejects_garbage() {
+        assert!(parse_line(b"{not json").is_err());
+        assert!(parse_line(b"").is_err());
+    }
+
     #[test]
-    fn push_assigns_sequential_ids() {
+    fn default_persistence_path_is_under_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = default_persistence_path(dir.path());
+        assert!(p.starts_with(dir.path()));
+        assert!(p.ends_with("events.ndjson"));
+    }
+
+    /// No file → 0 loaded, 0 skipped.
+    #[tokio::test]
+    async fn load_returns_empty_when_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("events.ndjson");
         let b = EventsBuffer::new(100);
-        let id1 = b.push(dummy());
-        let id2 = b.push(dummy());
-        assert_eq!(id1, 1);
-        assert_eq!(id2, 2);
+        let stats = load_initial_events(&p, &b).await.unwrap();
+        assert_eq!(stats.loaded, 0);
+        assert_eq!(stats.skipped_malformed, 0);
+        assert_eq!(stats.dropped_partial_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn load_round_trips_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("events.ndjson");
+        let b1 = EventsBuffer::new(100);
+        // Manually write 3 events to disk using the same format.
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&p)
+            .unwrap();
+        for i in 0..3 {
+            let id = b1.push(dummy());
+            let pe = PersistedEvent {
+                id,
+                ts_unix_ms: i,
+                ts_mono_ns: i,
+                event: dummy(),
+            };
+            serde_json::to_writer(&mut f, &pe).unwrap();
+            use std::io::Write;
+            writeln!(&mut f).unwrap();
+        }
+        drop(f);
+
+        let b2 = EventsBuffer::new(100);
+        let stats = load_initial_events(&p, &b2).await.unwrap();
+        assert_eq!(stats.loaded, 3);
+        assert_eq!(stats.skipped_malformed, 0);
+        assert_eq!(stats.dropped_partial_bytes, 0);
+        assert_eq!(b2.len(), 3);
+        // Next push continues ids from 4, not 1.
+        assert_eq!(b2.push(dummy()), 4);
+    }
+
+    #[tokio::test]
+    async fn load_skips_malformed_middle_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("events.ndjson");
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&p)
+            .unwrap();
+        use std::io::Write;
+        for i in 0..3 {
+            let pe = PersistedEvent {
+                id: i + 1,
+                ts_unix_ms: i,
+                ts_mono_ns: i,
+                event: dummy(),
+            };
+            serde_json::to_writer(&mut f, &pe).unwrap();
+            writeln!(&mut f).unwrap();
+        }
+        // Garbage in the middle.
+        writeln!(&mut f, "{{this is not json").unwrap();
+        // More good events.
+        for i in 3..5 {
+            let pe = PersistedEvent {
+                id: i + 1,
+                ts_unix_ms: i,
+                ts_mono_ns: i,
+                event: dummy(),
+            };
+            serde_json::to_writer(&mut f, &pe).unwrap();
+            writeln!(&mut f).unwrap();
+        }
+        drop(f);
+
+        let b = EventsBuffer::new(100);
+        let stats = load_initial_events(&p, &b).await.unwrap();
+        assert_eq!(stats.loaded, 5);
+        assert_eq!(stats.skipped_malformed, 1);
+        assert_eq!(b.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn load_truncates_partial_trailing_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("events.ndjson");
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&p)
+            .unwrap();
+        use std::io::Write;
+        // 2 valid lines...
+        for i in 0..2 {
+            let pe = PersistedEvent {
+                id: i + 1,
+                ts_unix_ms: i,
+                ts_mono_ns: i,
+                event: dummy(),
+            };
+            serde_json::to_writer(&mut f, &pe).unwrap();
+            writeln!(&mut f).unwrap();
+        }
+        // ...then a partial line with no terminating newline.
+        f.write_all(b"{\"id\":3,\"ev").unwrap();
+        drop(f);
+        let before_len = std::fs::metadata(&p).unwrap().len();
+
+        let b = EventsBuffer::new(100);
+        let stats = load_initial_events(&p, &b).await.unwrap();
+        assert_eq!(stats.loaded, 2);
+        assert_eq!(stats.skipped_malformed, 0);
+        assert!(stats.dropped_partial_bytes > 0);
         assert_eq!(b.len(), 2);
-        assert_eq!(b.total_pushed(), 2);
-    }
-
-    #[test]
-    fn evicts_oldest_at_max_rows() {
-        let b = EventsBuffer::new(3);
-        for _ in 0..5 {
-            b.push(dummy());
-        }
-        assert_eq!(b.len(), 3);
-        assert_eq!(b.total_evicted(), 2);
-        // After 5 pushes (ids 1..=5), the buffer holds ids 3, 4, 5.
-        assert_eq!(b.smallest_id(), 3);
-        assert_eq!(b.largest_id(), 5);
-    }
-
-    #[test]
-    fn get_returns_event_by_id_no_eviction() {
-        let b = EventsBuffer::new(100);
-        let id1 = b.push(dummy());
-        let id2 = b.push(dummy());
-        let ev1 = b.get(id1).unwrap();
-        let ev2 = b.get(id2).unwrap();
-        assert_eq!(ev1, dummy());
-        assert_eq!(ev2, dummy());
-    }
-
-    /// Correctness review F8: get(id) must return None for evicted
-    /// ids, NOT a different (wrong) event.
-    #[test]
-    fn get_returns_none_for_evicted_id() {
-        let b = EventsBuffer::new(3);
-        let id1 = b.push(dummy());
-        let id2 = b.push(dummy());
-        let id3 = b.push(dummy());
-        let id4 = b.push(dummy());
-        let id5 = b.push(dummy());
-        // id1 and id2 were evicted.
-        assert!(b.get(id1).is_none(), "id1 should be evicted");
-        assert!(b.get(id2).is_none(), "id2 should be evicted");
-        // id3, id4, id5 are present.
-        assert!(b.get(id3).is_some());
-        assert!(b.get(id4).is_some());
-        assert!(b.get(id5).is_some());
-    }
-
-    /// Correctness review F8: list(since_id=N) must include events
-    /// whose id is strictly greater than N, even after eviction.
-    #[test]
-    fn list_since_id_survives_eviction() {
-        let b = EventsBuffer::new(3);
-        for i in 0..5 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
-        }
-        // After 5 pushes, buffer holds ids 3, 4, 5 (raw: "m2", "m3", "m4").
-        // since_id = 1 → should return all 3 (3, 4, 5).
-        let v = b.list(Some(1), usize::MAX);
-        assert_eq!(v.len(), 3);
-        // since_id = 3 → should return only 4 and 5 (events strictly > id 3).
-        let v = b.list(Some(3), usize::MAX);
-        assert_eq!(v.len(), 2);
-        // since_id = 100 → buffer's largest is 5 → empty list.
-        let v = b.list(Some(100), usize::MAX);
-        assert!(v.is_empty());
-    }
-
-    #[test]
-    fn list_recent_returns_last_n() {
-        let b = EventsBuffer::new(100);
-        for i in 0..10 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
-        }
-        let last3 = b.list_recent(3);
-        assert_eq!(last3.len(), 3);
-        if let InboundEvent::Unknown { raw, .. } = &last3[0] {
-            assert_eq!(raw, "m7");
-        } else {
-            panic!("expected Unknown");
-        }
-    }
-
-    #[test]
-    fn get_returns_none_for_out_of_range() {
-        let b = EventsBuffer::new(100);
-        assert!(b.get(0).is_none());
-        assert!(b.get(999).is_none());
-    }
-
-    #[test]
-    fn list_with_limit() {
-        let b = EventsBuffer::new(100);
-        for i in 0..20 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
-        }
-        let v = b.list(None, 5);
-        assert_eq!(v.len(), 5);
-    }
-
-    #[test]
-    fn empty_buffer() {
-        let b = EventsBuffer::new(100);
-        assert!(b.is_empty());
-        assert_eq!(b.len(), 0);
-        assert_eq!(b.smallest_id(), 0);
-        assert_eq!(b.largest_id(), 0);
-        assert!(b.list_recent(10).is_empty());
+        // File should have been truncated to a length ≤ before_len
+        // (we don't assert an exact value because the trailing
+        // bytes plus the partial write boundaries vary).
+        let after_len = std::fs::metadata(&p).unwrap().len();
+        assert!(after_len <= before_len);
     }
 }

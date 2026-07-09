@@ -10,7 +10,7 @@ use tracing::info;
 use crate::adapter_trait::OctoWhatsAppAdapter;
 use crate::audit::AuditLog;
 use crate::config::WhatsAppRuntimeConfig;
-use crate::events_persister::EventsBuffer;
+use crate::events_buffer::EventsBuffer;
 use crate::ipc::handlers::clients::McpClientRegistry;
 use crate::media_buffer::MediaBuffer;
 use crate::observability::metrics::Metrics;

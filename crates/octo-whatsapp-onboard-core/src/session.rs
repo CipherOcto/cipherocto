@@ -65,6 +65,16 @@ pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration)
 
     let deadline = Instant::now() + timeout;
     let notify = adapter.connected();
+    // Session 13: QR-cycle staleness watchdog. Wacore exhausts its
+    // QR ref tokens within ~60s of starting a fresh pair (the
+    // server logs `All QR codes for this session have expired` and
+    // stops emitting `Event::PairingQrCode`). Without this check,
+    // `wait_for_connected` would happily wait the full operator
+    // `--timeout` (default 300s) for a phone that won't ever scan.
+    // 60s is generous — a single QR ref token refresh is ~30-45s in
+    // practice; 60s gives the operator a full cycle to scan + enter
+    // a phone-side confirmation.
+    const QR_STALL_THRESHOLD: Duration = Duration::from_secs(60);
     // Race the Notify against the polling fallback. The first one to
     // see `self_handle()` set wins.
     let check = async {
@@ -79,6 +89,18 @@ pub async fn wait_for_connected(adapter: &WhatsAppWebAdapter, timeout: Duration)
             // set self_phone, not just Event::Connected).
             if let Some(phone) = adapter.self_handle() {
                 return Ok(phone);
+            }
+            // Session 13: bail out early when wacore has stopped
+            // emitting QRs — the operator walked away, the server
+            // exhausted its ref tokens, the run loop may still be
+            // silently reconnecting, but no human action will ever
+            // connect this device. Exit with a clear error code so
+            // the operator can investigate instead of waiting 5
+            // minutes for the timeout.
+            if adapter.pairing_qr_stalled(QR_STALL_THRESHOLD) {
+                return Err(CoreError::QrPairingStalled {
+                    idle_secs: QR_STALL_THRESHOLD.as_secs(),
+                });
             }
             // Check 2: Notify wakeup. Use tokio::select! to race
             // the Notify against the next poll tick.

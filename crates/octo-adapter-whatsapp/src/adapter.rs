@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use octo_network::dot::adapters::{
     coordinator_admin::{
@@ -399,6 +400,16 @@ pub struct WhatsAppWebAdapter {
     /// [`WhatsAppWebAdapter::dropped_inbound_messages`] for
     /// observability. Resetting it requires recreating the adapter.
     dropped_inbound_count: Arc<AtomicU64>,
+    /// Session 13: monotonic timestamp of the most recent
+    /// `Event::PairingQrCode` we forwarded. After wacore exhausts its
+    /// QR ref tokens it logs `All QR codes for this session have
+    /// expired` and stops emitting further QRs — but the run loop may
+    /// continue reconnecting silently, leaving the CLI's
+    /// `wait_for_connected` polling until the operator's `--timeout`
+    /// elapses. `pairing_qr_stalled(idle_threshold)` lets the core
+    /// detect that stall and return immediately instead of waiting the
+    /// full `--timeout`. Cleared on each `start_bot`.
+    last_pairing_qr_at: Arc<Mutex<Option<Instant>>>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
@@ -479,6 +490,12 @@ impl WhatsAppWebAdapter {
             // counter is incremented inside the on_event closure and
             // the download_rx_consumer task on `try_send` failure.
             dropped_inbound_count: Arc::new(AtomicU64::new(0)),
+            // Session 13: no QR seen yet; populated by the
+            // Event::PairingQrCode handler in start_bot. Reset to
+            // None on shutdown and on every new start_bot so a stale
+            // timestamp from a prior session can never bleed into a
+            // fresh one.
+            last_pairing_qr_at: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -495,6 +512,21 @@ impl WhatsAppWebAdapter {
     /// done and the client is fully synchronized with the server.
     pub fn synced(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.synced_notify)
+    }
+
+    /// Session 13: true iff at least one `Event::PairingQrCode` has
+    /// been observed AND no further QRs have arrived in the last
+    /// `idle_threshold` duration. Returns false before any QR has
+    /// arrived (the operator hasn't been shown anything yet — wait
+    /// for the first cycle) and false if a fresh QR arrived
+    /// recently. Used by `wait_for_connected` to short-circuit when
+    /// wacore has exhausted its QR ref tokens (the
+    /// "All QR codes for this session have expired" path).
+    pub fn pairing_qr_stalled(&self, idle_threshold: std::time::Duration) -> bool {
+        let Some(last) = *self.last_pairing_qr_at.lock() else {
+            return false;
+        };
+        last.elapsed() >= idle_threshold
     }
 
     /// R12-M1 fix: returns the cumulative number of inbound
@@ -893,6 +925,12 @@ impl WhatsAppWebAdapter {
         // Clone values for the event handler
         let inbound_tx = self.inbound_tx.clone();
         let self_phone = self.self_phone.clone();
+        // Session 13: clone the QR-cycle watchdog timestamp into the
+        // closure so Event::PairingQrCode refreshes it. Without this
+        // clone the closure would borrow `self` and fail E0521
+        // because the on_event closure outlives the start_bot
+        // scope.
+        let last_pairing_qr_at = Arc::clone(&self.last_pairing_qr_at);
         // Combine the static `config.groups` and the runtime-registered
         // groups at the moment the bot starts. New groups added via
         // `register_group_at_runtime` after `start_bot` is captured by
@@ -1067,6 +1105,11 @@ impl WhatsAppWebAdapter {
                 // the inner async closure so the `try_send` at line
                 // 904+ can increment it on channel-full failure.
                 let dropped_inbound_count = Arc::clone(&dropped_inbound_count);
+                // Session 13: clone the QR-cycle watchdog timestamp
+                // into the inner async closure so the
+                // `Event::PairingQrCode` arm can refresh it without
+                // moving out of the outer Fn closure.
+                let last_pairing_qr_at = Arc::clone(&last_pairing_qr_at);
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
@@ -1310,6 +1353,20 @@ impl WhatsAppWebAdapter {
                             synced_notify.notify_waiters();
                         }
                         Event::PairingQrCode(inner) => {
+                            // Session 13: refresh the QR-cycle staleness
+                            // watchdog. When wacore exhausts the QR ref
+                            // tokens it logs `All QR codes for this session
+                            // have expired` and stops emitting further
+                            // PairingQrCode events; the adapter's
+                            // `pairing_qr_stalled` then becomes true after
+                            // `idle_threshold` elapses, letting
+                            // `wait_for_connected` return early instead of
+                            // waiting the operator's full `--timeout`.
+                            //
+                            // The `Fn` closure requires us to borrow not
+                            // move the captured `Arc`; cloning is cheap
+                            // (two atomic refcounts).
+                            *last_pairing_qr_at.clone().lock() = Some(Instant::now());
                             let code = &inner.code;
                             match qrcode::QrCode::new(code.as_bytes()) {
                                 Ok(qr) => {
@@ -2576,6 +2633,10 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // Clear client
         *self.client.lock() = None;
         *self.self_phone.lock() = None;
+        // Session 13: clear the QR-cycle timestamp so a re-spawned
+        // adapter (or a `--reset` re-pair) cannot trip the
+        // `pairing_qr_stalled` check from a stale prior run.
+        *self.last_pairing_qr_at.lock() = None;
 
         tracing::info!("WhatsApp Web adapter shut down");
         Ok(())
@@ -3469,6 +3530,7 @@ impl WhatsAppWebAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_domain_hash_deterministic() {
@@ -3492,6 +3554,86 @@ mod tests {
         assert!(encoded.starts_with("DOT/1/"));
         let decoded = WhatsAppWebAdapter::decode_envelope(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    // Session 13: `pairing_qr_stalled` — the QR-cycle watchdog the
+    // CLI's `wait_for_connected` polls to detect server-side QR
+    // exhaustion (operator walked away; server logged `All QR codes
+    // for this session have expired`). The three tests cover the
+    // three meaningful states: pre-QR (return false — we can't have
+    // stalled if nothing's been emitted), idle-but-fresh (recent
+    // QR), and stale (operator walked away).
+
+    fn fresh_adapter() -> WhatsAppWebAdapter {
+        WhatsAppWebAdapter::new(WhatsAppConfig {
+            // Dummy path — `start_bot` is never invoked in these
+            // tests so the value is never read or validated.
+            session_path: "/tmp/octo-pairing-qr-stalled-test".to_string(),
+            pair_phone: None,
+            pair_code: None,
+            ws_url: None,
+            groups: vec![],
+            sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
+        })
+    }
+
+    #[test]
+    fn pairing_qr_stalled_false_before_any_qr_seen() {
+        // No `Event::PairingQrCode` has fired yet — the adapter was
+        // just constructed. `wait_for_connected` is in its first
+        // cycle waiting for the server's first QR; calling this
+        // "stalled" would falsely exit immediately.
+        let adapter = fresh_adapter();
+        assert!(
+            !adapter.pairing_qr_stalled(Duration::from_millis(1)),
+            "no QR has fired; must not report stalled"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_false_when_qr_is_fresh() {
+        // After a QR fires the timestamp is "now". A short threshold
+        // must NOT trip — the operator just received a fresh QR.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now());
+        assert!(
+            !adapter.pairing_qr_stalled(Duration::from_secs(60)),
+            "fresh QR (just fired) must not be stalled under a 60s threshold"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_true_after_idle_threshold() {
+        // Backdate the timestamp past the threshold; the operator
+        // either walked away or wacore has stopped emitting QRs.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now() - Duration::from_secs(120));
+        assert!(
+            adapter.pairing_qr_stalled(Duration::from_secs(60)),
+            "QR last seen 120s ago must be stalled under a 60s threshold"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_cleared_on_shutdown() {
+        // A stale timestamp from a prior pair must NOT survive
+        // shutdown — otherwise re-pairing on the same adapter
+        // instance would falsely bail out before the new QR has
+        // time to arrive.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now() - Duration::from_secs(999));
+        // shutdown() is async (download_tx uses tokio::sync::Mutex);
+        // spin a minimal runtime to drive it.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let _ = rt.block_on(adapter.shutdown());
+        assert!(
+            adapter.last_pairing_qr_at.lock().is_none(),
+            "shutdown must clear last_pairing_qr_at"
+        );
     }
 
     /// R10-M2 fix: pin the `canonicalize` behavior for the

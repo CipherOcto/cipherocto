@@ -35,6 +35,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -51,7 +52,6 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
 fn init_tracing_once() {
@@ -243,118 +243,159 @@ struct LiveFixture {
     adapter: Arc<WhatsAppWebAdapter>,
     socket: PathBuf,
     cancel: CancellationToken,
-    /// Wrapped in `Arc` so the fixture is `Sync` (required by
-    /// `tokio::sync::OnceCell`). `JoinHandle` itself is `!Sync`.
+    /// Dedicated multi-thread tokio runtime that owns the daemon task
+    /// + connection-watcher + unix-socket server for the lifetime of
+    /// the test process. Built once at fixture init and kept here
+    /// (not on the calling test's runtime) so the daemon task
+    /// survives each `#[tokio::test]` runtime dropping at test end.
+    daemon_runtime: Arc<tokio::runtime::Runtime>,
+    /// `JoinHandle` from `daemon_runtime.spawn(daemon.run())`.
+    /// `Arc` so `teardown_final` can move the inner handle out
+    /// without `&JoinHandle` borrowing constraints.
     daemon_task: Arc<tokio::task::JoinHandle<anyhow::Result<()>>>,
-    /// Held in `Option` so callers can `.take()` ownership, drop the
-    /// `parking_lot::Mutex` guard, and `.await` the call without
-    /// holding a lock across an await point
-    /// (`clippy::await_holding_lock`). Re-`replace()` after the call.
-    rpc: Mutex<Option<RpcStream>>,
     created_groups: Mutex<Vec<String>>,
     created_tokens: Mutex<Vec<String>>,
     tmp: TempDir,
 }
 
-static FIXTURE: OnceCell<LiveFixture> = OnceCell::const_new();
+static FIXTURE: std::sync::OnceLock<LiveFixture> = std::sync::OnceLock::new();
 static TEARDOWN_DONE: AtomicBool = AtomicBool::new(false);
 
-async fn fixture() -> &'static LiveFixture {
-    FIXTURE.get_or_init(init_fixture).await
+/// Sync getter — the fixture is built on a dedicated runtime owned by
+/// the fixture itself (see [`init_fixture`]). Per-call RPC
+/// connections reuse only the `socket` path; the unix socket is
+/// kernel-level so it works regardless of which tokio runtime
+/// accepts the connection. This sidesteps the
+/// `tokio::spawn`-on-doomed-runtime bug that caused
+/// `send.text` (and any handler that relies on a live server
+/// task) to fail with `tokio 1.x shutdown` after the first test
+/// in a multi-test invocation tore down its runtime.
+fn fixture() -> &'static LiveFixture {
+    FIXTURE.get_or_init(init_fixture)
 }
 
-async fn init_fixture() -> LiveFixture {
+/// Build the live fixture on a dedicated multi-thread tokio runtime
+/// that the fixture retains for the lifetime of the test process.
+/// Critically, the daemon task (`daemon.run()`) is spawned on this
+/// runtime, NOT on whichever test's runtime happens to invoke
+/// `fixture()` first. Without this, the first `#[tokio::test]`
+/// runtime dropping at test end kills the daemon task, and any
+/// subsequent test's RPC call sees `tokio 1.x shutdown` errors
+/// because the server-side handler task is gone.
+fn init_fixture() -> LiveFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = make_test_config(&tmp);
     std::fs::create_dir_all(cfg.data_dir.clone()).expect("mkdir data_dir");
     std::fs::create_dir_all(cfg.log_dir.clone()).expect("mkdir log_dir");
 
-    let adapter = connect_adapter().await;
-    let adapter_for_start = adapter.clone();
+    // Build + populate the dedicated runtime on a fresh `std::thread`
+    // that has NO tokio context. Calling
+    // `tokio::runtime::Builder::build().block_on(...)` from inside
+    // a `#[tokio::test]` runtime panics with "Cannot start a runtime
+    // from within a runtime", so the construction must happen
+    // off-runtime. The std::thread is the boundary that gives us
+    // that — the runtime's worker threads (spawned by the Builder
+    // below) are entirely separate from the test's runtime.
+    let cfg_for_init = cfg.clone();
+    let (daemon_runtime, parts) = std::thread::Builder::new()
+        .name("live-daemon-init".into())
+        .spawn(move || {
+            let daemon_runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("live-daemon")
+                .build()
+                .expect("build dedicated daemon runtime");
+            let adapter_cfg = live_adapter_config();
+            if let Err(e) = adapter_cfg.validate() {
+                panic!("invalid live WhatsAppConfig: {e}");
+            }
+            let parts = daemon_runtime.block_on(async move {
+                let adapter = Arc::new(WhatsAppWebAdapter::new(adapter_cfg));
+                let adapter_for_start = adapter.clone();
+                let daemon = Daemon::new(cfg_for_init.clone());
+                // Phase 6.12.5: bind BEFORE start_bot so the
+                // connection-watcher subscribes before any boot-time
+                // lifecycle events fire. The bind's internal
+                // `tokio::spawn(start())` lands on the dedicated
+                // runtime, not a transient `#[tokio::test]` one.
+                daemon
+                    .handle()
+                    .bind_adapter_and_start(adapter.clone(), move || async move {
+                        adapter_for_start
+                            .start_bot()
+                            .await
+                            .expect("WhatsAppWebAdapter::start_bot failed; is the session mounted?");
+                    });
 
-    let daemon = Daemon::new(cfg.clone());
+                // Wait up to 60s for self_handle() to resolve — this
+                // is the signal that the WA client finished its
+                // handshake and the bot is now Connected. On healthy
+                // sessions this resolves inside a few seconds; the
+                // budget is generous to absorb WhatsApp server
+                // latency.
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while std::time::Instant::now() < deadline {
+                    if adapter.self_handle().is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                assert!(
+                    adapter.self_handle().is_some(),
+                    "adapter self_handle() never resolved within 60s; connected never propagated"
+                );
 
-    // Phase 6.12.5: bind BEFORE start_bot so the connection-watcher
-    // subscribes before any boot-time lifecycle events fire. The
-    // chokepoint spawns `start` on the daemon's tokio runtime after
-    // `bind_adapter` has wired up the broadcast Receiver.
-    daemon
-        .handle()
-        .bind_adapter_and_start(adapter.clone(), move || async move {
-            adapter_for_start
-                .start_bot()
-                .await
-                .expect("WhatsAppWebAdapter::start_bot failed; is the session mounted?");
-        });
+                let cancel = daemon.cancel_token();
+                let daemon_task = tokio::spawn(daemon.run());
 
-    // Wait up to 60s for self_handle() to resolve — this is the
-    // signal that the WA client finished its handshake and the bot
-    // is now Connected. On healthy sessions this resolves inside a
-    // few seconds; the budget is generous to absorb WhatsApp server
-    // latency.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    while std::time::Instant::now() < deadline {
-        if adapter.self_handle().is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    assert!(
-        adapter.self_handle().is_some(),
-        "adapter self_handle() never resolved within 60s; connected never propagated"
-    );
+                let sock = cfg_for_init.socket_path();
+                for _ in 0..50 {
+                    if sock.exists() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                assert!(sock.exists(), "socket {sock:?} was never created");
 
-    let cancel = daemon.cancel_token();
-    let daemon_task = Arc::new(tokio::spawn(daemon.run()));
+                (adapter, sock, cancel, daemon_task)
+            });
+            (daemon_runtime, parts)
+        })
+        .expect("spawn live-daemon-init thread")
+        .join()
+        .expect("live-daemon-init thread panicked");
 
-    let sock = cfg.socket_path();
-    for _ in 0..50 {
-        if sock.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(sock.exists(), "socket {sock:?} was never created");
-
-    // Sanity: boot succeeded → daemon is reachable. health.get is in
-    // the no-delay skip-list, so no inter-call delay here.
-    let rpc_slot = Mutex::new(Some(RpcStream::new(sock.clone()).await));
-    {
-        let mut stream = rpc_slot.lock().take().expect("rpc present");
-        let _ = stream.call("health.get", json!({})).await;
-        *rpc_slot.lock() = Some(stream);
-    }
+    let (adapter, sock, cancel, daemon_task) = parts;
 
     LiveFixture {
         adapter,
         socket: sock,
         cancel,
-        daemon_task,
-        rpc: rpc_slot,
+        daemon_runtime: Arc::new(daemon_runtime),
+        daemon_task: Arc::new(daemon_task),
         created_groups: Mutex::new(Vec::new()),
         created_tokens: Mutex::new(Vec::new()),
         tmp,
     }
 }
 
-/// Helper used by chain bodies (T2-T7): take the RpcStream out of the
-/// fixture's Mutex, run the async call without holding the lock, then
-/// put it back. Bypasses `clippy::await_holding_lock` cleanly.
+/// Open a fresh unix-socket connection per call and run a JSON-RPC
+/// request. Used by chain bodies (T2-T7). Opening per call sidesteps
+/// the cross-runtime RpcStream re-use problem: the stream's
+/// `tokio::net::UnixStream` registers its `AsyncFd` with whichever
+/// runtime creates it, and reusing a stream across runtimes (one per
+/// `#[tokio::test]`) panics inside tokio. Per-call open keeps the
+/// cost minimal — connect is a single `connect(2)` syscall — and
+/// matches how a real CLI client behaves.
 ///
 /// Logs per-call duration at INFO so live runs surface which RPC
-/// dominates wall time. Slow calls (groups.list on accounts with
-/// many groups, etc.) stand out clearly in `RUST_LOG=info` output.
-async fn rpc_call(
-    rpc_slot: &Mutex<Option<RpcStream>>,
-    method: &str,
-    params: Value,
-) -> Result<Value, String> {
-    let mut rpc = rpc_slot.lock().take().expect("rpc stream present");
+/// dominates wall time.
+async fn rpc_call(socket: &Path, method: &str, params: Value) -> Result<Value, String> {
     let started = std::time::Instant::now();
-    let res = rpc.call(method, params).await;
+    let mut stream = RpcStream::new(socket.to_path_buf()).await;
+    let res = stream.call(method, params).await;
     let dur = started.elapsed();
     tracing::info!("rpc {method:32} dur={:?}", dur);
-    *rpc_slot.lock() = Some(rpc);
     res
 }
 
@@ -370,13 +411,13 @@ async fn teardown_final() {
     // not asserted — teardown must not panic on partial failure.
     let groups = fix.created_groups.lock().clone();
     for jid in groups {
-        let _ = rpc_call(&fix.rpc, "groups.leave", json!({ "jid": jid })).await;
+        let _ = rpc_call(&fix.socket, "groups.leave", json!({ "jid": jid })).await;
     }
 
     // Best-effort: revoke every token we issued.
     let tokens = fix.created_tokens.lock().clone();
     for id in tokens {
-        let _ = rpc_call(&fix.rpc, "security.tokens.revoke", json!({ "id": id })).await;
+        let _ = rpc_call(&fix.socket, "security.tokens.revoke", json!({ "id": id })).await;
     }
 
     fix.cancel.cancel();
@@ -519,21 +560,21 @@ async fn zzz_teardown_runs_last() {
 
 #[tokio::test]
 async fn live_chain_a_lifecycle() {
-    let fix = fixture().await;
-    let v = rpc_call(&fix.rpc, "version.get", json!({})).await.unwrap();
+    let fix = fixture();
+    let v = rpc_call(&fix.socket, "version.get", json!({})).await.unwrap();
     assert!(v["daemon_binary_version"].is_string(), "version: {v}");
     assert_eq!(v["daemon_api_version"], "1.0.0+phase5", "version: {v}");
     inter_call_delay_for("health.get").await;
-    let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+    let h = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
     assert_eq!(h["ok"], true, "health: {h}");
     inter_call_delay_for("status.get").await;
-    let s = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+    let s = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
     assert!(s["phase"].is_string(), "status: {s}");
     inter_call_delay_for("capabilities").await;
-    let c = rpc_call(&fix.rpc, "capabilities", json!({})).await.unwrap();
+    let c = rpc_call(&fix.socket, "capabilities", json!({})).await.unwrap();
     assert!(c.is_object(), "capabilities: {c}");
     inter_call_delay_for("daemon.methods.list").await;
-    let m = rpc_call(&fix.rpc, "daemon.methods.list", json!({}))
+    let m = rpc_call(&fix.socket, "daemon.methods.list", json!({}))
         .await
         .unwrap();
     let arr = m["methods"]
@@ -548,8 +589,8 @@ async fn live_chain_a_lifecycle() {
 
 #[tokio::test]
 async fn live_chain_h_daemon_control() {
-    let fix = fixture().await;
-    let _r = rpc_call(&fix.rpc, "reconnect.now", json!({}))
+    let fix = fixture();
+    let _r = rpc_call(&fix.socket, "reconnect.now", json!({}))
         .await
         .unwrap();
     // Reconnect is async; poll health.get with a 15s budget so a slow
@@ -560,7 +601,7 @@ async fn live_chain_h_daemon_control() {
         if std::time::Instant::now() >= deadline {
             panic!("health.get never returned ok=true within 15s after reconnect: {last}");
         }
-        last = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+        last = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
         if last["ok"] == true {
             break;
         }
@@ -582,43 +623,40 @@ fn test_member_phone() -> String {
 }
 
 /// Read `OCTO_WHATSAPP_TEST_MEMBER_2/3/4` (additional phones for
-/// add/remove/promote/demote/ban/approve_join tests). Each must be a
-/// distinct phone reachable from the operator's WA account — WA rejects
-/// duplicate adds and duplicate promotes.
-fn test_member_phone_n(n: u8) -> String {
+/// add/remove/promote/demote/ban/approve_join tests). Returns
+/// `None` when the env var is unset — `live_chain_b2_groups_admin`
+/// uses this signal to skip cleanly when the operator only has one
+/// reachable phone, while `live_chain_b1_groups_basic` runs against
+/// the lone `OCTO_WHATSAPP_TEST_MEMBER` and still populates
+/// `created_groups` so chains C/D/E have a fixture to operate on.
+fn test_member_phone_n(n: u8) -> Option<String> {
     let var = format!("OCTO_WHATSAPP_TEST_MEMBER_{n}");
-    std::env::var(&var).unwrap_or_else(|_| {
-        panic!(
-            "{var} env var required for live_chain_b_groups; \
-             set it to an E.164 phone (e.g. +15551234567) reachable on the operator's WA account"
-        )
-    })
+    std::env::var(&var).ok()
 }
 
-// ── Chain B — groups lifecycle (all 18 `groups.*` RPCs) ──────────
+// ── Chain B1 — groups basic lifecycle (1 member required) ──────
 //
-// Phase 6.12 walks the full `CoordinatorAdmin` member-management surface
-// against a real WhatsApp Web session. Prerequisite: a real test
-// member handle reachable from the operator's WA account, exported as
-// `OCTO_WHATSAPP_TEST_MEMBER` (E.164, e.g. `+15551234567`). The chain
-// derives 3 additional handles for members that don't need to be
-// in the operator's contacts (`groups.add_member`/`approve_join`/...).
+// Phase 6.12: subset of `CoordinatorAdmin` that needs only the base
+// test member (`OCTO_WHATSAPP_TEST_MEMBER`). Creates a group, runs
+// list/info/set_description/rename/set_locked/leave, and registers
+// the group in `created_groups` so chains C/D/E can pick it up.
+//
+// Operators with only one reachable phone (the common case) run B1
+// alone. Operators with 3 extra phones also run B2 (admin ops:
+// add/remove/promote/demote/ban/approve_join).
 //
 // Skipped (irreversible on WA server-side):
 // - `groups.destroy`            — deletes the group permanently
 // - `groups.transfer_ownership` — reassigns ownership permanently
 #[tokio::test]
-async fn live_chain_b_groups() {
+async fn live_chain_b1_groups_basic() {
     init_tracing_once();
     let member = test_member_phone();
-    let member_2 = test_member_phone_n(2);
-    let member_3 = test_member_phone_n(3);
-    let member_4 = test_member_phone_n(4);
-    let fix = fixture().await;
+    let fix = fixture();
 
     // 1) groups.create — group lifecycle is core, panic on failure.
     let created = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.create",
         json!({
             "subject": "phase612",
@@ -648,7 +686,7 @@ async fn live_chain_b_groups() {
     fix.created_groups.lock().push(group_a.clone());
 
     // 4) groups.list — assert result contains the jid.
-    let list = rpc_call(&fix.rpc, "groups.list", json!({}))
+    let list = rpc_call(&fix.socket, "groups.list", json!({}))
         .await
         .unwrap_or_else(|e| panic!("groups.list failed: {e}"));
     assert!(list["groups"].is_array(), "groups.list not array: {list}");
@@ -657,7 +695,7 @@ async fn live_chain_b_groups() {
     inter_call_delay_for("groups.info").await;
 
     // 6) groups.info — assert members array contains the test member.
-    let info = rpc_call(&fix.rpc, "groups.info", json!({ "jid": group_a.clone() }))
+    let info = rpc_call(&fix.socket, "groups.info", json!({ "jid": group_a.clone() }))
         .await
         .unwrap_or_else(|e| panic!("groups.info failed: {e}"));
     assert!(
@@ -666,79 +704,11 @@ async fn live_chain_b_groups() {
     );
 
     // 7) inter-call throttle.
-    inter_call_delay_for("groups.add_member").await;
-
-    // 8) groups.add_member (singular) — best-effort (member's privacy
-    //    settings may reject the invite).
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.add_member",
-        json!({
-            "jid": group_a.clone(),
-            "member": member_2.clone(),
-            "is_admin": false,
-        }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.add_member non-fatal: {e}");
-        Value::Null
-    });
-
-    // 9) inter-call throttle.
-    inter_call_delay_for("groups.add_members").await;
-
-    // 10) groups.add_members (array) — best-effort.
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.add_members",
-        json!({
-            "jid": group_a.clone(),
-            "members": [{ "handle": member_3.clone() }],
-        }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.add_members non-fatal: {e}");
-        Value::Null
-    });
-
-    // 11) inter-call throttle.
-    inter_call_delay_for("groups.promote").await;
-
-    // 12) groups.promote — best-effort (requires add to have succeeded).
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.promote",
-        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.promote non-fatal: {e}");
-        Value::Null
-    });
-
-    // 13) inter-call throttle.
-    inter_call_delay_for("groups.demote").await;
-
-    // 14) groups.demote — best-effort (requires member to be admin).
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.demote",
-        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.demote non-fatal: {e}");
-        Value::Null
-    });
-
-    // 15) inter-call throttle.
     inter_call_delay_for("groups.set_description").await;
 
-    // 16) groups.set_description — best-effort.
+    // 8) groups.set_description — best-effort.
     let _ = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.set_description",
         json!({ "jid": group_a.clone(), "description": "e2e marker" }),
     )
@@ -748,12 +718,12 @@ async fn live_chain_b_groups() {
         Value::Null
     });
 
-    // 17) inter-call throttle.
+    // 9) inter-call throttle.
     inter_call_delay_for("groups.rename").await;
 
-    // 18) groups.rename — best-effort.
+    // 10) groups.rename — best-effort.
     let _ = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.rename",
         json!({ "jid": group_a.clone(), "subject": "phase612-renamed" }),
     )
@@ -763,12 +733,12 @@ async fn live_chain_b_groups() {
         Value::Null
     });
 
-    // 19) inter-call throttle.
+    // 11) inter-call throttle.
     inter_call_delay_for("groups.set_locked").await;
 
-    // 20) groups.set_locked true — best-effort.
+    // 12) groups.set_locked true — best-effort.
     let _ = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.set_locked",
         json!({ "jid": group_a.clone(), "locked": true }),
     )
@@ -778,13 +748,13 @@ async fn live_chain_b_groups() {
         Value::Null
     });
 
-    // 21) inter-call throttle.
+    // 13) inter-call throttle.
     inter_call_delay_for("groups.set_locked").await;
 
-    // 22) groups.set_locked false — toggle back so subsequent
-    //     add_member calls in teardown / follow-up runs are not blocked.
+    // 14) groups.set_locked false — toggle back so subsequent
+    //     add_member calls (in B2 or follow-up runs) are not blocked.
     let _ = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.set_locked",
         json!({ "jid": group_a.clone(), "locked": false }),
     )
@@ -794,47 +764,12 @@ async fn live_chain_b_groups() {
         Value::Null
     });
 
-    // 23) inter-call throttle.
-    inter_call_delay_for("groups.ban").await;
-
-    // 24) groups.ban — best-effort (requires member to be in group).
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.ban",
-        json!({
-            "jid": group_a.clone(),
-            "member": member_3.clone(),
-            "duration_seconds": 3600,
-        }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.ban non-fatal: {e}");
-        Value::Null
-    });
-
-    // 25) inter-call throttle.
-    inter_call_delay_for("groups.approve_join").await;
-
-    // 26) groups.approve_join — expected to error (no pending join
-    //     request from member_4). Best-effort.
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.approve_join",
-        json!({ "jid": group_a.clone(), "member": member_4.clone() }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.approve_join non-fatal (expected): {e}");
-        Value::Null
-    });
-
-    // 27) inter-call throttle.
+    // 15) groups.resolve_invite with a dummy URL — must error path.
+    //     Lives in B1 (no member needed) so it's exercised even when
+    //     the operator has only one phone.
     inter_call_delay_for("groups.resolve_invite").await;
-
-    // 28) groups.resolve_invite with a dummy URL — must error path.
     let resolve = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "groups.resolve_invite",
         json!({ "code": "https://chat.whatsapp.com/DUMMY" }),
     )
@@ -844,41 +779,9 @@ async fn live_chain_b_groups() {
         Err(e) => tracing::info!("groups.resolve_invite correctly errored: {e}"),
     }
 
-    // 29) inter-call throttle.
-    inter_call_delay_for("groups.remove_member").await;
-
-    // 30) groups.remove_member (singular) — best-effort.
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.remove_member",
-        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.remove_member non-fatal: {e}");
-        Value::Null
-    });
-
-    // 31) inter-call throttle.
-    inter_call_delay_for("groups.remove_members").await;
-
-    // 32) groups.remove_members (array) — best-effort.
-    let _ = rpc_call(
-        &fix.rpc,
-        "groups.remove_members",
-        json!({ "jid": group_a.clone(), "members": [member.clone()] }),
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("live: groups.remove_members non-fatal: {e}");
-        Value::Null
-    });
-
-    // 33) inter-call throttle.
+    // 16) groups.leave — best-effort (group may already be left).
     inter_call_delay_for("groups.leave").await;
-
-    // 34) groups.leave — best-effort (group may already be left).
-    let _ = rpc_call(&fix.rpc, "groups.leave", json!({ "jid": group_a.clone() }))
+    let _ = rpc_call(&fix.socket, "groups.leave", json!({ "jid": group_a.clone() }))
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("live: groups.leave non-fatal: {e}");
@@ -886,11 +789,155 @@ async fn live_chain_b_groups() {
         });
 }
 
+// ── Chain B2 — groups admin ops (4 distinct members required) ────
+//
+// Phase 6.12 admin surface: add/remove/promote/demote/ban/approve_join
+// against a real WA group. Prerequisite: B1 (or equivalent) must have
+// run first to populate `created_groups`. Requires the 3 extra
+// test members — `OCTO_WHATSAPP_TEST_MEMBER_2/3/4`. If any are unset,
+// the chain logs and returns; the operator with only one reachable
+// phone still gets B1's coverage plus C/D/E.
+//
+// Best-effort throughout — member privacy settings may reject
+// individual ops (add_member/approve_join in particular). Irreversible
+// ops (groups.destroy, groups.transfer_ownership) are NOT exercised.
+#[tokio::test]
+async fn live_chain_b2_groups_admin() {
+    init_tracing_once();
+    let member_2 = match test_member_phone_n(2) {
+        Some(p) => p,
+        None => {
+            tracing::info!(
+                "live_chain_b2_groups_admin: skipping (OCTO_WHATSAPP_TEST_MEMBER_2/3/4 unset; \
+                 run B1 only or set the extra member phones)"
+            );
+            return;
+        }
+    };
+    let member_3 = match test_member_phone_n(3) {
+        Some(p) => p,
+        None => {
+            tracing::info!("live_chain_b2_groups_admin: skipping (TEST_MEMBER_3 unset)");
+            return;
+        }
+    };
+    let member_4 = match test_member_phone_n(4) {
+        Some(p) => p,
+        None => {
+            tracing::info!("live_chain_b2_groups_admin: skipping (TEST_MEMBER_4 unset)");
+            return;
+        }
+    };
+    let fix = fixture();
+    let group_a = {
+        let groups = fix.created_groups.lock();
+        groups.first().cloned().unwrap_or_else(|| {
+            panic!("Chain B2 requires Chain B1 to run first (no group_a registered)")
+        })
+    };
+
+    // Local best-effort helper (Chain B1's is fn-scoped, redefined here).
+    async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
+        match rpc_call(&fix.socket, method, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("live: {method} non-fatal: {e}");
+                Value::Null
+            }
+        }
+    }
+
+    // 1) groups.add_member (singular) — best-effort (member privacy
+    //    settings may reject the invite).
+    inter_call_delay_for("groups.add_member").await;
+    best_effort(
+        fix,
+        "groups.add_member",
+        json!({
+            "jid": group_a.clone(),
+            "member": member_2.clone(),
+            "is_admin": false,
+        }),
+    )
+    .await;
+
+    // 2) groups.add_members (array) — best-effort.
+    inter_call_delay_for("groups.add_members").await;
+    best_effort(
+        fix,
+        "groups.add_members",
+        json!({
+            "jid": group_a.clone(),
+            "members": [{ "handle": member_3.clone() }],
+        }),
+    )
+    .await;
+
+    // 3) groups.promote — best-effort (requires add to have succeeded).
+    inter_call_delay_for("groups.promote").await;
+    best_effort(
+        fix,
+        "groups.promote",
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
+    )
+    .await;
+
+    // 4) groups.demote — best-effort (requires member to be admin).
+    inter_call_delay_for("groups.demote").await;
+    best_effort(
+        fix,
+        "groups.demote",
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
+    )
+    .await;
+
+    // 5) groups.ban — best-effort (requires member to be in group).
+    inter_call_delay_for("groups.ban").await;
+    best_effort(
+        fix,
+        "groups.ban",
+        json!({
+            "jid": group_a.clone(),
+            "member": member_3.clone(),
+            "duration_seconds": 3600,
+        }),
+    )
+    .await;
+
+    // 6) groups.approve_join — expected to error (no pending join
+    //    request from member_4). Best-effort.
+    inter_call_delay_for("groups.approve_join").await;
+    best_effort(
+        fix,
+        "groups.approve_join",
+        json!({ "jid": group_a.clone(), "member": member_4.clone() }),
+    )
+    .await;
+
+    // 7) groups.remove_member (singular) — best-effort.
+    inter_call_delay_for("groups.remove_member").await;
+    best_effort(
+        fix,
+        "groups.remove_member",
+        json!({ "jid": group_a.clone(), "member": member_2.clone() }),
+    )
+    .await;
+
+    // 8) groups.remove_members (array) — best-effort.
+    inter_call_delay_for("groups.remove_members").await;
+    best_effort(
+        fix,
+        "groups.remove_members",
+        json!({ "jid": group_a.clone(), "members": [member_4.clone()] }),
+    )
+    .await;
+}
+
 // ── Chain C — messages + chats (depends on Chain B's group_a) ────
 #[tokio::test]
 async fn live_chain_c_messages_chats() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     let group_a = {
         let groups = fix.created_groups.lock();
@@ -901,7 +948,7 @@ async fn live_chain_c_messages_chats() {
 
     // Best-effort helper: log warnings on Err, never panic.
     async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
-        match rpc_call(&fix.rpc, method, params).await {
+        match rpc_call(&fix.socket, method, params).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("live: {method} non-fatal: {e}");
@@ -1029,7 +1076,7 @@ async fn best_effort_envelope(
     wire_path: PathBuf,
 ) -> Value {
     match rpc_call(
-        &fix.rpc,
+        &fix.socket,
         method,
         json!({
             "peer": peer,
@@ -1057,7 +1104,7 @@ async fn best_effort_envelope(
 #[tokio::test]
 async fn live_chain_d_sends() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     let group_a = {
         let groups = fix.created_groups.lock();
@@ -1068,7 +1115,7 @@ async fn live_chain_d_sends() {
 
     // Best-effort helper.
     async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
-        match rpc_call(&fix.rpc, method, params).await {
+        match rpc_call(&fix.socket, method, params).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("live: {method} non-fatal: {e}");
@@ -1082,7 +1129,7 @@ async fn live_chain_d_sends() {
     // `status: queued_for_phase2` without a `message_id`. We accept
     // the result and defensively extract `message_id` (may be absent).
     let text_res = rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "send.text",
         json!({ "peer": group_a.clone(), "text": "live-test-text" }),
     )
@@ -1237,7 +1284,7 @@ async fn live_chain_d_sends() {
 #[tokio::test]
 async fn live_chain_e_envelopes() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     let group_a = {
         let groups = fix.created_groups.lock();
@@ -1249,7 +1296,7 @@ async fn live_chain_e_envelopes() {
     // 1) domain.compute_hash — computes a deterministic id for the
     // given group JID. Warn-skip on Err.
     let domain_hash = match rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "domain.compute-hash",
         json!({ "jid": group_a.clone() }),
     )
@@ -1274,7 +1321,7 @@ async fn live_chain_e_envelopes() {
     // NOT a recognized param (handler only takes `file`), so omit it.
     let wire_path = write_dummy_file(fix, "live_wire.bin");
     let envelope = match rpc_call(
-        &fix.rpc,
+        &fix.socket,
         "envelope.encode",
         json!({ "file": wire_path.to_string_lossy().into_owned() }),
     )
@@ -1338,7 +1385,7 @@ async fn live_chain_e_envelopes() {
         tracing::warn!("live: skip envelope.decode (no envelope)");
     } else {
         let _ = match rpc_call(
-            &fix.rpc,
+            &fix.socket,
             "envelope.decode",
             json!({ "encoded": envelope.clone() }),
         )
@@ -1369,12 +1416,12 @@ async fn live_chain_e_envelopes() {
 #[tokio::test]
 async fn live_chain_f_admin() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     // Local best-effort helper (Chain C's `best_effort` is fn-scoped
     // inside its test fn, so we redefine here).
     async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
-        match rpc_call(&fix.rpc, method, params).await {
+        match rpc_call(&fix.socket, method, params).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("live: {method} non-fatal: {e}");
@@ -1453,10 +1500,10 @@ async fn live_chain_f_admin() {
 #[tokio::test]
 async fn live_chain_g_tokens() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
-        match rpc_call(&fix.rpc, method, params).await {
+        match rpc_call(&fix.socket, method, params).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("live: {method} non-fatal: {e}");
@@ -1571,7 +1618,7 @@ async fn live_chain_i_bad_shape_session() {
     // `connected=false` + `bot_state=Connected` — both healthy, just
     // mid-classify. Trusting `bot_state` keeps the skip-on-healthy
     // path correctly aligned with the intent of the test.
-    let s = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+    let s = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
     let bot_state = s["bot_state"].as_str().unwrap_or("?").to_string();
     let connected = s["connected"].as_bool().unwrap_or(true);
     let phase = s["phase"].as_str().unwrap_or("?").to_string();
@@ -1627,7 +1674,7 @@ async fn live_chain_i_bad_shape_session() {
         // real lifecycle event post-handshake. Either way the
         // invariant (non-Connected variant) must hold.
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let s2 = rpc_call(&fix.rpc, "status.get", json!({})).await.unwrap();
+        let s2 = rpc_call(&fix.socket, "status.get", json!({})).await.unwrap();
         let bot_state2 = s2["bot_state"].as_str().unwrap_or("?").to_string();
         let phase2 = s2["phase"].as_str().unwrap_or("?").to_string();
         let connected2 = s2["connected"].as_bool().unwrap_or(true);
@@ -1658,7 +1705,7 @@ async fn live_chain_i_bad_shape_session() {
         );
 
         // Liveness probe — daemon process is up, even when bot is dead.
-        let h = rpc_call(&fix.rpc, "health.get", json!({})).await.unwrap();
+        let h = rpc_call(&fix.socket, "health.get", json!({})).await.unwrap();
         assert_eq!(
             h["ok"], true,
             "daemon must report health.ok=true even when bot is dead"
@@ -1666,7 +1713,7 @@ async fn live_chain_i_bad_shape_session() {
 
         // Stateful RPC must surface NotConnected, not panic or hang.
         let r = rpc_call(
-            &fix.rpc,
+            &fix.socket,
             "send.text",
             json!({ "to": "selftest-no-such-jid@s.whatsapp.net", "text": "selftest" }),
         )
@@ -1700,10 +1747,10 @@ async fn live_chain_i_bad_shape_session() {
 #[tokio::test]
 async fn live_chain_j_accounts() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     async fn best_effort(fix: &LiveFixture, method: &str, params: Value) -> Value {
-        match rpc_call(&fix.rpc, method, params).await {
+        match rpc_call(&fix.socket, method, params).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("live: {method} non-fatal: {e}");
@@ -1756,7 +1803,7 @@ async fn live_chain_j_accounts() {
 #[tokio::test]
 async fn live_cli_dispatch() {
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     // Pre-create an envelope input file (3 bytes "abc") so the
     // `envelope encode --file <path>` call has something to encode.
@@ -1876,7 +1923,7 @@ async fn live_mcp_integration() {
     use octo_whatsapp::mcp_server::EXPECTED_TOOL_COUNT;
 
     init_tracing_once();
-    let fix = fixture().await;
+    let fix = fixture();
 
     // 1) Spawn the MCP server, attached to the live fixture's socket.
     let mut child = mcp_spawn(fix).await;

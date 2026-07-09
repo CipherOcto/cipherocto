@@ -8,7 +8,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum JidError {
-    #[error("expected E.164, <digits>@s.whatsapp.net, or <digits>@lid; got {0:?}")]
+    #[error("expected E.164, <digits>@s.whatsapp.net, <digits>@lid, or <digits>@g.us; got {0:?}")]
     InvalidPeerFormat(String),
     #[error("expected <digits>@g.us; got {0:?}")]
     InvalidGroupFormat(String),
@@ -19,6 +19,20 @@ pub enum JidError {
 pub fn peer_to_jid(input: &str) -> Result<String, JidError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
+        return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
+    }
+    // Group JIDs (`<digits>@g.us`) are valid `peer` inputs for
+    // send.text / envelope.send so that an agent can post to a group
+    // the same way it posts to a 1:1 chat. The shape rules below
+    // match `group_to_jid`: digits-only local part, >= 10 digits.
+    if trimmed.ends_with("@g.us") {
+        let digits = trimmed.trim_end_matches("@g.us");
+        if digits.chars().all(|c| c.is_ascii_digit())
+            && !digits.is_empty()
+            && digits.len() >= 10
+        {
+            return Ok(trimmed.to_string());
+        }
         return Err(JidError::InvalidPeerFormat(trimmed.to_string()));
     }
     if trimmed.ends_with("@lid") {

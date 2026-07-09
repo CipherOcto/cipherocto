@@ -40,9 +40,24 @@ fn peer_to_jid_rejects_empty() {
 }
 
 #[test]
-fn peer_to_jid_rejects_group_jid() {
+fn peer_to_jid_accepts_group_jid() {
+    let jid = peer_to_jid("120363123456789@g.us").unwrap();
+    assert_eq!(jid, "120363123456789@g.us");
+}
+
+#[test]
+fn peer_to_jid_rejects_short_group_jid() {
+    // Group local part must be >= 10 digits per `group_to_jid` rules.
     assert!(matches!(
         peer_to_jid("120363@g.us"),
+        Err(JidError::InvalidPeerFormat(_))
+    ));
+}
+
+#[test]
+fn peer_to_jid_rejects_non_digit_group_local() {
+    assert!(matches!(
+        peer_to_jid("not-a-number@g.us"),
         Err(JidError::InvalidPeerFormat(_))
     ));
 }

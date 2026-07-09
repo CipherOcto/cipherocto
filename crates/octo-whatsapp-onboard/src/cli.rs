@@ -34,13 +34,15 @@ pub enum Command {
     PairLink(PairLinkArgs),
     /// Verify existing session.
     Whoami(WhoamiArgs),
-    /// Drive the caBLE v2 tunnel against a phone whose
-    /// `FIDO:/<digits>` QR was scanned (Session 9). Reads the URI
-    /// from stdin or `--qr-file`, decodes it as a HandshakeV2,
-    /// connects to `wss://cable.ua5v.com`, and runs a CTAP2
-    /// GetAssertion over the encrypted tunnel using the WebAuthn
-    /// JSON from `--options-file` (or a built-in sample). Prints
-    /// the resulting PublicKeyCredential JSON on success.
+    /// Drive the caBLE v2 tunnel as the CLI (emulating WA Web
+    /// Browser — the FIDO QR publisher). Generates a fresh
+    /// HandshakeV2 + P-256 keypair, renders the FIDO QR to
+    /// stderr for the operator to scan with the phone's Google
+    /// Lens, then connects to `wss://cable.ua5v.com` and waits
+    /// for the phone's signed assertion. Uses the WebAuthn JSON
+    /// from `--options-file` (or a built-in mirror of the WA
+    /// Web bot-verification payload). Prints the resulting
+    /// PublicKeyCredential JSON on success.
     CompanionLink(CompanionLinkArgs),
     /// Multi-account session store operations.
     Session {
@@ -222,21 +224,22 @@ pub struct SessionRemoveArgs {
     pub yes: bool,
 }
 
-/// Session 9 — drive the caBLE v2 tunnel against a phone whose
-/// `FIDO:/<digits>` QR was scanned (e.g. via `zbarcam --raw -q |
-/// companion-link`). Decodes the URI, connects to
-/// `wss://cable.ua5v.com`, and runs a CTAP2 GetAssertion over the
-/// encrypted tunnel using the WebAuthn JSON shape from
-/// `--options-file` (or a built-in mirror of the WA Web bot-verification
-/// publicKey). On success prints the resulting PublicKeyCredential
-/// JSON. The operator must have the phone scanning the same QR
-/// during the run window.
+/// Session 10 — CLI emulates WA Web Browser for the FIDO / caBLE
+/// passkey step. Generates a fresh HandshakeV2 (P-256 static
+/// keypair + random 16-byte secret), renders the FIDO QR to
+/// stderr (Unicode block characters) for the operator to scan
+/// with the phone's Google Lens, then drives the full Noise-
+/// over-WebSocket handshake against `wss://cable.ua5v.com` and
+/// receives the signed assertion over the encrypted tunnel. On
+/// success prints the resulting PublicKeyCredential JSON.
+///
+/// Operator flow:
+///   1. Phone: WA → Settings → Linked Devices → Link a Device
+///   2. Run this command on the laptop.
+///   3. A QR appears on stderr. Scan it with Google Lens.
+///   4. The phone asserts via its passkey; we receive + print.
 #[derive(Args, Debug)]
 pub struct CompanionLinkArgs {
-    /// Path to a file containing the `FIDO:/<digits>` URI. If
-    /// omitted, read from stdin.
-    #[arg(long)]
-    pub qr_file: Option<PathBuf>,
     /// Path to a file containing the WebAuthn
     /// `PublicKeyCredentialRequestOptions` JSON wacore would have
     /// emitted via `Event::PairPasskeyRequest.request_options_json`.
@@ -245,9 +248,9 @@ pub struct CompanionLinkArgs {
     /// allowCredentials, uvm extension).
     #[arg(long)]
     pub options_file: Option<PathBuf>,
-    /// Timeout in seconds for the full connect + handshake + assertion
-    /// (default: 120 — generous for the operator to scan with the
-    /// phone).
+    /// Timeout in seconds for the full QR-display + handshake +
+    /// assertion round-trip (default: 120 — generous for the
+    /// operator to scan with the phone).
     #[arg(long, default_value_t = 120)]
     pub timeout: u64,
 }

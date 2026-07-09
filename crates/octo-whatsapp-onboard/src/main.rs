@@ -222,52 +222,20 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
     }
 }
 
-/// Session 9 — drive the caBLE v2 tunnel against a phone whose
-/// `FIDO:/<digits>` QR was scanned (operator flow: pipe the QR
-/// decoder's stdout into stdin, or pass `--qr-file <path>`).
-/// Decodes the URI, connects to `wss://cable.ua5v.com`, runs a
-/// CTAP2 GetAssertion over the encrypted tunnel using the
-/// WebAuthn JSON from `--options-file` (or a built-in mirror of
-/// the WA Web bot-verification payload), and prints the resulting
-/// PublicKeyCredential JSON.
+/// Session 10 — CLI emulates WA Web Browser for the FIDO / caBLE
+/// passkey step. Builds a `CablePasskeyAuthenticator` (responder
+/// side) which generates a fresh P-256 keypair + secret, renders
+/// the FIDO QR to stderr, and waits for the phone to scan + assert.
+/// On success prints the resulting PublicKeyCredential JSON.
 ///
-/// The CLI binary doesn't itself drive wacore's SHORTCAKE flow
-/// (that's wired in Session 10 via `CablePasskeyAuthenticator`
-/// on the adapter's `PasskeyAuthenticator` trait). This command
-/// is the operator-facing canary that proves the caBLE transport
-/// itself works against the operator's live phone.
+/// Operator flow:
+///   1. Phone: WA → Settings → Linked Devices → Link a Device
+///   2. Run this command on the laptop.
+///   3. A QR appears on stderr. Scan it with Google Lens.
+///   4. The phone asserts via its passkey; we receive + print.
 async fn run_companion_link(args: CompanionLinkArgs) -> std::result::Result<(), OnboardError> {
     // rustls 0.23+ requires an explicit crypto provider before TLS.
     let _ = rustls::crypto::ring::default_provider().install_default();
-
-    // Read the FIDO:/ URI from --qr-file or stdin.
-    let uri = match args.qr_file.as_ref() {
-        Some(path) => std::fs::read_to_string(path)
-            .map_err(|e| OnboardError::BadConfig(format!("read qr_file {:?}: {e}", path)))?,
-        None => {
-            let mut s = String::new();
-            std::io::stdin()
-                .read_to_string(&mut s)
-                .map_err(|e| OnboardError::BadConfig(format!("read stdin: {e}")))?;
-            s
-        }
-    };
-    let uri = uri.trim().to_string();
-    if !uri.starts_with("FIDO:/") {
-        return Err(OnboardError::BadConfig(format!(
-            "expected FIDO:/ URI, got {uri:?}"
-        )));
-    }
-
-    // Decode the HandshakeV2.
-    let handshake = octo_cable::HandshakeV2::from_fido_uri(&uri)
-        .map_err(|e| OnboardError::BadConfig(format!("decode HandshakeV2: {e:?}")))?;
-    tracing::info!(
-        peer_identity_bytes = handshake.peer_identity.len(),
-        secret_bytes = handshake.secret.len(),
-        request_type = ?handshake.request_type,
-        "decoded HandshakeV2"
-    );
 
     // Load the WebAuthn request_options_json (wacore would supply
     // this via Event::PairPasskeyRequest).
@@ -277,25 +245,68 @@ async fn run_companion_link(args: CompanionLinkArgs) -> std::result::Result<(), 
         None => BUILTIN_REQUEST_OPTIONS_JSON.to_string(),
     };
 
-    // Drive the caBLE pipeline under the operator's timeout.
+    // Build the QR renderer that prints to stderr using unicode
+    // block characters. Same pattern WA Web uses for its primary
+    // QR. Operator scans this QR with the phone's Google Lens.
+    let qr_display: octo_adapter_whatsapp::passkey::cable::QrDisplayFn = std::sync::Arc::new(
+        |fido_uri: &str| match qrcode::QrCode::new(fido_uri.as_bytes()) {
+            Ok(qr) => {
+                let rendered = qr
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .quiet_zone(true)
+                    .build();
+                eprintln!(
+                    "\nScan this FIDO QR with the phone's Google Lens \
+                         (WA Android → Settings → Linked Devices → Link a Device):\n\n{rendered}\n"
+                );
+            }
+            Err(e) => {
+                eprintln!("\nFailed to render QR ({e}). Raw FIDO:/<digits> URI:\n{fido_uri}\n");
+            }
+        },
+    );
+
+    // Construct the authenticator. This synchronously renders the
+    // QR to stderr so the operator can scan before we attempt the
+    // network connection.
+    let authenticator = octo_adapter_whatsapp::passkey::CablePasskeyAuthenticator::new(qr_display);
+    tracing::info!(
+        peer_identity_bytes = authenticator.handshake().peer_identity.len(),
+        secret_bytes = authenticator.handshake().secret.len(),
+        "generated fresh HandshakeV2 for FIDO QR"
+    );
+
+    // Build the upstream-style AssertionRequest that wraps the
+    // WebAuthn JSON wacore would have sent.
+    use octo_adapter_whatsapp::passkey::PasskeyAuthenticator;
+    let request = octo_adapter_whatsapp::passkey::AssertionRequest {
+        challenge: vec![],
+        rp_id: Some("whatsapp.com".to_string()),
+        allow_credentials: vec![],
+        user_verification: octo_adapter_whatsapp::passkey::UserVerification::Required,
+        timeout_ms: Some(60_000),
+        raw_options_json: options_json,
+    };
+
+    // Bound the full QR-display + handshake + assertion under the
+    // operator's timeout.
     let limit = std::time::Duration::from_secs(args.timeout);
-    let credential = tokio::time::timeout(
-        limit,
-        octo_cable::assert_via_cable(&handshake, &options_json),
-    )
-    .await
-    .map_err(|_| {
-        OnboardError::Cancelled(format!(
-            "companion-link timeout after {}s — phone never scanned the QR?",
-            args.timeout
-        ))
-    })?
-    .map_err(|e| OnboardError::Generic(anyhow::anyhow!("assert_via_cable: {e:?}")))?;
+    let assertion = tokio::time::timeout(limit, authenticator.get_assertion(&request))
+        .await
+        .map_err(|_| {
+            OnboardError::Cancelled(format!(
+                "companion-link timeout after {}s — phone never scanned the QR?",
+                args.timeout
+            ))
+        })?
+        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("cable authenticator: {e}")))?;
 
     println!(
         "{}",
-        serde_json::to_string_pretty(&credential)
-            .map_err(|e| OnboardError::Generic(anyhow::anyhow!("re-serialize credential: {e}")))?
+        serde_json::to_string_pretty(&serde_json::Value::String(
+            String::from_utf8_lossy(&assertion.assertion_json).into_owned()
+        ))
+        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("re-serialize credential: {e}")))?
     );
     Ok(())
 }
@@ -311,8 +322,6 @@ const BUILTIN_REQUEST_OPTIONS_JSON: &str = r#"{
     "userVerification": "required",
     "extensions": {"uvm": true}
 }"#;
-
-use std::io::Read;
 
 async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), OnboardError> {
     // R4-L1: no clone needed; args is by-value and args.base_dir

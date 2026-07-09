@@ -29,3 +29,7 @@ thiserror = "1"
 # `companion-link` so TLS to `cable.ua5v.com` works without a
 # compile-time feature flag.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# qrcode for FIDO QR rendering in the companion-link subcommand
+# (Session 10). Same crate used by `octo-adapter-whatsapp` for the
+# primary companion bootstrap QR.
+qrcode = "0.14"

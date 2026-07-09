@@ -76,10 +76,7 @@ impl EventsBuffer {
     /// Existing in-memory state is REPLACED (the buffer is cleared
     /// first). This is intended for a fresh daemon-startup hydrate,
     /// not a merge.
-    pub fn hydrate_from_entries(
-        &self,
-        entries: impl IntoIterator<Item = (u64, InboundEvent)>,
-    ) {
+    pub fn hydrate_from_entries(&self, entries: impl IntoIterator<Item = (u64, InboundEvent)>) {
         let mut g = self.inner.lock();
         g.clear();
         let mut max_id = 0_u64;
@@ -329,11 +326,7 @@ mod tests {
         }
         assert_eq!(b.next_id.load(Ordering::Relaxed), 4);
         // Reload with persisted ids 10, 11, 12.
-        let entries = vec![
-            (10, dummy()),
-            (11, dummy()),
-            (12, dummy()),
-        ];
+        let entries = vec![(10, dummy()), (11, dummy()), (12, dummy())];
         b.hydrate_from_entries(entries);
         assert_eq!(b.len(), 3);
         assert_eq!(b.smallest_id(), 10);

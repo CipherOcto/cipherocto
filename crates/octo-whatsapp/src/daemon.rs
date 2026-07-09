@@ -773,6 +773,36 @@ impl Daemon {
             config.media_buffer.root.clone(),
         );
         let events_buffer = EventsBuffer::new(config.events.max_rows);
+        // Phase 3 Part D: spawn the disk persister. The actor
+        // owns a tokio task that mirrors in-memory events to
+        // `$data_dir/events/events.ndjson` (override via
+        // `events.persistence_path`). Cold-start reload is
+        // synchronous inside `spawn` so the buffer is hydrated
+        // before this function returns.
+        if config.events.persistence_enabled {
+            let path = config.events.resolved_persistence_path(&config.data_dir);
+            match crate::events_persister::EventsPersisterHandle::spawn(
+                events_buffer.clone(),
+                Some(path),
+                std::time::Duration::from_millis(config.events.flush_interval_ms),
+                cancel.clone(),
+            ) {
+                Ok(handle) => {
+                    let persister_token = cancel.clone();
+                    EVENTS_PERSISTER.with(|cell| {
+                        *cell.borrow_mut() = Some((persister_token, handle));
+                    });
+                    tracing::info!(
+                        path = %config.events.resolved_persistence_path(&config.data_dir).display(),
+                        "events_persister: spawned"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e,
+                        "events_persister: spawn failed; running with in-memory only");
+                }
+            }
+        }
         // Phase 5 Part B: Prometheus registry materialized first so
         // we can attach it to AuditLog / RuleStore / TriggerStore.
         let label_secret = config
@@ -996,6 +1026,9 @@ impl Daemon {
         }
         let _ = sighup_handle.await;
         crate::daemon::drain_persister_handles().await;
+        // Phase 3 Part D: drain the events persister so the last
+        // batch of in-flight events gets a final fsync.
+        crate::daemon::drain_events_persister().await;
         let _ = server_task.await;
         info!("daemon: exited");
         Ok(())
@@ -1121,6 +1154,15 @@ thread_local! {
     /// `Daemon::new` (typically the runtime entry point).
     static PERSISTER_HANDLES: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Phase 3 Part D: optional events disk persister. `Some`
+    /// when `events.persistence_enabled` is true (the default).
+    /// Drains on shutdown via `drain_events_persister`.
+    static EVENTS_PERSISTER: std::cell::RefCell<
+        Option<(
+            tokio_util::sync::CancellationToken,
+            crate::events_persister::EventsPersisterHandle,
+        )>,
+    > = const { std::cell::RefCell::new(None) };
 }
 
 /// Drain the per-thread `PERSISTER_HANDLES`. Cancels each handle's
@@ -1133,6 +1175,28 @@ pub(crate) async fn drain_persister_handles() {
             h.abort();
         }
     });
+}
+
+/// Phase 3 Part D: drain the events persister if one was spawned.
+/// Cancels its cancellation token (triggers the actor's drain + final
+/// fsync) and waits up to 5s for the join handle. Logs but does not
+/// propagate a timeout.
+pub(crate) async fn drain_events_persister() {
+    let pair = EVENTS_PERSISTER.with(|cell| cell.borrow_mut().take());
+    let Some((token, handle)) = pair else {
+        return;
+    };
+    token.cancel();
+    // Allow up to 5s for the actor to drain + flush. The actor's
+    // cancel arm does a final sync_all(); if it doesn't return in
+    // 5s the worst case is we lose the last few seconds of events
+    // (we already lost at most flush_interval_ms anyway).
+    if tokio::time::timeout(std::time::Duration::from_secs(5), handle.join())
+        .await
+        .is_err()
+    {
+        tracing::warn!("events_persister: drain timed out after 5s");
+    }
 }
 
 /// Read `rules.toml` from disk (if present) and return the parsed

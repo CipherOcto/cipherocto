@@ -58,7 +58,10 @@ async fn append_then_reload_round_trips() {
     for i in 0..3 {
         handle.push(dummy_event(&format!("m{i}"))).expect("push");
     }
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
     shutdown(handle, token).await;
 
     // Sanity: file should now have 3 lines.
@@ -106,7 +109,10 @@ async fn append_writes_one_ndjson_line_per_event() {
     for i in 0..5 {
         handle.push(dummy_event(&format!("m{i}"))).expect("push");
     }
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
 
     let bytes = std::fs::read(&path).expect("read");
     let content = std::str::from_utf8(&bytes).expect("utf8");
@@ -266,7 +272,10 @@ async fn eviction_to_disk_keeps_append_only_log() {
     for i in 0..10 {
         handle.push(dummy_event(&format!("m{i}"))).expect("push");
     }
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
     shutdown(handle, token).await;
 
     // Disk log: all 10 events written.
@@ -307,7 +316,10 @@ async fn persistence_disabled_creates_no_file() {
     for i in 0..100 {
         handle.push(dummy_event(&format!("m{i}"))).expect("push");
     }
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
     shutdown(handle, token).await;
 
     assert!(!path.exists(), "no file must be created when disabled");
@@ -334,7 +346,10 @@ async fn flush_sync_blocks_until_disk() {
     // Before flush_sync, the file may exist (actor creates it) but
     // be empty (no fsync pushed bytes through the page cache).
     let before = std::fs::read(&path).map(|b| b.len()).unwrap_or(0);
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
     let after = std::fs::read(&path).expect("read after").len();
     assert!(after > before, "flush_sync must grow the file");
     shutdown(handle, token).await;
@@ -408,12 +423,17 @@ async fn concurrent_push_and_reload_safe() {
 
     // Wait for the background pusher to finish; join.
     let (handle, push_token) = push_task.await.expect("join");
-    handle.flush_sync(Duration::from_secs(2)).await.expect("flush");
+    handle
+        .flush_sync(Duration::from_secs(2))
+        .await
+        .expect("flush");
     shutdown(handle, push_token).await;
 
     // Final reload: 10 events present.
     let buffer3 = EventsBuffer::new(1000);
-    let stats3 = load_initial_events(&path, &buffer3).await.expect("reload 2");
+    let stats3 = load_initial_events(&path, &buffer3)
+        .await
+        .expect("reload 2");
     assert_eq!(stats3.loaded, 10, "all 10 events must end up on disk");
     // Don't leak the original token.
     token.cancel();

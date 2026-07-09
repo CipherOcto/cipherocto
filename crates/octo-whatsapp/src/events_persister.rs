@@ -197,14 +197,16 @@ impl EventsPersisterHandle {
 
         let join = tokio::spawn(async move {
             if let Err(e) = run_actor(
-                task_buffer,
-                task_path,
-                flush_interval,
-                task_cancel,
+                ActorState {
+                    buffer: task_buffer,
+                    path: task_path,
+                    flush_interval,
+                    cancel: task_cancel,
+                    _dropped: task_dropped,
+                    _last_load_stats: task_load_stats,
+                },
                 rx,
                 flush_rx,
-                task_dropped,
-                task_load_stats,
             )
             .await
             {
@@ -230,9 +232,7 @@ impl EventsPersisterHandle {
                 self.dropped.inc();
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                Err(PersistError::ChannelClosed)
-            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(PersistError::ChannelClosed),
         }
     }
 
@@ -384,17 +384,29 @@ pub async fn load_initial_events(
     })
 }
 
-/// The actor loop. Extracted so test paths can exercise it directly.
-async fn run_actor(
+/// Group of shared state the actor loop needs beyond its two
+/// channels. Bundling keeps the function signature under
+/// clippy's too_many_arguments threshold.
+#[derive(Debug)]
+struct ActorState {
     buffer: Arc<EventsBuffer>,
     path: Option<PathBuf>,
     flush_interval: Duration,
     cancel: CancellationToken,
+    _dropped: Arc<DropCounter>,
+    _last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+}
+
+/// The actor loop. Extracted so test paths can exercise it directly.
+async fn run_actor(
+    state: ActorState,
     mut rx: mpsc::Receiver<InboundEvent>,
     mut flush_rx: mpsc::Receiver<oneshot::Sender<()>>,
-    _dropped: Arc<DropCounter>,
-    last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
 ) -> Result<(), PersistError> {
+    let buffer = state.buffer;
+    let path = state.path;
+    let flush_interval = state.flush_interval;
+    let cancel = state.cancel;
     // Open file (or create) in append+read mode for both write and
     // the optional mid-life reload. The current design reloads only
     // at boot, so the read side is not used here.
@@ -615,6 +627,7 @@ mod tests {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&p)
             .unwrap();
         for i in 0..3 {
@@ -648,6 +661,7 @@ mod tests {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&p)
             .unwrap();
         use std::io::Write;
@@ -690,6 +704,7 @@ mod tests {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&p)
             .unwrap();
         use std::io::Write;

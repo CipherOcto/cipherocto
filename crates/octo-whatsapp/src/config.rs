@@ -45,10 +45,30 @@ impl Default for MediaBufferConfig {
 /// and `retention_days` (TTL, currently advisory — `max_rows` is the
 /// primary bound). Default `max_rows = 1_000_000` and
 /// `retention_days = 30` per design §InboundEvent retention.
+///
+/// Phase 3 Part D: disk persistence knobs. `persistence_enabled` is
+/// the master switch; `flush_interval_ms` controls the windowed
+/// fsync cadence. `persistence_path` overrides the default
+/// `$data_dir/events/events.ndjson` for operators who want a custom
+/// location.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct EventsConfig {
     pub max_rows: usize,
     pub retention_days: u32,
+    #[serde(default = "default_events_persistence_enabled")]
+    pub persistence_enabled: bool,
+    #[serde(default = "default_events_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    #[serde(default)]
+    pub persistence_path: Option<std::path::PathBuf>,
+}
+
+fn default_events_persistence_enabled() -> bool {
+    true
+}
+
+fn default_events_flush_interval_ms() -> u64 {
+    5_000
 }
 
 impl Default for EventsConfig {
@@ -56,6 +76,21 @@ impl Default for EventsConfig {
         Self {
             max_rows: 1_000_000,
             retention_days: 30,
+            persistence_enabled: default_events_persistence_enabled(),
+            flush_interval_ms: default_events_flush_interval_ms(),
+            persistence_path: None,
+        }
+    }
+}
+
+impl EventsConfig {
+    /// Resolve the on-disk file path. Operators can override via
+    /// `persistence_path`; otherwise we use
+    /// `default_persistence_path(data_dir)`.
+    pub fn resolved_persistence_path(&self, data_dir: &std::path::Path) -> std::path::PathBuf {
+        match &self.persistence_path {
+            Some(p) => p.clone(),
+            None => crate::events_persister::default_persistence_path(data_dir),
         }
     }
 }
@@ -453,6 +488,18 @@ impl WhatsAppRuntimeConfig {
             return Err(ConfigError::InvalidName(
                 "events.retention_days must be > 0 (got 0)".to_string(),
             ));
+        }
+        // Phase 3 Part D: persistence tuning. flush_interval_ms
+        // is bounded to keep the at-most-once window tight but
+        // avoid pathological sub-second fsync churn. 0 is rejected
+        // because it would block the actor loop on every event.
+        if self.events.persistence_enabled
+            && !(100..=60_000).contains(&self.events.flush_interval_ms)
+        {
+            return Err(ConfigError::InvalidName(format!(
+                "events.flush_interval_ms must be in 100..=60000 when persistence is enabled (got {})",
+                self.events.flush_interval_ms
+            )));
         }
         if self.security.audit_max_rows == 0 {
             return Err(ConfigError::InvalidName(

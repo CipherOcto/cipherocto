@@ -214,11 +214,48 @@ mod imp {
     pub async fn start_advertisement(
         service_data: [u8; ADVERT_DATA_LEN],
     ) -> Result<BleAdvertHandle, super::CableError> {
-        let session = Session::new()
-            .await
-            .map_err(|e| super::CableError::Ble(format!("D-Bus session: {e}")))?;
+        tracing::debug!(target: "octo_cable::ble", "opening D-Bus session to bluez");
+        let session = Session::new().await.map_err(|e| {
+            tracing::error!(target: "octo_cable::ble", "D-Bus session: {e}");
+            super::CableError::Ble(format!("D-Bus session: {e}"))
+        })?;
+
         let adapter = pick_adapter(&session).await?;
-        advertise_on(&adapter, service_data).await
+        let cable = cable_uuid();
+
+        // Pre-flight: dump adapter state for the debug log so the
+        // operator can correlate with `busctl introspect`.
+        let adapter_name = adapter.name().to_string();
+        let adapter_addr = adapter.address().await.unwrap_or_default();
+        let is_powered_before = adapter.is_powered().await.unwrap_or(false);
+        let is_discoverable_before = adapter.is_discoverable().await.unwrap_or(false);
+        tracing::info!(
+            target: "octo_cable::ble",
+            adapter = %adapter_name,
+            address = %adapter_addr,
+            powered_before = is_powered_before,
+            discoverable_before = is_discoverable_before,
+            "caBLE ad: using this Bluetooth adapter"
+        );
+        // Session 15 follow-up: the kernel-side `Discoverable`
+        // property is OFF by default on most Linux distributions.
+        // Without flipping it, bluez registers the advertisement
+        // but never emits it on-air — the phone's gms never sees
+        // the ad and reports "devices not close enough". We set
+        // it explicitly via D-Bus so the operator doesn't have to
+        // run `bluetoothctl discoverable on` manually.
+        tracing::debug!(target: "octo_cable::ble", "set_discoverable(true)");
+        adapter.set_discoverable(true).await.map_err(|e| {
+            tracing::error!(target: "octo_cable::ble", "set_discoverable(true): {e}");
+            super::CableError::Ble(format!("set_discoverable(true): {e}"))
+        })?;
+        let is_discoverable_after = adapter.is_discoverable().await.unwrap_or(false);
+        tracing::debug!(
+            target: "octo_cable::ble",
+            discoverable_after = is_discoverable_after,
+            "adapter.Discoverable post-set"
+        );
+        advertise_on(&adapter, cable, service_data).await
     }
 
     /// Pick the first available adapter. Tries the default adapter
@@ -243,8 +280,16 @@ mod imp {
 
     async fn advertise_on(
         adapter: &Adapter,
+        cable: bluer::Uuid,
         service_data: [u8; ADVERT_DATA_LEN],
     ) -> Result<BleAdvertHandle, super::CableError> {
+        tracing::debug!(target: "octo_cable::ble",
+            eid_uuid = %cable,
+            service_data_len = service_data.len(),
+            service_data_hex = ?service_data,
+            "caBLE ad: building Advertisement"
+        );
+
         // Wait for the powered-on event to settle (max 1 s). Once
         // `is_powered()` is true, the kernel is ready to accept
         // advertisement registrations.
@@ -252,8 +297,9 @@ mod imp {
             .events()
             .await
             .map_err(|e| super::CableError::Ble(format!("adapter.events() subscribe: {e}")))?;
-        for _ in 0..20 {
+        for ticks in 0u32..20 {
             if adapter.is_powered().await.unwrap_or(false) {
+                tracing::debug!(target: "octo_cable::ble", ticks, "adapter powered");
                 break;
             }
             if let Some(AdapterEvent::PropertyChanged(_)) = events.next().await {
@@ -261,8 +307,6 @@ mod imp {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-
-        let cable = cable_uuid();
 
         // BTreeSet<Uuid> (service_uuids) and BTreeMap<Uuid, Vec<u8>>
         // (service_data). bluer 0.17 prefers the BTree variants for
@@ -274,23 +318,92 @@ mod imp {
         service_data_map.insert(cable, service_data.to_vec());
 
         let adv = Advertisement {
-            // Peripheral (non-connectable) — the phone only scans
-            // for the service-data payload, never connects. The
-            // tunnel carries data over the WebSocket, not BLE GATT.
+            // CRITICAL (Session 15 follow-up #2): use `Type::Peripheral`
+            // (ADV_IND: scannable + connectable), NOT `Type::Broadcast`.
+            //
+            // Why: the phone's gms FIDO module filters incoming BLE
+            // advertisements by the Flags AD (type 0x01) value 0x06
+            // (LE General Discoverable + BR/EDR not supported).
+            // Bluetooth Core Spec Part B §11.3 forbids the Flags AD
+            // type in non-scannable advertisements, so bluez strips
+            // it from `Type::Broadcast` ads and logs:
+            //   "Broadcast cannot set flags"
+            // which is exactly what we observed in `journalctl -u
+            // bluetooth`. Without the Flags AD, gms silently drops
+            // the ad and reports "devices not close enough" /
+            // "connecting to other device" forever.
+            //
+            // `Type::Peripheral` (ADV_IND) is scannable, so the
+            // Flags AD is allowed and bluez auto-packs it with the
+            // adapter's `Discoverable=true` value (we set that
+            // above via `set_discoverable(true)`). Chromium's caBLE
+            // implementation takes the same path on Linux.
+            //
+            // Connectability bit set: gms does not actually GATT-
+            // connect (the caBLE v2 tunnel runs over WebSocket via
+            // the relay, not GATT). If gms does attempt a GATT
+            // connect, our responder doesn't expose a GATT service
+            // so the connection fails immediately and gms proceeds
+            // with the WS handshake.
+            //
+            // (Discovered by comparing WA Web (Chrome) which uses
+            // ADV_IND on Linux and works on this same hci0 + MSFT
+            // firmware, vs our previous Broadcast attempt which
+            // registered ActiveInstances=1 but never reached the
+            // phone.)
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids,
             service_data: service_data_map,
-            // Discoverable limited (default Peripheral). Local
-            // name empty (no UI string — the FIDO:/ URI is the
-            // operator-facing identity, not the ad).
-            discoverable: Some(true),
+            // Tight interval (100-500 ms) so the phone's gms
+            // scanner — which polls for a few seconds at most —
+            // sees the ad at least 4-20 times. Default bluez
+            // interval is 1-10s, way too slow for a transient
+            // pairing window.
+            min_interval: Some(Duration::from_millis(100)),
+            max_interval: Some(Duration::from_millis(500)),
+            // 120s cap so a hung CLI can't leave the ad running
+            // indefinitely; the actual lifetime is "until Noise
+            // handshake completes" (~5s typically) and we drop the
+            // handle at that point.
             duration: Some(Duration::from_secs(120)),
             ..Default::default()
         };
-        let handle = adapter
-            .advertise(adv)
-            .await
-            .map_err(|e| super::CableError::Ble(format!("advertise(): {e}")))?;
+        let handle = adapter.advertise(adv).await.map_err(|e| {
+            tracing::error!(target: "octo_cable::ble", error = %e,
+                "adapter.advertise() failed");
+            super::CableError::Ble(format!("advertise(): {e}"))
+        })?;
+
+        // Probe ActiveInstances + kernel state every second for 8
+        // seconds so the operator can correlate against
+        // `busctl introspect` and confirm the ad is on-air (not
+        // just registered). Async-context, so we await directly
+        // — using `futures::executor::block_on` here would
+        // deadlock the tokio worker.
+        let probe = adapter.clone();
+        tokio::spawn(async move {
+            for i in 0..8 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let active = probe
+                    .active_advertising_instances()
+                    .await
+                    .map(|n| n as usize)
+                    .unwrap_or(usize::MAX);
+                let powered = probe.is_powered().await.unwrap_or(false);
+                let disco = probe.is_discoverable().await.unwrap_or(false);
+                let scanning = probe.is_discovering().await.unwrap_or(false);
+                tracing::debug!(target: "octo_cable::ble",
+                    t = i + 1,
+                    active_instances = active,
+                    powered, discoverable = disco, scanning,
+                    "BLE ad probe (verify with `busctl introspect org.bluez /org/bluez/hci0 org.bluez.LEAdvertisingManager1`)"
+                );
+            }
+        });
+
+        tracing::info!(target: "octo_cable::ble",
+            "caBLE ad: registered with bluez (handle ok); phone's gms should now find us"
+        );
         Ok(BleAdvertHandle {
             _adv_handle: handle,
         })

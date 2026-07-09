@@ -14,6 +14,10 @@ pub mod chats_pin;
 pub mod chats_typing;
 pub mod chats_unpin;
 pub mod clients;
+pub mod contact_block;
+pub mod contact_unblock;
+pub mod contacts_get_profile_picture;
+pub mod contacts_is_on_whatsapp;
 pub mod daemon_methods;
 pub mod daemon_ops;
 pub mod domain_compute_hash;
@@ -32,6 +36,10 @@ pub mod messages_list;
 pub mod messages_mark_read;
 pub mod messages_search;
 pub mod preflight;
+pub mod presence_set_available;
+pub mod presence_set_unavailable;
+pub mod presence_subscribe;
+pub mod presence_unsubscribe;
 pub mod rules;
 pub mod security_tokens;
 pub mod send_audio;
@@ -152,6 +160,17 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(accounts::AccountsList))
         .register(Arc::new(accounts::AccountsUse))
         .register(Arc::new(accounts::AccountsInfo))
+        // Tier 4: contacts + presence
+        .register(Arc::new(contacts_is_on_whatsapp::ContactsIsOnWhatsApp))
+        .register(Arc::new(
+            contacts_get_profile_picture::ContactsGetProfilePicture,
+        ))
+        .register(Arc::new(contact_block::ContactBlock))
+        .register(Arc::new(contact_unblock::ContactUnblock))
+        .register(Arc::new(presence_subscribe::PresenceSubscribe))
+        .register(Arc::new(presence_unsubscribe::PresenceUnsubscribe))
+        .register(Arc::new(presence_set_available::PresenceSetAvailable))
+        .register(Arc::new(presence_set_unavailable::PresenceSetUnavailable))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -310,6 +329,20 @@ pub const PHASE6_1_ACCOUNTS_METHODS: &[&str] = &[
     "daemon.accounts.info",
 ];
 
+/// RPC method names added in Tier 4 (live coverage matrix): contact
+/// existence / profile picture / blocklist queries + presence
+/// subscription + outbound presence broadcasts.
+pub const TIER4_CONTACT_PRESENCE_METHODS: &[&str] = &[
+    "contacts.is_on_whatsapp",
+    "contacts.get_profile_picture",
+    "contact.block",
+    "contact.unblock",
+    "presence.subscribe",
+    "presence.unsubscribe",
+    "presence.set_available",
+    "presence.set_unavailable",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +411,7 @@ mod tests {
             .chain(PHASE5_SECURITY_METHODS.iter())
             .chain(PHASE6_12_GROUPS_METHODS.iter())
             .chain(PHASE6_1_ACCOUNTS_METHODS.iter())
+            .chain(TIER4_CONTACT_PRESENCE_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

@@ -1269,6 +1269,200 @@ impl WhatsAppWebAdapter {
         h.update(jid.trim().to_lowercase().as_bytes());
         h.finalize().to_hex().to_string()
     }
+
+    // ── Tier 4: contact + presence (lib wrappers) ─────────────────────
+    //
+    // Each method is the inherent implementation of a trait method on
+    // `OctoWhatsAppAdapter`. The trait surface (in `octo-whatsapp`) calls
+    // these via direct delegation. When `self.client` is `None` every
+    // method returns `Unreachable { reason: "client not connected" }` —
+    // identical to the established pattern in `send_typing` above.
+
+    /// Check whether `jid` is a registered WhatsApp user. Thin wrapper
+    /// over `wacore::Client::contacts().is_on_whatsapp(...)`.
+    pub async fn is_on_whatsapp(&self, jid: &str) -> Result<bool, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let mut results = client.contacts().is_on_whatsapp(&[parsed]).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("is_on_whatsapp failed: {e:#}"),
+            }
+        })?;
+        Ok(results
+            .first_mut()
+            .map(|r| std::mem::replace(&mut r.is_registered, false))
+            .unwrap_or(false))
+    }
+
+    /// Fetch the profile-picture URL for a peer. Returns `Ok(None)`
+    /// when the peer has no profile picture (or hides it via privacy).
+    pub async fn get_profile_picture_url(
+        &self,
+        jid: &str,
+        preview: bool,
+    ) -> Result<Option<String>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let pic = client
+            .contacts()
+            .get_profile_picture(&parsed, preview)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_profile_picture failed: {e:#}"),
+            })?;
+        Ok(pic.map(|p| p.url))
+    }
+
+    /// Block a contact. Propagates to all our linked devices via the
+    /// WA server's blocklist IQ.
+    pub async fn block_contact(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client.blocking().block(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("block_contact failed: {e:#}"),
+            }
+        })
+    }
+
+    /// Unblock a contact.
+    pub async fn unblock_contact(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client.blocking().unblock(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("unblock_contact failed: {e:#}"),
+            }
+        })
+    }
+
+    /// Subscribe to `jid`'s presence updates.
+    pub async fn subscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client.presence().subscribe(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("subscribe_presence failed: {e:#}"),
+            }
+        })
+    }
+
+    /// Unsubscribe from `jid`'s presence updates.
+    pub async fn unsubscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .presence()
+            .unsubscribe(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("unsubscribe_presence failed: {e:#}"),
+            })
+    }
+
+    /// Broadcast our presence as `available` (online).
+    pub async fn set_presence_available(&self) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client
+            .presence()
+            .set_available()
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_presence_available failed: {e:#}"),
+            })
+    }
+
+    /// Broadcast our presence as `unavailable` (offline).
+    pub async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client
+            .presence()
+            .set_unavailable()
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_presence_unavailable failed: {e:#}"),
+            })
+    }
 }
 
 impl WhatsAppWebAdapter {

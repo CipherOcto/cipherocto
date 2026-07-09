@@ -199,6 +199,52 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// Set the typing indicator (composing / paused) on a peer.
     async fn send_typing(&self, jid: &str, is_typing: bool) -> Result<(), PlatformAdapterError>;
 
+    // ── Group F2: contact + presence (queries) ────────────────────────
+    //
+    // Tier 4 of the live coverage matrix. Each wraps a thin slice of the
+    // WA crate's `Contacts`, `Blocking`, and `Presence` features; the IPC
+    // handlers under `ipc/handlers/` translate them into JSON-RPC.
+
+    /// Check whether a phone-number JID is registered on WhatsApp.
+    /// Returns `true` if the user has an account, `false` otherwise.
+    /// Maps to `wacore::Client::contacts().is_on_whatsapp(...)` for one
+    /// input JID.
+    async fn is_on_whatsapp(&self, jid: &str) -> Result<bool, PlatformAdapterError>;
+
+    /// Fetch the profile-picture URL for a peer. `preview = true` asks
+    /// for the thumbnail; `false` asks for the full image. Maps to
+    /// `wacore::Client::contacts().get_profile_picture(...)`. Returns
+    /// `Ok(None)` when the peer has no profile picture (or it is hidden
+    /// by privacy settings).
+    async fn get_profile_picture_url(
+        &self,
+        jid: &str,
+        preview: bool,
+    ) -> Result<Option<String>, PlatformAdapterError>;
+
+    /// Add the peer to the local blocklist. The WA server propagates
+    /// the block to all our linked devices.
+    async fn block_contact(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Remove the peer from the local blocklist.
+    async fn unblock_contact(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Subscribe to the peer's presence updates. Sends a
+    /// `<presence type="subscribe">` stanza. After this returns,
+    /// inbound `InboundEvent::Presence { peer, kind }` events will fire
+    /// whenever the peer goes online/offline.
+    async fn subscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Unsubscribe from the peer's presence updates.
+    async fn unsubscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Broadcast our presence as `available` (online). All peers that
+    /// have subscribed to us see the change within ~1s.
+    async fn set_presence_available(&self) -> Result<(), PlatformAdapterError>;
+
+    /// Broadcast our presence as `unavailable` (offline).
+    async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError>;
+
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
     /// Size-gated wrapper for `send_image`. Rejects when the file
@@ -506,6 +552,37 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn send_typing(&self, jid: &str, is_typing: bool) -> Result<(), PlatformAdapterError> {
         self.send_typing(jid, is_typing).await
+    }
+
+    // ── Tier 4: contact + presence delegation ──────────────────────────
+
+    async fn is_on_whatsapp(&self, jid: &str) -> Result<bool, PlatformAdapterError> {
+        self.is_on_whatsapp(jid).await
+    }
+    async fn get_profile_picture_url(
+        &self,
+        jid: &str,
+        preview: bool,
+    ) -> Result<Option<String>, PlatformAdapterError> {
+        self.get_profile_picture_url(jid, preview).await
+    }
+    async fn block_contact(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.block_contact(jid).await
+    }
+    async fn unblock_contact(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.unblock_contact(jid).await
+    }
+    async fn subscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.subscribe_presence(jid).await
+    }
+    async fn unsubscribe_presence(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.unsubscribe_presence(jid).await
+    }
+    async fn set_presence_available(&self) -> Result<(), PlatformAdapterError> {
+        self.set_presence_available().await
+    }
+    async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError> {
+        self.set_presence_unavailable().await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -984,6 +1061,46 @@ mod tests {
     #[tokio::test]
     async fn delegation_send_typing() {
         assert_client_not_connected(adapter().send_typing(JID, true).await);
+    }
+
+    // ── Tier 4: contact + presence (unchecked) ────────────────────────
+    //
+    // Each delegation test verifies that the trait method forwards
+    // through to the inherent method on the same adapter. With no
+    // client bound the inherent body returns `Unreachable` — exactly
+    // what the trait method should propagate.
+
+    #[tokio::test]
+    async fn delegation_is_on_whatsapp() {
+        assert_client_not_connected(adapter().is_on_whatsapp(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_get_profile_picture_url() {
+        assert_client_not_connected(adapter().get_profile_picture_url(JID, true).await);
+    }
+    #[tokio::test]
+    async fn delegation_block_contact() {
+        assert_client_not_connected(adapter().block_contact(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_unblock_contact() {
+        assert_client_not_connected(adapter().unblock_contact(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_subscribe_presence() {
+        assert_client_not_connected(adapter().subscribe_presence(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_unsubscribe_presence() {
+        assert_client_not_connected(adapter().unsubscribe_presence(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_set_presence_available() {
+        assert_client_not_connected(adapter().set_presence_available().await);
+    }
+    #[tokio::test]
+    async fn delegation_set_presence_unavailable() {
+        assert_client_not_connected(adapter().set_presence_unavailable().await);
     }
 
     // ── Group G: size-gated wrappers ──

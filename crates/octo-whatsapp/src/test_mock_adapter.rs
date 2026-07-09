@@ -339,6 +339,39 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "send_typing")
     }
 
+    // ── Tier 4: contact + presence — unit-result ─────────────────────
+
+    async fn is_on_whatsapp(&self, _jid: &str) -> Result<bool, PlatformAdapterError> {
+        record_unit_call(&self.state, "is_on_whatsapp")?;
+        Ok(true)
+    }
+    async fn get_profile_picture_url(
+        &self,
+        _jid: &str,
+        _preview: bool,
+    ) -> Result<Option<String>, PlatformAdapterError> {
+        record_unit_call(&self.state, "get_profile_picture_url")?;
+        Ok(Some("https://example.invalid/p.jpg".into()))
+    }
+    async fn block_contact(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "block_contact")
+    }
+    async fn unblock_contact(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "unblock_contact")
+    }
+    async fn subscribe_presence(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "subscribe_presence")
+    }
+    async fn unsubscribe_presence(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "unsubscribe_presence")
+    }
+    async fn set_presence_available(&self) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_presence_available")
+    }
+    async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_presence_unavailable")
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

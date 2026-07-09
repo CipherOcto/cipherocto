@@ -340,13 +340,20 @@ async fn init_fixture() -> LiveFixture {
 /// Helper used by chain bodies (T2-T7): take the RpcStream out of the
 /// fixture's Mutex, run the async call without holding the lock, then
 /// put it back. Bypasses `clippy::await_holding_lock` cleanly.
+///
+/// Logs per-call duration at INFO so live runs surface which RPC
+/// dominates wall time. Slow calls (groups.list on accounts with
+/// many groups, etc.) stand out clearly in `RUST_LOG=info` output.
 async fn rpc_call(
     rpc_slot: &Mutex<Option<RpcStream>>,
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
     let mut rpc = rpc_slot.lock().take().expect("rpc stream present");
+    let started = std::time::Instant::now();
     let res = rpc.call(method, params).await;
+    let dur = started.elapsed();
+    tracing::info!("rpc {method:32} dur={:?}", dur);
     *rpc_slot.lock() = Some(rpc);
     res
 }
@@ -1795,7 +1802,10 @@ async fn live_cli_dispatch() {
         // else (groups.list, messages.list, etc.) hits the live
         // adapter, so we throttle to be polite.
         inter_call_delay_for(name).await;
+        let started = std::time::Instant::now();
         let (code, stdout, stderr) = cli_exec(fix, args).await;
+        let dur = started.elapsed();
+        tracing::info!("live_cli_dispatch: {name:16} exit={code} dur={:?}", dur);
         assert_eq!(
             code, 0,
             "cli {name} failed (exit {code}): stderr={stderr} stdout={stdout}"

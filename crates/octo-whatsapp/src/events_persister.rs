@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::events::InboundEvent;
@@ -116,38 +116,84 @@ impl DropCounter {
 /// Handle to the running persister. Send events via [`Self::push`]
 /// (best-effort, non-blocking), request a synchronous fsync via
 /// [`Self::flush_sync`], wait for shutdown via [`Self::join`].
-#[derive(Debug)]
 pub struct EventsPersisterHandle {
     tx: mpsc::Sender<InboundEvent>,
-    flush: mpsc::Sender<()>,
-    flush_done: Arc<Notify>,
+    flush: mpsc::Sender<oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
     dropped: Arc<DropCounter>,
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+}
+
+impl std::fmt::Debug for EventsPersisterHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventsPersisterHandle")
+            .field("dropped_total", &self.dropped.get())
+            .field("last_load_stats", &*self.last_load_stats.lock())
+            .finish()
+    }
 }
 
 impl EventsPersisterHandle {
     /// Spawn the actor. `path = None` disables disk I/O entirely
     /// (the actor still relays events to the buffer; useful for
     /// hermetic tests).
+    ///
+    /// If `path` is `Some`, this function performs the cold-start
+    /// reload **synchronously** before returning, so the buffer is
+    /// hydrated by the time the caller sees the handle. The reload
+    /// is a `block_on` of the `load_initial_events` future, which is
+    /// short (a single file read + parse).
     pub fn spawn(
         buffer: Arc<EventsBuffer>,
         path: Option<PathBuf>,
         flush_interval: Duration,
         cancel: CancellationToken,
     ) -> Result<Self, PersistError> {
+        // Synchronous cold-start reload. The actor task then runs
+        // the main loop; if any new events arrived in the tiny
+        // window between hydrate and spawn they are still in the
+        // buffer's mpsc and will be processed.
         let (tx, rx) = mpsc::channel::<InboundEvent>(4096);
-        let (flush_tx, flush_rx) = mpsc::channel::<()>(4);
-        let flush_done = Arc::new(Notify::new());
+        let (flush_tx, flush_rx) = mpsc::channel::<oneshot::Sender<()>>(16);
         let dropped = Arc::new(DropCounter::default());
         let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
+        if let Some(p) = &path {
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            // `spawn` is sync, but the reload is async. We cannot
+            // call `Handle::block_on` from within a runtime (it
+            // would deadlock). Spin up a dedicated single-thread
+            // runtime for the reload; it completes quickly and
+            // exits.
+            let buffer_for_reload = buffer.clone();
+            let path_for_reload = p.clone();
+            let stats_handle = std::thread::Builder::new()
+                .name("events-reload".into())
+                .spawn(move || -> Result<LoadStats, PersistError> {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("build reload runtime");
+                    rt.block_on(load_initial_events(&path_for_reload, &buffer_for_reload))
+                })
+                .expect("spawn reload thread");
+            let stats = stats_handle.join().expect("join reload thread")?;
+            tracing::info!(
+                loaded = stats.loaded,
+                skipped = stats.skipped_malformed,
+                "events_persister: cold-start reload complete"
+            );
+            *last_load_stats.lock() = Some(stats);
+        }
 
         let task_cancel = cancel.clone();
         let task_buffer = buffer.clone();
-        let task_path = path.clone();
+        let task_path = path;
         let task_dropped = dropped.clone();
         let task_load_stats = last_load_stats.clone();
-        let task_flush_done = flush_done.clone();
 
         let join = tokio::spawn(async move {
             if let Err(e) = run_actor(
@@ -157,7 +203,6 @@ impl EventsPersisterHandle {
                 task_cancel,
                 rx,
                 flush_rx,
-                task_flush_done,
                 task_dropped,
                 task_load_stats,
             )
@@ -170,7 +215,6 @@ impl EventsPersisterHandle {
         Ok(Self {
             tx,
             flush: flush_tx,
-            flush_done,
             join,
             dropped,
             last_load_stats,
@@ -195,13 +239,14 @@ impl EventsPersisterHandle {
     /// Block until the actor flushes the file to disk and acks.
     /// Useful for shutdown drain + tests.
     pub async fn flush_sync(&self, timeout: Duration) -> Result<(), PersistError> {
-        // Push a sentinel "please flush" and await flush_done.
-        let _ = self.flush.send(()).await;
-        let fd = self.flush_done.clone();
-        let waiter = tokio::spawn(async move {
-            fd.notified().await;
-        });
-        match tokio::time::timeout(timeout, waiter).await {
+        // Per-request oneshot: the actor acks via the sender we
+        // supply. This avoids the Notify race where the actor
+        // notifies before the waiter is parked.
+        let (ack_tx, ack_rx) = oneshot::channel::<()>();
+        if self.flush.send(ack_tx).await.is_err() {
+            return Err(PersistError::ChannelClosed);
+        }
+        match tokio::time::timeout(timeout, ack_rx).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(PersistError::ChannelClosed),
             Err(_) => Err(PersistError::FlushTimeout {
@@ -249,10 +294,18 @@ pub async fn load_initial_events(
 ) -> Result<LoadStats, PersistError> {
     let started = std::time::Instant::now();
     if !path.exists() {
+        // No file = empty history. Touch nothing.
         return Ok(LoadStats {
             reload_took_ms: started.elapsed().as_millis() as u64,
             ..Default::default()
         });
+    }
+    // Make sure the parent exists for any later truncation. The
+    // reload itself doesn't need it (the file is already there).
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
     }
 
     let bytes = match tokio::fs::read(path).await {
@@ -338,8 +391,7 @@ async fn run_actor(
     flush_interval: Duration,
     cancel: CancellationToken,
     mut rx: mpsc::Receiver<InboundEvent>,
-    mut flush_rx: mpsc::Receiver<()>,
-    flush_done: Arc<Notify>,
+    mut flush_rx: mpsc::Receiver<oneshot::Sender<()>>,
     _dropped: Arc<DropCounter>,
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
 ) -> Result<(), PersistError> {
@@ -353,16 +405,9 @@ async fn run_actor(
                     tokio::fs::create_dir_all(parent).await?;
                 }
             }
-            // Cold-start reload first.
-            match load_initial_events(p, &buffer).await {
-                Ok(stats) => {
-                    *last_load_stats.lock() = Some(stats);
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, path = %p.display(),
-                        "events_persister: cold-start reload failed; continuing");
-                }
-            }
+            // The cold-start reload was performed synchronously in
+            // `EventsPersisterHandle::spawn`. We just need to open
+            // the file in append mode for new writes.
             Some(OpenOptions::new().create(true).append(true).open(p).await?)
         }
         None => None,
@@ -372,8 +417,10 @@ async fn run_actor(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
+        // After any arm fires, drain BOTH channels as much as
+        // possible before yielding. This bounds the latency of a
+        // flush_sync ack to "events pushed before the ack call".
         tokio::select! {
-            biased;
             _ = cancel.cancelled() => {
                 // Drain remaining events.
                 while let Ok(ev) = rx.try_recv() {
@@ -382,25 +429,21 @@ async fn run_actor(
                         let _ = write_event(f, id, &ev).await;
                     }
                 }
+                // Drain any pending flush requests so callers don't
+                // hang on flush_sync.
+                while let Ok(ack) = flush_rx.try_recv() {
+                    if let Some(f) = file.as_mut() {
+                        let _ = f.sync_all().await;
+                    }
+                    let _ = ack.send(());
+                }
                 if let Some(f) = file.as_mut() {
                     let _ = f.sync_all().await;
                 }
-                flush_done.notify_waiters();
                 return Ok(());
             }
-            _ = ticker.tick() => {
-                if let Some(f) = file.as_mut() {
-                    let _ = f.sync_all().await;
-                }
-                flush_done.notify_waiters();
-            }
-            Some(_) = flush_rx.recv() => {
-                if let Some(f) = file.as_mut() {
-                    let _ = f.sync_all().await;
-                }
-                flush_done.notify_waiters();
-            }
             Some(ev) = rx.recv() => {
+                // Write the event we just received.
                 let id = buffer.push(ev.clone());
                 if let Some(f) = file.as_mut() {
                     if let Err(e) = write_event(f, id, &ev).await {
@@ -408,18 +451,55 @@ async fn run_actor(
                             "events_persister: write failed; event kept in memory");
                     }
                 }
+                // Drain any additional events that arrived in the
+                // same scheduling slice — avoids 1-event-per-loop
+                // iter overhead during bursts.
+                while let Ok(ev) = rx.try_recv() {
+                    let id = buffer.push(ev.clone());
+                    if let Some(f) = file.as_mut() {
+                        if let Err(e) = write_event(f, id, &ev).await {
+                            tracing::warn!(error = %e,
+                                "events_persister: write failed; event kept in memory");
+                        }
+                    }
+                }
             }
-            else => break,
+            Some(ack) = flush_rx.recv() => {
+                // Before acking, drain rx so events already pushed
+                // are on disk. This is the critical correctness path.
+                while let Ok(ev) = rx.try_recv() {
+                    let id = buffer.push(ev.clone());
+                    if let Some(f) = file.as_mut() {
+                        if let Err(e) = write_event(f, id, &ev).await {
+                            tracing::warn!(error = %e,
+                                "events_persister: write failed; event kept in memory");
+                        }
+                    }
+                }
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+                let _ = ack.send(());
+            }
+            _ = ticker.tick() => {
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+            }
+            else => {
+                // Both channels closed; flush once and exit.
+                if let Some(f) = file.as_mut() {
+                    let _ = f.sync_all().await;
+                }
+                return Ok(());
+            }
         }
     }
-    // Channel closed; flush once.
-    if let Some(f) = file.as_mut() {
-        let _ = f.sync_all().await;
-    }
-    flush_done.notify_waiters();
-    Ok(())
 }
 
+/// Drain queued flush requests and ack each after a fsync. Used as
+/// a cooperative step after processing an event so the caller doesn't
+/// have to wait for the next ticker to see their ack.
 /// Encode + write one NDJSON line for `event` whose buffer-assigned
 /// id is `id`.
 async fn write_event(file: &mut File, id: u64, ev: &InboundEvent) -> Result<(), PersistError> {
@@ -434,9 +514,6 @@ async fn write_event(file: &mut File, id: u64, ev: &InboundEvent) -> Result<(), 
         ts_mono_ns: mono,
         event: ev.clone(),
     };
-    // `serde_json::to_writer` writes directly to the file via a
-    // wrapper. We need a Write; the async File implements
-    // AsyncWrite. Wrap with `BufWriter` to avoid syscall per byte.
     let mut buf = Vec::with_capacity(512);
     serde_json::to_writer(&mut buf, &payload)?;
     buf.push(b'\n');

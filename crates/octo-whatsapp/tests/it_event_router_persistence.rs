@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use octo_whatsapp::events::{EventEnvelope, InboundEvent};
-use octo_whatsapp::events_persister::EventsBuffer;
+use octo_whatsapp::events_buffer::EventsBuffer;
 use octo_whatsapp::events_router::EventsRouter;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;

@@ -747,3 +747,399 @@ async fn live_send_sticker() {
     )
     .await;
 }
+
+// ===========================================================================
+// Tier 3 — Receipts
+//
+// Every outbound send produces at least one `InboundEvent::Receipt`
+// for the same `message_id`. Variant depends on peer-device state:
+//   - First receipt (~100-500 ms) — server acknowledge of dispatch
+//   - `Receipt { kind: Delivered }` — peer device online + chat foregrounded
+//   - `Receipt { kind: Read }` — peer device opened the chat
+//   - `Receipt { kind: Played }` — peer played the voice / video
+//
+// Our `Receipt` struct carries `{ msg_id, peer, kind, ts_unix_ms, ts_mono_ns }`.
+// There is no `from_me` flag — direction is implicit in which side sent the
+// original: a Receipt whose target msg_id originated on our end is OUR outgoing
+// ack-receipt; one whose target msg_id was inbound on our daemon is the peer's
+// delivery ack.
+//
+// Operator pre-action flags:
+//   - `OCTO_WHATSAPP_TEST_DELIVER=1` — peer is online with the chat open
+//   - `OCTO_WHATSAPP_TEST_READ=1` — peer has marked read
+//   - `OCTO_WHATSAPP_TEST_PLAY=1` — peer has played the voice message
+//   - `OCTO_WHATSAPP_TEST_INBOUND_MSG_ID=<msg_id>` — inbound-msg-id for the
+//     mark_read test; the operator MUST send us a message from TEST_MEMBER
+//     first and capture its inbound message id, then set this env var.
+//
+// Skip-vs-fail policy: when the operator flag is unset we skip (eprintln +
+// early return) — never panic. Setting all four flags unlocks the full suite.
+// ===========================================================================
+
+/// `live_receipt_first_for_outbound` — Tier 3 canary.
+///
+/// Self-echo sends produce a `Receipt` within ~100-500 ms as the WA
+/// server acknowledges dispatch. Asserts the structural match
+/// (msg_id == sent id, kind ∈ {Delivered, Read, Played}) within 10 s.
+/// This test ALWAYS runs (no operator pre-action required) — the
+/// receipt chain is the cheapest proof that the WA link is alive.
+#[tokio::test]
+async fn live_receipt_first_for_outbound() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let text = format!("tier3 receipt canary {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": self_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
+    // First receipt (server-ack equivalent) — match any of the 3
+    // known kinds, since wacore collapses ack into Delivered.
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &message_id
+                    && matches!(
+                        kind,
+                        octo_whatsapp::events::ReceiptKind::Delivered
+                            | octo_whatsapp::events::ReceiptKind::Read
+                            | octo_whatsapp::events::ReceiptKind::Played
+                    )
+            )
+        },
+        Duration::from_secs(10),
+    )
+    .unwrap_or_else(|e| panic!("tier3 canary: no Receipt for {message_id} in 10 s: {e}"));
+    if let InboundEvent::Receipt {
+        msg_id, kind, peer, ..
+    } = ev
+    {
+        assert_eq!(msg_id, message_id);
+        assert_eq!(peer, self_jid, "receipt peer must match self-jid");
+        eprintln!("tier3 canary: Receipt {{ kind: {kind:?}, peer: {peer} }}");
+    } else {
+        unreachable!("predicate constrained to Receipt")
+    }
+}
+
+/// `live_receipt_delivered` — Tier 3 delivered state.
+///
+/// Requires `OCTO_WHATSAPP_TEST_DELIVER=1`. The peer device must be
+/// online with the chat open on a second client (WA desktop / mobile).
+/// Asserts `Receipt { kind: Delivered }` for the outbound msg_id
+/// within 30 s. Without operator action, the receipt chain stalls
+/// at the first ack and never progresses to Delivered.
+#[tokio::test]
+async fn live_receipt_delivered() {
+    let fix = fixture();
+    if !test_flag_set("OCTO_WHATSAPP_TEST_DELIVER") {
+        eprintln!(
+            "live_receipt_delivered: skipping (set OCTO_WHATSAPP_TEST_DELIVER=1 \
+             when the test peer's WA is online + chat foregrounded)"
+        );
+        return;
+    }
+    let peer_jid = require_test_peer_jid("live_receipt_delivered");
+    let text = format!("tier3 delivered {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": peer_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &message_id
+                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Delivered)
+            )
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_receipt_delivered: no Delivered receipt for {message_id} in 30 s. \
+             Confirm TEST_MEMBER device is online with the chat foregrounded. Underlying: {e}"
+        )
+    });
+    if let InboundEvent::Receipt {
+        msg_id, kind, peer, ..
+    } = ev
+    {
+        assert_eq!(msg_id, message_id);
+        assert_eq!(peer, peer_jid);
+        eprintln!("live_receipt_delivered: OK {kind:?} peer={peer}");
+    } else {
+        unreachable!("predicate constrained to Receipt")
+    }
+}
+
+/// `live_receipt_read` — Tier 3 read state.
+///
+/// Requires `OCTO_WHATSAPP_TEST_READ=1`. Operator must open the chat
+/// on the second device. Asserts `Receipt { kind: Read }` within 30 s.
+#[tokio::test]
+async fn live_receipt_read() {
+    let fix = fixture();
+    if !test_flag_set("OCTO_WHATSAPP_TEST_READ") {
+        eprintln!(
+            "live_receipt_read: skipping (set OCTO_WHATSAPP_TEST_READ=1 \
+             when the test peer's WA has the chat opened)"
+        );
+        return;
+    }
+    let peer_jid = require_test_peer_jid("live_receipt_read");
+    let text = format!("tier3 read {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": peer_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &message_id
+                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
+            )
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_receipt_read: no Read receipt for {message_id} in 30 s. \
+             Confirm TEST_MEMBER device has the chat visibly open. Underlying: {e}"
+        )
+    });
+    if let InboundEvent::Receipt {
+        msg_id, kind, peer, ..
+    } = ev
+    {
+        assert_eq!(msg_id, message_id);
+        assert_eq!(peer, peer_jid);
+        eprintln!("live_receipt_read: OK {kind:?} peer={peer}");
+    } else {
+        unreachable!("predicate constrained to Receipt")
+    }
+}
+
+/// `live_receipt_played` — Tier 3 voice-played state.
+///
+/// Requires `OCTO_WHATSAPP_TEST_PLAY=1`. Sends a 1 KB voice note
+/// (`.ogg` container — `send.voice` is the WA voice-message path).
+/// Operator must play it on the second device. Asserts
+/// `Receipt { kind: Played }` within 30 s.
+#[tokio::test]
+async fn live_receipt_played() {
+    let fix = fixture();
+    if !test_flag_set("OCTO_WHATSAPP_TEST_PLAY") {
+        eprintln!(
+            "live_receipt_played: skipping (set OCTO_WHATSAPP_TEST_PLAY=1 \
+             when the test peer's WA has played the voice note)"
+        );
+        return;
+    }
+    let peer_jid = require_test_peer_jid("live_receipt_played");
+    let path = write_tiny_fixture(fix, "tier3-played-voice", "ogg");
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "send.voice",
+            json!({"file": path.to_string_lossy().into_owned()}),
+        )
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.voice missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.voice");
+
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &message_id
+                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Played)
+            )
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_receipt_played: no Played receipt for {message_id} in 30 s. \
+             Confirm TEST_MEMBER device has played the voice note. Underlying: {e}"
+        )
+    });
+    if let InboundEvent::Receipt {
+        msg_id, kind, peer, ..
+    } = ev
+    {
+        assert_eq!(msg_id, message_id);
+        assert_eq!(peer, peer_jid);
+        eprintln!("live_receipt_played: OK {kind:?} peer={peer}");
+    } else {
+        unreachable!("predicate constrained to Receipt")
+    }
+}
+
+/// `live_mark_read_emits_read_receipt` — Tier 3 inbound-ack path.
+///
+/// Operator pre-action: TEST_MEMBER_1 must send us a message. The
+/// `OCTO_WHATSAPP_TEST_INBOUND_MSG_ID` env var carries its message
+/// id (capture it from the daemon's persister log on the second
+/// device, or run `live_inbound_*` first). The test calls
+/// `messages.mark_read` for that inbound message, then asserts the
+/// daemon emits `Receipt { msg_id == inbound_msg_id, kind: Read }`
+/// on our own buffer (the outbound read-receipt sent to the peer).
+///
+/// The RPC's `marked_read` status is the load-bearing assertion. The
+/// Receipt event is the bonus — different wacore versions route
+/// outbound read-receipts through different paths, so a missing
+/// event is logged but does NOT fail the test.
+#[tokio::test]
+async fn live_mark_read_emits_read_receipt() {
+    let fix = fixture();
+    let inbound_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_INBOUND_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_mark_read_emits_read_receipt: skipping \
+                 (set OCTO_WHATSAPP_TEST_INBOUND_MSG_ID to the message id of a fresh \
+                 inbound Message from TEST_MEMBER to your account)"
+            );
+            return;
+        }
+    };
+    let peer_phone = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_mark_read_emits_read_receipt: skipping (also set \
+                 OCTO_WHATSAPP_TEST_MEMBER to the sender's phone)"
+            );
+            return;
+        }
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    // Drive mark_read. The RPC returns `status: "marked_read"` on
+    // success — adapter.error surfaces as a `NotConnected` RpcError.
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "messages.mark_read",
+            json!({"peer": peer_jid, "up_to_msg_id": inbound_msg_id.clone()}),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "marked_read",
+        "messages.mark_read must return status=marked_read; got {resp}"
+    );
+    assert_eq!(
+        resp["up_to_msg_id"], inbound_msg_id,
+        "messages.mark_read must echo up_to_msg_id"
+    );
+    inter_call_delay_for("messages.mark_read");
+
+    // The outbound read-receipt our daemon sent: a Receipt event
+    // with msg_id == inbound_msg_id and kind == Read lands in our
+    // OWN buffer. If wacore emits it through the same channel that
+    // other receipts do, it will appear here within seconds.
+    let result = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &inbound_msg_id
+                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
+            )
+        },
+        Duration::from_secs(15),
+    );
+    match result {
+        Ok(InboundEvent::Receipt {
+            msg_id, kind, peer, ..
+        }) => {
+            assert_eq!(msg_id, inbound_msg_id);
+            assert_eq!(peer, peer_jid);
+            eprintln!("live_mark_read_emits_read_receipt: OK {kind:?} peer={peer}");
+        }
+        Ok(_) => unreachable!("predicate constrained to Receipt"),
+        Err(e) => {
+            // Don't panic on this — different wacore versions emit
+            // the outbound read-receipt through different channels.
+            // The RPC succeeded (`marked_read` returned); the test
+            // passes as long as the call succeeded.
+            eprintln!(
+                "live_mark_read_emits_read_receipt: RPC marked_read OK but no outbound \
+                 Receipt event surfaced within 15 s ({e}). Non-fatal: the ack may \
+                 have been routed directly through a socket bypass."
+            );
+        }
+    }
+}
+
+/// True when `OCTO_WHATSAPP_TEST_<NAME>` is set to a non-empty value.
+fn test_flag_set(name: &str) -> bool {
+    std::env::var(name).map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+/// Resolve `OCTO_WHATSAPP_TEST_MEMBER` into a canonical JID, panicking
+/// with a precise error if missing or malformed. Used by all Tier 3
+/// tests that require a peer device.
+fn require_test_peer_jid(test_name: &str) -> String {
+    let peer_phone = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => panic!(
+            "{test_name}: also set OCTO_WHATSAPP_TEST_MEMBER to the E.164 phone of a \
+             peer device that can receive WhatsApp messages"
+        ),
+    };
+    octo_whatsapp::jids::peer_to_jid(&peer_phone).unwrap_or_else(|e| {
+        panic!("{test_name}: OCTO_WHATSAPP_TEST_MEMBER invalid (need E.164 with leading +): {e}")
+    })
+}

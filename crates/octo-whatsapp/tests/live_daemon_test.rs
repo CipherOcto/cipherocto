@@ -169,6 +169,11 @@ struct LiveTestFixture {
     cancel: CancellationToken,
     daemon_runtime: Arc<tokio::runtime::Runtime>,
     events_buffer: Arc<octo_whatsapp::events_buffer::EventsBuffer>,
+    /// Connected phone number (E.164). Resolved during fixture init by
+    /// calling `adapter.self_handle()` after the WA handshake settles.
+    /// Used by Tier-1 tests that send to self for the self-echo
+    /// round-trip without depending on TEST_MEMBER_1.
+    self_jid: String,
     tmp: TempDir,
 }
 
@@ -253,50 +258,61 @@ fn init_fixture() -> LiveTestFixture {
                     .build()
                     .expect("build dedicated daemon runtime"),
             );
-            let (cancel, events_buffer, sock, _daemon_task) = runtime_arc.block_on(async move {
-                let adapter = Arc::new(WhatsAppWebAdapter::new(adapter_cfg));
-                let adapter_for_start = adapter.clone();
-                let daemon = Daemon::new(cfg_for_thread.clone());
-                daemon
-                    .handle()
-                    .bind_adapter_and_start(adapter.clone(), move || async move {
-                        adapter_for_start
-                            .start_bot()
-                            .await
-                            .expect("WhatsAppWebAdapter::start_bot failed");
+            let (cancel, events_buffer, sock, self_jid, _daemon_task) =
+                runtime_arc.block_on(async move {
+                    let adapter = Arc::new(WhatsAppWebAdapter::new(adapter_cfg));
+                    let adapter_for_start = adapter.clone();
+                    let daemon = Daemon::new(cfg_for_thread.clone());
+                    daemon
+                        .handle()
+                        .bind_adapter_and_start(adapter.clone(), move || async move {
+                            adapter_for_start
+                                .start_bot()
+                                .await
+                                .expect("WhatsAppWebAdapter::start_bot failed");
+                        });
+                    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                    while std::time::Instant::now() < deadline {
+                        if adapter.self_handle().is_some() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    assert!(
+                        adapter.self_handle().is_some(),
+                        "live fixture: adapter never reached Connected within 60s"
+                    );
+                    let cancel = daemon.cancel_token();
+                    let events_buffer = daemon.handle().events_buffer().clone();
+                    let daemon_task = tokio::spawn(async move { daemon.run().await });
+                    let sock = cfg_for_thread.socket_path();
+                    let spin_deadline = std::time::Instant::now() + Duration::from_secs(5);
+                    while std::time::Instant::now() < spin_deadline {
+                        if sock.exists() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    assert!(
+                        sock.exists(),
+                        "live fixture: socket {sock:?} never created within 5s"
+                    );
+                    let self_jid = adapter.self_handle().unwrap_or_else(|| {
+                        panic!("live fixture: self_handle() resolved to None at end of init")
                     });
-                let deadline = std::time::Instant::now() + Duration::from_secs(60);
-                while std::time::Instant::now() < deadline {
-                    if adapter.self_handle().is_some() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-                assert!(
-                    adapter.self_handle().is_some(),
-                    "live fixture: adapter never reached Connected within 60s"
-                );
-                let cancel = daemon.cancel_token();
-                let events_buffer = daemon.handle().events_buffer().clone();
-                let daemon_task = tokio::spawn(async move { daemon.run().await });
-                let sock = cfg_for_thread.socket_path();
-                let spin_deadline = std::time::Instant::now() + Duration::from_secs(5);
-                while std::time::Instant::now() < spin_deadline {
-                    if sock.exists() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                assert!(
-                    sock.exists(),
-                    "live fixture: socket {sock:?} never created within 5s"
-                );
-                (cancel, events_buffer, sock, daemon_task)
-            });
-            (runtime_arc, cancel, events_buffer, sock, _daemon_task)
+                    (cancel, events_buffer, sock, self_jid, daemon_task)
+                });
+            (
+                runtime_arc,
+                cancel,
+                events_buffer,
+                sock,
+                self_jid,
+                _daemon_task,
+            )
         })
         .expect("spawn init thread");
-    let (daemon_runtime, cancel, events_buffer, socket, _daemon_task) =
+    let (daemon_runtime, cancel, events_buffer, socket, self_jid, _daemon_task) =
         init_join.join().expect("init thread panic");
 
     LiveTestFixture {
@@ -304,6 +320,7 @@ fn init_fixture() -> LiveTestFixture {
         cancel,
         daemon_runtime,
         events_buffer,
+        self_jid,
         tmp,
     }
 }
@@ -352,4 +369,227 @@ async fn live_connection_open_emits_event() {
         ),
         Err(e) => panic!("wait_for error: {e}"),
     }
+}
+
+// ===========================================================================
+// Tier 1 — 1:1 text send
+//
+// Ground-truth contract: every outbound text message produces a
+// Receipt event for the same message_id within 30 s of `send.text`
+// returning; every send to a peer that has the chat open produces a
+// `Message` event back on our own daemon (self-echo) within the same
+// window. The self-echo is what we assert — TEST_MEMBER_1 dependency
+// is optional via a dedicated test that requires the env var.
+// ===========================================================================
+
+/// Resolve the fixture's connected self JID into the canonical
+/// `<digits>@s.whatsapp.net` form that `send.text` accepts. Bare E.164
+/// digits without the suffix are rejected by the handler's peer
+/// pre-flight (RFC-0850 §8.6).
+fn self_peer_jid(fix: &LiveTestFixture) -> String {
+    octo_whatsapp::jids::peer_to_jid(&format!("+{}", fix.self_jid)).expect("self JID resolves")
+}
+
+/// Construct an RPC connection on the fixture's unix socket. Skips
+/// the 2 s floor when the method is in the read-only list (used by
+/// read-only setup probes like `status.get`).
+async fn rpc(fix: &LiveTestFixture) -> RpcStream {
+    RpcStream::new(fix.socket.clone()).await
+}
+
+/// `live_send_text_self` — Tier 1 canary.
+///
+/// Sends a uniquely-tagged text to the operator's own linked account.
+/// The daemon's adapter dispatches through `wacore::Client::send_text`;
+/// WA servers round-trip the message back to our own daemon as a
+/// self-echo `InboundEvent::Message`. The test asserts the event lands
+/// within 10 s, with `peer == self`, `from_me == true`, and
+/// `id == send.text response.message_id`.
+///
+/// Failure modes this test catches:
+/// - `send.text` silently no-op'd (the Phase 1 stub regression)
+/// - WA dispatch error surfaces as `InvalidParams` or `Unreachable`
+/// - NDJSON ingestion dropping events (events_query sees None)
+/// - Self JID resolution fails (fixture panic upstream)
+#[tokio::test]
+async fn live_send_text_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let marker = format!("live-tier1-{}", std::process::id());
+    let text = format!("tier1 self-echo {marker}");
+
+    // Setup probe: read status (idempotent, no 2 s floor needed).
+    let _ = rpc(fix).await.call("status.get", json!({})).await;
+
+    // Main action: send.text to self. This will hit the rate-limit
+    // floor on the NEXT call, not this one (the floor is the WA
+    // servers' cooldown, not our internal debounce).
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": self_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text response missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
+    // Ground-truth assertion: self-echo event lands in the buffer
+    // within 10 s. Assert peer == self + id == response + from_me via
+    // structural pattern match.
+    let event = wait_for(
+        &fix.events_buffer,
+        |ev| matches!(ev, InboundEvent::Message { id, peer, .. } if id == &message_id && peer == &self_jid),
+        Duration::from_secs(10),
+    )
+    .unwrap_or_else(|e| panic!("live_send_text_self: {e}; marker={marker}; message_id={message_id}"));
+    let InboundEvent::Message { id, peer, .. } = event else {
+        unreachable!("predicate already constrained to Message")
+    };
+    assert_eq!(id, message_id, "message_id must round-trip");
+    assert_eq!(peer, self_jid, "peer must round-trip (self)");
+}
+
+/// `live_send_text_peer` — Tier 1 cross-device.
+///
+/// Variant that requires `OCTO_WHATSAPP_TEST_MEMBER` set to a phone
+/// number that has the operator's chat open on a second device (e.g.
+/// the desktop app). Skips with a clear message — NOT an error —
+/// when the env var is unset. WA delivers: `Receipt { kind: ServerAck }`
+/// fires immediately on our end; `Receipt { kind: Delivered }` only
+/// fires once the second device acknowledges (operator action).
+#[tokio::test]
+async fn live_send_text_peer() {
+    let fix = fixture();
+    let Some(peer_phone) = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() else {
+        eprintln!(
+            "live_send_text_peer: skipping (OCTO_WHATSAPP_TEST_MEMBER unset; \
+             run with the env var set to a phone that can receive)"
+        );
+        return;
+    };
+    let peer_jid = match octo_whatsapp::jids::peer_to_jid(&peer_phone) {
+        Ok(j) => j,
+        Err(e) => panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"),
+    };
+    let text = format!("tier1 cross-device {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": peer_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text response missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
+    // ServerAck is the local dispatch acknowledgment — fires within
+    // hundreds of ms. Delivered requires operator action on the
+    // second device.
+    let ack = wait_for(
+        &fix.events_buffer,
+        |ev| matches!(ev, InboundEvent::Receipt { msg_id, kind, .. } if msg_id == &message_id && matches!(kind, octo_whatsapp::events::ReceiptKind::Delivered | octo_whatsapp::events::ReceiptKind::Read)),
+        Duration::from_secs(30),
+    );
+    match ack {
+        Ok(InboundEvent::Receipt { msg_id, .. }) => assert_eq!(msg_id, message_id),
+        Ok(_) => unreachable!("predicate constrained to Receipt"),
+        Err(e) => panic!(
+            "live_send_text_peer: no Delivered/Read receipt for {message_id} within 30s. \
+             This usually means the second device (TEST_MEMBER) never received / opened the chat. \
+             Underlying error: {e}"
+        ),
+    }
+}
+
+/// `live_send_text_oversize` — Tier 1 negative path.
+///
+/// Sends 65 537 bytes (ceiling + 1). The handler's pre-flight check
+/// must reject with `PayloadTooLarge` (`-32004`) BEFORE any adapter
+/// contact — so we assert no outbound event lands (otherwise the
+/// rate-limit floor is the only thing keeping the WA servers from
+/// rejecting the payload). 65 537 bytes > 65 536 bytes, well under
+/// the u32::MAX, safe to allocate.
+#[tokio::test]
+async fn live_send_text_oversize_rejected_pre_flight() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let text = "a".repeat(65_537);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": self_jid, "text": text}))
+        .await;
+    let err = &resp["error"];
+    assert_eq!(
+        err["code"].as_i64(),
+        Some(-32004),
+        "oversize must be rejected with PayloadTooLarge (-32004), got {resp}"
+    );
+    assert_eq!(err["data"]["max_bytes"].as_u64(), Some(65_536));
+    assert_eq!(err["data"]["size_bytes"].as_u64(), Some(65_537));
+    // Negative: the WA servers never saw this payload.
+    let text_marker = "oversize-marker-no-event-should-land";
+    let absent = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(ev, InboundEvent::Message { text, .. }
+                if text.contains(text_marker))
+        },
+        Duration::from_secs(3),
+    );
+    assert!(
+        absent.is_err(),
+        "live_send_text_oversize_rejected_pre_flight: payload leaked to WA — predicate unexpectedly matched within 3s"
+    );
+}
+
+/// `live_send_text_invalid_peer` — Tier 1 negative path.
+///
+/// Sends to a peer that doesn't satisfy the `peer_to_jid` shape
+/// rules (contains `@` but isn't a recognised suffix). Must be
+/// rejected with `InvalidParams` (`-32602`) before the adapter is
+/// ever called.
+#[tokio::test]
+async fn live_send_text_invalid_peer_rejected_pre_flight() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "send.text",
+            json!({"peer": "not-a-peer-shape", "text": "hi"}),
+        )
+        .await;
+    assert_eq!(
+        resp["error"]["code"].as_i64(),
+        Some(-32602),
+        "invalid peer must be rejected with InvalidParams (-32602), got {resp}"
+    );
+}
+
+/// `live_send_text_accepts_exact_ceiling` — Tier 1 ceiling boundary.
+///
+/// Sends a text of EXACTLY 65 536 bytes. The pre-flight must pass
+/// (size == ceiling is inclusive). The adapter dispatches to WA.
+/// We don't assert inbound echo here because 65 KiB self-echo is
+/// indistinguishable from echo of any other size — the unit tests
+/// in send_text.rs already pin the handler shape; the live test
+/// only checks the ceiling boundary doesn't trigger rejection.
+#[tokio::test]
+async fn live_send_text_accepts_exact_ceiling() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let text = "a".repeat(65_536);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": self_jid, "text": text}))
+        .await;
+    assert!(
+        resp.get("message_id").is_some(),
+        "exact-ceiling must dispatch: {resp}"
+    );
+    assert_eq!(resp["size_bytes"].as_u64(), Some(65_536));
+    inter_call_delay_for("send.text");
 }

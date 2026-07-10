@@ -3679,6 +3679,61 @@ impl WhatsAppWebAdapter {
             })?;
         Ok(crate::SetGroupProfilePictureResponse { id: resp.id })
     }
+
+    // ── Tier 7.I: sync appstate config + remaining IQ ────────
+
+    /// Enable or disable skipping of history-sync notifications
+    /// at runtime. Maps to `Client::set_skip_history_sync`.
+    pub async fn set_skip_history_sync(&self, enabled: bool) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.set_skip_history_sync(enabled);
+        Ok(())
+    }
+
+    /// Set how many one-time pre-keys are generated per upload
+    /// batch. Maps to `Client::set_wanted_pre_key_count`.
+    pub async fn set_wanted_pre_key_count(&self, count: u32) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.set_wanted_pre_key_count(count as usize);
+        Ok(())
+    }
+
+    /// Retune the per-chat outbound resend rate limiter live.
+    /// `burst = 0` disables the limiter. Maps to
+    /// `Client::set_resend_rate_limit`.
+    pub async fn set_resend_rate_limit(
+        &self,
+        burst: u32,
+        refill_per_min: u32,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.set_resend_rate_limit(burst, refill_per_min);
+        Ok(())
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

@@ -359,6 +359,30 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         active: bool,
     ) -> Result<(), PlatformAdapterError>;
 
+    // ── Session 7.I: sync appstate config + remaining IQ ─────
+
+    /// Enable or disable skipping of history-sync notifications
+    /// at runtime. When enabled, the client acknowledges
+    /// incoming history sync notifications without downloading
+    /// or processing them. Maps to
+    /// `Client::set_skip_history_sync(enabled)`.
+    async fn set_skip_history_sync(&self, enabled: bool) -> Result<(), PlatformAdapterError>;
+
+    /// Set how many one-time pre-keys are generated per upload
+    /// batch. Call before connecting; takes effect on the next
+    /// pre-key upload. Maps to
+    /// `Client::set_wanted_pre_key_count(count)`.
+    async fn set_wanted_pre_key_count(&self, count: u32) -> Result<(), PlatformAdapterError>;
+
+    /// Retune the per-chat outbound resend rate limiter live.
+    /// `burst = 0` disables the limiter. Maps to
+    /// `Client::set_resend_rate_limit(burst, refill_per_min)`.
+    async fn set_resend_rate_limit(
+        &self,
+        burst: u32,
+        refill_per_min: u32,
+    ) -> Result<(), PlatformAdapterError>;
+
     /// Create a new newsletter. `name` is required (non-empty);
     /// `description` is optional. Returns the metadata of the
     /// newly created newsletter. Maps to
@@ -1236,6 +1260,19 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         active: bool,
     ) -> Result<(), PlatformAdapterError> {
         self.set_force_active_delivery_receipts(active).await
+    }
+    async fn set_skip_history_sync(&self, enabled: bool) -> Result<(), PlatformAdapterError> {
+        self.set_skip_history_sync(enabled).await
+    }
+    async fn set_wanted_pre_key_count(&self, count: u32) -> Result<(), PlatformAdapterError> {
+        self.set_wanted_pre_key_count(count).await
+    }
+    async fn set_resend_rate_limit(
+        &self,
+        burst: u32,
+        refill_per_min: u32,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_resend_rate_limit(burst, refill_per_min).await
     }
     async fn create_newsletter(
         &self,
@@ -2231,6 +2268,21 @@ mod tests {
                 .create_event(JID, "tier6-event", 1_700_000_000, None)
                 .await,
         );
+    }
+
+    // ── Tier 7.I: sync appstate config + remaining IQ delegation ──
+
+    #[tokio::test]
+    async fn delegation_set_skip_history_sync() {
+        assert_client_not_connected(adapter().set_skip_history_sync(true).await);
+    }
+    #[tokio::test]
+    async fn delegation_set_wanted_pre_key_count() {
+        assert_client_not_connected(adapter().set_wanted_pre_key_count(812).await);
+    }
+    #[tokio::test]
+    async fn delegation_set_resend_rate_limit() {
+        assert_client_not_connected(adapter().set_resend_rate_limit(8, 60).await);
     }
 
     // ── Group G: size-gated wrappers ──

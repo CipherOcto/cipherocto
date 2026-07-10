@@ -29,6 +29,9 @@ pub mod daemon_ops;
 pub mod daemon_set_client_profile;
 pub mod daemon_set_force_active_delivery_receipts;
 pub mod daemon_set_passive;
+pub mod daemon_set_resend_rate_limit;
+pub mod daemon_set_skip_history_sync;
+pub mod daemon_set_wanted_pre_key_count;
 pub mod domain_compute_hash;
 pub mod envelope_decode;
 pub mod envelope_encode;
@@ -287,6 +290,16 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(daemon_set_passive::DaemonSetPassive))
         .register(Arc::new(
             daemon_set_force_active_delivery_receipts::DaemonSetForceActiveDeliveryReceipts,
+        ))
+        // Tier 7.I: sync appstate config + remaining IQ
+        .register(Arc::new(
+            daemon_set_skip_history_sync::DaemonSetSkipHistorySync,
+        ))
+        .register(Arc::new(
+            daemon_set_wanted_pre_key_count::DaemonSetWantedPreKeyCount,
+        ))
+        .register(Arc::new(
+            daemon_set_resend_rate_limit::DaemonSetResendRateLimit,
         ))
         // Tier 7.E: newsletter + tctoken
         .register(Arc::new(newsletter_create::NewsletterCreate))
@@ -612,6 +625,20 @@ pub const TIER7_H_GROUP_METHODS: &[&str] = &[
     "groups.remove_profile_picture",
 ];
 
+/// Tier 7.I: sync appstate config + remaining IQ. 3 of the
+/// original 5 RPCs land. `daemon.set_device_props` and
+/// `daemon.set_retry_admission` are deferred — the WA-side
+/// type for `set_device_props` is
+/// `DevicePropsOverride` (3 of 4 fields are protobuf-generated
+/// enums) and `set_retry_admission` accepts an
+/// `Arc<dyn RetryAdmission>`, neither of which round-trips
+/// cleanly across JSON-RPC.
+pub const TIER7_I_DAEMON_METHODS: &[&str] = &[
+    "daemon.set_skip_history_sync",
+    "daemon.set_wanted_pre_key_count",
+    "daemon.set_resend_rate_limit",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,6 +721,7 @@ mod tests {
             .chain(TIER7_E_NEWSLETTER_TCTOKEN_METHODS.iter())
             .chain(TIER7_F_PASSKEY_METHODS.iter())
             .chain(TIER7_H_GROUP_METHODS.iter())
+            .chain(TIER7_I_DAEMON_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

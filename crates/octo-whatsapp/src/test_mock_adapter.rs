@@ -617,6 +617,22 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "send_passkey_confirmation")
     }
 
+    // ── Tier 7.I: sync appstate config + remaining IQ ────────
+
+    async fn set_skip_history_sync(&self, _enabled: bool) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_skip_history_sync")
+    }
+    async fn set_wanted_pre_key_count(&self, _count: u32) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_wanted_pre_key_count")
+    }
+    async fn set_resend_rate_limit(
+        &self,
+        _burst: u32,
+        _refill_per_min: u32,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_resend_rate_limit")
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

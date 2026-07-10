@@ -289,6 +289,22 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "mark_read")
     }
 
+    async fn pin_message(
+        &self,
+        _peer_jid: &str,
+        _msg_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "pin_message")
+    }
+
+    async fn unpin_message(
+        &self,
+        _peer_jid: &str,
+        _msg_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "unpin_message")
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

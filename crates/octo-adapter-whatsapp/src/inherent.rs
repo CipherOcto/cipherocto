@@ -1013,7 +1013,91 @@ impl WhatsAppWebAdapter {
             })
     }
 
-    // ── Task 16: message_search ──
+    // ── Task 15b: messages pin / unpin (Tier 7.A) ──
+
+    /// Pin a message in a chat for all participants (7-day default).
+    ///
+    /// Thin wrapper around `whatsapp_rust::Client::pin_message`. The
+    /// `MessageKey` we send identifies the target as from_me=true since
+    /// pinning a message you did not send requires group admin context,
+    /// which the high-level pin/unpin helpers do not currently expose;
+    /// admin pinning can be layered later if needed.
+    pub async fn pin_message(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let chat: wacore_binary::Jid =
+            peer_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid JID {peer_jid:?}: {e}"),
+                })?;
+        let key = waproto::whatsapp::MessageKey {
+            remote_jid: Some(peer_jid.to_string()),
+            from_me: Some(true),
+            id: Some(msg_id.to_string()),
+            ..Default::default()
+        };
+        client
+            .pin_message(chat, key, whatsapp_rust::PinDuration::Days7)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("pin_message failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Unpin a previously pinned message.
+    pub async fn unpin_message(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let chat: wacore_binary::Jid =
+            peer_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid JID {peer_jid:?}: {e}"),
+                })?;
+        let key = waproto::whatsapp::MessageKey {
+            remote_jid: Some(peer_jid.to_string()),
+            from_me: Some(true),
+            id: Some(msg_id.to_string()),
+            ..Default::default()
+        };
+        client
+            .unpin_message(chat, key)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("unpin_message failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+// ── Task 16: message_search ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
     ///

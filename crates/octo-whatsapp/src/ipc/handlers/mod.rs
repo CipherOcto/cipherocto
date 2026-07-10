@@ -49,8 +49,10 @@ pub mod messages_get;
 pub mod messages_list;
 pub mod messages_mark_as_played;
 pub mod messages_mark_read;
+pub mod messages_pin;
 pub mod messages_search;
 pub mod messages_star;
+pub mod messages_unpin;
 pub mod messages_unstar;
 pub mod newsletter_get_metadata;
 pub mod newsletter_leave;
@@ -227,6 +229,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(newsletter_get_metadata::NewsletterGetMetadata))
         .register(Arc::new(newsletter_leave::NewsletterLeave))
         .register(Arc::new(events_create::EventsCreate))
+        // Tier 7.A: pin / unpin / forward / edit-encrypted
+        .register(Arc::new(messages_pin::MessagesPin))
+        .register(Arc::new(messages_unpin::MessagesUnpin))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -476,6 +481,9 @@ pub const TIER6_5_NEWSLETTER_METHODS: &[&str] = &[
     "events.create",
 ];
 
+/// Tier 7.A: messages pin / unpin (Phase 7 close-the-gap).
+pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] = &["messages.pin", "messages.unpin"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,6 +559,7 @@ mod tests {
             .chain(TIER6_3_LIFECYCLE_METHODS.iter())
             .chain(TIER6_4_IDENTITY_METHODS.iter())
             .chain(TIER6_5_NEWSLETTER_METHODS.iter())
+            .chain(TIER7_A_PIN_UNPIN_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

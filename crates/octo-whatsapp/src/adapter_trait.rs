@@ -160,6 +160,13 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         up_to_msg_id: &str,
     ) -> Result<(), PlatformAdapterError>;
 
+    /// Pin a message in a chat for all participants (7-day default).
+    async fn pin_message(&self, peer_jid: &str, msg_id: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Unpin a previously pinned message.
+    async fn unpin_message(&self, peer_jid: &str, msg_id: &str)
+        -> Result<(), PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -741,6 +748,16 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         up_to_msg_id: &str,
     ) -> Result<(), PlatformAdapterError> {
         self.mark_read(peer_jid, up_to_msg_id).await
+    }
+    async fn pin_message(&self, peer_jid: &str, msg_id: &str) -> Result<(), PlatformAdapterError> {
+        self.pin_message(peer_jid, msg_id).await
+    }
+    async fn unpin_message(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.unpin_message(peer_jid, msg_id).await
     }
     async fn message_search(
         &self,

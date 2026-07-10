@@ -327,6 +327,29 @@ impl OctoWhatsAppAdapter for MockAdapter {
         )
     }
 
+    async fn fetch_sticker_pack(
+        &self,
+        _pack_id: &str,
+        _locale: &str,
+    ) -> Result<octo_adapter_whatsapp::StickerPackSnapshot, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("fetch_sticker_pack").or_insert(0) += 1;
+        Ok(octo_adapter_whatsapp::StickerPackSnapshot {
+            sticker_pack_id: Some("fake-pack-id".into()),
+            name: Some("Fake Pack".into()),
+            publisher: Some("Fake Publisher".into()),
+            description: None,
+            file_size: None,
+            image_data_hash: None,
+            stickers: Vec::new(),
+            animated: 0,
+            lottie: 0,
+            preview_image_ids: Vec::new(),
+            tray_image_id: None,
+            tray_image_preview: None,
+        })
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

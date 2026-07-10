@@ -121,6 +121,46 @@ pub struct NewsletterMetadataSnapshot {
     pub creation_time: Option<u64>,
 }
 
+/// One entry inside a first-party sticker pack. Mirrors the WA
+/// crate's `wacore::sticker_pack::StickerPackItem` flattened to
+/// primitive types so the runtime layer does not need to depend on
+/// wacore re-exports. `media_key`, `file_hash`, and `enc_file_hash`
+/// are base64-encoded on the wire (the WA crate returns raw `Vec<u8>`
+/// because the bytes are CDN-encrypted blob keys).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct StickerPackItemSnapshot {
+    pub media_key_b64: Option<String>,
+    pub file_hash_b64: Option<String>,
+    pub enc_file_hash_b64: Option<String>,
+    pub direct_path: Option<String>,
+    pub url: Option<String>,
+    pub file_size: Option<u64>,
+    pub mimetype: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub emojis: Vec<String>,
+    pub accessibility_text: Option<String>,
+}
+
+/// Flattened sticker pack returned by `media.fetch_sticker_pack`.
+/// Mirrors `wacore::sticker_pack::StickerPack` so the runtime can
+/// serialize without depending on the wacore type directly.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct StickerPackSnapshot {
+    pub sticker_pack_id: Option<String>,
+    pub name: Option<String>,
+    pub publisher: Option<String>,
+    pub description: Option<String>,
+    pub file_size: Option<String>,
+    pub image_data_hash: Option<String>,
+    pub stickers: Vec<StickerPackItemSnapshot>,
+    pub animated: i32,
+    pub lottie: i32,
+    pub preview_image_ids: Vec<String>,
+    pub tray_image_id: Option<String>,
+    pub tray_image_preview: Option<String>,
+}
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

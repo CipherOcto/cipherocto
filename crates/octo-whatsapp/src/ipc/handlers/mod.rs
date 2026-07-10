@@ -41,6 +41,7 @@ pub mod labels_add_chat_label;
 pub mod labels_create;
 pub mod labels_delete;
 pub mod labels_remove_chat_label;
+pub mod media_fetch_sticker_pack;
 pub mod media_info;
 pub mod messages_delete_for_me;
 pub mod messages_download;
@@ -231,11 +232,12 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(newsletter_get_metadata::NewsletterGetMetadata))
         .register(Arc::new(newsletter_leave::NewsletterLeave))
         .register(Arc::new(events_create::EventsCreate))
-        // Tier 7.A: pin / unpin / forward / edit-encrypted
+        // Tier 7.A: pin / unpin / forward / edit-encrypted + sticker_pack
         .register(Arc::new(messages_pin::MessagesPin))
         .register(Arc::new(messages_unpin::MessagesUnpin))
         .register(Arc::new(messages_forward::MessagesForward))
         .register(Arc::new(messages_edit_encrypted::MessagesEditEncrypted))
+        .register(Arc::new(media_fetch_sticker_pack::MediaFetchStickerPack))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -485,12 +487,13 @@ pub const TIER6_5_NEWSLETTER_METHODS: &[&str] = &[
     "events.create",
 ];
 
-/// Tier 7.A: messages pin / unpin / forward (Phase 7 close-the-gap).
+/// Tier 7.A: messages pin / unpin / forward / edit_encrypted / sticker_pack.
 pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] = &[
     "messages.pin",
     "messages.unpin",
     "messages.forward",
     "messages.edit_encrypted",
+    "media.fetch_sticker_pack",
 ];
 
 #[cfg(test)]

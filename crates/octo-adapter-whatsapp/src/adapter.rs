@@ -345,7 +345,8 @@ pub struct WhatsAppWebAdapter {
     ///
     /// Unbounded by design — operators that run millions of sends should
     /// add a TTL or LRU later. Reset on `start_bot` (new session).
-    pub(crate) last_outgoing: Arc<Mutex<HashMap<String, HashMap<String, waproto::whatsapp::Message>>>>,
+    pub(crate) last_outgoing:
+        Arc<Mutex<HashMap<String, HashMap<String, waproto::whatsapp::Message>>>>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's

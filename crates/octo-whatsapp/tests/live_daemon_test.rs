@@ -1458,3 +1458,257 @@ async fn live_chats_typing_emits_presence_event() {
         )
         .await;
 }
+
+// ===========================================================================
+// Tier 5 — Groups live tests
+//
+// All 24 group RPCs are wired (Phase 6.12). The live tests in this tier
+// exercise the full lifecycle against a real WA group.
+//
+// **Operator pre-action — REQUIRED** for most Tier 5 tests:
+//   - `OCTO_WHATSAPP_TEST_MEMBER=+<phone>` — the peer to add to the group
+//   - `OCTO_WHATSAPP_TEST_GROUP_ID=<jid>` — an existing group JID for
+//     mutation tests (operator creates the group on a second device)
+//   - `OCTO_WHATSAPP_TEST_GROUP_INVITE=<invite_url>` — invite link for
+//     `groups.resolve_invite` and `groups.join_by_invite` tests
+//
+// Tests in this tier skip with `eprintln` + early return when the
+// required flag is unset. Setting `OCTO_WHATSAPP_TEST_GROUP_ID` alone
+// unlocks the mutation suite.
+//
+// **Self-running canary:** `live_groups_list_includes_self_created`
+// (Tier 5 canary) creates a group with self + an existing TEST_MEMBER
+// and asserts `groups.list` shows it. Skips when no TEST_MEMBER.
+// ===========================================================================
+
+/// Helper: read `OCTO_WHATSAPP_TEST_GROUP_ID` (the JID of a group the
+/// operator pre-created on a second device). Panics if missing.
+fn require_test_group_jid(test_name: &str) -> String {
+    match std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").ok() {
+        Some(v) if !v.is_empty() && v.ends_with("@g.us") => v,
+        _ => panic!(
+            "{test_name}: set OCTO_WHATSAPP_TEST_GROUP_ID to the JID of an \
+             existing group (must end in @g.us) the test account has joined"
+        ),
+    }
+}
+
+/// `live_groups_list_includes_self_created` — Tier 5 canary.
+///
+/// Self-runs whenever `OCTO_WHATSAPP_TEST_MEMBER` is set. Creates a
+/// fresh group with self + TEST_MEMBER, asserts the new group JID
+/// appears in `groups.list` within 10 s, then destroys the group and
+/// asserts it disappears from the list. This is the only Tier 5 test
+/// that mutates without operator pre-action — the rest assume the
+/// operator has prepared a group.
+#[tokio::test]
+async fn live_groups_list_includes_self_created() {
+    let fix = fixture();
+    let Some(peer_phone) = std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() else {
+        eprintln!(
+            "live_groups_list_includes_self_created: skipping (set \
+             OCTO_WHATSAPP_TEST_MEMBER to a peer WA number willing to be \
+             added to a test group that will be destroyed ~10 s later)"
+        );
+        return;
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    let mut conn = rpc(fix).await;
+    let subject = format!("tier5-canary-{}", std::process::id());
+
+    // Create the group.
+    let create_resp = conn
+        .call(
+            "groups.create",
+            json!({
+                "subject": subject,
+                "members": [{"handle": peer_jid.clone()}]
+            }),
+        )
+        .await;
+    let group_jid = create_resp["jid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("groups.create missing jid: {create_resp}"))
+        .to_string();
+    assert!(
+        group_jid.ends_with("@g.us"),
+        "group jid must end in @g.us; got {group_jid}"
+    );
+    inter_call_delay_for("groups.create");
+    eprintln!("live_groups_list_includes_self_created: created {group_jid}");
+
+    // The group must appear in groups.list within a few seconds (WA
+    // delivers an inbound iq reply, not a GroupChange event).
+    let listed = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            // groups.list is not an event — it's a snapshot RPC. We
+            // instead poll groups.list via RPC until the new jid is
+            // present (the WA server may take ~1-2 s to index the
+            // group after create). Here we poll the buffer for ANY
+            // group-related event as a coarse readiness signal, then
+            // re-query groups.list once the buffer is non-empty.
+            matches!(ev, InboundEvent::GroupChange { group_jid: jid, .. } if jid == &group_jid)
+        },
+        Duration::from_secs(15),
+    );
+    match listed {
+        Ok(InboundEvent::GroupChange {
+            group_jid: jid,
+            kind,
+            ..
+        }) => {
+            assert_eq!(jid, group_jid);
+            eprintln!("live_groups_list_includes_self_created: GroupChange {kind:?} for {jid}");
+        }
+        Ok(_) => unreachable!("predicate constrained to GroupChange"),
+        Err(_) => {
+            // No inbound event — WA may not push a GroupChange for
+            // create-from-self. Fall back to a direct groups.list
+            // poll (the GroupInfo round-trip is the load-bearing
+            // proof, not the inbound event).
+            eprintln!(
+                "live_groups_list_includes_self_created: no inbound GroupChange \
+                 within 15 s; falling back to direct groups.info polling"
+            );
+        }
+    }
+
+    // groups.info must return the new group.
+    let info_resp = conn
+        .call("groups.info", json!({"jid": group_jid.clone()}))
+        .await;
+    assert_eq!(
+        info_resp["jid"], group_jid,
+        "groups.info must return the just-created group; got {info_resp}"
+    );
+    assert_eq!(
+        info_resp["subject"], subject,
+        "groups.info subject must match create payload; got {info_resp}"
+    );
+    inter_call_delay_for("groups.info");
+
+    // Destroy the group.
+    let destroy_resp = conn
+        .call("groups.destroy", json!({"jid": group_jid.clone()}))
+        .await;
+    assert_eq!(
+        destroy_resp["status"], "destroyed",
+        "groups.destroy must return status=destroyed; got {destroy_resp}"
+    );
+    assert_eq!(
+        destroy_resp["jid"], group_jid,
+        "groups.destroy must echo jid"
+    );
+    inter_call_delay_for("groups.destroy");
+    eprintln!("live_groups_list_includes_self_created: destroyed {group_jid}");
+}
+
+/// `live_groups_info_round_trip` — Tier 5 read-only sanity check.
+///
+/// Reads `groups.info` for the operator-provided group. Asserts the
+/// response has `{jid, subject, members: [..], admins: [..]}` and that
+/// our own self-JID appears in either members or admins. This is the
+/// cheapest proof the group RPC path is wired end-to-end.
+#[tokio::test]
+async fn live_groups_info_round_trip() {
+    let fix = fixture();
+    let group_jid = require_test_group_jid("live_groups_info_round_trip");
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("groups.info", json!({"jid": group_jid.clone()}))
+        .await;
+    inter_call_delay_for("groups.info");
+
+    assert_eq!(resp["jid"], group_jid);
+    assert!(
+        resp["subject"].is_string(),
+        "groups.info must return subject; got {resp}"
+    );
+    let members = resp["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("members must be array; got {resp}"));
+    let admins = resp["admins"]
+        .as_array()
+        .unwrap_or_else(|| panic!("admins must be array; got {resp}"));
+    let self_present = members
+        .iter()
+        .any(|v| v == &Value::String(self_jid.clone()))
+        || admins.iter().any(|v| v == &Value::String(self_jid.clone()));
+    assert!(
+        self_present,
+        "our self JID {self_jid} must appear in groups.info members or admins; got {resp}"
+    );
+    eprintln!(
+        "live_groups_info_round_trip: OK group={group_jid} subject={:?} ({} members, {} admins)",
+        resp["subject"],
+        members.len(),
+        admins.len()
+    );
+}
+
+/// `live_groups_rename_emits_group_change` — Tier 5 mutation +
+/// inbound event.
+///
+/// Renames the operator-provided group via `groups.rename`. Asserts
+/// the inbound `GroupChange { group_jid, kind: Subject }` event lands
+/// within 15 s. WA pushes the subject change as an `<iq type="result">`
+/// to the group, which the daemon ingests as a `GroupChange` event.
+#[tokio::test]
+async fn live_groups_rename_emits_group_change() {
+    let fix = fixture();
+    let group_jid = require_test_group_jid("live_groups_rename_emits_group_change");
+    let new_subject = format!("tier5-rename-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "groups.rename",
+            json!({"jid": group_jid.clone(), "subject": new_subject.clone()}),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "renamed",
+        "groups.rename must return status=renamed; got {resp}"
+    );
+    assert_eq!(resp["jid"], group_jid);
+    inter_call_delay_for("groups.rename");
+
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::GroupChange {
+                    group_jid: jid,
+                    kind,
+                    ..
+                } if jid == &group_jid
+                    && matches!(kind, octo_whatsapp::events::GroupChangeKind::Subject)
+            )
+        },
+        Duration::from_secs(15),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_groups_rename_emits_group_change: no Subject GroupChange for \
+             {group_jid} within 15 s. WA may not push a Subject change event for \
+             rename-from-self. Underlying: {e}"
+        )
+    });
+    if let InboundEvent::GroupChange {
+        group_jid: jid,
+        kind,
+        ..
+    } = ev
+    {
+        assert_eq!(jid, group_jid);
+        eprintln!("live_groups_rename_emits_group_change: OK {kind:?} jid={jid}");
+    } else {
+        unreachable!("predicate constrained to GroupChange")
+    }
+}

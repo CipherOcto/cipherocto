@@ -3552,3 +3552,95 @@ async fn live_get_business_profile() {
     }
     eprintln!("live_get_business_profile: OK status={status} peer={peer_jid}");
 }
+
+// ===========================================================================
+// Tier 7.H live tests: groups.get_invite_link + groups.update_member_label.
+//
+// Both require `OCTO_WHATSAPP_TEST_GROUP_ID` (operator pre-created group).
+// Skip-vs-fail convention: env unset → eprintln + early return so the
+// rest of the live suite still runs.
+// ===========================================================================
+
+/// `live_get_invite_link` — 7.H canary.
+///
+/// Fetches the active invite link for a self-created group via
+/// `groups.get_invite_link`. Skips cleanly if no env var.
+#[tokio::test]
+async fn live_get_invite_link() {
+    let Some(_jid) = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
+        eprintln!(
+            "live_get_invite_link: skipping (set OCTO_WHATSAPP_TEST_GROUP_ID to an \
+             existing group JID the test account has joined)"
+        );
+        return;
+    };
+    let jid = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").unwrap();
+    assert!(jid.ends_with("@g.us"), "JID must end in @g.us; got {jid}");
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "groups.get_invite_link",
+            json!({ "jid": jid, "reset": false }),
+        )
+        .await;
+    inter_call_delay_for("groups.get_invite_link");
+    let link = resp["link"].as_str().unwrap_or("");
+    assert!(
+        link.starts_with("https://chat.whatsapp.com/"),
+        "invite link must start with https://chat.whatsapp.com/; got {resp}"
+    );
+    eprintln!("live_get_invite_link: OK link_prefix={}", &link[..30]);
+}
+
+/// `live_update_member_label` — 7.H canary.
+///
+/// Sets the bot's per-group "member label" (empty string clear or
+/// any short tag). Skips cleanly without env vars.
+#[tokio::test]
+async fn live_update_member_label() {
+    let Some(_jid) = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
+        eprintln!(
+            "live_update_member_label: skipping (set OCTO_WHATSAPP_TEST_GROUP_ID to an \
+             existing group JID the test account has joined)"
+        );
+        return;
+    };
+    let jid = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").unwrap();
+    assert!(jid.ends_with("@g.us"), "JID must end in @g.us; got {jid}");
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let label = format!("cipherocto-7H-{}", std::process::id());
+    let resp = conn
+        .call(
+            "groups.update_member_label",
+            json!({ "jid": jid, "label": label.clone() }),
+        )
+        .await;
+    inter_call_delay_for("groups.update_member_label");
+    assert!(
+        resp.is_object() && !resp.as_object().unwrap().contains_key("error"),
+        "update_member_label should succeed; got {resp}"
+    );
+    // Clear it back to "" so we leave the group clean.
+    let clear = conn
+        .call(
+            "groups.update_member_label",
+            json!({ "jid": jid, "label": "" }),
+        )
+        .await;
+    inter_call_delay_for("groups.update_member_label");
+    assert!(
+        clear.is_object() && !clear.as_object().unwrap().contains_key("error"),
+        "update_member_label clear should succeed; got {clear}"
+    );
+    eprintln!("live_update_member_label: OK set={label:?} then cleared for jid={jid}");
+}

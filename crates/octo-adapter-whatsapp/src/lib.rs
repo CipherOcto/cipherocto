@@ -39,6 +39,10 @@ pub use store::StoolapStore;
 // directly. Keeping the re-exports centralised here means callers (and the
 // test) don't need a direct `whatsapp-rust` dependency on their dev-deps
 // just to spell out a `CreateGroupOutput.metadata.participants: Vec<GroupParticipant>`.
+/// Re-export of the WA business-profile wire type (already
+/// `serde::Serialize`) so the runtime can return it directly
+/// without depending on wacore.
+pub use wacore::iq::business::BusinessProfile;
 /// Re-export of the protobuf crate so runtime-layer handlers can
 /// reach into waproto for enum values that don't have a flat
 /// snapshot equivalent (e.g. `EventResponseType`).

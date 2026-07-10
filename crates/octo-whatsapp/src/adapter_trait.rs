@@ -310,6 +310,55 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         recipients: &[String],
     ) -> Result<String, PlatformAdapterError>;
 
+    /// Set our own profile picture. `image_data_b64` is the
+    /// base64-encoded JPEG bytes (square-cropped is conventional;
+    /// WA Web re-encodes whatever the caller passes). Maps to
+    /// `Client::profile().set_profile_picture(image_data)`.
+    async fn set_profile_picture(&self, image_data_b64: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Remove our own profile picture. Maps to
+    /// `Client::profile().remove_profile_picture()`.
+    async fn remove_profile_picture(&self) -> Result<(), PlatformAdapterError>;
+
+    /// Fetch the public business profile for a JID (returns
+    /// address, description, categories, etc.). Maps to
+    /// `Client::get_business_profile(jid)`.
+    async fn get_business_profile(
+        &self,
+        jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::BusinessProfile>, PlatformAdapterError>;
+
+    /// Set the client profile presented to WA on (re)connect.
+    /// `platform` is one of "web" / "android" / "smb_android" /
+    /// "ios" / "macos" / "windows". Other params default to the
+    /// platform's built-in values when omitted. Maps to
+    /// `Client::set_client_profile(...)`.
+    async fn set_client_profile(
+        &self,
+        platform: &str,
+        os_version: Option<&str>,
+        manufacturer: Option<&str>,
+        locale_language: Option<&str>,
+        locale_country: Option<&str>,
+        passive_login: Option<bool>,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Toggle passive mode. When `passive=true`, the server holds
+    /// queued messages until polled (matches whatsmeow's
+    /// convention). WA Web defaults to `passive=false`. Maps to
+    /// `Client::set_passive(passive)`.
+    async fn set_passive(&self, passive: bool) -> Result<(), PlatformAdapterError>;
+
+    /// Toggle the "force active delivery receipts" flag on the
+    /// client. When `active=true`, every outbound message gets
+    /// an immediate `DeliveryReceipt` ack regardless of the
+    /// peer's online state. Maps to
+    /// `Client::set_force_active_delivery_receipts(active)`.
+    async fn set_force_active_delivery_receipts(
+        &self,
+        active: bool,
+    ) -> Result<(), PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -1044,6 +1093,46 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         recipients: &[String],
     ) -> Result<String, PlatformAdapterError> {
         self.revoke_status(message_id, privacy, recipients).await
+    }
+    async fn set_profile_picture(&self, image_data_b64: &str) -> Result<(), PlatformAdapterError> {
+        self.set_profile_picture(image_data_b64).await
+    }
+    async fn remove_profile_picture(&self) -> Result<(), PlatformAdapterError> {
+        self.remove_profile_picture().await
+    }
+    async fn get_business_profile(
+        &self,
+        jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::BusinessProfile>, PlatformAdapterError> {
+        self.get_business_profile(jid).await
+    }
+    async fn set_client_profile(
+        &self,
+        platform: &str,
+        os_version: Option<&str>,
+        manufacturer: Option<&str>,
+        locale_language: Option<&str>,
+        locale_country: Option<&str>,
+        passive_login: Option<bool>,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_client_profile(
+            platform,
+            os_version,
+            manufacturer,
+            locale_language,
+            locale_country,
+            passive_login,
+        )
+        .await
+    }
+    async fn set_passive(&self, passive: bool) -> Result<(), PlatformAdapterError> {
+        self.set_passive(passive).await
+    }
+    async fn set_force_active_delivery_receipts(
+        &self,
+        active: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_force_active_delivery_receipts(active).await
     }
     async fn message_search(
         &self,

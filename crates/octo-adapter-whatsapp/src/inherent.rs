@@ -2991,6 +2991,183 @@ impl WhatsAppWebAdapter {
             })?;
         Ok(send_result.message_id)
     }
+
+    // ── Tier 7.D: profile pictures + business profile + runtime config ──
+
+    /// Set our own profile picture. `image_data_b64` is the
+    /// base64-encoded JPEG bytes.
+    pub async fn set_profile_picture(
+        &self,
+        image_data_b64: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(image_data_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("set_profile_picture: image_data_b64 invalid base64: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .profile()
+            .set_profile_picture(data)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_profile_picture failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Remove our own profile picture.
+    pub async fn remove_profile_picture(&self) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .profile()
+            .remove_profile_picture()
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("remove_profile_picture failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Fetch the public business profile for a JID.
+    pub async fn get_business_profile(
+        &self,
+        jid: &str,
+    ) -> Result<Option<crate::BusinessProfile>, PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let profile = client.get_business_profile(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_business_profile({jid}) failed: {e}"),
+            }
+        })?;
+        Ok(profile)
+    }
+
+    /// Set the client profile presented to WA on (re)connect.
+    /// `platform` is one of "web" / "android" / "smb_android" /
+    /// "ios" / "macos" / "windows".
+    pub async fn set_client_profile(
+        &self,
+        platform: &str,
+        os_version: Option<&str>,
+        manufacturer: Option<&str>,
+        locale_language: Option<&str>,
+        locale_country: Option<&str>,
+        passive_login: Option<bool>,
+    ) -> Result<(), PlatformAdapterError> {
+        use wacore::client_profile::ClientProfile;
+        let mut profile = match platform {
+            "web" => ClientProfile::web(),
+            "android" => ClientProfile::android(os_version.unwrap_or("15")),
+            "smb_android" => ClientProfile::smb_android(os_version.unwrap_or("15")),
+            "ios" => ClientProfile::ios(os_version.unwrap_or("18.0")),
+            "macos" => ClientProfile::macos(os_version.unwrap_or("15.0")),
+            "windows" => ClientProfile::windows(os_version.unwrap_or("11")),
+            other => {
+                return Err(PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!(
+                        "set_client_profile: platform {other:?} unknown; expected web/android/smb_android/ios/macos/windows"
+                    ),
+                });
+            }
+        };
+        if let Some(m) = manufacturer {
+            profile.manufacturer = m.to_string();
+        }
+        if let Some(l) = locale_language {
+            profile.locale_language = l.to_string();
+        }
+        if let Some(c) = locale_country {
+            profile.locale_country = c.to_string();
+        }
+        if let Some(p) = passive_login {
+            profile.passive_login = p;
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.set_client_profile(profile).await;
+        Ok(())
+    }
+
+    /// Toggle passive mode.
+    pub async fn set_passive(&self, passive: bool) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .set_passive(passive)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_passive({passive}) failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Toggle the "force active delivery receipts" flag.
+    pub async fn set_force_active_delivery_receipts(
+        &self,
+        active: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.set_force_active_delivery_receipts(active);
+        Ok(())
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

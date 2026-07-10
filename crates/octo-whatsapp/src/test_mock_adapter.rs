@@ -459,6 +459,48 @@ impl OctoWhatsAppAdapter for MockAdapter {
         )
     }
 
+    // ── Tier 7.D: profile pictures + business profile + runtime config ──
+
+    async fn set_profile_picture(&self, _image_data_b64: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_profile_picture")
+    }
+
+    async fn remove_profile_picture(&self) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "remove_profile_picture")
+    }
+
+    async fn get_business_profile(
+        &self,
+        _jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::BusinessProfile>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_business_profile").or_insert(0) += 1;
+        Ok(Some(octo_adapter_whatsapp::BusinessProfile::default()))
+    }
+
+    async fn set_client_profile(
+        &self,
+        _platform: &str,
+        _os_version: Option<&str>,
+        _manufacturer: Option<&str>,
+        _locale_language: Option<&str>,
+        _locale_country: Option<&str>,
+        _passive_login: Option<bool>,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_client_profile")
+    }
+
+    async fn set_passive(&self, _passive: bool) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_passive")
+    }
+
+    async fn set_force_active_delivery_receipts(
+        &self,
+        _active: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_force_active_delivery_receipts")
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

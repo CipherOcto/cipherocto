@@ -19,12 +19,16 @@ pub mod chats_unpin;
 pub mod clients;
 pub mod contact_block;
 pub mod contact_unblock;
+pub mod contacts_get_business_profile;
 pub mod contacts_get_profile_picture;
 pub mod contacts_get_user_info;
 pub mod contacts_is_on_whatsapp;
 pub mod contacts_save_contact;
 pub mod daemon_methods;
 pub mod daemon_ops;
+pub mod daemon_set_client_profile;
+pub mod daemon_set_force_active_delivery_receipts;
+pub mod daemon_set_passive;
 pub mod domain_compute_hash;
 pub mod envelope_decode;
 pub mod envelope_encode;
@@ -70,6 +74,8 @@ pub mod presence_subscribe;
 pub mod presence_unsubscribe;
 pub mod privacy_get;
 pub mod privacy_set;
+pub mod profile_remove_picture;
+pub mod profile_set_picture;
 pub mod profile_set_push_name;
 pub mod profile_set_status;
 pub mod rules;
@@ -255,6 +261,17 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(status_send_image::StatusSendImage))
         .register(Arc::new(status_send_video::StatusSendVideo))
         .register(Arc::new(status_revoke::StatusRevoke))
+        // Tier 7.D: profile pictures + business profile + runtime config
+        .register(Arc::new(profile_set_picture::ProfileSetPicture))
+        .register(Arc::new(profile_remove_picture::ProfileRemovePicture))
+        .register(Arc::new(
+            contacts_get_business_profile::ContactsGetBusinessProfile,
+        ))
+        .register(Arc::new(daemon_set_client_profile::DaemonSetClientProfile))
+        .register(Arc::new(daemon_set_passive::DaemonSetPassive))
+        .register(Arc::new(
+            daemon_set_force_active_delivery_receipts::DaemonSetForceActiveDeliveryReceipts,
+        ))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -525,6 +542,16 @@ pub const TIER7_C_STATUS_METHODS: &[&str] = &[
     "status.revoke",
 ];
 
+/// Tier 7.D: profile pictures + business profile + runtime config.
+pub const TIER7_D_PROFILE_METHODS: &[&str] = &[
+    "profile.set_profile_picture",
+    "profile.remove_profile_picture",
+    "contacts.get_business_profile",
+    "daemon.set_client_profile",
+    "daemon.set_passive",
+    "daemon.set_force_active_delivery_receipts",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +630,7 @@ mod tests {
             .chain(TIER7_A_PIN_UNPIN_METHODS.iter())
             .chain(TIER7_B_POLLS_EVENTS_METHODS.iter())
             .chain(TIER7_C_STATUS_METHODS.iter())
+            .chain(TIER7_D_PROFILE_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

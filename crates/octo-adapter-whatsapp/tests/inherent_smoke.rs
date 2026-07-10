@@ -64,7 +64,11 @@ async fn smoke_send_reaction_unconnected() {
 #[tokio::test]
 async fn smoke_send_poll_unconnected() {
     let opts = vec!["A".to_string(), "B".to_string()];
-    assert_client_not_connected(adapter().send_poll(JID, "Q?", &opts, false).await);
+    assert_client_not_connected(
+        adapter()
+            .send_poll(JID, "Q?", &opts, false, false, None)
+            .await,
+    );
 }
 
 #[tokio::test]

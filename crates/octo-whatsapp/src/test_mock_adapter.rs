@@ -236,6 +236,8 @@ impl OctoWhatsAppAdapter for MockAdapter {
         _question: &str,
         _options: &[String],
         _multi: bool,
+        _is_quiz: bool,
+        _correct_option_index: Option<usize>,
     ) -> Result<String, PlatformAdapterError> {
         record_single_call(&self.state, "send_poll", Ok("fake-poll-msg-id".into()))
     }
@@ -747,9 +749,19 @@ impl OctoWhatsAppAdapter for MockAdapter {
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
         _max_bytes: usize,
     ) -> Result<String, PlatformAdapterError> {
-        self.send_poll(to_jid, question, options, multi).await
+        self.send_poll(
+            to_jid,
+            question,
+            options,
+            multi,
+            is_quiz,
+            correct_option_index,
+        )
+        .await
     }
 
     async fn send_contact_checked(
@@ -1389,7 +1401,7 @@ mod tests {
             .await
             .unwrap();
         let _ = m
-            .send_poll_checked("jid", "q", &[], false, 1024)
+            .send_poll_checked("jid", "q", &[], false, false, None, 1024)
             .await
             .unwrap();
         let _ = m

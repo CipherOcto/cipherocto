@@ -15,6 +15,14 @@ struct Params {
     options: Vec<String>,
     #[serde(default)]
     multi: bool,
+    /// When `true`, send a quiz (single-select with one correct
+    /// answer); `correct_option_index` then becomes required.
+    #[serde(default)]
+    is_quiz: bool,
+    /// 0-based index into `options` of the correct answer.
+    /// Required when `is_quiz=true`.
+    #[serde(default)]
+    correct_option_index: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -52,7 +60,15 @@ impl RpcHandler for SendPoll {
             data: None,
         })?;
         let id = adapter
-            .send_poll_checked(&p.peer, &p.question, &p.options, p.multi, kind.max_bytes())
+            .send_poll_checked(
+                &p.peer,
+                &p.question,
+                &p.options,
+                p.multi,
+                p.is_quiz,
+                p.correct_option_index,
+                kind.max_bytes(),
+            )
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::NotConnected.as_i32(),
@@ -63,6 +79,7 @@ impl RpcHandler for SendPoll {
             "status": "sent",
             "message_id": id,
             "option_count": p.options.len(),
+            "is_quiz": p.is_quiz,
             "kind": kind.as_str(),
         }))
     }
@@ -123,6 +140,28 @@ mod tests {
         assert_eq!(r["message_id"], "fake-poll-msg-id");
         assert_eq!(r["option_count"], 2);
         assert_eq!(r["kind"], "poll");
+        assert_eq!(r["is_quiz"], false);
+    }
+
+    #[tokio::test]
+    async fn quiz_path_with_correct_option_index() {
+        let r = SendPoll
+            .call(
+                handle_with_mock(),
+                serde_json::json!({
+                    "peer": "1234567890@s.whatsapp.net",
+                    "question": "Capital of France?",
+                    "options": ["London", "Paris", "Berlin"],
+                    "multi": false,
+                    "is_quiz": true,
+                    "correct_option_index": 1,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r["status"], "sent");
+        assert_eq!(r["is_quiz"], true);
+        assert_eq!(r["message_id"], "fake-poll-msg-id");
     }
 
     #[tokio::test]

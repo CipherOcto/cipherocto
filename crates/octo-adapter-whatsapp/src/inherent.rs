@@ -647,6 +647,8 @@ impl WhatsAppWebAdapter {
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
     ) -> Result<String, PlatformAdapterError> {
         let client = {
             let guard = self.client.lock();
@@ -662,6 +664,29 @@ impl WhatsAppWebAdapter {
                 code: 400,
                 message: format!("invalid JID {to_jid:?}: {e}"),
             })?;
+        // Quiz path delegates to `Polls::create_quiz` which enforces
+        // single-select (`selectableOptionsCount = 1`) and embeds
+        // the correct option index in the protobuf. The
+        // `message_secret` it generates is currently NOT surfaced to
+        // the runtime — operators need it to decrypt votes, so a
+        // future commit will add `message_secret_b64` to the
+        // `send.poll` response shape.
+        if is_quiz {
+            let correct_index =
+                correct_option_index.ok_or_else(|| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: "send_poll: is_quiz=true requires correct_option_index".into(),
+                })?;
+            let (send_result, _message_secret) = client
+                .polls()
+                .create_quiz(&jid, question, options, correct_index)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("send_poll (quiz) failed: {e}"),
+                })?;
+            return Ok(send_result.message_id);
+        }
         let selectable_options_count = if multi { options.len() as u32 } else { 1 };
         let poll_msg = waproto::whatsapp::message::PollCreationMessage {
             name: Some(question.to_string()),
@@ -690,12 +715,15 @@ impl WhatsAppWebAdapter {
         Ok(send_result.message_id)
     }
     /// Size-gated wrapper for `send_poll`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_poll_checked(
         &self,
         to_jid: &str,
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
         max_bytes: usize,
     ) -> Result<String, PlatformAdapterError> {
         let payload_size = question.len() + options.iter().map(|o| o.len()).sum::<usize>() + 32;
@@ -706,7 +734,15 @@ impl WhatsAppWebAdapter {
                 platform: "whatsapp".into(),
             });
         }
-        self.send_poll(to_jid, question, options, multi).await
+        self.send_poll(
+            to_jid,
+            question,
+            options,
+            multi,
+            is_quiz,
+            correct_option_index,
+        )
+        .await
     }
 
     // ── Task 11: contact (vcard file, max 1 MiB) ──
@@ -2837,7 +2873,7 @@ mod tests {
         // 4 KiB ceiling: an 8 KiB question blows the budget.
         let big_q = "?".repeat(8 * 1024);
         let r = adapter()
-            .send_poll_checked(JID, &big_q, &[], false, 4 * 1024)
+            .send_poll_checked(JID, &big_q, &[], false, false, None, 4 * 1024)
             .await;
         assert!(matches!(
             r,

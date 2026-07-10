@@ -2865,3 +2865,335 @@ async fn live_edit_encrypted() {
         resp["new_msg_id"]
     );
 }
+
+// ===========================================================================
+// Tier 7.B — polls vote / aggregate + events respond smoke tests
+// ===========================================================================
+//
+// All three honour the same env-skip convention as the Tier 7.A
+// tests above: missing env var → `eprintln!` + early return (test
+// passes). The tests check the env BEFORE calling fixture() so they
+// skip cleanly even when no WA session is paired.
+
+/// `live_vote_poll` — Tier 7.B smoke test for `polls.vote`.
+///
+/// Operator pre-action:
+/// 1. From your second device (TEST_MEMBER), send yourself a poll
+///    via WA Web (`is_quiz=false`, multi=false). The poll's
+///    `message_secret` is in the WA Web > Inspect panel of the
+///    message (32-byte base64 string).
+/// 2. Set `OCTO_WHATSAPP_TEST_POLL_MSG_ID` to that poll's msg id.
+/// 3. Set `OCTO_WHATSAPP_TEST_POLL_CREATOR_JID` to the JID of the
+///    TEST_MEMBER sender (e.g. `15551234567@s.whatsapp.net`).
+/// 4. Set `OCTO_WHATSAPP_TEST_POLL_SECRET_B64` to the 32-byte
+///    base64-encoded poll secret.
+/// 5. Set `OCTO_WHATSAPP_TEST_POLL_OPTIONS` to the option names
+///    matching the poll (for single-select, one entry; for
+///    multi-select, one or more).
+///
+/// Asserts `status=voted` and a non-empty `message_id`. The
+/// `InboundEvent::Receipt::ServerAck` for the vote surfaces on
+/// OUR buffer (different event from the underlying poll-create
+/// receipt). We don't assert it because the inbound flow is
+/// covered by Tier 3 (general receipts); this test focuses on
+/// the RPC contract.
+#[tokio::test]
+async fn live_vote_poll() {
+    let poll_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_POLL_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_vote_poll: skipping \
+                 (set OCTO_WHATSAPP_TEST_POLL_MSG_ID, \
+                 OCTO_WHATSAPP_TEST_POLL_CREATOR_JID, \
+                 OCTO_WHATSAPP_TEST_POLL_SECRET_B64, and \
+                 OCTO_WHATSAPP_TEST_POLL_OPTIONS — see doc-comment)"
+            );
+            return;
+        }
+    };
+    let poll_creator_jid = match std::env::var("OCTO_WHATSAPP_TEST_POLL_CREATOR_JID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_vote_poll: skipping (OCTO_WHATSAPP_TEST_POLL_CREATOR_JID unset)");
+            return;
+        }
+    };
+    let secret_b64 = match std::env::var("OCTO_WHATSAPP_TEST_POLL_SECRET_B64").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_vote_poll: skipping (OCTO_WHATSAPP_TEST_POLL_SECRET_B64 unset)");
+            return;
+        }
+    };
+    let options_csv = match std::env::var("OCTO_WHATSAPP_TEST_POLL_OPTIONS").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_vote_poll: skipping (OCTO_WHATSAPP_TEST_POLL_OPTIONS unset)");
+            return;
+        }
+    };
+    let peer_jid = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => octo_whatsapp::jids::peer_to_jid(&v)
+            .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}")),
+        _ => {
+            eprintln!("live_vote_poll: skipping (OCTO_WHATSAPP_TEST_MEMBER unset)");
+            return;
+        }
+    };
+    let selected_options: Vec<String> = options_csv
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if selected_options.is_empty() {
+        eprintln!(
+            "live_vote_poll: skipping (OCTO_WHATSAPP_TEST_POLL_OPTIONS had no valid entries)"
+        );
+        return;
+    }
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "polls.vote",
+            json!({
+                "peer": peer_jid,
+                "poll_msg_id": poll_msg_id.clone(),
+                "poll_creator_jid": poll_creator_jid,
+                "message_secret_b64": secret_b64,
+                "selected_options": selected_options,
+            }),
+        )
+        .await;
+    inter_call_delay_for("polls.vote");
+
+    assert_eq!(
+        resp["status"], "voted",
+        "polls.vote must return status=voted; got {resp}"
+    );
+    assert_eq!(resp["poll_msg_id"], poll_msg_id);
+    assert!(
+        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        "polls.vote must return non-empty message_id; got {resp}"
+    );
+    eprintln!(
+        "live_vote_poll: OK poll={poll_msg_id} -> vote={}",
+        resp["message_id"]
+    );
+}
+
+/// `live_aggregate_poll` — Tier 7.B smoke test for
+/// `polls.aggregate`.
+///
+/// Operator pre-action: same env vars as `live_vote_poll`, plus
+/// `OCTO_WHATSAPP_TEST_POLL_VOTES_JSON` — a JSON array of
+/// `{voter_jid, enc_payload_b64, enc_iv_b64}` entries harvested
+/// from inbound WA WS frames (TODO: future `InboundEvent::PollVote`
+/// will surface these automatically).
+///
+/// Asserts `status=aggregated` and that `results` is an array
+/// (possibly empty — actual decryption depends on the WA
+/// server actually accepting the operator-harvested votes).
+#[tokio::test]
+async fn live_aggregate_poll() {
+    let poll_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_POLL_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_aggregate_poll: skipping \
+                 (set OCTO_WHATSAPP_TEST_POLL_MSG_ID, \
+                 OCTO_WHATSAPP_TEST_POLL_CREATOR_JID, \
+                 OCTO_WHATSAPP_TEST_POLL_SECRET_B64, \
+                 OCTO_WHATSAPP_TEST_POLL_OPTIONS, and \
+                 OCTO_WHATSAPP_TEST_POLL_VOTES_JSON — see doc-comment)"
+            );
+            return;
+        }
+    };
+    let poll_creator_jid = match std::env::var("OCTO_WHATSAPP_TEST_POLL_CREATOR_JID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_aggregate_poll: skipping (OCTO_WHATSAPP_TEST_POLL_CREATOR_JID unset)");
+            return;
+        }
+    };
+    let secret_b64 = match std::env::var("OCTO_WHATSAPP_TEST_POLL_SECRET_B64").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_aggregate_poll: skipping (OCTO_WHATSAPP_TEST_POLL_SECRET_B64 unset)");
+            return;
+        }
+    };
+    let options_csv = match std::env::var("OCTO_WHATSAPP_TEST_POLL_OPTIONS").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_aggregate_poll: skipping (OCTO_WHATSAPP_TEST_POLL_OPTIONS unset)");
+            return;
+        }
+    };
+    let votes_json = match std::env::var("OCTO_WHATSAPP_TEST_POLL_VOTES_JSON").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_aggregate_poll: skipping (OCTO_WHATSAPP_TEST_POLL_VOTES_JSON unset)");
+            return;
+        }
+    };
+    let poll_options: Vec<String> = options_csv
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if poll_options.is_empty() {
+        eprintln!(
+            "live_aggregate_poll: skipping (OCTO_WHATSAPP_TEST_POLL_OPTIONS had no valid entries)"
+        );
+        return;
+    }
+    let votes_value: Value = match serde_json::from_str(&votes_json) {
+        Ok(v) => v,
+        Err(e) => panic!("OCTO_WHATSAPP_TEST_POLL_VOTES_JSON invalid JSON: {e}"),
+    };
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "polls.aggregate",
+            json!({
+                "options": poll_options,
+                "votes": votes_value,
+                "message_secret_b64": secret_b64,
+                "poll_msg_id": poll_msg_id.clone(),
+                "poll_creator_jid": poll_creator_jid,
+            }),
+        )
+        .await;
+    inter_call_delay_for("polls.aggregate");
+
+    assert_eq!(
+        resp["status"], "aggregated",
+        "polls.aggregate must return status=aggregated; got {resp}"
+    );
+    assert_eq!(resp["poll_msg_id"], poll_msg_id);
+    let results = resp["results"]
+        .as_array()
+        .expect("polls.aggregate results must be an array");
+    for entry in results {
+        assert!(
+            entry["name"].is_string(),
+            "each result must have a name; got {entry}"
+        );
+        assert!(
+            entry["voters"].is_array(),
+            "each result must have a voters array; got {entry}"
+        );
+    }
+    eprintln!(
+        "live_aggregate_poll: OK poll={poll_msg_id} -> {} option rows",
+        results.len()
+    );
+}
+
+/// `live_respond_event` — Tier 7.B smoke test for
+/// `events.respond`.
+///
+/// Operator pre-action:
+/// 1. Have TEST_MEMBER create a calendar event in the chat with
+///    you. The 32-byte base64 `message_secret` is exposed via
+///    WA Web > Inspect.
+/// 2. Set `OCTO_WHATSAPP_TEST_EVENT_MSG_ID` to the event-creation
+///    msg id.
+/// 3. Set `OCTO_WHATSAPP_TEST_EVENT_CREATOR_JID` to the JID of
+///    TEST_MEMBER.
+/// 4. Set `OCTO_WHATSAPP_TEST_EVENT_SECRET_B64` to the
+///    base64-encoded 32-byte secret.
+/// 5. Set `OCTO_WHATSAPP_TEST_EVENT_RESPONSE` to one of
+///    `going` / `not_going` / `maybe`.
+///
+/// Asserts `status=responded` and a non-empty `message_id`.
+/// No event predicate (RSVPs do not surface on the responder's
+/// own buffer — they ride along on the original event message
+/// on the creator's device).
+#[tokio::test]
+async fn live_respond_event() {
+    let event_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_EVENT_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_respond_event: skipping \
+                 (set OCTO_WHATSAPP_TEST_EVENT_MSG_ID, \
+                 OCTO_WHATSAPP_TEST_EVENT_CREATOR_JID, \
+                 OCTO_WHATSAPP_TEST_EVENT_SECRET_B64, and \
+                 OCTO_WHATSAPP_TEST_EVENT_RESPONSE — see doc-comment)"
+            );
+            return;
+        }
+    };
+    let event_creator_jid = match std::env::var("OCTO_WHATSAPP_TEST_EVENT_CREATOR_JID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_respond_event: skipping (OCTO_WHATSAPP_TEST_EVENT_CREATOR_JID unset)");
+            return;
+        }
+    };
+    let secret_b64 = match std::env::var("OCTO_WHATSAPP_TEST_EVENT_SECRET_B64").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_respond_event: skipping (OCTO_WHATSAPP_TEST_EVENT_SECRET_B64 unset)");
+            return;
+        }
+    };
+    let response = match std::env::var("OCTO_WHATSAPP_TEST_EVENT_RESPONSE").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_respond_event: skipping (OCTO_WHATSAPP_TEST_EVENT_RESPONSE unset)");
+            return;
+        }
+    };
+    let peer_jid = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => octo_whatsapp::jids::peer_to_jid(&v)
+            .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}")),
+        _ => {
+            eprintln!("live_respond_event: skipping (OCTO_WHATSAPP_TEST_MEMBER unset)");
+            return;
+        }
+    };
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "events.respond",
+            json!({
+                "peer": peer_jid,
+                "event_msg_id": event_msg_id.clone(),
+                "event_creator_jid": event_creator_jid,
+                "message_secret_b64": secret_b64,
+                "response": response.clone(),
+            }),
+        )
+        .await;
+    inter_call_delay_for("events.respond");
+
+    assert_eq!(
+        resp["status"], "responded",
+        "events.respond must return status=responded; got {resp}"
+    );
+    assert_eq!(resp["event_msg_id"], event_msg_id);
+    assert_eq!(resp["response"], response);
+    assert!(
+        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        "events.respond must return non-empty message_id; got {resp}"
+    );
+    eprintln!(
+        "live_respond_event: OK event={event_msg_id} response={response} -> {}",
+        resp["message_id"]
+    );
+}

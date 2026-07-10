@@ -114,13 +114,19 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         emoji: &str,
     ) -> Result<String, PlatformAdapterError>;
 
-    /// Send a poll. Returns the new message id.
+    /// Send a poll. Returns the new message id. When `is_quiz=true`
+    /// routes to `Polls::create_quiz` (single-select, embeds
+    /// `correct_option_index` in the protobuf); `multi` is ignored
+    /// in that branch (WA Web forces single-select for quizzes).
+    #[allow(clippy::too_many_arguments)]
     async fn send_poll(
         &self,
         to_jid: &str,
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
     ) -> Result<String, PlatformAdapterError>;
 
     /// Send a vCard contact file. Returns the new message id.
@@ -613,13 +619,19 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         max_bytes: usize,
     ) -> Result<String, PlatformAdapterError>;
 
-    /// Size-gated wrapper for `send_poll`.
+    /// Size-gated wrapper for `send_poll`. `is_quiz=true` routes to
+    /// `Polls::create_quiz` (single-select, embeds
+    /// `correct_option_index` in the protobuf); `multi` is ignored
+    /// in that branch (WA Web forces single-select for quizzes).
+    #[allow(clippy::too_many_arguments)]
     async fn send_poll_checked(
         &self,
         to_jid: &str,
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
         max_bytes: usize,
     ) -> Result<String, PlatformAdapterError>;
 
@@ -791,14 +803,25 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     ) -> Result<String, PlatformAdapterError> {
         self.send_reaction(to_jid, msg_id, emoji).await
     }
+    #[allow(clippy::too_many_arguments)]
     async fn send_poll(
         &self,
         to_jid: &str,
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
     ) -> Result<String, PlatformAdapterError> {
-        self.send_poll(to_jid, question, options, multi).await
+        self.send_poll(
+            to_jid,
+            question,
+            options,
+            multi,
+            is_quiz,
+            correct_option_index,
+        )
+        .await
     }
     async fn send_contact(
         &self,
@@ -1274,12 +1297,15 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         }
         self.send_reaction(to_jid, msg_id, emoji).await
     }
+    #[allow(clippy::too_many_arguments)]
     async fn send_poll_checked(
         &self,
         to_jid: &str,
         question: &str,
         options: &[String],
         multi: bool,
+        is_quiz: bool,
+        correct_option_index: Option<usize>,
         max_bytes: usize,
     ) -> Result<String, PlatformAdapterError> {
         let payload_size = question.len() + options.iter().map(|o| o.len()).sum::<usize>() + 32;
@@ -1290,7 +1316,15 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
                 platform: "whatsapp".into(),
             });
         }
-        self.send_poll(to_jid, question, options, multi).await
+        self.send_poll(
+            to_jid,
+            question,
+            options,
+            multi,
+            is_quiz,
+            correct_option_index,
+        )
+        .await
     }
     async fn send_contact_checked(
         &self,
@@ -1520,7 +1554,11 @@ mod tests {
     #[tokio::test]
     async fn delegation_send_poll() {
         let opts = vec!["A".to_string(), "B".to_string()];
-        assert_client_not_connected(adapter().send_poll(JID, "Q?", &opts, false).await);
+        assert_client_not_connected(
+            adapter()
+                .send_poll(JID, "Q?", &opts, false, false, None)
+                .await,
+        );
     }
     #[tokio::test]
     async fn delegation_send_contact() {
@@ -1892,7 +1930,7 @@ mod tests {
         // payload = 2 + 1 + 32 = 35; max 1024 OK.
         assert_client_not_connected(
             adapter()
-                .send_poll_checked(JID, "Q?", &opts, false, 1024)
+                .send_poll_checked(JID, "Q?", &opts, false, false, None, 1024)
                 .await,
         );
     }

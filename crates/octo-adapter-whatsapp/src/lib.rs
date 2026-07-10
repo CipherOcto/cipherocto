@@ -196,6 +196,16 @@ pub struct ReceivedTcTokenSnapshot {
 /// `Deserialize` so we don't need a snapshot wrapper.
 pub use wacore::store::traits::TcTokenEntry as TcTokenEntryValue;
 
+// ── Tier 7.H: group gap list (invite link / member labels / profile pic) ──
+//
+// Re-exported from `octo-network::dot::adapters::coordinator_admin`
+// so the runtime-layer handlers and IPC tests can name the types
+// without depending on `octo-network` directly through the adapter
+// surface. The types already derive `Serialize` + `Deserialize` so
+// no snapshot wrapper is needed.
+pub use octo_network::dot::adapters::coordinator_admin::GroupProfilePictureSnapshot;
+pub use octo_network::dot::adapters::coordinator_admin::SetGroupProfilePictureResponse;
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

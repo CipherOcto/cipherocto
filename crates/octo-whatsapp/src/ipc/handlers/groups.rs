@@ -926,6 +926,190 @@ impl RpcHandler for GroupsJoinById {
     }
 }
 
+// --- groups.get_invite_link ---
+
+#[derive(Debug)]
+pub struct GroupsGetInviteLink;
+
+#[derive(Deserialize)]
+struct GetInviteLinkParams {
+    jid: String,
+    #[serde(default)]
+    reset: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsGetInviteLink {
+    fn name(&self) -> &'static str {
+        "groups.get_invite_link"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: GetInviteLinkParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let link = coord
+            .get_invite_link(&gid, p.reset)
+            .await
+            .map_err(|e| map_err("groups.get_invite_link", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({ "link": link }))
+    }
+}
+
+// --- groups.update_member_label ---
+
+#[derive(Debug)]
+pub struct GroupsUpdateMemberLabel;
+
+#[derive(Deserialize)]
+struct UpdateMemberLabelParams {
+    jid: String,
+    label: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsUpdateMemberLabel {
+    fn name(&self) -> &'static str {
+        "groups.update_member_label"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: UpdateMemberLabelParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        coord
+            .update_member_label(&gid, &p.label)
+            .await
+            .map_err(|e| map_err("groups.update_member_label", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({}))
+    }
+}
+
+// --- groups.get_profile_pictures ---
+
+#[derive(Debug)]
+pub struct GroupsGetProfilePictures;
+
+#[derive(Deserialize)]
+struct GetProfilePicturesParams {
+    jids: Vec<String>,
+    #[serde(default)]
+    preview: bool,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsGetProfilePictures {
+    fn name(&self) -> &'static str {
+        "groups.get_profile_pictures"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: GetProfilePicturesParams = serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gids: Vec<GroupId> = p.jids.iter().map(|j| GroupId::new(j.clone())).collect();
+        let pictures = coord
+            .get_profile_pictures(&gids, p.preview)
+            .await
+            .map_err(|e| map_err("groups.get_profile_pictures", e))?;
+        let _keep_alive = adapter;
+        let arr: Vec<Value> = pictures
+            .iter()
+            .map(|pic| {
+                json!({
+                    "group_jid": pic.group_jid,
+                    "url": pic.url,
+                    "direct_path": pic.direct_path,
+                    "photo_id": pic.photo_id,
+                })
+            })
+            .collect();
+        Ok(json!({ "pictures": arr }))
+    }
+}
+
+// --- groups.set_profile_picture ---
+
+#[derive(Debug)]
+pub struct GroupsSetProfilePicture;
+
+#[derive(Deserialize)]
+struct SetGroupProfilePictureParams {
+    jid: String,
+    image_data_b64: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsSetProfilePicture {
+    fn name(&self) -> &'static str {
+        "groups.set_profile_picture"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: SetGroupProfilePictureParams =
+            serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let resp = coord
+            .set_profile_picture(&gid, &p.image_data_b64)
+            .await
+            .map_err(|e| map_err("groups.set_profile_picture", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({ "id": resp.id }))
+    }
+}
+
+// --- groups.remove_profile_picture ---
+
+#[derive(Debug)]
+pub struct GroupsRemoveProfilePicture;
+
+#[derive(Deserialize)]
+struct RemoveGroupProfilePictureParams {
+    jid: String,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for GroupsRemoveProfilePicture {
+    fn name(&self) -> &'static str {
+        "groups.remove_profile_picture"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let p: RemoveGroupProfilePictureParams =
+            serde_json::from_value(params).map_err(invalid_params)?;
+        let adapter = require_adapter(&h)?;
+        let coord = adapter.as_coordinator_admin().ok_or(RpcError {
+            code: RpcErrorCode::NotConnected.as_i32(),
+            message: "adapter does not implement CoordinatorAdmin".into(),
+            data: None,
+        })?;
+        let gid = GroupId::new(p.jid);
+        let resp = coord
+            .remove_profile_picture(&gid)
+            .await
+            .map_err(|e| map_err("groups.remove_profile_picture", e))?;
+        let _keep_alive = adapter;
+        Ok(json!({ "id": resp.id }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1661,5 +1845,132 @@ mod tests {
         let h = fresh_daemon_with_mock();
         let e = GroupsJoinById.call(h, json!({})).await.unwrap_err();
         assert_eq!(e.code, RpcErrorCode::InvalidParams.as_i32());
+    }
+
+    // --- 7.H: groups.get_invite_link ---
+
+    #[tokio::test]
+    async fn groups_get_invite_link_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsGetInviteLink
+            .call(h, json!({"jid": "120363012345678901@g.us"}))
+            .await
+            .unwrap();
+        assert_eq!(v["link"], "https://chat.whatsapp.com/MOCKINV");
+    }
+
+    #[tokio::test]
+    async fn groups_get_invite_link_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsGetInviteLink
+            .call(h, json!({"jid": "120363012345678901@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- 7.H: groups.update_member_label ---
+
+    #[tokio::test]
+    async fn groups_update_member_label_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsUpdateMemberLabel
+            .call(h, json!({"jid": "120363012345678901@g.us", "label": "VIP"}))
+            .await
+            .unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn groups_update_member_label_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsUpdateMemberLabel
+            .call(h, json!({"jid": "120363012345678901@g.us", "label": "VIP"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- 7.H: groups.get_profile_pictures ---
+
+    #[tokio::test]
+    async fn groups_get_profile_pictures_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsGetProfilePictures
+            .call(h, json!({"jids": ["120363012345678901@g.us"]}))
+            .await
+            .unwrap();
+        let arr = v["pictures"].as_array().expect("pictures array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["group_jid"], "120363012345678901@g.us");
+        assert_eq!(arr[0]["photo_id"], "MOCKPIC");
+    }
+
+    #[tokio::test]
+    async fn groups_get_profile_pictures_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsGetProfilePictures
+            .call(h, json!({"jids": ["x@g.us"]}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- 7.H: groups.set_profile_picture ---
+
+    #[tokio::test]
+    async fn groups_set_profile_picture_happy_path() {
+        let h = fresh_daemon_with_mock();
+        // 1x1 red PNG base64 — small valid payload, decoded bytes
+        // don't need to be a real image for the mock path.
+        let v = GroupsSetProfilePicture
+            .call(
+                h,
+                json!({
+                    "jid": "120363012345678901@g.us",
+                    "image_data_b64": "iVBORw0KGgo=",
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["id"], "MOCKPICID");
+    }
+
+    #[tokio::test]
+    async fn groups_set_profile_picture_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsSetProfilePicture
+            .call(
+                h,
+                json!({
+                    "jid": "120363012345678901@g.us",
+                    "image_data_b64": "AAAA",
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
+    }
+
+    // --- 7.H: groups.remove_profile_picture ---
+
+    #[tokio::test]
+    async fn groups_remove_profile_picture_happy_path() {
+        let h = fresh_daemon_with_mock();
+        let v = GroupsRemoveProfilePicture
+            .call(h, json!({"jid": "120363012345678901@g.us"}))
+            .await
+            .unwrap();
+        assert_eq!(v["id"], "0");
+    }
+
+    #[tokio::test]
+    async fn groups_remove_profile_picture_no_adapter() {
+        let h = fresh_daemon_no_adapter();
+        let e = GroupsRemoveProfilePicture
+            .call(h, json!({"jid": "120363012345678901@g.us"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, RpcErrorCode::NotConnected.as_i32());
     }
 }

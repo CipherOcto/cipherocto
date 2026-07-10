@@ -3518,6 +3518,167 @@ impl WhatsAppWebAdapter {
         })?;
         Ok(())
     }
+
+    // ── Tier 7.H: group gap list (invite link / member labels / profile pic) ──
+
+    /// Set the bot's per-group "member label" (empty string clears).
+    /// Maps to `Groups::update_member_label`. Empty/blank values are
+    /// forwarded as-is — the WA crate treats `""` as "clear".
+    pub async fn update_member_label(
+        &self,
+        group_jid: &str,
+        label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let jid: wacore_binary::Jid =
+            group_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid group JID {group_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .groups()
+            .update_member_label(&jid, label.to_string())
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("update_member_label failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Fetch profile pictures for one or more groups.
+    /// `preview = true` selects the low-resolution preview URL;
+    /// `false` returns the full image. Maps to
+    /// `Groups::get_profile_pictures`.
+    pub async fn get_group_profile_pictures(
+        &self,
+        group_jids: Vec<String>,
+        preview: bool,
+    ) -> Result<Vec<crate::GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let jids: Result<Vec<wacore_binary::Jid>, _> = group_jids
+            .iter()
+            .map(|s| s.parse::<wacore_binary::Jid>())
+            .collect();
+        let jids = jids.map_err(|e| PlatformAdapterError::ApiError {
+            code: 400,
+            message: format!("invalid group JID list: {e}"),
+        })?;
+        let picture_type = if preview {
+            // `PictureType` is `pub` in `wacore::iq::groups`.
+            wacore::iq::groups::PictureType::Preview
+        } else {
+            wacore::iq::groups::PictureType::Image
+        };
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let results = client
+            .groups()
+            .get_profile_pictures(jids, picture_type)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_profile_pictures failed: {e}"),
+            })?;
+        let snaps = results
+            .into_iter()
+            .map(|p| crate::GroupProfilePictureSnapshot {
+                group_jid: p.group_jid.to_string(),
+                url: p.url,
+                direct_path: p.direct_path,
+                photo_id: p.photo_id,
+            })
+            .collect();
+        Ok(snaps)
+    }
+
+    /// Set a group's profile picture. `image_data_b64` is the
+    /// base64-encoded JPEG bytes (WhatsApp uses 640x640).
+    pub async fn set_group_profile_picture(
+        &self,
+        group_jid: &str,
+        image_data_b64: &str,
+    ) -> Result<crate::SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let jid: wacore_binary::Jid =
+            group_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid group JID {group_jid:?}: {e}"),
+                })?;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(image_data_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("set_group_profile_picture: image_data_b64 invalid base64: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let resp = client
+            .groups()
+            .set_profile_picture(&jid, data)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_group_profile_picture failed: {e}"),
+            })?;
+        Ok(crate::SetGroupProfilePictureResponse { id: resp.id })
+    }
+
+    /// Remove a group's profile picture.
+    pub async fn remove_group_profile_picture(
+        &self,
+        group_jid: &str,
+    ) -> Result<crate::SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let jid: wacore_binary::Jid =
+            group_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid group JID {group_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let resp = client
+            .groups()
+            .remove_profile_picture(&jid)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("remove_group_profile_picture failed: {e}"),
+            })?;
+        Ok(crate::SetGroupProfilePictureResponse { id: resp.id })
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

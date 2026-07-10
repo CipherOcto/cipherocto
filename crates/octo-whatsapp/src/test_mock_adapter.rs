@@ -23,7 +23,8 @@ use parking_lot::Mutex;
 use octo_adapter_whatsapp::{ChatInfo, MessageHit};
 use octo_network::dot::adapters::coordinator_admin::{
     AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
-    GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+    GroupMemberSpec, GroupMetadata, GroupModeFlags, GroupProfilePictureSnapshot, InviteRef, PeerId,
+    SetGroupProfilePictureResponse,
 };
 use octo_network::dot::adapters::{CapabilityReport, MediaCapabilities};
 use octo_network::dot::error::PlatformAdapterError;
@@ -1150,6 +1151,11 @@ impl CoordinatorAdmin for MockCoordinatorAdmin {
             can_get_metadata: true,
             can_resolve_invite: true,
             can_transfer_ownership: true,
+            can_get_invite_link: true,
+            can_update_member_label: true,
+            can_get_profile_pictures: true,
+            can_set_profile_picture: true,
+            can_remove_profile_picture: true,
         }
     }
 
@@ -1333,6 +1339,82 @@ impl CoordinatorAdmin for MockCoordinatorAdmin {
     ) -> Result<(), PlatformAdapterError> {
         self.record_unit_call("transfer_ownership")
     }
+
+    // ── Session 7.H: group gap list (invite link / member labels / profile pic) ──
+
+    async fn get_invite_link(
+        &self,
+        _id: &GroupId,
+        _reset: bool,
+    ) -> Result<String, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_invite_link").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("get_invite_link") {
+            return Err(e);
+        }
+        Ok("https://chat.whatsapp.com/MOCKINV".into())
+    }
+
+    async fn update_member_label(
+        &self,
+        _id: &GroupId,
+        _label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.record_unit_call("update_member_label")
+    }
+
+    async fn get_profile_pictures(
+        &self,
+        ids: &[GroupId],
+        _preview: bool,
+    ) -> Result<Vec<GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_profile_pictures").or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("get_profile_pictures") {
+            return Err(e);
+        }
+        Ok(ids
+            .iter()
+            .map(|id| GroupProfilePictureSnapshot {
+                group_jid: id.as_str().to_string(),
+                url: Some("https://mock.example/pic".into()),
+                direct_path: None,
+                photo_id: Some("MOCKPIC".into()),
+            })
+            .collect())
+    }
+
+    async fn set_profile_picture(
+        &self,
+        _id: &GroupId,
+        _image_data_b64: &str,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("set_group_profile_picture")
+            .or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("set_group_profile_picture") {
+            return Err(e);
+        }
+        Ok(SetGroupProfilePictureResponse {
+            id: "MOCKPICID".into(),
+        })
+    }
+
+    async fn remove_profile_picture(
+        &self,
+        _id: &GroupId,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("remove_group_profile_picture")
+            .or_insert(0) += 1;
+        if let Some(e) = s.canned_unit_err.remove("remove_group_profile_picture") {
+            return Err(e);
+        }
+        Ok(SetGroupProfilePictureResponse { id: "0".into() })
+    }
+
     fn platform_name(&self) -> String {
         "mock".into()
     }

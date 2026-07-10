@@ -156,6 +156,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(groups::GroupsListWithInvites))
         .register(Arc::new(groups::GroupsJoinByInvite))
         .register(Arc::new(groups::GroupsJoinById))
+        .register(Arc::new(groups::GroupsGetInviteLink))
+        .register(Arc::new(groups::GroupsUpdateMemberLabel))
+        .register(Arc::new(groups::GroupsGetProfilePictures))
+        .register(Arc::new(groups::GroupsSetProfilePicture))
+        .register(Arc::new(groups::GroupsRemoveProfilePicture))
         .register(Arc::new(messages_list::MessagesList))
         .register(Arc::new(messages_search::MessagesSearch))
         .register(Arc::new(messages_edit::MessagesEdit))
@@ -595,6 +600,18 @@ pub const TIER7_E_NEWSLETTER_TCTOKEN_METHODS: &[&str] = &[
 pub const TIER7_F_PASSKEY_METHODS: &[&str] =
     &["passkey.send_response", "passkey.send_confirmation"];
 
+/// Tier 7.H: group gap list (invite link / member labels /
+/// profile pic). All five extend the existing `groups.*`
+/// surface. The community RPCs (Session 7.G) are deferred
+/// until the WA crate publishes the `mod community` surface.
+pub const TIER7_H_GROUP_METHODS: &[&str] = &[
+    "groups.get_invite_link",
+    "groups.update_member_label",
+    "groups.get_profile_pictures",
+    "groups.set_profile_picture",
+    "groups.remove_profile_picture",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,6 +693,7 @@ mod tests {
             .chain(TIER7_D_PROFILE_METHODS.iter())
             .chain(TIER7_E_NEWSLETTER_TCTOKEN_METHODS.iter())
             .chain(TIER7_F_PASSKEY_METHODS.iter())
+            .chain(TIER7_H_GROUP_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

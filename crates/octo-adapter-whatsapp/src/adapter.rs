@@ -15,7 +15,8 @@ use std::time::Instant;
 use octo_network::dot::adapters::{
     coordinator_admin::{
         AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
-        GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+        GroupMemberSpec, GroupMetadata, GroupModeFlags, GroupProfilePictureSnapshot, InviteRef,
+        PeerId, SetGroupProfilePictureResponse,
     },
     CapabilityReport, DeliveryReceipt, MediaCapabilities, PlatformAdapter, RawPlatformMessage,
 };
@@ -2806,6 +2807,12 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             can_resolve_invite: true,
             // Handoff
             can_transfer_ownership: true,
+            // Misc admin (Session 7.H)
+            can_get_invite_link: true,
+            can_update_member_label: true,
+            can_get_profile_pictures: true,
+            can_set_profile_picture: true,
+            can_remove_profile_picture: true,
         }
     }
 
@@ -3275,6 +3282,58 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         // The equivalent is: promote the new owner to admin.
         // The caller can optionally demote the old owner afterwards.
         self.promote_to_admin(group_id, new_owner).await
+    }
+
+    // ── Session 7.H: group gap list (invite link / member labels / profile pic) ──
+
+    async fn get_invite_link(
+        &self,
+        group_id: &GroupId,
+        reset: bool,
+    ) -> Result<String, PlatformAdapterError> {
+        // Delegate to the inherent helper at adapter.rs:1631. The
+        // String error is mapped to `Unreachable` for parity with
+        // the other trait impls (the WA-side `GroupError` doesn't
+        // round-trip cleanly into the trait's error enum yet).
+        self.get_invite_link(group_id.as_str(), reset)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_invite_link failed: {e}"),
+            })
+    }
+
+    async fn update_member_label(
+        &self,
+        group_id: &GroupId,
+        label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.update_member_label(group_id.as_str(), label).await
+    }
+
+    async fn get_profile_pictures(
+        &self,
+        group_ids: &[GroupId],
+        preview: bool,
+    ) -> Result<Vec<GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let jids: Vec<String> = group_ids.iter().map(|g| g.as_str().to_string()).collect();
+        self.get_group_profile_pictures(jids, preview).await
+    }
+
+    async fn set_profile_picture(
+        &self,
+        group_id: &GroupId,
+        image_data_b64: &str,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        self.set_group_profile_picture(group_id.as_str(), image_data_b64)
+            .await
+    }
+
+    async fn remove_profile_picture(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        self.remove_group_profile_picture(group_id.as_str()).await
     }
 }
 

@@ -411,6 +411,23 @@ pub struct AdminCapabilityReport {
     /// `false` here and callers see the multi-step dance in
     /// `transfer_ownership`'s docs.
     pub can_transfer_ownership: bool,
+
+    // ── F. Misc admin (Session 7.H) ──────────────────────────
+    /// Can fetch the active invite link for a group. WhatsApp
+    /// exposes this as a server-stored invite code with a reset
+    /// flag; IRC's invite list is per-channel and static.
+    pub can_get_invite_link: bool,
+    /// Can set / clear the per-member label on a group (WhatsApp
+    /// "member label", Telegram "admin title"). False on IRC.
+    pub can_update_member_label: bool,
+    /// Can fetch profile pictures for one or more groups.
+    pub can_get_profile_pictures: bool,
+    /// Can set the group's profile picture (admin op on
+    /// WhatsApp; not exposed on IRC).
+    pub can_set_profile_picture: bool,
+    /// Can remove the group's profile picture (admin op on
+    /// WhatsApp; not exposed on IRC).
+    pub can_remove_profile_picture: bool,
 }
 
 /// Coordinator / admin actions on a group.
@@ -766,6 +783,84 @@ pub trait CoordinatorAdmin: Send + Sync {
         })
     }
 
+    // ── F. Misc admin (Session 7.H) ──────────────────────────
+    //
+    // Extend the existing group surface with invite-link /
+    // member-label / profile-picture operations. None of these
+    // produce an inbound event the runtime needs to broadcast —
+    // the wire-level ack is the only signal.
+
+    /// Fetch the active invite link (or code) for `group_id`.
+    /// `reset = true` rotates the existing link; `false` returns
+    /// the current one without changing it.
+    async fn get_invite_link(
+        &self,
+        group_id: &GroupId,
+        reset: bool,
+    ) -> Result<String, PlatformAdapterError> {
+        let _ = (group_id, reset);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "get_invite_link".into(),
+        })
+    }
+
+    /// Set / clear the per-member "member label" on a group
+    /// (WhatsApp's per-self label). `label = ""` clears it.
+    async fn update_member_label(
+        &self,
+        group_id: &GroupId,
+        label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let _ = (group_id, label);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "update_member_label".into(),
+        })
+    }
+
+    /// Fetch the profile picture for one or more groups.
+    /// `picture_type` selects preview vs. full image.
+    async fn get_profile_pictures(
+        &self,
+        group_ids: &[GroupId],
+        preview: bool,
+    ) -> Result<Vec<GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let _ = (group_ids, preview);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "get_profile_pictures".into(),
+        })
+    }
+
+    /// Set a group's profile picture. `image_data_b64` is the
+    /// base64-encoded JPEG bytes (caller decides size/crop;
+    /// WhatsApp uses 640x640).
+    async fn set_profile_picture(
+        &self,
+        group_id: &GroupId,
+        image_data_b64: &str,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let _ = (group_id, image_data_b64);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "set_profile_picture".into(),
+        })
+    }
+
+    /// Remove a group's profile picture. Returns the (now-empty)
+    /// picture id — usually `Some("0")` on WhatsApp.
+    async fn remove_profile_picture(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let _ = group_id;
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "remove_profile_picture".into(),
+        })
+    }
+
     /// Helper used by the default-method error paths. Adapters
     /// override this to return the platform's short name
     /// (e.g. `"whatsapp"`, `"telegram"`, `"matrix"`). Default:
@@ -773,6 +868,27 @@ pub trait CoordinatorAdmin: Send + Sync {
     fn platform_name(&self) -> String {
         "unknown".into()
     }
+}
+
+/// Flat snapshot of one group's profile-picture query result.
+/// Mirrors `wacore::iq::groups::GroupProfilePicture` flattened to
+/// primitive types so the runtime doesn't need a wacore
+/// dependency just to round-trip the fields. `url` and
+/// `direct_path` are `None` when the group has no picture.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GroupProfilePictureSnapshot {
+    pub group_jid: String,
+    pub url: Option<String>,
+    pub direct_path: Option<String>,
+    pub photo_id: Option<String>,
+}
+
+/// Response from `set_group_profile_picture` /
+/// `remove_group_profile_picture`. `id` is the server-assigned
+/// picture id (WhatsApp: opaque hex; `Some("0")` for cleared).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetGroupProfilePictureResponse {
+    pub id: String,
 }
 
 // ── PlatformAdapter bridge ────────────────────────────────────────
@@ -846,6 +962,11 @@ mod tests {
         assert!(!r.can_get_metadata);
         assert!(!r.can_resolve_invite);
         assert!(!r.can_transfer_ownership);
+        assert!(!r.can_get_invite_link);
+        assert!(!r.can_update_member_label);
+        assert!(!r.can_get_profile_pictures);
+        assert!(!r.can_set_profile_picture);
+        assert!(!r.can_remove_profile_picture);
     }
 
     #[test]

@@ -3197,3 +3197,253 @@ async fn live_respond_event() {
         resp["message_id"]
     );
 }
+
+// ===========================================================================
+// Tier 7.C — status / broadcast story smoke tests
+// ===========================================================================
+//
+// WA status (a.k.a. "story") updates are public broadcasts visible
+// to a subset of contacts; the RPCs accept the recipient JID list
+// inline because the runtime caller (operator or upstream tool)
+// already knows who can see the status.
+//
+// All four tests honour the env-skip convention: missing env var →
+// `eprintln!` + early return (test passes). Env checks run BEFORE
+// fixture() so they skip cleanly without a paired WA session.
+//
+// For all four, `OCTO_WHATSAPP_STATUS_RECIPIENTS` carries a JSON
+// array of recipients (typically your full contact list, freshly
+// snapshotted at run time).
+
+fn live_status_recipients_jid() -> Option<Vec<String>> {
+    let raw = std::env::var("OCTO_WHATSAPP_STATUS_RECIPIENTS").ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Vec<String>>(&raw).ok()
+}
+
+/// `live_status_send_text` — post a text status and assert the
+/// returned `message_id`. No event predicate (status posts do not
+/// surface on the sender's own buffer — recipients are the
+/// observers).
+#[tokio::test]
+async fn live_status_send_text() {
+    let recipients = match live_status_recipients_jid() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            eprintln!(
+                "live_status_send_text: skipping \
+                 (set OCTO_WHATSAPP_STATUS_RECIPIENTS to a JSON array of JIDs)"
+            );
+            return;
+        }
+    };
+    let text = match std::env::var("OCTO_WHATSAPP_STATUS_TEXT").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!("live_status_send_text: skipping (OCTO_WHATSAPP_STATUS_TEXT unset)");
+            return;
+        }
+    };
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "status.send_text",
+            json!({
+                "text": text,
+                "recipients": recipients,
+            }),
+        )
+        .await;
+    inter_call_delay_for("status.send_text");
+    assert_eq!(
+        resp["status"], "posted",
+        "status.send_text must return status=posted; got {resp}"
+    );
+    assert!(
+        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        "status.send_text must return non-empty message_id; got {resp}"
+    );
+    eprintln!("live_status_send_text: OK -> {}", resp["message_id"]);
+}
+
+/// `live_status_send_image` — post an image status. Requires
+/// `OCTO_WHATSAPP_STATUS_IMAGE_PATH` (a local file path).
+/// `OCTO_WHATSAPP_STATUS_IMAGE_CAPTION` is optional.
+#[tokio::test]
+async fn live_status_send_image() {
+    let recipients = match live_status_recipients_jid() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            eprintln!(
+                "live_status_send_image: skipping \
+                 (set OCTO_WHATSAPP_STATUS_RECIPIENTS)"
+            );
+            return;
+        }
+    };
+    let file_path = match std::env::var("OCTO_WHATSAPP_STATUS_IMAGE_PATH").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_status_send_image: skipping \
+                 (set OCTO_WHATSAPP_STATUS_IMAGE_PATH)"
+            );
+            return;
+        }
+    };
+    let caption = std::env::var("OCTO_WHATSAPP_STATUS_IMAGE_CAPTION")
+        .ok()
+        .filter(|v| !v.is_empty());
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "status.send_image",
+            json!({
+                "file_path": file_path,
+                "caption": caption,
+                "recipients": recipients,
+            }),
+        )
+        .await;
+    inter_call_delay_for("status.send_image");
+    assert_eq!(
+        resp["status"], "posted",
+        "status.send_image must return status=posted; got {resp}"
+    );
+    assert!(
+        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        "status.send_image must return non-empty message_id; got {resp}"
+    );
+    eprintln!("live_status_send_image: OK -> {}", resp["message_id"]);
+}
+
+/// `live_status_send_video` — post a video status. Requires
+/// `OCTO_WHATSAPP_STATUS_VIDEO_PATH` (a local file path) and
+/// `OCTO_WHATSAPP_STATUS_VIDEO_DURATION_SECONDS` (integer seconds).
+#[tokio::test]
+async fn live_status_send_video() {
+    let recipients = match live_status_recipients_jid() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            eprintln!(
+                "live_status_send_video: skipping \
+                 (set OCTO_WHATSAPP_STATUS_RECIPIENTS)"
+            );
+            return;
+        }
+    };
+    let file_path = match std::env::var("OCTO_WHATSAPP_STATUS_VIDEO_PATH").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_status_send_video: skipping \
+                 (set OCTO_WHATSAPP_STATUS_VIDEO_PATH)"
+            );
+            return;
+        }
+    };
+    let duration_seconds: u32 =
+        match std::env::var("OCTO_WHATSAPP_STATUS_VIDEO_DURATION_SECONDS").ok() {
+            Some(v) if !v.is_empty() => match v.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    eprintln!(
+                        "live_status_send_video: skipping \
+                         (OCTO_WHATSAPP_STATUS_VIDEO_DURATION_SECONDS not an integer)"
+                    );
+                    return;
+                }
+            },
+            _ => {
+                eprintln!(
+                    "live_status_send_video: skipping \
+                     (set OCTO_WHATSAPP_STATUS_VIDEO_DURATION_SECONDS)"
+                );
+                return;
+            }
+        };
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "status.send_video",
+            json!({
+                "file_path": file_path,
+                "duration_seconds": duration_seconds,
+                "recipients": recipients,
+            }),
+        )
+        .await;
+    inter_call_delay_for("status.send_video");
+    assert_eq!(
+        resp["status"], "posted",
+        "status.send_video must return status=posted; got {resp}"
+    );
+    assert!(
+        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        "status.send_video must return non-empty message_id; got {resp}"
+    );
+    eprintln!("live_status_send_video: OK -> {}", resp["message_id"]);
+}
+
+/// `live_status_revoke` — revoke a previously-posted status.
+/// Requires `OCTO_WHATSAPP_STATUS_REVOKE_MSG_ID` from an earlier
+/// `live_status_send_*` run.
+#[tokio::test]
+async fn live_status_revoke() {
+    let recipients = match live_status_recipients_jid() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            eprintln!(
+                "live_status_revoke: skipping \
+                 (set OCTO_WHATSAPP_STATUS_RECIPIENTS)"
+            );
+            return;
+        }
+    };
+    let message_id = match std::env::var("OCTO_WHATSAPP_STATUS_REVOKE_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_status_revoke: skipping \
+                 (set OCTO_WHATSAPP_STATUS_REVOKE_MSG_ID from a prior \
+                 live_status_send_* run)"
+            );
+            return;
+        }
+    };
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "status.revoke",
+            json!({
+                "message_id": message_id.clone(),
+                "recipients": recipients,
+            }),
+        )
+        .await;
+    inter_call_delay_for("status.revoke");
+    assert_eq!(
+        resp["status"], "revoked",
+        "status.revoke must return status=revoked; got {resp}"
+    );
+    assert_eq!(resp["message_id"], message_id);
+    assert!(
+        resp["revoke_message_id"].is_string()
+            && !resp["revoke_message_id"].as_str().unwrap().is_empty(),
+        "status.revoke must return non-empty revoke_message_id; got {resp}"
+    );
+    eprintln!(
+        "live_status_revoke: OK {message_id} -> {}",
+        resp["revoke_message_id"]
+    );
+}

@@ -1869,3 +1869,182 @@ async fn live_contacts_get_user_info_self() {
         devices.len()
     );
 }
+
+// ===========================================================================
+// Tier 6.1 — Privacy + blocking live tests
+//
+// `privacy.get` is the canary (always runs). `privacy.set` is
+// hermetic-but-mutating: it changes OUR privacy settings, so we
+// restore the previous value at the end. `blocking.get_blocklist`
+// and `blocking.is_blocked` are read-only snapshots of our local
+// blocklist state.
+// ===========================================================================
+
+/// `live_privacy_get_round_trip` — Tier 6.1 canary.
+///
+/// Calls `privacy.get` and asserts the response is a list of
+/// `{category, value}` settings — each field is a string. Returns
+/// `count >= 1` since every WA account has at least `last` and
+/// `readreceipts` settings populated.
+#[tokio::test]
+async fn live_privacy_get_round_trip() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("privacy.get", json!({})).await;
+    inter_call_delay_for("privacy.get");
+
+    let settings = resp["settings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("settings must be array; got {resp}"));
+    assert!(
+        !settings.is_empty(),
+        "privacy.get must return >= 1 setting; got {resp}"
+    );
+    for s in settings {
+        assert!(
+            s["category"].is_string(),
+            "category must be string; got {s}"
+        );
+        assert!(s["value"].is_string(), "value must be string; got {s}");
+    }
+    eprintln!(
+        "live_privacy_get_round_trip: OK {} settings: {:?}",
+        settings.len(),
+        settings
+            .iter()
+            .map(|s| format!(
+                "{}={}",
+                s["category"].as_str().unwrap_or("?"),
+                s["value"].as_str().unwrap_or("?")
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `live_privacy_set_round_trip` — Tier 6.1 outbound privacy update.
+///
+/// Sets `readreceipts` to `all`, asserts the RPC returns
+/// `{status: "set"}`, then reads back via `privacy.get` and asserts
+/// the value flipped to `all`. Restores the previous value at the
+/// end so other tests aren't affected.
+///
+/// Note: we read the current value FIRST, then write the marker
+/// value, then assert, then restore — net effect = no permanent
+/// change to our privacy state.
+#[tokio::test]
+async fn live_privacy_set_round_trip() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    // Read current value.
+    let pre_resp = conn.call("privacy.get", json!({})).await;
+    inter_call_delay_for("privacy.get");
+    let pre_settings = pre_resp["settings"]
+        .as_array()
+        .expect("settings must be array");
+    let pre_readreceipts = pre_settings
+        .iter()
+        .find(|s| s["category"] == "readreceipts")
+        .and_then(|s| s["value"].as_str())
+        .unwrap_or("all")
+        .to_string();
+
+    // Set marker.
+    let set_resp = conn
+        .call(
+            "privacy.set",
+            json!({"category": "readreceipts", "value": "all"}),
+        )
+        .await;
+    assert_eq!(
+        set_resp["status"], "set",
+        "privacy.set must return status=set; got {set_resp}"
+    );
+    assert_eq!(set_resp["category"], "readreceipts");
+    assert_eq!(set_resp["value"], "all");
+    inter_call_delay_for("privacy.set");
+
+    // Read back — propagation typically takes ~1-3 s.
+    let post_resp = conn.call("privacy.get", json!({})).await;
+    let post_settings = post_resp["settings"]
+        .as_array()
+        .expect("settings must be array");
+    let observed = post_settings
+        .iter()
+        .find(|s| s["category"] == "readreceipts")
+        .and_then(|s| s["value"].as_str())
+        .unwrap_or("");
+    assert_eq!(
+        observed, "all",
+        "readreceipts must be 'all' after privacy.set; got {post_resp}"
+    );
+    inter_call_delay_for("privacy.get");
+
+    // Restore prior value if it differed.
+    if pre_readreceipts != "all" {
+        let _ = conn
+            .call(
+                "privacy.set",
+                json!({"category": "readreceipts", "value": pre_readreceipts}),
+            )
+            .await;
+        eprintln!("live_privacy_set_round_trip: restored readreceipts={pre_readreceipts}");
+    } else {
+        eprintln!("live_privacy_set_round_trip: no restore needed");
+    }
+}
+
+/// `live_blocking_get_blocklist_round_trip` — Tier 6.1 blocklist
+/// snapshot.
+///
+/// Calls `blocking.get_blocklist` and asserts the response is a
+/// list of JID strings (`{jids: [...], count: N}`). The blocklist
+/// starts empty for a fresh account; blocking a peer via
+/// `contact.block` would add an entry (covered in Tier 4). The
+/// hermetic assertion is just shape.
+#[tokio::test]
+async fn live_blocking_get_blocklist_round_trip() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("blocking.get_blocklist", json!({})).await;
+    inter_call_delay_for("blocking.get_blocklist");
+
+    assert!(resp["jids"].is_array(), "jids must be array; got {resp}");
+    let jids = resp["jids"].as_array().unwrap();
+    assert_eq!(
+        resp["count"].as_u64().unwrap_or(0) as usize,
+        jids.len(),
+        "count must match jids.len()"
+    );
+    eprintln!(
+        "live_blocking_get_blocklist_round_trip: OK {} jids: {:?}",
+        jids.len(),
+        jids
+    );
+}
+
+/// `live_blocking_is_blocked_round_trip` — Tier 6.1 single-JID
+/// blocklist check.
+///
+/// Queries `blocking.is_blocked` for our own self JID (we never
+/// block ourselves). Asserts `{blocked: false}`.
+#[tokio::test]
+async fn live_blocking_is_blocked_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("blocking.is_blocked", json!({"peer": self_jid.clone()}))
+        .await;
+    inter_call_delay_for("blocking.is_blocked");
+
+    assert_eq!(
+        resp["blocked"], false,
+        "self must never be on our own blocklist; got {resp}"
+    );
+    eprintln!(
+        "live_blocking_is_blocked_round_trip: OK self blocked={}",
+        resp["blocked"]
+    );
+}

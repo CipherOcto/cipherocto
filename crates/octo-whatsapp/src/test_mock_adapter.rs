@@ -435,6 +435,50 @@ impl OctoWhatsAppAdapter for MockAdapter {
         Ok(false)
     }
 
+    // ── Tier 6.2: labels + star — unit-result / string-id ─────────
+
+    async fn create_label(
+        &self,
+        _label_id: &str,
+        _name: &str,
+        _color: i32,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "create_label")
+    }
+    async fn delete_label(&self, _label_id: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "delete_label")
+    }
+    async fn add_chat_label(
+        &self,
+        _label_id: &str,
+        _chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "add_chat_label")
+    }
+    async fn remove_chat_label(
+        &self,
+        _label_id: &str,
+        _chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "remove_chat_label")
+    }
+    async fn star_message(
+        &self,
+        _peer: &str,
+        _msg_id: &str,
+        _from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "star_message")
+    }
+    async fn unstar_message(
+        &self,
+        _peer: &str,
+        _msg_id: &str,
+        _from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "unstar_message")
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

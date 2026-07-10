@@ -31,6 +31,10 @@ pub mod envelope_send_native;
 pub mod events;
 pub mod groups;
 pub mod health;
+pub mod labels_add_chat_label;
+pub mod labels_create;
+pub mod labels_delete;
+pub mod labels_remove_chat_label;
 pub mod media_info;
 pub mod messages_download;
 pub mod messages_edit;
@@ -38,6 +42,8 @@ pub mod messages_get;
 pub mod messages_list;
 pub mod messages_mark_read;
 pub mod messages_search;
+pub mod messages_star;
+pub mod messages_unstar;
 pub mod preflight;
 pub mod presence_set_available;
 pub mod presence_set_unavailable;
@@ -187,6 +193,13 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(privacy_set::PrivacySet))
         .register(Arc::new(blocking_get_blocklist::BlockingGetBlocklist))
         .register(Arc::new(blocking_is_blocked::BlockingIsBlocked))
+        // Tier 6.2: labels + star
+        .register(Arc::new(labels_create::LabelsCreate))
+        .register(Arc::new(labels_delete::LabelsDelete))
+        .register(Arc::new(labels_add_chat_label::LabelsAddChatLabel))
+        .register(Arc::new(labels_remove_chat_label::LabelsRemoveChatLabel))
+        .register(Arc::new(messages_star::MessagesStar))
+        .register(Arc::new(messages_unstar::MessagesUnstar))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -377,6 +390,23 @@ pub const TIER6_1_PRIVACY_METHODS: &[&str] = &[
     "blocking.is_blocked",
 ];
 
+/// RPC method names added in Tier 6.2 (live coverage matrix):
+/// labels (create / delete / add-chat / remove-chat) + message
+/// star / unstar.
+///
+/// **Deferred:** `polls.vote` and `polls.aggregate` require the
+/// `message_secret` + `poll_creator_jid` + per-vote ciphertext
+/// round-trip that wacore's `polls::vote` API exposes; they are
+/// tracked in the coverage matrix as `gap:rpc`.
+pub const TIER6_2_LABELS_STAR_METHODS: &[&str] = &[
+    "labels.create",
+    "labels.delete",
+    "labels.add_chat_label",
+    "labels.remove_chat_label",
+    "messages.star",
+    "messages.unstar",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +478,7 @@ mod tests {
             .chain(TIER4_CONTACT_PRESENCE_METHODS.iter())
             .chain(TIER6_PROFILE_METHODS.iter())
             .chain(TIER6_1_PRIVACY_METHODS.iter())
+            .chain(TIER6_2_LABELS_STAR_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

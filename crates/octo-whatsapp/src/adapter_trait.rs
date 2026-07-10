@@ -302,6 +302,62 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// Maps to `Client::blocking().is_blocked(jid)`.
     async fn is_blocked(&self, jid: &str) -> Result<bool, PlatformAdapterError>;
 
+    // ── Group F6: labels + polls + star (Tier 6.2) ────────────────
+    //
+    // Cross-cutting mutators that touch app-state sync on the WA
+    // server. Most return the new label/poll id directly; star
+    // returns nothing (just an IQ ACK).
+
+    /// Create a new label. `label_id` is caller-assigned (upsert: WA
+    /// allows renaming/recoloring an existing label by reissuing
+    /// with the same id). Maps to
+    /// `Client::labels().create_label(label_id, name, color)`.
+    async fn create_label(
+        &self,
+        label_id: &str,
+        name: &str,
+        color: i32,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Delete a label by id. Maps to
+    /// `Client::labels().delete_label(label_id)`.
+    async fn delete_label(&self, label_id: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Attach a label to a chat. Maps to
+    /// `Client::labels().add_chat_label(label_id, chat_jid)`.
+    async fn add_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Remove a label from a chat. Maps to
+    /// `Client::labels().remove_chat_label(label_id, chat_jid)`.
+    async fn remove_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Star a message. `peer` is the chat JID; `msg_id` is the
+    /// message id (use `from_me = true` for outbound, `false` for
+    /// inbound messages). Maps to
+    /// `Client::chatstate().star_message(...)`.
+    async fn star_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Unstar a message. Same shape as `star_message`.
+    async fn unstar_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError>;
+
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
     /// Size-gated wrapper for `send_image`. Rejects when the file
@@ -676,6 +732,50 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn is_blocked(&self, jid: &str) -> Result<bool, PlatformAdapterError> {
         self.is_blocked(jid).await
+    }
+
+    // ── Tier 6.2: labels + star + polls delegation ────────────────
+
+    async fn create_label(
+        &self,
+        label_id: &str,
+        name: &str,
+        color: i32,
+    ) -> Result<(), PlatformAdapterError> {
+        self.create_label(label_id, name, color).await
+    }
+    async fn delete_label(&self, label_id: &str) -> Result<(), PlatformAdapterError> {
+        self.delete_label(label_id).await
+    }
+    async fn add_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.add_chat_label(label_id, chat_jid).await
+    }
+    async fn remove_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.remove_chat_label(label_id, chat_jid).await
+    }
+    async fn star_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.star_message(peer, msg_id, from_me).await
+    }
+    async fn unstar_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.unstar_message(peer, msg_id, from_me).await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1228,6 +1328,33 @@ mod tests {
     #[tokio::test]
     async fn delegation_is_blocked() {
         assert_client_not_connected(adapter().is_blocked(JID).await);
+    }
+
+    // ── Tier 6.2: labels + star + polls (unchecked) ──────────────
+
+    #[tokio::test]
+    async fn delegation_create_label() {
+        assert_client_not_connected(adapter().create_label("42", "work", 0).await);
+    }
+    #[tokio::test]
+    async fn delegation_delete_label() {
+        assert_client_not_connected(adapter().delete_label("42").await);
+    }
+    #[tokio::test]
+    async fn delegation_add_chat_label() {
+        assert_client_not_connected(adapter().add_chat_label("42", JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_remove_chat_label() {
+        assert_client_not_connected(adapter().remove_chat_label("42", JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_star_message() {
+        assert_client_not_connected(adapter().star_message(JID, "m1", true).await);
+    }
+    #[tokio::test]
+    async fn delegation_unstar_message() {
+        assert_client_not_connected(adapter().unstar_message(JID, "m1", true).await);
     }
 
     // ── Group G: size-gated wrappers ──

@@ -1651,6 +1651,169 @@ impl WhatsAppWebAdapter {
                 reason: format!("is_blocked failed: {e:#}"),
             })
     }
+
+    // ── Tier 6.2: labels + star + polls (lib wrappers) ────────────
+
+    /// Create a new label. `label_id` is caller-assigned (upsert).
+    pub async fn create_label(
+        &self,
+        label_id: &str,
+        name: &str,
+        color: i32,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client
+            .labels()
+            .create_label(label_id, name, color)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("create_label failed: {e:#}"),
+            })
+    }
+
+    /// Delete a label by id.
+    pub async fn delete_label(&self, label_id: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client
+            .labels()
+            .delete_label(label_id)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("delete_label failed: {e:#}"),
+            })
+    }
+
+    /// Attach a label to a chat.
+    pub async fn add_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            chat_jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid chat JID {chat_jid:?}: {e}"),
+            })?;
+        client
+            .labels()
+            .add_chat_label(label_id, &parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("add_chat_label failed: {e:#}"),
+            })
+    }
+
+    /// Remove a label from a chat.
+    pub async fn remove_chat_label(
+        &self,
+        label_id: &str,
+        chat_jid: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            chat_jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid chat JID {chat_jid:?}: {e}"),
+            })?;
+        client
+            .labels()
+            .remove_chat_label(label_id, &parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("remove_chat_label failed: {e:#}"),
+            })
+    }
+
+    /// Star a message. `peer` is the chat JID; `msg_id` is the message
+    /// id; `from_me = true` for outbound messages, `false` for
+    /// inbound messages (1:1 messages have no `participant_jid`; group
+    /// messages from others require one, but our trait does not
+    /// expose that yet — see Tier 6.x backlog).
+    pub async fn star_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            peer.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid peer JID {peer:?}: {e}"),
+            })?;
+        client
+            .chat_actions()
+            .star_message(&parsed, None, msg_id, from_me)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("star_message failed: {e:#}"),
+            })
+    }
+
+    /// Unstar a message.
+    pub async fn unstar_message(
+        &self,
+        peer: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            peer.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid peer JID {peer:?}: {e}"),
+            })?;
+        client
+            .chat_actions()
+            .unstar_message(&parsed, None, msg_id, from_me)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("unstar_message failed: {e:#}"),
+            })
+    }
 }
 
 impl WhatsAppWebAdapter {

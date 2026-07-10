@@ -13,18 +13,21 @@ use serde_json::Value;
 /// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
 /// Part A + Phase 5 Part E RPC surfaces + Phase 6.12 groups coordinator
 /// surface + Phase 6.12.1 groups completion surface + Phase 6.1 multi-
-/// account surface). Used by integration tests to assert `tools/list`
-/// advertises the full set. The Phase 4 / Phase 5 Part E additions are
-/// 17 tools (10 rule CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1
-/// action). The Phase 6.12 additions are 14 `groups.*` coordinator tools
-/// (destroy, resolve_invite, add_member, add_members, remove_member,
+/// account surface + Phase 7.H groups gap list surfaced in this commit).
+/// Used by integration tests to assert `tools/list` advertises the full
+/// set. The Phase 4 / Phase 5 Part E additions are 17 tools (10 rule
+/// CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1 action). The Phase
+/// 6.12 additions are 14 `groups.*` coordinator tools (destroy,
+/// resolve_invite, add_member, add_members, remove_member,
 /// remove_members, promote, demote, ban, approve_join, rename,
 /// set_description, set_locked, transfer_ownership). The Phase 6.12.1
 /// completion surface adds 6 more (set_announce, set_ephemeral,
 /// set_require_approval, list_with_invites, join_by_invite, join_by_id).
 /// The Phase 6.1 multi-account surface adds 3 `daemon.accounts.*` tools
-/// (list, use, info).
-pub const EXPECTED_TOOL_COUNT: usize = 89;
+/// (list, use, info). The Phase 7.H gap-list surface adds 5 more
+/// (get_invite_link / update_member_label / get_profile_pictures /
+/// set_profile_picture / remove_profile_picture).
+pub const EXPECTED_TOOL_COUNT: usize = 94;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -498,6 +501,41 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Join a group by JID.",
         schema_props_required(&[("jid", "string")], &["jid"]),
     ));
+    // ─── Phase 7.H gap list (5) — surfaced in Session A ───────────────
+    v.push(td(
+        "groups.get_invite_link",
+        "Fetch (or rotate, with reset=true) a group's invite link.",
+        schema_props_required(&[("jid", "string"), ("reset", "boolean")], &["jid"]),
+    ));
+    v.push(td(
+        "groups.update_member_label",
+        "Set or clear a per-member label (e.g. nickname) within a group. Pass an empty string for label to clear.",
+        schema_props_required(
+            &[("jid", "string"), ("label", "string")],
+            &["jid", "label"],
+        ),
+    ));
+    v.push(td(
+        "groups.get_profile_pictures",
+        "Fetch profile pictures for one or more groups. Pass preview=true to request the small preview variant.",
+        schema_props_required(
+            &[("jids", "array"), ("preview", "boolean")],
+            &["jids"],
+        ),
+    ));
+    v.push(td(
+        "groups.set_profile_picture",
+        "Set the group icon. `image_path` must point to a JPEG/PNG on disk.",
+        schema_props_required(
+            &[("jid", "string"), ("image_path", "string")],
+            &["jid", "image_path"],
+        ),
+    ));
+    v.push(td(
+        "groups.remove_profile_picture",
+        "Remove the group icon.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
     // ─── Media (1) ────────────────────────────────────────────────────
     v.push(td(
         "media.info",
@@ -828,6 +866,12 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "groups.list_with_invites" => "groups.list_with_invites",
         "groups.join_by_invite" => "groups.join_by_invite",
         "groups.join_by_id" => "groups.join_by_id",
+        // Phase 7.H gap list — surfaced in Session A.
+        "groups.get_invite_link" => "groups.get_invite_link",
+        "groups.update_member_label" => "groups.update_member_label",
+        "groups.get_profile_pictures" => "groups.get_profile_pictures",
+        "groups.set_profile_picture" => "groups.set_profile_picture",
+        "groups.remove_profile_picture" => "groups.remove_profile_picture",
         "media.info" => "media.info",
         "envelope.encode" => "envelope.encode",
         "envelope.decode" => "envelope.decode",
@@ -1153,6 +1197,38 @@ mod tests {
             assert!(
                 names.contains(m),
                 "Phase 6.1 accounts tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
+    }
+
+    /// Session A of the parity-closure plan: 5 Phase 7.H `groups.*` gap
+    /// list RPCs (get_invite_link / update_member_label /
+    /// get_profile_pictures / set_profile_picture /
+    /// remove_profile_picture) now exposed as MCP tools.
+    #[test]
+    fn session_a_phase7h_groups_gap_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "groups.get_invite_link",
+            "groups.update_member_label",
+            "groups.get_profile_pictures",
+            "groups.set_profile_picture",
+            "groups.remove_profile_picture",
+        ] {
+            assert!(
+                names.contains(m),
+                "Session A Phase 7.H groups gap tool {m:?} not advertised"
             );
         }
         assert_eq!(

@@ -302,6 +302,34 @@ pub enum GroupsAction {
         /// Group JID to join (group must allow on-demand joins).
         jid: String,
     },
+    /// Get the current invite link for a group. Pass `--reset` to rotate the link (revokes the prior URL).
+    GetInviteLink {
+        jid: String,
+        /// Rotate the link server-side; the returned URL supersedes any prior invite.
+        #[arg(long, default_value_t = false)]
+        reset: bool,
+    },
+    /// Set or clear a per-member label (e.g. nickname) within a group. Pass an empty `--label` to clear.
+    UpdateMemberLabel {
+        jid: String,
+        #[arg(long)]
+        label: String,
+    },
+    /// Fetch profile pictures for one or more groups. Pass `--preview` to request the small preview variant.
+    GetProfilePictures {
+        #[arg(long, value_delimiter = ',')]
+        jids: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        preview: bool,
+    },
+    /// Set the group icon. The `--file` argument must point to a JPEG/PNG.
+    SetProfilePicture {
+        jid: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Remove the group icon.
+    RemoveProfilePicture { jid: String },
 }
 
 #[derive(Debug, Args)]
@@ -1052,6 +1080,26 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
             ("groups.join_by_invite", serde_json::json!({"code": code}))
         }
         GroupsAction::JoinById { jid } => ("groups.join_by_id", serde_json::json!({"jid": jid})),
+        GroupsAction::GetInviteLink { jid, reset } => (
+            "groups.get_invite_link",
+            serde_json::json!({"jid": jid, "reset": reset}),
+        ),
+        GroupsAction::UpdateMemberLabel { jid, label } => (
+            "groups.update_member_label",
+            serde_json::json!({"jid": jid, "label": label}),
+        ),
+        GroupsAction::GetProfilePictures { jids, preview } => (
+            "groups.get_profile_pictures",
+            serde_json::json!({"jids": jids, "preview": preview}),
+        ),
+        GroupsAction::SetProfilePicture { jid, file } => (
+            "groups.set_profile_picture",
+            serde_json::json!({"jid": jid, "image_path": file.to_string_lossy()}),
+        ),
+        GroupsAction::RemoveProfilePicture { jid } => (
+            "groups.remove_profile_picture",
+            serde_json::json!({"jid": jid}),
+        ),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)

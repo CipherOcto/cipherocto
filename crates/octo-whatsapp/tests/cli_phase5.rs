@@ -471,3 +471,71 @@ fn cli_groups_join_by_id_help() {
         "groups join-by-id --help must mention jid, got:\n{help}"
     );
 }
+
+// ─── Phase 7.H: group gap list (invite link / member label / profile pic) ───
+//
+// These five subcommands landed at the IPC layer in Phase 7.H but only
+// got CLI surface in Session A of the parity-closure plan. The tests
+// verify the clap surface parses; deeper IPC behavior is covered by the
+// IPC handler unit tests in `src/ipc/handlers/groups.rs`.
+
+#[test]
+fn cli_groups_get_invite_link_help() {
+    let help = cli_help(&["groups", "get-invite-link"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups get-invite-link --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--reset"),
+        "groups get-invite-link --help must mention --reset, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_update_member_label_help() {
+    let help = cli_help(&["groups", "update-member-label"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups update-member-label --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--label"),
+        "groups update-member-label --help must mention --label, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_get_profile_pictures_help() {
+    let help = cli_help(&["groups", "get-profile-pictures"]);
+    assert!(
+        help.contains("--jids"),
+        "groups get-profile-pictures --help must mention --jids, got:\n{help}"
+    );
+    assert!(
+        help.contains("--preview"),
+        "groups get-profile-pictures --help must mention --preview, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_set_profile_picture_help() {
+    let help = cli_help(&["groups", "set-profile-picture"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups set-profile-picture --help must mention jid, got:\n{help}"
+    );
+    assert!(
+        help.contains("--file"),
+        "groups set-profile-picture --help must mention --file, got:\n{help}"
+    );
+}
+
+#[test]
+fn cli_groups_remove_profile_picture_help() {
+    let help = cli_help(&["groups", "remove-profile-picture"]);
+    assert!(
+        help.contains("<JID>") || help.contains("jid"),
+        "groups remove-profile-picture --help must mention jid, got:\n{help}"
+    );
+}

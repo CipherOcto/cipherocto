@@ -404,6 +404,24 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// JID (LIDs rejected by the WA server).
     async fn save_contact(&self, jid: &str, full_name: &str) -> Result<(), PlatformAdapterError>;
 
+    // ── Group F11: identity (Tier 6.4) ────────────────────────────
+    //
+    // Local-state reads — no WA server roundtrip needed (PN / LID
+    // come from the in-memory `persistence_manager`; identity_tags
+    // are the user's local device tag set).
+
+    /// Return our PN (phone-number) JID as a string, or `None` if
+    /// the device is not signed in. Maps to `Client::get_pn()`.
+    async fn get_pn(&self) -> Result<Option<String>, PlatformAdapterError>;
+
+    /// Return our LID (local identifier) JID as a string, or `None`
+    /// if migration has not occurred. Maps to `Client::get_lid()`.
+    async fn get_lid(&self) -> Result<Option<String>, PlatformAdapterError>;
+
+    /// Return `true` if the device has completed LID migration.
+    /// Maps to `Client::is_lid_migrated()`.
+    async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError>;
+
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
     /// Size-gated wrapper for `send_image`. Rejects when the file
@@ -851,6 +869,18 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn save_contact(&self, jid: &str, full_name: &str) -> Result<(), PlatformAdapterError> {
         self.save_contact(jid, full_name).await
+    }
+
+    // ── Tier 6.4: identity delegation ─────────────────────────────
+
+    async fn get_pn(&self) -> Result<Option<String>, PlatformAdapterError> {
+        self.get_pn().await
+    }
+    async fn get_lid(&self) -> Result<Option<String>, PlatformAdapterError> {
+        self.get_lid().await
+    }
+    async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError> {
+        self.is_lid_migrated().await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1449,6 +1479,21 @@ mod tests {
     #[tokio::test]
     async fn delegation_save_contact() {
         assert_client_not_connected(adapter().save_contact(JID, "Alice").await);
+    }
+
+    // ── Tier 6.4: identity (unchecked) ────────────────────────────
+
+    #[tokio::test]
+    async fn delegation_get_pn() {
+        assert_client_not_connected(adapter().get_pn().await);
+    }
+    #[tokio::test]
+    async fn delegation_get_lid() {
+        assert_client_not_connected(adapter().get_lid().await);
+    }
+    #[tokio::test]
+    async fn delegation_is_lid_migrated() {
+        assert_client_not_connected(adapter().is_lid_migrated().await);
     }
 
     // ── Group G: size-gated wrappers ──

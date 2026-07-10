@@ -508,6 +508,21 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "save_contact")
     }
 
+    // ── Tier 6.4: identity (Option<String> / bool returns) ───────
+
+    async fn get_pn(&self) -> Result<Option<String>, PlatformAdapterError> {
+        record_unit_call(&self.state, "get_pn")?;
+        Ok(Some("15551234567@s.whatsapp.net".to_string()))
+    }
+    async fn get_lid(&self) -> Result<Option<String>, PlatformAdapterError> {
+        record_unit_call(&self.state, "get_lid")?;
+        Ok(Some("100000000000001@lid".to_string()))
+    }
+    async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError> {
+        record_unit_call(&self.state, "is_lid_migrated")?;
+        Ok(true)
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

@@ -1937,6 +1937,51 @@ impl WhatsAppWebAdapter {
                 reason: format!("save_contact failed: {e:#}"),
             })
     }
+
+    // ── Tier 6.4: identity (lib wrappers) ────────────────────────
+    //
+    // PN / LID / lid_migrated are all reads from the in-memory
+    // `persistence_manager.get_device_snapshot()`. The first two are
+    // sync accessors on `Client`; `is_lid_migrated` is async (it may
+    // need to read an `ab_props` cache miss).
+
+    /// Return our PN (phone-number) JID as a string, or `None` if
+    /// the device is not signed in.
+    pub async fn get_pn(&self) -> Result<Option<String>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        Ok(client.get_pn().map(|j| j.to_string()))
+    }
+
+    /// Return our LID (local identifier) JID as a string, or `None`
+    /// if migration has not occurred.
+    pub async fn get_lid(&self) -> Result<Option<String>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        Ok(client.get_lid().map(|j| j.to_string()))
+    }
+
+    /// Return `true` if the device has completed LID migration.
+    pub async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        Ok(client.is_lid_migrated().await)
+    }
 }
 
 impl WhatsAppWebAdapter {

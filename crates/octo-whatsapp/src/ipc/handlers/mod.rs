@@ -33,6 +33,9 @@ pub mod envelope_send_native;
 pub mod events;
 pub mod groups;
 pub mod health;
+pub mod identity_get_lid;
+pub mod identity_get_pn;
+pub mod identity_is_lid_migrated;
 pub mod labels_add_chat_label;
 pub mod labels_create;
 pub mod labels_delete;
@@ -209,6 +212,10 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(chats_clear::ChatsClear))
         .register(Arc::new(messages_delete_for_me::MessagesDeleteForMe))
         .register(Arc::new(contacts_save_contact::ContactsSaveContact))
+        // Tier 6.4: identity (local-state reads)
+        .register(Arc::new(identity_get_pn::IdentityGetPn))
+        .register(Arc::new(identity_get_lid::IdentityGetLid))
+        .register(Arc::new(identity_is_lid_migrated::IdentityIsLidMigrated))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -432,6 +439,20 @@ pub const TIER6_3_LIFECYCLE_METHODS: &[&str] = &[
     "contacts.save_contact",
 ];
 
+/// RPC method names added in Tier 6.4 (live coverage matrix):
+/// identity (PN / LID / LID-migration status) — all read from the
+/// in-memory device snapshot, no WA server roundtrip.
+///
+/// **Deferred:** passkey pair RPCs (pair_passkey_request /
+/// pair_passkey_response / pair_passkey_confirmation) require a
+/// WebAuthn authenticator and are tracked as `gap:rpc` for a
+/// future session.
+pub const TIER6_4_IDENTITY_METHODS: &[&str] = &[
+    "identity.get_pn",
+    "identity.get_lid",
+    "identity.is_lid_migrated",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +526,7 @@ mod tests {
             .chain(TIER6_1_PRIVACY_METHODS.iter())
             .chain(TIER6_2_LABELS_STAR_METHODS.iter())
             .chain(TIER6_3_LIFECYCLE_METHODS.iter())
+            .chain(TIER6_4_IDENTITY_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

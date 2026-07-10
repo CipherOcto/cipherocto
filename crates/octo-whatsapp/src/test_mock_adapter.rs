@@ -398,6 +398,67 @@ impl OctoWhatsAppAdapter for MockAdapter {
         )
     }
 
+    // ── Tier 7.C: WA status / broadcast story ──────────────────
+
+    async fn send_status_text(
+        &self,
+        _text: &str,
+        _background_argb: u32,
+        _font: &str,
+        _privacy: &str,
+        _recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "send_status_text",
+            Ok("fake-status-text-msg-id".into()),
+        )
+    }
+
+    async fn send_status_image(
+        &self,
+        _file_path: &Path,
+        _caption: Option<&str>,
+        _thumbnail_b64: Option<&str>,
+        _privacy: &str,
+        _recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "send_status_image",
+            Ok("fake-status-image-msg-id".into()),
+        )
+    }
+
+    async fn send_status_video(
+        &self,
+        _file_path: &Path,
+        _caption: Option<&str>,
+        _thumbnail_b64: Option<&str>,
+        _duration_seconds: u32,
+        _privacy: &str,
+        _recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "send_status_video",
+            Ok("fake-status-video-msg-id".into()),
+        )
+    }
+
+    async fn revoke_status(
+        &self,
+        _message_id: &str,
+        _privacy: &str,
+        _recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "revoke_status",
+            Ok("fake-status-revoke-msg-id".into()),
+        )
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

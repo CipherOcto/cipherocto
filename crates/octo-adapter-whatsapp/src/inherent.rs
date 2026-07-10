@@ -2725,6 +2725,272 @@ impl WhatsAppWebAdapter {
             })?;
         Ok(send_result.message_id)
     }
+
+    // ── Tier 7.C: WA status / broadcast story ──────────────────
+
+    /// Translate a privacy wire string into the WA enum.
+    /// `"contacts"` (default) / `"allowlist"` / `"denylist"`.
+    fn parse_status_privacy(
+        privacy: &str,
+    ) -> Result<whatsapp_rust::StatusPrivacySetting, PlatformAdapterError> {
+        match privacy {
+            "contacts" => Ok(whatsapp_rust::StatusPrivacySetting::Contacts),
+            "allowlist" => Ok(whatsapp_rust::StatusPrivacySetting::AllowList),
+            "denylist" => Ok(whatsapp_rust::StatusPrivacySetting::DenyList),
+            other => Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "status: privacy must be contacts/allowlist/denylist; got {other:?}"
+                ),
+            }),
+        }
+    }
+
+    /// Translate a font name string into the WA FontType enum.
+    /// `"SYSTEM"` (default) / `"SYSTEM_TEXT"` / `"FB_SCRIPT"` /
+    /// `"SYSTEM_BOLD"` / `"MORNINGBREEZE_REGULAR"` /
+    /// `"CALISTOGA_REGULAR"` / `"EXO2_EXTRABOLD"` /
+    /// `"COURIERPRIME_BOLD"`. The proto wire values are
+    /// non-contiguous (0, 1, 2, 6, 7, 8, 9, 10) so callers pass
+    /// the symbolic name to stay version-stable.
+    fn parse_status_font(
+        font: &str,
+    ) -> Result<waproto::whatsapp::message::extended_text_message::FontType, PlatformAdapterError>
+    {
+        use waproto::whatsapp::message::extended_text_message::FontType;
+        match font {
+            "SYSTEM" => Ok(FontType::SYSTEM),
+            "SYSTEM_TEXT" => Ok(FontType::SYSTEM_TEXT),
+            "FB_SCRIPT" => Ok(FontType::FB_SCRIPT),
+            "SYSTEM_BOLD" => Ok(FontType::SYSTEM_BOLD),
+            "MORNINGBREEZE_REGULAR" => Ok(FontType::MORNINGBREEZE_REGULAR),
+            "CALISTOGA_REGULAR" => Ok(FontType::CALISTOGA_REGULAR),
+            "EXO2_EXTRABOLD" => Ok(FontType::EXO2_EXTRABOLD),
+            "COURIERPRIME_BOLD" => Ok(FontType::COURIERPRIME_BOLD),
+            other => Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "status: unknown font {other:?}; expected SYSTEM/SYSTEM_TEXT/FB_SCRIPT/SYSTEM_BOLD/MORNINGBREEZE_REGULAR/CALISTOGA_REGULAR/EXO2_EXTRABOLD/COURIERPRIME_BOLD"
+                ),
+            }),
+        }
+    }
+
+    /// Parse a list of recipient JID strings. Errors with a
+    /// helpful message naming the bad entry.
+    fn parse_recipient_jids(
+        recipients: &[String],
+    ) -> Result<Vec<wacore_binary::Jid>, PlatformAdapterError> {
+        recipients
+            .iter()
+            .map(|s| {
+                s.parse::<wacore_binary::Jid>()
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("invalid recipient JID {s:?}: {e}"),
+                    })
+            })
+            .collect()
+    }
+
+    /// Post a text status update. See `Client::status().send_text`
+    /// for the underlying call shape.
+    pub async fn send_status_text(
+        &self,
+        text: &str,
+        background_argb: u32,
+        font: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let privacy_setting = Self::parse_status_privacy(privacy)?;
+        let font_enum = Self::parse_status_font(font)?;
+        let recipient_jids = Self::parse_recipient_jids(recipients)?;
+        let send_result = client
+            .status()
+            .send_text(
+                text,
+                background_argb,
+                font_enum,
+                &recipient_jids,
+                whatsapp_rust::StatusSendOptions {
+                    privacy: privacy_setting,
+                },
+            )
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_status_text failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
+
+    /// Post an image status update. The image at `file_path` is
+    /// uploaded to the WA CDN first; `thumbnail_b64` is the
+    /// base64-encoded JPEG thumbnail bytes WA renders inline
+    /// (small, < 16 KiB typical).
+    pub async fn send_status_image(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let thumbnail = thumbnail_b64
+            .map(|b| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("thumbnail_b64 invalid base64: {e}"),
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let privacy_setting = Self::parse_status_privacy(privacy)?;
+        let recipient_jids = Self::parse_recipient_jids(recipients)?;
+        let upload = upload_to_cdn(&client, data, MediaType::Image, UploadOptions::new()).await?;
+        let send_result = client
+            .status()
+            .send_image(
+                upload,
+                thumbnail,
+                caption,
+                &recipient_jids,
+                whatsapp_rust::StatusSendOptions {
+                    privacy: privacy_setting,
+                },
+            )
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_status_image failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
+
+    /// Post a video status update.
+    pub async fn send_status_video(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        duration_seconds: u32,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        let data =
+            tokio::fs::read(file_path)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("read {file_path:?}: {e}"),
+                })?;
+        let thumbnail = thumbnail_b64
+            .map(|b| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b)
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("thumbnail_b64 invalid base64: {e}"),
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let privacy_setting = Self::parse_status_privacy(privacy)?;
+        let recipient_jids = Self::parse_recipient_jids(recipients)?;
+        let upload = upload_to_cdn(&client, data, MediaType::Video, UploadOptions::new()).await?;
+        let send_result = client
+            .status()
+            .send_video(
+                upload,
+                thumbnail,
+                duration_seconds,
+                caption,
+                &recipient_jids,
+                whatsapp_rust::StatusSendOptions {
+                    privacy: privacy_setting,
+                },
+            )
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_status_video failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
+
+    /// Revoke a previously-sent status update. `recipients` MUST
+    /// match the list used at send time — the revoke is
+    /// individually encrypted to the same set of devices.
+    pub async fn revoke_status(
+        &self,
+        message_id: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let privacy_setting = Self::parse_status_privacy(privacy)?;
+        let recipient_jids = Self::parse_recipient_jids(recipients)?;
+        let send_result = client
+            .status()
+            .revoke(
+                message_id.to_string(),
+                &recipient_jids,
+                whatsapp_rust::StatusSendOptions {
+                    privacy: privacy_setting,
+                },
+            )
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("revoke_status failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

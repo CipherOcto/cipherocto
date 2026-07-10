@@ -86,6 +86,10 @@ pub mod send_text;
 pub mod send_video;
 pub mod send_voice;
 pub mod status;
+pub mod status_revoke;
+pub mod status_send_image;
+pub mod status_send_text;
+pub mod status_send_video;
 pub mod triggers;
 pub mod util;
 pub mod version;
@@ -246,6 +250,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(polls_aggregate::PollsAggregate))
         // Tier 7.B: events respond
         .register(Arc::new(events_respond::EventsRespond))
+        // Tier 7.C: status / broadcast story
+        .register(Arc::new(status_send_text::StatusSendText))
+        .register(Arc::new(status_send_image::StatusSendImage))
+        .register(Arc::new(status_send_video::StatusSendVideo))
+        .register(Arc::new(status_revoke::StatusRevoke))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -508,6 +517,14 @@ pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] = &[
 pub const TIER7_B_POLLS_EVENTS_METHODS: &[&str] =
     &["polls.vote", "polls.aggregate", "events.respond"];
 
+/// Tier 7.C: status / broadcast story (text/image/video/revoke).
+pub const TIER7_C_STATUS_METHODS: &[&str] = &[
+    "status.send_text",
+    "status.send_image",
+    "status.send_video",
+    "status.revoke",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +602,7 @@ mod tests {
             .chain(TIER6_5_NEWSLETTER_METHODS.iter())
             .chain(TIER7_A_PIN_UNPIN_METHODS.iter())
             .chain(TIER7_B_POLLS_EVENTS_METHODS.iter())
+            .chain(TIER7_C_STATUS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

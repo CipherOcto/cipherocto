@@ -258,6 +258,58 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         extra_guest_count: Option<i32>,
     ) -> Result<String, PlatformAdapterError>;
 
+    /// Post a text status update. `background_argb` is 0xAARRGGBB;
+    /// `font` is the FontType wire enum name (e.g. "SYSTEM",
+    /// "FB_SCRIPT"). `privacy` is one of "contacts" (default) /
+    /// "allowlist" / "denylist". `recipients` is the list of JIDs
+    /// the status is encrypted to — typically all your contacts.
+    /// Maps to `Client::status().send_text(...)`.
+    async fn send_status_text(
+        &self,
+        text: &str,
+        background_argb: u32,
+        font: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
+    /// Post an image status update. The image at `file_path` is
+    /// uploaded to the WA CDN first; `thumbnail_b64` is the
+    /// base64-encoded JPEG thumbnail bytes WA renders inline
+    /// (small, < 16 KiB typical). Optional `caption`. Returns the
+    /// new status message id.
+    async fn send_status_image(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
+    /// Post a video status update. `duration_seconds` is the
+    /// media duration in seconds; WA Web clips at 30 s for status.
+    /// Returns the new status message id.
+    async fn send_status_video(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        duration_seconds: u32,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
+    /// Revoke a previously-sent status update. `recipients` MUST
+    /// match the list used at send time — the revoke is
+    /// individually encrypted to the same set of devices.
+    async fn revoke_status(
+        &self,
+        message_id: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -943,6 +995,55 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
             extra_guest_count,
         )
         .await
+    }
+    async fn send_status_text(
+        &self,
+        text: &str,
+        background_argb: u32,
+        font: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.send_status_text(text, background_argb, font, privacy, recipients)
+            .await
+    }
+    async fn send_status_image(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.send_status_image(file_path, caption, thumbnail_b64, privacy, recipients)
+            .await
+    }
+    async fn send_status_video(
+        &self,
+        file_path: &Path,
+        caption: Option<&str>,
+        thumbnail_b64: Option<&str>,
+        duration_seconds: u32,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.send_status_video(
+            file_path,
+            caption,
+            thumbnail_b64,
+            duration_seconds,
+            privacy,
+            recipients,
+        )
+        .await
+    }
+    async fn revoke_status(
+        &self,
+        message_id: &str,
+        privacy: &str,
+        recipients: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.revoke_status(message_id, privacy, recipients).await
     }
     async fn message_search(
         &self,

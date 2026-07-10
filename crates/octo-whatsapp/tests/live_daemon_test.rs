@@ -2048,3 +2048,165 @@ async fn live_blocking_is_blocked_round_trip() {
         resp["blocked"]
     );
 }
+
+// ===========================================================================
+// Tier 6.2 — Labels + star/unstar live tests
+//
+// `labels.create` + `labels.delete` form a round-trip we can drive
+// against the real WA server without operator setup. `labels.add_chat_label`
+// / `labels.remove_chat_label` need a real chat JID — for self-echo
+// tests we use our own JID (allowed; labels are caller-side metadata).
+// `messages.star` + `messages.unstar` are symmetric mutations that
+// we drive against a fresh message_id for the round-trip assertion.
+//
+// **Operator note:** labels.create appends to our local labels list.
+// Tests restore by calling labels.delete afterward. message star /
+// unstar mutates server-side state; tests use a synthetic msg_id
+// (the WA server accepts the upsert; the row never resolves to a
+// real message, so this is harmless).
+// ===========================================================================
+
+/// `live_labels_create_delete_round_trip` — Tier 6.2 canary.
+///
+/// Creates a label with a unique id, asserts the RPC returns
+/// `{status: "created", label_id, name, color}`, then deletes it.
+/// Asserts delete returns `{status: "deleted", label_id}` echoing
+/// the same id.
+#[tokio::test]
+async fn live_labels_create_delete_round_trip() {
+    let fix = fixture();
+    let label_id = format!("tier6-{}", std::process::id());
+    let name = format!("tier6 label {label_id}");
+
+    let mut conn = rpc(fix).await;
+    let create_resp = conn
+        .call(
+            "labels.create",
+            json!({"label_id": label_id.clone(), "name": name.clone(), "color": 1}),
+        )
+        .await;
+    assert_eq!(
+        create_resp["status"], "created",
+        "labels.create must return status=created; got {create_resp}"
+    );
+    assert_eq!(create_resp["label_id"], label_id);
+    assert_eq!(create_resp["name"], name);
+    assert_eq!(create_resp["color"], 1);
+    inter_call_delay_for("labels.create");
+
+    let delete_resp = conn
+        .call("labels.delete", json!({"label_id": label_id.clone()}))
+        .await;
+    assert_eq!(
+        delete_resp["status"], "deleted",
+        "labels.delete must return status=deleted; got {delete_resp}"
+    );
+    assert_eq!(delete_resp["label_id"], label_id);
+    inter_call_delay_for("labels.delete");
+    eprintln!("live_labels_create_delete_round_trip: OK label_id={label_id}");
+}
+
+/// `live_labels_add_remove_chat_label` — Tier 6.2 chat-association.
+///
+/// Creates a label, attaches it to our own self JID as the chat,
+/// then detaches it, then deletes the label. Full round-trip;
+/// every intermediate state must return `{status: ...}` matching
+/// the operation.
+#[tokio::test]
+async fn live_labels_add_remove_chat_label() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let label_id = format!("tier6-addrm-{}", std::process::id());
+    let name = format!("tier6 addrm {label_id}");
+
+    let mut conn = rpc(fix).await;
+
+    // Create.
+    let create_resp = conn
+        .call(
+            "labels.create",
+            json!({"label_id": label_id.clone(), "name": name.clone(), "color": 2}),
+        )
+        .await;
+    assert_eq!(create_resp["status"], "created");
+    inter_call_delay_for("labels.create");
+
+    // Add to self chat.
+    let add_resp = conn
+        .call(
+            "labels.add_chat_label",
+            json!({"label_id": label_id.clone(), "chat_jid": self_jid.clone()}),
+        )
+        .await;
+    assert_eq!(
+        add_resp["status"], "added",
+        "labels.add_chat_label must return status=added; got {add_resp}"
+    );
+    assert_eq!(add_resp["label_id"], label_id);
+    assert_eq!(add_resp["chat_jid"], self_jid);
+    inter_call_delay_for("labels.add_chat_label");
+
+    // Remove from self chat.
+    let rm_resp = conn
+        .call(
+            "labels.remove_chat_label",
+            json!({"label_id": label_id.clone(), "chat_jid": self_jid.clone()}),
+        )
+        .await;
+    assert_eq!(
+        rm_resp["status"], "removed",
+        "labels.remove_chat_label must return status=removed; got {rm_resp}"
+    );
+    assert_eq!(rm_resp["label_id"], label_id);
+    inter_call_delay_for("labels.remove_chat_label");
+
+    // Cleanup: delete the label.
+    let del_resp = conn
+        .call("labels.delete", json!({"label_id": label_id.clone()}))
+        .await;
+    assert_eq!(del_resp["status"], "deleted");
+    inter_call_delay_for("labels.delete");
+    eprintln!("live_labels_add_remove_chat_label: OK label_id={label_id}");
+}
+
+/// `live_messages_star_unstar_round_trip` — Tier 6.2 message
+/// star/unstar. Synthesizes a `msg_id`, calls `messages.star` and
+/// then `messages.unstar`. Both must return `{status: "starred" /
+/// "unstarred"}`. The synthetic id is harmless — the WA server
+/// accepts the app-state mutation without checking the message id
+/// exists in our store.
+#[tokio::test]
+async fn live_messages_star_unstar_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let msg_id = format!("FAKE-MSG-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let star_resp = conn
+        .call(
+            "messages.star",
+            json!({"peer": self_jid.clone(), "msg_id": msg_id.clone(), "from_me": true}),
+        )
+        .await;
+    assert_eq!(
+        star_resp["status"], "starred",
+        "messages.star must return status=starred; got {star_resp}"
+    );
+    assert_eq!(star_resp["msg_id"], msg_id);
+    assert_eq!(star_resp["from_me"], true);
+    inter_call_delay_for("messages.star");
+
+    let unstar_resp = conn
+        .call(
+            "messages.unstar",
+            json!({"peer": self_jid.clone(), "msg_id": msg_id.clone(), "from_me": true}),
+        )
+        .await;
+    assert_eq!(
+        unstar_resp["status"], "unstarred",
+        "messages.unstar must return status=unstarred; got {unstar_resp}"
+    );
+    assert_eq!(unstar_resp["msg_id"], msg_id);
+    inter_call_delay_for("messages.unstar");
+    eprintln!("live_messages_star_unstar_round_trip: OK msg_id={msg_id}");
+}

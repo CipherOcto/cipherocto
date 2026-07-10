@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use base64::Engine;
+
 use crate::adapter::{upload_to_cdn, WhatsAppWebAdapter};
 use crate::media_ref::{encode_base64url, MediaRef};
 use crate::PlatformAdapterError;
@@ -1160,6 +1162,67 @@ impl WhatsAppWebAdapter {
                 reason: format!("forward_message failed: {e}"),
             })?;
         Ok(send_result.message_id)
+    }
+
+    // ── Task 15d: edit_message_encrypted (Tier 7.A.3) ──
+
+    /// Edit a previously-sent message via the message-secret encrypted
+    /// path. The runtime caller provides the original 32-byte
+    /// `message_secret` (base64-encoded) — this is the secret that
+    /// was generated when the message was first sent, and is required
+    /// to prove the edit originated from the original sender. See
+    /// `wacore::message_edit::MessageEditContext` for the full
+    /// encrypt/decrypt round-trip the WA crate performs internally.
+    pub async fn edit_message_encrypted(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+        message_secret_b64: &str,
+        new_text: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(message_secret_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "edit_message_encrypted: message_secret_b64 is not valid base64: {e}"
+                ),
+            })?;
+        if secret.len() != 32 {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "edit_message_encrypted: message_secret must decode to exactly 32 bytes, got {}",
+                    secret.len()
+                ),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let to: wacore_binary::Jid =
+            peer_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {peer_jid:?}: {e}"),
+            })?;
+        let new_content = waproto::whatsapp::Message {
+            conversation: Some(new_text.to_string()),
+            ..Default::default()
+        };
+        let new_id = client
+            .edit_message_encrypted(to, msg_id, &secret, new_content)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("edit_message_encrypted failed: {e}"),
+            })?;
+        Ok(new_id)
     }
 
 // ── Task 16: message_search ──

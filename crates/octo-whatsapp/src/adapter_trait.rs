@@ -175,6 +175,20 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         original_msg_id: &str,
     ) -> Result<String, PlatformAdapterError>;
 
+    /// Edit a message via the message-secret encrypted path. The
+    /// `message_secret_b64` is the base64-encoded 32-byte secret that
+    /// was generated when the original message was sent (per
+    /// `wacore::message_edit::MessageEditContext`); without it the
+    /// edit cannot be decrypted on the receiver. Returns the new
+    /// message id.
+    async fn edit_message_encrypted(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+        message_secret_b64: &str,
+        new_text: &str,
+    ) -> Result<String, PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -773,6 +787,16 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         original_msg_id: &str,
     ) -> Result<String, PlatformAdapterError> {
         self.forward_message(peer_jid, original_msg_id).await
+    }
+    async fn edit_message_encrypted(
+        &self,
+        peer_jid: &str,
+        msg_id: &str,
+        message_secret_b64: &str,
+        new_text: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        self.edit_message_encrypted(peer_jid, msg_id, message_secret_b64, new_text)
+            .await
     }
     async fn message_search(
         &self,

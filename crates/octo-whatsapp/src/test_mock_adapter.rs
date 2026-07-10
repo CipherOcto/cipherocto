@@ -313,6 +313,20 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_single_call(&self.state, "forward_message", Ok("fake-fwd-msg-id".into()))
     }
 
+    async fn edit_message_encrypted(
+        &self,
+        _peer_jid: &str,
+        _msg_id: &str,
+        _message_secret_b64: &str,
+        _new_text: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "edit_message_encrypted",
+            Ok("fake-encrypted-edit-msg-id".into()),
+        )
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

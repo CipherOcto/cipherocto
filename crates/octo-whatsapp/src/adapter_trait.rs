@@ -35,7 +35,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use octo_adapter_whatsapp::{ChatInfo, MessageHit, PrivacySettingSnapshot, UserInfoSnapshot};
+use octo_adapter_whatsapp::{
+    ChatInfo, MessageHit, NewsletterMetadataSnapshot, PrivacySettingSnapshot, UserInfoSnapshot,
+};
 use octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin;
 use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::error::PlatformAdapterError;
@@ -421,6 +423,49 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// Return `true` if the device has completed LID migration.
     /// Maps to `Client::is_lid_migrated()`.
     async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError>;
+
+    // ── Group F12: newsletter (Tier 6.5) ─────────────────────────
+    //
+    // Newsletter = WA's broadcast channel feature (one-to-many,
+    // followers-only). The runtime exposes list/get/leave; create /
+    // join remain operator-driven for now (admin gates).
+
+    /// List all newsletters this account is subscribed to. Maps to
+    /// `Client::newsletter().list_subscribed()`.
+    async fn list_subscribed_newsletters(
+        &self,
+    ) -> Result<Vec<NewsletterMetadataSnapshot>, PlatformAdapterError>;
+
+    /// Fetch metadata for one newsletter by its JID. Maps to
+    /// `Client::newsletter().get_metadata(jid)`.
+    async fn get_newsletter_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<NewsletterMetadataSnapshot, PlatformAdapterError>;
+
+    /// Leave a newsletter. Maps to
+    /// `Client::newsletter().leave(jid)`.
+    async fn leave_newsletter(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F13: events (Tier 6.5) ────────────────────────────
+    //
+    // WhatsApp's calendar / event feature (separate from the
+    // chat-bot messages). `events.create` sends a new event;
+    // `events.respond` is RSVP, gated behind operator setup
+    // (the event + secret must originate from a real creation).
+
+    /// Create a WA calendar event with `name`, `start_time_unix`, and
+    /// optional `description`. Maps to
+    /// `Client::events().create(jid, params)`. The `message_secret`
+    /// returned by wacore is internal to the protocol and not
+    /// surfaced to the runtime.
+    async fn create_event(
+        &self,
+        to_jid: &str,
+        name: &str,
+        start_time_unix: i64,
+        description: Option<&str>,
+    ) -> Result<String, PlatformAdapterError>;
 
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
@@ -881,6 +926,33 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn is_lid_migrated(&self) -> Result<bool, PlatformAdapterError> {
         self.is_lid_migrated().await
+    }
+
+    // ── Tier 6.5: newsletter + events delegation ──────────────────
+
+    async fn list_subscribed_newsletters(
+        &self,
+    ) -> Result<Vec<NewsletterMetadataSnapshot>, PlatformAdapterError> {
+        self.list_subscribed_newsletters().await
+    }
+    async fn get_newsletter_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.get_newsletter_metadata(jid).await
+    }
+    async fn leave_newsletter(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.leave_newsletter(jid).await
+    }
+    async fn create_event(
+        &self,
+        to_jid: &str,
+        name: &str,
+        start_time_unix: i64,
+        description: Option<&str>,
+    ) -> Result<String, PlatformAdapterError> {
+        self.create_event(to_jid, name, start_time_unix, description)
+            .await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1494,6 +1566,29 @@ mod tests {
     #[tokio::test]
     async fn delegation_is_lid_migrated() {
         assert_client_not_connected(adapter().is_lid_migrated().await);
+    }
+
+    // ── Tier 6.5: newsletter + events (unchecked) ───────────────
+
+    #[tokio::test]
+    async fn delegation_list_subscribed_newsletters() {
+        assert_client_not_connected(adapter().list_subscribed_newsletters().await);
+    }
+    #[tokio::test]
+    async fn delegation_get_newsletter_metadata() {
+        assert_client_not_connected(adapter().get_newsletter_metadata(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_leave_newsletter() {
+        assert_client_not_connected(adapter().leave_newsletter(JID).await);
+    }
+    #[tokio::test]
+    async fn delegation_create_event() {
+        assert_client_not_connected(
+            adapter()
+                .create_event(JID, "tier6-event", 1_700_000_000, None)
+                .await,
+        );
     }
 
     // ── Group G: size-gated wrappers ──

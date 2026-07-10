@@ -103,6 +103,24 @@ pub struct PrivacySettingSnapshot {
     pub value: String,
 }
 
+/// Flattened newsletter metadata for the runtime. Mirrors the WA
+/// crate's `NewsletterMetadata` (most fields) plus a wire-string
+/// form of the `state` and `role` enums so the runtime does not
+/// need to depend on those types.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct NewsletterMetadataSnapshot {
+    pub jid: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub subscriber_count: u64,
+    pub state: String,
+    pub picture_url: Option<String>,
+    pub preview_url: Option<String>,
+    pub invite_code: Option<String>,
+    pub role: Option<String>,
+    pub creation_time: Option<u64>,
+}
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

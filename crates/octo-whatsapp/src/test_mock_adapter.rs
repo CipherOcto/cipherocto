@@ -523,6 +523,58 @@ impl OctoWhatsAppAdapter for MockAdapter {
         Ok(true)
     }
 
+    // ── Tier 6.5: newsletter + events ────────────────────────────
+
+    async fn list_subscribed_newsletters(
+        &self,
+    ) -> Result<Vec<octo_adapter_whatsapp::NewsletterMetadataSnapshot>, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        record_unit_call(&self.state, "list_subscribed_newsletters")?;
+        Ok(vec![NewsletterMetadataSnapshot {
+            jid: "100000000000001@newsletter".to_string(),
+            name: "mock-newsletter".to_string(),
+            description: None,
+            subscriber_count: 1,
+            state: "Active".to_string(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: Some("ABCD1234".to_string()),
+            role: Some("Subscriber".to_string()),
+            creation_time: None,
+        }])
+    }
+    async fn get_newsletter_metadata(
+        &self,
+        _jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        record_unit_call(&self.state, "get_newsletter_metadata")?;
+        Ok(NewsletterMetadataSnapshot {
+            jid: _jid.to_string(),
+            name: "mock-newsletter".to_string(),
+            description: None,
+            subscriber_count: 1,
+            state: "Active".to_string(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: Some("Subscriber".to_string()),
+            creation_time: None,
+        })
+    }
+    async fn leave_newsletter(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "leave_newsletter")
+    }
+    async fn create_event(
+        &self,
+        _to_jid: &str,
+        _name: &str,
+        _start_time_unix: i64,
+        _description: Option<&str>,
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(&self.state, "create_event", Ok("fake-event-msg-id".into()))
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

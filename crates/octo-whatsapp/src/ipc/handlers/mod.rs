@@ -31,6 +31,7 @@ pub mod envelope_encode;
 pub mod envelope_send;
 pub mod envelope_send_native;
 pub mod events;
+pub mod events_create;
 pub mod groups;
 pub mod health;
 pub mod identity_get_lid;
@@ -51,6 +52,9 @@ pub mod messages_mark_read;
 pub mod messages_search;
 pub mod messages_star;
 pub mod messages_unstar;
+pub mod newsletter_get_metadata;
+pub mod newsletter_leave;
+pub mod newsletter_list_subscribed;
 pub mod preflight;
 pub mod presence_set_available;
 pub mod presence_set_unavailable;
@@ -216,6 +220,13 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(identity_get_pn::IdentityGetPn))
         .register(Arc::new(identity_get_lid::IdentityGetLid))
         .register(Arc::new(identity_is_lid_migrated::IdentityIsLidMigrated))
+        // Tier 6.5: newsletter + events
+        .register(Arc::new(
+            newsletter_list_subscribed::NewsletterListSubscribed,
+        ))
+        .register(Arc::new(newsletter_get_metadata::NewsletterGetMetadata))
+        .register(Arc::new(newsletter_leave::NewsletterLeave))
+        .register(Arc::new(events_create::EventsCreate))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -453,6 +464,18 @@ pub const TIER6_4_IDENTITY_METHODS: &[&str] = &[
     "identity.is_lid_migrated",
 ];
 
+/// RPC method names added in Tier 6.5 (live coverage matrix):
+/// newsletter (list_subscribed / get_metadata / leave) + events
+/// (create).
+///
+/// **Deferred:** status.send_text / send_image / send_video / revoke (status story) require `waproto` extended-text message types + font + background color enums (4 RPCs); events.respond (RSVP) needs the per-event message_secret round-trip (1 RPC). All tracked as `gap:rpc`.
+pub const TIER6_5_NEWSLETTER_METHODS: &[&str] = &[
+    "newsletter.list_subscribed",
+    "newsletter.get_metadata",
+    "newsletter.leave",
+    "events.create",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +550,7 @@ mod tests {
             .chain(TIER6_2_LABELS_STAR_METHODS.iter())
             .chain(TIER6_3_LIFECYCLE_METHODS.iter())
             .chain(TIER6_4_IDENTITY_METHODS.iter())
+            .chain(TIER6_5_NEWSLETTER_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

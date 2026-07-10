@@ -1982,6 +1982,149 @@ impl WhatsAppWebAdapter {
         };
         Ok(client.is_lid_migrated().await)
     }
+
+    // ── Tier 6.5: newsletter + events (lib wrappers) ─────────────
+
+    /// List all newsletters this account is subscribed to.
+    pub async fn list_subscribed_newsletters(
+        &self,
+    ) -> Result<Vec<crate::NewsletterMetadataSnapshot>, PlatformAdapterError> {
+        use crate::NewsletterMetadataSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let list = client
+            .newsletter()
+            .list_subscribed()
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("list_subscribed_newsletters failed: {e:#}"),
+            })?;
+        Ok(list
+            .into_iter()
+            .map(|n| NewsletterMetadataSnapshot {
+                jid: n.jid.to_string(),
+                name: n.name,
+                description: n.description,
+                subscriber_count: n.subscriber_count,
+                state: format!("{:?}", n.state),
+                picture_url: n.picture_url,
+                preview_url: n.preview_url,
+                invite_code: n.invite_code,
+                role: n.role.map(|r| format!("{:?}", r)),
+                creation_time: n.creation_time,
+            })
+            .collect())
+    }
+
+    /// Fetch metadata for one newsletter.
+    pub async fn get_newsletter_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use crate::NewsletterMetadataSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let n = client
+            .newsletter()
+            .get_metadata(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_newsletter_metadata failed: {e:#}"),
+            })?;
+        Ok(NewsletterMetadataSnapshot {
+            jid: n.jid.to_string(),
+            name: n.name,
+            description: n.description,
+            subscriber_count: n.subscriber_count,
+            state: format!("{:?}", n.state),
+            picture_url: n.picture_url,
+            preview_url: n.preview_url,
+            invite_code: n.invite_code,
+            role: n.role.map(|r| format!("{:?}", r)),
+            creation_time: n.creation_time,
+        })
+    }
+
+    /// Leave a newsletter.
+    pub async fn leave_newsletter(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .newsletter()
+            .leave(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("leave_newsletter failed: {e:#}"),
+            })
+    }
+
+    /// Create a WA calendar event. `description` is optional.
+    /// Returns the new event's message id.
+    pub async fn create_event(
+        &self,
+        to_jid: &str,
+        name: &str,
+        start_time_unix: i64,
+        description: Option<&str>,
+    ) -> Result<String, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+        let mut params = whatsapp_rust::EventCreationParams {
+            name: name.to_string(),
+            start_time: Some(start_time_unix),
+            ..Default::default()
+        };
+        if let Some(desc) = description {
+            params.description = Some(desc.to_string());
+        }
+        let (result, _message_secret) = client
+            .events()
+            .create(&parsed, params)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("create_event failed: {e:#}"),
+            })?;
+        Ok(result.message_id)
+    }
 }
 
 impl WhatsAppWebAdapter {

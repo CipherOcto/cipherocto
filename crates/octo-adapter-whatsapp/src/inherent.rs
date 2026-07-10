@@ -83,12 +83,22 @@ impl WhatsAppWebAdapter {
             message.set_context_info(ctx);
         }
 
+        // Tier 7.A.2 (forward): clone the outgoing body so a later
+        // `forward_message` call can replay it. The cache only catches
+        // `send_text`; media forwards (which need the full wa::Message
+        // including embedded media references) are a future scope.
+        let cached_for_forward = message.clone();
         let send_result = Box::pin(client.send_message(jid, message))
             .await
             .map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "whatsapp".into(),
                 reason: format!("send_text failed: {e}"),
             })?;
+        {
+            let mut cache = self.last_outgoing.lock();
+            let by_id = cache.entry(to_jid.to_string()).or_default();
+            by_id.insert(send_result.message_id.clone(), cached_for_forward);
+        }
         Ok(send_result.message_id)
     }
 
@@ -1095,6 +1105,61 @@ impl WhatsAppWebAdapter {
                 reason: format!("unpin_message failed: {e}"),
             })?;
         Ok(())
+    }
+
+    // ── Task 15c: forward_message (Tier 7.A.2) ──
+
+    /// Forward a previously-sent message to a new peer.
+    ///
+    /// The WA crate's `Client::forward_message` takes the original
+    /// `&wa::Message` by reference — not just a msg_id. Since the
+    /// runtime layer never sees the body, this inherent looks up the
+    /// cached `wa::Message` we stashed in `last_outgoing` at send time
+    /// (keyed by `peer_jid` + `msg_id`).
+    ///
+    /// Returns the new message id. Errors if the original is not in
+    /// the cache (e.g. it was sent via media path, or the cache was
+    /// cleared on session restart).
+    pub async fn forward_message(
+        &self,
+        peer_jid: &str,
+        original_msg_id: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        let original = {
+            let cache = self.last_outgoing.lock();
+            cache
+                .get(peer_jid)
+                .and_then(|by_id| by_id.get(original_msg_id))
+                .cloned()
+        }
+        .ok_or_else(|| PlatformAdapterError::ApiError {
+            code: 404,
+            message: format!(
+                "forward_message: original msg {original_msg_id} for peer {peer_jid} not in cache (only send_text bodies are cached)"
+            ),
+        })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let to: wacore_binary::Jid =
+            peer_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {peer_jid:?}: {e}"),
+            })?;
+        let send_result = client
+            .forward_message(to, &original)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("forward_message failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
     }
 
 // ── Task 16: message_search ──

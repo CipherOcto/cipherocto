@@ -45,6 +45,7 @@ pub mod media_info;
 pub mod messages_delete_for_me;
 pub mod messages_download;
 pub mod messages_edit;
+pub mod messages_forward;
 pub mod messages_get;
 pub mod messages_list;
 pub mod messages_mark_as_played;
@@ -232,6 +233,7 @@ pub fn build_registry() -> HandlerRegistry {
         // Tier 7.A: pin / unpin / forward / edit-encrypted
         .register(Arc::new(messages_pin::MessagesPin))
         .register(Arc::new(messages_unpin::MessagesUnpin))
+        .register(Arc::new(messages_forward::MessagesForward))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -481,8 +483,9 @@ pub const TIER6_5_NEWSLETTER_METHODS: &[&str] = &[
     "events.create",
 ];
 
-/// Tier 7.A: messages pin / unpin (Phase 7 close-the-gap).
-pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] = &["messages.pin", "messages.unpin"];
+/// Tier 7.A: messages pin / unpin / forward (Phase 7 close-the-gap).
+pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] =
+    &["messages.pin", "messages.unpin", "messages.forward"];
 
 #[cfg(test)]
 mod tests {

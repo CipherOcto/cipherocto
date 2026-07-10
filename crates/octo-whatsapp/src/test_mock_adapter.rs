@@ -305,6 +305,14 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "unpin_message")
     }
 
+    async fn forward_message(
+        &self,
+        _peer_jid: &str,
+        _original_msg_id: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(&self.state, "forward_message", Ok("fake-fwd-msg-id".into()))
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

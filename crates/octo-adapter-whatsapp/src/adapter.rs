@@ -7,7 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -335,6 +335,17 @@ pub struct WhatsAppWebAdapter {
     /// detect that stall and return immediately instead of waiting the
     /// full `--timeout`. Cleared on each `start_bot`.
     last_pairing_qr_at: Arc<Mutex<Option<Instant>>>,
+    /// Tier 7.A.2 (forward): per-peer cache of the most recent
+    /// outgoing `wa::Message` (keyed by its message_id), used by
+    /// `WhatsAppWebAdapter::forward_message` to replay a body the
+    /// operator previously sent. Without this cache, `forward` would
+    /// need the original `wa::Message` which the runtime layer cannot
+    /// reconstruct from the msg_id alone (the inner content is opaque
+    /// protobuf that only the adapter saw at send time).
+    ///
+    /// Unbounded by design — operators that run millions of sends should
+    /// add a TTL or LRU later. Reset on `start_bot` (new session).
+    pub(crate) last_outgoing: Arc<Mutex<HashMap<String, HashMap<String, waproto::whatsapp::Message>>>>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
@@ -421,6 +432,8 @@ impl WhatsAppWebAdapter {
             // timestamp from a prior session can never bleed into a
             // fresh one.
             last_pairing_qr_at: Arc::new(Mutex::new(None)),
+            // Tier 7.A.2: per-peer outgoing-message cache for forward.
+            last_outgoing: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

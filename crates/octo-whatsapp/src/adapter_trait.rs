@@ -167,6 +167,14 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     async fn unpin_message(&self, peer_jid: &str, msg_id: &str)
         -> Result<(), PlatformAdapterError>;
 
+    /// Forward a previously-sent text message to a new peer.
+    /// Returns the new message id.
+    async fn forward_message(
+        &self,
+        peer_jid: &str,
+        original_msg_id: &str,
+    ) -> Result<String, PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -758,6 +766,13 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         msg_id: &str,
     ) -> Result<(), PlatformAdapterError> {
         self.unpin_message(peer_jid, msg_id).await
+    }
+    async fn forward_message(
+        &self,
+        peer_jid: &str,
+        original_msg_id: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        self.forward_message(peer_jid, original_msg_id).await
     }
     async fn message_search(
         &self,

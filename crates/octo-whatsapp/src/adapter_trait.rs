@@ -358,6 +358,52 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         from_me: bool,
     ) -> Result<(), PlatformAdapterError>;
 
+    // ── Group F7: messages.mark_as_played (Tier 6.3) ──────────────
+    //
+    // Receipt variant — voice/video "played" ack.
+
+    /// Send a `played` receipt for one or more messages. Maps to
+    /// `Client::mark_as_played(chat, sender, message_ids)`.
+    async fn mark_as_played(
+        &self,
+        chat: &str,
+        msg_ids: &[String],
+    ) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F8: chats.clear (Tier 6.3) ─────────────────────────
+    //
+    // Clear all messages in a chat but keep the chat entry. Distinct
+    // from `chats.delete` which removes the chat entirely.
+
+    /// Clear all messages in a chat. `delete_starred` also removes
+    /// starred messages; `delete_media` also removes downloaded
+    /// media. Maps to `Client::chat_actions().clear_chat(...)`.
+    async fn clear_chat(
+        &self,
+        jid: &str,
+        delete_starred: bool,
+        delete_media: bool,
+    ) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F9: messages.delete_for_me (Tier 6.3) ──────────────
+
+    /// Local-only delete (not for everyone). Maps to
+    /// `Client::chat_actions().delete_message_for_me(...)`.
+    async fn delete_message_for_me(
+        &self,
+        chat: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F10: contacts.save_contact (Tier 6.3) ──────────────
+
+    /// Save or rename a contact. Maps to
+    /// `Client::chat_actions().save_contact(jid, full_name, first_name,
+    /// save_on_primary_addressbook)`. The jid must be a phone-number
+    /// JID (LIDs rejected by the WA server).
+    async fn save_contact(&self, jid: &str, full_name: &str) -> Result<(), PlatformAdapterError>;
+
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
     /// Size-gated wrapper for `send_image`. Rejects when the file
@@ -776,6 +822,35 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         from_me: bool,
     ) -> Result<(), PlatformAdapterError> {
         self.unstar_message(peer, msg_id, from_me).await
+    }
+
+    // ── Tier 6.3: mark_as_played / clear_chat / delete_message_for_me / save_contact ─
+
+    async fn mark_as_played(
+        &self,
+        chat: &str,
+        msg_ids: &[String],
+    ) -> Result<(), PlatformAdapterError> {
+        self.mark_as_played(chat, msg_ids).await
+    }
+    async fn clear_chat(
+        &self,
+        jid: &str,
+        delete_starred: bool,
+        delete_media: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.clear_chat(jid, delete_starred, delete_media).await
+    }
+    async fn delete_message_for_me(
+        &self,
+        chat: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        self.delete_message_for_me(chat, msg_id, from_me).await
+    }
+    async fn save_contact(&self, jid: &str, full_name: &str) -> Result<(), PlatformAdapterError> {
+        self.save_contact(jid, full_name).await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1355,6 +1430,25 @@ mod tests {
     #[tokio::test]
     async fn delegation_unstar_message() {
         assert_client_not_connected(adapter().unstar_message(JID, "m1", true).await);
+    }
+
+    // ── Tier 6.3: mark_as_played / clear_chat / delete_for_me / save_contact ─
+
+    #[tokio::test]
+    async fn delegation_mark_as_played() {
+        assert_client_not_connected(adapter().mark_as_played(JID, &["m1".to_string()]).await);
+    }
+    #[tokio::test]
+    async fn delegation_clear_chat() {
+        assert_client_not_connected(adapter().clear_chat(JID, false, false).await);
+    }
+    #[tokio::test]
+    async fn delegation_delete_message_for_me() {
+        assert_client_not_connected(adapter().delete_message_for_me(JID, "m1", true).await);
+    }
+    #[tokio::test]
+    async fn delegation_save_contact() {
+        assert_client_not_connected(adapter().save_contact(JID, "Alice").await);
     }
 
     // ── Group G: size-gated wrappers ──

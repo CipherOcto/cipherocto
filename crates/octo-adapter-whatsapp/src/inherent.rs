@@ -1814,6 +1814,129 @@ impl WhatsAppWebAdapter {
                 reason: format!("unstar_message failed: {e:#}"),
             })
     }
+
+    // ── Tier 6.3: messages.mark_as_played (lib wrapper) ──────────
+
+    /// Send a `played` receipt for one or more messages in a chat.
+    /// Emits Receipt { kind: Played } events to our own buffer.
+    pub async fn mark_as_played(
+        &self,
+        chat: &str,
+        msg_ids: &[String],
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            chat.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid chat JID {chat:?}: {e}"),
+            })?;
+        let id_refs: Vec<&str> = msg_ids.iter().map(String::as_str).collect();
+        client
+            .mark_as_played(&parsed, None, &id_refs)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("mark_as_played failed: {e:#}"),
+            })
+    }
+
+    // ── Tier 6.3: chats.clear (lib wrapper) ───────────────────────
+
+    /// Clear all messages in a chat but keep the chat entry.
+    pub async fn clear_chat(
+        &self,
+        jid: &str,
+        delete_starred: bool,
+        delete_media: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .chat_actions()
+            .clear_chat(&parsed, delete_starred, delete_media, None)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("clear_chat failed: {e:#}"),
+            })
+    }
+
+    // ── Tier 6.3: messages.delete_for_me (lib wrapper) ───────────
+
+    /// Local-only delete (not for everyone).
+    pub async fn delete_message_for_me(
+        &self,
+        chat: &str,
+        msg_id: &str,
+        from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            chat.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid chat JID {chat:?}: {e}"),
+            })?;
+        client
+            .chat_actions()
+            .delete_message_for_me(&parsed, None, msg_id, from_me, false, None)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("delete_message_for_me failed: {e:#}"),
+            })
+    }
+
+    // ── Tier 6.3: contacts.save_contact (lib wrapper) ────────────
+
+    /// Save or rename a contact in the local address book.
+    pub async fn save_contact(
+        &self,
+        jid: &str,
+        full_name: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .chat_actions()
+            .save_contact(&parsed, Some(full_name.to_string()), None, false)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("save_contact failed: {e:#}"),
+            })
+    }
 }
 
 impl WhatsAppWebAdapter {

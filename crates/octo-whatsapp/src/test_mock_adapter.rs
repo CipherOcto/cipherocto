@@ -479,6 +479,35 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "unstar_message")
     }
 
+    // ── Tier 6.3: mark_as_played / clear_chat / delete_for_me / save_contact ─
+
+    async fn mark_as_played(
+        &self,
+        _chat: &str,
+        _msg_ids: &[String],
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "mark_as_played")
+    }
+    async fn clear_chat(
+        &self,
+        _jid: &str,
+        _delete_starred: bool,
+        _delete_media: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "clear_chat")
+    }
+    async fn delete_message_for_me(
+        &self,
+        _chat: &str,
+        _msg_id: &str,
+        _from_me: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "delete_message_for_me")
+    }
+    async fn save_contact(&self, _jid: &str, _full_name: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "save_contact")
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

@@ -8,6 +8,7 @@ pub mod blocking_get_blocklist;
 pub mod blocking_is_blocked;
 pub mod capabilities;
 pub mod chats_archive;
+pub mod chats_clear;
 pub mod chats_delete;
 pub mod chats_info;
 pub mod chats_list;
@@ -21,6 +22,7 @@ pub mod contact_unblock;
 pub mod contacts_get_profile_picture;
 pub mod contacts_get_user_info;
 pub mod contacts_is_on_whatsapp;
+pub mod contacts_save_contact;
 pub mod daemon_methods;
 pub mod daemon_ops;
 pub mod domain_compute_hash;
@@ -36,10 +38,12 @@ pub mod labels_create;
 pub mod labels_delete;
 pub mod labels_remove_chat_label;
 pub mod media_info;
+pub mod messages_delete_for_me;
 pub mod messages_download;
 pub mod messages_edit;
 pub mod messages_get;
 pub mod messages_list;
+pub mod messages_mark_as_played;
 pub mod messages_mark_read;
 pub mod messages_search;
 pub mod messages_star;
@@ -200,6 +204,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(labels_remove_chat_label::LabelsRemoveChatLabel))
         .register(Arc::new(messages_star::MessagesStar))
         .register(Arc::new(messages_unstar::MessagesUnstar))
+        // Tier 6.3: messages.mark_as_played + chats.clear + messages.delete_for_me + contacts.save_contact
+        .register(Arc::new(messages_mark_as_played::MessagesMarkAsPlayed))
+        .register(Arc::new(chats_clear::ChatsClear))
+        .register(Arc::new(messages_delete_for_me::MessagesDeleteForMe))
+        .register(Arc::new(contacts_save_contact::ContactsSaveContact))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -407,6 +416,22 @@ pub const TIER6_2_LABELS_STAR_METHODS: &[&str] = &[
     "messages.unstar",
 ];
 
+/// RPC method names added in Tier 6.3 (live coverage matrix):
+/// `messages.mark_as_played` (Played receipt), `chats.clear`
+/// (clear all messages), `messages.delete_for_me` (local-only
+/// delete), `contacts.save_contact` (sync contact metadata).
+///
+/// **Deferred:** `messages.forward` requires the original
+/// message body (not just msg_id); `messages.edit_message_encrypted`
+/// requires the wacore `message_edit::decrypt` round-trip with the
+/// per-message HKDF secret. Both tracked as `gap:rpc`.
+pub const TIER6_3_LIFECYCLE_METHODS: &[&str] = &[
+    "messages.mark_as_played",
+    "chats.clear",
+    "messages.delete_for_me",
+    "contacts.save_contact",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,6 +504,7 @@ mod tests {
             .chain(TIER6_PROFILE_METHODS.iter())
             .chain(TIER6_1_PRIVACY_METHODS.iter())
             .chain(TIER6_2_LABELS_STAR_METHODS.iter())
+            .chain(TIER6_3_LIFECYCLE_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

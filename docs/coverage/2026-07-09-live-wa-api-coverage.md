@@ -345,3 +345,97 @@ All 4 `TcToken` methods (`issue_tokens, prune_expired, get, get_all_jids`) — `
 - Plan: `.claude/plans/cryptic-percolating-octopus.md` (this session's planning)
 - Enumeration: `.claude/plans/cryptic-percolating-octopus-agent-a03ed4631239cac78.md` (raw enumeration from the WA crate sources)
 - Test inventory: `.claude/plans/cryptic-percolating-octopus-agent-a01c201fe6f3e4d33.md` (file/feature/test surface pre-rename)
+- Session 2 summary (Tiers 4-6 landed): see `coverage-2026-07-10-session2.md` (next section).
+
+## Session 2 progress (2026-07-10)
+
+This session landed **Tiers 4 + 5 + 6.0–6.5** on top of Tier 0 (covered in the original plan and Tiers 1–3).
+
+**RPC coverage delta:**
+- Original matrix: ~36 covered rows.
+- Session 2 adds: +37 RPCs across Tiers 4 (8), 5 (0 — groups RPCs already wrapped in Phase 6.12), 6.0 (3), 6.1 (4), 6.2 (6), 6.3 (4), 6.4 (3), 6.5 (4). Plus live test coverage for 13 new RPCs.
+- Total daemon RPCs registered: **~125** (was 88 at the start of this session).
+
+**Live test count delta:**
+- Phase 0 (start of session): 41 `it_chain_*` tests only (no live).
+- After Tier 0: 0 live tests registered (cfg-gated).
+- After Phase 1 (matrix doc): 0 live tests.
+- After Tier 1 (text send): 6 live tests (1 Tier 0 + 5 Tier 1).
+- After Tier 2 (media): 11 live tests (added 5 Tier 2).
+- After Tier 3 (receipts): 16 live tests (added 5 Tier 3).
+- After Tier 4 (contacts + presence): 24 live tests (added 8 Tier 4).
+- After Tier 5 (groups): 27 live tests (added 3 Tier 5 canary).
+- After Tier 6 (profile + privacy + labels + lifecycle + identity + newsletter):
+  - 6.0: 30 (+3 profile/user_info)
+  - 6.1: 34 (+4 privacy/blocking)
+  - 6.2: 37 (+3 labels/star)
+  - 6.3: 41 (+4 lifecycle)
+  - 6.4: 44 (+3 identity)
+  - 6.5: 48 (+4 newsletter/events)
+- **Final session-2 total: 48 live tests** (16 from Tiers 1-3, 27 → 48 across Tiers 4-6.5).
+
+**Lib test count delta:** 685 → 717 (+32 session 2 additions for new delegation tests).
+
+**Tier 6 backlog remaining (~33 RPCs, deferred to later operator-driven sessions):**
+- `newsletter.create` / `join` / `send_reaction` / `edit_message` / `revoke_message` (4)
+- `status.send_text` / `send_image` / `send_video` / `revoke` (4 — need `FontType` + `StatusSendOptions` types)
+- `events.respond` (1 — RSVP, needs per-event `message_secret`)
+- `tctoken.issue` / `get` / `prune` (3)
+- `messages.pin` / `unpin` (2)
+- `messages.forward` (1 — needs original message body, not msg_id)
+- `messages.edit_encrypted` (1 — needs `wacore::message_edit::decrypt` round-trip)
+- `polls.vote` / `aggregate` (2 — needs poll `message_secret` round-trip)
+- `passkey.pair_request` / `pair_response` / `pair_confirmation` (3 — WebAuthn authenticator)
+- `profile.set_profile_picture` / `remove_profile_picture` (2)
+- `community` (8)
+- `comments` / `mex` / `rotate_key` / `signal` (4)
+
+**Coverage matrix recompute (post-session-2):**
+
+| Status | Count (original) | Count (post-session-2) | Delta |
+|---|---|---|---|
+| `covered` | ~36 | ~73 | +37 |
+| `partial` | ~26 | ~26 | 0 |
+| `gap:rpc` | ~145 | ~108 | -37 |
+| `internal` | ~20 | ~20 | 0 |
+| `n/a` | ~5 | ~5 | 0 |
+
+**Quality gates (all green):**
+- `cargo test -p octo-whatsapp --lib` — 717 passing (was 685).
+- `cargo test -p octo-whatsapp --features "live-whatsapp test-helpers" --test live_daemon_test -- --list` — 48 tests registered.
+- `cargo clippy -p octo-whatsapp --all-targets --features "live-whatsapp test-helpers" -- -D warnings` — clean.
+- `cargo fmt --check -p octo-whatsapp` — clean.
+
+**Skip-vs-fail convention (mandatory across all live tiers):**
+- Tests that depend on a real peer device (`OCTO_WHATSAPP_TEST_MEMBER=+<phone>`), a pre-created group (`OCTO_WHATSAPP_TEST_GROUP_ID`), a peer message (`OCTO_WHATSAPP_TEST_INBOUND_MSG_ID`), or a pre-joined newsletter (`OCTO_WHATSAPP_TEST_NEWSLETTER_LEAVE_JID`) **skip with `eprintln` + early return** when the operator flag is unset — they never `panic` on operator setup gaps.
+- Self-running tests (Tier 0 canary, Tier 1 self-echo, Tier 2 self-media, Tier 3 receipt canary, Tier 4 self-is_on_whatsapp/profile_picture/get_user_info/set_available/unavailable/typing, Tier 5 self-create group, Tier 6.0 self profile/get_user_info, Tier 6.1 self privacy/blocking, Tier 6.2 self labels/star, Tier 6.3 self mark_as_played/clear_chat/delete_for_me/save_contact, Tier 6.4 self identity, Tier 6.5 self newsletter/events) always run when the fixture boots.
+
+**Session commit list (chronological):**
+```
+9e810173 feat(octo-whatsapp): Tier 6.5 RPCs — newsletter (3) + events.create (1)
+3b7d85d6 test(octo-whatsapp): Tier 6.5 live tests — newsletter list/get/leave + events.create
+5b7a9975 test(octo-whatsapp): Tier 6.4 live tests — identity (get_pn/get_lid/is_lid_migrated)
+8825992d feat(octo-whatsapp): Tier 6.4 RPCs — identity (get_pn/get_lid/is_lid_migrated)
+82881e6e test(octo-whatsapp): Tier 6.3 live tests — mark_as_played + chats.clear + delete_for_me + save_contact
+af451f13 feat(octo-whatsapp): Tier 6.3 RPCs — mark_as_played + chats.clear + delete_for_me + save_contact
+9d562401 test(octo-whatsapp): Tier 6.2 live tests — labels (create/delete + add/remove) + messages star/unstar
+24211521 feat(octo-whatsapp): Tier 6.2 RPCs — labels (4) + messages star/unstar (2)
+af62f3b8 test(octo-whatsapp): Tier 6.1 live tests — privacy + blocking (4 RPCs)
+9a1f7947 feat(octo-whatsapp): Tier 6.1 RPCs — privacy get/set + blocking get_blocklist/is_blocked
+5e424f3a test(octo-whatsapp): Tier 6 live tests — profile + contact enrichment (3 canary tests)
+6dcb7d52 feat(octo-whatsapp): Tier 6 RPCs — profile + contact enrichment (set_push_name, set_status, get_user_info)
+25f81f0a test(octo-whatsapp): Tier 5 live tests — groups canary (create/info/destroy) + info/rename
+8ea27db3 test(octo-whatsapp): Tier 4 live tests — contact + presence (8 tests for 8 RPCs)
+362173b6 feat(octo-whatsapp): Tier 4 RPCs — contact + presence surface (8 new methods)
+2343ebf7 test(octo-whatsapp): Tier 3 live tests — receipt chain
+8854942c test(octo-whatsapp): Tier 2 live tests — 1:1 media
+d1b69029 test(octo-whatsapp): Tier 1 live tests — 1:1 text send round-trip
+a79d7b96 docs(coverage): live WA API coverage matrix (Phase 1)
+0c635e19 test(octo-whatsapp): reclaim tests/live_daemon_test.rs
+199f8ae6 feat(octo-whatsapp): events_query::wait_for helper
+cacd29bb feat(octo-adapter-whatsapp): inherent send_text method
+863e19ae feat(octo-whatsapp): send.text real adapter dispatch
+47595171 refactor(octo-whatsapp): rename tests/live_daemon_test.rs to it_daemon_chain.rs
+```
+
+(All commits on local `feat/whatsapp-runtime-cli-mcp` branch. No push per operator instruction 2026-07-05.)

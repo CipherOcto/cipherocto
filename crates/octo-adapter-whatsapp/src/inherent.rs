@@ -9,7 +9,7 @@ use base64::Engine;
 use crate::adapter::{upload_to_cdn, WhatsAppWebAdapter};
 use crate::media_ref::{encode_base64url, MediaRef};
 use crate::PlatformAdapterError;
-use crate::{StickerPackItemSnapshot, StickerPackSnapshot};
+use crate::{PollOptionResultSnapshot, StickerPackItemSnapshot, StickerPackSnapshot};
 use wacore_binary::JidExt;
 use whatsapp_rust::download::MediaType;
 use whatsapp_rust::prelude::{MessageBuilderExt, MessageExt};
@@ -2451,6 +2451,243 @@ impl WhatsAppWebAdapter {
                 reason: format!("fetch_sticker_pack({pack_id}, {locale}) failed: {e:#}"),
             })?;
         Ok(sticker_pack_to_snapshot(pack))
+    }
+
+    /// Submit a vote on an existing poll. Returns the new vote
+    /// message's id.
+    ///
+    /// `peer_jid` is the chat where the poll lives (1:1 or group).
+    /// `poll_creator_jid` is the JID of whoever created the poll —
+    /// the encryption AAD is keyed off it, so getting it wrong
+    /// makes the vote undecryptable for the recipient. The
+    /// `message_secret_b64` is the 32-byte secret generated when
+    /// the poll was created (returned via the `send.poll` response
+    /// in a future commit, or captured from `MessageContextInfo`
+    /// on the inbound poll message).
+    pub async fn vote_poll(
+        &self,
+        peer_jid: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+        message_secret_b64: &str,
+        selected_options: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(message_secret_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("vote_poll: message_secret_b64 invalid base64: {e}"),
+            })?;
+        if secret.len() != 32 {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "vote_poll: message_secret must be 32 bytes, got {}",
+                    secret.len()
+                ),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let chat: wacore_binary::Jid =
+            peer_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid chat JID {peer_jid:?}: {e}"),
+                })?;
+        let creator: wacore_binary::Jid =
+            poll_creator_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid poll creator JID {poll_creator_jid:?}: {e}"),
+                })?;
+        let send_result = client
+            .polls()
+            .vote(&chat, poll_msg_id, &creator, &secret, selected_options)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("vote_poll failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
+    }
+
+    /// Tally the votes for a poll by decrypting each encrypted vote
+    /// and resolving which option each voter picked. Returns the
+    /// per-option roster of voter JIDs.
+    ///
+    /// `votes` is the list of encrypted votes harvested from inbound
+    /// `PollUpdateMessage`s — each entry is `(voter_jid, enc_payload,
+    /// enc_iv)`. The caller is responsible for collecting them (the
+    /// future `InboundEvent::PollVote` variant will populate them
+    /// automatically; for now operators pass them in directly).
+    pub async fn aggregate_poll_votes(
+        &self,
+        poll_options: &[String],
+        votes: &[(String, Vec<u8>, Vec<u8>)],
+        message_secret_b64: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+    ) -> Result<Vec<PollOptionResultSnapshot>, PlatformAdapterError> {
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(message_secret_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("aggregate_poll_votes: message_secret_b64 invalid base64: {e}"),
+            })?;
+        if secret.len() != 32 {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "aggregate_poll_votes: message_secret must be 32 bytes, got {}",
+                    secret.len()
+                ),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let creator: wacore_binary::Jid =
+            poll_creator_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid poll creator JID {poll_creator_jid:?}: {e}"),
+                })?;
+        // Re-hydrate each (voter_jid, payload, iv) into the typed
+        // (Jid, PollVoteCiphertext) tuple the WA crate wants. The
+        // Ciphertext borrows the bytes so we collect into a
+        // temporary owned buffer first.
+        struct OwnedVote {
+            voter: wacore_binary::Jid,
+            enc_payload: Vec<u8>,
+            enc_iv: Vec<u8>,
+        }
+        let mut owned: Vec<OwnedVote> = Vec::with_capacity(votes.len());
+        for (voter_jid, enc_payload, enc_iv) in votes {
+            let voter = voter_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid voter JID {voter_jid:?}: {e}"),
+                })?;
+            owned.push(OwnedVote {
+                voter,
+                enc_payload: enc_payload.clone(),
+                enc_iv: enc_iv.clone(),
+            });
+        }
+        let cipher_views: Vec<(&wacore_binary::Jid, wacore::poll::PollVoteCiphertext<'_>)> = owned
+            .iter()
+            .map(|v| {
+                (
+                    &v.voter,
+                    wacore::poll::PollVoteCiphertext {
+                        enc_payload: &v.enc_payload,
+                        enc_iv: &v.enc_iv,
+                    },
+                )
+            })
+            .collect();
+        let results = client
+            .polls()
+            .aggregate_votes(poll_options, &cipher_views, &secret, poll_msg_id, &creator)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("aggregate_poll_votes failed: {e}"),
+            })?;
+        Ok(results
+            .into_iter()
+            .map(|r| PollOptionResultSnapshot {
+                name: r.name,
+                voters: r.voters,
+            })
+            .collect())
+    }
+
+    /// RSVP to a WA calendar event. The `message_secret_b64` is the
+    /// 32-byte secret generated when the event was created. Maps to
+    /// `Client::events().respond(chat, msg_id, creator, secret,
+    /// response, extra_guests)`.
+    pub async fn respond_event(
+        &self,
+        peer_jid: &str,
+        event_msg_id: &str,
+        event_creator_jid: &str,
+        message_secret_b64: &str,
+        response: waproto::whatsapp::message::event_response_message::EventResponseType,
+        extra_guest_count: Option<i32>,
+    ) -> Result<String, PlatformAdapterError> {
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(message_secret_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("respond_event: message_secret_b64 invalid base64: {e}"),
+            })?;
+        if secret.len() != 32 {
+            return Err(PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!(
+                    "respond_event: message_secret must be 32 bytes, got {}",
+                    secret.len()
+                ),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let chat: wacore_binary::Jid =
+            peer_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid chat JID {peer_jid:?}: {e}"),
+                })?;
+        let creator: wacore_binary::Jid =
+            event_creator_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid event creator JID {event_creator_jid:?}: {e}"),
+                })?;
+        let send_result = client
+            .events()
+            .respond(
+                &chat,
+                event_msg_id,
+                &creator,
+                &secret,
+                response,
+                extra_guest_count,
+            )
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("respond_event failed: {e}"),
+            })?;
+        Ok(send_result.message_id)
     }
 }
 

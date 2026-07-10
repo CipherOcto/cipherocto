@@ -32,6 +32,7 @@ pub mod envelope_send;
 pub mod envelope_send_native;
 pub mod events;
 pub mod events_create;
+pub mod events_respond;
 pub mod groups;
 pub mod health;
 pub mod identity_get_lid;
@@ -60,6 +61,8 @@ pub mod messages_unstar;
 pub mod newsletter_get_metadata;
 pub mod newsletter_leave;
 pub mod newsletter_list_subscribed;
+pub mod polls_aggregate;
+pub mod polls_vote;
 pub mod preflight;
 pub mod presence_set_available;
 pub mod presence_set_unavailable;
@@ -238,6 +241,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(messages_forward::MessagesForward))
         .register(Arc::new(messages_edit_encrypted::MessagesEditEncrypted))
         .register(Arc::new(media_fetch_sticker_pack::MediaFetchStickerPack))
+        // Tier 7.B: polls vote / aggregate
+        .register(Arc::new(polls_vote::PollsVote))
+        .register(Arc::new(polls_aggregate::PollsAggregate))
+        // Tier 7.B: events respond
+        .register(Arc::new(events_respond::EventsRespond))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -496,6 +504,10 @@ pub const TIER7_A_PIN_UNPIN_METHODS: &[&str] = &[
     "media.fetch_sticker_pack",
 ];
 
+/// Tier 7.B: polls vote / aggregate / events respond.
+pub const TIER7_B_POLLS_EVENTS_METHODS: &[&str] =
+    &["polls.vote", "polls.aggregate", "events.respond"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,6 +584,7 @@ mod tests {
             .chain(TIER6_4_IDENTITY_METHODS.iter())
             .chain(TIER6_5_NEWSLETTER_METHODS.iter())
             .chain(TIER7_A_PIN_UNPIN_METHODS.iter())
+            .chain(TIER7_B_POLLS_EVENTS_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

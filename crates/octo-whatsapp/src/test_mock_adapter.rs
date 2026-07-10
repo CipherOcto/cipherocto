@@ -350,6 +350,52 @@ impl OctoWhatsAppAdapter for MockAdapter {
         })
     }
 
+    async fn vote_poll(
+        &self,
+        _peer_jid: &str,
+        _poll_msg_id: &str,
+        _poll_creator_jid: &str,
+        _message_secret_b64: &str,
+        _selected_options: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(&self.state, "vote_poll", Ok("fake-poll-vote-msg-id".into()))
+    }
+
+    async fn aggregate_poll_votes(
+        &self,
+        poll_options: &[String],
+        _votes: &[(String, Vec<u8>, Vec<u8>)],
+        _message_secret_b64: &str,
+        _poll_msg_id: &str,
+        _poll_creator_jid: &str,
+    ) -> Result<Vec<octo_adapter_whatsapp::PollOptionResultSnapshot>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("aggregate_poll_votes").or_insert(0) += 1;
+        Ok(poll_options
+            .iter()
+            .map(|name| octo_adapter_whatsapp::PollOptionResultSnapshot {
+                name: name.clone(),
+                voters: Vec::new(),
+            })
+            .collect())
+    }
+
+    async fn respond_event(
+        &self,
+        _peer_jid: &str,
+        _event_msg_id: &str,
+        _event_creator_jid: &str,
+        _message_secret_b64: &str,
+        _response: octo_adapter_whatsapp::waproto::whatsapp::message::event_response_message::EventResponseType,
+        _extra_guest_count: Option<i32>,
+    ) -> Result<String, PlatformAdapterError> {
+        record_single_call(
+            &self.state,
+            "respond_event",
+            Ok("fake-event-respond-msg-id".into()),
+        )
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

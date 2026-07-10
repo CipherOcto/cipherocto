@@ -39,6 +39,10 @@ pub use store::StoolapStore;
 // directly. Keeping the re-exports centralised here means callers (and the
 // test) don't need a direct `whatsapp-rust` dependency on their dev-deps
 // just to spell out a `CreateGroupOutput.metadata.participants: Vec<GroupParticipant>`.
+/// Re-export of the protobuf crate so runtime-layer handlers can
+/// reach into waproto for enum values that don't have a flat
+/// snapshot equivalent (e.g. `EventResponseType`).
+pub use waproto;
 pub use whatsapp_rust::{GroupMetadata, GroupParticipant, ParticipantChangeResponse};
 
 // ── Phase 2 RPC payload types ──────────────────────────────────────
@@ -159,6 +163,18 @@ pub struct StickerPackSnapshot {
     pub preview_image_ids: Vec<String>,
     pub tray_image_id: Option<String>,
     pub tray_image_preview: Option<String>,
+}
+
+/// One row of poll tally results — `name` is the option label (the
+/// string the poll creator posted), `voters` is the canonical JID
+/// of every voter that selected it (deduped, last-vote-wins per the
+/// WA crate's `aggregate_votes` semantics).
+///
+/// Maps to `wacore::features::polls::PollOptionResult`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PollOptionResultSnapshot {
+    pub name: String,
+    pub voters: Vec<String>,
 }
 
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent

@@ -206,6 +206,52 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         locale: &str,
     ) -> Result<octo_adapter_whatsapp::StickerPackSnapshot, PlatformAdapterError>;
 
+    /// Submit a vote on an existing poll. `peer_jid` is the chat
+    /// the poll lives in (1:1 or group); `poll_creator_jid` is the
+    /// JID of whoever created it. `message_secret_b64` is the
+    /// base64-encoded 32-byte secret the WA crate generates at
+    /// poll-creation time (returned via `send.poll`'s response
+    /// shape in a future commit, or extracted from inbound
+    /// `MessageContextInfo`).
+    async fn vote_poll(
+        &self,
+        peer_jid: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+        message_secret_b64: &str,
+        selected_options: &[String],
+    ) -> Result<String, PlatformAdapterError>;
+
+    /// Tally the votes for a poll. `votes` is a list of
+    /// `(voter_jid, enc_payload, enc_iv)` tuples harvested from
+    /// inbound poll updates — each `enc_payload` and `enc_iv` are
+    /// raw bytes (NOT base64) carried verbatim from the
+    /// `PollEncValue` field of each update. Maps to
+    /// `Client::polls().aggregate_votes(...)`.
+    async fn aggregate_poll_votes(
+        &self,
+        poll_options: &[String],
+        votes: &[(String, Vec<u8>, Vec<u8>)],
+        message_secret_b64: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+    ) -> Result<Vec<octo_adapter_whatsapp::PollOptionResultSnapshot>, PlatformAdapterError>;
+
+    /// RSVP to a WA calendar event. `response` is one of the
+    /// `EventResponseType` enum values (GOING / NOT_GOING / MAYBE)
+    /// sourced from the waproto re-export. Maps to
+    /// `Client::events().respond(chat, msg_id, creator, secret,
+    /// response, extra_guests)`.
+    async fn respond_event(
+        &self,
+        peer_jid: &str,
+        event_msg_id: &str,
+        event_creator_jid: &str,
+        message_secret_b64: &str,
+        response: octo_adapter_whatsapp::waproto::whatsapp::message::event_response_message::EventResponseType,
+        extra_guest_count: Option<i32>,
+    ) -> Result<String, PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -821,6 +867,59 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         locale: &str,
     ) -> Result<octo_adapter_whatsapp::StickerPackSnapshot, PlatformAdapterError> {
         self.fetch_sticker_pack(pack_id, locale).await
+    }
+    async fn vote_poll(
+        &self,
+        peer_jid: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+        message_secret_b64: &str,
+        selected_options: &[String],
+    ) -> Result<String, PlatformAdapterError> {
+        self.vote_poll(
+            peer_jid,
+            poll_msg_id,
+            poll_creator_jid,
+            message_secret_b64,
+            selected_options,
+        )
+        .await
+    }
+    async fn aggregate_poll_votes(
+        &self,
+        poll_options: &[String],
+        votes: &[(String, Vec<u8>, Vec<u8>)],
+        message_secret_b64: &str,
+        poll_msg_id: &str,
+        poll_creator_jid: &str,
+    ) -> Result<Vec<octo_adapter_whatsapp::PollOptionResultSnapshot>, PlatformAdapterError> {
+        self.aggregate_poll_votes(
+            poll_options,
+            votes,
+            message_secret_b64,
+            poll_msg_id,
+            poll_creator_jid,
+        )
+        .await
+    }
+    async fn respond_event(
+        &self,
+        peer_jid: &str,
+        event_msg_id: &str,
+        event_creator_jid: &str,
+        message_secret_b64: &str,
+        response: octo_adapter_whatsapp::waproto::whatsapp::message::event_response_message::EventResponseType,
+        extra_guest_count: Option<i32>,
+    ) -> Result<String, PlatformAdapterError> {
+        self.respond_event(
+            peer_jid,
+            event_msg_id,
+            event_creator_jid,
+            message_secret_b64,
+            response,
+            extra_guest_count,
+        )
+        .await
     }
     async fn message_search(
         &self,
@@ -1473,6 +1572,42 @@ mod tests {
         // PlatformAdapterError::Unreachable — but the mock returns
         // Ok(empty). Either way, the trait dispatch reached the body.
         let _ = r;
+    }
+    #[tokio::test]
+    async fn delegation_vote_poll() {
+        let secret_b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let opts = vec!["A".to_string()];
+        let r = adapter()
+            .vote_poll(JID, "msg-1", JID, secret_b64, &opts)
+            .await;
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_aggregate_poll_votes() {
+        let secret_b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let opts = vec!["A".to_string(), "B".to_string()];
+        let votes: Vec<(String, Vec<u8>, Vec<u8>)> = vec![];
+        let r = adapter()
+            .aggregate_poll_votes(&opts, &votes, secret_b64, "msg-1", JID)
+            .await;
+        // Aggregate without a client just gets Unreachable from the
+        // client-lock check before decrypt is attempted.
+        assert_client_not_connected(r);
+    }
+    #[tokio::test]
+    async fn delegation_respond_event() {
+        let secret_b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let r = adapter()
+            .respond_event(
+                JID,
+                "evt-1",
+                JID,
+                secret_b64,
+                octo_adapter_whatsapp::waproto::whatsapp::message::event_response_message::EventResponseType::Going,
+                None,
+            )
+            .await;
+        assert_client_not_connected(r);
     }
     #[tokio::test]
     async fn delegation_delete_message() {

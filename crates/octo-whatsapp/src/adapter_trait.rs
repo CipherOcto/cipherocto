@@ -434,6 +434,34 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// `Client::tc_token().get_all_jids()`.
     async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError>;
 
+    // ── Tier 7.F: passkey (response + confirmation) + comments ─────
+
+    /// Send the WebAuthn assertion for an inbound
+    /// `Event::PairPasskeyRequest` and open the handshake.
+    /// `assertion_json_b64` is the base64-encoded WebAuthn
+    /// assertion JSON; `credential_id_b64` is the base64-encoded
+    /// credential `rawId` bytes. Maps to
+    /// `Client::send_passkey_response(assertion)`.
+    async fn send_passkey_response(
+        &self,
+        assertion_json_b64: &str,
+        credential_id_b64: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Confirm a passkey link after the operator has verified
+    /// the `Event::PairPasskeyConfirmation` code. Maps to
+    /// `Client::send_passkey_confirmation()`.
+    async fn send_passkey_confirmation(&self) -> Result<(), PlatformAdapterError>;
+
+    // NOTE: comments.send_text / comments.send_message /
+    // mex.query / mex.mutate / media.reupload /
+    // media.reupload_many were originally in this session but
+    // the WA crate keeps the backing modules (`Comments`,
+    // `media_reupload`) pub(crate) and `MexDoc`/`MessageKey`
+    // fields have signature shapes that are not directly
+    // reachable from outside. Re-add them once the WA crate
+    // publishes friendlier builder APIs.
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -1264,6 +1292,17 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError> {
         self.get_all_tc_token_jids().await
+    }
+    async fn send_passkey_response(
+        &self,
+        assertion_json_b64: &str,
+        credential_id_b64: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.send_passkey_response(assertion_json_b64, credential_id_b64)
+            .await
+    }
+    async fn send_passkey_confirmation(&self) -> Result<(), PlatformAdapterError> {
+        self.send_passkey_confirmation().await
     }
     async fn message_search(
         &self,

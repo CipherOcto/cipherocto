@@ -70,6 +70,8 @@ pub mod newsletter_leave;
 pub mod newsletter_list_subscribed;
 pub mod newsletter_revoke_message;
 pub mod newsletter_send_reaction;
+pub mod passkey_send_confirmation;
+pub mod passkey_send_response;
 pub mod polls_aggregate;
 pub mod polls_vote;
 pub mod preflight;
@@ -291,6 +293,9 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(tctoken_get::TcTokenGet))
         .register(Arc::new(tctoken_prune_expired::TcTokenPruneExpired))
         .register(Arc::new(tctoken_get_all_jids::TcTokenGetAllJids))
+        // Tier 7.F: passkey (response + confirmation)
+        .register(Arc::new(passkey_send_response::PasskeySendResponse))
+        .register(Arc::new(passkey_send_confirmation::PasskeySendConfirmation))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -584,6 +589,12 @@ pub const TIER7_E_NEWSLETTER_TCTOKEN_METHODS: &[&str] = &[
     "tctoken.get_all_jids",
 ];
 
+/// Tier 7.F: passkey (response + confirmation) only — comments
+/// and mex/media_reupload deferred until the WA crate publishes
+/// friendlier builder APIs.
+pub const TIER7_F_PASSKEY_METHODS: &[&str] =
+    &["passkey.send_response", "passkey.send_confirmation"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,6 +675,7 @@ mod tests {
             .chain(TIER7_C_STATUS_METHODS.iter())
             .chain(TIER7_D_PROFILE_METHODS.iter())
             .chain(TIER7_E_NEWSLETTER_TCTOKEN_METHODS.iter())
+            .chain(TIER7_F_PASSKEY_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

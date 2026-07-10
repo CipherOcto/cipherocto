@@ -3452,6 +3452,72 @@ impl WhatsAppWebAdapter {
         })?;
         Ok(jids)
     }
+
+    // ── Tier 7.F: passkey (response + confirmation) + comments ─────
+
+    /// Send the WebAuthn assertion to open a passkey handshake.
+    /// `assertion_json_b64` is the base64-encoded WebAuthn
+    /// assertion JSON; `credential_id_b64` is the base64-encoded
+    /// credential `rawId` bytes.
+    pub async fn send_passkey_response(
+        &self,
+        assertion_json_b64: &str,
+        credential_id_b64: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let assertion_json = base64::engine::general_purpose::STANDARD
+            .decode(assertion_json_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("send_passkey_response: assertion_json_b64 invalid base64: {e}"),
+            })?;
+        let credential_id = base64::engine::general_purpose::STANDARD
+            .decode(credential_id_b64)
+            .map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("send_passkey_response: credential_id_b64 invalid base64: {e}"),
+            })?;
+        let assertion = whatsapp_rust::passkey::Assertion {
+            assertion_json,
+            credential_id,
+        };
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.send_passkey_response(assertion).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_passkey_response failed: {e}"),
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Confirm a passkey link after the operator has verified
+    /// the `Event::PairPasskeyConfirmation` code.
+    pub async fn send_passkey_confirmation(&self) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.send_passkey_confirmation().await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("send_passkey_confirmation failed: {e}"),
+            }
+        })?;
+        Ok(())
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

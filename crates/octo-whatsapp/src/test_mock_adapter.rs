@@ -602,6 +602,20 @@ impl OctoWhatsAppAdapter for MockAdapter {
         Ok(Vec::new())
     }
 
+    // ── Tier 7.F: passkey (response + confirmation) only ────────────
+
+    async fn send_passkey_response(
+        &self,
+        _assertion_json_b64: &str,
+        _credential_id_b64: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "send_passkey_response")
+    }
+
+    async fn send_passkey_confirmation(&self) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "send_passkey_confirmation")
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

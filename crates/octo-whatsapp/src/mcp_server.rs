@@ -540,10 +540,10 @@ pub fn tool_descriptors() -> Vec<Value> {
     ));
     v.push(td(
         "groups.set_profile_picture",
-        "Set the group icon. `image_path` must point to a JPEG/PNG on disk.",
+        "Set the group icon. `image_data_b64` must be base64-encoded JPEG/PNG bytes.",
         schema_props_required(
-            &[("jid", "string"), ("image_path", "string")],
-            &["jid", "image_path"],
+            &[("jid", "string"), ("image_data_b64", "string")],
+            &["jid", "image_data_b64"],
         ),
     ));
     v.push(td(

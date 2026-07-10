@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -1092,10 +1093,19 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
             "groups.get_profile_pictures",
             serde_json::json!({"jids": jids, "preview": preview}),
         ),
-        GroupsAction::SetProfilePicture { jid, file } => (
-            "groups.set_profile_picture",
-            serde_json::json!({"jid": jid, "image_path": file.to_string_lossy()}),
-        ),
+        GroupsAction::SetProfilePicture { jid, file } => {
+            // The IPC handler takes base64-encoded image data
+            // (`image_data_b64`); the CLI takes a file path and
+            // base64-encodes the bytes here so operators don't have
+            // to do it manually.
+            let bytes =
+                std::fs::read(file).map_err(|e| anyhow::anyhow!("read {}: {e}", file.display()))?;
+            let b64 = B64.encode(&bytes);
+            (
+                "groups.set_profile_picture",
+                serde_json::json!({"jid": jid, "image_data_b64": b64}),
+            )
+        }
         GroupsAction::RemoveProfilePicture { jid } => (
             "groups.remove_profile_picture",
             serde_json::json!({"jid": jid}),

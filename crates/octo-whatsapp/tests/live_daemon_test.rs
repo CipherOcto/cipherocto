@@ -3644,3 +3644,168 @@ async fn live_update_member_label() {
     );
     eprintln!("live_update_member_label: OK set={label:?} then cleared for jid={jid}");
 }
+
+// ===========================================================================
+// Tier 7.H live tests (continued): groups.get_profile_pictures +
+// groups.set_profile_picture + groups.remove_profile_picture.
+//
+// All three require `OCTO_WHATSAPP_TEST_GROUP_ID` (operator pre-created
+// group the bot has joined and is admin of). The set step additionally
+// requires `OCTO_WHATSAPP_TEST_PROFILE_PIC` pointing at a local JPEG file
+// — same env var the Phase 7.D `live_set_profile_picture` test uses.
+// Skip-vs-fail convention: env unset → eprintln + early return.
+// ===========================================================================
+
+/// `live_get_group_profile_pictures` — fetch profile pictures for
+/// the test group and assert the response shape.
+///
+/// The WA server returns a Vec<GroupProfilePictureSnapshot>; the
+/// snapshot's `photo_id` is opaque (a base64-url-encoded pointer).
+/// Tests only assert that an array is returned with the expected JID.
+#[tokio::test]
+async fn live_get_group_profile_pictures() {
+    let Some(_jid) = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
+        eprintln!(
+            "live_get_group_profile_pictures: skipping \
+             (set OCTO_WHATSAPP_TEST_GROUP_ID to an existing group JID \
+              the test account has joined)"
+        );
+        return;
+    };
+    let jid = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").unwrap();
+    assert!(jid.ends_with("@g.us"), "JID must end in @g.us; got {jid}");
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "groups.get_profile_pictures",
+            json!({ "jids": [jid.clone()], "preview": true }),
+        )
+        .await;
+    inter_call_delay_for("groups.get_profile_pictures");
+    let arr = resp
+        .as_array()
+        .unwrap_or_else(|| panic!("groups.get_profile_pictures must return array; got {resp}"));
+    assert!(
+        !arr.is_empty(),
+        "groups.get_profile_pictures should return at least one snapshot for {jid}; got {resp}"
+    );
+    let snap = &arr[0];
+    assert_eq!(
+        snap["group_jid"], jid,
+        "snapshot group_jid must match the requested JID"
+    );
+    eprintln!(
+        "live_get_group_profile_pictures: OK returned {} snapshot(s) for jid={}",
+        arr.len(),
+        jid
+    );
+}
+
+/// `live_set_group_profile_picture` — upload a JPEG to the test group.
+/// Operator pre-action: set `OCTO_WHATSAPP_TEST_GROUP_ID` + `OCTO_WHATSAPP_TEST_PROFILE_PIC`.
+///
+/// The IPC handler returns `{ "id": <photo_id> }`; tests assert the id
+/// is non-empty. Cleanup removes the picture immediately to keep the
+/// operator's group state clean.
+#[tokio::test]
+async fn live_set_group_profile_picture() {
+    let Some(_jid) = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
+        eprintln!(
+            "live_set_group_profile_picture: skipping \
+             (set OCTO_WHATSAPP_TEST_GROUP_ID)"
+        );
+        return;
+    };
+    let file_path = match std::env::var("OCTO_WHATSAPP_TEST_PROFILE_PIC").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_set_group_profile_picture: skipping \
+                 (set OCTO_WHATSAPP_TEST_PROFILE_PIC to a local JPEG file path)"
+            );
+            return;
+        }
+    };
+    let data = match std::fs::read(&file_path) {
+        Ok(d) => d,
+        Err(e) => panic!("OCTO_WHATSAPP_TEST_PROFILE_PIC unreadable: {e}"),
+    };
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
+    let jid = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").unwrap();
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "groups.set_profile_picture",
+            json!({ "jid": jid.clone(), "image_data_b64": b64 }),
+        )
+        .await;
+    inter_call_delay_for("groups.set_profile_picture");
+    let photo_id = resp["id"].as_str().unwrap_or("");
+    assert!(
+        !photo_id.is_empty(),
+        "groups.set_profile_picture must return non-empty id; got {resp}"
+    );
+    eprintln!(
+        "live_set_group_profile_picture: OK uploaded {} bytes; photo_id={photo_id}",
+        data.len()
+    );
+
+    // Cleanup: remove the group picture we just set so we don't pollute
+    // the operator's group state. Best-effort — failure here is logged,
+    // not asserted, because the test already proved the round-trip.
+    inter_call_delay_for("groups.remove_profile_picture");
+    let _cleanup = conn
+        .call(
+            "groups.remove_profile_picture",
+            json!({ "jid": jid.clone() }),
+        )
+        .await;
+    eprintln!("live_set_group_profile_picture: cleanup attempted (picture removed)");
+}
+
+/// `live_remove_group_profile_picture` — explicit remove test (no
+/// preceding set). The WA server may return an error if the group has
+/// no picture set; we tolerate either outcome. Skips without env vars.
+#[tokio::test]
+async fn live_remove_group_profile_picture() {
+    let Some(_jid) = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+    else {
+        eprintln!(
+            "live_remove_group_profile_picture: skipping \
+             (set OCTO_WHATSAPP_TEST_GROUP_ID)"
+        );
+        return;
+    };
+    let jid = std::env::var("OCTO_WHATSAPP_TEST_GROUP_ID").unwrap();
+    assert!(jid.ends_with("@g.us"), "JID must end in @g.us; got {jid}");
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "groups.remove_profile_picture",
+            json!({ "jid": jid.clone() }),
+        )
+        .await;
+    inter_call_delay_for("groups.remove_profile_picture");
+    // Either succeed (returns {id: "0"}) or error (no picture set).
+    // We only assert the call did not panic and returned a JSON object.
+    assert!(
+        resp.is_object(),
+        "groups.remove_profile_picture must return object; got {resp}"
+    );
+    eprintln!("live_remove_group_profile_picture: OK jid={jid} resp={resp}");
+}

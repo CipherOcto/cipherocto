@@ -2456,3 +2456,154 @@ async fn live_identity_is_lid_migrated_self() {
         resp["migrated"]
     );
 }
+
+// ===========================================================================
+// Tier 6.5 — Newsletter + events live tests
+//
+// `newsletter.list_subscribed` is the canary (always runs, returns
+// our subscribed list — likely empty for a fresh account, but the
+// RPC shape is the assertion). `newsletter.leave` requires operator
+// setup: a newsletter the test account was previously added to.
+// `newsletter.get_metadata` similarly requires a known JID. Both skip
+// when no env var is set.
+// `events.create` is hermetic (self-creates a calendar event against
+// our own JID).
+// ===========================================================================
+
+/// `live_newsletter_list_subscribed_self` — Tier 6.5 canary.
+///
+/// Returns our subscribed-newsletter list. For a fresh account the
+/// list is typically empty — the assertion is shape: `{newsletters:
+/// [...], count: N}` where `count == newsletters.len()`.
+#[tokio::test]
+async fn live_newsletter_list_subscribed_self() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("newsletter.list_subscribed", json!({})).await;
+    inter_call_delay_for("newsletter.list_subscribed");
+
+    assert!(
+        resp["newsletters"].is_array(),
+        "newsletters must be array; got {resp}"
+    );
+    let list = resp["newsletters"].as_array().unwrap();
+    assert_eq!(
+        resp["count"].as_u64().unwrap_or(0) as usize,
+        list.len(),
+        "count must match newsletters.len()"
+    );
+    eprintln!(
+        "live_newsletter_list_subscribed_self: OK {} newsletter(s)",
+        list.len()
+    );
+}
+
+/// `live_newsletter_get_metadata_skips_without_setup` — Tier 6.5
+/// operator-gated. Skips unless the operator pre-created a
+/// newsletter and set `OCTO_WHATSAPP_TEST_NEWSLETTER_JID`. The
+/// assertion is: a real JID returns metadata; the server response
+/// is parseable.
+#[tokio::test]
+async fn live_newsletter_get_metadata_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_get_metadata_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_JID to a real newsletter JID ending in @newsletter)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("newsletter.get_metadata", json!({"jid": nl_jid.clone()}))
+        .await;
+    inter_call_delay_for("newsletter.get_metadata");
+    let info = &resp["info"];
+    assert!(info.is_object(), "info must be object; got {resp}");
+    assert_eq!(
+        info["jid"], nl_jid,
+        "info.jid must echo the requested JID; got {resp}"
+    );
+    assert!(
+        info["name"].is_string(),
+        "info.name must be string; got {resp}"
+    );
+    eprintln!(
+        "live_newsletter_get_metadata_skips_without_setup: OK jid={} name={:?}",
+        info["jid"], info["name"]
+    );
+}
+
+/// `live_newsletter_leave_skips_without_setup` — Tier 6.5
+/// operator-gated. Skips unless the operator pre-set
+/// `OCTO_WHATSAPP_TEST_NEWSLETTER_LEAVE_JID` (a newsletter the test
+/// account is currently in). The RPC must return `{status: "left"}`
+/// or a structured error.
+#[tokio::test]
+async fn live_newsletter_leave_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_LEAVE_JID").ok() else {
+        eprintln!(
+            "live_newsletter_leave_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_LEAVE_JID to a newsletter JID the \
+             test account is currently subscribed to; the test leaves it)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("newsletter.leave", json!({"jid": nl_jid.clone()}))
+        .await;
+    inter_call_delay_for("newsletter.leave");
+    assert_eq!(
+        resp["status"], "left",
+        "newsletter.leave must return status=left; got {resp}"
+    );
+    assert_eq!(resp["jid"], nl_jid);
+    eprintln!("live_newsletter_leave_skips_without_setup: OK jid={nl_jid}");
+}
+
+/// `live_events_create_self` — Tier 6.5 calendar event.
+///
+/// Creates a WA calendar event against our own JID. The server
+/// returns the new event's message id; the RPC surfaces it as
+/// `{status: "created", message_id, ...}`. The event is visible to
+/// us in our own chat list immediately.
+#[tokio::test]
+async fn live_events_create_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let name = format!("tier6-event-{}", std::process::id());
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64 + 3600)
+        .unwrap_or(1_700_000_000);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "events.create",
+            json!({
+                "to": self_jid.clone(),
+                "name": name.clone(),
+                "start_time": start_time,
+            }),
+        )
+        .await;
+    inter_call_delay_for("events.create");
+
+    assert_eq!(
+        resp["status"], "created",
+        "events.create must return status=created; got {resp}"
+    );
+    assert_eq!(resp["name"], name);
+    assert_eq!(resp["start_time"], start_time);
+    assert!(
+        resp["message_id"].is_string(),
+        "message_id must be string; got {resp}"
+    );
+    eprintln!(
+        "live_events_create_self: OK message_id={}",
+        resp["message_id"]
+    );
+}

@@ -17,6 +17,7 @@ pub mod clients;
 pub mod contact_block;
 pub mod contact_unblock;
 pub mod contacts_get_profile_picture;
+pub mod contacts_get_user_info;
 pub mod contacts_is_on_whatsapp;
 pub mod daemon_methods;
 pub mod daemon_ops;
@@ -40,6 +41,8 @@ pub mod presence_set_available;
 pub mod presence_set_unavailable;
 pub mod presence_subscribe;
 pub mod presence_unsubscribe;
+pub mod profile_set_push_name;
+pub mod profile_set_status;
 pub mod rules;
 pub mod security_tokens;
 pub mod send_audio;
@@ -171,6 +174,10 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(presence_unsubscribe::PresenceUnsubscribe))
         .register(Arc::new(presence_set_available::PresenceSetAvailable))
         .register(Arc::new(presence_set_unavailable::PresenceSetUnavailable))
+        // Tier 6: profile + contact enrichment
+        .register(Arc::new(profile_set_push_name::ProfileSetPushName))
+        .register(Arc::new(profile_set_status::ProfileSetStatus))
+        .register(Arc::new(contacts_get_user_info::ContactsGetUserInfo))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -343,6 +350,14 @@ pub const TIER4_CONTACT_PRESENCE_METHODS: &[&str] = &[
     "presence.set_unavailable",
 ];
 
+/// RPC method names added in Tier 6 (live coverage matrix): profile
+/// updates (push name, About status) + rich user-info enrichment.
+pub const TIER6_PROFILE_METHODS: &[&str] = &[
+    "profile.set_push_name",
+    "profile.set_status",
+    "contacts.get_user_info",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,6 +427,7 @@ mod tests {
             .chain(PHASE6_12_GROUPS_METHODS.iter())
             .chain(PHASE6_1_ACCOUNTS_METHODS.iter())
             .chain(TIER4_CONTACT_PRESENCE_METHODS.iter())
+            .chain(TIER6_PROFILE_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

@@ -372,6 +372,31 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "set_presence_unavailable")
     }
 
+    // ── Tier 6: profile + contact-enrichment — unit-result ─────────
+
+    async fn set_push_name(&self, _name: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_push_name")
+    }
+    async fn set_status_text(&self, _text: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_status_text")
+    }
+    async fn get_user_info(
+        &self,
+        _jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::UserInfoSnapshot>, PlatformAdapterError> {
+        use octo_adapter_whatsapp::UserInfoSnapshot;
+        record_unit_call(&self.state, "get_user_info")?;
+        Ok(Some(UserInfoSnapshot {
+            jid: _jid.to_string(),
+            lid: None,
+            status: Some("mock status".into()),
+            picture_id: None,
+            is_business: false,
+            verified_name: None,
+            devices: vec![0],
+        }))
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

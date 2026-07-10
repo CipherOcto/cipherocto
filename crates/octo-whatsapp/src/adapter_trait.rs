@@ -35,7 +35,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use octo_adapter_whatsapp::{ChatInfo, MessageHit};
+use octo_adapter_whatsapp::{ChatInfo, MessageHit, UserInfoSnapshot};
 use octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin;
 use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::error::PlatformAdapterError;
@@ -244,6 +244,33 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
 
     /// Broadcast our presence as `unavailable` (offline).
     async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F3: profile (Tier 6) ─────────────────────────────────
+    //
+    // Updates that touch our OWN profile. Each maps 1:1 to a thin
+    // wacore call. The IPC handlers under `ipc/handlers/profile_*`
+    // translate them into JSON-RPC.
+
+    /// Set our push name (the display name peers see in chats and
+    /// groups). Maps to `Client::profile().set_push_name(name)`.
+    /// Propagates cross-device via app-state sync.
+    async fn set_push_name(&self, name: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Set our "About" status text (the persistent profile status —
+    /// NOT the ephemeral text status). Maps to
+    /// `Client::profile().set_status_text(text)`.
+    async fn set_status_text(&self, text: &str) -> Result<(), PlatformAdapterError>;
+
+    // ── Group F4: contact enrichment (Tier 6) ──────────────────────
+
+    /// Fetch rich user info for a single JID (status, picture_id,
+    /// business flag, verified name, linked device IDs). Returns
+    /// `Ok(None)` when the WA server reports no record for the JID.
+    /// Maps to `Client::contacts().get_user_info(&[Jid])`.
+    async fn get_user_info(
+        &self,
+        jid: &str,
+    ) -> Result<Option<UserInfoSnapshot>, PlatformAdapterError>;
 
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
@@ -583,6 +610,21 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     }
     async fn set_presence_unavailable(&self) -> Result<(), PlatformAdapterError> {
         self.set_presence_unavailable().await
+    }
+
+    // ── Tier 6: profile + contact-enrichment delegation ─────────────
+
+    async fn set_push_name(&self, name: &str) -> Result<(), PlatformAdapterError> {
+        self.set_push_name(name).await
+    }
+    async fn set_status_text(&self, text: &str) -> Result<(), PlatformAdapterError> {
+        self.set_status_text(text).await
+    }
+    async fn get_user_info(
+        &self,
+        jid: &str,
+    ) -> Result<Option<UserInfoSnapshot>, PlatformAdapterError> {
+        self.get_user_info(jid).await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1101,6 +1143,21 @@ mod tests {
     #[tokio::test]
     async fn delegation_set_presence_unavailable() {
         assert_client_not_connected(adapter().set_presence_unavailable().await);
+    }
+
+    // ── Tier 6: profile + contact-enrichment (unchecked) ────────────
+
+    #[tokio::test]
+    async fn delegation_set_push_name() {
+        assert_client_not_connected(adapter().set_push_name("Alice").await);
+    }
+    #[tokio::test]
+    async fn delegation_set_status_text() {
+        assert_client_not_connected(adapter().set_status_text("hello").await);
+    }
+    #[tokio::test]
+    async fn delegation_get_user_info() {
+        assert_client_not_connected(adapter().get_user_info(JID).await);
     }
 
     // ── Group G: size-gated wrappers ──

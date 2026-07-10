@@ -73,6 +73,25 @@ pub struct ChatInfo {
     pub last_activity_ts: i64,
 }
 
+/// Flattened snapshot of `wacore::iq::usync::UserInfo` returned by
+/// the Tier-6 `contacts.get_user_info` RPC. Strips the `Jid` rich
+/// type to a string and drops server-side error fields — the RPC
+/// either succeeds (some fields may be `None`) or returns `Ok(None)`
+/// for an unknown JID. Defined here so that the inherent
+/// implementation in `inherent.rs` can build it without `octo-whatsapp`
+/// needing to depend back on `octo-adapter-whatsapp` (already taken
+/// care of via the dependency-graph inversion).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct UserInfoSnapshot {
+    pub jid: String,
+    pub lid: Option<String>,
+    pub status: Option<String>,
+    pub picture_id: Option<String>,
+    pub is_business: bool,
+    pub verified_name: Option<String>,
+    pub devices: Vec<u16>,
+}
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

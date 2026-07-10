@@ -1463,6 +1463,86 @@ impl WhatsAppWebAdapter {
                 reason: format!("set_presence_unavailable failed: {e:#}"),
             })
     }
+
+    // ── Tier 6: profile + contact-enrichment (lib wrappers) ─────────
+
+    /// Set our push name (display name).
+    pub async fn set_push_name(&self, name: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client.profile().set_push_name(name).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_push_name failed: {e:#}"),
+            }
+        })
+    }
+
+    /// Set our profile "About" status text.
+    pub async fn set_status_text(&self, text: &str) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        client
+            .profile()
+            .set_status_text(text)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_status_text failed: {e:#}"),
+            })
+    }
+
+    /// Fetch rich user info for one JID. Returns `Ok(None)` when the
+    /// WA server has no record for the JID (or has hidden everything
+    /// behind privacy).
+    pub async fn get_user_info(
+        &self,
+        jid: &str,
+    ) -> Result<Option<crate::UserInfoSnapshot>, PlatformAdapterError> {
+        use crate::UserInfoSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let map = client
+            .contacts()
+            .get_user_info(&[parsed])
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_user_info failed: {e:#}"),
+            })?;
+        Ok(map
+            .into_values()
+            .next()
+            .map(|info| UserInfoSnapshot {
+                jid: info.jid.to_string(),
+                lid: info.lid.map(|j| j.to_string()),
+                status: info.status,
+                picture_id: info.picture_id,
+                is_business: info.is_business,
+                verified_name: info.verified_name.and_then(|v| v.name),
+                devices: info.devices,
+            }))
+    }
 }
 
 impl WhatsAppWebAdapter {

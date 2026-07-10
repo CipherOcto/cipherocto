@@ -13,21 +13,23 @@ use serde_json::Value;
 /// Number of MCP tools registered (Phase 1 + Phase 2 + Phase 3 + Phase 5
 /// Part A + Phase 5 Part E RPC surfaces + Phase 6.12 groups coordinator
 /// surface + Phase 6.12.1 groups completion surface + Phase 6.1 multi-
-/// account surface + Phase 7.H groups gap list surfaced in this commit).
-/// Used by integration tests to assert `tools/list` advertises the full
-/// set. The Phase 4 / Phase 5 Part E additions are 17 tools (10 rule
-/// CRUD/dry-run + 4 trigger CRUD/run + 2 audit + 1 action). The Phase
-/// 6.12 additions are 14 `groups.*` coordinator tools (destroy,
-/// resolve_invite, add_member, add_members, remove_member,
-/// remove_members, promote, demote, ban, approve_join, rename,
-/// set_description, set_locked, transfer_ownership). The Phase 6.12.1
-/// completion surface adds 6 more (set_announce, set_ephemeral,
-/// set_require_approval, list_with_invites, join_by_invite, join_by_id).
-/// The Phase 6.1 multi-account surface adds 3 `daemon.accounts.*` tools
-/// (list, use, info). The Phase 7.H gap-list surface adds 5 more
-/// (get_invite_link / update_member_label / get_profile_pictures /
-/// set_profile_picture / remove_profile_picture).
-pub const EXPECTED_TOOL_COUNT: usize = 94;
+/// account surface + Phase 7.H groups gap list + Session A lifecycle /
+/// rules / triggers read-only operators). Used by integration tests to
+/// assert `tools/list` advertises the full set. The Phase 4 / Phase 5
+/// Part E additions are 17 tools (10 rule CRUD/dry-run + 4 trigger
+/// CRUD/run + 2 audit + 1 action). The Phase 6.12 additions are 14
+/// `groups.*` coordinator tools (destroy, resolve_invite, add_member,
+/// add_members, remove_member, remove_members, promote, demote, ban,
+/// approve_join, rename, set_description, set_locked, transfer_ownership).
+/// The Phase 6.12.1 completion surface adds 6 more (set_announce,
+/// set_ephemeral, set_require_approval, list_with_invites, join_by_invite,
+/// join_by_id). The Phase 6.1 multi-account surface adds 3
+/// `daemon.accounts.*` tools (list, use, info). The Phase 7.H gap-list
+/// surface adds 5 more (get_invite_link / update_member_label /
+/// get_profile_pictures / set_profile_picture / remove_profile_picture).
+/// The Session A parity-closure surface adds 6 more (reconnect.now /
+/// shutdown / rules.list / rules.get / triggers.list / triggers.get).
+pub const EXPECTED_TOOL_COUNT: usize = 100;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -123,6 +125,19 @@ pub fn tool_descriptors() -> Vec<Value> {
     v.push(td(
         "health",
         "Get daemon health (liveness/readiness summary).",
+        schema_empty(),
+    ));
+    // Session A of the parity-closure plan surfaced the two lifecycle
+    // operators (`reconnect.now` / `shutdown`) on the MCP surface; they
+    // already had CLI subcommands but no MCP tool.
+    v.push(td(
+        "reconnect.now",
+        "Force a reconnect of the underlying WebSocket. Tears down the current session and re-authenticates.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "shutdown",
+        "Gracefully shut down the daemon. Any in-flight RPC returns its result before the daemon exits.",
         schema_empty(),
     ));
     // ─── Send media + control (11) ────────────────────────────────────
@@ -635,7 +650,20 @@ pub fn tool_descriptors() -> Vec<Value> {
         "List active and grace-period tokens.",
         schema_empty(),
     ));
-    // ─── Rules CRUD + dry-run (10) — Phase 5 Part E (Phase 4 RPC) ─────
+    // ─── Rules CRUD + dry-run (12) — Phase 5 Part E (Phase 4 RPC) ─────
+    // Session A of the parity-closure plan added the Phase 1 read-only
+    // tools (`rules.list` / `rules.get`) to the MCP surface so an MCP
+    // client can enumerate rules.
+    v.push(td(
+        "rules.list",
+        "List all rules in the live ruleset.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "rules.get",
+        "Fetch a single rule by id.",
+        schema_props_required(&[("id", "string")], &["id"]),
+    ));
     v.push(td(
         "rules.create",
         "Create a new rule. The body is the full rule object (id, enabled, priority, predicate, actions, cooldown_ms, ttl_until).",
@@ -718,7 +746,20 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Dry-run: evaluate an inbound event against the live ruleset without executing actions.",
         schema_props_required(&[("event", "object")], &["event"]),
     ));
-    // ─── Triggers CRUD + run (4) — Phase 5 Part E (Phase 4 RPC) ────────
+    // ─── Triggers CRUD + run (6) — Phase 5 Part E (Phase 4 RPC) ────────
+    // Session A of the parity-closure plan added the Phase 1 read-only
+    // tools (`triggers.list` / `triggers.get`) to the MCP surface so an
+    // MCP client can enumerate triggers.
+    v.push(td(
+        "triggers.list",
+        "List all triggers in the live triggerset.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "triggers.get",
+        "Fetch a single trigger by id.",
+        schema_props_required(&[("id", "string")], &["id"]),
+    ));
     v.push(td(
         "triggers.create",
         "Create a new trigger.",
@@ -815,6 +856,9 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "version" => "version.get",
         "status" => "status.get",
         "health" => "health.get",
+        // Session A: lifecycle operators surfaced on MCP.
+        "reconnect.now" => "reconnect.now",
+        "shutdown" => "shutdown",
         "send.text" => "send.text",
         "send.image" => "send.image",
         "send.video" => "send.video",
@@ -893,6 +937,10 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "security.revoke_all_tokens" => "security.revoke_all_tokens",
         "security.list_tokens" => "security.list_tokens",
         // Phase 4 RPC surface exposed via Phase 5 Part E wrappers.
+        // Session A: Phase 1 read-only rules added so MCP clients can
+        // enumerate rules before mutating them.
+        "rules.list" => "rules.list",
+        "rules.get" => "rules.get",
         "rules.create" => "rules.create",
         "rules.update" => "rules.update",
         "rules.patch" => "rules.patch",
@@ -903,6 +951,10 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "rules.reload" => "rules.reload",
         "rules.flush" => "rules.flush",
         "rules.test" => "rules.test",
+        // Session A: Phase 1 read-only triggers added so MCP clients can
+        // enumerate triggers before mutating them.
+        "triggers.list" => "triggers.list",
+        "triggers.get" => "triggers.get",
         "triggers.create" => "triggers.create",
         "triggers.update" => "triggers.update",
         "triggers.delete" => "triggers.delete",
@@ -1229,6 +1281,39 @@ mod tests {
             assert!(
                 names.contains(m),
                 "Session A Phase 7.H groups gap tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
+    }
+
+    /// Session A of the parity-closure plan: 6 read-only / lifecycle
+    /// operators that already had CLI subcommands but no MCP surface.
+    /// (reconnect.now / shutdown / rules.list / rules.get /
+    /// triggers.list / triggers.get).
+    #[test]
+    fn session_a_lifecycle_and_readonly_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "reconnect.now",
+            "shutdown",
+            "rules.list",
+            "rules.get",
+            "triggers.list",
+            "triggers.get",
+        ] {
+            assert!(
+                names.contains(m),
+                "Session A lifecycle/readonly tool {m:?} not advertised"
             );
         }
         assert_eq!(

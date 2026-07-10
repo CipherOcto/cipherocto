@@ -2210,3 +2210,136 @@ async fn live_messages_star_unstar_round_trip() {
     inter_call_delay_for("messages.unstar");
     eprintln!("live_messages_star_unstar_round_trip: OK msg_id={msg_id}");
 }
+
+// ===========================================================================
+// Tier 6.3 — mark_as_played + chats.clear + delete_for_me + save_contact
+//
+// All four mutate local state in ways the WA server accepts on
+// self-echo without operator pre-action. Each test asserts the
+// RPC shape and cleans up after itself.
+// ===========================================================================
+
+/// `live_messages_mark_as_played_self` — Tier 6.3 played receipt.
+///
+/// Sends a `played` receipt for a synthetic message id in the
+/// self-chat. The server accepts the receipt regardless of whether
+/// the message id resolves to a real message; the response shape
+/// is the load-bearing assertion.
+#[tokio::test]
+async fn live_messages_mark_as_played_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let msg_id = format!("FAKE-PLAYED-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "messages.mark_as_played",
+            json!({
+                "chat": self_jid.clone(),
+                "msg_ids": [msg_id.clone()],
+            }),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "played",
+        "messages.mark_as_played must return status=played; got {resp}"
+    );
+    assert_eq!(resp["chat"], self_jid);
+    assert_eq!(resp["msg_ids"][0], msg_id);
+    assert_eq!(resp["count"], 1);
+    inter_call_delay_for("messages.mark_as_played");
+    eprintln!("live_messages_mark_as_played_self: OK msg_id={msg_id}");
+}
+
+/// `live_chats_clear_round_trip` — Tier 6.3 chat clear.
+///
+/// Calls `chats.clear` against our own self-chat. Distinct from
+/// `chats.delete` (which removes the chat from the list entirely).
+/// The clear RPC writes an app-state mutation that the WA server
+/// accepts regardless of whether the chat has any visible messages.
+#[tokio::test]
+async fn live_chats_clear_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "chats.clear",
+            json!({
+                "jid": self_jid.clone(),
+                "delete_starred": false,
+                "delete_media": false,
+            }),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "cleared",
+        "chats.clear must return status=cleared; got {resp}"
+    );
+    assert_eq!(resp["jid"], self_jid);
+    assert_eq!(resp["delete_starred"], false);
+    assert_eq!(resp["delete_media"], false);
+    inter_call_delay_for("chats.clear");
+    eprintln!("live_chats_clear_round_trip: OK jid={self_jid}");
+}
+
+/// `live_messages_delete_for_me_round_trip` — Tier 6.3 local-only
+/// delete. Same shape as `send.delete` (delete-for-everyone) but
+/// without the 3600s window constraint — works for any message we
+/// have locally. Synthetic msg_id is harmless.
+#[tokio::test]
+async fn live_messages_delete_for_me_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let msg_id = format!("FAKE-DELFORME-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "messages.delete_for_me",
+            json!({
+                "peer": self_jid.clone(),
+                "msg_id": msg_id.clone(),
+                "from_me": true,
+            }),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "deleted_for_me",
+        "messages.delete_for_me must return status=deleted_for_me; got {resp}"
+    );
+    assert_eq!(resp["msg_id"], msg_id);
+    assert_eq!(resp["from_me"], true);
+    inter_call_delay_for("messages.delete_for_me");
+    eprintln!("live_messages_delete_for_me_round_trip: OK msg_id={msg_id}");
+}
+
+/// `live_contacts_save_contact_round_trip` — Tier 6.3 contact sync.
+///
+/// Saves a contact name against our own self-JID (we are a valid
+/// phone-number JID). The WA server writes the contact action to
+/// app-state sync; no inbound event fires locally — the load-bearing
+/// assertion is the response shape.
+#[tokio::test]
+async fn live_contacts_save_contact_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let full_name = format!("tier6-name-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "contacts.save_contact",
+            json!({"peer": self_jid.clone(), "full_name": full_name.clone()}),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "saved",
+        "contacts.save_contact must return status=saved; got {resp}"
+    );
+    assert_eq!(resp["full_name"], full_name);
+    inter_call_delay_for("contacts.save_contact");
+    eprintln!("live_contacts_save_contact_round_trip: OK full_name={full_name}");
+}

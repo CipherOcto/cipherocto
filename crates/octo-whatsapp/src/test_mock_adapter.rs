@@ -397,6 +397,44 @@ impl OctoWhatsAppAdapter for MockAdapter {
         }))
     }
 
+    // ── Tier 6.1: privacy + blocklist queries — unit-result ────────
+
+    async fn fetch_privacy_settings(
+        &self,
+    ) -> Result<Vec<octo_adapter_whatsapp::PrivacySettingSnapshot>, PlatformAdapterError> {
+        use octo_adapter_whatsapp::PrivacySettingSnapshot;
+        record_unit_call(&self.state, "fetch_privacy_settings")?;
+        Ok(vec![
+            PrivacySettingSnapshot {
+                category: "last".into(),
+                value: "all".into(),
+            },
+            PrivacySettingSnapshot {
+                category: "profile".into(),
+                value: "contacts".into(),
+            },
+            PrivacySettingSnapshot {
+                category: "readreceipts".into(),
+                value: "all".into(),
+            },
+        ])
+    }
+    async fn set_privacy_setting(
+        &self,
+        _category: &str,
+        _value: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_privacy_setting")
+    }
+    async fn get_blocklist(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        record_unit_call(&self.state, "get_blocklist")?;
+        Ok(vec!["mock-blocked@s.whatsapp.net".to_string()])
+    }
+    async fn is_blocked(&self, _jid: &str) -> Result<bool, PlatformAdapterError> {
+        record_unit_call(&self.state, "is_blocked")?;
+        Ok(false)
+    }
+
     // ── Group G: size-gated wrappers (delegate to unchecked) ──
 
     async fn send_image_checked(

@@ -4,6 +4,8 @@
 pub mod accounts;
 pub mod actions_escalate;
 pub mod audit;
+pub mod blocking_get_blocklist;
+pub mod blocking_is_blocked;
 pub mod capabilities;
 pub mod chats_archive;
 pub mod chats_delete;
@@ -41,6 +43,8 @@ pub mod presence_set_available;
 pub mod presence_set_unavailable;
 pub mod presence_subscribe;
 pub mod presence_unsubscribe;
+pub mod privacy_get;
+pub mod privacy_set;
 pub mod profile_set_push_name;
 pub mod profile_set_status;
 pub mod rules;
@@ -178,6 +182,11 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(profile_set_push_name::ProfileSetPushName))
         .register(Arc::new(profile_set_status::ProfileSetStatus))
         .register(Arc::new(contacts_get_user_info::ContactsGetUserInfo))
+        // Tier 6.1: privacy + blocklist queries
+        .register(Arc::new(privacy_get::PrivacyGet))
+        .register(Arc::new(privacy_set::PrivacySet))
+        .register(Arc::new(blocking_get_blocklist::BlockingGetBlocklist))
+        .register(Arc::new(blocking_is_blocked::BlockingIsBlocked))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -358,6 +367,16 @@ pub const TIER6_PROFILE_METHODS: &[&str] = &[
     "contacts.get_user_info",
 ];
 
+/// RPC method names added in Tier 6.1 (live coverage matrix):
+/// privacy settings (get/set) + blocklist queries (get_blocklist /
+/// is_blocked).
+pub const TIER6_1_PRIVACY_METHODS: &[&str] = &[
+    "privacy.get",
+    "privacy.set",
+    "blocking.get_blocklist",
+    "blocking.is_blocked",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +447,7 @@ mod tests {
             .chain(PHASE6_1_ACCOUNTS_METHODS.iter())
             .chain(TIER4_CONTACT_PRESENCE_METHODS.iter())
             .chain(TIER6_PROFILE_METHODS.iter())
+            .chain(TIER6_1_PRIVACY_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

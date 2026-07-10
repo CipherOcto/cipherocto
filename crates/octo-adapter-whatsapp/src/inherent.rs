@@ -1543,6 +1543,114 @@ impl WhatsAppWebAdapter {
                 devices: info.devices,
             }))
     }
+
+    // ── Tier 6.1: privacy + blocklist queries (lib wrappers) ───────
+
+    /// Fetch all current privacy settings as wire-string
+    /// `(category, value)` pairs. Wraps
+    /// `Client::fetch_privacy_settings()`.
+    pub async fn fetch_privacy_settings(
+        &self,
+    ) -> Result<Vec<crate::PrivacySettingSnapshot>, PlatformAdapterError> {
+        use crate::PrivacySettingSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let resp = client.fetch_privacy_settings().await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("fetch_privacy_settings failed: {e:#}"),
+            }
+        })?;
+        Ok(resp
+            .settings
+            .into_iter()
+            .map(|s| PrivacySettingSnapshot {
+                category: s.category.as_str().to_string(),
+                value: s.value.as_str().to_string(),
+            })
+            .collect())
+    }
+
+    /// Set one privacy setting. `category` and `value` are the wire
+    /// strings accepted by `PrivacyCategory::from_wire_str` /
+    /// `PrivacyValue::from_wire_str`. Unknown categories/values fall
+    /// back to `Other(name)` so round-tripping is always possible
+    /// (the IQ may reject an invalid combination at the server — the
+    /// handler returns `InternalError` in that case).
+    pub async fn set_privacy_setting(
+        &self,
+        category: &str,
+        value: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        // Use the `Other(String)` variant to bypass the (uncompiled)
+        // wire-string parser — the macro generates `as_str()` but no
+        // reverse parser, so we forward the strings directly. The IQ
+        // executor accepts `Other(...)` and round-trips the value.
+        let cat = wacore::iq::privacy::PrivacyCategory::Other(category.to_string());
+        let val = wacore::iq::privacy::PrivacyValue::Other(value.to_string());
+        client
+            .set_privacy_setting(cat, val)
+            .await
+            .map(|_| ())
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_privacy_setting failed: {e:#}"),
+            })
+    }
+
+    /// Get the current local blocklist as a list of JID strings.
+    pub async fn get_blocklist(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let entries = client.blocking().get_blocklist().await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_blocklist failed: {e:#}"),
+            }
+        })?;
+        Ok(entries.into_iter().map(|e| e.jid.to_string()).collect())
+    }
+
+    /// Check whether a JID is on our local blocklist.
+    pub async fn is_blocked(&self, jid: &str) -> Result<bool, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard.clone().ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .blocking()
+            .is_blocked(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("is_blocked failed: {e:#}"),
+            })
+    }
 }
 
 impl WhatsAppWebAdapter {

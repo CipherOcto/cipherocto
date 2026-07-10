@@ -35,7 +35,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use octo_adapter_whatsapp::{ChatInfo, MessageHit, UserInfoSnapshot};
+use octo_adapter_whatsapp::{ChatInfo, MessageHit, PrivacySettingSnapshot, UserInfoSnapshot};
 use octo_network::dot::adapters::coordinator_admin::CoordinatorAdmin;
 use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::error::PlatformAdapterError;
@@ -271,6 +271,36 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         &self,
         jid: &str,
     ) -> Result<Option<UserInfoSnapshot>, PlatformAdapterError>;
+
+    // ── Group F5: privacy + blocklist queries (Tier 6.1) ───────────
+    //
+    // Privacy: thin wrappers over `Client::fetch_privacy_settings`
+    // + `Client::set_privacy_setting`. Blocklist queries: thin
+    // wrappers over `Client::blocking().get_blocklist / is_blocked`.
+
+    /// Fetch all current privacy settings as a list of
+    /// `{category, value}` pairs (wire string forms). Maps to
+    /// `Client::fetch_privacy_settings()`.
+    async fn fetch_privacy_settings(
+        &self,
+    ) -> Result<Vec<PrivacySettingSnapshot>, PlatformAdapterError>;
+
+    /// Set one privacy setting. `category` and `value` are the wire
+    /// strings (`"last"`, `"profile"`, `"contacts"`, `"all"`, `"none"`,
+    /// etc.). Maps to `Client::set_privacy_setting(...)`.
+    async fn set_privacy_setting(
+        &self,
+        category: &str,
+        value: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Return the current local blocklist as a list of JID strings.
+    /// Maps to `Client::blocking().get_blocklist()`.
+    async fn get_blocklist(&self) -> Result<Vec<String>, PlatformAdapterError>;
+
+    /// Check whether a single JID is currently on our blocklist.
+    /// Maps to `Client::blocking().is_blocked(jid)`.
+    async fn is_blocked(&self, jid: &str) -> Result<bool, PlatformAdapterError>;
 
     // ── Group G: size-gated wrappers (size ceiling first, then unchecked) ──
 
@@ -625,6 +655,27 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         jid: &str,
     ) -> Result<Option<UserInfoSnapshot>, PlatformAdapterError> {
         self.get_user_info(jid).await
+    }
+
+    // ── Tier 6.1: privacy + blocklist queries delegation ───────────
+
+    async fn fetch_privacy_settings(
+        &self,
+    ) -> Result<Vec<PrivacySettingSnapshot>, PlatformAdapterError> {
+        self.fetch_privacy_settings().await
+    }
+    async fn set_privacy_setting(
+        &self,
+        category: &str,
+        value: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.set_privacy_setting(category, value).await
+    }
+    async fn get_blocklist(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        self.get_blocklist().await
+    }
+    async fn is_blocked(&self, jid: &str) -> Result<bool, PlatformAdapterError> {
+        self.is_blocked(jid).await
     }
 
     // ── Checked wrappers: replicate the size-gate from inherent.rs `_checked` ──
@@ -1158,6 +1209,25 @@ mod tests {
     #[tokio::test]
     async fn delegation_get_user_info() {
         assert_client_not_connected(adapter().get_user_info(JID).await);
+    }
+
+    // ── Tier 6.1: privacy + blocklist queries (unchecked) ──────────
+
+    #[tokio::test]
+    async fn delegation_fetch_privacy_settings() {
+        assert_client_not_connected(adapter().fetch_privacy_settings().await);
+    }
+    #[tokio::test]
+    async fn delegation_set_privacy_setting() {
+        assert_client_not_connected(adapter().set_privacy_setting("last", "contacts").await);
+    }
+    #[tokio::test]
+    async fn delegation_get_blocklist() {
+        assert_client_not_connected(adapter().get_blocklist().await);
+    }
+    #[tokio::test]
+    async fn delegation_is_blocked() {
+        assert_client_not_connected(adapter().is_blocked(JID).await);
     }
 
     // ── Group G: size-gated wrappers ──

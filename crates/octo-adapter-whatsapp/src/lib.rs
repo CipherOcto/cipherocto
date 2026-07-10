@@ -92,6 +92,17 @@ pub struct UserInfoSnapshot {
     pub devices: Vec<u16>,
 }
 
+/// One (category, value) pair from the privacy settings list.
+/// Both fields carry the wire string (`"last"`, `"profile"`,
+/// `"all"`, `"contacts"`, `"none"`, `"contact_blacklist"`, etc.) so
+/// the runtime does not need to know the full PrivacyCategory /
+/// PrivacyValue enums to round-trip a value.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PrivacySettingSnapshot {
+    pub category: String,
+    pub value: String,
+}
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

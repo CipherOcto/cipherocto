@@ -62,9 +62,14 @@ pub mod messages_search;
 pub mod messages_star;
 pub mod messages_unpin;
 pub mod messages_unstar;
+pub mod newsletter_create;
+pub mod newsletter_edit_message;
 pub mod newsletter_get_metadata;
+pub mod newsletter_join;
 pub mod newsletter_leave;
 pub mod newsletter_list_subscribed;
+pub mod newsletter_revoke_message;
+pub mod newsletter_send_reaction;
 pub mod polls_aggregate;
 pub mod polls_vote;
 pub mod preflight;
@@ -96,6 +101,10 @@ pub mod status_revoke;
 pub mod status_send_image;
 pub mod status_send_text;
 pub mod status_send_video;
+pub mod tctoken_get;
+pub mod tctoken_get_all_jids;
+pub mod tctoken_issue;
+pub mod tctoken_prune_expired;
 pub mod triggers;
 pub mod util;
 pub mod version;
@@ -272,6 +281,16 @@ pub fn build_registry() -> HandlerRegistry {
         .register(Arc::new(
             daemon_set_force_active_delivery_receipts::DaemonSetForceActiveDeliveryReceipts,
         ))
+        // Tier 7.E: newsletter + tctoken
+        .register(Arc::new(newsletter_create::NewsletterCreate))
+        .register(Arc::new(newsletter_join::NewsletterJoin))
+        .register(Arc::new(newsletter_send_reaction::NewsletterSendReaction))
+        .register(Arc::new(newsletter_edit_message::NewsletterEditMessage))
+        .register(Arc::new(newsletter_revoke_message::NewsletterRevokeMessage))
+        .register(Arc::new(tctoken_issue::TcTokenIssue))
+        .register(Arc::new(tctoken_get::TcTokenGet))
+        .register(Arc::new(tctoken_prune_expired::TcTokenPruneExpired))
+        .register(Arc::new(tctoken_get_all_jids::TcTokenGetAllJids))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -552,6 +571,19 @@ pub const TIER7_D_PROFILE_METHODS: &[&str] = &[
     "daemon.set_force_active_delivery_receipts",
 ];
 
+/// Tier 7.E: newsletter (5 RPCs) + tctoken (4 RPCs).
+pub const TIER7_E_NEWSLETTER_TCTOKEN_METHODS: &[&str] = &[
+    "newsletter.create",
+    "newsletter.join",
+    "newsletter.send_reaction",
+    "newsletter.edit_message",
+    "newsletter.revoke_message",
+    "tctoken.issue",
+    "tctoken.get",
+    "tctoken.prune_expired",
+    "tctoken.get_all_jids",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,6 +663,7 @@ mod tests {
             .chain(TIER7_B_POLLS_EVENTS_METHODS.iter())
             .chain(TIER7_C_STATUS_METHODS.iter())
             .chain(TIER7_D_PROFILE_METHODS.iter())
+            .chain(TIER7_E_NEWSLETTER_TCTOKEN_METHODS.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

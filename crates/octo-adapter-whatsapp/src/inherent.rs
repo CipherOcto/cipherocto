@@ -3168,6 +3168,290 @@ impl WhatsAppWebAdapter {
         client.set_force_active_delivery_receipts(active);
         Ok(())
     }
+
+    // ── Tier 7.E: newsletter + TcToken ────────────────────────────
+
+    /// Create a new newsletter.
+    pub async fn create_newsletter(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let m = client
+            .newsletter()
+            .create(name, description)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("create_newsletter failed: {e}"),
+            })?;
+        Ok(crate::NewsletterMetadataSnapshot {
+            jid: m.jid.to_string(),
+            name: m.name,
+            description: m.description,
+            subscriber_count: m.subscriber_count,
+            state: format!("{:?}", m.state),
+            picture_url: m.picture_url,
+            preview_url: m.preview_url,
+            invite_code: m.invite_code,
+            role: m.role.map(|r| format!("{:?}", r)),
+            creation_time: m.creation_time,
+        })
+    }
+
+    /// Join (subscribe to) a newsletter.
+    pub async fn join_newsletter(
+        &self,
+        jid: &str,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let m = client.newsletter().join(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("join_newsletter({jid}) failed: {e}"),
+            }
+        })?;
+        Ok(crate::NewsletterMetadataSnapshot {
+            jid: m.jid.to_string(),
+            name: m.name,
+            description: m.description,
+            subscriber_count: m.subscriber_count,
+            state: format!("{:?}", m.state),
+            picture_url: m.picture_url,
+            preview_url: m.preview_url,
+            invite_code: m.invite_code,
+            role: m.role.map(|r| format!("{:?}", r)),
+            creation_time: m.creation_time,
+        })
+    }
+
+    /// Send a reaction emoji to a newsletter message.
+    pub async fn newsletter_send_reaction(
+        &self,
+        jid: &str,
+        server_id: u64,
+        reaction: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .newsletter()
+            .send_reaction(&parsed, server_id, reaction)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_send_reaction failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Edit a message in a newsletter.
+    pub async fn newsletter_edit_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+        new_text: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        // Newsletter edit content is a plain `wa::Message { conversation }`.
+        let content = waproto::whatsapp::Message {
+            conversation: Some(new_text.to_string()),
+            ..Default::default()
+        };
+        client
+            .newsletter()
+            .edit_message(&parsed, message_id, content)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_edit_message failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Revoke (delete) a message in a newsletter.
+    pub async fn newsletter_revoke_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client
+            .newsletter()
+            .revoke_message(&parsed, message_id)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_revoke_message failed: {e}"),
+            })?;
+        Ok(())
+    }
+
+    /// Issue privacy tokens for the given JIDs.
+    pub async fn issue_tc_tokens(
+        &self,
+        jids: &[String],
+    ) -> Result<Vec<crate::ReceivedTcTokenSnapshot>, PlatformAdapterError> {
+        let parsed: Vec<wacore_binary::Jid> = jids
+            .iter()
+            .map(|s| {
+                s.parse::<wacore_binary::Jid>()
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("invalid JID {s:?}: {e}"),
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let tokens = client.tc_token().issue_tokens(&parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("issue_tc_tokens failed: {e}"),
+            }
+        })?;
+        Ok(tokens
+            .into_iter()
+            .map(|t| crate::ReceivedTcTokenSnapshot {
+                jid: t.jid.to_string(),
+                token_b64: base64::engine::general_purpose::STANDARD.encode(&t.token),
+                timestamp: t.timestamp,
+            })
+            .collect())
+    }
+
+    /// Read the locally-stored tc token for a single JID.
+    pub async fn get_tc_token(
+        &self,
+        jid: &str,
+    ) -> Result<Option<crate::TcTokenEntryValue>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let entry =
+            client
+                .tc_token()
+                .get(jid)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("get_tc_token({jid}) failed: {e}"),
+                })?;
+        Ok(entry)
+    }
+
+    /// Prune expired tc tokens from the local store.
+    pub async fn prune_expired_tc_tokens(&self) -> Result<u32, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let n = client.tc_token().prune_expired().await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("prune_expired_tc_tokens failed: {e}"),
+            }
+        })?;
+        Ok(n)
+    }
+
+    /// Return all JIDs that have stored tc tokens.
+    pub async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let jids = client.tc_token().get_all_jids().await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_all_tc_token_jids failed: {e}"),
+            }
+        })?;
+        Ok(jids)
+    }
 }
 
 /// Convert a `wacore::sticker_pack::StickerPack` into our

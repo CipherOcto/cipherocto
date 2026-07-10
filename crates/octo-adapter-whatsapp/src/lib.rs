@@ -181,6 +181,21 @@ pub struct PollOptionResultSnapshot {
     pub voters: Vec<String>,
 }
 
+/// A trusted-contact privacy token received from the server.
+/// `token_b64` is base64-encoded so the runtime can serialize
+/// the raw bytes without having to depend on wacore types.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReceivedTcTokenSnapshot {
+    pub jid: String,
+    pub token_b64: String,
+    pub timestamp: i64,
+}
+
+/// Re-export of the wacore TcTokenEntry for runtime-layer
+/// handlers; the type already derives `Serialize` and
+/// `Deserialize` so we don't need a snapshot wrapper.
+pub use wacore::store::traits::TcTokenEntry as TcTokenEntryValue;
+
 /// Convenience alias used by the Phase 2 RPC handlers and the inherent
 /// methods in this crate. They are interchangeable — pick whichever is
 /// clearer at the call site.

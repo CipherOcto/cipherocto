@@ -501,6 +501,107 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "set_force_active_delivery_receipts")
     }
 
+    // ── Tier 7.E: newsletter + TcToken ────────────────────────────
+
+    async fn create_newsletter(
+        &self,
+        _name: &str,
+        _description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("create_newsletter").or_insert(0) += 1;
+        Ok(NewsletterMetadataSnapshot {
+            jid: "1234567890@newsletter".into(),
+            name: "Fake Newsletter".into(),
+            description: None,
+            subscriber_count: 0,
+            state: "active".into(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: None,
+            creation_time: None,
+        })
+    }
+
+    async fn join_newsletter(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("join_newsletter").or_insert(0) += 1;
+        Ok(NewsletterMetadataSnapshot {
+            jid: jid.into(),
+            name: "Fake Newsletter".into(),
+            description: None,
+            subscriber_count: 0,
+            state: "active".into(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: None,
+            creation_time: None,
+        })
+    }
+
+    async fn newsletter_send_reaction(
+        &self,
+        _jid: &str,
+        _server_id: u64,
+        _reaction: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "newsletter_send_reaction")
+    }
+
+    async fn newsletter_edit_message(
+        &self,
+        _jid: &str,
+        _message_id: &str,
+        _new_text: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "newsletter_edit_message")
+    }
+
+    async fn newsletter_revoke_message(
+        &self,
+        _jid: &str,
+        _message_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "newsletter_revoke_message")
+    }
+
+    async fn issue_tc_tokens(
+        &self,
+        _jids: &[String],
+    ) -> Result<Vec<octo_adapter_whatsapp::ReceivedTcTokenSnapshot>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("issue_tc_tokens").or_insert(0) += 1;
+        Ok(Vec::new())
+    }
+
+    async fn get_tc_token(
+        &self,
+        _jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::TcTokenEntryValue>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_tc_token").or_insert(0) += 1;
+        Ok(None)
+    }
+
+    async fn prune_expired_tc_tokens(&self) -> Result<u32, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("prune_expired_tc_tokens").or_insert(0) += 1;
+        Ok(0)
+    }
+
+    async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("get_all_tc_token_jids").or_insert(0) += 1;
+        Ok(Vec::new())
+    }
+
     // ── Group D: search + chat metadata — collection/option ──
 
     async fn message_search(

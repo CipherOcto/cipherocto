@@ -359,6 +359,81 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         active: bool,
     ) -> Result<(), PlatformAdapterError>;
 
+    /// Create a new newsletter. `name` is required (non-empty);
+    /// `description` is optional. Returns the metadata of the
+    /// newly created newsletter. Maps to
+    /// `Client::newsletter().create(name, description)`.
+    async fn create_newsletter(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError>;
+
+    /// Join (subscribe to) a newsletter by its JID. Maps to
+    /// `Client::newsletter().join(jid)`.
+    async fn join_newsletter(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError>;
+
+    /// Send a reaction emoji to a newsletter message.
+    /// `server_id` is the server-assigned ID; `reaction` is the
+    /// emoji (e.g. `"👍"`, `"❤️"`) or empty to remove. Maps to
+    /// `Client::newsletter().send_reaction(jid, server_id, reaction)`.
+    async fn newsletter_send_reaction(
+        &self,
+        jid: &str,
+        server_id: u64,
+        reaction: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Edit a message in a newsletter (channel) by its
+    /// `message_id`. `new_text` becomes the new `conversation`
+    /// body (plaintext — channels are not E2E). Maps to
+    /// `Client::newsletter().edit_message(jid, message_id, content)`.
+    async fn newsletter_edit_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+        new_text: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Revoke (delete) a message in a newsletter by its
+    /// `message_id`. Maps to
+    /// `Client::newsletter().revoke_message(jid, message_id)`.
+    async fn newsletter_revoke_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+    ) -> Result<(), PlatformAdapterError>;
+
+    /// Issue privacy tokens for the given JIDs (typically LID
+    /// JIDs). The server returns one token per JID; tokens are
+    /// stored locally and exposed via `get_tc_token` /
+    /// `get_all_tc_token_jids`. Maps to
+    /// `Client::tc_token().issue_tokens(jids)`.
+    async fn issue_tc_tokens(
+        &self,
+        jids: &[String],
+    ) -> Result<Vec<octo_adapter_whatsapp::ReceivedTcTokenSnapshot>, PlatformAdapterError>;
+
+    /// Read the locally-stored tc token for a single JID.
+    /// Returns `None` if the JID has no stored token. Maps to
+    /// `Client::tc_token().get(jid)`.
+    async fn get_tc_token(
+        &self,
+        jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::TcTokenEntryValue>, PlatformAdapterError>;
+
+    /// Prune expired tc tokens from the local store. Returns
+    /// the number of rows deleted. Maps to
+    /// `Client::tc_token().prune_expired()`.
+    async fn prune_expired_tc_tokens(&self) -> Result<u32, PlatformAdapterError>;
+
+    /// Return all JIDs that have stored tc tokens. Maps to
+    /// `Client::tc_token().get_all_jids()`.
+    async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError>;
+
     // ── Group D: search + chat metadata ──
 
     /// Search messages matching `query`, optionally scoped to a peer.
@@ -1133,6 +1208,62 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         active: bool,
     ) -> Result<(), PlatformAdapterError> {
         self.set_force_active_delivery_receipts(active).await
+    }
+    async fn create_newsletter(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.create_newsletter(name, description).await
+    }
+    async fn join_newsletter(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.join_newsletter(jid).await
+    }
+    async fn newsletter_send_reaction(
+        &self,
+        jid: &str,
+        server_id: u64,
+        reaction: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.newsletter_send_reaction(jid, server_id, reaction)
+            .await
+    }
+    async fn newsletter_edit_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+        new_text: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.newsletter_edit_message(jid, message_id, new_text)
+            .await
+    }
+    async fn newsletter_revoke_message(
+        &self,
+        jid: &str,
+        message_id: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.newsletter_revoke_message(jid, message_id).await
+    }
+    async fn issue_tc_tokens(
+        &self,
+        jids: &[String],
+    ) -> Result<Vec<octo_adapter_whatsapp::ReceivedTcTokenSnapshot>, PlatformAdapterError> {
+        self.issue_tc_tokens(jids).await
+    }
+    async fn get_tc_token(
+        &self,
+        jid: &str,
+    ) -> Result<Option<octo_adapter_whatsapp::TcTokenEntryValue>, PlatformAdapterError> {
+        self.get_tc_token(jid).await
+    }
+    async fn prune_expired_tc_tokens(&self) -> Result<u32, PlatformAdapterError> {
+        self.prune_expired_tc_tokens().await
+    }
+    async fn get_all_tc_token_jids(&self) -> Result<Vec<String>, PlatformAdapterError> {
+        self.get_all_tc_token_jids().await
     }
     async fn message_search(
         &self,

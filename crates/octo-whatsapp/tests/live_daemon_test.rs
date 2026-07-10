@@ -2607,3 +2607,261 @@ async fn live_events_create_self() {
         resp["message_id"]
     );
 }
+
+// ===========================================================================
+// Tier 7.A — messages pin / unpin / forward / edit_encrypted
+// (Phase 7 close-the-gap: Phase 0 + Tier 7.A RPC wrappers, no events)
+// ===========================================================================
+//
+// WA server behaviour for these RPCs:
+// - `messages.pin` / `messages.unpin`: side-effect on the chat's
+//   pinned-message set. No `InboundEvent` is emitted back to the
+//   sender's own buffer — the only observable signal is the RPC
+//   response itself and a subsequent `chats.*` read (not exposed
+//   in Phase 7.A). Live tests therefore assert RPC success only.
+// - `messages.forward`: side-effect + a new outbound message. The
+//   receiver's device will eventually emit a `Message` event on
+//   THEIR buffer, not ours. Assert RPC success + the
+//   `new_msg_id` field is a non-empty string.
+// - `messages.edit_encrypted`: requires the 32-byte message_secret
+//   from the original send. That secret is NOT yet exposed in
+//   `send.text`'s response shape, so the live test is gated on a
+//   follow-up commit (see TODO in the test doc-comment below).
+//
+// All four tests honour the same env-skip convention as Tier 3/4:
+// missing env var → `eprintln!` + early return (test passes).
+
+/// `live_pin_message` — Tier 7.A.1 smoke test for `messages.pin` +
+/// `messages.unpin`.
+///
+/// Operator pre-action:
+/// 1. Set `OCTO_WHATSAPP_TEST_INBOUND_MSG_ID` to the id of a
+///    message in any chat you control (sending yourself a fresh
+///    text message from a second device is the easiest path).
+/// 2. Set `OCTO_WHATSAPP_TEST_MEMBER` to the E.164 phone of that
+///    chat peer (use your own number for the self-chat).
+///
+/// The test pins the message, asserts RPC success, then unpins
+/// and asserts RPC success. No event predicate — WA does not emit
+/// a pin/unpin event to the sender's own device.
+#[tokio::test]
+async fn live_pin_message() {
+    let inbound_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_INBOUND_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_pin_message: skipping \
+                 (set OCTO_WHATSAPP_TEST_INBOUND_MSG_ID to the message id of a fresh \
+                 inbound Message from TEST_MEMBER to your account)"
+            );
+            return;
+        }
+    };
+    let peer_jid = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => octo_whatsapp::jids::peer_to_jid(&v)
+            .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}")),
+        _ => {
+            eprintln!(
+                "live_pin_message: skipping (also set \
+                 OCTO_WHATSAPP_TEST_MEMBER to the sender's phone)"
+            );
+            return;
+        }
+    };
+    let fix = fixture();
+
+    let mut conn = rpc(fix).await;
+    let pin_resp = conn
+        .call(
+            "messages.pin",
+            json!({"peer": peer_jid.clone(), "msg_id": inbound_msg_id.clone()}),
+        )
+        .await;
+    inter_call_delay_for("messages.pin");
+    assert_eq!(
+        pin_resp["status"], "pinned",
+        "messages.pin must return status=pinned; got {pin_resp}"
+    );
+    assert_eq!(pin_resp["msg_id"], inbound_msg_id);
+
+    // Unpin. Same delay policy: pin and unpin are separate WA
+    // calls, each on the 2 s floor.
+    let unpin_resp = conn
+        .call(
+            "messages.unpin",
+            json!({"peer": peer_jid.clone(), "msg_id": inbound_msg_id.clone()}),
+        )
+        .await;
+    inter_call_delay_for("messages.unpin");
+    assert_eq!(
+        unpin_resp["status"], "unpinned",
+        "messages.unpin must return status=unpinned; got {unpin_resp}"
+    );
+    assert_eq!(unpin_resp["msg_id"], inbound_msg_id);
+
+    eprintln!("live_pin_message: OK pin+unpin cycle for {inbound_msg_id} in {peer_jid}");
+}
+
+/// `live_forward_message` — Tier 7.A.2 smoke test for
+/// `messages.forward`.
+///
+/// Operator pre-action:
+/// 1. From your second device, send a text message to your
+///    linked-account number. The message id is what we forward.
+/// 2. Set `OCTO_WHATSAPP_TEST_MEMBER` to the E.164 phone of that
+///    second device (the original sender).
+/// 3. Set `OCTO_WHATSAPP_TEST_FORWARD_PEER` to the phone of a
+///    THIRD party that should receive the forward (or reuse
+///    `OCTO_WHATSAPP_TEST_MEMBER` to forward back to the sender).
+/// 4. Set `OCTO_WHATSAPP_TEST_FORWARD_ORIGINAL_MSG_ID` to the id
+///    of the message you sent in step 1.
+///
+/// The RPC returns `{status, peer, original_msg_id, new_msg_id}`.
+/// We assert `status=forwarded` and that `new_msg_id` is a
+/// non-empty string. No inbound event lands on OUR buffer — the
+/// forwarded message is delivered to the receiver's device and
+/// surfaces on THEIR buffer.
+#[tokio::test]
+async fn live_forward_message() {
+    let original_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_FORWARD_ORIGINAL_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_forward_message: skipping \
+                     (set OCTO_WHATSAPP_TEST_FORWARD_ORIGINAL_MSG_ID to the message id \
+                     of a message you previously sent to OCTO_WHATSAPP_TEST_MEMBER)"
+            );
+            return;
+        }
+    };
+    let forward_peer_phone = match std::env::var("OCTO_WHATSAPP_TEST_FORWARD_PEER").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_forward_message: skipping \
+                     (also set OCTO_WHATSAPP_TEST_FORWARD_PEER to the E.164 phone of \
+                     the intended recipient)"
+            );
+            return;
+        }
+    };
+    let forward_peer_jid = octo_whatsapp::jids::peer_to_jid(&forward_peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_FORWARD_PEER invalid: {e}"));
+    let fix = fixture();
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "messages.forward",
+            json!({
+                "peer": forward_peer_jid.clone(),
+                "original_msg_id": original_msg_id.clone(),
+            }),
+        )
+        .await;
+    inter_call_delay_for("messages.forward");
+
+    assert_eq!(
+        resp["status"], "forwarded",
+        "messages.forward must return status=forwarded; got {resp}"
+    );
+    assert_eq!(resp["original_msg_id"], original_msg_id);
+    assert_eq!(resp["peer"], forward_peer_jid);
+    assert!(
+        resp["new_msg_id"].is_string() && !resp["new_msg_id"].as_str().unwrap().is_empty(),
+        "messages.forward must return a non-empty new_msg_id; got {resp}"
+    );
+
+    eprintln!(
+        "live_forward_message: OK {original_msg_id} -> {forward_peer_jid} new={}",
+        resp["new_msg_id"]
+    );
+}
+
+/// `live_edit_encrypted` — Tier 7.A.3 smoke test for
+/// `messages.edit_encrypted`.
+///
+/// **Operator pre-action:** the 32-byte message_secret from the
+/// original send is required. `send.text`'s current response
+/// shape does NOT expose that secret — capturing it requires a
+/// follow-up commit that adds it to `SendResult` and to the
+/// `send.text` RPC response. Until that lands, this test is
+/// permanently skip-with-hint so the suite remains green even
+/// without the missing plumbing.
+///
+/// Once `OCTO_WHATSAPP_TEST_EDIT_SECRET_B64` can be populated
+/// from a fresh `send.text` response, this test will:
+/// 1. Set `OCTO_WHATSAPP_TEST_INBOUND_MSG_ID` to the just-sent
+///    msg id.
+/// 2. Set `OCTO_WHATSAPP_TEST_MEMBER` to the peer (or self).
+/// 3. Set `OCTO_WHATSAPP_TEST_EDIT_SECRET_B64` to the
+///    base64-encoded 32-byte message_secret.
+/// 4. Call `messages.edit_encrypted` and assert the returned
+///    `new_msg_id` is a non-empty string.
+#[tokio::test]
+async fn live_edit_encrypted() {
+    let inbound_msg_id = match std::env::var("OCTO_WHATSAPP_TEST_INBOUND_MSG_ID").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_edit_encrypted: skipping \
+                     (set OCTO_WHATSAPP_TEST_INBOUND_MSG_ID to a recent message id)"
+            );
+            return;
+        }
+    };
+    let secret_b64 = match std::env::var("OCTO_WHATSAPP_TEST_EDIT_SECRET_B64").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_edit_encrypted: skipping — message_secret exposure from \
+                 send.text is not yet implemented; capture the 32-byte secret via a \
+                 follow-up commit on the `send.text` response shape, then re-run \
+                 with OCTO_WHATSAPP_TEST_EDIT_SECRET_B64 set"
+            );
+            return;
+        }
+    };
+    let peer_jid = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => octo_whatsapp::jids::peer_to_jid(&v)
+            .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}")),
+        _ => {
+            eprintln!(
+                "live_edit_encrypted: skipping (also set \
+                 OCTO_WHATSAPP_TEST_MEMBER to the peer phone)"
+            );
+            return;
+        }
+    };
+    let fix = fixture();
+    let _ = fix;
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "messages.edit_encrypted",
+            json!({
+                "peer": peer_jid.clone(),
+                "msg_id": inbound_msg_id.clone(),
+                "message_secret_b64": secret_b64,
+                "new_text": "live_edit_encrypted test",
+            }),
+        )
+        .await;
+    inter_call_delay_for("messages.edit_encrypted");
+
+    assert_eq!(
+        resp["status"], "edited",
+        "messages.edit_encrypted must return status=edited; got {resp}"
+    );
+    assert_eq!(resp["msg_id"], inbound_msg_id);
+    assert!(
+        resp["new_msg_id"].is_string() && !resp["new_msg_id"].as_str().unwrap().is_empty(),
+        "messages.edit_encrypted must return a non-empty new_msg_id; got {resp}"
+    );
+
+    eprintln!(
+        "live_edit_encrypted: OK {inbound_msg_id} -> {}",
+        resp["new_msg_id"]
+    );
+}

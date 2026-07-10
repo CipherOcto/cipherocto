@@ -2343,3 +2343,116 @@ async fn live_contacts_save_contact_round_trip() {
     inter_call_delay_for("contacts.save_contact");
     eprintln!("live_contacts_save_contact_round_trip: OK full_name={full_name}");
 }
+
+// ===========================================================================
+// Tier 6.4 — Identity live tests
+//
+// All three identity RPCs are local-state reads (no WA server
+// roundtrip). They ALWAYS run (no operator flag). The shape is:
+//   - `pn` / `lid` are either Some(jid_string) or null
+//   - `signed_in` / `migrated` are booleans derived from the Option
+//   - `migrated` for `is_lid_migrated` is the migration-status bool
+// ===========================================================================
+
+/// `live_identity_get_pn_self` — Tier 6.4 canary.
+///
+/// Queries our own PN JID. Must always return Some(self_jid-like
+/// shape) when the fixture is signed in. The actual pn JID is
+/// returned as a string in `@s.whatsapp.net` form.
+#[tokio::test]
+async fn live_identity_get_pn_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("identity.get_pn", json!({})).await;
+    inter_call_delay_for("identity.get_pn");
+
+    assert!(
+        resp["pn"].is_string() || resp["pn"].is_null(),
+        "pn must be string or null; got {resp}"
+    );
+    assert_eq!(
+        resp["signed_in"], true,
+        "fixture is signed in; signed_in must be true; got {resp}"
+    );
+    if let Some(pn) = resp["pn"].as_str() {
+        assert!(
+            pn.ends_with("@s.whatsapp.net"),
+            "PN JID must end in @s.whatsapp.net; got {pn}"
+        );
+        assert!(
+            pn.trim_start_matches('+')
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '@' || c == '.'),
+            "PN JID must be digit-form; got {pn}"
+        );
+        // PN JID and self_jid should share the same phone digits.
+        let self_digits: String = self_jid
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        let pn_digits: String = pn.chars().take_while(|c| c.is_ascii_digit()).collect();
+        assert_eq!(
+            pn_digits, self_digits,
+            "PN JID digits must match self_jid digits ({self_jid}); got {pn}"
+        );
+    }
+    eprintln!(
+        "live_identity_get_pn_self: OK pn={:?} signed_in={}",
+        resp["pn"], resp["signed_in"]
+    );
+}
+
+/// `live_identity_get_lid_self` — Tier 6.4 LID migration.
+///
+/// Queries our own LID JID. May return Some or None depending on
+/// whether the device has completed LID migration. The `migrated`
+/// field must agree: Some(LID) ↔ migrated=true, None ↔
+/// migrated=false.
+#[tokio::test]
+async fn live_identity_get_lid_self() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("identity.get_lid", json!({})).await;
+    inter_call_delay_for("identity.get_lid");
+
+    assert!(
+        resp["lid"].is_string() || resp["lid"].is_null(),
+        "lid must be string or null; got {resp}"
+    );
+    let has_lid = resp["lid"].is_string();
+    assert_eq!(
+        resp["migrated"], has_lid,
+        "migrated must agree with lid presence; got {resp}"
+    );
+    if let Some(lid) = resp["lid"].as_str() {
+        assert!(lid.ends_with("@lid"), "LID JID must end in @lid; got {lid}");
+    }
+    eprintln!(
+        "live_identity_get_lid_self: OK lid={:?} migrated={}",
+        resp["lid"], resp["migrated"]
+    );
+}
+
+/// `live_identity_is_lid_migrated_self` — Tier 6.4 migration bool.
+///
+/// Returns the migration-status bool. Self-consistent with
+/// `identity.get_lid` when called back-to-back (server side state
+/// does not change between the two calls).
+#[tokio::test]
+async fn live_identity_is_lid_migrated_self() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("identity.is_lid_migrated", json!({})).await;
+    inter_call_delay_for("identity.is_lid_migrated");
+
+    assert!(
+        resp["migrated"].is_boolean(),
+        "migrated must be boolean; got {resp}"
+    );
+    eprintln!(
+        "live_identity_is_lid_migrated_self: OK migrated={}",
+        resp["migrated"]
+    );
+}

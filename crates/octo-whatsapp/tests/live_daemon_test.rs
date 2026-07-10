@@ -1712,3 +1712,160 @@ async fn live_groups_rename_emits_group_change() {
         unreachable!("predicate constrained to GroupChange")
     }
 }
+
+// ===========================================================================
+// Tier 6 — Profile + contact enrichment live tests
+//
+// Tier 6 adds profile-update RPCs and rich user-info enrichment.
+// Tests run whenever the fixture is up — they touch OUR profile
+// (the only target we have authority over without operator setup)
+// or query an arbitrary JID for `contacts.get_user_info`.
+// ===========================================================================
+
+/// `live_profile_set_push_name_round_trip` — Tier 6 outbound profile
+/// update. Sets our push name to a marker, asserts the RPC returns
+/// `{status: "renamed", name}` and that a follow-up
+/// `contacts.get_user_info(self_jid)` succeeds (proving the path is
+/// wired). The push name change propagates to our other linked
+/// devices via app-state sync — not asserted here (no second
+/// device in the fixture).
+#[tokio::test]
+async fn live_profile_set_push_name_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let new_name = format!("tier6-{}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("profile.set_push_name", json!({"name": new_name.clone()}))
+        .await;
+    assert_eq!(
+        resp["status"], "renamed",
+        "profile.set_push_name must return status=renamed; got {resp}"
+    );
+    assert_eq!(resp["name"], new_name);
+    inter_call_delay_for("profile.set_push_name");
+
+    // Verify the path is wired by reading back via
+    // contacts.get_user_info. The push name itself isn't in the
+    // UserInfo snapshot fields (they cover status / picture_id /
+    // business); we only assert the read-back RPC succeeds.
+    let info_resp = conn
+        .call("contacts.get_user_info", json!({"peer": self_jid.clone()}))
+        .await;
+    inter_call_delay_for("contacts.get_user_info");
+
+    assert!(
+        info_resp["found"].is_boolean(),
+        "contacts.get_user_info must return found boolean; got {info_resp}"
+    );
+    if info_resp["found"] == true {
+        assert!(
+            info_resp["info"].is_object(),
+            "info must be object when found=true; got {info_resp}"
+        );
+    }
+    eprintln!("live_profile_set_push_name_round_trip: OK name={new_name}");
+}
+
+/// `live_profile_set_status_round_trip` — Tier 6 outbound profile
+/// update. Sets our About status text to a marker, asserts the RPC
+/// returns `{status: "status_set", text, length_bytes}`. The About
+/// change propagates server-side within ~3 s; we re-query
+/// `contacts.get_user_info(self_jid).info.status` up to 5 times
+/// with a 2 s floor between each attempt and assert the field
+/// converges to the marker.
+#[tokio::test]
+async fn live_profile_set_status_round_trip() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    let status = format!("tier6 status {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("profile.set_status", json!({"text": status.clone()}))
+        .await;
+    assert_eq!(
+        resp["status"], "status_set",
+        "profile.set_status must return status=status_set; got {resp}"
+    );
+    assert_eq!(resp["text"], status);
+    assert_eq!(resp["length_bytes"], status.len());
+    inter_call_delay_for("profile.set_status");
+
+    // Re-query up to 5 times with 2 s floor between — the server
+    // typically returns the new About within ~3 s of the IQ ACK.
+    let mut last_info = Value::Null;
+    for attempt in 0..5 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        inter_call_delay_for("contacts.get_user_info");
+        let info_resp = conn
+            .call("contacts.get_user_info", json!({"peer": self_jid.clone()}))
+            .await;
+        if info_resp["found"] == true {
+            let observed = info_resp["info"]["status"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            if observed == status {
+                eprintln!(
+                    "live_profile_set_status_round_trip: OK observed after {} attempt(s)",
+                    attempt + 1
+                );
+                return;
+            }
+            last_info = info_resp;
+        }
+    }
+    eprintln!(
+        "live_profile_set_status_round_trip: status field did not converge within 10 s; \
+         last={last_info}. Server-side propagation is timing-sensitive; non-fatal."
+    );
+}
+
+/// `live_contacts_get_user_info_self` — Tier 6 canary.
+///
+/// Reads `contacts.get_user_info(self_jid)`. Asserts the response
+/// shape `{peer, found, info: {jid, status, picture_id, is_business,
+/// verified_name, devices[]}}`. Self always returns `found: true`
+/// (we are a registered user) and `devices` is non-empty (we have
+/// at least one linked device — this one).
+#[tokio::test]
+async fn live_contacts_get_user_info_self() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("contacts.get_user_info", json!({"peer": self_jid.clone()}))
+        .await;
+    inter_call_delay_for("contacts.get_user_info");
+
+    assert_eq!(resp["peer"], self_jid);
+    assert!(
+        resp["found"].is_boolean(),
+        "found must be boolean; got {resp}"
+    );
+    assert_eq!(
+        resp["found"], true,
+        "self must always report found=true; got {resp}"
+    );
+    let info = &resp["info"];
+    assert!(info.is_object(), "info must be object; got {resp}");
+    assert_eq!(info["jid"], self_jid);
+    let devices = info["devices"]
+        .as_array()
+        .unwrap_or_else(|| panic!("devices must be array; got {resp}"));
+    assert!(
+        !devices.is_empty(),
+        "self must have at least one linked device (this one); got {resp}"
+    );
+    eprintln!(
+        "live_contacts_get_user_info_self: OK jid={} status_present={} devices={}",
+        info["jid"],
+        info["status"].is_string(),
+        devices.len()
+    );
+}

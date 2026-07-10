@@ -3447,3 +3447,108 @@ async fn live_status_revoke() {
         resp["revoke_message_id"]
     );
 }
+
+// ===========================================================================
+// Tier 7.D — profile pictures + business profile smoke tests
+// ===========================================================================
+
+/// `live_set_profile_picture` — upload a JPEG and assert the RPC
+/// succeeds. No event predicate (profile pictures do not surface
+/// as events on the sender's own buffer).
+///
+/// Operator pre-action:
+/// 1. Set `OCTO_WHATSAPP_TEST_PROFILE_PIC` to a local JPEG file
+///    (1x1 or small square works; WA Web re-encodes whatever
+///    shape you pass — the bytes returned by the RPC are
+///    opaque; tests only check the success response).
+#[tokio::test]
+async fn live_set_profile_picture() {
+    let file_path = match std::env::var("OCTO_WHATSAPP_TEST_PROFILE_PIC").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_set_profile_picture: skipping \
+                 (set OCTO_WHATSAPP_TEST_PROFILE_PIC to a local JPEG file path)"
+            );
+            return;
+        }
+    };
+    let data = match std::fs::read(&file_path) {
+        Ok(d) => d,
+        Err(e) => panic!("OCTO_WHATSAPP_TEST_PROFILE_PIC unreadable: {e}"),
+    };
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "profile.set_profile_picture",
+            json!({ "image_data_b64": b64 }),
+        )
+        .await;
+    inter_call_delay_for("profile.set_profile_picture");
+    assert_eq!(
+        resp["status"], "set",
+        "profile.set_profile_picture must return status=set; got {resp}"
+    );
+    eprintln!(
+        "live_set_profile_picture: OK ({} bytes uploaded)",
+        data.len()
+    );
+
+    // Cleanup: remove the profile picture we just set so we don't
+    // pollute the operator's account state.
+    inter_call_delay_for("profile.remove_profile_picture");
+    let cleanup = conn.call("profile.remove_profile_picture", json!({})).await;
+    assert_eq!(
+        cleanup["status"], "removed",
+        "cleanup profile.remove_profile_picture must return status=removed; got {cleanup}"
+    );
+    eprintln!("live_set_profile_picture: cleanup OK (picture removed)");
+}
+
+/// `live_get_business_profile` — fetch the business profile for
+/// TEST_MEMBER. Fails-open if the peer isn't a business account
+/// (the WA server returns an empty profile, which we render as
+/// `status=not_found`).
+///
+/// Operator pre-action:
+/// 1. Set `OCTO_WHATSAPP_TEST_MEMBER` to the E.164 phone of a
+///    peer that may be a business account. For best coverage,
+///    use a known business like a local shop.
+#[tokio::test]
+async fn live_get_business_profile() {
+    let peer_jid = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => match octo_whatsapp::jids::peer_to_jid(&v) {
+            Ok(j) => j,
+            Err(e) => panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"),
+        },
+        _ => {
+            eprintln!("live_get_business_profile: skipping (OCTO_WHATSAPP_TEST_MEMBER unset)");
+            return;
+        }
+    };
+
+    let fix = fixture();
+    let _ = fix;
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "contacts.get_business_profile",
+            json!({ "jid": peer_jid.clone() }),
+        )
+        .await;
+    inter_call_delay_for("contacts.get_business_profile");
+    let status = resp["status"].as_str().unwrap_or("");
+    assert!(
+        status == "found" || status == "not_found",
+        "contacts.get_business_profile status must be found|not_found; got {resp}"
+    );
+    assert_eq!(resp["jid"], peer_jid);
+    if status == "found" {
+        assert!(resp["profile"].is_object());
+    }
+    eprintln!("live_get_business_profile: OK status={status} peer={peer_jid}");
+}

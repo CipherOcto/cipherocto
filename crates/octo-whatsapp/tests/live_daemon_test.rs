@@ -1356,55 +1356,97 @@ async fn live_receipt_delivered() {
 
 /// `live_receipt_read` — Tier 3 read state.
 ///
-/// **Wire-protocol gap: this test always skips, by design.** Read
-/// receipts from peer devices are routed by the WA server only to the
-/// PRIMARY device of the recipient's account — companion sessions
-/// (`device:25` and similar) never receive the Read stanza for
-/// outbound messages they sent. Verified empirically: the buffer dump
-/// for a live dispatch shows `Receipt { kind: Delivered }` for the
-/// outbound msg_id (TEST_MEMBER's app accepted the bubble) but no
-/// `Receipt { kind: Read }` ever lands, even with the chat open on
-/// TEST_MEMBER for 90 s. wacore's event bus dispatches Receipt
-/// unconditionally for non-retry types
-/// (`src/receipt.rs:518`), so the missing event isn't a parser
-/// problem — it's that the Read stanza never reaches our session.
+/// Requires `OCTO_WHATSAPP_TEST_READ=1`. Operator must open the chat
+/// on the second device. Asserts `Receipt { kind: Read }` within 90 s.
 ///
-/// The operator confirmed: "all official clients are receiving the
-/// receipt, both WA Android and WA Web" — that's because those are
-/// the PRIMARY device or the recipient. Our `default.session.db`
-/// is a companion device (device:25, the operator's WA Web linked
-/// session), which is precisely the device the WA server omits from
-/// the Read routing path. The Delivered ack does flow to companion
-/// devices (verified by `live_receipt_delivered`), only the Read
-/// tick does not.
-///
-/// What the daemon CAN verify for read state:
-///
-/// - The bubble renders on the linked WA client (Tier 2
-///   `live_send_image_to_test_member` covers cross-device image).
-/// - Delivered acks flow back to companion sessions (verified).
-/// - Outbound read-acks on inbound messages:
-///   `live_mark_read_emits_read_receipt` invokes
-///   `messages.mark_read` and asserts the daemon emits a
-///   `Receipt { kind: Read }` for the inbound msg_id — that path
-///   goes OUT from our session via the WA mark-read RPC, not
-///   through the inbound Read-stanza pipeline that multi-device
-///   routing suppresses.
-///
-/// The skip is unconditional (no env flag needed) so the suite
-/// stays green and the test stays discoverable in the live test
-/// catalog.
+/// The 90 s window (longer than the 30 s default) gives the operator
+/// realistic time to read the eprintln prompt, switch to the peer
+/// device, find the chat, and tap it open — all without racing the
+/// receipt. The Read receipt fires ~1 s after the chat window becomes
+/// foreground on the peer side, so the actual slack is much tighter
+/// than the 90 s ceiling suggests.
 #[tokio::test]
 async fn live_receipt_read() {
     let fix = fixture();
-    let _ = fix;
+    if !test_flag_set("OCTO_WHATSAPP_TEST_READ") {
+        eprintln!(
+            "live_receipt_read: skipping (set OCTO_WHATSAPP_TEST_READ=1 \
+             when the test peer's WA has the chat opened)"
+        );
+        return;
+    }
+    let peer_jid = require_test_peer_jid("live_receipt_read");
+    let text = format!("tier3 read {}", std::process::id());
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call("send.text", json!({"peer": peer_jid, "text": text}))
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.text");
+
     eprintln!(
-        "live_receipt_read: skipping (companion-session Read routing gap — \
-         WA server routes Read receipts only to primary devices, not \
-         to device:25 companion sessions. Verified empirically: Delivered \
-         acks surface for the same dispatch but no Read event lands \
-         even with TEST_MEMBER chat open for 90 s.)"
+        "live_receipt_read: dispatched {message_id} to {peer_jid}; \
+         you have up to 90 s to open the chat on TEST_MEMBER's WA."
     );
+
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| {
+            matches!(
+                ev,
+                InboundEvent::Receipt {
+                    msg_id,
+                    kind,
+                    ..
+                } if msg_id == &message_id
+                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
+            )
+        },
+        Duration::from_secs(90),
+    )
+    .unwrap_or_else(|e| {
+        // Diagnostic: dump recent buffer events so we can see if the
+        // Read receipt landed in some other shape that the parser
+        // didn't route to Receipt { kind: Read }.
+        eprintln!("--- live_receipt_read buffer dump (last 40) ---");
+        for ev in fix.events_buffer.list_recent(40) {
+            match ev {
+                InboundEvent::Receipt { msg_id, kind, peer, .. } => {
+                    eprintln!("  Receipt(kind={kind:?} msg_id={msg_id} peer={peer})");
+                }
+                InboundEvent::Message { id, peer, kind, .. } => {
+                    eprintln!("  Message(kind={kind:?} id={id} peer={peer})");
+                }
+                InboundEvent::Unknown { raw, .. } => {
+                    let head = raw.split_whitespace().next().unwrap_or("?");
+                    let preview: String = raw.chars().take(90).collect();
+                    eprintln!("  Unknown({head}) preview={preview:?}");
+                }
+                other => {
+                    eprintln!("  {other:?}");
+                }
+            }
+        }
+        eprintln!("--- end buffer dump ---");
+        panic!(
+            "live_receipt_read: no Read receipt for {message_id} in 90 s. \
+             Confirm TEST_MEMBER device has the chat visibly open. Underlying: {e}"
+        )
+    });
+    if let InboundEvent::Receipt {
+        msg_id, kind, peer, ..
+    } = ev
+    {
+        assert_eq!(msg_id, message_id);
+        assert_eq!(peer, peer_jid);
+        eprintln!("live_receipt_read: OK {kind:?} peer={peer}");
+    } else {
+        unreachable!("predicate constrained to Receipt")
+    }
 }
 
 /// `live_receipt_played` — Tier 3 voice-played state.

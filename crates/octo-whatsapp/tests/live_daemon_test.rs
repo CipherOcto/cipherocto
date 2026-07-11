@@ -192,6 +192,17 @@ fn fixture() -> &'static LiveTestFixture {
 }
 
 fn init_fixture() -> LiveTestFixture {
+    // Initialise tracing once per test process. RUST_LOG wins; the
+    // default captures wacore's receipt handler (which logs every
+    // received receipt type) at debug level — that's the diagnostic
+    // we need to confirm whether Read stanzas arrive at our session.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,wa::receipt=debug")),
+        )
+        .with_test_writer()
+        .try_init();
     let tmp = tempfile::tempdir().expect("tempdir");
 
     // Mirrors the config builder in `it_daemon_chain.rs::make_test_config`
@@ -4342,7 +4353,7 @@ async fn live_capture_receipts_for_self_dispatch() {
     let mut any_other = Vec::new();
     while std::time::Instant::now() < deadline {
         for ev in fix.events_buffer.list_recent(200) {
-            if let InboundEvent::Receipt { msg_id, kind, .. } = ev {
+            if let InboundEvent::Receipt { msg_id, kind, peer, .. } = ev {
                 if msg_id != message_id {
                     continue;
                 }
@@ -4352,21 +4363,21 @@ async fn live_capture_receipts_for_self_dispatch() {
                         saw_delivered = true;
                         eprintln!(
                             "live_capture_receipts_for_self_dispatch: kind=Delivered \
-                             arrived for {message_id}"
+                             arrived for {message_id} (msg_id on event={msg_id}, peer={peer})"
                         );
                     }
                     ReceiptKind::Read if !saw_read => {
                         saw_read = true;
                         eprintln!(
                             "live_capture_receipts_for_self_dispatch: kind=Read \
-                             arrived for {message_id}"
+                             arrived for {message_id} (msg_id on event={msg_id}, peer={peer})"
                         );
                     }
                     ReceiptKind::Played if !saw_played => {
                         saw_played = true;
                         eprintln!(
                             "live_capture_receipts_for_self_dispatch: kind=Played \
-                             arrived for {message_id}"
+                             arrived for {message_id} (msg_id on event={msg_id}, peer={peer})"
                         );
                     }
                     other => {

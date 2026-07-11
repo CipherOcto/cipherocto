@@ -426,7 +426,7 @@ fn parser_routes_lid_server_to_lid_canonical() {
 
 #[test]
 fn parser_routes_wacore_receipt_read_kind() {
-    let raw = r#"Receipt(Receipt { r#type: Read, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), to: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), id: Some("3EB0READ"), timestamp: Some(1700000000) })"#;
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), sender: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), sender_alt: None, is_from_me: false, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0READ"], timestamp: 2026-07-11T12:00:00Z, r#type: Read, offline: false })"#;
     let env = EventEnvelope {
         raw: raw.to_string(),
         ts_unix_ms: 1,
@@ -442,7 +442,7 @@ fn parser_routes_wacore_receipt_read_kind() {
         } => {
             assert_eq!(msg_id, "3EB0READ");
             assert!(matches!(kind, ReceiptKind::Read));
-            // `peer` is the acker's JID — the peer's own pn, not ours.
+            // `peer` is the chat Jid from MessageSource.
             assert_eq!(peer, "15551234567@s.whatsapp.net");
         }
         other => panic!("expected Receipt, got {other:?}"),
@@ -451,7 +451,7 @@ fn parser_routes_wacore_receipt_read_kind() {
 
 #[test]
 fn parser_routes_wacore_receipt_played_kind() {
-    let raw = r#"Receipt(Receipt { r#type: Played, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), to: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), id: Some("3EB0PLAY"), timestamp: Some(1700000000) })"#;
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), sender: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), sender_alt: None, is_from_me: false, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0PLAY"], timestamp: 2026-07-11T12:00:00Z, r#type: Played, offline: false })"#;
     let env = EventEnvelope {
         raw: raw.to_string(),
         ts_unix_ms: 1,
@@ -468,7 +468,7 @@ fn parser_routes_wacore_receipt_played_kind() {
 
 #[test]
 fn parser_routes_wacore_receipt_delivered_kind() {
-    let raw = r#"Receipt(Receipt { r#type: Delivered, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), id: Some("3EB0DLV"), timestamp: Some(1700000000) })"#;
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), sender: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), sender_alt: None, is_from_me: false, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0DLV"], timestamp: 2026-07-11T12:00:00Z, r#type: Delivered, offline: false })"#;
     let env = EventEnvelope {
         raw: raw.to_string(),
         ts_unix_ms: 1,
@@ -488,7 +488,7 @@ fn parser_routes_wacore_receipt_delivered_kind() {
 
 #[test]
 fn parser_routes_wacore_receipt_read_self() {
-    let raw = r#"Receipt(Receipt { r#type: ReadSelf, from: None, id: Some("3EB0SELF"), timestamp: Some(1700000000) })"#;
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 25, integrator: 0 }), sender: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 25, integrator: 0 }), sender_alt: None, is_from_me: true, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0SELF"], timestamp: 2026-07-11T12:00:00Z, r#type: ReadSelf, offline: false })"#;
     let env = EventEnvelope {
         raw: raw.to_string(),
         ts_unix_ms: 1,
@@ -500,5 +500,59 @@ fn parser_routes_wacore_receipt_read_self() {
             assert!(matches!(kind, ReceiptKind::Read));
         }
         other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+// ===========================================================================
+// Receipt Debug-format pin tests
+//
+// The actual Receipt event body in our buffer is
+// `Receipt(Receipt { source: ..., message_ids: ["3EB0..."], timestamp: ...,
+// r#type: Delivered/Read/Played, offline: false })` — wacore's struct
+// Debug format. There is NO `id:` field name; the message ids live
+// inside `message_ids:` (Vec<MessageId>, with MessageId = String).
+//
+// The prior parser searched for `id:` (which would also match the
+// `message_ids:` substring if naive) and the
+// Jid Debug format `Jid { user, server, agent, device, integrator }`
+// has no `id:` either. These tests pin the precise format we accept.
+// ===========================================================================
+
+#[test]
+fn parser_extracts_msg_id_from_wacore_receipt_message_ids_field() {
+    // Format that wacore actually emits for `Event::Receipt(receipt)`
+    // Debug. Reproduced from wacore's Receipt struct definition.
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Jid { user: "5521998201100", server: Pn, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "5521998201100", server: Pn, agent: 0, device: 0, integrator: 0 }, sender_alt: None, is_from_me: false, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0BC6BF3DF275DC4D29A"], timestamp: 2026-07-11T20:14:00Z, r#type: Delivered, offline: false })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { msg_id, peer, kind, .. } => {
+            assert_eq!(msg_id, "3EB0BC6BF3DF275DC4D29A", "msg_id must match the message_ids[0]");
+            assert_eq!(peer, "5521998201100@s.whatsapp.net", "peer must be the source.chat Jid");
+            assert!(matches!(kind, ReceiptKind::Delivered));
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_extracts_msg_id_from_wacore_receipt_read() {
+    let raw = r#"Receipt(Receipt { source: MessageSource { chat: Jid { user: "5521998201100", server: Pn, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "5521998201100", server: Pn, agent: 0, device: 0, integrator: 0 }, sender_alt: None, is_from_me: false, is_group: false, is_broadcast: false, is_status_v3: false, is_newsletter: false }, message_ids: ["3EB0READ0001"], timestamp: 2026-07-11T20:14:00Z, r#type: Read, offline: false })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { msg_id, kind, .. } => {
+            assert_eq!(msg_id, "3EB0READ0001");
+            assert!(matches!(kind, ReceiptKind::Read));
+        }
+        other => panic!("expected Receipt Read, got {other:?}"),
     }
 }

@@ -591,18 +591,19 @@ fn parse_connection(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEven
 }
 
 fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
-    // wacore emits `Receipt { r#type: ReceiptType, from: ..., to: ...,
-    // id: Some("..."), timestamp: Some(...) }` where `r#type` is
-    // the Rust raw-identifier escape for the field name `type`. The
-    // 8-variant model collapses `Read` and `Played` directly into the
-    // matching `ReceiptKind`; everything else (Sent, Sender, Retry,
-    // EncRekeyRetry, ReadSelf, PlayedSelf, ServerError, Inactive,
-    // PeerMsg, HistorySync, Other) falls back to Delivered so
-    // consumers always see a typed Receipt. Read receipts from a peer
-    // viewing the chat on their linked device become kind=Read; same
-    // for Played when voice/video plays end. The legacy fallback
-    // `kind` field is also accepted because individual wacore
-    // versions have shipped both shapes.
+    // wacore emits `Receipt { r#type: ReceiptType, source: MessageSource { chat, sender, ... },
+    // message_ids: ["3EB0..."], timestamp, offline }` where `r#type` is
+    // the Rust raw-identifier escape for the field name `type`. There
+    // is NO `id:` field — message ids live inside the `message_ids:
+    // Vec<MessageId>` (MessageId = String) array. Reading the first id
+    // from that array gives us the canonical message id that consumers
+    // correlate against.
+    //
+    // The 8-variant model collapses `Read` and `Played` directly into
+    // the matching `ReceiptKind`; everything else (Sent, Sender,
+    // Retry, EncRekeyRetry, ReadSelf, PlayedSelf, ServerError,
+    // Inactive, PeerMsg, HistorySync, Other) falls back to Delivered
+    // so consumers always see a typed Receipt.
     let kind = match field(rest, "r#type").as_deref() {
         Some("Read") | Some("ReadSelf") => ReceiptKind::Read,
         Some("Played") | Some("PlayedSelf") => ReceiptKind::Played,
@@ -614,20 +615,14 @@ fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
             _ => ReceiptKind::Delivered,
         },
     };
-    // wacore's id field is the message id as an Option<Vec<u8>> or
-    // Option<String> depending on the variant — for 1:1 chat receipts
-    // it's an Option<String> whose Debug form is `Some("3EB0...")`.
-    // Use the Jid-aware `extract_field` (introduced for ServerAck) to
-    // unwrap the `Some(...)` envelope. Fall back to a bare quoted-string
-    // shape for older wacore versions.
-    let msg_id = extract_field(rest, "id").unwrap_or_default();
-    // wacore emits `from` for the receipt sender (peer device that
-    // acked) and `to` for the destination. Receipts we receive from
-    // the WA server have `from` set to the acking peer; the prior
-    // SelfSend test relied on a `peer` field that doesn't exist in
-    // the wire format. Use `from` first, fall back to `to` for
-    // server-originated receipts without an acker.
-    let peer = extract_field(rest, "from")
+    // Extract the first id from `message_ids: ["3EB0...", ...]`.
+    let msg_id = extract_message_ids_first(rest).unwrap_or_default();
+    // The "peer" for an inbound receipt is the JID the receipt was
+    // sent to — `source.chat` in wacore's MessageSource. Use that
+    // field, falling back to `from` then `to` for older wacore
+    // variants or server-originated receipts without an acker.
+    let peer = extract_source_chat(rest)
+        .or_else(|| extract_field(rest, "from"))
         .or_else(|| extract_field(rest, "to"))
         .unwrap_or_default();
     InboundEvent::Receipt {
@@ -638,6 +633,67 @@ fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         ts_mono_ns,
     }
 }
+
+/// Extract the first message id from a wacore `Receipt` Debug body's
+/// `message_ids: Vec<String>` field. The Debug format prints the array
+/// as `["3EB0...", ...]`. Returns the first quoted string, or `None`
+/// if the field is missing or empty.
+fn extract_message_ids_first(body: &str) -> Option<String> {
+    let needle = "message_ids: [";
+    let start = body.find(needle)? + needle.len();
+    let rest = &body[start..];
+    let after_quote = rest.strip_prefix('"')?;
+    let end = after_quote.find('"')?;
+    Some(after_quote[..end].to_string())
+}
+
+/// Extract the JID from `source.chat` inside a wacore
+/// `MessageSource`. The Debug body looks like:
+/// `source: MessageSource { chat: Some(Jid { ... }), sender: ..., ... }`.
+/// The value follows `chat: ` and is either `Some(Jid { ... })` or
+/// bare `Jid { ... }`. We extract the user+server directly since the
+/// Jid shape is known.
+fn extract_source_chat(body: &str) -> Option<String> {
+    let needle = "source: MessageSource { chat: ";
+    let start = body.find(needle)? + needle.len();
+    let rest = &body[start..];
+    // Strip the optional `Some(...)` wrapper. Find the Jid's user and
+    // server fields directly — same regex-free approach we use for
+    // ServerAck's `from` field.
+    let rest = rest.strip_prefix("Some(").unwrap_or(rest).trim_start();
+    let after_jid = rest.strip_prefix("Jid ")?;
+    let user = {
+        let u_needle = "user: \"";
+        let u_start = after_jid.find(u_needle)? + u_needle.len();
+        let after_u = &after_jid[u_start..];
+        let u_end = after_u.find('"')?;
+        &after_u[..u_end]
+    };
+    let s_needle = "server: ";
+    let s_start = after_jid.find(s_needle)? + s_needle.len();
+    let after_s = &after_jid[s_start..];
+    let s_end = after_s.find([',', ' ', '}']).unwrap_or(after_s.len());
+    let server_raw = after_s[..s_end].trim();
+    let server = match server_raw {
+        "Pn" => "s.whatsapp.net",
+        "Lid" => "lid",
+        other => other,
+    };
+    let device = after_jid
+        .find("device: ")
+        .map(|d| {
+            let rest = &after_jid[d + "device: ".len()..];
+            let end = rest.find([',', ' ', '}']).unwrap_or(rest.len());
+            rest[..end].trim().parse::<u16>().unwrap_or(0)
+        })
+        .unwrap_or(0);
+    Some(if device > 0 {
+        format!("{user}:{device}@{server}")
+    } else {
+        format!("{user}@{server}")
+    })
+}
+
 
 /// Parse wacore's `ServerAck` debug-formatted body. The shape is:
 ///

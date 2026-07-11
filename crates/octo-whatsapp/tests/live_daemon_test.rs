@@ -1416,69 +1416,44 @@ async fn live_receipt_read() {
 
 /// `live_receipt_played` — Tier 3 voice-played state.
 ///
-/// Requires `OCTO_WHATSAPP_TEST_PLAY=1`. Sends a 1 KB voice note
-/// (`.ogg` container — `send.voice` is the WA voice-message path).
-/// Operator must play it on the second device. Asserts
-/// `Receipt { kind: Played }` within 30 s.
+/// **Wire-protocol gap: this test always skips, by design.** The WA
+/// server does not surface a "Played" notification when a peer plays
+/// a voice / video note — play state is client-side only. The wacore
+/// `ReceiptType` enum (`wacore/src/types/presence.rs:29-`) confirms
+/// this: only `Delivered`, `Sent`, `Sender`, `Retry`, `EncRekeyRetry`
+/// are recognised on the wire. There is no `Played` variant and no
+/// receipt stanza parser produces one. The plan in
+/// `docs/plans/cryptic-percolating-octopus.md` listed this test as
+/// Tier 3.4 based on the assumption that Played would surface as a
+/// Receipt event; that assumption is wrong.
+///
+/// What the daemon can verify for voice notes:
+///
+/// - the bubble renders on the linked WA client (Tier 2 already
+///   covers `live_send_image_to_test_member` for cross-device image;
+///   voice is analogous)
+/// - the bubble's media is playable end-to-end (the
+///   `tests/fixtures/live/voice-1s.ogg` fixture committed in 4a362981
+///   is validated against WA's mobile player)
+/// - the Delivered + Read receipts fire as for any other 1:1 chat
+///   message (`live_receipt_delivered`, `live_receipt_read`)
+///
+/// What the daemon cannot verify: that TEST_MEMBER actually tapped
+/// play and listened past the first second. That signal exists only
+/// on TEST_MEMBER's mobile client and is not propagated back to our
+/// multi-device session.
+///
+/// The skip is unconditional (no env flag needed) so the suite stays
+/// green and the test stays discoverable in the live test catalog.
 #[tokio::test]
 async fn live_receipt_played() {
     let fix = fixture();
-    if !test_flag_set("OCTO_WHATSAPP_TEST_PLAY") {
-        eprintln!(
-            "live_receipt_played: skipping (set OCTO_WHATSAPP_TEST_PLAY=1 \
-             when the test peer's WA has played the voice note)"
-        );
-        return;
-    }
-    let peer_jid = require_test_peer_jid("live_receipt_played");
-    let path = write_voice_fixture(fix, "tier3-played-voice");
-    let mut conn = rpc(fix).await;
-    let resp = conn
-        .call(
-            "send.voice",
-            json!({
-                "peer": peer_jid,
-                "file": path.to_string_lossy().into_owned(),
-            }),
-        )
-        .await;
-    let message_id = resp["message_id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("send.voice missing message_id: {resp}"))
-        .to_string();
-    inter_call_delay_for("send.voice");
-
-    let ev = wait_for(
-        &fix.events_buffer,
-        |ev| {
-            matches!(
-                ev,
-                InboundEvent::Receipt {
-                    msg_id,
-                    kind,
-                    ..
-                } if msg_id == &message_id
-                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Played)
-            )
-        },
-        Duration::from_secs(30),
-    )
-    .unwrap_or_else(|e| {
-        panic!(
-            "live_receipt_played: no Played receipt for {message_id} in 30 s. \
-             Confirm TEST_MEMBER device has played the voice note. Underlying: {e}"
-        )
-    });
-    if let InboundEvent::Receipt {
-        msg_id, kind, peer, ..
-    } = ev
-    {
-        assert_eq!(msg_id, message_id);
-        assert_eq!(peer, peer_jid);
-        eprintln!("live_receipt_played: OK {kind:?} peer={peer}");
-    } else {
-        unreachable!("predicate constrained to Receipt")
-    }
+    let _ = fix;
+    eprintln!(
+        "live_receipt_played: skipping (WA wire protocol does not emit a Played \
+         receipt — play state is client-side only. See test docstring for the \
+         wacore ReceiptType enum reference.)"
+    );
 }
 
 /// `live_mark_read_emits_read_receipt` — Tier 3 inbound-ack path.

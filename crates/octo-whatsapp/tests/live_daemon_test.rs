@@ -424,7 +424,7 @@ async fn rpc(fix: &LiveTestFixture) -> RpcStream {
     RpcStream::new(fix.socket.clone()).await
 }
 
-/// `live_send_text_self` — Tier 1 ServerAck canary.
+/// `live_send_text_self` — Tier 1 canary.
 ///
 /// Sends a uniquely-tagged text to the operator's own linked account.
 /// The daemon's adapter dispatches through `wacore::Client::send_text`;
@@ -433,34 +433,28 @@ async fn rpc(fix: &LiveTestFixture) -> RpcStream {
 /// raw Debug-string starts with `ServerAck(` lands within 15 s, then
 /// extracts the embedded WA crate `id` field via
 /// [`extract_server_ack_id`] and asserts it equals the dispatched
-/// `message_id`.
+/// `message_id`. The test ALSO asserts that the dispatched text body
+/// surfaces in the daemon's events table as a typed `Message` (or
+/// `Unknown(Message)` envelope) — that's the operator-visible
+/// round-trip: every linked WA client must render the bubble.
 ///
-/// Currently the events parser routes `ServerAck` to
-/// `InboundEvent::Unknown` because `ReceiptKind` has no typed
-/// `ServerAck` variant yet. The Tier-3 receipt tests assert via the
-/// typed `Receipt` route; this canary stays ahead of them by reading
-/// the raw envelope. The eventual parser-gap follow-up commit
-/// (Phase 7.A-close) upgrades this test to
-/// `matches!(ev, InboundEvent::Receipt { kind: ReceiptKind::ServerAck, .. } if msg_id == &message_id)`.
-///
-/// **Why ServerAck-only and not "self echoes back as InboundEvent::Message":**
-/// single-device WA sessions (the kind octo-whatsapp links by default)
-/// do NOT surface self-dispatched messages in the inbox event stream.
-/// WA classifies `to: <own_jid>` as outbound-only state; the live WA
-/// client of that number doesn't render the message either (operator
-/// confirmation). The ServerAck round-trip is the highest-fidelity
-/// acknowledgement the WA protocol gives for a single-device self-send.
-///
-/// For a real round-trip end-to-end (typed Message event + body +
-/// text rendered on a separate WA client) use `live_send_text_peer`
-/// with `OCTO_WHATSAPP_TEST_MEMBER=<another-number>`. That test is
-/// the load-bearing Tier 1 cross-account canary.
+/// Currently the events parser routes `Message(...)` envelopes from
+/// the WA crate to `InboundEvent::Unknown` because the typed
+/// `Message` parser branch doesn't parse the WA crate's
+/// `Message(...)` Debug envelope yet. The match arm in this test
+/// therefore fires on either a typed `Message` whose `id` matches,
+/// or an `Unknown` whose raw starts with `Message(`. The eventual
+/// parser-gap follow-up commit (Phase 7.A-close) closes the typed
+/// route.
 ///
 /// Failure modes this test catches:
 /// - `send.text` silently no-op'd (the Phase 1 stub regression)
 /// - WA dispatch error surfaces as `InvalidParams` or `Unreachable`
 /// - NDJSON ingestion dropping events (events_query sees None)
 /// - Self JID resolution fails (fixture panic upstream)
+/// - Body never round-trips (the bug this test was failing on; the
+///   operator-mandated requirement that every linked WA client renders
+///   the dispatched bubble)
 ///
 /// Sends a uniquely-tagged text to the operator's own linked account.
 /// The daemon's adapter dispatches through `wacore::Client::send_text`;
@@ -607,18 +601,20 @@ async fn live_send_text_self() {
         all_kinds.join("\n  - ")
     );
 
-    // Soft assertion (informational only): for a single-device session
-    // we EXPECT zero body events matching the marker — that's the WA
-    // protocol characteristic noted in the docstring. The dump above
-    // is logged for future debugging. The real canary for cross-account
-    // text rendering is `live_send_text_peer` (see Tier 1 docstring).
-    if !body_present {
-        eprintln!(
-            "live_send_text_self: body events matching marker={marker:?} = 0 \
-             (expected for single-device self-echo; see Tier 1 docstring). \
-             Cross-account rendering is covered by live_send_text_peer."
-        );
-    }
+    // Hard assertion: dispatched text body MUST surface in the events table
+    // so the live WA client of the linked number renders the bubble. The
+    // operator's mandate is non-negotiable — every dispatched text must
+    // appear on every linked WA client. The match arm covers both the
+    // typed `Message` route (parser upgraded) and the `Unknown` envelope
+    // route (current state); either is acceptable as long as the body
+    // text is present.
+    assert!(
+        body_present,
+        "live_send_text_self: dispatched text body never surfaced in the events buffer; \
+         expected at least one typed `Message(...)` or `Unknown(Message(...))` envelope \
+         carrying marker={marker:?}. Operator mandate: the text MUST appear on every linked \
+         WA client. See eprintln buffer dump above for what did land."
+    );
 }
 
 /// Extract the embedded WA crate `id` field from a `ServerAck(...)`

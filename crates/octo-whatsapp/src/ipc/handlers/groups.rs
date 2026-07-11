@@ -239,13 +239,16 @@ impl RpcHandler for GroupsDestroy {
             message: "adapter does not implement CoordinatorAdmin".into(),
             data: None,
         })?;
-        let gid = GroupId::new(p.jid);
+        let gid = GroupId::new(p.jid.clone());
         coord
             .destroy_group(&gid)
             .await
             .map_err(|e| map_err("groups.destroy", e))?;
         let _keep_alive = adapter;
-        Ok(json!({}))
+        Ok(json!({
+            "status": "destroyed",
+            "jid": p.jid,
+        }))
     }
 }
 
@@ -589,13 +592,17 @@ impl RpcHandler for GroupsRename {
             message: "adapter does not implement CoordinatorAdmin".into(),
             data: None,
         })?;
-        let gid = GroupId::new(p.jid);
+        let gid = GroupId::new(p.jid.clone());
         coord
             .rename_group(&gid, &p.subject)
             .await
             .map_err(|e| map_err("groups.rename", e))?;
         let _keep_alive = adapter;
-        Ok(json!({}))
+        Ok(json!({
+            "status": "renamed",
+            "jid": p.jid,
+            "subject": p.subject,
+        }))
     }
 }
 
@@ -1239,7 +1246,7 @@ mod tests {
             .call(h, json!({"jid": "x@g.us"}))
             .await
             .unwrap();
-        assert_eq!(v, json!({}));
+        assert_eq!(v, json!({"status": "destroyed", "jid": "x@g.us"}));
     }
 
     #[tokio::test]
@@ -1560,7 +1567,10 @@ mod tests {
             .call(h, json!({"jid": "x@g.us", "subject": "new name"}))
             .await
             .unwrap();
-        assert_eq!(v, json!({}));
+        assert_eq!(
+            v,
+            json!({"status": "renamed", "jid": "x@g.us", "subject": "new name"})
+        );
     }
 
     #[tokio::test]

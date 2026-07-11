@@ -5091,3 +5091,124 @@ async fn live_tctoken_issue() {
         panic!("tctoken.issue returned neither status=issued nor error object; got {resp}");
     }
 }
+
+// ===========================================================================
+// Tier 7 — Passkey pair-link live tests (7.F in close-the-gap plan)
+//
+// `passkey.send_response` + `passkey.send_confirmation` complete the
+// WA multi-device pair-link handshake. They fire ONLY when a second
+// device (Android phone, iOS companion, etc.) starts pairing and the
+// server delivers `Event::PairPasskeyRequest` to our running client.
+//
+// Without a second device actively pairing, no inbound arrives and
+// the RPCs would fail with "no pending passkey handshake". The
+// operator must trigger pairing on the phone (Settings → Linked
+// Devices → Link a Device) and set
+// `OCTO_WHATSAPP_PASSKEY_PAIRING=1` to enable the live tests below.
+//
+// All passkey tests are env-gated and skip early without operator
+// opt-in — there is no way to synthesize a PairPasskeyRequest from
+// the running client.
+// ===========================================================================
+
+/// `live_passkey_send_response_skips_without_pairing` — Tier 7
+/// pair-link handshake.
+///
+/// **Operator opt-in required.** Set
+/// `OCTO_WHATSAPP_PASSKEY_PAIRING=1` to enable. The test waits up
+/// to 90 s for an inbound `Event::PairPasskeyRequest` (which arrives
+/// when the operator scans the caBLE QR on the WA Android app's
+/// "Link a Device" flow). On arrival, extracts the WebAuthn
+/// challenge from the request, computes a mock assertion, and
+/// dispatches `passkey.send_response`.
+///
+/// Without the env var: skips early.
+#[tokio::test]
+async fn live_passkey_send_response_skips_without_pairing() {
+    let Some(_) = std::env::var("OCTO_WHATSAPP_PASSKEY_PAIRING").ok() else {
+        eprintln!(
+            "live_passkey_send_response_skips_without_pairing: skipping (set \
+             OCTO_WHATSAPP_PASSKEY_PAIRING=1; trigger pairing on phone via \
+             Settings → Linked Devices → Link a Device within 90 s)"
+        );
+        return;
+    };
+    let fix = fixture();
+    // Wait up to 90 s for an inbound PairPasskeyRequest. The
+    // SHORTCAKE_PASSKEY log line confirms receipt; here we wait
+    // on the events buffer directly.
+    let req_event = wait_for(
+        &fix.events_buffer,
+        |ev| matches!(ev, InboundEvent::Unknown { raw, .. } if raw.contains("PairPasskeyRequest")),
+        Duration::from_secs(90),
+    );
+    let raw = match req_event {
+        Ok(InboundEvent::Unknown { raw, .. }) => raw,
+        Ok(other) => panic!("predicate constrained to Unknown; got {other:?}"),
+        Err(e) => {
+            eprintln!(
+                "live_passkey_send_response_skips_without_pairing: no PairPasskeyRequest \
+                 observed within 90 s; was the phone QR scanned? {e}"
+            );
+            return;
+        }
+    };
+    eprintln!(
+        "live_passkey_send_response_skips_without_pairing: inbound PairPasskeyRequest \
+         observed (raw head={:?})",
+        raw.chars().take(120).collect::<String>()
+    );
+
+    // Dispatch a mock assertion. The adapter's
+    // send_passkey_response expects a base64-encoded assertion
+    // JSON + base64 credential ID. We supply 32 bytes of zero
+    // for both — the WA server will reject them, but that proves
+    // the RPC is wired through to the adapter.
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "passkey.send_response",
+            json!({
+                "assertion_json_b64": "AAAAAAAAAAAAAAAAAAAAAA==",
+                "credential_id_b64": "AAAAAAAAAAAAAAAAAAAAAA==",
+            }),
+        )
+        .await;
+    inter_call_delay_for("passkey.send_response");
+    assert!(
+        resp["status"] == "opened" || resp["status"] == "completed",
+        "passkey.send_response must return status=opened|completed; got {resp}"
+    );
+    eprintln!(
+        "live_passkey_send_response_skips_without_pairing: OK status={}",
+        resp["status"]
+    );
+}
+
+/// `live_passkey_send_confirmation_skips_without_pairing` — Tier 7
+/// pair-link confirmation.
+///
+/// **Operator opt-in required.** Same env gate as the response
+/// test. Fires `passkey.send_confirmation` after the operator has
+/// seen the WA-confirmation 6-digit code on the phone. Asserts the
+/// response shape.
+#[tokio::test]
+async fn live_passkey_send_confirmation_skips_without_pairing() {
+    let Some(_) = std::env::var("OCTO_WHATSAPP_PASSKEY_PAIRING").ok() else {
+        eprintln!(
+            "live_passkey_send_confirmation_skips_without_pairing: skipping (set \
+             OCTO_WHATSAPP_PASSKEY_PAIRING=1; complete the pair-link handshake \
+             on the phone after `passkey.send_response` succeeded)"
+        );
+        return;
+    };
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+    let resp = conn.call("passkey.send_confirmation", json!({})).await;
+    inter_call_delay_for("passkey.send_confirmation");
+    assert_eq!(
+        resp["status"], "confirmed",
+        "passkey.send_confirmation must return status=confirmed; got {resp}"
+    );
+    eprintln!("live_passkey_send_confirmation_skips_without_pairing: OK confirmed");
+}

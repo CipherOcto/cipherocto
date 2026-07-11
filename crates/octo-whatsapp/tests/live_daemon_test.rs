@@ -886,6 +886,34 @@ fn write_real_png_fixture(fix: &LiveTestFixture, name: &str) -> std::path::PathB
     path
 }
 
+/// 1-second silent opus voice note. Validated against WA's mobile
+/// client player (the bubble plays back without "audio is corrupt"
+/// errors). The bytes are committed at
+/// `crates/octo-whatsapp/tests/fixtures/live/voice-1s.ogg`; this
+/// helper copies them into the live-fixture's tmp dir so each test
+/// run has a fresh copy. Generated via:
+///
+///   ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 1 \
+///          -c:a libopus -b:a 16k -ac 1 -ar 16000 -application voip \
+///          voice-1s.ogg
+///
+/// 651 bytes, mono 16 kHz, 16 kb/s, VOIP application profile.
+fn write_voice_fixture(fix: &LiveTestFixture, name: &str) -> std::path::PathBuf {
+    let path = fix.tmp.path().join(format!("{name}.ogg"));
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/live/voice-1s.ogg");
+    std::fs::copy(&fixture_path, &path).unwrap_or_else(|e| {
+        panic!(
+            "copy voice fixture {:?} -> {:?}: {e}. \
+             Run `ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 1 \
+             -c:a libopus -b:a 16k -ac 1 -ar 16000 -application voip \
+             crates/octo-whatsapp/tests/fixtures/live/voice-1s.ogg` to regenerate.",
+            fixture_path, path
+        )
+    });
+    path
+}
+
 /// Helper: send a media RPC, wait for the self-echo, assert id round-trips.
 async fn send_media_and_wait(
     fix: &LiveTestFixture,
@@ -1403,7 +1431,7 @@ async fn live_receipt_played() {
         return;
     }
     let peer_jid = require_test_peer_jid("live_receipt_played");
-    let path = write_tiny_fixture(fix, "tier3-played-voice", "ogg");
+    let path = write_voice_fixture(fix, "tier3-played-voice");
     let mut conn = rpc(fix).await;
     let resp = conn
         .call(

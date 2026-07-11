@@ -937,6 +937,151 @@ async fn live_send_image() {
     .await;
 }
 
+/// `live_send_image_to_test_member` — Tier 2 cross-device.
+///
+/// Sends a real image to `OCTO_WHATSAPP_TEST_MEMBER` (operator-provided
+/// peer phone) and waits for both:
+///   - the RPC response carrying a real `message_id`
+///   - an `InboundEvent::Message` of kind=Image with the same id
+///
+/// This is the operator-side proof that media flows end-to-end on a
+/// non-self peer. The fixture's session is `+5521995544743`-something;
+/// `TEST_MEMBER` MUST be a different phone that has the operator's
+/// session in its contact list, otherwise the message lands in spam
+/// and never reaches the test peer. The event-table assertion is the
+/// daemon-side proof; the bubble render is verified manually.
+#[tokio::test]
+async fn live_send_image_to_test_member() {
+    let fix = fixture();
+    let peer_phone = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_send_image_to_test_member: skipping (set OCTO_WHATSAPP_TEST_MEMBER \
+                 to the E.164 phone of a peer device to receive the cross-device image)"
+            );
+            return;
+        }
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+    let path = write_tiny_fixture(fix, "tier2-image-peer", "jpg");
+    eprintln!(
+        "live_send_image_to_test_member: peer_jid={peer_jid}; file={path:?}; \
+         please confirm this image bubble lands on the TEST_MEMBER device."
+    );
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "send.image",
+            json!({
+                "peer": peer_jid,
+                "file": path.to_string_lossy().into_owned(),
+                "caption": format!("tier2 image peer {}", std::process::id()),
+            }),
+        )
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.image missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.image");
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| matches!(ev, InboundEvent::Message { id, .. } if id == &message_id),
+        Duration::from_secs(15),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_send_image_to_test_member: no Message event for {message_id} in 15 s; \
+             underlying: {e}"
+        )
+    });
+    if let InboundEvent::Message {
+        id, peer, kind, ..
+    } = ev
+    {
+        assert_eq!(id, message_id);
+        assert_eq!(peer, peer_jid);
+        let k = kind;
+        eprintln!("live_send_image_to_test_member: OK id={id} peer={peer} kind={k:?}");
+    } else {
+        unreachable!("predicate constrained to Message")
+    }
+}
+
+/// `live_send_image_to_self_visible` — Tier 2 self-media diagnostics.
+///
+/// Sends an image to the session's own JID via the +E164 form so the
+/// `peer_to_jid -> apply_self_routing` swap fires. Confirms the RPC
+/// succeeds AND that an `InboundEvent::Message` (synthesised by the
+/// handler after the 9f44984-era self-routing fix) lands in the events
+/// table. The bubble render on the linked WA client is verified by the
+/// operator manually checking their phone.
+///
+/// Crucial: this test uses the OPPOSITE form of the prior
+/// `live_send_image` fixture (which sends via `self_peer_jid`) by
+/// supplying the raw `+E164` so we can confirm `peer_to_jid` and the
+/// self-routing swap both behave. If they don't, the message_id from
+/// WA will differ from the synthesised event id because the dispatch
+/// went to a different JID than the one captured in `p.peer`.
+#[tokio::test]
+async fn live_send_image_to_self_visible() {
+    let fix = fixture();
+    let self_jid = self_peer_jid(fix);
+    // `self_peer_jid` returns the +E164 form: the handler must resolve
+    // it via peer_to_jid, then swap via apply_self_routing.
+    let path = write_tiny_fixture(fix, "tier2-image-self", "jpg");
+    eprintln!(
+        "live_send_image_to_self_visible: self_jid={self_jid}; file={path:?}; \
+         please confirm this image bubble lands on the operator's linked WA client."
+    );
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "send.image",
+            json!({
+                "peer": self_jid,
+                "file": path.to_string_lossy().into_owned(),
+                "caption": format!("tier2 image self {}", std::process::id()),
+            }),
+        )
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.image missing message_id: {resp}"))
+        .to_string();
+    inter_call_delay_for("send.image");
+    let ev = wait_for(
+        &fix.events_buffer,
+        |ev| matches!(ev, InboundEvent::Message { id, .. } if id == &message_id),
+        Duration::from_secs(15),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "live_send_image_to_self_visible: no Message event for {message_id} in 15 s; \
+             underlying: {e}"
+        )
+    });
+    if let InboundEvent::Message {
+        id, peer, kind, from_me, ..
+    } = ev
+    {
+        assert_eq!(id, message_id);
+        assert_eq!(peer, self_jid);
+        assert!(from_me, "self-send event must have from_me=true");
+        let k = kind;
+        eprintln!(
+            "live_send_image_to_self_visible: OK id={id} peer={peer} kind={k:?} from_me={from_me}; \
+             >>> PLEASE CONFIRM the bubble appears on the linked WA client <<<"
+        );
+    } else {
+        unreachable!("predicate constrained to Message")
+    }
+}
+
 /// `live_send_video` — Tier 2 outbound video.
 #[tokio::test]
 async fn live_send_video() {

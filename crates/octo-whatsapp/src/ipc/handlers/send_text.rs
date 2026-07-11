@@ -99,10 +99,7 @@ impl RpcHandler for SendText {
         // (`+E164`, `digits@s.whatsapp.net`, `digits@lid`) routes
         // correctly. Falls back to the primary-slot JID when the
         // session's device suffix can't be resolved.
-        let jid = match adapter.self_jid_full() {
-            Some(self_jid) if jid_digit_prefix(&jid) == jid_digit_prefix(&self_jid) => self_jid,
-            _ => jid,
-        };
+        let jid = crate::jids::apply_self_routing(&jid, adapter.self_jid_full().as_deref());
 
         let message_id = adapter
             .send_text(jid.as_str(), &p.text, p.reply_to.as_deref(), &p.mentions)
@@ -150,16 +147,6 @@ impl RpcHandler for SendText {
             "ts_unix_ms": ts_unix_ms as u64,
         }))
     }
-}
-
-/// Strip a JID down to its leading ASCII digits (the E.164 portion).
-/// Used by `SendText::call` to detect self-sends regardless of the
-/// JID envelope shape (`<digits>@s.whatsapp.net`, `<digits>@lid`,
-/// `<digits>@g.us`, or bare `<digits>` from `peer_to_jid`).
-fn jid_digit_prefix(jid: &str) -> String {
-    jid.chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
 }
 
 #[cfg(test)]

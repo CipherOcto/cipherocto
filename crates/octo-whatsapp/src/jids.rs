@@ -72,5 +72,46 @@ pub fn group_to_jid(input: &str) -> Result<String, JidError> {
     }
 }
 
+/// Leading ASCII digits of a JID (the E.164 portion). Used to detect
+/// self-sends regardless of the JID envelope shape (`<digits>@s.whatsapp.net`,
+/// `<digits>@lid`, `<digits>@g.us`, or bare `<digits>` from `peer_to_jid`).
+pub fn jid_digit_prefix(jid: &str) -> String {
+    jid.chars().take_while(|c| c.is_ascii_digit()).collect()
+}
+
+/// Self-send routing. When the user-supplied peer resolves to the same
+/// E.164 digits as the session's own canonical JID, the canonical JID
+/// (with device suffix) is returned so the dispatch lands on the
+/// operator's linked WA client. Otherwise the input JID is returned
+/// unchanged. A `None` `self_jid_full` (operator's identity hasn't
+/// resolved yet, typical for early boot) means the routing decision
+/// defaults to the caller-supplied peer.
+///
+/// Group JIDs (`@g.us`) never match because `jid_digit_prefix` returns
+/// the same leading digits for both sides, and we additionally require
+/// the post-`@` domain to match the session JID's domain — a self-send
+/// on a group address would only make sense if the operator joined the
+/// group on the linked device, in which case the dispatch is still
+/// correctly addressed (same JID either way). To be conservative we
+/// only swap when the envelopes are domain-equivalent
+/// (`s.whatsapp.net` ↔ `s.whatsapp.net`, `lid` ↔ `lid`).
+pub fn apply_self_routing(peer_jid: &str, self_jid_full: Option<&str>) -> String {
+    let Some(self_jid) = self_jid_full else {
+        return peer_jid.to_string();
+    };
+    let peer_digits = jid_digit_prefix(peer_jid);
+    let self_digits = jid_digit_prefix(self_jid);
+    if peer_digits.is_empty() || peer_digits != self_digits {
+        return peer_jid.to_string();
+    }
+    // Domain check: only swap when the envelopes share a domain shape.
+    let peer_domain = peer_jid.find('@').map(|i| &peer_jid[i..]);
+    let self_domain = self_jid.find('@').map(|i| &self_jid[i..]);
+    match (peer_domain, self_domain) {
+        (Some(p), Some(s)) if p == s => self_jid.to_string(),
+        _ => peer_jid.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests;

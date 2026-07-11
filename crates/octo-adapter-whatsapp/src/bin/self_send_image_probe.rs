@@ -89,6 +89,24 @@ async fn main() {
     };
     eprintln!("[img-probe] connected; self_jid = {self_jid_str}");
 
+    // The pn being Some does NOT mean the WA socket is fully wired —
+    // `client.upload` requires the media-conn subsystem to be ready,
+    // which only happens after the noise/handshake completes. Wait
+    // for `is_connected()` before issuing uploads, or we get a
+    // `client is not connected` error from the request layer.
+    let connected_deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < connected_deadline {
+        if client.is_connected() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    if !client.is_connected() {
+        eprintln!("[img-probe] FATAL: client.is_connected() never went true within 60s");
+        std::process::exit(1);
+    }
+    eprintln!("[img-probe] is_connected=true; ready to upload");
+
     // Resolve image path from argv or default to /tmp/1px.png.
     let image_path = std::env::args()
         .nth(1)

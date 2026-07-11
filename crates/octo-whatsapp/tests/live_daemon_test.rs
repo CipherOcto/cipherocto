@@ -4283,3 +4283,108 @@ async fn live_remove_group_profile_picture() {
     );
     eprintln!("live_remove_group_profile_picture: OK jid={jid} resp={resp}");
 }
+
+// ===========================================================================
+// Tier 3 diagnostic: capture inbound Receipt events
+// ===========================================================================
+
+/// `live_capture_receipts_for_self_dispatch` — capture every Receipt
+/// event that lands in the events buffer for 60 s after a self-send
+/// dispatch. Reports the FIRST Receipt per kind observed, so the
+/// operator can see what the daemon actually receives from the WA
+/// server when TEST_MEMBER opens the chat.
+///
+/// Set `OCTO_WHATSAPP_TEST_MEMBER` to the E.164 phone of a peer whose
+/// chat you can open on TEST_MEMBER's WA client. The test dispatches
+/// a text to that peer, prints the dispatched msg_id, then waits
+/// 60 s. While it waits, open the chat on TEST_MEMBER's WA. The
+/// test prints a summary of every distinct Receipt kind observed.
+#[tokio::test]
+async fn live_capture_receipts_for_self_dispatch() {
+    let fix = fixture();
+    let peer_phone = match std::env::var("OCTO_WHATSAPP_TEST_MEMBER").ok() {
+        Some(v) if !v.is_empty() => v,
+        _ => {
+            eprintln!(
+                "live_capture_receipts_for_self_dispatch: skipping \
+                 (set OCTO_WHATSAPP_TEST_MEMBER to the E.164 of a peer you can open)"
+            );
+            return;
+        }
+    };
+    let peer_jid = octo_whatsapp::jids::peer_to_jid(&peer_phone)
+        .unwrap_or_else(|e| panic!("OCTO_WHATSAPP_TEST_MEMBER invalid: {e}"));
+
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "send.text",
+            json!({"peer": peer_jid, "text": format!("recv-diag {}", std::process::id())}),
+        )
+        .await;
+    let message_id = resp["message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.text missing message_id: {resp}"))
+        .to_string();
+    eprintln!(
+        "live_capture_receipts_for_self_dispatch: dispatched {message_id} to {peer_jid}; \
+         you have up to 60 s to open the chat on TEST_MEMBER's WA. \
+         Every Receipt kind observed will be eprintln'd below."
+    );
+    inter_call_delay_for("send.text");
+
+    // 60 s window: collect every Receipt whose msg_id matches the
+    // dispatch, dedup by kind, and report the first arrival of each.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut saw_delivered = false;
+    let mut saw_read = false;
+    let mut saw_played = false;
+    let mut any_other = Vec::new();
+    while std::time::Instant::now() < deadline {
+        for ev in fix.events_buffer.list_recent(200) {
+            if let InboundEvent::Receipt { msg_id, kind, .. } = ev {
+                if msg_id != message_id {
+                    continue;
+                }
+                use octo_whatsapp::events::ReceiptKind;
+                match kind {
+                    ReceiptKind::Delivered if !saw_delivered => {
+                        saw_delivered = true;
+                        eprintln!(
+                            "live_capture_receipts_for_self_dispatch: kind=Delivered \
+                             arrived for {message_id}"
+                        );
+                    }
+                    ReceiptKind::Read if !saw_read => {
+                        saw_read = true;
+                        eprintln!(
+                            "live_capture_receipts_for_self_dispatch: kind=Read \
+                             arrived for {message_id}"
+                        );
+                    }
+                    ReceiptKind::Played if !saw_played => {
+                        saw_played = true;
+                        eprintln!(
+                            "live_capture_receipts_for_self_dispatch: kind=Played \
+                             arrived for {message_id}"
+                        );
+                    }
+                    other => {
+                        if !any_other.iter().any(|(k, _)| k == &format!("{other:?}")) {
+                            any_other.push((format!("{other:?}"), message_id.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if saw_delivered && saw_read && saw_played {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    eprintln!(
+        "live_capture_receipts_for_self_dispatch: summary — Delivered={saw_delivered} \
+         Read={saw_read} Played={saw_played} other={:?}",
+        any_other
+    );
+}

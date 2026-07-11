@@ -591,29 +591,33 @@ fn parse_connection(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEven
 }
 
 fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
-    // wacore emits `Receipt { r#type: ReceiptType, source: MessageSource { chat, sender, ... },
-    // message_ids: ["3EB0..."], timestamp, offline }` where `r#type` is
-    // the Rust raw-identifier escape for the field name `type`. There
-    // is NO `id:` field — message ids live inside the `message_ids:
-    // Vec<MessageId>` (MessageId = String) array. Reading the first id
-    // from that array gives us the canonical message id that consumers
-    // correlate against.
+    // wacore emits `Receipt { type: ReceiptType, source: MessageSource { chat, sender, ... },
+    // message_ids: ["3EB0..."], timestamp, offline }`. The Receipt
+    // struct field is declared `r#type` (Rust reserved-word escape)
+    // but the Debug impl on this wacore version prints it as `type`
+    // (no raw-identifier escape). There is NO `id:` field — message
+    // ids live inside the `message_ids: Vec<MessageId>` array. Reading
+    // the first id from that array gives us the canonical message id
+    // that consumers correlate against.
     //
     // The 8-variant model collapses `Read` and `Played` directly into
     // the matching `ReceiptKind`; everything else (Sent, Sender,
     // Retry, EncRekeyRetry, ReadSelf, PlayedSelf, ServerError,
     // Inactive, PeerMsg, HistorySync, Other) falls back to Delivered
     // so consumers always see a typed Receipt.
-    let kind = match field(rest, "r#type").as_deref() {
+    //
+    // We check `type` first (current wacore Debug) then fall back to
+    // `r#type` (older wacore versions that did render the raw
+    // identifier escape) and finally `kind` (legacy compat path).
+    let kind = match field(rest, "type")
+        .or_else(|| field(rest, "r#type"))
+        .or_else(|| field(rest, "kind"))
+        .as_deref()
+    {
         Some("Read") | Some("ReadSelf") => ReceiptKind::Read,
         Some("Played") | Some("PlayedSelf") => ReceiptKind::Played,
         Some("Delivered") => ReceiptKind::Delivered,
-        _ => match field(rest, "kind").as_deref() {
-            Some("Read") | Some("ReadSelf") => ReceiptKind::Read,
-            Some("Played") | Some("PlayedSelf") => ReceiptKind::Played,
-            Some("Delivered") => ReceiptKind::Delivered,
-            _ => ReceiptKind::Delivered,
-        },
+        _ => ReceiptKind::Delivered,
     };
     // Extract the first id from `message_ids: ["3EB0...", ...]`.
     let msg_id = extract_message_ids_first(rest).unwrap_or_default();

@@ -1079,6 +1079,60 @@ impl WhatsAppWebAdapter {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
 
+                    // Special-case chat-presence (typing/recording) and
+                    // availability-presence into the daemon's
+                    // `parse_presence()` shape — those variants carry
+                    // structured data (jid, kind, optional last_seen)
+                    // the Tier-4 live tests assert on, but wacore's
+                    // default Debug output uses `Event::ChatPresence(
+                    // ChatPresenceUpdate { source: MessageSource {
+                    // chat: Some(Jid { ... }), ... }, state: ..., media: ... })`
+                    // which the daemon parser does not recognise. Format
+                    // them into `Presence { jid: ..., kind: Typing|Recording,
+                    // last_seen: ... }` so `parse_presence()` matches.
+                    let custom_presence_desc: Option<String> = match &*event {
+                        Event::ChatPresence(update) => {
+                            let kind_label = match (update.state, update.media) {
+                                (
+                                    wacore::types::presence::ChatPresence::Composing,
+                                    wacore::types::presence::ChatPresenceMedia::Audio,
+                                ) => "Recording",
+                                (
+                                    wacore::types::presence::ChatPresence::Composing,
+                                    wacore::types::presence::ChatPresenceMedia::Text,
+                                ) => "Typing",
+                                (
+                                    wacore::types::presence::ChatPresence::Paused,
+                                    _,
+                                ) => "Paused",
+                            };
+                            let sender_jid = update.source.sender.to_string();
+                            Some(format!(
+                                "Presence(jid: {sender_jid:?}, kind: {kind_label}, last_seen: None)"
+                            ))
+                        }
+                        Event::Presence(update) => {
+                            let kind_label = if update.unavailable {
+                                "Unavailable"
+                            } else {
+                                "Available"
+                            };
+                            let last_seen_unix = update.last_seen.and_then(|dt| {
+                                let secs = dt.timestamp();
+                                if secs >= 0 { Some(secs) } else { None }
+                            });
+                            let from_jid = update.from.to_string();
+                            Some(format!(
+                                "Presence(jid: {from_jid:?}, kind: {kind_label}, last_seen: {last_seen_unix:?})"
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(desc) = custom_presence_desc {
+                        let _ = raw_event_tx.send(desc);
+                        return;
+                    }
+
                     // Broadcast raw event for debugging/monitoring.
                     let event_desc = format!("{:?}", event);
                     let _ = raw_event_tx.send(event_desc);
@@ -1231,7 +1285,18 @@ impl WhatsAppWebAdapter {
                             let device = client.persistence_manager().get_device_snapshot();
                             if let Some(ref pn) = device.pn {
                                 let pn_str = pn.to_string();
-                                let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
+                                // `device.pn` is a Jid — its `Display` form is
+                                // `<user>[:<device>]@<server>`. Drop the device
+                                // suffix (`:NN`) so `self_handle()` returns the
+                                // bare pn digits that the WA server recognises
+                                // for `contacts.is_on_whatsapp` lookups; the
+                                // device id is a separate dimension, never part
+                                // of the phone number.
+                                let user_part = pn_str
+                                    .split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                    .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                        pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                    });
                                 let digits = Self::normalize_phone(user_part);
                                 if !digits.is_empty() {
                                     *self_phone.lock() = Some(digits);
@@ -1253,7 +1318,13 @@ impl WhatsAppWebAdapter {
                                 let device = client.persistence_manager().get_device_snapshot();
                                 if let Some(ref pn) = device.pn {
                                     let pn_str = pn.to_string();
-                                    let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
+                                    // Drop the device suffix `:NN` — see
+                                    // `Event::Connected` branch above.
+                                    let user_part = pn_str
+                                        .split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                        .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                            pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                        });
                                     let digits = Self::normalize_phone(user_part);
                                     if !digits.is_empty() {
                                         *self_phone.lock() = Some(digits);

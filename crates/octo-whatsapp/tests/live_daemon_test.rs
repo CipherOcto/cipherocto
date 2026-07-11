@@ -4554,3 +4554,163 @@ async fn live_capture_receipts_for_self_dispatch() {
         any_other
     );
 }
+
+// ===========================================================================
+// Tier 6 — Daemon ops live tests (7.I in close-the-gap plan)
+//
+// These RPCs tune the running client's behavior live. They mutate
+// internal `Client` state but produce NO inbound event on the
+// events buffer (no IQ ACK, no notification). The only verifiable
+// ground truth is the RPC response shape: `{status: "set", ...}`.
+// We assert shape + a re-query that uses the affected path (when
+// applicable) to prove the change actually took effect.
+// ===========================================================================
+
+/// `live_set_skip_history_sync` — Tier 6 daemon op (7.I.1).
+///
+/// Toggles whether incoming history-sync notifications are skipped.
+/// The path lives on `Client::set_skip_history_sync`. The RPC
+/// returns `{status: "set", enabled}` and produces no inbound
+/// event (the toggle takes effect on the next inbound history-sync
+/// stanza). We assert shape and re-toggle to the original state so
+/// the test is idempotent across runs.
+///
+/// **Note:** There is no observable wire-level side effect we can
+/// assert against — the toggle is internal. This is a smoke test
+/// proving the RPC dispatches through to the real `Client` without
+/// panicking or returning a transport error.
+#[tokio::test]
+async fn live_set_skip_history_sync() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    // Toggle ON
+    let resp = conn
+        .call("daemon.set_skip_history_sync", json!({"enabled": true}))
+        .await;
+    assert_eq!(
+        resp["status"], "set",
+        "daemon.set_skip_history_sync must return status=set; got {resp}"
+    );
+    assert_eq!(resp["enabled"], true);
+    inter_call_delay_for("daemon.set_skip_history_sync");
+
+    // Toggle OFF — proves the second call also dispatches
+    let resp2 = conn
+        .call("daemon.set_skip_history_sync", json!({"enabled": false}))
+        .await;
+    assert_eq!(
+        resp2["status"], "set",
+        "daemon.set_skip_history_sync (re-toggle) must return status=set; got {resp2}"
+    );
+    assert_eq!(resp2["enabled"], false);
+
+    eprintln!("live_set_skip_history_sync: OK toggled on then off");
+}
+
+/// `live_set_wanted_pre_key_count` — Tier 6 daemon op (7.I.2).
+///
+/// Sets the per-upload pre-key batch size. Default is 812
+/// (`UPLOAD_KEYS_COUNT`). We set to a marker value, assert the
+/// response, then restore to default. The path lives on
+/// `Client::set_wanted_pre_key_count`; produces no inbound event.
+#[tokio::test]
+async fn live_set_wanted_pre_key_count() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    // Set to non-default marker
+    let marker_count: u32 = 1624;
+    let resp = conn
+        .call(
+            "daemon.set_wanted_pre_key_count",
+            json!({"count": marker_count}),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "set",
+        "daemon.set_wanted_pre_key_count must return status=set; got {resp}"
+    );
+    assert_eq!(
+        resp["count"].as_u64().unwrap_or(0) as u32,
+        marker_count,
+        "response count must match what we set"
+    );
+    inter_call_delay_for("daemon.set_wanted_pre_key_count");
+
+    // Restore to default so subsequent tests + the running session
+    // are not left in a non-standard state.
+    let restore = conn
+        .call("daemon.set_wanted_pre_key_count", json!({"count": 812}))
+        .await;
+    assert_eq!(
+        restore["status"], "set",
+        "daemon.set_wanted_pre_key_count (restore) must return status=set; got {restore}"
+    );
+
+    eprintln!("live_set_wanted_pre_key_count: OK set then restored (marker={marker_count} -> 812)");
+}
+
+/// `live_set_resend_rate_limit` — Tier 6 daemon op (7.I.3).
+///
+/// Retunes the per-chat outbound resend rate limiter live. Maps to
+/// `Client::set_resend_rate_limit(burst, refill_per_min)`. We set
+/// to a marker, assert shape, then restore to defaults
+/// (`burst=8, refill_per_min=60` matches `DEFAULT_RESEND_BURST` /
+/// `DEFAULT_RESEND_REFILL_PER_MIN` from whatsapp-rust).
+///
+/// Produces no inbound event; verifiable only via response shape.
+#[tokio::test]
+async fn live_set_resend_rate_limit() {
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    // Set to non-default marker
+    let marker_burst: u32 = 4;
+    let marker_refill: u32 = 30;
+    let resp = conn
+        .call(
+            "daemon.set_resend_rate_limit",
+            json!({
+                "burst": marker_burst,
+                "refill_per_min": marker_refill,
+            }),
+        )
+        .await;
+    assert_eq!(
+        resp["status"], "set",
+        "daemon.set_resend_rate_limit must return status=set; got {resp}"
+    );
+    assert_eq!(
+        resp["burst"].as_u64().unwrap_or(0) as u32,
+        marker_burst,
+        "response burst must match what we set"
+    );
+    assert_eq!(
+        resp["refill_per_min"].as_u64().unwrap_or(0) as u32,
+        marker_refill,
+        "response refill_per_min must match what we set"
+    );
+    inter_call_delay_for("daemon.set_resend_rate_limit");
+
+    // Restore to defaults so the running session is not left
+    // with a deliberately-throttled resend path.
+    let restore = conn
+        .call(
+            "daemon.set_resend_rate_limit",
+            json!({
+                "burst": 8,
+                "refill_per_min": 60,
+            }),
+        )
+        .await;
+    assert_eq!(
+        restore["status"], "set",
+        "daemon.set_resend_rate_limit (restore) must return status=set; got {restore}"
+    );
+
+    eprintln!(
+        "live_set_resend_rate_limit: OK burst={marker_burst} refill={marker_refill} \
+         then restored to (8, 60)"
+    );
+}

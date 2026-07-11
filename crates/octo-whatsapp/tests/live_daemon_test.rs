@@ -1409,6 +1409,29 @@ async fn live_receipt_read() {
         Duration::from_secs(90),
     )
     .unwrap_or_else(|e| {
+        // Diagnostic: dump recent buffer events so we can see if the
+        // Read receipt landed in some other shape that the parser
+        // didn't route to Receipt { kind: Read }.
+        eprintln!("--- live_receipt_read buffer dump (last 40) ---");
+        for ev in fix.events_buffer.list_recent(40) {
+            match ev {
+                InboundEvent::Receipt { msg_id, kind, peer, .. } => {
+                    eprintln!("  Receipt(kind={kind:?} msg_id={msg_id} peer={peer})");
+                }
+                InboundEvent::Message { id, peer, kind, .. } => {
+                    eprintln!("  Message(kind={kind:?} id={id} peer={peer})");
+                }
+                InboundEvent::Unknown { raw, .. } => {
+                    let head = raw.split_whitespace().next().unwrap_or("?");
+                    let preview: String = raw.chars().take(90).collect();
+                    eprintln!("  Unknown({head}) preview={preview:?}");
+                }
+                other => {
+                    eprintln!("  {other:?}");
+                }
+            }
+        }
+        eprintln!("--- end buffer dump ---");
         panic!(
             "live_receipt_read: no Read receipt for {message_id} in 90 s. \
              Confirm TEST_MEMBER device has the chat visibly open. Underlying: {e}"

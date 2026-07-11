@@ -591,15 +591,48 @@ fn parse_connection(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEven
 }
 
 fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
-    let kind = match field(rest, "kind").as_deref() {
-        Some("Read") => ReceiptKind::Read,
+    // wacore emits `Receipt { r#type: ReceiptType, from: ..., to: ...,
+    // id: Some("..."), timestamp: Some(...) }` where `r#type` is
+    // the Rust raw-identifier escape for the field name `type`. The
+    // 8-variant model collapses `Read` and `Played` directly into the
+    // matching `ReceiptKind`; everything else (Sent, Sender, Retry,
+    // EncRekeyRetry, ReadSelf, PlayedSelf, ServerError, Inactive,
+    // PeerMsg, HistorySync, Other) falls back to Delivered so
+    // consumers always see a typed Receipt. Read receipts from a peer
+    // viewing the chat on their linked device become kind=Read; same
+    // for Played when voice/video plays end. The legacy fallback
+    // `kind` field is also accepted because individual wacore
+    // versions have shipped both shapes.
+    let kind = match field(rest, "r#type").as_deref() {
+        Some("Read") | Some("ReadSelf") => ReceiptKind::Read,
+        Some("Played") | Some("PlayedSelf") => ReceiptKind::Played,
         Some("Delivered") => ReceiptKind::Delivered,
-        Some("Played") => ReceiptKind::Played,
-        _ => ReceiptKind::Delivered,
+        _ => match field(rest, "kind").as_deref() {
+            Some("Read") | Some("ReadSelf") => ReceiptKind::Read,
+            Some("Played") | Some("PlayedSelf") => ReceiptKind::Played,
+            Some("Delivered") => ReceiptKind::Delivered,
+            _ => ReceiptKind::Delivered,
+        },
     };
+    // wacore's id field is the message id as an Option<Vec<u8>> or
+    // Option<String> depending on the variant — for 1:1 chat receipts
+    // it's an Option<String> whose Debug form is `Some("3EB0...")`.
+    // Use the Jid-aware `extract_field` (introduced for ServerAck) to
+    // unwrap the `Some(...)` envelope. Fall back to a bare quoted-string
+    // shape for older wacore versions.
+    let msg_id = extract_field(rest, "id").unwrap_or_default();
+    // wacore emits `from` for the receipt sender (peer device that
+    // acked) and `to` for the destination. Receipts we receive from
+    // the WA server have `from` set to the acking peer; the prior
+    // SelfSend test relied on a `peer` field that doesn't exist in
+    // the wire format. Use `from` first, fall back to `to` for
+    // server-originated receipts without an acker.
+    let peer = extract_field(rest, "from")
+        .or_else(|| extract_field(rest, "to"))
+        .unwrap_or_default();
     InboundEvent::Receipt {
-        msg_id: unquote(&field(rest, "msg_id").unwrap_or_default()),
-        peer: unquote(&field(rest, "peer").unwrap_or_default()),
+        msg_id,
+        peer,
         kind,
         ts_unix_ms,
         ts_mono_ns,

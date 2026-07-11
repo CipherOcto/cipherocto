@@ -412,3 +412,93 @@ fn parser_routes_lid_server_to_lid_canonical() {
         other => panic!("expected Receipt, got {other:?}"),
     }
 }
+
+// ===========================================================================
+// Receipt parser — wacore `r#type` raw-identifier field
+//
+// The prior parser matched a non-existent `kind` field and silently
+// routed every wacore Receipt to ReceiptKind::Delivered via the
+// wildcard arm. wacore emits `r#type:` (Rust raw-identifier escape
+// for the field literally named `type`), so Read / Played receipts
+// were masquerading as Delivered. These tests pin the corrected
+// mapping so the bug class can't regress.
+// ===========================================================================
+
+#[test]
+fn parser_routes_wacore_receipt_read_kind() {
+    let raw = r#"Receipt(Receipt { r#type: Read, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), to: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), id: Some("3EB0READ"), timestamp: Some(1700000000) })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt {
+            msg_id,
+            peer,
+            kind,
+            ..
+        } => {
+            assert_eq!(msg_id, "3EB0READ");
+            assert!(matches!(kind, ReceiptKind::Read));
+            // `peer` is the acker's JID — the peer's own pn, not ours.
+            assert_eq!(peer, "15551234567@s.whatsapp.net");
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_routes_wacore_receipt_played_kind() {
+    let raw = r#"Receipt(Receipt { r#type: Played, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), to: Some(Jid { user: "9988776655", server: Pn, agent: 0, device: 25, integrator: 0 }), id: Some("3EB0PLAY"), timestamp: Some(1700000000) })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { kind, .. } => {
+            assert!(matches!(kind, ReceiptKind::Played));
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_routes_wacore_receipt_delivered_kind() {
+    let raw = r#"Receipt(Receipt { r#type: Delivered, from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), id: Some("3EB0DLV"), timestamp: Some(1700000000) })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt {
+            msg_id, kind, ..
+        } => {
+            assert_eq!(msg_id, "3EB0DLV");
+            assert!(matches!(kind, ReceiptKind::Delivered));
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_routes_wacore_receipt_read_self() {
+    let raw = r#"Receipt(Receipt { r#type: ReadSelf, from: None, id: Some("3EB0SELF"), timestamp: Some(1700000000) })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { kind, .. } => {
+            assert!(matches!(kind, ReceiptKind::Read));
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}

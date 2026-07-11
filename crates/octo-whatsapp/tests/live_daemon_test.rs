@@ -1357,7 +1357,14 @@ async fn live_receipt_delivered() {
 /// `live_receipt_read` — Tier 3 read state.
 ///
 /// Requires `OCTO_WHATSAPP_TEST_READ=1`. Operator must open the chat
-/// on the second device. Asserts `Receipt { kind: Read }` within 30 s.
+/// on the second device. Asserts `Receipt { kind: Read }` within 90 s.
+///
+/// The 90 s window (longer than the 30 s default) gives the operator
+/// realistic time to read the eprintln prompt, switch to the peer
+/// device, find the chat, and tap it open — all without racing the
+/// receipt. The Read receipt fires ~1 s after the chat window becomes
+/// foreground on the peer side, so the actual slack is much tighter
+/// than the 90 s ceiling suggests.
 #[tokio::test]
 async fn live_receipt_read() {
     let fix = fixture();
@@ -1381,6 +1388,11 @@ async fn live_receipt_read() {
         .to_string();
     inter_call_delay_for("send.text");
 
+    eprintln!(
+        "live_receipt_read: dispatched {message_id} to {peer_jid}; \
+         you have up to 90 s to open the chat on TEST_MEMBER's WA."
+    );
+
     let ev = wait_for(
         &fix.events_buffer,
         |ev| {
@@ -1394,11 +1406,11 @@ async fn live_receipt_read() {
                     && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
             )
         },
-        Duration::from_secs(30),
+        Duration::from_secs(90),
     )
     .unwrap_or_else(|e| {
         panic!(
-            "live_receipt_read: no Read receipt for {message_id} in 30 s. \
+            "live_receipt_read: no Read receipt for {message_id} in 90 s. \
              Confirm TEST_MEMBER device has the chat visibly open. Underlying: {e}"
         )
     });
@@ -1520,6 +1532,10 @@ async fn live_mark_read_emits_read_receipt() {
     // with msg_id == inbound_msg_id and kind == Read lands in our
     // OWN buffer. If wacore emits it through the same channel that
     // other receipts do, it will appear here within seconds.
+    // 90 s window (longer than the 15 s default) gives operator time
+    // to send the inbound message, capture its id from events.list,
+    // set OCTO_WHATSAPP_TEST_INBOUND_MSG_ID, and run this test — the
+    // Receipt typically fires within ~1 s of the mark_read RPC.
     let result = wait_for(
         &fix.events_buffer,
         |ev| {
@@ -1533,7 +1549,7 @@ async fn live_mark_read_emits_read_receipt() {
                     && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
             )
         },
-        Duration::from_secs(15),
+        Duration::from_secs(90),
     );
     match result {
         Ok(InboundEvent::Receipt {

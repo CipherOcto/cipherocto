@@ -329,3 +329,86 @@ fn serde_json_round_trip_receipt() {
     let back: InboundEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(ev, back);
 }
+
+// ===========================================================================
+// ServerAck → Receipt parser
+//
+// Tier 3 (receipts) relied on wacore's ServerAck events being routed to a
+// typed Receipt, but the original parser only matched the literal
+// `Receipt(` prefix and dropped everything else into Unknown. These tests
+// pin the parser behaviour so a future refactor doesn't silently break
+// the chain again.
+// ===========================================================================
+
+#[test]
+fn parser_routes_server_ack_to_receipt_kind_delivered() {
+    let raw = r#"ServerAck(ServerAck { id: "3EB0123", class: Some("message"), from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), timestamp: Some(2026-07-11T12:00:00Z), error: None })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt {
+            msg_id,
+            peer,
+            kind,
+            ..
+        } => {
+            assert_eq!(msg_id, "3EB0123");
+            assert_eq!(peer, "15551234567@s.whatsapp.net");
+            assert!(matches!(kind, ReceiptKind::Delivered));
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_routes_server_ack_with_device_suffix() {
+    let raw = r#"ServerAck(ServerAck { id: "3EB0999", class: Some("message"), from: Some(Jid { user: "5521995544743", server: Pn, agent: 0, device: 25, integrator: 0 }), timestamp: Some(2026-07-11T12:00:00Z), error: None })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { peer, .. } => {
+            assert_eq!(peer, "5521995544743:25@s.whatsapp.net");
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}
+
+#[test]
+fn parser_drops_non_message_server_ack_to_unknown() {
+    let raw = r#"ServerAck(ServerAck { id: "3EB0AAA", class: Some("receipt"), from: Some(Jid { user: "15551234567", server: Pn, agent: 0, device: 0, integrator: 0 }), timestamp: Some(2026-07-11T12:00:00Z), error: None })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    assert!(
+        matches!(ev, InboundEvent::Unknown { .. }),
+        "non-message class must stay Unknown, got {ev:?}"
+    );
+}
+
+#[test]
+fn parser_routes_lid_server_to_lid_canonical() {
+    let raw = r#"ServerAck(ServerAck { id: "3EB0BBB", class: Some("message"), from: Some(Jid { user: "999", server: Lid, agent: 0, device: 0, integrator: 0 }), timestamp: Some(2026-07-11T12:00:00Z), error: None })"#;
+    let env = EventEnvelope {
+        raw: raw.to_string(),
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+    };
+    let ev = InboundEvent::parse(env);
+    match ev {
+        InboundEvent::Receipt { peer, .. } => {
+            assert_eq!(peer, "999@lid");
+        }
+        other => panic!("expected Receipt, got {other:?}"),
+    }
+}

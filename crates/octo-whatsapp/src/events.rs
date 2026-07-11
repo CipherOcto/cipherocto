@@ -398,6 +398,20 @@ impl InboundEvent {
             parse_connection(rest, ts_unix_ms, ts_mono_ns)
         } else if let Some(rest) = raw.strip_prefix("Receipt(") {
             parse_receipt(rest, ts_unix_ms, ts_mono_ns)
+        } else if let Some(rest) = raw.strip_prefix("ServerAck(") {
+            // wacore emits `ServerAck(class="message", id, from, timestamp)`
+            // for the immediate server-side acknowledge of an outbound
+            // dispatch. The 8-variant model collapses this into
+            // `Receipt { kind: Delivered }` so the Tier-3 canary and
+            // every downstream consumer can assert on a uniform Receipt
+            // event. Class="receipt" and other non-message ServerAck
+            // classes (which are themselves peer-device delivery
+            // confirmations) are kept as typed Receipts as well — they
+            // describe the same "server confirmed delivery" semantics
+            // from the daemon's point of view. Non-message-class
+            // ServerAcks are rare (only for ack-of-ack chains) and we
+            // route them through the same parser for consistency.
+            parse_server_ack(rest, ts_unix_ms, ts_mono_ns)
         } else if let Some(rest) = raw.strip_prefix("Call(") {
             parse_call(rest, ts_unix_ms, ts_mono_ns)
         } else if let Some(rest) = raw.strip_prefix("Story(") {
@@ -590,6 +604,123 @@ fn parse_receipt(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         ts_unix_ms,
         ts_mono_ns,
     }
+}
+
+/// Parse wacore's `ServerAck` debug-formatted body. The shape is:
+///
+/// ```text
+/// ServerAck { id: "3EB0...", class: Some("message"), from: Some(Jid { ... }),
+///             timestamp: Some(2026-07-11T12:06:47Z), error: None }
+/// ```
+///
+/// We collapse the message-class server-ack into a typed
+/// `Receipt { kind: Delivered }` so consumers can assert on a single
+/// uniform event shape. The original `Unknown(ServerAck(...))` body is
+/// preserved in the events table only for the raw wacore variant when
+/// we don't recognise the class — that path is exercised by `class =
+/// None` (e.g. presence-class acks), which we drop into `Unknown`
+/// rather than fabricating a Receipt we can't substantiate.
+///
+/// The helper `field()` terminates at the first `,`, `}`, or `)` — too
+/// aggressive for `Some("...")` and `Some(Jid { ... })` values that
+/// appear as Rust Debug-wrapped enums. We hand-roll the extraction
+/// here: locate the quoted inner string directly.
+fn parse_server_ack(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
+    let class = extract_field(rest, "class");
+    let id = extract_field(rest, "id").unwrap_or_default();
+    let from = extract_field(rest, "from").unwrap_or_default();
+    if !matches!(class.as_deref(), Some("message")) {
+        return InboundEvent::Unknown {
+            raw: format!("ServerAck({rest})"),
+            ts_unix_ms,
+            ts_mono_ns,
+            untrusted: false,
+        };
+    }
+    InboundEvent::Receipt {
+        msg_id: id,
+        peer: from,
+        kind: ReceiptKind::Delivered,
+        ts_unix_ms,
+        ts_mono_ns,
+    }
+}
+
+/// Find `key: ...` in a Rust Debug dump body and return a usable
+/// string for the value. Three shapes are recognised:
+///
+///   - `key: "value"` — bare quoted string
+///   - `key: Some("value")` — enum-wrapped primitive
+///   - `key: Some(Jid { user: "X", server: Pn, ... })` — enum-wrapped
+///     Jid Debug form; this helper unwraps to the canonical `X@Pn`
+///     JID string so consumers don't have to re-parse Debug output.
+///
+/// Returns `None` if the field is absent or its shape doesn't match
+/// any of the above. The `field()` helper used elsewhere in this
+/// module terminates at the first `,`, `}`, or `)` — too aggressive
+/// for `Some(...)` and `Some(Jid { ... })` values. This helper
+/// unwraps correctly.
+fn extract_field(body: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}: ");
+    let start = body.find(&needle)? + needle.len();
+    let rest = &body[start..];
+    let rest = rest.trim_start();
+    // Bare quoted string: "value"
+    if let Some(after_quote) = rest.strip_prefix('"') {
+        let end = after_quote.find('"')?;
+        return Some(after_quote[..end].to_string());
+    }
+    // Some("value")
+    if let Some(after_some) = rest.strip_prefix("Some(\"") {
+        let end = after_some.find('"')?;
+        return Some(after_some[..end].to_string());
+    }
+    // Some(Jid { user: "X", server: Pn, device: 25, ... }) -> "X:25@Pn"
+    // when device > 0, otherwise "X@Pn". The device suffix is required
+    // by the WA wire protocol for multi-device self-echo (without it,
+    // the dispatch lands on the primary slot instead of the linked
+    // session — see the Tier 2 self-send diagnosis in
+    // commit bdf2e81a).
+    if let Some(after_jid) = rest.strip_prefix("Some(Jid ") {
+        let u_needle = "user: \"";
+        let u_start = after_jid.find(u_needle)? + u_needle.len();
+        let after_u = &after_jid[u_start..];
+        let u_end = after_u.find('"')?;
+        let user = &after_u[..u_end];
+        let s_needle = "server: ";
+        let s_start = after_jid.find(s_needle)? + s_needle.len();
+        let after_s = &after_jid[s_start..];
+        let s_end = after_s
+            .find([',', ' ', '}'])
+            .unwrap_or(after_s.len());
+        let server_raw = after_s[..s_end].trim();
+        // Map wacore's Debug repr of the server enum to the canonical
+        // WA JID domain string. Pn (phone number) and Lid (long-form
+        // identity) are the two values in the wire protocol.
+        let server = match server_raw {
+            "Pn" => "s.whatsapp.net",
+            "Lid" => "lid",
+            other => other,
+        };
+        // Optional device suffix.
+        let device = after_jid
+            .find("device: ")
+            .map(|d| {
+                let rest = &after_jid[d + "device: ".len()..];
+                let end = rest
+                    .find([',', ' ', '}'])
+                    .unwrap_or(rest.len());
+                rest[..end].trim().parse::<u8>().unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let canonical = if device > 0 {
+            format!("{user}:{device}@{server}")
+        } else {
+            format!("{user}@{server}")
+        };
+        return Some(canonical);
+    }
+    None
 }
 
 fn parse_call(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {

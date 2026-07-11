@@ -1070,6 +1070,13 @@ impl OctoWhatsAppAdapter for MockAdapter {
     fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
         Some(&self.coord_admin)
     }
+
+    /// Mock fallback: no device topology, return primary slot only.
+    /// Hermetic tests that exercise the self-send path don't care
+    /// about device-suffix routing.
+    fn self_jid_full(&self) -> Option<String> {
+        None
+    }
 }
 
 // ===========================================================================

@@ -939,6 +939,31 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     fn subscribe_raw_events(&self) -> Option<tokio::sync::broadcast::Receiver<String>> {
         None
     }
+
+    /// Returns the bot's own canonical JID (with device suffix when
+    /// the linked session is paired as a companion device), or `None`
+    /// if the adapter hasn't reached `Connected` yet.
+    ///
+    /// Distinct from the platform-agnostic `self_handle()` (digits
+    /// only) because the daemon's `send.text` handler needs the
+    /// device-suffixed form to route self-sends back to the linked
+    /// session — sending to the primary-phone slot via
+    /// `peer_to_jid("+E164")` lands on a different WA account when
+    /// the session is paired as device N (N > 0). The probe binary
+    /// (`crates/octo-adapter-whatsapp/src/bin/self_send_probe.rs`)
+    /// proves the WA round-trip works when dispatched to the
+    /// device-suffixed JID; this accessor lets the daemon's
+    /// `send.text` handler route the same way without going through
+    /// `peer_to_jid`.
+    ///
+    /// Required (no default body) because the platform-agnostic
+    /// `PlatformAdapter::self_handle` isn't in the trait's supertrait
+    /// list (adding it would force every impl to also implement
+    /// `PlatformAdapter`, which `MockAdapter` deliberately does not).
+    /// `WhatsAppWebAdapter` reads `device.pn` directly off the
+    /// underlying WA client; `MockAdapter` returns `self_handle()`
+    /// digits + `@s.whatsapp.net` (no device suffix).
+    fn self_jid_full(&self) -> Option<String>;
 }
 
 // ===========================================================================
@@ -1823,6 +1848,20 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         // The trait impl here is targeted specifically at the WA
         // backend, so calling the concrete method is appropriate.
         Some(octo_adapter_whatsapp::WhatsAppWebAdapter::subscribe_raw_events(self))
+    }
+
+    /// Override the default `self_jid_full()` to read the bot's
+    /// canonical JID directly off the underlying WA client. Delegates
+    /// to `WhatsAppWebAdapter::device_pn()`, which preserves the device
+    /// suffix (e.g. `:25` for a companion-linked session). The
+    /// default impl in the trait body falls back to `self_handle()`
+    /// digits + `@s.whatsapp.net`, which would route self-sends
+    /// through the primary-phone slot and miss the linked session
+    /// entirely. See the diagnostic probe at
+    /// `crates/octo-adapter-whatsapp/src/bin/self_send_probe.rs`
+    /// for the round-trip path this override enables.
+    fn self_jid_full(&self) -> Option<String> {
+        octo_adapter_whatsapp::WhatsAppWebAdapter::device_pn(self)
     }
 }
 

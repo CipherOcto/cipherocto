@@ -121,6 +121,7 @@ mod tests {
                 media_token: None,
                 reply_to: None,
                 mentions: Vec::new(),
+                from_me: false,
                 is_group: false,
             }),
             caller_uid: "test".into(),

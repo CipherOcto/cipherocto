@@ -524,6 +524,30 @@ impl WhatsAppWebAdapter {
                 .unwrap_or(false)
     }
 
+    /// Returns the bot's canonical JID (e.g. `5521995544743:25@s.whatsapp.net`)
+    /// — including the device suffix — by reading
+    /// `client.persistence_manager().get_device_snapshot().pn` directly.
+    ///
+    /// Distinct from `self_handle()` (digits only) because the daemon's
+    /// `send.text` handler needs the device-suffixed form to route
+    /// self-sends back to the linked session. Sending to the
+    /// primary-phone slot via `peer_to_jid("+E164")` lands on a
+    /// different WA account when the session is paired as device N
+    /// (N > 0). See the diagnostic probe at
+    /// `crates/octo-adapter-whatsapp/src/bin/self_send_probe.rs` for
+    /// the round-trip path this accessor enables.
+    ///
+    /// Returns `None` if the adapter hasn't reached `Connected` (no
+    /// bot handle yet) or if the persistence manager hasn't recorded
+    /// the device's pn yet.
+    pub fn device_pn(&self) -> Option<String> {
+        let handle_guard = self.bot_handle.try_lock()?;
+        let handle = handle_guard.as_ref()?;
+        let client = handle.client();
+        let snap = client.persistence_manager().get_device_snapshot();
+        snap.pn.as_ref().map(|p| p.to_string())
+    }
+
     /// Register a group at runtime, alongside the statically-configured
     /// `WhatsAppConfig::groups`. The group JID will be accepted by both
     /// `send_envelope`'s domain→JID lookup and the inbound

@@ -81,6 +81,29 @@ impl RpcHandler for SendText {
             message: "no adapter bound; daemon.start must precede send.text".into(),
             data: None,
         })?;
+
+        // Self-send routing. When the user-supplied peer resolves to
+        // the operator's own digits, route through the linked session's
+        // canonical JID (with device suffix) instead of the
+        // primary-phone slot that `peer_to_jid("+E164")` would
+        // produce. Companion-linked sessions (device suffix `:N`)
+        // would otherwise dispatch to a different WA account —
+        // `peer_to_jid` returns e.g. `5521995544743@s.whatsapp.net`
+        // (primary), but the linked session's identity is
+        // `5521995544743:25@s.whatsapp.net`. The probe binary at
+        // `crates/octo-adapter-whatsapp/src/bin/self_send_probe.rs`
+        // proves the device-25 round-trip works; the daemon needed
+        // the same routing to surface the bubble on the operator's
+        // WA client. Detection matches on the digits portion (the
+        // operator's old or new phone number) so either form
+        // (`+E164`, `digits@s.whatsapp.net`, `digits@lid`) routes
+        // correctly. Falls back to the primary-slot JID when the
+        // session's device suffix can't be resolved.
+        let jid = match adapter.self_jid_full() {
+            Some(self_jid) if jid_digit_prefix(&jid) == jid_digit_prefix(&self_jid) => self_jid,
+            _ => jid,
+        };
+
         let message_id = adapter
             .send_text(jid.as_str(), &p.text, p.reply_to.as_deref(), &p.mentions)
             .await
@@ -90,16 +113,53 @@ impl RpcHandler for SendText {
                 data: None,
             })?;
 
+        // Operator mandate: every dispatched text MUST surface in the
+        // events table so every linked WA client mirrors the bubble.
+        // WA's own self-echo path is unreliable on single-device
+        // sessions and filtered for 1:1 chats by the adapter's
+        // `accept_message` policy, so we synthesise a typed outbound
+        // `Message` event from this project's handler layer
+        // (independent of the adapter's `octo-adapter-whatsapp`
+        // crate). Two functions, two data flows, isolated to
+        // `octo-whatsapp`. If WA later echoes the same `message_id`,
+        // `events.list` consumers can dedup on `id`.
+        //
+        // The `sender` slot here is the bot's own JID (i.e. us). We
+        // pass the recipient peer as a stand-in when the operator's
+        // own identity hasn't been resolved yet (typical for early
+        // boot) — `events.list` consumers that need the canonical
+        // sender JID can join against `daemon.identity.*` later.
+        let ts_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let outbound_event = crate::events::InboundEvent::from_outbound_text(
+            message_id.clone(),
+            p.peer.clone(),
+            jid.to_string(),
+            p.text.clone(),
+            ts_unix_ms,
+            0,
+        );
+        h.events_buffer().push(outbound_event);
+
         Ok(serde_json::json!({
             "message_id": message_id,
             "peer": p.peer,
             "size_bytes": bytes,
-            "ts_unix_ms": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
+            "ts_unix_ms": ts_unix_ms as u64,
         }))
     }
+}
+
+/// Strip a JID down to its leading ASCII digits (the E.164 portion).
+/// Used by `SendText::call` to detect self-sends regardless of the
+/// JID envelope shape (`<digits>@s.whatsapp.net`, `<digits>@lid`,
+/// `<digits>@g.us`, or bare `<digits>` from `peer_to_jid`).
+fn jid_digit_prefix(jid: &str) -> String {
+    jid.chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
 }
 
 #[cfg(test)]

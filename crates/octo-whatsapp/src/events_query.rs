@@ -165,6 +165,7 @@ mod tests {
             reply_to: None,
             mentions: vec![],
             mentions_truncated: false,
+            from_me: false,
             is_group: false,
         }
     }

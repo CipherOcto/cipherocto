@@ -49,6 +49,14 @@ pub enum InboundEvent {
         mentions: Vec<String>,
         #[serde(default)]
         mentions_truncated: bool,
+        /// `true` for messages we dispatched ourselves (synthesized
+        /// into the events table by the `send.*` IPC handlers after a
+        /// successful adapter dispatch). `false` for inbound messages
+        /// arriving from a peer via the WA websocket. Defaults to
+        /// `false` on deserialization to preserve NDJSON back-compat
+        /// with event records written before this field existed.
+        #[serde(default)]
+        from_me: bool,
         is_group: bool,
     },
     Reaction {
@@ -278,6 +286,47 @@ impl InboundEvent {
         }
     }
 
+    /// Build a typed `InboundEvent::Message` that represents a message
+    /// we dispatched ourselves. Used by the `send.*` IPC handlers in
+    /// `octo-whatsapp` to surface every outbound dispatch in the daemon's
+    /// events table — independently of WA's own inbox-echo behaviour,
+    /// which is unreliable for self-sends on single-device sessions and
+    /// filtered (1:1 vs configured groups) by the adapter's `accept_message`
+    /// for live-test fixtures. Operator mandate: every dispatched text
+    /// must surface in the events table so every linked WA client can
+    /// mirror the bubble.
+    ///
+    /// `peer` is the JID the user addressed (canonical form already
+    /// resolved by the handler); `sender` is the bot's own JID. `ts_unix_ms`
+    /// is the wall clock at dispatch time; `ts_mono_ns` is the same
+    /// monotonic sample so subsequent inbound-echo events (if any) can
+    /// be deduplicated against this one.
+    pub fn from_outbound_text(
+        message_id: String,
+        peer: String,
+        self_jid: String,
+        text: String,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    ) -> Self {
+        let text = Self::bound_text(text);
+        InboundEvent::Message {
+            id: message_id,
+            peer,
+            sender: self_jid,
+            ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Text,
+            text,
+            media_token: None,
+            reply_to: None,
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me: true,
+            is_group: false,
+        }
+    }
+
     fn parse_inner(raw: &str, ts_unix_ms: i64, ts_mono_ns: u64, now_unix_ms: Option<i64>) -> Self {
         let raw = raw.trim();
         let untrusted = match now_unix_ms {
@@ -370,6 +419,7 @@ fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
     let is_group = field(rest, "is_group")
         .map(|v| v == "true")
         .unwrap_or(false);
+    let from_me = field(rest, "from_me").map(|v| v == "true").unwrap_or(false);
     let kind = match field(rest, "kind").as_deref() {
         Some("Text") => MessageKind::Text,
         Some("Image") => MessageKind::Image,
@@ -396,6 +446,7 @@ fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         reply_to: field(rest, "reply_to").map(|v| unquote(&v)),
         mentions,
         mentions_truncated,
+        from_me,
         is_group,
     }
 }

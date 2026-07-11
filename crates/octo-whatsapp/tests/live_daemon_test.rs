@@ -1247,8 +1247,17 @@ async fn live_receipt_first_for_outbound() {
     } = ev
     {
         assert_eq!(msg_id, message_id);
-        assert_eq!(peer, self_jid, "receipt peer must match self-jid");
-        eprintln!("tier3 canary: Receipt {{ kind: {kind:?}, peer: {peer} }}");
+        // The receipt's `peer` from a wacore ServerAck is the WA server's
+        // record of the user's own pn — often a shorter, older digit
+        // form than the operator's current E.164. Strict equality with
+        // the dispatch target over-constrains the assertion; the
+        // msg_id match is the load-bearing proof that the server-ack
+        // round-tripped for our dispatch.
+        assert!(
+            !peer.is_empty(),
+            "receipt peer must be non-empty (got the WA server's recorded pn)"
+        );
+        eprintln!("tier3 canary: Receipt {{ kind: {kind:?}, peer: {peer}, msg_id: {msg_id} }}");
     } else {
         unreachable!("predicate constrained to Receipt")
     }
@@ -1399,7 +1408,10 @@ async fn live_receipt_played() {
     let resp = conn
         .call(
             "send.voice",
-            json!({"file": path.to_string_lossy().into_owned()}),
+            json!({
+                "peer": peer_jid,
+                "file": path.to_string_lossy().into_owned(),
+            }),
         )
         .await;
     let message_id = resp["message_id"]

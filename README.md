@@ -308,6 +308,18 @@ Full token architecture described in the [Whitepaper](./docs/01-foundation/white
 
 ---
 
+## Module Installers
+
+Some modules ship a one-command installer that drops the binary + the
+right config for every detected AI-agent environment on the host.
+
+- **octo-whatsapp** — runtime CLI + MCP server (Claude Code, Cursor,
+  Continue.dev, Windsurf, Aider). See
+  [docs/distribution.md](./docs/distribution.md) and run
+  `bash scripts/install.sh`.
+
+---
+
 ## Repository Status
 
 🚧 **Seed Stage Development**

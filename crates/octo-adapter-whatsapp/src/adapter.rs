@@ -271,6 +271,14 @@ pub struct WhatsAppWebAdapter {
     inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
     /// Bot's own phone number (resolved on connect)
     self_phone: Arc<Mutex<Option<String>>>,
+    /// Companion to `self_phone` for the LID (long-form identity)
+    /// the WA server uses internally for our own account. Populated
+    /// from the same `device_snapshot()` as `self_phone`, on the
+    /// `Event::Connected` and `Event::HistorySync` paths. Exposed via
+    /// the inherent `self_lid_phone()` accessor — used by live tests
+    /// that need to assert against the LID form of our own JID
+    /// (group member lists, IQ responses).
+    self_lid: Arc<Mutex<Option<String>>>,
     /// Mission 0850p-a-notify-event-connected: a `tokio::sync::Notify` that
     /// is `notify_waiters()`-ed on `Event::Connected`. Replaces the
     /// 250 ms polling loop in `wait_for_connected` (mission
@@ -400,6 +408,19 @@ pub(crate) struct WhatsAppHandlerHandle {
 }
 
 impl WhatsAppWebAdapter {
+    /// Companion to the trait-level `self_handle()` that returns the
+    /// LID (long-form identity) the WA server uses internally for our
+    /// own account. Group-info queries and similar IQ responses list
+    /// members by LID rather than by pn, so callers that need to
+    /// assert "our own JID appears in the member list" must compare
+    /// against the LID form. Returns `None` if the device snapshot
+    /// has no LID yet (typically the same window as `self_handle()`
+    /// being None — the LID is populated alongside the pn on
+    /// `Event::Connected`).
+    pub fn self_lid_phone(&self) -> Option<String> {
+        self.self_lid.lock().clone()
+    }
+
     pub fn new(config: WhatsAppConfig) -> Self {
         let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(1024);
         Self {
@@ -409,6 +430,7 @@ impl WhatsAppWebAdapter {
             inbound_rx: Arc::new(Mutex::new(inbound_rx)),
             inbound_tx,
             self_phone: Arc::new(Mutex::new(None)),
+            self_lid: Arc::new(Mutex::new(None)),
             // Mission 0850p-a-notify-event-connected: a fresh Notify for
             // each adapter instance. `notify_waiters()` is called by
             // the Event::Connected handler; consumers (the CLI's
@@ -889,6 +911,7 @@ impl WhatsAppWebAdapter {
         // Clone values for the event handler
         let inbound_tx = self.inbound_tx.clone();
         let self_phone = self.self_phone.clone();
+        let self_lid = self.self_lid.clone();
         // Session 13: clone the QR-cycle watchdog timestamp into the
         // closure so Event::PairingQrCode refreshes it. Without this
         // clone the closure would borrow `self` and fail E0521
@@ -1049,6 +1072,7 @@ impl WhatsAppWebAdapter {
             .on_event(move |event, client| {
                 let inbound_tx = inbound_tx.clone();
                 let self_phone = self_phone.clone();
+                let self_lid = self_lid.clone();
                 let groups = groups.clone();
                 let runtime_groups = Arc::clone(&runtime_groups);
                 let conversation_jids = conversation_jids.clone();
@@ -1303,6 +1327,28 @@ impl WhatsAppWebAdapter {
                                     tracing::info!("resolved bot identity: +{user_part}");
                                 }
                             }
+                            // Populate the LID companion to `self_phone`.
+                            // Group info IQ responses list members by LID,
+                            // not by pn — without this, the live
+                            // `live_groups_info_round_trip` test cannot
+                            // assert "our own JID appears in members or
+                            // admins" against the wire-format response.
+                            if let Some(ref lid) = device.lid {
+                                let lid_str = lid.to_string();
+                                // `device.lid` is a Jid — Display form is
+                                // `<user>:<device>@<server>`. Drop the
+                                // device suffix (`:NN`) for the same reason
+                                // as the pn path above.
+                                let lid_user = lid_str
+                                    .split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                    .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                        lid_str.split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                    });
+                                if !lid_user.is_empty() {
+                                    *self_lid.lock() = Some(lid_user.to_string());
+                                    tracing::info!("resolved bot LID: {lid_user}");
+                                }
+                            }
                             // Mission 0850p-a-notify-event-connected:
                             // wake up any `wait_for_connected` consumer
                             // waiting on `Notify::notified()`.
@@ -1329,6 +1375,22 @@ impl WhatsAppWebAdapter {
                                     if !digits.is_empty() {
                                         *self_phone.lock() = Some(digits);
                                         tracing::info!("resolved bot identity from HistorySync: +{user_part}");
+                                    }
+                                }
+                                if self_lid.lock().is_none() {
+                                    if let Some(ref lid) = device.lid {
+                                        let lid_str = lid.to_string();
+                                        // Drop device suffix `:NN` — see
+                                        // `Event::Connected` branch above.
+                                        let lid_user = lid_str
+                                            .split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                            .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                                lid_str.split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                            });
+                                        if !lid_user.is_empty() {
+                                            *self_lid.lock() = Some(lid_user.to_string());
+                                            tracing::info!("resolved bot LID from HistorySync: {lid_user}");
+                                        }
                                     }
                                 }
                             }

@@ -97,6 +97,8 @@ impl RpcHandler for SendImage {
             "media_ref_token": token,
             "size_bytes": slot.size_bytes,
             "kind": kind.as_str(),
+            "peer": p.peer,
+            "routed_jid": jid,
             "ts_unix_ms": ts_unix_ms as u64,
         }))
     }

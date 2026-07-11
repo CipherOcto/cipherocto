@@ -865,6 +865,27 @@ fn write_tiny_fixture(fix: &LiveTestFixture, name: &str, ext: &str) -> std::path
     path
 }
 
+/// Smallest valid PNG (1×1 transparent, 69 bytes). The hand-rolled
+/// bytes match the IHDR/IDAT/IEND structure that WA's media pipeline
+/// expects server-side. 1 KB of zeros goes through upload (WA assigns
+/// a real `message_id`) but is rejected at the next hop — server-side
+/// media validation refuses zero-byte image bodies for self-echo even
+/// when cross-device delivery succeeds. Operator diagnostic.
+fn write_real_png_fixture(fix: &LiveTestFixture, name: &str) -> std::path::PathBuf {
+    let path = fix.tmp.path().join(format!("{name}.png"));
+    // 1×1 transparent PNG, 8-bit RGBA, non-interlaced.
+    // bytes produced by `printf '\x89PNG\r\n\x1a\n...' > /tmp/1px.png`.
+    let bytes: [u8; 69] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+        0xcf, 0xc0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x5a, 0xf1, 0x71, 0x9e, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+    std::fs::write(&path, bytes).expect("write png fixture");
+    path
+}
+
 /// Helper: send a media RPC, wait for the self-echo, assert id round-trips.
 async fn send_media_and_wait(
     fix: &LiveTestFixture,
@@ -1032,7 +1053,7 @@ async fn live_send_image_to_self_visible() {
     let self_jid = self_peer_jid(fix);
     // `self_peer_jid` returns the +E164 form: the handler must resolve
     // it via peer_to_jid, then swap via apply_self_routing.
-    let path = write_tiny_fixture(fix, "tier2-image-self", "jpg");
+    let path = write_real_png_fixture(fix, "tier2-image-self");
     eprintln!(
         "live_send_image_to_self_visible: self_jid={self_jid}; file={path:?}; \
          please confirm this image bubble lands on the operator's linked WA client."
@@ -1053,6 +1074,15 @@ async fn live_send_image_to_self_visible() {
         .as_str()
         .unwrap_or_else(|| panic!("send.image missing message_id: {resp}"))
         .to_string();
+    let routed_jid = resp["routed_jid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("send.image missing routed_jid: {resp}"))
+        .to_string();
+    eprintln!(
+        "live_send_image_to_self_visible: input peer={self_jid}; routed_jid={routed_jid}; \
+         message_id={message_id}; please compare with the official client's self-send on the \
+         same device and confirm whether the bubble renders."
+    );
     inter_call_delay_for("send.image");
     let ev = wait_for(
         &fix.events_buffer,

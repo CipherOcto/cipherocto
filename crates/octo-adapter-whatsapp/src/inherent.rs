@@ -2261,6 +2261,11 @@ impl WhatsAppWebAdapter {
 
     /// Return our PN (phone-number) JID as a string, or `None` if
     /// the device is not signed in.
+    ///
+    /// Strips the `:device` suffix from the wacore display form so
+    /// downstream consumers (RPC handlers, tests, fingerprint code)
+    /// see the canonical user-only `<digits>@s.whatsapp.net` form
+    /// they need for protocol fields (chat JID, presence target).
     pub async fn get_pn(&self) -> Result<Option<String>, PlatformAdapterError> {
         let client = {
             let guard = self.client.lock();
@@ -2271,7 +2276,19 @@ impl WhatsAppWebAdapter {
                     reason: "client not connected".into(),
                 })?
         };
-        Ok(client.get_pn().map(|j| j.to_string()))
+        Ok(client.get_pn().map(|j| {
+            let s = j.to_string();
+            // `s` looks like `<digits>[:device]@s.whatsapp.net`.
+            // Strip everything from the first `:` after `@start`
+            // through to `@` so device suffix is removed.
+            if let Some(at_idx) = s.find('@') {
+                let (user_part, rest) = s.split_at(at_idx);
+                let user = user_part.split(':').next().unwrap_or(user_part);
+                format!("{user}{rest}")
+            } else {
+                s
+            }
+        }))
     }
 
     /// Return our LID (local identifier) JID as a string, or `None`

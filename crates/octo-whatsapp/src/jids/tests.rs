@@ -199,19 +199,13 @@ fn apply_self_routing_domain_mismatch_no_swap() {
     // Cross-domain: peer on s.whatsapp.net, self on lid. Don't swap —
     // lid is the long-form identifier and may not be a valid dispatch
     // target for a user-jid peer.
-    let routed = apply_self_routing(
-        "1234567890@s.whatsapp.net",
-        Some("1234567890@lid"),
-    );
+    let routed = apply_self_routing("1234567890@s.whatsapp.net", Some("1234567890@lid"));
     assert_eq!(routed, "1234567890@s.whatsapp.net");
 }
 
 #[test]
 fn apply_self_routing_rejects_empty_self_digits() {
     // Session pn is "@s.whatsapp.net" (no digits) — must NOT swap.
-    let routed = apply_self_routing(
-        "15551234567@s.whatsapp.net",
-        Some("@s.whatsapp.net"),
-    );
+    let routed = apply_self_routing("15551234567@s.whatsapp.net", Some("@s.whatsapp.net"));
     assert_eq!(routed, "15551234567@s.whatsapp.net");
 }

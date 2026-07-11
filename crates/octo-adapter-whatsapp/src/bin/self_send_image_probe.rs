@@ -41,8 +41,8 @@ fn resolve_session_path() -> std::path::PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         format!("{home}/.local/share/octo/whatsapp")
     });
-    let session_name = std::env::var("OCTO_WHATSAPP_SESSION_NAME")
-        .unwrap_or_else(|_| "default.session.db".into());
+    let session_name =
+        std::env::var("OCTO_WHATSAPP_SESSION_NAME").unwrap_or_else(|_| "default.session.db".into());
     std::path::PathBuf::from(&persist_dir).join(&session_name)
 }
 
@@ -114,7 +114,9 @@ async fn main() {
     let image_path = std::path::PathBuf::from(&image_path);
     if !image_path.exists() {
         eprintln!("[img-probe] FATAL: image file {image_path:?} does not exist");
-        eprintln!("[img-probe] hint: generate one with `printf '\\x89PNG\\r\\n...' > /tmp/1px.png`");
+        eprintln!(
+            "[img-probe] hint: generate one with `printf '\\x89PNG\\r\\n...' > /tmp/1px.png`"
+        );
         std::process::exit(1);
     }
     let bytes = match tokio::fs::read(&image_path).await {
@@ -124,10 +126,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    eprintln!(
-        "[img-probe] read {} bytes from {image_path:?}",
-        bytes.len()
-    );
+    eprintln!("[img-probe] read {} bytes from {image_path:?}", bytes.len());
 
     // Upload to WA CDN.
     let upload = match client

@@ -115,10 +115,7 @@ pub fn apply_self_routing(peer_jid: &str, self_jid_full: Option<&str>) -> String
     // user's current phone (e.g. pn=13 digits, peer=15 digits) or
     // equal (same phone). Anything else is a different phone and we
     // don't swap.
-    if self_digits.len() < 7
-        || self_digits.is_empty()
-        || !peer_digits.starts_with(&self_digits)
-    {
+    if self_digits.len() < 7 || self_digits.is_empty() || !peer_digits.starts_with(&self_digits) {
         return peer_jid.to_string();
     }
     // Trailing-suffix guard: refuse to swap if peer_digits extends

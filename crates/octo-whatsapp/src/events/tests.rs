@@ -351,10 +351,7 @@ fn parser_routes_server_ack_to_receipt_kind_delivered() {
     let ev = InboundEvent::parse(env);
     match ev {
         InboundEvent::Receipt {
-            msg_id,
-            peer,
-            kind,
-            ..
+            msg_id, peer, kind, ..
         } => {
             assert_eq!(msg_id, "3EB0123");
             assert_eq!(peer, "15551234567@s.whatsapp.net");
@@ -435,10 +432,7 @@ fn parser_routes_wacore_receipt_read_kind() {
     let ev = InboundEvent::parse(env);
     match ev {
         InboundEvent::Receipt {
-            msg_id,
-            peer,
-            kind,
-            ..
+            msg_id, peer, kind, ..
         } => {
             assert_eq!(msg_id, "3EB0READ");
             assert!(matches!(kind, ReceiptKind::Read));
@@ -476,9 +470,7 @@ fn parser_routes_wacore_receipt_delivered_kind() {
     };
     let ev = InboundEvent::parse(env);
     match ev {
-        InboundEvent::Receipt {
-            msg_id, kind, ..
-        } => {
+        InboundEvent::Receipt { msg_id, kind, .. } => {
             assert_eq!(msg_id, "3EB0DLV");
             assert!(matches!(kind, ReceiptKind::Delivered));
         }
@@ -530,9 +522,17 @@ fn parser_extracts_msg_id_from_wacore_receipt_message_ids_field() {
     };
     let ev = InboundEvent::parse(env);
     match ev {
-        InboundEvent::Receipt { msg_id, peer, kind, .. } => {
-            assert_eq!(msg_id, "3EB0BC6BF3DF275DC4D29A", "msg_id must match the message_ids[0]");
-            assert_eq!(peer, "5521998201100@s.whatsapp.net", "peer must be the source.chat Jid");
+        InboundEvent::Receipt {
+            msg_id, peer, kind, ..
+        } => {
+            assert_eq!(
+                msg_id, "3EB0BC6BF3DF275DC4D29A",
+                "msg_id must match the message_ids[0]"
+            );
+            assert_eq!(
+                peer, "5521998201100@s.whatsapp.net",
+                "peer must be the source.chat Jid"
+            );
             assert!(matches!(kind, ReceiptKind::Delivered));
         }
         other => panic!("expected Receipt, got {other:?}"),

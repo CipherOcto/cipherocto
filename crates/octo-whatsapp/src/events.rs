@@ -698,7 +698,6 @@ fn extract_source_chat(body: &str) -> Option<String> {
     })
 }
 
-
 /// Parse wacore's `ServerAck` debug-formatted body. The shape is:
 ///
 /// ```text
@@ -783,9 +782,7 @@ fn extract_field(body: &str, key: &str) -> Option<String> {
         let s_needle = "server: ";
         let s_start = after_jid.find(s_needle)? + s_needle.len();
         let after_s = &after_jid[s_start..];
-        let s_end = after_s
-            .find([',', ' ', '}'])
-            .unwrap_or(after_s.len());
+        let s_end = after_s.find([',', ' ', '}']).unwrap_or(after_s.len());
         let server_raw = after_s[..s_end].trim();
         // Map wacore's Debug repr of the server enum to the canonical
         // WA JID domain string. Pn (phone number) and Lid (long-form
@@ -800,9 +797,7 @@ fn extract_field(body: &str, key: &str) -> Option<String> {
             .find("device: ")
             .map(|d| {
                 let rest = &after_jid[d + "device: ".len()..];
-                let end = rest
-                    .find([',', ' ', '}'])
-                    .unwrap_or(rest.len());
+                let end = rest.find([',', ' ', '}']).unwrap_or(rest.len());
                 rest[..end].trim().parse::<u8>().unwrap_or(0)
             })
             .unwrap_or(0);

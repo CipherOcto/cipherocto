@@ -129,3 +129,89 @@ fn group_to_jid_rejects_bare_digits() {
         Err(JidError::InvalidGroupFormat(_))
     ));
 }
+
+// ===========================================================================
+// apply_self_routing
+// ===========================================================================
+
+#[test]
+fn apply_self_routing_none_session_returns_peer() {
+    let routed = apply_self_routing("552199554474325@s.whatsapp.net", None);
+    assert_eq!(routed, "552199554474325@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_exact_match_swaps() {
+    let routed = apply_self_routing(
+        "552199554474325@s.whatsapp.net",
+        Some("552199554474325:25@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "552199554474325:25@s.whatsapp.net");
+}
+
+/// Operator's current phone (+552199554474325, 15 digits) vs session
+/// pn (5521995544743:25, 13 digits + :25 suffix). Old pn cache, new
+/// number. Prefix-match must fire; the swap routes to the
+/// device-suffixed session JID. This is the live case from the
+/// 2026-07-11 self-image diagnostic.
+#[test]
+fn apply_self_routing_prefix_match_swaps() {
+    let routed = apply_self_routing(
+        "552199554474325@s.whatsapp.net",
+        Some("5521995544743:25@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "5521995544743:25@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_prefix_match_e164_input() {
+    // User types +E164 form (digits only after peer_to_jid strips +).
+    let routed = apply_self_routing(
+        "552199554474325@s.whatsapp.net",
+        Some("552199554474325:7@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "552199554474325:7@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_no_match_for_other_phone() {
+    // Different operator entirely — must NOT swap.
+    let routed = apply_self_routing(
+        "15551234567@s.whatsapp.net",
+        Some("5521995544743:25@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "15551234567@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_rejects_overlong_suffix() {
+    // Adversarial: peer=55219955447439999 (13 + 5 trailing), self=5521995544743.
+    // 5 trailing > 3 limit, must NOT swap.
+    let routed = apply_self_routing(
+        "55219955447439999@s.whatsapp.net",
+        Some("5521995544743:25@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "55219955447439999@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_domain_mismatch_no_swap() {
+    // Cross-domain: peer on s.whatsapp.net, self on lid. Don't swap —
+    // lid is the long-form identifier and may not be a valid dispatch
+    // target for a user-jid peer.
+    let routed = apply_self_routing(
+        "1234567890@s.whatsapp.net",
+        Some("1234567890@lid"),
+    );
+    assert_eq!(routed, "1234567890@s.whatsapp.net");
+}
+
+#[test]
+fn apply_self_routing_rejects_empty_self_digits() {
+    // Session pn is "@s.whatsapp.net" (no digits) — must NOT swap.
+    let routed = apply_self_routing(
+        "15551234567@s.whatsapp.net",
+        Some("@s.whatsapp.net"),
+    );
+    assert_eq!(routed, "15551234567@s.whatsapp.net");
+}

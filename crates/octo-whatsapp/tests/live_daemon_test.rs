@@ -906,12 +906,14 @@ async fn send_media_and_wait(
 async fn live_send_image() {
     let fix = fixture();
     let path = write_tiny_fixture(fix, "tier2-image", "jpg");
+    let self_jid = self_peer_jid(fix);
     let mut conn = rpc(fix).await;
     // First do the call so we can assert media_ref_token shape.
     let resp = conn
         .call(
             "send.image",
             json!({
+                "peer": self_jid,
                 "file": path.to_string_lossy().into_owned(),
                 "caption": format!("tier2 image {}", std::process::id()),
             }),

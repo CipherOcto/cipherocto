@@ -10,6 +10,18 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Build a fresh monotonic-clock sample in nanoseconds. Used by
+/// `from_outbound_*` constructors and by the parser path; tests inject
+/// the source sample directly so they don't depend on `Instant::now`
+/// drift.
+pub fn now_mono_ns() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
 /// Maximum number of mentions kept inline. The design says "longer
 /// mention lists truncate with a `mentions_truncated=true` flag."
 pub const MAX_INLINE_MENTIONS: usize = 8;
@@ -319,6 +331,47 @@ impl InboundEvent {
             kind: MessageKind::Text,
             text,
             media_token: None,
+            reply_to: None,
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me: true,
+            is_group: false,
+        }
+    }
+
+    /// Mirror of `from_outbound_text` for media dispatches (image/video/audio/
+    /// voice/sticker/document). Same operator mandate: every dispatched media
+    /// must surface in the events table — WA's inbox-echo is unreliable for
+    /// self-sends and the adapter's `accept_message` filter drops 1:1 chat
+    /// messages on live-test fixtures. Two functions, two data flows,
+    /// isolated to `octo-whatsapp`. Inbound echos for the same message_id
+    /// can be deduped by `events.list` consumers.
+    ///
+    /// `kind` selects the `MessageKind` variant; `caption` becomes the
+    /// `text` slot (bounded to `MAX_INLINE_TEXT_BYTES`). `media_token` is
+    /// the upload-ref token returned by the adapter (when the RPC exposes
+    /// one — images do; voice/audio/video currently return `(id, _token)`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_outbound_media(
+        message_id: String,
+        peer: String,
+        self_jid: String,
+        kind: MessageKind,
+        caption: Option<String>,
+        media_token: Option<String>,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    ) -> Self {
+        let text = caption.map(Self::bound_text).unwrap_or_default();
+        InboundEvent::Message {
+            id: message_id,
+            peer,
+            sender: self_jid,
+            ts_unix_ms,
+            ts_mono_ns,
+            kind,
+            text,
+            media_token,
             reply_to: None,
             mentions: Vec::new(),
             mentions_truncated: false,

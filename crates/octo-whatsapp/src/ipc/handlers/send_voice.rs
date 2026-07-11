@@ -32,25 +32,50 @@ impl RpcHandler for SendVoice {
         })?;
         let kind = MediaKind::Voice;
         let slot = preflight::preflight(&h, kind, &p.file).await?;
+        let jid = crate::jids::peer_to_jid(&p.peer).map_err(|e| RpcError {
+            code: RpcErrorCode::InvalidParams.as_i32(),
+            message: format!("invalid peer: {e}"),
+            data: Some(serde_json::json!({
+                "expected_format": "E.164 or <digits>@s.whatsapp.net or <digits>@lid"
+            })),
+        })?;
         let adapter = h.adapter().ok_or(RpcError {
             code: RpcErrorCode::NotConnected.as_i32(),
             message: "no adapter bound to daemon".into(),
             data: None,
         })?;
+        let jid = crate::jids::apply_self_routing(&jid, adapter.self_jid_full().as_deref());
         let (id, token) = adapter
-            .send_voice_checked(&p.peer, &p.file, kind.max_bytes())
+            .send_voice_checked(&jid, &p.file, kind.max_bytes())
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::NotConnected.as_i32(),
                 message: format!("adapter send_voice failed: {e}"),
                 data: Some(json!({"kind": kind.as_str()})),
             })?;
+        let ts_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let ts_mono_ns = crate::events::now_mono_ns();
+        let outbound_event = crate::events::InboundEvent::from_outbound_media(
+            id.clone(),
+            p.peer.clone(),
+            jid.clone(),
+            crate::events::MessageKind::Voice,
+            None,
+            Some(token.clone()),
+            ts_unix_ms,
+            ts_mono_ns,
+        );
+        h.events_buffer().push(outbound_event);
         Ok(json!({
             "status": "sent",
             "message_id": id,
             "media_ref_token": token,
             "size_bytes": slot.size_bytes,
             "kind": kind.as_str(),
+            "ts_unix_ms": ts_unix_ms as u64,
         }))
     }
 }

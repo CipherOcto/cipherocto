@@ -17,9 +17,11 @@
 #![cfg(feature = "query")]
 
 pub mod embedder;
+pub mod embedder_job;
 pub mod ingester;
 pub mod schema;
 
 pub use embedder::{EmbedError, Embedder, HybridEmbedder, LocalCandleEmbedder};
+pub use embedder_job::{EmbedderJob, EmbedderQueue, JobConfig, JobMetrics, JobMetricsSnapshot};
 pub use ingester::{QueryError, QueryIngester};
 pub use schema::{migrate, SCHEMA_VERSION};

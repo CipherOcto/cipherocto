@@ -443,6 +443,27 @@ impl DaemonHandle {
                         // — `install` is a no-op when something is
                         // already wired.
                         self.install_query_subsystem(arc.clone());
+                        // Phase 1 task 16: hydrate derived views
+                        // from the events NDJSON canonical log so
+                        // a fresh daemon boots with all previously
+                        // persisted events searchable.
+                        let ndjson_path = self
+                            .inner
+                            .config
+                            .events
+                            .resolved_persistence_path(&self.inner.config.data_dir);
+                        match crate::query::replay_ndjson(arc.as_ref(), &ndjson_path) {
+                            Ok(n) => tracing::info!(
+                                replayed = n,
+                                path = %ndjson_path.display(),
+                                "query layer hydrated from NDJSON"
+                            ),
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                path = %ndjson_path.display(),
+                                "NDJSON replay failed; derived views start empty"
+                            ),
+                        }
                         let cancel = self.inner.cancel.clone();
                         let sub = router.subscribe(4096);
                         arc.run(sub, cancel);

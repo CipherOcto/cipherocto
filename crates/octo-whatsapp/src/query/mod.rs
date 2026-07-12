@@ -29,5 +29,5 @@ pub use embedder_job::{EmbedderJob, EmbedderQueue, JobConfig, JobMetrics, JobMet
 pub use ingester::{QueryError, QueryIngester};
 pub use schema::{migrate, SCHEMA_VERSION};
 pub use service::{EventHit, QueryService, SearchFilters, SearchHit, ServiceError};
-pub use subsystem::{open_subsystem, QuerySubsystem, SubsystemError};
+pub use subsystem::{open_subsystem, replay_ndjson, QuerySubsystem, SubsystemError};
 pub use tantivy_sidecar::{IndexedMessage, TantivyError, TantivySidecar, TextHit};

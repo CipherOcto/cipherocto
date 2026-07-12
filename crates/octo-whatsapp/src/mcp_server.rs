@@ -29,7 +29,7 @@ use serde_json::Value;
 /// get_profile_pictures / set_profile_picture / remove_profile_picture).
 /// The Session A parity-closure surface adds 6 more (reconnect.now /
 /// shutdown / rules.list / rules.get / triggers.list / triggers.get).
-pub const EXPECTED_TOOL_COUNT: usize = 100;
+pub const EXPECTED_TOOL_COUNT: usize = 103;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -836,6 +836,57 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Show details for one linked WhatsApp account.",
         schema_props_required(&[("account_id", "string")], &["account_id"]),
     ));
+    // Phase 1 task 15: query layer MCP tools. Gated by the
+    // `query` cargo feature so absent builds see no schema leak.
+    #[cfg(feature = "query")]
+    {
+        v.push(td(
+            "daemon.search",
+            "Full-text + semantic search over the persisted messages view. \
+             Returns hits with BM25 score. Filters: peer, kind, since_ts_unix_ms, \
+             until_ts_unix_ms, limit (default 50, max 200).",
+            schema_props_required(
+                &[
+                    ("query", "string"),
+                    ("peer", "string"),
+                    ("kind", "string"),
+                    ("since_ts_unix_ms", "integer"),
+                    ("until_ts_unix_ms", "integer"),
+                    ("limit", "integer"),
+                ],
+                &["query"],
+            ),
+        ));
+        v.push(td(
+            "messages.context",
+            "Surrounding messages around an event_id (before + after). \
+             Used to render a thread view around a hit.",
+            schema_props_required(
+                &[
+                    ("event_id", "integer"),
+                    ("before", "integer"),
+                    ("after", "integer"),
+                ],
+                &["event_id"],
+            ),
+        ));
+        v.push(td(
+            "events.find",
+            "Filter `events` rows by kind / variant / peer / ts window. \
+             Returns denormalized rows (no Tantivy involvement).",
+            schema_props_required(
+                &[
+                    ("kind", "string"),
+                    ("variant", "string"),
+                    ("peer", "string"),
+                    ("since_ts_unix_ms", "integer"),
+                    ("until_ts_unix_ms", "integer"),
+                    ("limit", "integer"),
+                ],
+                &[],
+            ),
+        ));
+    }
     v
 }
 
@@ -928,6 +979,14 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "events.replay" => "events.replay",
         "events.tail" => "events.tail",
         "clients.list" => "clients.list",
+        // Phase 1 task 15: query layer tool routing. Names match the
+        // tool_descriptors() entries above.
+        #[cfg(feature = "query")]
+        "daemon.search" => "daemon.search",
+        #[cfg(feature = "query")]
+        "messages.context" => "messages.context",
+        #[cfg(feature = "query")]
+        "events.find" => "events.find",
         "daemon.accounts.list" => "daemon.accounts.list",
         "daemon.accounts.use" => "daemon.accounts.use",
         "daemon.accounts.info" => "daemon.accounts.info",

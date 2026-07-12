@@ -40,6 +40,19 @@ pub struct SearchHit {
     pub score: f32,
 }
 
+/// Full event row joined from `events` + `messages`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EventHit {
+    pub event_id: i64,
+    pub kind: String,
+    pub variant: Option<String>,
+    pub peer: Option<String>,
+    pub sender: Option<String>,
+    pub chat_jid: Option<String>,
+    pub ts_unix_ms: i64,
+    pub payload: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilters {
     pub peer: Option<String>,
@@ -230,6 +243,184 @@ impl QueryService {
             })),
         }
     }
+
+    /// Fetch a single event row by id. Returns `None` if no event
+    /// matches. Joins `events` (denormalized columns) with the
+    /// optional `messages` payload so callers get text in one call.
+    pub fn by_id(&self, event_id: i64) -> Result<Option<EventHit>, ServiceError> {
+        let db: &Database = self.ingester.db();
+        let mut rows = db.query(
+            "SELECT id, kind, variant, peer, sender, chat_jid, ts_unix_ms, payload \
+             FROM events WHERE id = ?",
+            vec![Value::from(event_id)],
+        )?;
+        let row = match rows.next() {
+            None => return Ok(None),
+            Some(Err(e)) => return Err(ServiceError::Stoolap(e)),
+            Some(Ok(r)) => r,
+        };
+        Ok(Some(EventHit {
+            event_id: row.get::<i64>(0).unwrap_or(0),
+            kind: get_str(&row, 1),
+            variant: {
+                let v: String = row.get::<String>(2).unwrap_or_default();
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v)
+                }
+            },
+            peer: opt_str_opt(row.get::<String>(3)),
+            sender: opt_str_opt(row.get::<String>(4)),
+            chat_jid: opt_str_opt(row.get::<String>(5)),
+            ts_unix_ms: row.get::<i64>(6).unwrap_or(0),
+            payload: get_str(&row, 7),
+        }))
+    }
+
+    /// Filter events by kind/variant/peer/ts_window. Bypasses Tantivy
+    /// (pure SQL). Used by `events.find`.
+    pub fn find(
+        &self,
+        kind: Option<&str>,
+        variant: Option<&str>,
+        peer: Option<&str>,
+        since_ts_unix_ms: Option<i64>,
+        until_ts_unix_ms: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<EventHit>, ServiceError> {
+        let mut sql = String::from(
+            "SELECT id, kind, variant, peer, sender, chat_jid, ts_unix_ms, payload \
+             FROM events WHERE 1=1",
+        );
+        let mut params: Vec<Value> = Vec::new();
+        if let Some(k) = kind {
+            sql.push_str(" AND kind = ?");
+            params.push(Value::from(k.to_string()));
+        }
+        if let Some(v) = variant {
+            sql.push_str(" AND variant = ?");
+            params.push(Value::from(v.to_string()));
+        }
+        if let Some(p) = peer {
+            sql.push_str(" AND peer = ?");
+            params.push(Value::from(p.to_string()));
+        }
+        if let Some(s) = since_ts_unix_ms {
+            sql.push_str(" AND ts_unix_ms >= ?");
+            params.push(Value::from(s));
+        }
+        if let Some(u) = until_ts_unix_ms {
+            sql.push_str(" AND ts_unix_ms <= ?");
+            params.push(Value::from(u));
+        }
+        sql.push_str(" ORDER BY ts_unix_ms DESC LIMIT ?");
+        params.push(Value::from(limit as i64));
+        let db: &Database = self.ingester.db();
+        let rows = db.query(&sql, params)?;
+        let mut out = Vec::with_capacity(limit);
+        for row in rows {
+            let row = row?;
+            out.push(EventHit {
+                event_id: row.get::<i64>(0).unwrap_or(0),
+                kind: get_str(&row, 1),
+                variant: {
+                    let v: String = row.get::<String>(2).unwrap_or_default();
+                    if v.is_empty() {
+                        None
+                    } else {
+                        Some(v)
+                    }
+                },
+                peer: opt_str_opt(row.get::<String>(3)),
+                sender: opt_str_opt(row.get::<String>(4)),
+                chat_jid: opt_str_opt(row.get::<String>(5)),
+                ts_unix_ms: row.get::<i64>(6).unwrap_or(0),
+                payload: get_str(&row, 7),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Brute-force cosine similarity search over the `embeddings`
+    /// table. Reads every vector, computes cosine vs the query
+    /// vector (assumed L2-normalized so cosine == dot), returns the
+    /// top-`limit` matches joined to `messages` for text.
+    ///
+    /// **v1 limit**: O(N) scan. Per fork TODOs at
+    /// `stoolap/src/storage/vector/search.rs:79,93,139`, the upstream
+    /// HNSW integration path isn't usable until fixed-dim columns
+    /// stop locking us to a single model. Acceptable up to ~500k
+    /// embeddings (30-50ms per top-200 query).
+    pub fn semantic_search(
+        &self,
+        query_vec: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, ServiceError> {
+        if query_vec.is_empty() {
+            return Ok(Vec::new());
+        }
+        let db: &Database = self.ingester.db();
+        let rows = db.query("SELECT event_id, vec FROM embeddings", ())?;
+        let mut scored: Vec<(i64, f32)> = Vec::new();
+        for row in rows {
+            let row = row?;
+            let event_id = row.get::<i64>(0).unwrap_or(0);
+            // Read the VECTOR column as a `Value` then extract f32s.
+            // Stoolap doesn't impl `FromValue<Vec<f32>>` so we go
+            // through the generic Value accessor.
+            let value = row.get::<Value>(1).ok();
+            let stored = value
+                .as_ref()
+                .and_then(|v| v.as_vector_f32())
+                .unwrap_or_default();
+            if stored.is_empty() {
+                continue;
+            }
+            let score = cosine_dot(query_vec, &stored);
+            scored.push((event_id, score));
+        }
+        // Sort descending by score.
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        // Join to messages for the denormalized rows.
+        let mut out = Vec::with_capacity(limit);
+        for (event_id, score) in scored {
+            if let Some(row) = self.fetch_row(event_id)? {
+                out.push(SearchHit {
+                    event_id,
+                    score,
+                    peer: row.peer,
+                    sender: row.sender,
+                    ts_unix_ms: row.ts_unix_ms,
+                    kind: row.kind,
+                    text: row.text,
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Convert `Result<String, _>` from `row.get::<String>` into an
+/// `Option<String>` that is `None` for NULL columns (where the
+/// FromValue conversion returns an empty string) and for any
+/// type-conversion error.
+fn opt_str_opt(r: std::result::Result<String, stoolap::Error>) -> Option<String> {
+    r.ok().filter(|s| !s.is_empty())
+}
+
+/// Cosine similarity under the L2-normalized assumption (cosine ==
+/// dot product). Both vectors must be the same length.
+fn cosine_dot(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+    }
+    dot
 }
 
 /// Helper: extract a column as `String`, defaulting to empty on NULL
@@ -297,14 +488,20 @@ mod tests {
     }
 
     fn fixture() -> (Database, TantivySidecar, QueryIngester) {
-        let db = Database::open_in_memory().expect("open");
+        // Stoolap `open_in_memory` creates a unique engine per call,
+        // so we open via DSN instead — the registry keeps the engine
+        // alive across handle clones. The DSN must be unique per
+        // test or registry entries share state across fixtures.
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dsn = format!("memory://test-{pid}-{nanos}");
+        let db = Database::open(&dsn).expect("open");
         migrate(&db).expect("migrate");
         let tantivy = TantivySidecar::in_memory().expect("tantivy");
-        // Share the SAME database handle between the test and the
-        // ingester so messages rows are visible to QueryService.
-        // Stoolap in-memory databases have a single handle per DSN,
-        // so we clone the handle (cheap, Arc-backed).
-        let ingester = QueryIngester::new(db.clone());
+        let ingester = QueryIngester::new(Database::open(&dsn).expect("open2"));
         (db, tantivy, ingester)
     }
 
@@ -329,9 +526,16 @@ mod tests {
             .unwrap();
         direct_db
             .execute(
-                "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, payload) \
-                 VALUES (?, ?, 0, 'message', '{}')",
-                vec![Value::from(id as i64), Value::from(ts)],
+                "INSERT INTO events \
+                 (id, ts_unix_ms, ts_mono_ns, kind, peer, sender, chat_jid, payload) \
+                 VALUES (?, ?, 0, 'message', ?, ?, ?, '{}')",
+                vec![
+                    Value::from(id as i64),
+                    Value::from(ts),
+                    Value::from(peer.to_string()),
+                    Value::from(peer.to_string()),
+                    Value::from(peer.to_string()),
+                ],
             )
             .unwrap();
         direct_db
@@ -511,6 +715,155 @@ mod tests {
         let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
         let hits = svc.search("fuzz", &SearchFilters::default(), 10).unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn by_id_returns_event_with_payload() {
+        let (db, tantivy, ingester) = fixture();
+        ingest_message(&tantivy, &db, 42, "peer_x", "hello", 1234);
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        let hit = svc.by_id(42).unwrap().expect("event 42 exists");
+        assert_eq!(hit.event_id, 42);
+        assert_eq!(hit.kind, "message");
+        assert_eq!(hit.peer.as_deref(), Some("peer_x"));
+        assert!(!hit.payload.is_empty());
+    }
+
+    #[test]
+    fn by_id_returns_none_for_unknown() {
+        let (_db, tantivy, ingester) = fixture();
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        assert!(svc.by_id(999).unwrap().is_none());
+    }
+
+    #[test]
+    fn find_filters_by_kind_and_peer() {
+        let (db, tantivy, ingester) = fixture();
+        ingest_message(&tantivy, &db, 1, "peer_a", "msg_a", 100);
+        ingest_message(&tantivy, &db, 2, "peer_b", "msg_b", 200);
+        // Insert a receipt event for peer_a (different kind).
+        db.execute(
+            "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, variant, peer, payload) \
+             VALUES (3, 300, 0, 'receipt', 'delivered', 'peer_a', '{}')",
+            (),
+        )
+        .unwrap();
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        let hits = svc
+            .find(Some("message"), None, Some("peer_a"), None, None, 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].event_id, 1);
+        assert_eq!(hits[0].kind, "message");
+        assert_eq!(hits[0].peer.as_deref(), Some("peer_a"));
+    }
+
+    #[test]
+    fn find_filters_by_variant() {
+        let (db, tantivy, ingester) = fixture();
+        db.execute(
+            "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, variant, payload) \
+             VALUES (1, 100, 0, 'receipt', 'delivered', '{}')",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, variant, payload) \
+             VALUES (2, 200, 0, 'receipt', 'read', '{}')",
+            (),
+        )
+        .unwrap();
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        let hits = svc
+            .find(Some("receipt"), Some("read"), None, None, None, 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].variant.as_deref(), Some("read"));
+    }
+
+    #[test]
+    fn find_filters_by_ts_window() {
+        let (db, tantivy, ingester) = fixture();
+        for i in 0..5 {
+            ingest_message(
+                &tantivy,
+                &db,
+                i,
+                "p",
+                &format!("m{i}"),
+                (i + 1) as i64 * 100,
+            );
+        }
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        let hits = svc
+            .find(Some("message"), None, None, Some(200), Some(400), 10)
+            .unwrap();
+        // Window: ts ∈ [200, 400] -> messages 2, 3, 4.
+        assert_eq!(hits.len(), 3);
+        assert!(hits.iter().all(|h| (200..=400).contains(&h.ts_unix_ms)));
+    }
+
+    #[test]
+    fn semantic_search_returns_cosine_ranked_hits() {
+        // Brute-force over embeddings table — minimal fake vectors.
+        let (db, tantivy, ingester) = fixture();
+        // Insert two messages, each with a tiny vector stored in
+        // embeddings table.
+        db.execute(
+            "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, payload) VALUES (1, 100, 0, 'message', '{}')",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO messages (event_id, peer, sender, ts_unix_ms, kind, text, from_me, is_group) VALUES (1, 'p', 'p', 100, 'text', 'first', 0, 0)",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO embeddings (event_id, model_id, dims, provider, vec, ts_embed_ms) \
+             VALUES (1, 'test', 4, 'local', ?, 0)",
+            vec![Value::vector(vec![1.0f32, 0.0, 0.0, 0.0])],
+        )
+        .map_err(|e| eprintln!("err1: {e:?}"))
+        .expect("embeddings insert 1");
+        db.execute(
+            "INSERT INTO events (id, ts_unix_ms, ts_mono_ns, kind, payload) VALUES (2, 200, 0, 'message', '{}')",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO messages (event_id, peer, sender, ts_unix_ms, kind, text, from_me, is_group) VALUES (2, 'p', 'p', 200, 'text', 'second', 0, 0)",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO embeddings (event_id, model_id, dims, provider, vec, ts_embed_ms) \
+             VALUES (2, 'test', 4, 'local', ?, 0)",
+            vec![Value::vector(vec![0.0f32, 1.0, 0.0, 0.0])],
+        )
+        .expect("embeddings insert 2");
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        // Query vector aligned with event_id 1 -> cosine 1.0.
+        let hits = svc.semantic_search(&[1.0, 0.0, 0.0, 0.0], 5).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].event_id, 1);
+        assert!((hits[0].score - 1.0).abs() < 1e-6);
+        assert_eq!(hits[1].event_id, 2);
+        assert!(hits[1].score.abs() < 1e-6);
+    }
+
+    #[test]
+    fn semantic_search_empty_query_returns_empty() {
+        let (_db, tantivy, ingester) = fixture();
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        assert!(svc.semantic_search(&[], 5).unwrap().is_empty());
     }
 
     // MockEmbedder usage keeps the unused-import lint happy across

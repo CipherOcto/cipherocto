@@ -28,6 +28,6 @@ pub use embedder::{EmbedError, Embedder, HybridEmbedder, LocalCandleEmbedder};
 pub use embedder_job::{EmbedderJob, EmbedderQueue, JobConfig, JobMetrics, JobMetricsSnapshot};
 pub use ingester::{QueryError, QueryIngester};
 pub use schema::{migrate, SCHEMA_VERSION};
-pub use service::{QueryService, SearchFilters, SearchHit, ServiceError};
+pub use service::{EventHit, QueryService, SearchFilters, SearchHit, ServiceError};
 pub use subsystem::{open_subsystem, QuerySubsystem, SubsystemError};
 pub use tantivy_sidecar::{IndexedMessage, TantivyError, TantivySidecar, TextHit};

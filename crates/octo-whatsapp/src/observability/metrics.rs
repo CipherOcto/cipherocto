@@ -105,6 +105,18 @@ pub struct Metrics {
     pub stoolap_lock_held_seconds: HistogramVec,
     /// `rpc_latency_seconds{method=hash}`.
     pub rpc_latency_seconds: HistogramVec,
+    /// Phase 1 task 21 (query layer):
+    /// `octo_wa_query_embed_total{result}` — embedder batch outcomes.
+    pub query_embed_total: CounterVec,
+    /// `octo_wa_query_queue_depth` — current depth of the embedder
+    /// mpsc channel (sampled at scrape time).
+    pub query_queue_depth: Gauge,
+    /// `octo_wa_query_embed_dropped_total` — jobs dropped because
+    /// the embedder channel was full.
+    pub query_embed_dropped_total: Counter,
+    /// `octo_wa_query_search_latency_seconds{method}` — RPC-level
+    /// query timing.
+    pub query_search_latency_seconds: HistogramVec,
     /// Private label-hash secret (used by helper accessors).
     label_secret: Vec<u8>,
 }
@@ -224,6 +236,39 @@ impl Metrics {
         )?;
         registry.register(Box::new(rpc_latency_seconds.clone()))?;
 
+        // Phase 1 task 21: query-layer observability. The depth
+        // gauge is sampled by the daemon's metrics scrape task
+        // (see `subsystem_run` for the polling side); the counters
+        // + histogram are bumped from the embedder worker + RPC
+        // handlers respectively.
+        let query_embed_total = CounterVec::new(
+            Opts::new(
+                "octo_wa_query_embed_total",
+                "Embedder outcomes: ok / transient_failure / fatal_failure",
+            ),
+            &["result"],
+        )?;
+        registry.register(Box::new(query_embed_total.clone()))?;
+        let query_queue_depth = Gauge::with_opts(Opts::new(
+            "octo_wa_query_queue_depth",
+            "In-flight embedder jobs (sampled at scrape time)",
+        ))?;
+        registry.register(Box::new(query_queue_depth.clone()))?;
+        let query_embed_dropped_total = Counter::with_opts(Opts::new(
+            "octo_wa_query_embed_dropped_total",
+            "Embedder jobs dropped because the channel was full",
+        ))?;
+        registry.register(Box::new(query_embed_dropped_total.clone()))?;
+        let query_search_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "octo_wa_query_search_latency_seconds",
+                "daemon.search / messages.context / events.find RPC latency",
+            )
+            .buckets(RPC_LATENCY_BUCKETS.to_vec()),
+            &["method"],
+        )?;
+        registry.register(Box::new(query_search_latency_seconds.clone()))?;
+
         // Pre-initialize the gauge families with their one-hot zero
         // series so Prometheus doesn't show "no data" until the first
         // state transition.
@@ -249,6 +294,10 @@ impl Metrics {
             stoolap_lock_wait_seconds,
             stoolap_lock_held_seconds,
             rpc_latency_seconds,
+            query_embed_total,
+            query_queue_depth,
+            query_embed_dropped_total,
+            query_search_latency_seconds,
             label_secret: label_secret.to_vec(),
         }))
     }
@@ -287,6 +336,11 @@ impl Metrics {
             "stoolap_lock_wait_seconds".into(),
             "stoolap_lock_held_seconds".into(),
             "rpc_latency_seconds".into(),
+            // Phase 1 task 21: query-layer families.
+            "octo_wa_query_embed_total".into(),
+            "octo_wa_query_queue_depth".into(),
+            "octo_wa_query_embed_dropped_total".into(),
+            "octo_wa_query_search_latency_seconds".into(),
         ]
     }
 
@@ -375,6 +429,34 @@ impl Metrics {
     pub fn observe_rpc_latency(&self, raw_method: &str, seconds: f64) {
         let h = self.hashed(raw_method);
         self.rpc_latency_seconds
+            .with_label_values(&[&h])
+            .observe(seconds);
+    }
+
+    // ---- Phase 1 task 21: query-layer observability -----------------
+
+    /// Increment `octo_wa_query_embed_total{result}`. `result` is one
+    /// of `"ok"`, `"transient_failure"`, `"fatal_failure"`.
+    pub fn inc_query_embed(&self, result: &str) {
+        self.query_embed_total.with_label_values(&[result]).inc();
+    }
+
+    /// Increment `octo_wa_query_embed_dropped_total`.
+    pub fn inc_query_embed_dropped(&self) {
+        self.query_embed_dropped_total.inc();
+    }
+
+    /// Sample the embedder queue depth at scrape time.
+    pub fn set_query_queue_depth(&self, depth: f64) {
+        self.query_queue_depth.set(depth);
+    }
+
+    /// Observe a single search RPC latency. `raw_method` is the
+    /// canonical RPC name (`daemon.search`, `messages.context`,
+    /// `events.find`).
+    pub fn observe_query_search_latency(&self, raw_method: &str, seconds: f64) {
+        let h = self.hashed(raw_method);
+        self.query_search_latency_seconds
             .with_label_values(&[&h])
             .observe(seconds);
     }
@@ -544,6 +626,15 @@ mod tests {
     fn gather_metric_names_includes_all_families() {
         let m = Metrics::new(b"k").unwrap();
         m.inc_inbound_event("message");
+        // Touch each query metric family. CounterVec labels must be
+        // primed with at least one known result string so the
+        // family surfaces in the gather output.
+        for r in ["ok", "transient_failure", "fatal_failure"] {
+            m.inc_query_embed(r);
+        }
+        m.inc_query_embed_dropped();
+        m.set_query_queue_depth(0.0);
+        m.observe_query_search_latency("daemon.search", 0.01);
         let names = m.gather_metric_names();
         // CounterVec needs at least one observation to be gathered.
         // Counters / Gauges always show.
@@ -551,6 +642,11 @@ mod tests {
             "daemon_uptime_seconds",
             "audit_rows_total",
             "inbound_events_total",
+            // Phase 1 task 21: query-layer metric families.
+            "octo_wa_query_embed_total",
+            "octo_wa_query_embed_dropped_total",
+            "octo_wa_query_queue_depth",
+            "octo_wa_query_search_latency_seconds",
         ] {
             assert!(
                 names.iter().any(|n| n == must),

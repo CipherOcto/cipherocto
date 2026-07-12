@@ -362,7 +362,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{EventEnvelope, MessageKind};
+    use crate::events::EventEnvelope;
     use crate::query::schema::migrate;
 
     fn synth_message(id: u64, peer: &str, text: &str, ts: i64) -> InboundEvent {

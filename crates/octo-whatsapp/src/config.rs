@@ -480,6 +480,14 @@ fn default_query_config_field() -> QueryConfig {
 }
 
 fn default_data_dir() -> PathBuf {
+    // Allow operators to override the system default via env so the
+    // daemon can run from a per-user install (e.g. `cargo install`)
+    // without writing to /var/lib. Honors `OCTO_WHATSAPP_DATA_DIR`.
+    if let Ok(p) = std::env::var("OCTO_WHATSAPP_DATA_DIR") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     PathBuf::from("/var/lib/octo/whatsapp")
 }
 
@@ -487,9 +495,22 @@ fn default_account_id() -> String {
     "default".to_string()
 }
 fn default_log_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OCTO_WHATSAPP_LOG_DIR") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     PathBuf::from("/var/log/octo/whatsapp")
 }
 fn default_socket_dir() -> PathBuf {
+    // Allow per-user install override. `OCTO_WHATSAPP_SOCKET_DIR`
+    // bypasses the system `/run` default so daemons launched outside
+    // systemd can still bind a unix socket under the user's home.
+    if let Ok(p) = std::env::var("OCTO_WHATSAPP_SOCKET_DIR") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
     PathBuf::from("/run/octo/whatsapp")
 }
 

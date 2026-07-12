@@ -459,8 +459,10 @@ impl DaemonHandle {
                                 .events
                                 .resolved_persistence_path(&self.inner.config.data_dir);
                             match crate::query::replay_ndjson(arc.as_ref(), &ndjson_path) {
-                                Ok(n) => tracing::info!(
-                                    replayed = n,
+                                Ok(stats) => tracing::info!(
+                                    read = stats.lines_read,
+                                    handled = stats.lines_handled,
+                                    failed_parse = stats.lines_failed_parse,
                                     path = %ndjson_path.display(),
                                     "query layer hydrated from NDJSON"
                                 ),

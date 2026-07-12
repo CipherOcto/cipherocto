@@ -90,16 +90,43 @@ pub enum SubsystemError {
 /// one JSON object per line. Lines that fail to parse are
 /// skipped (mirroring `EventsPersister::load_initial_events`
 /// semantics).
+/// Counters emitted by [`replay_ndjson`] so operators can tell, at a
+/// glance, whether the boot-time rehydration actually saw the events
+/// they expect. Before this struct existed, the function returned a
+/// bare `u64` which conflated three distinct cases (parse ok + insert
+/// ok, parse ok + PK collision silently swallowed, parse failed and
+/// the line was skipped) into one number — a footgun that masked
+/// the replay schema mismatch discovered 2026-07-12.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayStats {
+    /// Total NDJSON lines read (including blanks; excluding read
+    /// errors).
+    pub lines_read: u64,
+    /// Lines skipped because `serde_json::from_str::<PersistedEvent>`
+    /// returned an error. Normally a hand-counted 0 once the writer
+    /// and reader agree on the schema.
+    pub lines_failed_parse: u64,
+    /// Events handed to the ingester / tantivy / embedder. The
+    /// ingester further collapses duplicate PKs silently, so this is
+    /// the count *before* dedup at the SQL layer.
+    pub lines_handled: u64,
+}
+
 #[allow(clippy::result_large_err)] // TantivyError is itself 80 bytes; boxing would only push the cost to the heap.
-pub fn replay_ndjson(s: &QuerySubsystem, path: &std::path::Path) -> Result<u64, SubsystemError> {
+pub fn replay_ndjson(
+    s: &QuerySubsystem,
+    path: &std::path::Path,
+) -> Result<ReplayStats, SubsystemError> {
     use std::io::{BufRead, BufReader};
     let f = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ReplayStats::default());
+        }
         Err(e) => return Err(SubsystemError::Io(e)),
     };
     let reader = BufReader::new(f);
-    let mut ingested: u64 = 0;
+    let mut stats = ReplayStats::default();
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
@@ -108,23 +135,41 @@ pub fn replay_ndjson(s: &QuerySubsystem, path: &std::path::Path) -> Result<u64, 
         if line.trim().is_empty() {
             continue;
         }
-        // NDJSON schema (set by EventsPersister): one line per event,
-        // three-column shape: {raw: String, ts_unix_ms: i64,
-        // ts_mono_ns: u64}. Reuse the canonical parser so the
-        // derived view stays in lock-step with the live parser.
-        match serde_json::from_str::<crate::events::EventEnvelope>(&line) {
-            Ok(env) => {
-                let ev = crate::events::InboundEvent::parse(env);
-                s.handle_one(&ev);
-                ingested += 1;
+        stats.lines_read += 1;
+        // NDJSON schema (set by [`crate::events_persister::PersistedEvent`]):
+        // four-column shape: {id, ts_unix_ms, ts_mono_ns, event} where
+        // `event` is the full `InboundEvent` (serde-tagged enum). The
+        // `id` is the monotonic buffer-assigned id **persisted with
+        // the event**, not re-derived from a process-local atomic —
+        // replay must reuse the original PKs so inserts collapse on
+        // `events.id` without colliding with live events ingested in
+        // the same boot window.
+        match serde_json::from_str::<crate::events_persister::PersistedEvent>(&line) {
+            Ok(pe) => {
+                s.handle_one_with_id(pe.id, &pe.event);
+                stats.lines_handled += 1;
             }
-            Err(_) => continue,
+            Err(e) => {
+                // Surface the first few parse errors so misaligned
+                // schemas are obvious in the log instead of silently
+                // producing `lines_handled = 0` post-boot. Only the
+                // first three are warned to avoid log floods on a
+                // fully-corrupt NDJSON.
+                if stats.lines_failed_parse < 3 {
+                    tracing::warn!(
+                        error = %e,
+                        line_preview = %&line.chars().take(120).collect::<String>(),
+                        "replay_ndjson: line failed to parse as PersistedEvent"
+                    );
+                }
+                stats.lines_failed_parse += 1;
+            }
         }
     }
     // After a bulk import, force tantivy to reload so newly indexed
     // docs are visible. Reload via the public API.
     let _ = s.tantivy.reload();
-    Ok(ingested)
+    Ok(stats)
 }
 
 #[allow(clippy::result_large_err)] // TantivyError is itself 80 bytes; boxing would only push the cost to the heap.
@@ -187,7 +232,20 @@ impl QuerySubsystem {
     /// One-shot handler exposed for tests so they can drive the
     /// subsystem without a tokio runtime.
     pub fn handle_one(&self, ev: &InboundEvent) {
+        // Live path: allocate a fresh monotonic id from the
+        // process-local counter. The buffer assigns the *same* id for
+        // the live event before broadcast, so the ingester and SQL
+        // mirror agree on PKs across all consumers.
         let id = self.next_event_id();
+        self.handle_one_with_id(id, ev);
+    }
+
+    /// Same as [`Self::handle_one`] but uses an explicit id — the
+    /// NDJSON-replay path needs this so the persisted buffer-assigned
+    /// id is preserved across boots instead of being re-derived from
+    /// the process-local counter (which restarts at 1 every boot, so
+    /// replay and live would collide on PKs).
+    pub fn handle_one_with_id(&self, id: u64, ev: &InboundEvent) {
         // 1. SQL mirror — replay-safe via insert_idempotent.
         if let Err(e) = self.ingester.ingest(id, ev) {
             tracing::warn!(error = %e, "query_subsystem: SQL ingest failed");
@@ -283,25 +341,64 @@ fn message_kind_str(kind: crate::events::MessageKind) -> &'static str {
 /// Replay an NDJSON canonical log into a fresh subsystem —
 /// asserts that what the persister writes is what the
 /// derived views end up holding.
+///
+/// The on-disk shape is [`crate::events_persister::PersistedEvent`],
+/// which serializes as `{id, ts_unix_ms, ts_mono_ns, event: <tagged
+/// enum>}`. This test writes that shape and asserts replay hydrates
+/// every layer (SQL + tantivy). Before 2026-07-12 the test fixture
+/// used the wrong schema (`EventEnvelope {raw, ts_unix_ms, ts_mono_ns}`)
+/// and silently passed because the `replay_ndjson` parser also
+/// expected the wrong schema — masking the production bug where
+/// `events.ndjson` was being read as zero rows on every boot.
 #[test]
 fn replay_ndjson_hydrates_derived_views() {
+    use crate::events::{InboundEvent, MessageKind};
+    use crate::events_persister::PersistedEvent;
+
     let dir = tempfile::tempdir().expect("tmpdir");
     let ndjson = dir.path().join("events.ndjson");
-    // Write 3 events as NDJSON lines.
-    std::fs::write(
-            &ndjson,
-            b"{\"raw\":\"Message(id: \\\"M1\\\", peer: \\\"p_a\\\", sender: \\\"p_a\\\", text: \\\"alpha\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":1000,\"ts_mono_ns\":0}\n\
-             {\"raw\":\"Message(id: \\\"M2\\\", peer: \\\"p_a\\\", sender: \\\"p_a\\\", text: \\\"beta\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":2000,\"ts_mono_ns\":0}\n\
-             {\"raw\":\"Message(id: \\\"M3\\\", peer: \\\"p_b\\\", sender: \\\"p_b\\\", text: \\\"gamma\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":3000,\"ts_mono_ns\":0}\n",
-        )
-        .unwrap();
+    let mut buf = String::new();
+    let mk = |id: u64, msg_id: &str, peer: &str, text: &str, ts: u64| -> String {
+        let ev = InboundEvent::Message {
+            id: msg_id.into(),
+            peer: peer.into(),
+            sender: peer.into(),
+            kind: MessageKind::Text,
+            text: text.into(),
+            media_token: None,
+            reply_to: None,
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            ts_unix_ms: ts as i64,
+            ts_mono_ns: 0,
+            from_me: false,
+            is_group: false,
+        };
+        serde_json::to_string(&PersistedEvent {
+            id,
+            ts_unix_ms: ts,
+            ts_mono_ns: 0,
+            event: ev,
+        })
+        .expect("serialize")
+    };
+    buf.push_str(&mk(1, "M1", "p_a", "alpha", 1000));
+    buf.push('\n');
+    buf.push_str(&mk(2, "M2", "p_a", "beta", 2000));
+    buf.push('\n');
+    buf.push_str(&mk(3, "M3", "p_b", "gamma", 3000));
+    buf.push('\n');
+    std::fs::write(&ndjson, buf.as_bytes()).unwrap();
+
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::ok("test", 384));
     let sub = Arc::new(
         open_subsystem(&dir.path().join("query"), embedder, JobConfig::default()).expect("open"),
     );
-    let n = replay_ndjson(&sub, &ndjson).expect("replay");
-    assert_eq!(n, 3);
-    // SQL row count is 3.
+    let stats = replay_ndjson(&sub, &ndjson).expect("replay");
+    assert_eq!(stats.lines_read, 3);
+    assert_eq!(stats.lines_failed_parse, 0);
+    assert_eq!(stats.lines_handled, 3);
+    // SQL row count is 3 (one per `Message` variant).
     let mut rows = sub
         .db
         .query("SELECT COUNT(*) FROM messages", ())
@@ -312,43 +409,111 @@ fn replay_ndjson_hydrates_derived_views() {
         .expect("ok")
         .get::<i64>(0)
         .expect("i");
-    assert_eq!(count, 3);
+    assert_eq!(count, 3, "all 3 Message events landed in `messages`");
     // Tantivy has 3 indexed docs.
     sub.tantivy.reload().expect("reload");
     let hits = sub.tantivy.search("alpha", 10).expect("search");
     assert_eq!(hits.len(), 1);
 }
 
-/// Replay is idempotent at the Tantivy level (same event_id
-/// deletes + re-adds collapse on the index PK). The SQL side
-/// gets a fresh monotonic PK each replay since
-/// `next_event_id()` is process-local — that's intentional
-/// for v1 (NDJSON is append-only; collapse is at index time).
+/// Replay is idempotent at both the Tantivy level (same event_id
+/// deletes + re-adds collapse on the index PK) **and** the SQL
+/// level (the buffer-assigned `id` is now preserved across replays
+/// so the `events.id` PK swallows the second insert silently).
+///
+/// Before 2026-07-12 replay used a process-local counter, so a
+/// second replay of the same NDJSON file would write *different*
+/// event_ids and never collide — meaning the SQL store silently
+/// accumulated duplicates on every boot.
 #[test]
-fn replay_ndjson_is_idempotent_at_tantivy_level() {
+fn replay_ndjson_is_idempotent() {
+    use crate::events::{InboundEvent, MessageKind};
+    use crate::events_persister::PersistedEvent;
+
     let dir = tempfile::tempdir().expect("tmpdir");
     let ndjson = dir.path().join("events.ndjson");
-    let line = br#"{"raw":"Message(id: \"M1\", peer: \"p\", sender: \"p\", text: \"hello\", kind: Text, is_group: false)","ts_unix_ms":1,"ts_mono_ns":0}"#;
-    // Write the same line twice (simulating a buggy double-emit).
-    let mut content = line.to_vec();
+    let ev = InboundEvent::Message {
+        id: "M1".into(),
+        peer: "p".into(),
+        sender: "p".into(),
+        kind: MessageKind::Text,
+        text: "hello".into(),
+        media_token: None,
+        reply_to: None,
+        mentions: Vec::new(),
+        mentions_truncated: false,
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+        from_me: false,
+        is_group: false,
+    };
+    let line = serde_json::to_string(&PersistedEvent {
+        id: 1,
+        ts_unix_ms: 1,
+        ts_mono_ns: 0,
+        event: ev.clone(),
+    })
+    .unwrap();
+    let mut content = line.as_bytes().to_vec();
     content.push(b'\n');
-    content.extend_from_slice(line);
+    content.extend_from_slice(line.as_bytes());
     content.push(b'\n');
-    std::fs::write(&ndjson, content).unwrap();
+    std::fs::write(&ndjson, &content).unwrap();
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::ok("test", 384));
     let sub = Arc::new(
         open_subsystem(&dir.path().join("query"), embedder, JobConfig::default()).expect("open"),
     );
-    let n = replay_ndjson(&sub, &ndjson).expect("replay");
-    assert_eq!(n, 2, "both lines are ingested");
-    // The subsystem assigns a fresh monotonic PK per event,
-    // so two replays of the same line land as 2 distinct
-    // rows + 2 tantivy docs. True collapse requires hashing
-    // the message contents to derive a stable PK (a v2 task);
-    // for v1 the operator must trust ndjson hygiene.
+    let stats = replay_ndjson(&sub, &ndjson).expect("replay");
+    assert_eq!(stats.lines_read, 2, "two NDJSON lines read");
+    assert_eq!(stats.lines_handled, 2, "both handed to ingester");
+    assert_eq!(stats.lines_failed_parse, 0);
+    // Both lines carry the same persisted `id: 1`, so the SQL PK
+    // collapses the second insert. We must see exactly **1** row.
+    let mut rows = sub.db.query("SELECT COUNT(*) FROM events", ()).expect("q");
+    let count = rows
+        .next()
+        .expect("row")
+        .expect("ok")
+        .get::<i64>(0)
+        .expect("i");
+    assert_eq!(count, 1, "second replay collapses on events.id PK");
     sub.tantivy.reload().expect("reload");
     let hits = sub.tantivy.search("hello", 10).expect("search");
-    assert_eq!(hits.len(), 2, "no dedup at PK level in v1");
+    assert_eq!(hits.len(), 1, "tantivy also collapses on event_id PK");
+}
+
+/// New test (2026-07-12): NDJSON lines that don't match the
+/// `PersistedEvent` schema (legacy `{raw, ts_unix_ms, ts_mono_ns}`
+/// envelope shape) must be reported as `lines_failed_parse` rather
+/// than silently skipped — this is what surfaced the production
+/// bug where replay appeared to succeed with `replayed = 0`.
+#[test]
+fn replay_ndjson_reports_parse_failures() {
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let ndjson = dir.path().join("events.ndjson");
+    // Mix of one correct PersistedEvent line + one line in the
+    // legacy EventEnvelope shape + one garbage line.
+    std::fs::write(
+        &ndjson,
+        b"{\"id\":1,\"ts_unix_ms\":100,\"ts_mono_ns\":0,\"event\":{\"event\":\"unknown\",\"raw\":\"Message(id: \\\"M1\\\", peer: \\\"p\\\", sender: \\\"p\\\", text: \\\"hi\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":100,\"ts_mono_ns\":0,\"untrusted\":false}}\n\
+          {\"raw\":\"Message(id: \\\"legacy\\\", peer: \\\"p\\\", sender: \\\"p\\\", text: \\\"old\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":1,\"ts_mono_ns\":0}\n\
+          not even close to json\n",
+    )
+    .unwrap();
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::ok("test", 384));
+    let sub = Arc::new(
+        open_subsystem(&dir.path().join("query"), embedder, JobConfig::default()).expect("open"),
+    );
+    let stats = replay_ndjson(&sub, &ndjson).expect("replay");
+    assert_eq!(stats.lines_read, 3);
+    assert_eq!(
+        stats.lines_handled, 1,
+        "only the PersistedEvent shape parses"
+    );
+    assert_eq!(
+        stats.lines_failed_parse, 2,
+        "legacy + garbage lines are flagged"
+    );
 }
 
 #[cfg(test)]

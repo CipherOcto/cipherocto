@@ -151,6 +151,12 @@ struct DaemonInner {
     /// cheap so `bind_adapter` can wire the router sink without
     /// taking ownership of the actor's JoinHandle.
     events_persister: Option<crate::events_persister::PersisterIngress>,
+    /// Phase 0 (query layer): test seam that overrides the default
+    /// embedder. `None` => `LocalCandleEmbedder` scaffold. Tests
+    /// inject a deterministic `MockEmbedder` via
+    /// `set_query_embedder_for_tests`.
+    #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
+    test_embedder: std::sync::RwLock<Option<Arc<dyn crate::query::embedder::Embedder>>>,
     /// Spec compliance F18 (R1 review) + Session 4 (RFC-0909):
     /// 8-variant `BotState` mirror, encoded as `AtomicU8` for
     /// lock-free reads. Encoding: 0=Disconnected, 1=PairingQr,
@@ -390,6 +396,49 @@ impl DaemonHandle {
                     }
                 });
             }
+            // Phase 0 of `docs/plans/2026-07-11-whatsapp-query-layer-design.md`:
+            // wire the query subsystem (SQL mirror + Tantivy FTS +
+            // embedder queue) into the same broadcast. Built only when
+            // the `query` cargo feature is on.
+            #[cfg(feature = "query")]
+            {
+                let base = match self.query_base_dir() {
+                    Some(b) => b,
+                    None => {
+                        tracing::warn!(
+                            "query feature on but no base dir configured; \
+                             skipping query subsystem wiring"
+                        );
+                        tokio::spawn(async move {
+                            router.run(router_rx).await;
+                        });
+                        return;
+                    }
+                };
+                let embedder: Arc<dyn crate::query::embedder::Embedder> = self.query_embedder();
+                match crate::query::open_subsystem(
+                    &base,
+                    embedder,
+                    crate::query::JobConfig::default(),
+                ) {
+                    Ok(subsystem) => {
+                        tracing::info!(
+                            base = %base.display(),
+                            "query subsystem online"
+                        );
+                        let cancel = self.inner.cancel.clone();
+                        let sub = router.subscribe(4096);
+                        Arc::new(subsystem).run(sub, cancel);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            "query subsystem failed to open; broadcast \
+                             continues without it"
+                        );
+                    }
+                }
+            }
             tokio::spawn(async move {
                 router.run(router_rx).await;
             });
@@ -500,6 +549,53 @@ impl DaemonHandle {
 
     pub fn events_buffer(&self) -> &Arc<EventsBuffer> {
         &self.inner.events_buffer
+    }
+
+    /// Resolve the directory under which the query subsystem keeps
+    /// its derived stores (`<data_dir>/query/`). Returns `None`
+    /// when no data dir is configured (e.g. ephemeral test
+    /// daemons).
+    #[cfg(feature = "query")]
+    fn query_base_dir(&self) -> Option<std::path::PathBuf> {
+        let dir = self.inner.config.data_dir.clone();
+        if dir.as_os_str().is_empty() {
+            None
+        } else {
+            Some(dir.join("query"))
+        }
+    }
+
+    /// Construct the runtime embedder. Default is the local candle
+    /// scaffold (returns a fatal EmbedError until Phase 1 task 9
+    /// wires the forward pass); tests inject a `MockEmbedder` via
+    /// `set_query_embedder_for_tests`.
+    #[cfg(feature = "query")]
+    fn query_embedder(&self) -> Arc<dyn crate::query::embedder::Embedder> {
+        #[cfg(all(test, feature = "test-helpers"))]
+        {
+            if let Ok(guard) = self.inner.test_embedder.read() {
+                if let Some(forced) = guard.as_ref() {
+                    return forced.clone();
+                }
+            }
+        }
+        // `LocalCandleEmbedder::new()` resolves the cache directory
+        // but does not download weights — the actual forward pass
+        // arrives in Phase 1 task 9. If construction fails entirely
+        // (e.g. missing HOME), fall back to a `MockEmbedder` so the
+        // broadcast path still functions.
+        match crate::query::embedder::LocalCandleEmbedder::new() {
+            Ok(e) => Arc::new(e),
+            Err(_) => Arc::new(crate::query::embedder::MockEmbedder::ok("fallback", 384)),
+        }
+    }
+
+    /// Test seam: inject a deterministic embedder.
+    #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
+    pub fn set_query_embedder_for_tests(&self, e: Arc<dyn crate::query::embedder::Embedder>) {
+        if let Ok(mut g) = self.inner.test_embedder.write() {
+            *g = Some(e);
+        }
     }
 
     /// Spec compliance F18 (R1 review): 7-variant BotState mirror.
@@ -954,6 +1050,8 @@ impl Daemon {
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
                 events_persister,
+                #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
+                test_embedder: std::sync::RwLock::new(None),
                 bot_state: std::sync::atomic::AtomicU8::new(0), // Disconnected
                 clients: McpClientRegistry::new(),
                 rules: rule_store,

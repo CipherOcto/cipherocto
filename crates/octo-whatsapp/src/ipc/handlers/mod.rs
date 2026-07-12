@@ -41,6 +41,8 @@ pub mod envelope_send;
 pub mod envelope_send_native;
 pub mod events;
 pub mod events_create;
+#[cfg(feature = "query")]
+pub mod events_find;
 pub mod events_respond;
 pub mod groups;
 pub mod health;
@@ -53,6 +55,8 @@ pub mod labels_delete;
 pub mod labels_remove_chat_label;
 pub mod media_fetch_sticker_pack;
 pub mod media_info;
+#[cfg(feature = "query")]
+pub mod messages_context;
 pub mod messages_delete_for_me;
 pub mod messages_download;
 pub mod messages_edit;
@@ -333,6 +337,8 @@ fn build_base_registry() -> HandlerRegistry {
 #[cfg(feature = "query")]
 fn append_query_layer_handlers(reg: HandlerRegistry) -> HandlerRegistry {
     reg.register(Arc::new(daemon_search::DaemonSearch))
+        .register(Arc::new(messages_context::MessagesContext))
+        .register(Arc::new(events_find::EventsFind))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -661,6 +667,9 @@ pub const TIER7_I_DAEMON_METHODS: &[&str] = &[
     // registry-size invariant covers it without duplicating the
     // gating.
     "daemon.search",
+    // Phase 1 task 13: messages.context + events.find.
+    "messages.context",
+    "events.find",
 ];
 
 #[cfg(test)]

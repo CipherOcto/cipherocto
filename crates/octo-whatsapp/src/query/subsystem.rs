@@ -26,6 +26,17 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::events::InboundEvent;
+
+/// Wall-clock millis since the unix epoch. Used by the live path
+/// as the recorded-at timestamp when the inbound event doesn't
+/// carry an event-internal ts (Receipt / Presence / Unknown).
+fn now_unix_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 use crate::events_router::EventsSubscriber;
 use crate::query::embedder::Embedder;
 #[cfg(any(test, feature = "test-helpers"))]
@@ -146,7 +157,13 @@ pub fn replay_ndjson(
         // the same boot window.
         match serde_json::from_str::<crate::events_persister::PersistedEvent>(&line) {
             Ok(pe) => {
-                s.handle_one_with_id(pe.id, &pe.event);
+                // PersistedEvent.ts_unix_ms is the wall-clock at the
+                // time the persister first wrote the event to disk —
+                // use it as the recorded-at fallback so receipts and
+                // presence rows ingested during replay carry a
+                // meaningful chronological value instead of 0.
+                let recorded_at = (pe.ts_unix_ms as i64, pe.ts_mono_ns);
+                s.handle_one_with_id(pe.id, recorded_at, &pe.event);
                 stats.lines_handled += 1;
             }
             Err(e) => {
@@ -237,17 +254,29 @@ impl QuerySubsystem {
         // the live event before broadcast, so the ingester and SQL
         // mirror agree on PKs across all consumers.
         let id = self.next_event_id();
-        self.handle_one_with_id(id, ev);
+        // Wall-clock at the time the broadcast loop observed this
+        // event. Used as the recorded-at fallback for events whose
+        // event-internal ts is zero (Receipt / Presence / Unknown — WA
+        // doesn't ship timestamps for those variants).
+        let recorded_at = (now_unix_ms(), self.next_mono_ns());
+        self.handle_one_with_id(id, recorded_at, ev);
     }
 
-    /// Same as [`Self::handle_one`] but uses an explicit id — the
-    /// NDJSON-replay path needs this so the persisted buffer-assigned
-    /// id is preserved across boots instead of being re-derived from
-    /// the process-local counter (which restarts at 1 every boot, so
-    /// replay and live would collide on PKs).
-    pub fn handle_one_with_id(&self, id: u64, ev: &InboundEvent) {
+    /// Same as [`Self::handle_one`] but uses an explicit id and a
+    /// recorded-at timestamp supplied by the caller. The NDJSON-replay
+    /// path needs this so:
+    /// 1. the persisted buffer-assigned id is preserved across boots
+    ///    instead of being re-derived from the process-local counter
+    ///    (which restarts at 1 every boot, so replay and live would
+    ///    collide on PKs);
+    /// 2. `PersistedEvent.ts_unix_ms` / `ts_mono_ns` — i.e. the wall
+    ///    clock at the time the persister first wrote the event to
+    ///    disk — flow through into the SQL mirror so receipts and
+    ///    presence rows carry a meaningful recorded-at value instead
+    ///    of 0.
+    pub fn handle_one_with_id(&self, id: u64, recorded_at: (i64, u64), ev: &InboundEvent) {
         // 1. SQL mirror — replay-safe via insert_idempotent.
-        if let Err(e) = self.ingester.ingest(id, ev) {
+        if let Err(e) = self.ingester.ingest(id, recorded_at, ev) {
             tracing::warn!(error = %e, "query_subsystem: SQL ingest failed");
         }
         // 2. Tantivy FTS — only Message variants carry searchable text.
@@ -292,6 +321,18 @@ impl QuerySubsystem {
     /// for hermeticity — the live daemon shares the same buffer so
     /// the values line up.
     fn next_event_id(&self) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Allocate the next process-local monotonic nanosecond
+    /// counter. Used as a fallback `ts_mono_ns` when the inbound
+    /// event doesn't carry one (Receipt / Presence / Unknown). The
+    /// counter starts at 1 and increments per call — values are
+    /// comparable within a single daemon run but reset across
+    /// boots, which is acceptable for an in-memory recorded-at.
+    fn next_mono_ns(&self) -> u64 {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(1);
         COUNTER.fetch_add(1, Ordering::Relaxed)

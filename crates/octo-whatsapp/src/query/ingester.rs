@@ -54,8 +54,34 @@ impl QueryIngester {
     /// (when the variant is `Message`). `id` is the same monotonic id
     /// the `EventsBuffer` assigned; using it as the PK makes replay
     /// safe via `INSERT OR IGNORE`.
-    pub fn ingest(&self, id: u64, ev: &InboundEvent) -> Result<()> {
-        let (ts_unix_ms, ts_mono_ns) = event_ts(ev);
+    ///
+    /// `recorded_at = (ts_unix_ms, ts_mono_ns)` is the wall-clock /
+    /// monotonic pair from the time the event was *observed* by the
+    /// query subsystem — either the live broadcast loop (uses
+    /// `now()`) or the NDJSON replay path (uses
+    /// `PersistedEvent.ts_unix_ms/ts_mono_ns` set at first write).
+    /// When the event-internal ts is zero (Receipt / Presence /
+    /// Unknown variants — WA doesn't ship timestamps for those), we
+    /// fall back to `recorded_at` so the SQL row carries a
+    /// meaningful chronological value instead of 0. This keeps
+    /// `ORDER BY ts_unix_ms DESC` and `since_ts_unix_ms` filters
+    /// useful for operators.
+    pub fn ingest(&self, id: u64, recorded_at: (i64, u64), ev: &InboundEvent) -> Result<()> {
+        let (ev_ts_unix_ms, ev_ts_mono_ns) = event_ts(ev);
+        let ts_unix_ms = if ev_ts_unix_ms > 0 {
+            ev_ts_unix_ms
+        } else {
+            recorded_at.0
+        };
+        let ts_mono_ns = if ev_ts_mono_ns > 0 {
+            ev_ts_mono_ns
+        } else {
+            // recorded_at.1 is u64; stoolap::Value::from doesn't
+            // accept u64, so narrow to i64 — the value still fits
+            // for any wall-clock mono_ns we'll ever observe
+            // (Process startup ⇒ ~10^12 ns ⇒ well under 2^63).
+            recorded_at.1 as i64
+        };
         let kind = event_kind_tag(ev);
         let variant = event_variant(ev);
         let (peer, sender, chat_jid) = event_denorm(ev);
@@ -197,13 +223,16 @@ fn event_ts(ev: &InboundEvent) -> (i64, i64) {
             ts_unix_ms,
             ts_mono_ns,
             ..
-        } => (*ts_unix_ms, *ts_mono_ns as i64),
-        InboundEvent::Unknown {
+        }
+        | InboundEvent::Unknown {
             ts_unix_ms,
             ts_mono_ns,
             ..
         } => (*ts_unix_ms, *ts_mono_ns as i64),
-        InboundEvent::Presence { .. } => (now_ms(), 0),
+        // Presence carries only `last_seen` (wall-clock). Pass that
+        // through; if the daemon never observed the peer, it's `None`
+        // and the caller falls back to `recorded_at`.
+        InboundEvent::Presence { last_seen, .. } => (last_seen.unwrap_or(0), 0),
     }
 }
 
@@ -351,14 +380,6 @@ fn bool_i64(b: bool) -> Value {
     Value::from(if b { 1i64 } else { 0i64 })
 }
 
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +419,7 @@ mod tests {
             ingester
                 .ingest(
                     10 + i,
+                    (1000 + i as i64, 0),
                     &synth_message(10 + i, "peer_a", "hello", 1000 + i as i64),
                 )
                 .expect("ingest message");
@@ -426,7 +448,7 @@ mod tests {
             ts_unix_ms: 2000,
             ts_mono_ns: 0,
         });
-        ingester.ingest(42, &ev).expect("ingest receipt");
+        ingester.ingest(42, (2000, 0), &ev).expect("ingest receipt");
         assert_eq!(row_count(ingester.db(), "events"), 1);
         assert_eq!(row_count(ingester.db(), "messages"), 0);
         assert_eq!(
@@ -445,9 +467,13 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let ev = synth_message(99, "peer_c", "replay me", 5000);
-        ingester.ingest(99, &ev).expect("ingest 1");
-        ingester.ingest(99, &ev).expect("ingest 2 (replay)");
-        ingester.ingest(99, &ev).expect("ingest 3 (replay)");
+        ingester.ingest(99, (5000, 0), &ev).expect("ingest 1");
+        ingester
+            .ingest(99, (5000, 0), &ev)
+            .expect("ingest 2 (replay)");
+        ingester
+            .ingest(99, (5000, 0), &ev)
+            .expect("ingest 3 (replay)");
         assert_eq!(row_count(ingester.db(), "events"), 1);
         assert_eq!(row_count(ingester.db(), "messages"), 1);
     }
@@ -462,6 +488,7 @@ mod tests {
         ingester
             .ingest(
                 1,
+                (1, 0),
                 &InboundEvent::parse(EventEnvelope {
                     raw: "Receipt(msg_id: \"x\", peer: \"p\", type: Delivered)".into(),
                     ts_unix_ms: 1,
@@ -473,6 +500,7 @@ mod tests {
         ingester
             .ingest(
                 2,
+                (2, 0),
                 &InboundEvent::parse(EventEnvelope {
                     raw: "Receipt(msg_id: \"y\", peer: \"p\", type: Read)".into(),
                     ts_unix_ms: 2,
@@ -484,6 +512,7 @@ mod tests {
         ingester
             .ingest(
                 3,
+                (3, 0),
                 &InboundEvent::parse(EventEnvelope {
                     raw: "GroupChange(group_jid: \"g\", kind: Subject, after: \"name\", actor: \"x\")".into(),
                     ts_unix_ms: 3,
@@ -502,6 +531,72 @@ mod tests {
         assert_eq!(
             row_count_where(ingester.db(), "events", "variant = 'subject'"),
             1
+        );
+    }
+
+    /// Receipts / Presence / Unknown variants carry `ts_unix_ms = 0`
+    /// because the WA websocket doesn't include one. The ingester
+    /// must fall back to the caller-supplied `recorded_at` so the
+    /// SQL mirror has a useful chronological value (this matters
+    /// for `ORDER BY ts_unix_ms DESC` and `since_ts_unix_ms`
+    /// filters). Before 2026-07-12 every receipt row landed with
+    /// `ts_unix_ms = 0`, breaking both.
+    #[test]
+    fn recorded_at_fallback_when_event_ts_is_zero() {
+        let db = Database::open_in_memory().expect("open");
+        migrate(&db).expect("migrate");
+        let ingester = QueryIngester::new(db);
+        let ev = InboundEvent::parse(EventEnvelope {
+            // Receipt parser produces ts_unix_ms = 0 because the
+            // raw payload doesn't carry one.
+            raw: "Receipt(msg_id: \"M\", peer: \"p\", type: Delivered)".into(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        });
+        let recorded_at: (i64, u64) = (1_783_887_512_357, 999);
+        ingester
+            .ingest(7, recorded_at, &ev)
+            .expect("ingest zero-ts receipt");
+        let mut rows = ingester
+            .db()
+            .query("SELECT ts_unix_ms, ts_mono_ns FROM events WHERE id = 7", ())
+            .expect("q");
+        let row = rows.next().expect("row").expect("ok");
+        let ts: i64 = row.get::<i64>(0).unwrap();
+        let mono: i64 = row.get::<i64>(1).unwrap();
+        assert_eq!(
+            ts, recorded_at.0,
+            "ingester falls back to recorded_at when event ts is 0"
+        );
+        assert_eq!(mono, recorded_at.1 as i64);
+    }
+
+    /// When the event-internal ts is non-zero, the ingester must
+    /// use it directly (don't overwrite with `recorded_at`). The
+    /// recorded_at fallback is only for the zero case.
+    #[test]
+    fn event_internal_ts_takes_precedence_over_recorded_at() {
+        let db = Database::open_in_memory().expect("open");
+        migrate(&db).expect("migrate");
+        let ingester = QueryIngester::new(db);
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: "Receipt(msg_id: \"M\", peer: \"p\", type: Delivered)".into(),
+            ts_unix_ms: 0, // parser sets to 0 anyway; we override below via Message
+            ts_mono_ns: 0,
+        });
+        // Use a real Message variant so the event ts is non-zero.
+        let ev = synth_message(8, "peer_x", "hi", 1234);
+        let recorded_at: (i64, u64) = (9_999_999, 7);
+        ingester.ingest(8, recorded_at, &ev).expect("ingest");
+        let mut rows = ingester
+            .db()
+            .query("SELECT ts_unix_ms FROM events WHERE id = 8", ())
+            .expect("q");
+        let row = rows.next().expect("row").expect("ok");
+        let ts: i64 = row.get::<i64>(0).unwrap();
+        assert_eq!(
+            ts, 1234,
+            "event-internal ts (1234) is used, not recorded_at"
         );
     }
 }

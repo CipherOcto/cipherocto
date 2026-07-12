@@ -196,6 +196,18 @@ impl QuerySubsystem {
         &self.tantivy
     }
 
+    /// Clone the Tantivy sidecar's Arc (cheap — just bumps the
+    /// refcount) so callers like `QueryService` can hold their own
+    /// handle. Used by [`crate::daemon::DaemonHandle::install_query_subsystem`].
+    pub fn tantivy_arc(&self) -> Arc<TantivySidecar> {
+        Arc::clone(&self.tantivy)
+    }
+
+    /// Clone the ingester's Arc.
+    pub fn ingester_arc(&self) -> Arc<QueryIngester> {
+        Arc::clone(&self.ingester)
+    }
+
     /// Borrow the ingester.
     pub fn ingester(&self) -> &QueryIngester {
         &self.ingester

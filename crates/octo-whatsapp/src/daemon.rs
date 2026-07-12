@@ -157,6 +157,16 @@ struct DaemonInner {
     /// `set_query_embedder_for_tests`.
     #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
     test_embedder: std::sync::RwLock<Option<Arc<dyn crate::query::embedder::Embedder>>>,
+    /// Phase 1 (query layer): lazily-populated handle to the
+    /// `QuerySubsystem` so RPC handlers (daemon.search,
+    /// messages.context, events.find) can read from the derived
+    /// SQL + Tantivy views. Populated on first access by
+    /// `query_subsystem()` if the `query` feature is on; never
+    /// constructed when the feature is off.
+    #[cfg(feature = "query")]
+    query_subsystem: std::sync::OnceLock<Arc<crate::query::QuerySubsystem>>,
+    #[cfg(feature = "query")]
+    query_service: std::sync::OnceLock<Arc<crate::query::QueryService>>,
     /// Spec compliance F18 (R1 review) + Session 4 (RFC-0909):
     /// 8-variant `BotState` mirror, encoded as `AtomicU8` for
     /// lock-free reads. Encoding: 0=Disconnected, 1=PairingQr,
@@ -426,9 +436,16 @@ impl DaemonHandle {
                             base = %base.display(),
                             "query subsystem online"
                         );
+                        let arc = Arc::new(subsystem);
+                        // Install on the handle so RPC handlers
+                        // (daemon.search / messages.context /
+                        // events.find) can read from it. Idempotent
+                        // — `install` is a no-op when something is
+                        // already wired.
+                        self.install_query_subsystem(arc.clone());
                         let cancel = self.inner.cancel.clone();
                         let sub = router.subscribe(4096);
-                        Arc::new(subsystem).run(sub, cancel);
+                        arc.run(sub, cancel);
                     }
                     Err(e) => {
                         tracing::error!(
@@ -596,6 +613,37 @@ impl DaemonHandle {
         if let Ok(mut g) = self.inner.test_embedder.write() {
             *g = Some(e);
         }
+    }
+
+    /// Install the QuerySubsystem handle that RPC handlers read
+    /// from. Called by the live wiring at boot; tests inject a
+    /// hermetic instance directly. Returns `false` if a subsystem
+    /// was already installed (OnceLock semantics — first call wins).
+    #[cfg(feature = "query")]
+    pub fn install_query_subsystem(&self, s: Arc<crate::query::QuerySubsystem>) -> bool {
+        let inserted = self.inner.query_subsystem.set(s.clone()).is_ok();
+        if inserted {
+            let svc = Arc::new(crate::query::QueryService::new(
+                s.tantivy_arc(),
+                s.ingester_arc(),
+            ));
+            let _ = self.inner.query_service.set(svc);
+        }
+        inserted
+    }
+
+    /// Borrow the QuerySubsystem (live or test-injected). Returns
+    /// `None` if no subsystem has been installed.
+    #[cfg(feature = "query")]
+    pub fn query_subsystem(&self) -> Option<Arc<crate::query::QuerySubsystem>> {
+        self.inner.query_subsystem.get().cloned()
+    }
+
+    /// Borrow the QueryService view (Tantivy BM25 + SQL filters).
+    /// Returns `None` if no subsystem is installed.
+    #[cfg(feature = "query")]
+    pub fn query_service(&self) -> Option<Arc<crate::query::QueryService>> {
+        self.inner.query_service.get().cloned()
     }
 
     /// Spec compliance F18 (R1 review): 7-variant BotState mirror.
@@ -1052,6 +1100,10 @@ impl Daemon {
                 events_persister,
                 #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
                 test_embedder: std::sync::RwLock::new(None),
+                #[cfg(feature = "query")]
+                query_subsystem: std::sync::OnceLock::new(),
+                #[cfg(feature = "query")]
+                query_service: std::sync::OnceLock::new(),
                 bot_state: std::sync::atomic::AtomicU8::new(0), // Disconnected
                 clients: McpClientRegistry::new(),
                 rules: rule_store,

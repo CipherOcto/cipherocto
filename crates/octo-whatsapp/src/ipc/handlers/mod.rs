@@ -26,6 +26,8 @@ pub mod contacts_is_on_whatsapp;
 pub mod contacts_save_contact;
 pub mod daemon_methods;
 pub mod daemon_ops;
+#[cfg(feature = "query")]
+pub mod daemon_search;
 pub mod daemon_set_client_profile;
 pub mod daemon_set_force_active_delivery_receipts;
 pub mod daemon_set_passive;
@@ -120,6 +122,16 @@ use std::sync::Arc;
 /// Build the Phase 1 handler registry. Registering is order-independent;
 /// `HandlerRegistry::register` is the builder-style API.
 pub fn build_registry() -> HandlerRegistry {
+    let reg = build_base_registry();
+    #[cfg(feature = "query")]
+    let reg = append_query_layer_handlers(reg);
+    reg
+}
+
+/// All Phase 1-7 RPCs. The query-layer handlers (daemon.search,
+/// messages.context, events.find) are added separately and only when
+/// the `query` cargo feature is enabled.
+fn build_base_registry() -> HandlerRegistry {
     HandlerRegistry::new()
         .register(Arc::new(version::VersionGet))
         .register(Arc::new(status::StatusGet))
@@ -314,6 +326,13 @@ pub fn build_registry() -> HandlerRegistry {
         // Tier 7.F: passkey (response + confirmation)
         .register(Arc::new(passkey_send_response::PasskeySendResponse))
         .register(Arc::new(passkey_send_confirmation::PasskeySendConfirmation))
+    // Phase 1 task 12: query layer RPCs. Gated behind the `query`
+    // cargo feature; absent builds skip these handlers entirely.
+}
+
+#[cfg(feature = "query")]
+fn append_query_layer_handlers(reg: HandlerRegistry) -> HandlerRegistry {
+    reg.register(Arc::new(daemon_search::DaemonSearch))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).
@@ -637,6 +656,11 @@ pub const TIER7_I_DAEMON_METHODS: &[&str] = &[
     "daemon.set_skip_history_sync",
     "daemon.set_wanted_pre_key_count",
     "daemon.set_resend_rate_limit",
+    // Phase 1 task 12 (query layer): daemon.search only ships
+    // when the `query` cargo feature is on. Listed here so the
+    // registry-size invariant covers it without duplicating the
+    // gating.
+    "daemon.search",
 ];
 
 #[cfg(test)]

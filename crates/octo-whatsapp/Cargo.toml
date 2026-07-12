@@ -83,6 +83,19 @@ hmac       = "0.12"
 # without OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# Query layer (Phase 0 of `2026-07-11-whatsapp-query-layer-design.md`).
+# All optional, gated by `query` feature so default builds stay slim.
+# - stoolap: embedded SQL DB (file mode); fork at feat/blockchain-sql
+# - tantivy: FTS sidecar index (BM25 with simple() tokenizer)
+# - candle-*: local embedding model (all-MiniLM-L6-v2 Q4, 384d)
+stoolap             = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
+tantivy             = { version = "0.24", optional = true }
+candle-core         = { version = "0.9", optional = true }
+candle-nn           = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
+tokenizers          = { version = "0.22", optional = true }
+hf-hub              = { version = "0.4", optional = true }
+
 # Phase 5 Part B: optional OTLP tracing. Off by default; enable with
 # `--features otlp`. The library compiles cleanly with the feature
 # DISABLED — `observability/tracing.rs` is a no-op stub when `otlp`
@@ -133,6 +146,19 @@ otlp = [
 # landlock 0.5+ builder API is stable (documented in
 # `memory/whatsapp-phase5-handoff.md` "Known gaps deferred
 # beyond Phase 5").
+
+# Query layer (Phase 0+ of `docs/plans/2026-07-11-whatsapp-query-layer-design.md`).
+# Off by default in v1 to keep default builds slim; flip to default once
+# Phases 0-4 land (commit 20 in the plan).
+query = [
+  "dep:stoolap",
+  "dep:tantivy",
+  "dep:candle-core",
+  "dep:candle-nn",
+  "dep:candle-transformers",
+  "dep:tokenizers",
+  "dep:hf-hub",
+]
 
 [dev-dependencies]
 tempfile   = "3"

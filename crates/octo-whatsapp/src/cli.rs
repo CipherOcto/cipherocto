@@ -75,6 +75,11 @@ pub enum Command {
     Shutdown,
     /// Onboarding passthrough (delegates to octo-whatsapp-onboard-core).
     Onboard(OnboardCmd),
+    /// Phase 1 (query layer): full-text + semantic search over
+    /// the persisted `messages` + `events` views. Requires the
+    /// `query` cargo feature on the daemon binary.
+    #[cfg(feature = "query")]
+    Query(QueryCmd),
     /// Client session discovery (Phase 3).
     Clients(ClientsCmd),
     /// Phase 6.1: multi-account management.
@@ -583,6 +588,57 @@ pub enum AuditAction {
 pub struct ActionsCmd {
     #[command(subcommand)]
     pub action: ActionsAction,
+}
+
+/// Phase 1 (query layer): CLI mirror for `daemon.search`,
+/// `messages.context`, `events.find` RPCs.
+#[cfg(feature = "query")]
+#[derive(Debug, Args)]
+pub struct QueryCmd {
+    #[command(subcommand)]
+    pub action: QueryAction,
+}
+
+#[cfg(feature = "query")]
+#[derive(Debug, Subcommand)]
+pub enum QueryAction {
+    /// Full-text search across persisted messages.
+    Search {
+        query: String,
+        #[arg(long)]
+        peer: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        since_ts_unix_ms: Option<i64>,
+        #[arg(long)]
+        until_ts_unix_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Surrounding messages around an event_id.
+    Context {
+        event_id: i64,
+        #[arg(long)]
+        before: Option<usize>,
+        #[arg(long)]
+        after: Option<usize>,
+    },
+    /// Filter `events` rows by kind / variant / peer / ts.
+    Find {
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        variant: Option<String>,
+        #[arg(long)]
+        peer: Option<String>,
+        #[arg(long)]
+        since_ts_unix_ms: Option<i64>,
+        #[arg(long)]
+        until_ts_unix_ms: Option<i64>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1411,6 +1467,64 @@ pub fn dispatch_actions(cli: &Cli, cmd: &ActionsCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Phase 1 task 14: CLI mirror for the query-layer RPCs.
+#[cfg(feature = "query")]
+pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        QueryAction::Search {
+            query,
+            peer,
+            kind,
+            since_ts_unix_ms,
+            until_ts_unix_ms,
+            limit,
+        } => (
+            "daemon.search",
+            serde_json::json!({
+                "query": query,
+                "peer": peer,
+                "kind": kind,
+                "since_ts_unix_ms": since_ts_unix_ms,
+                "until_ts_unix_ms": until_ts_unix_ms,
+                "limit": limit,
+            }),
+        ),
+        QueryAction::Context {
+            event_id,
+            before,
+            after,
+        } => (
+            "messages.context",
+            serde_json::json!({
+                "event_id": event_id,
+                "before": before,
+                "after": after,
+            }),
+        ),
+        QueryAction::Find {
+            kind,
+            variant,
+            peer,
+            since_ts_unix_ms,
+            until_ts_unix_ms,
+            limit,
+        } => (
+            "events.find",
+            serde_json::json!({
+                "kind": kind,
+                "variant": variant,
+                "peer": peer,
+                "since_ts_unix_ms": since_ts_unix_ms,
+                "until_ts_unix_ms": until_ts_unix_ms,
+                "limit": limit,
+            }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
 /// Wire `events list` and `events show <id>` (Task 47).
 pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
@@ -1635,6 +1749,8 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Tokens(ref cmd) => dispatch_tokens(&cli, cmd),
         Command::Audit(ref cmd) => dispatch_audit(&cli, cmd),
         Command::Actions(ref cmd) => dispatch_actions(&cli, cmd),
+        #[cfg(feature = "query")]
+        Command::Query(ref cmd) => dispatch_query(&cli, cmd),
     }
 }
 

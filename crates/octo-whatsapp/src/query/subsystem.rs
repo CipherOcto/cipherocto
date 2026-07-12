@@ -28,6 +28,7 @@ use std::sync::Arc;
 use crate::events::InboundEvent;
 use crate::events_router::EventsSubscriber;
 use crate::query::embedder::Embedder;
+#[cfg(any(test, feature = "test-helpers"))]
 use crate::query::embedder::MockEmbedder;
 use crate::query::embedder_job::{EmbedderJob, EmbedderQueue, JobConfig};
 use crate::query::ingester::{QueryError, QueryIngester};
@@ -89,6 +90,7 @@ pub enum SubsystemError {
 /// one JSON object per line. Lines that fail to parse are
 /// skipped (mirroring `EventsPersister::load_initial_events`
 /// semantics).
+#[allow(clippy::result_large_err)] // TantivyError is itself 80 bytes; boxing would only push the cost to the heap.
 pub fn replay_ndjson(s: &QuerySubsystem, path: &std::path::Path) -> Result<u64, SubsystemError> {
     use std::io::{BufRead, BufReader};
     let f = match std::fs::File::open(path) {

@@ -186,3 +186,53 @@ fn media_buffer_config_validates() {
     };
     assert!(bad.validate().is_err());
 }
+
+#[test]
+fn query_config_defaults_match_documented_values() {
+    let q = QueryConfig::default();
+    assert_eq!(q.embed_provider, "local");
+    assert_eq!(q.queue_capacity, 1024);
+    assert_eq!(q.batch_size, 32);
+    assert_eq!(q.batch_window_ms, 50);
+    assert_eq!(q.subscriber_capacity, 4096);
+    assert!(q.rebuild_on_boot);
+    assert!(q.model_dir.is_none());
+}
+
+#[test]
+fn query_config_round_trips_through_toml() {
+    let toml_str = r#"
+        name = "x"
+        data_dir = "/tmp/x"
+        log_dir = "/tmp/x/log"
+        socket_dir = "/tmp/x/sock"
+        [query]
+        embed_provider = "mock"
+        queue_capacity = 256
+        batch_size = 8
+        batch_window_ms = 25
+        subscriber_capacity = 1024
+        rebuild_on_boot = false
+    "#;
+    let cfg: WhatsAppRuntimeConfig = toml::from_str(toml_str).expect("parse");
+    assert_eq!(cfg.query.embed_provider, "mock");
+    assert_eq!(cfg.query.queue_capacity, 256);
+    assert_eq!(cfg.query.batch_size, 8);
+    assert_eq!(cfg.query.batch_window_ms, 25);
+    assert_eq!(cfg.query.subscriber_capacity, 1024);
+    assert!(!cfg.query.rebuild_on_boot);
+}
+
+#[test]
+fn query_config_defaults_when_field_omitted_in_toml() {
+    let toml_str = r#"
+        name = "x"
+        data_dir = "/tmp/x"
+        log_dir = "/tmp/x/log"
+        socket_dir = "/tmp/x/sock"
+    "#;
+    let cfg: WhatsAppRuntimeConfig = toml::from_str(toml_str).expect("parse");
+    assert_eq!(cfg.query.embed_provider, "local");
+    assert_eq!(cfg.query.batch_size, 32);
+    assert!(cfg.query.rebuild_on_boot);
+}

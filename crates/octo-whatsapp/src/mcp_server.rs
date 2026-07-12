@@ -29,7 +29,12 @@ use serde_json::Value;
 /// get_profile_pictures / set_profile_picture / remove_profile_picture).
 /// The Session A parity-closure surface adds 6 more (reconnect.now /
 /// shutdown / rules.list / rules.get / triggers.list / triggers.get).
+/// The query layer (gated by the `query` cargo feature) adds 3
+/// more (daemon.search, messages.context, events.find).
+#[cfg(feature = "query")]
 pub const EXPECTED_TOOL_COUNT: usize = 103;
+#[cfg(not(feature = "query"))]
+pub const EXPECTED_TOOL_COUNT: usize = 100;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();

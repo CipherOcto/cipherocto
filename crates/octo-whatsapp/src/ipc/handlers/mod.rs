@@ -662,15 +662,28 @@ pub const TIER7_I_DAEMON_METHODS: &[&str] = &[
     "daemon.set_skip_history_sync",
     "daemon.set_wanted_pre_key_count",
     "daemon.set_resend_rate_limit",
-    // Phase 1 task 12 (query layer): daemon.search only ships
-    // when the `query` cargo feature is on. Listed here so the
-    // registry-size invariant covers it without duplicating the
-    // gating.
-    "daemon.search",
-    // Phase 1 task 13: messages.context + events.find.
-    "messages.context",
-    "events.find",
 ];
+
+/// Empty marker iterator — used to keep the dedup chain uniform
+/// across feature combinations. When `query` is on, it's
+/// populated; otherwise it's empty.
+pub const EMPTY_METHOD_LIST: &[&str] = &[];
+
+/// Phase 1 task 12-13: query-layer RPC names. The registry
+/// only contains them when the `query` cargo feature is on, so
+/// `TIER7_I_DAEMON_METHODS` is split — the three query methods
+/// live in this separate constant so absent builds don't
+/// double-count.
+#[cfg(feature = "query")]
+pub const TIER7_QUERY_METHODS: &[&str] = &["daemon.search", "messages.context", "events.find"];
+
+/// Compat alias — `build_registry` chains either of these
+/// depending on the cargo feature; the dedup test mirrors the
+/// choice.
+#[cfg(feature = "query")]
+pub const TIER7_METHODS_TAIL: &[&str] = TIER7_QUERY_METHODS;
+#[cfg(not(feature = "query"))]
+pub const TIER7_METHODS_TAIL: &[&str] = EMPTY_METHOD_LIST;
 
 #[cfg(test)]
 mod tests {
@@ -755,6 +768,7 @@ mod tests {
             .chain(TIER7_F_PASSKEY_METHODS.iter())
             .chain(TIER7_H_GROUP_METHODS.iter())
             .chain(TIER7_I_DAEMON_METHODS.iter())
+            .chain(TIER7_METHODS_TAIL.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         assert_eq!(reg.methods().len(), dedup);

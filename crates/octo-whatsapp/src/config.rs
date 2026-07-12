@@ -63,6 +63,75 @@ pub struct EventsConfig {
     pub persistence_path: Option<std::path::PathBuf>,
 }
 
+/// Phase 0+ of `docs/plans/2026-07-11-whatsapp-query-layer-design.md`:
+/// knobs for the embedded query layer. Read at boot by the
+/// daemon and forwarded to `QuerySubsystem`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct QueryConfig {
+    /// Embedding provider: "local" (candle MiniLM-L6-v2 Q4), "mock"
+    /// (deterministic hermetic), "none" (skip embedding entirely).
+    /// `"local"` is the default but falls back to `"mock"` when
+    /// the model weights aren't on disk.
+    #[serde(default = "default_query_embed_provider")]
+    pub embed_provider: String,
+    /// Override the candle model cache dir. Empty = HF default.
+    #[serde(default)]
+    pub model_dir: Option<std::path::PathBuf>,
+    /// Hard cap on in-flight embedding jobs. Excess are dropped
+    /// (recovery: NDJSON replay back-fills missing embeddings).
+    #[serde(default = "default_query_queue_capacity")]
+    pub queue_capacity: usize,
+    /// Worker batch size for the embedder queue.
+    #[serde(default = "default_query_batch_size")]
+    pub batch_size: usize,
+    /// Worker batch window in milliseconds (drains earlier when
+    /// `batch_size` is hit, otherwise waits this long).
+    #[serde(default = "default_query_batch_window_ms")]
+    pub batch_window_ms: u64,
+    /// Per-subscriber channel depth for the live ingress.
+    #[serde(default = "default_query_subscriber_capacity")]
+    pub subscriber_capacity: usize,
+    /// FTS index rebuild on boot. If `true` (default), the
+    /// subsystem rehydrates from NDJSON at boot. If `false`,
+    /// operators must run `octo-wa query index-rebuild` manually.
+    #[serde(default = "default_query_rebuild_on_boot")]
+    pub rebuild_on_boot: bool,
+}
+
+fn default_query_embed_provider() -> String {
+    "local".into()
+}
+fn default_query_queue_capacity() -> usize {
+    1024
+}
+fn default_query_batch_size() -> usize {
+    32
+}
+fn default_query_batch_window_ms() -> u64 {
+    50
+}
+fn default_query_subscriber_capacity() -> usize {
+    4096
+}
+fn default_query_rebuild_on_boot() -> bool {
+    true
+}
+
+impl Default for QueryConfig {
+    fn default() -> Self {
+        Self {
+            embed_provider: "local".into(),
+            model_dir: None,
+            queue_capacity: 1024,
+            batch_size: 32,
+            batch_window_ms: 50,
+            subscriber_capacity: 4096,
+            rebuild_on_boot: true,
+        }
+    }
+}
+
 fn default_events_persistence_enabled() -> bool {
     true
 }
@@ -125,6 +194,12 @@ pub struct WhatsAppRuntimeConfig {
     /// Phase 4: security/audit knobs. All optional with safe defaults.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Phase 1 (query layer): knobs for embedded SQL + Tantivy +
+    /// candle. Absent when the `query` cargo feature is off — in
+    /// that case the file load uses `QueryConfig::default()` so
+    /// the daemon still boots.
+    #[serde(default = "default_query_config_field")]
+    pub query: QueryConfig,
     /// Phase 5 Part B: Prometheus + /health + /ready + OTLP knobs.
     /// All optional with safe defaults (off / loopback-only).
     #[serde(default)]
@@ -395,8 +470,13 @@ impl Default for WhatsAppRuntimeConfig {
             security: SecurityConfig::default(),
             observability: ObservabilityConfig::default(),
             rules: RulesConfig::default(),
+            query: QueryConfig::default(),
         }
     }
+}
+
+fn default_query_config_field() -> QueryConfig {
+    QueryConfig::default()
 }
 
 fn default_data_dir() -> PathBuf {

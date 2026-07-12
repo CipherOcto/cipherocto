@@ -429,7 +429,11 @@ impl DaemonHandle {
                 match crate::query::open_subsystem(
                     &base,
                     embedder,
-                    crate::query::JobConfig::default(),
+                    crate::query::JobConfig {
+                        queue_capacity: self.inner.config.query.queue_capacity,
+                        batch_size: self.inner.config.query.batch_size,
+                        batch_window_ms: self.inner.config.query.batch_window_ms,
+                    },
                 ) {
                     Ok(subsystem) => {
                         tracing::info!(
@@ -446,23 +450,28 @@ impl DaemonHandle {
                         // Phase 1 task 16: hydrate derived views
                         // from the events NDJSON canonical log so
                         // a fresh daemon boots with all previously
-                        // persisted events searchable.
-                        let ndjson_path = self
-                            .inner
-                            .config
-                            .events
-                            .resolved_persistence_path(&self.inner.config.data_dir);
-                        match crate::query::replay_ndjson(arc.as_ref(), &ndjson_path) {
-                            Ok(n) => tracing::info!(
-                                replayed = n,
-                                path = %ndjson_path.display(),
-                                "query layer hydrated from NDJSON"
-                            ),
-                            Err(e) => tracing::warn!(
-                                error = %e,
-                                path = %ndjson_path.display(),
-                                "NDJSON replay failed; derived views start empty"
-                            ),
+                        // persisted events searchable. Configurable
+                        // via `query.rebuild_on_boot` (default on).
+                        if self.inner.config.query.rebuild_on_boot {
+                            let ndjson_path = self
+                                .inner
+                                .config
+                                .events
+                                .resolved_persistence_path(&self.inner.config.data_dir);
+                            match crate::query::replay_ndjson(arc.as_ref(), &ndjson_path) {
+                                Ok(n) => tracing::info!(
+                                    replayed = n,
+                                    path = %ndjson_path.display(),
+                                    "query layer hydrated from NDJSON"
+                                ),
+                                Err(e) => tracing::warn!(
+                                    error = %e,
+                                    path = %ndjson_path.display(),
+                                    "NDJSON replay failed; derived views start empty"
+                                ),
+                            }
+                        } else {
+                            tracing::info!("query.rebuild_on_boot = false; skipping NDJSON replay");
                         }
                         let cancel = self.inner.cancel.clone();
                         let sub = router.subscribe(4096);
@@ -928,6 +937,7 @@ impl Daemon {
             account_id: "default".into(),
             groups: Vec::new(),
             sender_allowlist: std::collections::BTreeMap::new(),
+            query: crate::config::QueryConfig::default(),
         };
 
         // Open the store at tmpdir/data/index.json — NOT via open_default().

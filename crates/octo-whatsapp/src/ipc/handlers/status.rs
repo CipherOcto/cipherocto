@@ -41,7 +41,15 @@ impl RpcHandler for StatusGet {
         let connected = handle
             .is_ready_flag()
             .load(std::sync::atomic::Ordering::Relaxed);
-        let session_valid = connected; // design: ready = connected && session_valid
+        // Spec compliance F17: `session_valid` reflects whether the
+        // server has authenticated our credentials. Two sources agree
+        // it is valid: (a) the wacore BotState watcher has set the
+        // ready atomic, or (b) the daemon phase has transitioned to
+        // `Connected` (the watcher may not have published the atomic
+        // yet — there is a brief race between phase promotion and the
+        // atomic write). Mirror the same OR-fallback that `health.rs`
+        // uses so the two RPCs agree.
+        let session_valid = connected || phase == "connected";
         let synced = false;
         let ready = connected && session_valid;
         // Spec compliance F19: include all fields from the design's

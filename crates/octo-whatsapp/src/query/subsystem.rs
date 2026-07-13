@@ -308,7 +308,7 @@ impl QuerySubsystem {
                 text,
                 peer: Some(peer.as_str()),
                 sender: Some(sender.as_str()),
-                kind: Some(message_kind_str(*kind)),
+                kind: Some(crate::query::ingester::message_kind_str(*kind)),
                 ts_unix_ms: *ts_unix_ms,
                 from_me: *from_me,
             };
@@ -371,23 +371,6 @@ impl QuerySubsystem {
     /// Borrow the ingester.
     pub fn ingester(&self) -> &QueryIngester {
         &self.ingester
-    }
-}
-
-fn message_kind_str(kind: crate::events::MessageKind) -> &'static str {
-    use crate::events::MessageKind;
-    match kind {
-        MessageKind::Text => "text",
-        MessageKind::Image => "image",
-        MessageKind::Video => "video",
-        MessageKind::Audio => "audio",
-        MessageKind::Voice => "voice",
-        MessageKind::Sticker => "sticker",
-        MessageKind::Document => "document",
-        MessageKind::Contact => "contact",
-        MessageKind::Location => "location",
-        MessageKind::Poll => "poll",
-        MessageKind::Reaction => "reaction",
     }
 }
 
@@ -566,6 +549,56 @@ fn replay_ndjson_reports_parse_failures() {
     assert_eq!(
         stats.lines_failed_parse, 2,
         "legacy + garbage lines are flagged"
+    );
+}
+
+/// Replay a non-Message variant (Receipt / Presence / Unknown) and
+/// assert the SQL mirror carries a meaningful `ts_unix_ms` from the
+/// `recorded_at` fallback. Before the `recorded_at` fix every
+/// receipt/presence row landed with `ts_unix_ms = 0`, which broke
+/// `ORDER BY ts_unix_ms DESC` and `since_ts_unix_ms` filters.
+#[test]
+fn replay_ndjson_receipt_uses_recorded_at_for_ts() {
+    use crate::events::{InboundEvent, ReceiptKind};
+    use crate::events_persister::PersistedEvent;
+    let dir = tempfile::tempdir().expect("tmpdir");
+    let ndjson = dir.path().join("events.ndjson");
+    let ev = InboundEvent::Receipt {
+        msg_id: "M-42".into(),
+        peer: "peer_q".into(),
+        kind: ReceiptKind::Delivered,
+        ts_unix_ms: 0,
+        ts_mono_ns: 0,
+    };
+    let persisted = PersistedEvent {
+        id: 9001,
+        ts_unix_ms: 1_700_000_000_000,
+        ts_mono_ns: 0,
+        event: ev,
+    };
+    let line = serde_json::to_string(&persisted).expect("serialize");
+    std::fs::write(&ndjson, format!("{line}\n")).unwrap();
+
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::ok("test", 384));
+    let sub = Arc::new(
+        open_subsystem(&dir.path().join("query"), embedder, JobConfig::default()).expect("open"),
+    );
+    let stats = replay_ndjson(&sub, &ndjson).expect("replay");
+    assert_eq!(stats.lines_handled, 1);
+
+    // Receipt has event-internal ts_unix_ms = 0; ingester must
+    // fall back to the recorded_at (PersistedEvent.ts_unix_ms) so
+    // ORDER BY ts_unix_ms DESC orders it correctly relative to
+    // later events.
+    let mut rows = sub
+        .db
+        .query("SELECT ts_unix_ms FROM events WHERE id = 9001", ())
+        .expect("q");
+    let row = rows.next().expect("row").expect("ok");
+    let ts: i64 = row.get::<i64>(0).unwrap();
+    assert_eq!(
+        ts, 1_700_000_000_000,
+        "receipt replay must use recorded_at as ts fallback"
     );
 }
 

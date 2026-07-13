@@ -162,8 +162,17 @@ impl QueryService {
         Ok(out)
     }
 
-    /// Surrounding messages: `before` before + `after` after, by ts.
-    /// Used by the `messages.context` RPC.
+    /// Surrounding messages: `before` before + pivot + `after` after,
+    /// ranked by ts proximity to pivot. Used by the `messages.context`
+    /// RPC.
+    ///
+    /// Before 2026-07-12 the lower bound was a heuristic 60-second
+    /// window per `before` step which (a) missed sparse chats and
+    /// (b) over-fetched bursty groups. The current implementation
+    /// pulls `(before + after + 1)` rows ordered by
+    /// `ABS(ts_unix_ms - pivot)` so the result is correct regardless
+    /// of message cadence; the returned list is then re-sorted by
+    /// `ts_unix_ms ASC` so callers see it chronologically.
     pub fn context(
         &self,
         event_id: i64,
@@ -171,38 +180,35 @@ impl QueryService {
         after: usize,
     ) -> Result<Vec<SearchHit>, ServiceError> {
         let db: &Database = self.ingester.db();
+        // Fetch pivot's ts + peer in one row.
         let mut pivot_row = db.query(
             "SELECT ts_unix_ms, peer FROM messages WHERE event_id = ?",
             vec![Value::from(event_id)],
         )?;
-        let pivot_ts = pivot_row
+        let pivot_row = pivot_row
             .next()
-            .ok_or_else(|| ServiceError::InvalidFilter("event_id not found".into()))??
-            .get::<i64>(0)
-            .unwrap_or(0);
-        // pivot_row is consumed by the first `next()`; we need peer.
-        // Re-query to fetch peer separately.
-        let peer_row = {
-            let mut r = db.query(
-                "SELECT peer FROM messages WHERE event_id = ?",
-                vec![Value::from(event_id)],
-            )?;
-            r.next().and_then(|x| x.ok())
-        }
-        .map(|r| get_str(&r, 0))
-        .unwrap_or_default();
-        // SQL: peer + ts window (lower bound heuristic; ordered by ts asc)
+            .ok_or_else(|| ServiceError::InvalidFilter("event_id not found".into()))??;
+        let pivot_ts = pivot_row.get::<i64>(0).unwrap_or(0);
+        let pivot_peer = get_str(&pivot_row, 1);
+        // Window INCLUDES the pivot itself — without this we'd miss
+        // the pivot and have to merge it back, which loses the
+        // (before + after) semantics when the pivot is at the
+        // boundary.
+        let window = (before + after + 1) as i64;
+        // Pull the K nearest messages for this peer ordered by ts
+        // distance to the pivot, then surface in chronological order
+        // in Rust.
         let sql = "SELECT event_id, peer, sender, ts_unix_ms, kind, text \
                    FROM messages \
                    WHERE peer = ? \
-                     AND ts_unix_ms >= ? \
-                   ORDER BY ts_unix_ms ASC LIMIT ?";
+                   ORDER BY ABS(ts_unix_ms - ?) ASC \
+                   LIMIT ?";
         let rows = db.query(
             sql,
             vec![
-                Value::from(peer_row),
-                Value::from(pivot_ts - (before as i64) * 60_000),
-                Value::from((before + after + 1) as i64),
+                Value::from(pivot_peer.as_str()),
+                Value::from(pivot_ts),
+                Value::from(window),
             ],
         )?;
         let mut out = Vec::new();
@@ -218,6 +224,9 @@ impl QueryService {
                 score: 0.0,
             });
         }
+        // Pivot is already in the LIMIT result — no need to append.
+        // Sort chronologically for presentation.
+        out.sort_by_key(|h| h.ts_unix_ms);
         Ok(out)
     }
 
@@ -694,13 +703,30 @@ mod tests {
         tantivy.reload().unwrap();
         let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
         let hits = svc.context(2, 1, 1).unwrap();
-        // Window: 1 before + pivot + 1 after. The ts heuristic is
-        // ±60_000ms, so messages 1, 2, 3 all land in the window.
-        assert!(hits.iter().any(|h| h.event_id == 2));
-        // Assert relative ordering: ascending by ts.
-        for pair in hits.windows(2) {
-            assert!(pair[0].ts_unix_ms <= pair[1].ts_unix_ms);
-        }
+        // Pivot is included + K-nearest-by-ts from the same peer.
+        assert!(hits.iter().any(|h| h.event_id == 2), "pivot present");
+        // With pivot=2 and (before,after)=(1,1), we want 1, 2, 3.
+        let ids: Vec<i64> = hits.iter().map(|h| h.event_id).collect();
+        assert_eq!(ids, vec![1, 2, 3], "chronological nearest-by-ts");
+    }
+
+    /// Context must work even when the per-peer cadence is sparse
+    /// (gap > 60s between messages). The pre-fix `60_000 ms/message`
+    /// window would have returned just the pivot and missed the
+    /// preceding message entirely.
+    #[test]
+    fn context_handles_sparse_cadence() {
+        let (db, tantivy, ingester) = fixture();
+        // Two messages for peer `p` one hour apart.
+        ingest_message(&tantivy, &db, 1, "p", "morning", 1_000);
+        ingest_message(&tantivy, &db, 2, "p", "afternoon", 3_600_000);
+        // Distractor on a different peer — must be ignored.
+        ingest_message(&tantivy, &db, 3, "other_peer", "noise", 1_700_000);
+        tantivy.reload().unwrap();
+        let svc = QueryService::new(std::sync::Arc::new(tantivy), std::sync::Arc::new(ingester));
+        let hits = svc.context(2, 1, 0).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|h| h.event_id).collect();
+        assert_eq!(ids, vec![1, 2]);
     }
 
     #[test]

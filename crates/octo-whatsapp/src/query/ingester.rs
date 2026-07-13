@@ -290,7 +290,7 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
     }
 }
 
-fn message_kind_str(kind: MessageKind) -> &'static str {
+pub fn message_kind_str(kind: MessageKind) -> &'static str {
     match kind {
         MessageKind::Text => "text",
         MessageKind::Image => "image",

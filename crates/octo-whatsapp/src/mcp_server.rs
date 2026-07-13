@@ -32,11 +32,15 @@ use serde_json::Value;
 /// The query layer (gated by the `query` cargo feature) adds 3
 /// more (daemon.search, messages.context, events.find). The dynamic
 /// SQL surface (Phase 9) adds 3 more (sql.execute, sql.query,
-/// sql.tables).
+/// sql.tables). The contact + identity surface (Phase 7.J — 10 tools)
+/// adds: contacts.is_on_whatsapp, contacts.get_user_info,
+/// contacts.get_business_profile, contacts.get_profile_picture,
+/// contacts.save_contact, contact.block, contact.unblock,
+/// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 106;
+pub const EXPECTED_TOOL_COUNT: usize = 116;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 100;
+pub const EXPECTED_TOOL_COUNT: usize = 110;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -916,6 +920,80 @@ pub fn tool_descriptors() -> Vec<Value> {
             schema_props_optional(&[]),
         ));
     }
+    // ─── Contacts (7) + Identity (3) — Phase 7.J ────────────────────────
+    // Long-lived gap: handlers were registered on the daemon RPC server
+    // since Tier 4 / Tier 6.4 but the MCP tool descriptor list never
+    // grew to advertise them. Adding the 10 here closes the gap; CLI
+    // subcommands (`contacts` / `identity`) live in cli.rs.
+    v.push(td(
+        "contacts.is_on_whatsapp",
+        "Check whether a peer JID is a registered WhatsApp user. \
+         Returns {peer, jid, on_whatsapp}. JID must be canonical \
+         `<digits>@s.whatsapp.net`; LIDs/E.164 are normalized server-side.",
+        schema_props_required(&[("peer", "string")], &["peer"]),
+    ));
+    v.push(td(
+        "contacts.get_user_info",
+        "Fetch rich user info for one peer: status text, picture id, \
+         business flag, verified business name, linked device ids, LID \
+         (when known). Returns {peer, found, info} where `info` is null \
+         when the WA server has no record (privacy-hidden).",
+        schema_props_required(&[("peer", "string")], &["peer"]),
+    ));
+    v.push(td(
+        "contacts.get_business_profile",
+        "Fetch a peer's public business profile (description, address, \
+         categories, hours). Returns {status: found|not_found, jid, \
+         profile?}. JID must be a phone-number JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "contacts.get_profile_picture",
+        "Fetch the profile-picture URL for a peer. `preview=true` \
+         (default) requests the thumbnail; `preview=false` requests the \
+         full image. Returns {peer, jid, preview, url, found} — url is \
+         null when the peer has no picture or hides it via privacy.",
+        schema_props_required(&[("peer", "string"), ("preview", "boolean")], &["peer"]),
+    ));
+    v.push(td(
+        "contacts.save_contact",
+        "Save or rename a contact in the local address book. Cross-device \
+         sync via the WA server's app-state. JID must be a phone-number \
+         JID (LIDs rejected by WA server).",
+        schema_props_required(
+            &[("peer", "string"), ("full_name", "string")],
+            &["peer", "full_name"],
+        ),
+    ));
+    v.push(td(
+        "contact.block",
+        "Add a peer to the local blocklist. Propagates to all linked \
+         devices via the WA server's blocklist IQ.",
+        schema_props_required(&[("peer", "string")], &["peer"]),
+    ));
+    v.push(td(
+        "contact.unblock",
+        "Remove a peer from the local blocklist. Reverses contact.block.",
+        schema_props_required(&[("peer", "string")], &["peer"]),
+    ));
+    v.push(td(
+        "identity.get_pn",
+        "Return this device's PN (phone-number) JID as a string, or null \
+         if not signed in. Read from the in-memory device snapshot — no \
+         WA server roundtrip.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "identity.get_lid",
+        "Return this device's LID (local-identifier) JID as a string, or \
+         null if LID migration has not occurred.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "identity.is_lid_migrated",
+        "Return true if the device has completed the LID migration.",
+        schema_empty(),
+    ));
     v
 }
 
@@ -1022,6 +1100,18 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "sql.query" => "sql.query",
         #[cfg(feature = "query")]
         "sql.tables" => "sql.tables",
+        // Contacts (7) + Identity (3) — Phase 7.J. See the long-lived
+        // gap note in tool_descriptors().
+        "contacts.is_on_whatsapp" => "contacts.is_on_whatsapp",
+        "contacts.get_user_info" => "contacts.get_user_info",
+        "contacts.get_business_profile" => "contacts.get_business_profile",
+        "contacts.get_profile_picture" => "contacts.get_profile_picture",
+        "contacts.save_contact" => "contacts.save_contact",
+        "contact.block" => "contact.block",
+        "contact.unblock" => "contact.unblock",
+        "identity.get_pn" => "identity.get_pn",
+        "identity.get_lid" => "identity.get_lid",
+        "identity.is_lid_migrated" => "identity.is_lid_migrated",
         "daemon.accounts.list" => "daemon.accounts.list",
         "daemon.accounts.use" => "daemon.accounts.use",
         "daemon.accounts.info" => "daemon.accounts.info",
@@ -1461,6 +1551,43 @@ mod tests {
             assert!(
                 names.contains(m),
                 "Session A lifecycle/readonly tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
+    }
+
+    /// Phase 7.J: the 10 contact + identity tools that were long-lived
+    /// RPC handlers on the daemon but never had MCP tool descriptors.
+    /// Asserts each name shows up in `tools/list` so the
+    /// `tool ... not implemented` MCP error disappears for clients.
+    #[test]
+    fn phase7j_contact_identity_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "contacts.is_on_whatsapp",
+            "contacts.get_user_info",
+            "contacts.get_business_profile",
+            "contacts.get_profile_picture",
+            "contacts.save_contact",
+            "contact.block",
+            "contact.unblock",
+            "identity.get_pn",
+            "identity.get_lid",
+            "identity.is_lid_migrated",
+        ] {
+            assert!(
+                names.contains(m),
+                "Phase 7.J contact/identity tool {m:?} not advertised"
             );
         }
         assert_eq!(

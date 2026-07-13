@@ -107,6 +107,8 @@ pub mod send_sticker;
 pub mod send_text;
 pub mod send_video;
 pub mod send_voice;
+#[cfg(feature = "query")]
+pub mod sql;
 pub mod status;
 pub mod status_revoke;
 pub mod status_send_image;
@@ -339,6 +341,9 @@ fn append_query_layer_handlers(reg: HandlerRegistry) -> HandlerRegistry {
     reg.register(Arc::new(daemon_search::DaemonSearch))
         .register(Arc::new(messages_context::MessagesContext))
         .register(Arc::new(events_find::EventsFind))
+        .register(Arc::new(sql::SqlExecute))
+        .register(Arc::new(sql::SqlQuery))
+        .register(Arc::new(sql::SqlTables))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).

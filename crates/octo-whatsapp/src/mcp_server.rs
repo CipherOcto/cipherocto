@@ -30,9 +30,11 @@ use serde_json::Value;
 /// The Session A parity-closure surface adds 6 more (reconnect.now /
 /// shutdown / rules.list / rules.get / triggers.list / triggers.get).
 /// The query layer (gated by the `query` cargo feature) adds 3
-/// more (daemon.search, messages.context, events.find).
+/// more (daemon.search, messages.context, events.find). The dynamic
+/// SQL surface (Phase 9) adds 3 more (sql.execute, sql.query,
+/// sql.tables).
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 103;
+pub const EXPECTED_TOOL_COUNT: usize = 106;
 #[cfg(not(feature = "query"))]
 pub const EXPECTED_TOOL_COUNT: usize = 100;
 
@@ -891,6 +893,37 @@ pub fn tool_descriptors() -> Vec<Value> {
                 &[],
             ),
         ));
+        // Dynamic SQL surface (Phase 9) — mirrors the daemon's
+        // sql.* RPCs. Safety rails (single-statement, write/read
+        // allow-list) live on the daemon side.
+        v.push(td(
+            "sql.execute",
+            "Run a single DDL/DML statement on the daemon's embedded \
+             SQL store. INSERT/UPDATE/DELETE/CREATE/DROP/ALTER only. \
+             Returns {rows_affected, sql, first_keyword}.",
+            schema_props_required(
+                &[("sql", "string")],
+                &["sql"],
+            ),
+        ));
+        v.push(td(
+            "sql.query",
+            "Run a read-only SELECT/WITH/SHOW/EXPLAIN against the \
+             daemon's SQL store. Returns {columns, rows, count, limit, \
+             truncated}. Hard cap: 10000 rows.",
+            schema_props_required(
+                &[
+                    ("sql", "string"),
+                    ("limit", "integer"),
+                ],
+                &["sql"],
+            ),
+        ));
+        v.push(td(
+            "sql.tables",
+            "List existing tables in the daemon's SQL store (SHOW TABLES).",
+            schema_props_optional(&[]),
+        ));
     }
     v
 }
@@ -992,6 +1025,12 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "messages.context" => "messages.context",
         #[cfg(feature = "query")]
         "events.find" => "events.find",
+        #[cfg(feature = "query")]
+        "sql.execute" => "sql.execute",
+        #[cfg(feature = "query")]
+        "sql.query" => "sql.query",
+        #[cfg(feature = "query")]
+        "sql.tables" => "sql.tables",
         "daemon.accounts.list" => "daemon.accounts.list",
         "daemon.accounts.use" => "daemon.accounts.use",
         "daemon.accounts.info" => "daemon.accounts.info",

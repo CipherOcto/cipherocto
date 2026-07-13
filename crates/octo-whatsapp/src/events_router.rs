@@ -199,22 +199,37 @@ impl EventsRouter {
                 recv = raw_rx.recv() => {
                     match recv {
                         Ok(raw) => {
-                            let ev = parse_or_unknown(&raw, 0, 0);
-                            if let Some(m) = &self.metrics {
-                                let kind = event_kind_label(&ev);
-                                m.inc_inbound_event(&kind);
-                            }
-                            self.buffer.push(ev.clone());
-                            self.fanout(ev.clone());
-                            // Phase 5 Part F: fire the action-dispatch hook
-                            // (if registered) on a clone so the buffer
-                            // entry + sink fan-out are unaffected.
-                            if let Some(hook) = self.action_hook.as_ref() {
-                                let hook = hook.clone();
-                                let ev2 = ev.clone();
-                                tokio::spawn(async move {
-                                    hook(ev2);
-                                });
+                            // Parse the envelope into one or more
+                            // events. A `Messages(MessageBatch { ... })`
+                            // envelope fans out to one event per inner
+                            // message so group conversations land as
+                            // searchable rows instead of an opaque
+                            // Unknown (see events::parse_many).
+                            let events = InboundEvent::parse_many(
+                                EventEnvelope {
+                                    raw,
+                                    ts_unix_ms: 0,
+                                    ts_mono_ns: 0,
+                                },
+                                None,
+                            );
+                            for ev in events {
+                                if let Some(m) = &self.metrics {
+                                    let kind = event_kind_label(&ev);
+                                    m.inc_inbound_event(&kind);
+                                }
+                                self.buffer.push(ev.clone());
+                                self.fanout(ev.clone());
+                                // Phase 5 Part F: fire the action-dispatch hook
+                                // (if registered) on a clone so the buffer
+                                // entry + sink fan-out are unaffected.
+                                if let Some(hook) = self.action_hook.as_ref() {
+                                    let hook = hook.clone();
+                                    let ev2 = ev.clone();
+                                    tokio::spawn(async move {
+                                        hook(ev2);
+                                    });
+                                }
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -257,14 +272,6 @@ impl EventsRouter {
             }
         }
     }
-}
-
-fn parse_or_unknown(raw: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
-    InboundEvent::parse(EventEnvelope {
-        raw: raw.to_string(),
-        ts_unix_ms,
-        ts_mono_ns,
-    })
 }
 
 /// Phase 5 Part B: stable per-event-kind string used as the

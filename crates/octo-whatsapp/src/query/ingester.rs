@@ -579,7 +579,7 @@ mod tests {
         let db = Database::open_in_memory().expect("open");
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
-        let ev = InboundEvent::parse(EventEnvelope {
+        let _ev = InboundEvent::parse(EventEnvelope {
             raw: "Receipt(msg_id: \"M\", peer: \"p\", type: Delivered)".into(),
             ts_unix_ms: 0, // parser sets to 0 anyway; we override below via Message
             ts_mono_ns: 0,

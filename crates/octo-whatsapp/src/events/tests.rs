@@ -556,3 +556,99 @@ fn parser_extracts_msg_id_from_wacore_receipt_read() {
         other => panic!("expected Receipt Read, got {other:?}"),
     }
 }
+
+// --- MessageBatch (group traffic) tests -------------------------------
+
+const SAMPLE_BATCH_TEXT: &str = r#"Messages(MessageBatch { messages: [InboundMessage { message: Message { conversation: Some("hello group"), sender_key_distribution_message: MessageField::Unset, image_message: MessageField::Unset, contact_message: MessageField::Unset, location_message: MessageField::Unset, extended_text_message: MessageField::Unset, document_message: MessageField::Unset, audio_message: MessageField::Unset, video_message: MessageField::Unset, call: MessageField::Unset, chat: MessageField::Unset, protocol_message: MessageField::Unset, contacts_array_message: MessageField::Unset, highly_structured_message: MessageField::Unset, fast_ratchet_key_sender_key_distribution_message: MessageField::Unset, send_payment_message: MessageField::Unset, live_location_message: MessageField::Unset, request_payment_message: MessageField::Unset, decline_payment_request_message: MessageField::Unset, cancel_payment_request_message: MessageField::Unset, template_message: MessageField::Unset, sticker_message: MessageField::Unset, group_invite_message: MessageField::Unset, template_button_reply_message: MessageField::Unset, product_message: MessageField::Unset, device_sent_message: MessageField::Unset, message_context_info: MessageField::Unset, list_message: MessageField::Unset, view_once_message: MessageField::Unset, order_message: MessageField::Unset, list_response_message: MessageField::Unset, ephemeral_message: MessageField::Unset, invoice_message: MessageField::Unset, buttons_message: MessageField::Unset, buttons_response_message: MessageField::Unset, payment_invite_message: MessageField::Unset, interactive_message: MessageField::Unset, reaction_message: MessageField::Unset, sticker_sync_rmr_message: MessageField::Unset, interactive_response_message: MessageField::Unset, poll_creation_message: MessageField::Unset, poll_update_message: MessageField::Unset, keep_in_chat_message: MessageField::Unset, document_with_caption_message: MessageField::Unset, request_phone_number_message: MessageField::Unset, view_once_message_v2: MessageField::Unset, enc_reaction_message: MessageField::Unset, edited_message: MessageField::Unset, view_once_message_v2_extension: MessageField::Unset, poll_creation_message_v2: MessageField::Unset, scheduled_call_creation_message: MessageField::Unset, group_mentioned_message: MessageField::Unset, pin_in_chat_message: MessageField::Unset, poll_creation_message_v3: MessageField::Unset, scheduled_call_edit_message: MessageField::Unset, ptv_message: MessageField::Unset, bot_invoke_message: MessageField::Unset, call_log_messsage: MessageField::Unset, message_history_bundle: MessageField::Unset, enc_comment_message: MessageField::Unset, bcall_message: MessageField::Unset, lottie_sticker_message: MessageField::Unset, event_message: MessageField::Unset, enc_event_response_message: MessageField::Unset, comment_message: MessageField::Unset, newsletter_admin_invite_message: MessageField::Unset, placeholder_message: MessageField::Unset, secret_encrypted_message: MessageField::Unset, album_message: MessageField::Unset, event_cover_image: MessageField::Unset, sticker_pack_message: MessageField::Unset, status_mention_message: MessageField::Unset, poll_result_snapshot_message: MessageField::Unset, poll_creation_option_image_message: MessageField::Unset, associated_child_message: MessageField::Unset, group_status_mention_message: MessageField::Unset, poll_creation_message_v4: MessageField::Unset, status_add_yours: MessageField::Unset, group_status_message: MessageField::Unset, rich_response_message: MessageField::Unset, status_notification_message: MessageField::Unset, limit_sharing_message: MessageField::Unset, bot_task_message: MessageField::Unset, question_message: MessageField::Unset, message_history_notice: MessageField::Unset, group_status_message_v2: MessageField::Unset, bot_forwarded_message: MessageField::Unset, status_question_answer_message: MessageField::Unset, question_reply_message: MessageField::Unset, question_response_message: MessageField::Unset, status_quoted_message: MessageField::Unset, status_sticker_interaction_message: MessageField::Unset, poll_creation_message_v5: MessageField::Unset, newsletter_follower_invite_message_v2: MessageField::Unset, poll_result_snapshot_message_v3: MessageField::Unset, newsletter_admin_profile_message: MessageField::Unset, newsletter_admin_profile_message_v2: MessageField::Unset, spoiler_message: MessageField::Unset, poll_creation_message_v6: MessageField::Unset, conditional_reveal_message: MessageField::Unset, poll_add_option_message: MessageField::Unset, event_invite_message: MessageField::Unset, group_root_key_share: MessageField::Unset, payment_reminder_message: MessageField::Unset, split_payment_message: MessageField::Unset, newsletter_admin_profile_status_message: MessageField::Unset, root_secret_distribute_message: MessageField::Unset }, info: MessageInfo { source: MessageSource { chat: Jid { user: "120363411021224818", server: Group, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "171979281834195", server: Lid, agent: 1, device: 0, integrator: 0 }, is_from_me: false, is_group: true, addressing_mode: Some(Lid), sender_alt: Some(Jid { user: "5524992057890", server: Pn, agent: 0, device: 0, integrator: 0 }), recipient_alt: None, broadcast_list_owner: None, recipient: None }, id: "3A1B00B2FA737D1DC945", server_id: 0, type: "", push_name: "Júlio César", timestamp: 2026-07-12T20:49:20Z, category: Empty, multicast: false, media_type: "", edit: Empty, bot_info: None, meta_info: MsgMetaInfo { target_id: None, target_sender: None, target_chat: None, deprecated_lid_session: None, thread_message_id: None, thread_message_sender_jid: None, content_type: Some("add_on"), appdata: None, reporting_tag: None, reporting_token: None, reporting_token_version: None }, verified_name: None, device_sent_meta: None, ephemeral_expiration: None, is_offline: false, unavailable_request_id: None, server_timestamp_us: Some(1783889361071932), verified_level: None, verified_name_serial: None, peer_recipient_pn: None, comment_target: None, bcl_participants: [] } }], origin: Live })"#;
+
+#[test]
+fn message_batch_text_extracts_as_message() {
+    let events = InboundEvent::parse_many(env(SAMPLE_BATCH_TEXT), None);
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        InboundEvent::Message {
+            id,
+            peer,
+            sender,
+            kind,
+            text,
+            is_group,
+            from_me,
+            ..
+        } => {
+            assert_eq!(id, "3A1B00B2FA737D1DC945");
+            assert_eq!(peer, "120363411021224818");
+            assert_eq!(sender, "171979281834195");
+            assert!(matches!(kind, MessageKind::Text));
+            assert_eq!(text, "hello group");
+            assert!(*is_group);
+            assert!(!*from_me);
+        }
+        other => panic!("expected Message, got {other:?}"),
+    }
+}
+
+#[test]
+fn message_batch_video_with_caption_extracts_kind_and_text() {
+    let raw = r#"Messages(MessageBatch { messages: [InboundMessage { message: Message { conversation: None, image_message: MessageField::Unset, video_message: MessageField::Set(VideoMessage { url: Some("https://x"), caption: Some("Lei seca arraial"), mimetype: Some("video/mp4"), file_sha256: None, file_length: Some(10), seconds: Some(6), media_key: Some("mk"), gif_playback: None, height: Some(1024), width: Some(576), file_enc_sha256: None, interactive_annotations: [], direct_path: None, media_key_timestamp: None, jpeg_thumbnail: None, context_info: MessageField::Unset, streaming_sidecar: None, streaming_sidecar_timestamp: None, security_token: Some("t"), first_scan_sidecar: Some("fs"), first_scan_length: None, scan_length: None, mid_quality_file_sha256: None, mid_quality_file_length: None, mid_quality_file_enc_sha256: None, video_attribution: None }), document_message: MessageField::Unset, audio_message: MessageField::Unset, contact_message: MessageField::Unset, location_message: MessageField::Unset, extended_text_message: MessageField::Unset, sticker_message: MessageField::Unset }, info: MessageInfo { source: MessageSource { chat: Jid { user: "120363411021224818", server: Group, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "9999", server: Lid, agent: 1, device: 0, integrator: 0 }, is_from_me: false, is_group: true, addressing_mode: Some(Lid), sender_alt: Some(Jid { user: "5511", server: Pn, agent: 0, device: 0, integrator: 0 }), recipient_alt: None, broadcast_list_owner: None, recipient: None }, id: "VID1", server_id: 0, type: "", push_name: "X", timestamp: 2026-07-12T20:49:20Z, category: Empty, multicast: false, media_type: "", edit: Empty, bot_info: None, meta_info: MsgMetaInfo { target_id: None, target_sender: None, target_chat: None, deprecated_lid_session: None, thread_message_id: None, thread_message_sender_jid: None, content_type: None, appdata: None, reporting_tag: None, reporting_token: None, reporting_token_version: None }, verified_name: None, device_sent_meta: None, ephemeral_expiration: None, is_offline: false, unavailable_request_id: None, server_timestamp_us: None, verified_level: None, verified_name_serial: None, peer_recipient_pn: None, comment_target: None, bcl_participants: [] } }], origin: History })"#;
+    let events = InboundEvent::parse_many(env(raw), None);
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        InboundEvent::Message {
+            kind,
+            text,
+            media_token,
+            ..
+        } => {
+            assert!(matches!(kind, MessageKind::Video));
+            assert_eq!(text, "Lei seca arraial");
+            assert_eq!(media_token.as_deref(), Some("mk"));
+        }
+        other => panic!("expected Message Video, got {other:?}"),
+    }
+}
+
+#[test]
+fn message_batch_with_multiple_messages_fans_out() {
+    let raw = r#"Messages(MessageBatch { messages: [InboundMessage { message: Message { conversation: Some("first"), image_message: MessageField::Unset, video_message: MessageField::Unset, document_message: MessageField::Unset, audio_message: MessageField::Unset, contact_message: MessageField::Unset, location_message: MessageField::Unset, extended_text_message: MessageField::Unset, sticker_message: MessageField::Unset, reaction_message: MessageField::Unset, protocol_message: MessageField::Unset, chat: MessageField::Unset, call: MessageField::Unset }, info: MessageInfo { source: MessageSource { chat: Jid { user: "1", server: Group, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "2", server: Lid, agent: 1, device: 0, integrator: 0 }, is_from_me: false, is_group: true, addressing_mode: Some(Lid), sender_alt: None, recipient_alt: None, broadcast_list_owner: None, recipient: None }, id: "A", server_id: 0, type: "", push_name: "x", timestamp: 2026-07-12T20:49:20Z, category: Empty, multicast: false, media_type: "", edit: Empty, bot_info: None, meta_info: MsgMetaInfo { target_id: None, target_sender: None, target_chat: None, deprecated_lid_session: None, thread_message_id: None, thread_message_sender_jid: None, content_type: None, appdata: None, reporting_tag: None, reporting_token: None, reporting_token_version: None }, verified_name: None, device_sent_meta: None, ephemeral_expiration: None, is_offline: false, unavailable_request_id: None, server_timestamp_us: None, verified_level: None, verified_name_serial: None, peer_recipient_pn: None, comment_target: None, bcl_participants: [] } }, InboundMessage { message: Message { conversation: Some("second"), image_message: MessageField::Unset, video_message: MessageField::Unset, document_message: MessageField::Unset, audio_message: MessageField::Unset, contact_message: MessageField::Unset, location_message: MessageField::Unset, extended_text_message: MessageField::Unset, sticker_message: MessageField::Unset, reaction_message: MessageField::Unset, protocol_message: MessageField::Unset, chat: MessageField::Unset, call: MessageField::Unset }, info: MessageInfo { source: MessageSource { chat: Jid { user: "3", server: Group, agent: 0, device: 0, integrator: 0 }, sender: Jid { user: "4", server: Lid, agent: 1, device: 0, integrator: 0 }, is_from_me: true, is_group: false, addressing_mode: None, sender_alt: None, recipient_alt: None, broadcast_list_owner: None, recipient: None }, id: "B", server_id: 0, type: "", push_name: "y", timestamp: 2026-07-12T20:50:00Z, category: Empty, multicast: false, media_type: "", edit: Empty, bot_info: None, meta_info: MsgMetaInfo { target_id: None, target_sender: None, target_chat: None, deprecated_lid_session: None, thread_message_id: None, thread_message_sender_jid: None, content_type: None, appdata: None, reporting_tag: None, reporting_token: None, reporting_token_version: None }, verified_name: None, device_sent_meta: None, ephemeral_expiration: None, is_offline: false, unavailable_request_id: None, server_timestamp_us: None, verified_level: None, verified_name_serial: None, peer_recipient_pn: None, comment_target: None, bcl_participants: [] } }], origin: Live })"#;
+    let events = InboundEvent::parse_many(env(raw), None);
+    assert_eq!(events.len(), 2);
+    match (&events[0], &events[1]) {
+        (
+            InboundEvent::Message {
+                id: a, text: at, ..
+            },
+            InboundEvent::Message {
+                id: b, text: bt, ..
+            },
+        ) => {
+            assert_eq!(a, "A");
+            assert_eq!(at, "first");
+            assert_eq!(b, "B");
+            assert_eq!(bt, "second");
+        }
+        _ => panic!("expected 2 Messages"),
+    }
+}
+
+#[test]
+fn parse_iso8601_ms_handles_common_shapes() {
+    // 2026-07-12 20:49:20 UTC: 20454 days from 1970-01-01 + 192 day-of-year
+    // + 20:49:20 = 1_783_889_360_000 ms.
+    assert_eq!(
+        parse_iso8601_ms("2026-07-12T20:49:20Z").unwrap(),
+        1_783_889_360_000
+    );
+    assert_eq!(
+        parse_iso8601_ms("\"2026-07-12T20:49:20Z\"").unwrap(),
+        1_783_889_360_000
+    );
+    // Sanity: epoch.
+    assert_eq!(parse_iso8601_ms("1970-01-01T00:00:00Z").unwrap(), 0);
+    // Leap-year aware.
+    assert!(
+        parse_iso8601_ms("2024-02-29T00:00:00Z").unwrap()
+            > parse_iso8601_ms("2023-03-01T00:00:00Z").unwrap()
+    );
+    assert!(parse_iso8601_ms("garbage").is_none());
+}

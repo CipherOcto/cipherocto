@@ -228,6 +228,30 @@ impl InboundEvent {
         Self::parse_inner(&env.raw, env.ts_unix_ms, env.ts_mono_ns, None)
     }
 
+    /// Parse an envelope into one or more [`InboundEvent`]s.
+    /// `Messages(MessageBatch { messages: [...] })` produces one
+    /// event per inner message (so a single history-sync backfill of
+    /// 50 messages lands as 50 events instead of one opaque
+    /// `Unknown`). Every other envelope produces exactly one event,
+    /// matching [`Self::parse`].
+    ///
+    /// `now_unix_ms` (when supplied) is used to flag future-skewed
+    /// timestamps on the envelope's own `ts_unix_ms` (the same
+    /// `untrusted` semantics as [`Self::parse_with_now`]).
+    pub fn parse_many(env: EventEnvelope, now_unix_ms: Option<i64>) -> Vec<Self> {
+        let raw = env.raw.trim();
+        if let Some(rest) = raw.strip_prefix("Messages(") {
+            parse_message_batch(rest, env.ts_unix_ms, env.ts_mono_ns, now_unix_ms)
+        } else {
+            vec![Self::parse_inner(
+                raw,
+                env.ts_unix_ms,
+                env.ts_mono_ns,
+                now_unix_ms,
+            )]
+        }
+    }
+
     /// Parser with optional skew-detection context. When
     /// `now_unix_ms` is supplied, events with `ts_unix_ms > now + SKEW_TOLERANCE_MS`
     /// get the `untrusted=true` flag (Unknown variant) or are passed through
@@ -452,11 +476,94 @@ impl InboundEvent {
 /// Stops at the first top-level `,`, `}`, or `)` (the closing paren
 /// of the outer `Variant(...)` tuple in `format!("{:?}", Event::...)`).
 fn field(body: &str, key: &str) -> Option<String> {
-    let needle = format!("{key}: ");
-    let start = body.find(&needle)? + needle.len();
-    let rest = &body[start..];
-    let end = rest.find([',', '}', ')']).unwrap_or(rest.len());
+    // Match either `, key:` (a typical Rust Debug field separator),
+    // ` { key:` (the *first* field of a struct whose outer braces
+    // were stripped), or `key:` at byte 0. This avoids tripping on
+    // field names whose suffixes contain `key` (e.g.
+    // `message_context_info` shares `info` with `info:`).
+    let after = if let Some(s) = body.find(&format!(", {key}: ")) {
+        s + format!(", {key}: ").len()
+    } else if let Some(s) = body.find(&format!("{{ {key}: ")) {
+        s + format!("{{ {key}: ").len()
+    } else if let Some(stripped) = body.strip_prefix(&format!("{key}: ")) {
+        body.len() - stripped.len()
+    } else {
+        return None;
+    };
+    let rest = &body[after..];
+    // Find the end of the value, tracking both `(` / `)` and `{` / `}`
+    // depth so that values like `MessageField::Set(VideoMessage { ... })`
+    // or `Jid { user: "...", ... }` are kept intact (a bare `,` or `}`
+    // inside such a wrapper must not terminate the value).
+    //
+    // A `)` that returns paren_depth from >0 to 0 is the closing
+    // paren of an enclosing `Some(...)` etc.; we INCLUDE it so that
+    // downstream `unwrap_some` can find the matching paren. A `)`
+    // from 0 to -1 is an outer-wrapper closing that should be
+    // excluded; we cut BEFORE it.
+    let bytes = rest.as_bytes();
+    let mut paren_depth: i32 = 0;
+    let mut brace_depth: i32 = 0;
+    let mut end = bytes.len();
+    let mut cut_at: Option<usize> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => paren_depth += 1,
+            b')' => {
+                if paren_depth == 0 {
+                    // Extra closing paren (e.g. outer envelope's `)`).
+                    cut_at = Some(i);
+                    break;
+                }
+                paren_depth -= 1;
+                if paren_depth == 0 {
+                    end = i + 1;
+                    cut_at = Some(end);
+                    break;
+                }
+            }
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
+            b',' if paren_depth == 0 && brace_depth == 0 => {
+                cut_at = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    if let Some(c) = cut_at {
+        end = c;
+    }
     Some(rest[..end].trim().to_string())
+}
+
+/// Strip a `Some(value)` wrapper that Rust's `Debug` emits for
+/// `Option<T>`. Returns the inner value with no paren-depth loss
+/// (handles nested tuples / struct literals). Used by the
+/// `MessageBatch` parser for fields like `conversation: Some("hi")`,
+/// `id: Some("abc")`, `stanza_id: Some("xyz")`, etc. Returns owned
+/// `String` so callers don't have to wrangle `field()`'s borrowed
+/// lifetime.
+fn unwrap_some(s: &str) -> Option<String> {
+    let s = s.trim();
+    let rest = s.strip_prefix("Some(")?;
+    let bytes = rest.as_bytes();
+    let mut depth = 1i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[..i].to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Strip surrounding quotes from a Debug-printed string literal.
@@ -516,6 +623,697 @@ fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         from_me,
         is_group,
     }
+}
+
+/// Parse a `Messages(MessageBatch { messages: [InboundMessage { ... }], origin: ..., ... })`
+/// envelope into one [`InboundEvent`] per inner message.
+///
+/// Why this exists: the WA WS delivers group messages as `MessageBatch`
+/// envelopes that wrap an array of `InboundMessage`s, each carrying its
+/// own `info: MessageInfo { source: MessageSource { chat, sender }, ...,
+/// timestamp }` and `message: Message { conversation, ... }`. Before
+/// 2026-07-12 every MessageBatch fell through to `Unknown` because the
+/// parser only knew `Message(...)` (singular). The single-event buffer +
+/// SQL mirror couldn't see group conversations at all, so they were
+/// invisible to FTS, semantic search, and the events-find RPC.
+///
+/// The parser is conservative — it regex-scans top-level key/value pairs
+/// and walks a state machine for nested `MessageField::Set(...)` blocks.
+/// When extraction fails (reactions inside a batch, unrecognised
+/// sub-messages, etc.) the inner message is dropped silently rather than
+/// emitting a noisy `Unknown` — the envelope-level `Unknown` would be
+/// misleading because the *envelope* was recognised, just not every
+/// inner entry.
+fn parse_message_batch(
+    rest: &str,
+    fallback_ts_unix_ms: i64,
+    fallback_ts_mono_ns: u64,
+    now_unix_ms: Option<i64>,
+) -> Vec<InboundEvent> {
+    // Locate the `messages: [ ... ]` array body. We scan for the
+    // outermost `[...]` that follows `messages:`.
+    let array_body = match extract_top_level_array_after(rest, "messages") {
+        Some(b) => b,
+        None => {
+            // Malformed envelope — return one Unknown so the
+            // persister writes the raw envelope rather than dropping
+            // it on the floor.
+            let untrusted = match now_unix_ms {
+                Some(now) => fallback_ts_unix_ms > now.saturating_add(SKEW_TOLERANCE_MS),
+                None => false,
+            };
+            return vec![InboundEvent::Unknown {
+                raw: format!("Messages({rest})"),
+                ts_unix_ms: fallback_ts_unix_ms,
+                ts_mono_ns: fallback_ts_mono_ns,
+                untrusted,
+            }];
+        }
+    };
+
+    // Split the array into per-element bodies at the
+    // `InboundMessage { ... }` boundary. Each element is a brace
+    // block at depth 1 inside the array.
+    let elements = split_top_level_braces(array_body);
+    let mut out = Vec::with_capacity(elements.len());
+    for elem in elements {
+        if let Some(ev) =
+            parse_inbound_message(elem, fallback_ts_unix_ms, fallback_ts_mono_ns, now_unix_ms)
+        {
+            out.push(ev);
+        }
+        // None ⇒ silently dropped (noisy / unsupported inner message)
+    }
+    if out.is_empty() {
+        // No usable inner messages — emit one Unknown so the
+        // envelope is at least recorded (matches the single-event
+        // parser's fallback semantics).
+        let untrusted = match now_unix_ms {
+            Some(now) => fallback_ts_unix_ms > now.saturating_add(SKEW_TOLERANCE_MS),
+            None => false,
+        };
+        out.push(InboundEvent::Unknown {
+            raw: format!("Messages({rest})"),
+            ts_unix_ms: fallback_ts_unix_ms,
+            ts_mono_ns: fallback_ts_mono_ns,
+            untrusted,
+        });
+    }
+    out
+}
+
+/// Parse one `InboundMessage { message: Message { ... }, info: MessageInfo { ... } }`
+/// body into an [`InboundEvent`]. Returns `None` for inner messages we
+/// don't know how to surface yet (e.g. encrypted reactions whose body
+/// uses a MessageField variant the regex doesn't recognise).
+fn parse_inbound_message(
+    body: &str,
+    fallback_ts_unix_ms: i64,
+    fallback_ts_mono_ns: u64,
+    now_unix_ms: Option<i64>,
+) -> Option<InboundEvent> {
+    // info: MessageInfo { source: MessageSource { chat: Jid { ... }, sender: ... },
+    //                     id, timestamp, is_from_me, is_group, ... }
+    let info_body = extract_nested_block(body, "info").unwrap_or("");
+    let source_body = extract_nested_block(info_body, "source").unwrap_or("");
+    // Rust `Debug` renders Option<T> as `Some(value)` and Jid as
+    // `Jid { user: "...", ... }` (no `Some` wrapper). For peer/sender
+    // we want the bare `user: "..."` string from inside the Jid block.
+    let peer = extract_jid_user(source_body, "chat");
+    let sender = extract_jid_user(source_body, "sender");
+    let id = unquote(&field(info_body, "id").unwrap_or_default());
+    let timestamp_raw = field(info_body, "timestamp")
+        .and_then(|v| unwrap_some(&v))
+        .unwrap_or_default();
+    let ts_unix_ms = parse_iso8601_ms(&timestamp_raw).unwrap_or(fallback_ts_unix_ms);
+    let is_group = field(info_body, "is_group")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let from_me = field(info_body, "is_from_me")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let _untrusted = match now_unix_ms {
+        Some(now) => ts_unix_ms > now.saturating_add(SKEW_TOLERANCE_MS),
+        None => false,
+    };
+    // The `info.timestamp` is `2026-07-12T20:49:20Z` and the
+    // envelope-level ts is the persister's now(). Prefer the
+    // message-internal timestamp when it's parseable (it usually
+    // is — MessageInfo always carries one for inbound traffic);
+    // fall back to envelope ts otherwise (sentinel for "when WA
+    // didn't bother" — usually for system-side inner messages).
+    let effective_ts_unix_ms = if timestamp_raw.is_empty() {
+        fallback_ts_unix_ms
+    } else {
+        ts_unix_ms
+    };
+    let ts_mono_ns = fallback_ts_mono_ns;
+
+    // message: Message { conversation, extended_text_message, image_message, ... }
+    let message_body = extract_nested_block(body, "message")?;
+
+    // Pull the first `MessageField::Set(<InnerType> { ... text fields ... })`
+    // we recognise. Earlier fields win so plain `conversation` beats
+    // `extended_text_message.text` if both are present (which they
+    // never are, but order is explicit anyway).
+    if let Some(text) = field(message_body, "conversation")
+        .as_deref()
+        .and_then(unwrap_some)
+        .filter(|v| *v != "None" && !v.is_empty())
+        .map(|v| unquote(&v))
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Text,
+            text: InboundEvent::bound_text(text),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: extract_mentions(message_body),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    if let Some(ext) =
+        field(message_body, "extended_text_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        if let Some(text) = extract_first_some_text_in_block(&ext) {
+            return Some(InboundEvent::Message {
+                id,
+                peer: peer.clone(),
+                sender: sender.clone(),
+                ts_unix_ms: effective_ts_unix_ms,
+                ts_mono_ns,
+                kind: MessageKind::Text,
+                text: InboundEvent::bound_text(text),
+                media_token: None,
+                reply_to: extract_context_reply_to(message_body),
+                mentions: extract_mentions(message_body),
+                mentions_truncated: false,
+                from_me,
+                is_group,
+            });
+        }
+    }
+    // Image
+    if let Some(img) =
+        field(message_body, "image_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        let caption = extract_first_some_string_in_block(img.as_str(), "caption");
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Image,
+            text: InboundEvent::bound_text(caption.unwrap_or_default()),
+            media_token: extract_first_some_string_in_block(img.as_str(), "media_key"),
+            reply_to: extract_context_reply_to(message_body),
+            mentions: extract_mentions(message_body),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Video
+    if let Some(vid) =
+        field(message_body, "video_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        let caption = extract_first_some_string_in_block(vid.as_str(), "caption");
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Video,
+            text: InboundEvent::bound_text(caption.unwrap_or_default()),
+            media_token: extract_first_some_string_in_block(vid.as_str(), "media_key"),
+            reply_to: extract_context_reply_to(message_body),
+            mentions: extract_mentions(message_body),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Document
+    if let Some(doc) =
+        field(message_body, "document_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        let caption = extract_first_some_string_in_block(doc.as_str(), "caption");
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Document,
+            text: InboundEvent::bound_text(caption.unwrap_or_default()),
+            media_token: extract_first_some_string_in_block(doc.as_str(), "media_key"),
+            reply_to: extract_context_reply_to(message_body),
+            mentions: extract_mentions(message_body),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Audio (no caption field — just media_key)
+    if field(message_body, "audio_message")
+        .and_then(|s| unwrap_message_field_set(&s))
+        .is_some()
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Audio,
+            text: String::new(),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Voice (ptv_message or legacy voice fields)
+    if let Some(ptv) = field(message_body, "ptv_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer: peer.clone(),
+            sender: sender.clone(),
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Voice,
+            text: String::new(),
+            media_token: extract_first_some_string_in_block(ptv.as_str(), "media_key"),
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Sticker
+    if field(message_body, "sticker_message")
+        .and_then(|s| unwrap_message_field_set(&s))
+        .is_some()
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer,
+            sender,
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Sticker,
+            text: String::new(),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Contact
+    if field(message_body, "contact_message")
+        .and_then(|s| unwrap_message_field_set(&s))
+        .is_some()
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer,
+            sender,
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Contact,
+            text: String::new(),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Location
+    if field(message_body, "location_message")
+        .and_then(|s| unwrap_message_field_set(&s))
+        .is_some()
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer,
+            sender,
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Location,
+            text: String::new(),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Poll
+    if field(message_body, "poll_creation_message_v3")
+        .or_else(|| field(message_body, "poll_creation_message"))
+        .and_then(|s| unwrap_message_field_set(&s))
+        .is_some()
+    {
+        return Some(InboundEvent::Message {
+            id,
+            peer,
+            sender,
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+            kind: MessageKind::Poll,
+            text: String::new(),
+            media_token: None,
+            reply_to: extract_context_reply_to(message_body),
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me,
+            is_group,
+        });
+    }
+    // Reaction (nested in batch — synthesize a Reaction event)
+    if let Some(react) =
+        field(message_body, "reaction_message").and_then(|s| unwrap_message_field_set(&s))
+    {
+        let key_body = field(react.as_str(), "key")
+            .and_then(|s| unwrap_message_field_set(&s))
+            .unwrap_or_default();
+        let target = unquote(&field(&key_body, "id").unwrap_or_default());
+        let emoji = unquote(&field(react.as_str(), "text").unwrap_or_default());
+        return Some(InboundEvent::Reaction {
+            id,
+            target_msg_id: target,
+            emoji,
+            from: sender,
+            peer,
+            ts_unix_ms: effective_ts_unix_ms,
+            ts_mono_ns,
+        });
+    }
+    // Encrypted reaction / unknown — drop silently.
+    let _ = message_body;
+    None
+}
+
+/// Find the body of an array `[ ... ]` that immediately follows
+/// `key:` at the same nesting depth (depth 0 inside `rest`). Returns
+/// the inside of the brackets (without the surrounding `[` `]`).
+fn extract_top_level_array_after<'a>(rest: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("{key}: [");
+    let start = rest.find(&needle)? + needle.len();
+    // Walk forward, tracking `[`/`]` depth, until we close depth 0.
+    let bytes = rest.as_bytes();
+    let mut depth: i32 = 1;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&rest[start..i]);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split `[a, b, c]` into top-level elements `["a", "b", "c"]`,
+/// respecting brace/paren/bracket nesting. The caller is responsible
+/// for the surrounding `[` `]` having been stripped — `s` is the inner
+/// content of the array.
+fn split_top_level_braces(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut brace = 0i32;
+    let mut paren = 0i32;
+    let mut bracket = 0i32;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => brace += 1,
+            b'}' => {
+                brace -= 1;
+                if brace == 0 && paren == 0 && bracket == 0 {
+                    // Trim trailing comma if present.
+                    let end = if i + 1 < bytes.len() && bytes[i + 1] == b',' {
+                        i + 1
+                    } else {
+                        i
+                    };
+                    let trimmed = s[start..=end].trim();
+                    // Skip empty entries (", ,") and bare commas.
+                    if !trimmed.is_empty() && trimmed != "," {
+                        out.push(trimmed);
+                    }
+                    // Next element starts after the comma (if any).
+                    start = end + 1;
+                    // Consume trailing whitespace.
+                    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                        start += 1;
+                    }
+                    i = start;
+                    continue;
+                }
+            }
+            b'(' => paren += 1,
+            b')' => paren -= 1,
+            b'[' => bracket += 1,
+            b']' => bracket -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    // Trailing element without a closing brace (shouldn't happen for
+    // well-formed Debug output, but guard against losing the last
+    // element).
+    let tail = s[start..].trim();
+    if !tail.is_empty() && tail != "," && !out.iter().any(|e| e.trim() == tail) {
+        out.push(tail);
+    }
+    out
+}
+
+/// Extract the body inside `key: <block>` where `<block>` is a
+/// `{...}`-delimited struct at the *current* nesting level. Returns
+/// the body inside the braces (without surrounding `{` `}`).
+///
+/// The caller is expected to call this with the **enclosing struct
+/// body** (e.g. `InboundMessage { ... }` stripped of its outer
+/// braces) so that the inner `info: MessageInfo { ... }` can be
+/// found at depth 0.
+///
+/// To avoid matching fields whose name ends in `_key` (e.g.
+/// `message_context_info` contains the substring `info`), we search
+/// for `, key: ` (a preceding comma + space is the canonical
+/// Rust Debug field separator at depth 0).
+fn extract_nested_block<'a>(body: &'a str, key: &str) -> Option<&'a str> {
+    // Field can appear after `, ` (a typical Rust Debug field
+    // separator), after ` { ` (the *first* field of a struct that
+    // opens with `Name { ... }`), after `{{ ` (depth-2 nested open),
+    // or at byte 0 (the body itself starts with `key:`).
+    let after = if let Some(s) = body.find(&format!(", {key}: ")) {
+        s + format!(", {key}: ").len()
+    } else if let Some(s) = body.find(&format!("{{ {key}: ")) {
+        s + format!("{{ {key}: ").len()
+    } else if let Some(s) = body.find(&format!("{{{{ {key}: ")) {
+        // Nested-open brace sequence (depth-2).
+        s + format!("{{{{ {key}: ").len()
+    } else if let Some(stripped) = body.strip_prefix(&format!("{key}: ")) {
+        body.len() - stripped.len()
+    } else {
+        return None;
+    };
+    let bytes = body.as_bytes();
+    // Skip whitespace AND a Rust type-name prefix like `MessageInfo `
+    // — Debug format emits `key: TypeName { ... }`. Walk past any
+    // identifier characters, then whitespace, until we find `{`.
+    let mut i = after;
+    // First skip whitespace.
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    // Then skip a Rust identifier (type name): letter/underscore,
+    // then letters/digits/underscores.
+    if i < bytes.len() && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+        i += 1;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+    }
+    // Then skip whitespace again.
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'{' {
+        return None;
+    }
+    let open = i + 1;
+    let mut depth: i32 = 1;
+    let mut j = open;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(body[open..j].trim_start());
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Within `block: { ... }`, find the first field of the form
+/// `key: Some("...")` and return the unquoted string. Used to pull
+/// `caption` out of image/video/document sub-messages whose nested
+/// schema is `caption: Some("...")`.
+/// Pull the `user: "..."` value from a `Jid { user: "...", ... }`
+/// block attached to a field. Used by `parse_inbound_message` to get
+/// peer/sender JID users without parsing the whole Jid struct. Returns
+/// empty string if the field or its `user` subfield is missing.
+fn extract_jid_user(body: &str, field_name: &str) -> String {
+    let block = match extract_nested_block(body, field_name) {
+        Some(b) => b,
+        None => return String::new(),
+    };
+    let raw = match field(block, "user") {
+        Some(v) => v,
+        None => return String::new(),
+    };
+    unquote(&raw)
+}
+
+fn extract_first_some_string_in_block(block: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}: Some(");
+    let start = block.find(&needle)? + needle.len();
+    // Read until matching `)` (only one level deep — `Some(String)`
+    // doesn't have nested parens for simple strings).
+    let bytes = block.as_bytes();
+    let mut i = start;
+    while i < bytes.len() {
+        if bytes[i] == b')' {
+            return Some(unquote(&block[start..i]));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Strip a `MessageField::Set(<InnerType> { ... })` wrapper, returning
+/// the inner `{ ... }` body. Used by `extract_context_reply_to` and
+/// the message-field arms so callers can use `field()` /
+/// `extract_first_some_string_in_block` on the inner struct directly.
+/// Returns `None` for `MessageField::Unset` / `None` / missing.
+fn unwrap_message_field_set(block: &str) -> Option<String> {
+    let prefix = "MessageField::Set(";
+    let start = block.find(prefix)? + prefix.len();
+    let bytes = block.as_bytes();
+    let mut depth = 1i32;
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(block[start..i].to_string());
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Within `block: { ... }`, find the first field of the form
+/// `key: Some("...")` for the *nested text field* — used for
+/// `extended_text_message.text: Some("...")`. The block contains
+/// `text: Some("...")`, so we search for the text key.
+fn extract_first_some_text_in_block(block: &str) -> Option<String> {
+    extract_first_some_string_in_block(block, "text")
+}
+
+/// Parse `2026-07-12T20:49:20Z` → `Some(1783890560000)`. Returns
+/// `None` for any other shape — caller falls back to envelope ts.
+fn parse_iso8601_ms(s: &str) -> Option<i64> {
+    let s = s.trim().trim_matches('"');
+    // Expected: YYYY-MM-DDTHH:MM:SSZ  (sometimes with millis, sometimes
+    // without). Minimal manual parser — no chrono dep.
+    if s.len() < 20 {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: i64 = s.get(5..7)?.parse().ok()?;
+    let day: i64 = s.get(8..10)?.parse().ok()?;
+    let hour: i64 = s.get(11..13)?.parse().ok()?;
+    let minute: i64 = s.get(14..16)?.parse().ok()?;
+    let second: i64 = s.get(17..19)?.parse().ok()?;
+    // Days in month (leap year aware). Conservative: Feb = 28.
+    let days_before_month = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let mut day_of_year = days_before_month[(month - 1) as usize] + (day - 1);
+    if month > 2 && is_leap {
+        day_of_year += 1;
+    }
+    // Years since 1970.
+    let mut y = year - 1970;
+    let mut days = 0i64;
+    while y > 0 {
+        let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        days += if leap { 366 } else { 365 };
+        y -= 1;
+    }
+    days += day_of_year;
+    Some(((days * 24 + hour) * 60 + minute) * 60 * 1000 + second * 1000)
+}
+
+/// Walk `message.context_info: ... { ..., stanza_id: ..., quoted_message: ... }`
+/// and pull `stanza_id` (the WA msg_id of the quoted message) if the
+/// quoted message is present. Returns `None` when the field is absent
+/// or `stanza_id: None`.
+fn extract_context_reply_to(message_body: &str) -> Option<String> {
+    let raw = field(message_body, "context_info")?;
+    let ctx = unwrap_message_field_set(&raw)?;
+    field(ctx.as_str(), "quoted_message").and_then(|s| unwrap_message_field_set(&s))?;
+    let id = field(ctx.as_str(), "stanza_id").and_then(|v| unwrap_some(&v))?;
+    if id == "None" || id.is_empty() {
+        return None;
+    }
+    Some(unquote(&id))
+}
+
+/// Walk `message.context_info.mentions` and pull each as a JID
+/// string. Bounded by `MAX_INLINE_MENTIONS` via
+/// [`InboundEvent::bound_mentions`].
+fn extract_mentions(message_body: &str) -> Vec<String> {
+    let raw = match field(message_body, "context_info") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    let ctx = match unwrap_message_field_set(&raw) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    // mentions: [Jid { ... }, Jid { ... }] — same regex strategy as
+    // split_top_level_braces but we just want the user string from
+    // each entry.
+    let arr = match extract_top_level_array_after(&ctx, "mentions") {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let elems = split_top_level_braces(arr);
+    let mut out = Vec::with_capacity(elems.len());
+    for elem in elems {
+        if let Some(user) = field(elem, "user").and_then(|v| unwrap_some(&v)) {
+            out.push(unquote(&user));
+        }
+    }
+    InboundEvent::bound_mentions(out).0
 }
 
 fn parse_reaction(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {

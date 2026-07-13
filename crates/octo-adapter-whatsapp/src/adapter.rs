@@ -2931,6 +2931,59 @@ impl WhatsAppWebAdapter {
 // `<digits>@s.whatsapp.net` (users). The `PeerId` we hand back is
 // the same string the platform uses natively.
 
+/// Decide whether a participant `p_user_jid` (the user portion of
+/// one row in a group's participant list, e.g. `"80836284174444"`
+/// for an `@lid` participant) is the bot itself.
+///
+/// WhatsApp groups identify members by their LID, NOT their PN,
+/// so the bot's own participant only matches when the LID is in
+/// the lookup set. The PN is kept as a fallback for the (rare)
+/// responses that still carry `@s.whatsapp.net` user portions.
+///
+/// The participant user portion may also include a `:NN` device
+/// suffix (e.g. `"80836284174444:42"`); we strip it before
+/// comparison. The bot's LID/PN values stored on the adapter are
+/// already stripped of the device suffix (see `Event::Connected`
+/// and `Event::HistorySync` handlers), but the input parameter is
+/// treated as raw in case the caller forgot.
+///
+/// Pre-computed set members (per identity — only non-empty ones
+/// are inserted):
+///   PN forms:
+///     - `<digits>`              (e.g. `5521995544743`)
+///     - `<digits>@s.whatsapp.net`
+///     - `+<digits>@s.whatsapp.net`
+///     - `+<digits>` (raw + retained)
+///   LID forms:
+///     - `<digits>`              (e.g. `80836284174444`)
+///     - `<digits>@lid`
+fn matches_self_participant(
+    p_user_jid: &str,
+    self_phone: Option<&str>,
+    self_lid: Option<&str>,
+) -> bool {
+    let p_user = p_user_jid.split(':').next().unwrap_or(p_user_jid);
+    let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(phone) = self_phone {
+        let digits = phone.trim_start_matches('+');
+        if !digits.is_empty() {
+            candidates.insert(digits.to_string());
+            candidates.insert(format!("{digits}@s.whatsapp.net"));
+            candidates.insert(format!("+{digits}@s.whatsapp.net"));
+            candidates.insert(format!("+{phone}"));
+        }
+    }
+    if let Some(lid) = self_lid {
+        // Defensive: strip `:NN` device suffix from the LID form too.
+        let digits = lid.trim_start_matches('+').split(':').next().unwrap_or(lid);
+        if !digits.is_empty() {
+            candidates.insert(digits.to_string());
+            candidates.insert(format!("{digits}@lid"));
+        }
+    }
+    candidates.contains(p_user)
+}
+
 #[async_trait]
 impl CoordinatorAdmin for WhatsAppWebAdapter {
     /// Truthful capability report. Anything we don't override on
@@ -3311,33 +3364,12 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             .get_participating()
             .await
             .map_err(|e| api_err("list_own_groups", e))?;
-        // Snapshot the bot's own phone once so we can match it against
-        // the participant list without holding the lock.
-        let self_phone = self.self_phone.lock().clone().unwrap_or_default();
-        // RFC-0861 §5 M11: pre-compute a `HashSet<String>` of the
-        // bot's plausible phone/JID forms so the per-participant
-        // membership check below is an O(1) hash lookup instead of
-        // an O(L) string equality. The set is built once per call;
-        // forms covered:
-        //   1. raw digits (e.g. `5521995544743`)
-        //   2. digits with leading `+` stripped / re-applied variants
-        //   3. digits with `@s.whatsapp.net` suffix
-        //   4. digits with `+@s.whatsapp.net` (some participants
-        //      carry the `+` in the user portion)
-        // Forms we cannot derive (e.g. alternate country-code
-        // variants of the same number) are simply not in the set
-        // — the bot just won't be detected as admin in that
-        // edge case, which matches the previous behavior.
-        let mut self_phones: std::collections::HashSet<String> = std::collections::HashSet::new();
-        if !self_phone.is_empty() {
-            let digits = self_phone.trim_start_matches('+').to_string();
-            self_phones.insert(digits.clone());
-            self_phones.insert(format!("{digits}@s.whatsapp.net"));
-            self_phones.insert(format!("+{digits}@s.whatsapp.net"));
-            // Some platforms normalise to JID form with a `+` in
-            // the user portion (e.g. `+15551234567@s.whatsapp.net`).
-            self_phones.insert(format!("+{}", self_phone));
-        }
+        // Snapshot the bot's own phone + LID once so we can match it
+        // against the participant list without holding the lock.
+        let self_phone = self.self_phone.lock().clone();
+        let self_lid = self.self_lid.lock().clone();
+        let phone_ref = self_phone.as_deref();
+        let lid_ref = self_lid.as_deref();
         Ok(map
             .into_iter()
             .map(|(jid, meta)| {
@@ -3345,7 +3377,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
                 let is_admin = meta
                     .participants
                     .iter()
-                    .find(|p| self_phones.contains(p.jid.user.as_str()))
+                    .find(|p| matches_self_participant(p.jid.user.as_str(), phone_ref, lid_ref))
                     .map(|p| p.is_admin())
                     .unwrap_or(false);
                 GroupHandle {
@@ -5515,5 +5547,102 @@ mod tests {
             });
             (tx, handle)
         }
+    }
+
+    // ----- `matches_self_participant` unit tests (bug fix 2026-07-13) -----
+    //
+    // Background: the previous `list_own_groups` implementation only
+    // inserted the bot's phone-number variants into the participant
+    // lookup set, so on accounts where the bot's group-member identity
+    // is the LID (not the PN) the bot was never detected as admin —
+    // every `groups.list` row returned `is_admin: false`. The fix
+    // builds a lookup set from BOTH the PN and the LID, and strips a
+    // trailing `:NN` device suffix from the participant user portion
+    // before comparing.
+    //
+    // These tests pin the helper's contract end-to-end. Adding more
+    // cases here is cheaper than running a live session.
+
+    fn msp(participant: &str, phone: Option<&str>, lid: Option<&str>) -> bool {
+        super::matches_self_participant(participant, phone, lid)
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_digits() {
+        // The headline bug case: bot's LID matches an `@lid` participant.
+        assert!(msp("80836284174444", None, Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_with_device_suffix() {
+        // Some wacore responses include a `:NN` device suffix on the
+        // user portion. Must still match.
+        assert!(msp("80836284174444:42", None, Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_strips_device_from_self_lid() {
+        // Defensive: even if the caller passes the LID WITH a device
+        // suffix, we should still strip and match.
+        assert!(msp("80836284174444", None, Some("80836284174444:42")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_pn_digits_fallback() {
+        // Backwards-compat: PN-only responses (older wacore behaviour)
+        // still resolve.
+        assert!(msp("5521995544743", Some("5521995544743"), None));
+    }
+
+    #[test]
+    fn matches_self_participant_by_pn_full_jid_suffix() {
+        // Some callers (e.g. one that uses `p.jid.to_string()` rather
+        // than `p.jid.user.as_str()`) pass the full JID form. The
+        // helper inserts `<digits>@s.whatsapp.net` into the candidate
+        // set, so a `<digits>@s.whatsapp.net` input matches too.
+        assert!(msp(
+            "5521995544743@s.whatsapp.net",
+            Some("5521995544743"),
+            None
+        ));
+    }
+
+    #[test]
+    fn matches_self_participant_prefers_lid_when_both_set() {
+        // When both are set, LID alone should match an LID participant
+        // (the headline case), and PN alone should match a PN
+        // participant (legacy case).
+        let phone = Some("5521995544743");
+        let lid = Some("80836284174444");
+        assert!(msp("80836284174444", phone, lid));
+        assert!(msp("5521995544743", phone, lid));
+    }
+
+    #[test]
+    fn matches_self_participant_rejects_unrelated_user() {
+        // A participant user portion that matches neither PN nor LID
+        // must not match.
+        let phone = Some("5521995544743");
+        let lid = Some("80836284174444");
+        assert!(!msp("5511987654321", phone, lid));
+        assert!(!msp("123456789", phone, lid));
+    }
+
+    #[test]
+    fn matches_self_participant_empty_inputs_returns_false() {
+        // Empty PN/LID (the "not yet connected" state) must never
+        // match — that would silently mark every group as admin.
+        assert!(!msp("80836284174444", None, None));
+        assert!(!msp("80836284174444", Some(""), Some("")));
+        assert!(!msp("", Some("5521995544743"), Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_lid_full_jid_suffix() {
+        // Symmetric to the PN case: a full LID JID form (`<digits>@lid`)
+        // input also resolves, because the helper inserts that variant
+        // into the candidate set. Useful for callers that compare
+        // against `p.jid.to_string()` instead of `p.jid.user.as_str()`.
+        assert!(msp("80836284174444@lid", None, Some("80836284174444")));
     }
 }

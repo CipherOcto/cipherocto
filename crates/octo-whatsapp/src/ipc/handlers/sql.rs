@@ -37,17 +37,12 @@ const MAX_ROWS: usize = 10_000;
 
 /// Statements accepted by `sql.execute` (write side of the DDL/DML).
 const WRITE_VERBS: &[&str] = &[
-    "INSERT", "UPDATE", "DELETE", "REPLACE",
-    "CREATE", "DROP", "ALTER", "TRUNCATE",
-    "BEGIN", "COMMIT", "ROLLBACK",
-    "PRAGMA", "ANALYZE", "VACUUM",
+    "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN",
+    "COMMIT", "ROLLBACK", "PRAGMA", "ANALYZE", "VACUUM",
 ];
 
 /// Statements accepted by `sql.query` (read side).
-const READ_VERBS: &[&str] = &[
-    "SELECT", "WITH",
-    "SHOW", "EXPLAIN", "DESCRIBE", "DESC",
-];
+const READ_VERBS: &[&str] = &["SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC"];
 
 // === Helpers ==============================================================
 
@@ -92,21 +87,38 @@ fn single_statement(sql: &str) -> Result<&str, RpcError> {
         let b = bytes[i];
         let next = bytes.get(i + 1).copied();
         if in_line_comment {
-            if b == b'\n' { in_line_comment = false; }
+            if b == b'\n' {
+                in_line_comment = false;
+            }
         } else if in_block_comment {
-            if b == b'*' && next == Some(b'/') { in_block_comment = false; i += 1; }
+            if b == b'*' && next == Some(b'/') {
+                in_block_comment = false;
+                i += 1;
+            }
         } else if in_single_quote {
-            if b == b'\'' { in_single_quote = false; }
-            else { has_real_token = true; }
+            if b == b'\'' {
+                in_single_quote = false;
+            } else {
+                has_real_token = true;
+            }
         } else if in_double_quote {
-            if b == b'"' { in_double_quote = false; }
-            else { has_real_token = true; }
+            if b == b'"' {
+                in_double_quote = false;
+            } else {
+                has_real_token = true;
+            }
         } else {
             match b {
                 b'\'' => in_single_quote = true,
                 b'"' => in_double_quote = true,
-                b'-' if next == Some(b'-') => { in_line_comment = true; i += 1; }
-                b'/' if next == Some(b'*') => { in_block_comment = true; i += 1; }
+                b'-' if next == Some(b'-') => {
+                    in_line_comment = true;
+                    i += 1;
+                }
+                b'/' if next == Some(b'*') => {
+                    in_block_comment = true;
+                    i += 1;
+                }
                 b';' => stmts += 1,
                 c if !c.is_ascii_whitespace() => has_real_token = true,
                 _ => {}
@@ -129,7 +141,10 @@ fn single_statement(sql: &str) -> Result<&str, RpcError> {
     if stmts > 0 {
         return Err(RpcError {
             code: RpcErrorCode::InvalidParams.as_i32(),
-            message: format!("sql must contain exactly one statement (found {})", stmts + 1),
+            message: format!(
+                "sql must contain exactly one statement (found {})",
+                stmts + 1
+            ),
             data: Some(json!({ "hint": "remove the inner `;` or split into separate calls" })),
         });
     }
@@ -148,32 +163,48 @@ fn first_keyword(sql: &str) -> Result<String, RpcError> {
         let b = bytes[i];
         let next = bytes.get(i + 1).copied();
         if in_single {
-            if b == b'\'' { in_single = false; }
-            i += 1; continue;
+            if b == b'\'' {
+                in_single = false;
+            }
+            i += 1;
+            continue;
         }
         if in_double {
-            if b == b'"' { in_double = false; }
-            i += 1; continue;
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
         }
         // Skip line comments.
         if b == b'-' && next == Some(b'-') {
-            while i < bytes.len() && bytes[i] != b'\n' { i += 1; }
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
             continue;
         }
         // Skip block comments.
         if b == b'/' && next == Some(b'*') {
             i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
-            i += 2; continue;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
         }
-        if b.is_ascii_whitespace() { i += 1; continue; }
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
         // Collect the identifier: ASCII letters / digits / underscore /
         // dot (for things like `WITH RECURSIVE` or schema-qualified
         // identifiers — but the first token should be a single word).
         let start = i;
         while i < bytes.len() {
             let c = bytes[i];
-            if c.is_ascii_whitespace() || c == b'(' || c == b';' { break; }
+            if c.is_ascii_whitespace() || c == b'(' || c == b';' {
+                break;
+            }
             i += 1;
         }
         return Ok(std::str::from_utf8(&bytes[start..i])
@@ -188,10 +219,14 @@ fn first_keyword(sql: &str) -> Result<String, RpcError> {
 }
 
 /// `true` iff `kw` is in the write allow-list.
-fn is_write_verb(kw: &str) -> bool { WRITE_VERBS.iter().any(|v| *v == kw) }
+fn is_write_verb(kw: &str) -> bool {
+    WRITE_VERBS.contains(&kw)
+}
 
 /// `true` iff `kw` is in the read allow-list.
-fn is_read_verb(kw: &str) -> bool { READ_VERBS.iter().any(|v| *v == kw) }
+fn is_read_verb(kw: &str) -> bool {
+    READ_VERBS.contains(&kw)
+}
 
 /// Coerce a stoolap [`Value`] into a `serde_json::Value`. Falls back to
 /// stringification when the type doesn't map cleanly.
@@ -206,21 +241,19 @@ fn stoolap_value_to_json(v: &stoolap::Value) -> serde_json::Value {
         SV::Text(s) => serde_json::Value::String(s.as_str().to_string()),
         SV::Boolean(b) => serde_json::Value::Bool(*b),
         SV::Timestamp(ts) => serde_json::Value::String(ts.to_rfc3339()),
-        SV::Blob(bytes) => {
-            serde_json::Value::String(format!("0x{}", hex_lower(bytes)))
-        }
+        SV::Blob(bytes) => serde_json::Value::String(format!("0x{}", hex_lower(bytes))),
         // Extension wraps JSON (tag=6) and Vector (tag=7); we render
         // the raw hex so the operator can spot it instead of silently
         // losing the value.
-        SV::Extension(bytes) => {
-            serde_json::Value::String(format!("0x{}", hex_lower(bytes)))
-        }
+        SV::Extension(bytes) => serde_json::Value::String(format!("0x{}", hex_lower(bytes))),
     }
 }
 
 fn hex_lower(b: &[u8]) -> String {
     let mut s = String::with_capacity(b.len() * 2);
-    for byte in b { s.push_str(&format!("{byte:02x}")); }
+    for byte in b {
+        s.push_str(&format!("{byte:02x}"));
+    }
     s
 }
 
@@ -245,7 +278,9 @@ pub struct SqlExecute;
 
 #[async_trait::async_trait]
 impl RpcHandler for SqlExecute {
-    fn name(&self) -> &'static str { "sql.execute" }
+    fn name(&self) -> &'static str {
+        "sql.execute"
+    }
 
     async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
         let p: ExecuteParams = serde_json::from_value(params).map_err(|e| RpcError {
@@ -300,7 +335,9 @@ pub struct SqlQuery;
 
 #[async_trait::async_trait]
 impl RpcHandler for SqlQuery {
-    fn name(&self) -> &'static str { "sql.query" }
+    fn name(&self) -> &'static str {
+        "sql.query"
+    }
 
     async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
         let p: QueryParams = serde_json::from_value(params).map_err(|e| RpcError {
@@ -327,7 +364,8 @@ impl RpcHandler for SqlQuery {
         let client_cap = p.limit.unwrap_or(MAX_ROWS).min(MAX_ROWS);
         let sql_owned = sql.to_string();
         let (columns, rows, truncated) = tokio::task::spawn_blocking(move || {
-            let mut rows = db.query(&sql_owned, ())
+            let mut rows = db
+                .query(&sql_owned, ())
                 .map_err(|e| format!("query: {e}"))?;
             // Clamp to client_cap (further limit atop MAX_ROWS).
             let cap = client_cap.min(MAX_ROWS);
@@ -383,7 +421,9 @@ pub struct SqlTables;
 
 #[async_trait::async_trait]
 impl RpcHandler for SqlTables {
-    fn name(&self) -> &'static str { "sql.tables" }
+    fn name(&self) -> &'static str {
+        "sql.tables"
+    }
 
     async fn call(&self, h: DaemonHandle, _params: Value) -> Result<Value, RpcError> {
         let db = require_db(&h)?;
@@ -398,7 +438,7 @@ impl RpcHandler for SqlTables {
         let mut names: Vec<String> = Vec::new();
         for row in res {
             let row = row.map_err(|e| stoolap_err("sql.tables", e))?;
-            if let Some(s) = row.get::<String>(0).ok() {
+            if let Ok(s) = row.get::<String>(0) {
                 names.push(s);
             } else if let Some(v) = row.get_value(0) {
                 names.push(format!("{v:?}"));
@@ -416,18 +456,18 @@ impl RpcHandler for SqlTables {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::daemon::Daemon;
     use crate::query::embedder::{Embedder, MockEmbedder};
     use crate::query::{open_subsystem, JobConfig};
+    use std::sync::Arc;
 
     fn handle_with_query() -> (tempfile::TempDir, DaemonHandle) {
         let tmp = tempfile::tempdir().expect("tmpdir");
         let h = Daemon::new_for_tests(tmp.path()).1;
         let base = tempfile::tempdir().expect("subdir");
         let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder::ok("test", 384));
-        let s = open_subsystem(base.path(), embedder, JobConfig::default())
-            .expect("open subsystem");
+        let s =
+            open_subsystem(base.path(), embedder, JobConfig::default()).expect("open subsystem");
         h.install_query_subsystem(Arc::new(s));
         (tmp, h)
     }
@@ -444,8 +484,14 @@ mod tests {
 
     #[test]
     fn first_keyword_skips_whitespace_and_comments() {
-        assert_eq!(first_keyword("   \n -- preamble\n SELECT 1").unwrap(), "SELECT");
-        assert_eq!(first_keyword("/* ansi style */ INSERT INTO t").unwrap(), "INSERT");
+        assert_eq!(
+            first_keyword("   \n -- preamble\n SELECT 1").unwrap(),
+            "SELECT"
+        );
+        assert_eq!(
+            first_keyword("/* ansi style */ INSERT INTO t").unwrap(),
+            "INSERT"
+        );
         assert_eq!(first_keyword("CREATE TABLE x (id INT)").unwrap(), "CREATE");
     }
 
@@ -495,7 +541,9 @@ mod tests {
         let (_t, h) = handle_with_query();
         // Stoolap only supports INTEGER PRIMARY KEY (rowid alias);
         // use a plain UNIQUE on a TEXT column instead.
-        execute(&h, "CREATE TABLE demo (k TEXT UNIQUE, v INTEGER)").await.unwrap();
+        execute(&h, "CREATE TABLE demo (k TEXT UNIQUE, v INTEGER)")
+            .await
+            .unwrap();
         execute(
             &h,
             "INSERT INTO demo (k, v) VALUES ('a', 1), ('b', 2), ('c', 3)",
@@ -504,9 +552,7 @@ mod tests {
         .unwrap();
         let r = query(&h, "SELECT k, v FROM demo ORDER BY k").await.unwrap();
         let rows = r["rows"].as_array().expect("rows arr");
-        let keys: Vec<&str> = rows.iter()
-            .map(|r| r[0].as_str().unwrap())
-            .collect();
+        let keys: Vec<&str> = rows.iter().map(|r| r[0].as_str().unwrap()).collect();
         assert_eq!(keys, vec!["a", "b", "c"]);
         assert_eq!(rows[2][1].as_i64().unwrap(), 3);
     }
@@ -529,7 +575,9 @@ mod tests {
     #[tokio::test]
     async fn sql_execute_rejects_multi_statement() {
         let (_t, h) = handle_with_query();
-        let err = execute(&h, "CREATE TABLE x (id INT); DROP TABLE x").await.unwrap_err();
+        let err = execute(&h, "CREATE TABLE x (id INT); DROP TABLE x")
+            .await
+            .unwrap_err();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("exactly one statement"));
     }
@@ -546,18 +594,24 @@ mod tests {
     #[tokio::test]
     async fn sql_tables_returns_created_table() {
         let (_t, h) = handle_with_query();
-        execute(&h, "CREATE TABLE sample (id INTEGER PRIMARY KEY)").await.unwrap();
+        execute(&h, "CREATE TABLE sample (id INTEGER PRIMARY KEY)")
+            .await
+            .unwrap();
         let r = SqlTables.call(h.clone(), Value::Null).await.unwrap();
         let tbl = r["tables"].as_array().expect("tables arr");
-        assert!(tbl.iter().any(|v| v.as_str() == Some("sample")),
-            "expected 'sample' in {tbl:?}");
+        assert!(
+            tbl.iter().any(|v| v.as_str() == Some("sample")),
+            "expected 'sample' in {tbl:?}"
+        );
     }
 
     #[tokio::test]
     async fn sql_query_returns_all_under_cap() {
         let (_t, h) = handle_with_query();
         execute(&h, "CREATE TABLE t (k INTEGER)").await.unwrap();
-        execute(&h, "INSERT INTO t VALUES (1),(2),(3),(4),(5)").await.unwrap();
+        execute(&h, "INSERT INTO t VALUES (1),(2),(3),(4),(5)")
+            .await
+            .unwrap();
         let r = query(&h, "SELECT k FROM t ORDER BY k").await.unwrap();
         assert_eq!(r["count"].as_u64().unwrap(), 5);
         let rows = r["rows"].as_array().unwrap();

@@ -674,13 +674,23 @@ pub const TIER7_I_DAEMON_METHODS: &[&str] = &[
 /// populated; otherwise it's empty.
 pub const EMPTY_METHOD_LIST: &[&str] = &[];
 
-/// Phase 1 task 12-13: query-layer RPC names. The registry
-/// only contains them when the `query` cargo feature is on, so
-/// `TIER7_I_DAEMON_METHODS` is split — the three query methods
-/// live in this separate constant so absent builds don't
-/// double-count.
+/// Phase 1 task 12-13 + Phase 9 dynamic SQL driver: query-layer RPC
+/// names. The registry only contains them when the `query` cargo
+/// feature is on, so `TIER7_I_DAEMON_METHODS` is split — these six
+/// query methods live in this separate constant so absent builds
+/// don't double-count.
 #[cfg(feature = "query")]
-pub const TIER7_QUERY_METHODS: &[&str] = &["daemon.search", "messages.context", "events.find"];
+pub const TIER7_QUERY_METHODS: &[&str] = &[
+    "daemon.search",
+    "messages.context",
+    "events.find",
+    // Phase 9: dynamic SQL driver — these three round-trip through
+    // `QuerySubsystem::db` and let the operator drive DDL/DML on the
+    // embedded stoolap database at runtime.
+    "sql.execute",
+    "sql.query",
+    "sql.tables",
+];
 
 /// Compat alias — `build_registry` chains either of these
 /// depending on the cargo feature; the dedup test mirrors the

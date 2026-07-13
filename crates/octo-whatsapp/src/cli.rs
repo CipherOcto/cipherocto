@@ -1538,18 +1538,12 @@ pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
                 "limit": limit,
             }),
         ),
-        QueryAction::Execute { sql } => (
-            "sql.execute",
-            serde_json::json!({ "sql": sql }),
-        ),
+        QueryAction::Execute { sql } => ("sql.execute", serde_json::json!({ "sql": sql })),
         QueryAction::Query { sql, limit } => (
             "sql.query",
             serde_json::json!({ "sql": sql, "limit": limit }),
         ),
-        QueryAction::Tables => (
-            "sql.tables",
-            serde_json::Value::Null,
-        ),
+        QueryAction::Tables => ("sql.tables", serde_json::Value::Null),
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)

@@ -901,23 +901,14 @@ pub fn tool_descriptors() -> Vec<Value> {
             "Run a single DDL/DML statement on the daemon's embedded \
              SQL store. INSERT/UPDATE/DELETE/CREATE/DROP/ALTER only. \
              Returns {rows_affected, sql, first_keyword}.",
-            schema_props_required(
-                &[("sql", "string")],
-                &["sql"],
-            ),
+            schema_props_required(&[("sql", "string")], &["sql"]),
         ));
         v.push(td(
             "sql.query",
             "Run a read-only SELECT/WITH/SHOW/EXPLAIN against the \
              daemon's SQL store. Returns {columns, rows, count, limit, \
              truncated}. Hard cap: 10000 rows.",
-            schema_props_required(
-                &[
-                    ("sql", "string"),
-                    ("limit", "integer"),
-                ],
-                &["sql"],
-            ),
+            schema_props_required(&[("sql", "string"), ("limit", "integer")], &["sql"]),
         ));
         v.push(td(
             "sql.tables",
@@ -1074,6 +1065,28 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         }
     };
     let daemon_result = forward_to_daemon(socket, daemon_method, arguments).await?;
+    // The tag lives on the parent object; reading `code`/`message` from
+    // the parent (not from `get("__rpc_error__")`, which would yield the
+    // Bool value of the tag instead of the parent object).
+    let is_error = daemon_result
+        .as_object()
+        .and_then(|o| o.get("__rpc_error__"))
+        .is_some();
+    if is_error {
+        let code = daemon_result.get("code").cloned().unwrap_or(Value::Null);
+        let message = daemon_result.get("message").cloned().unwrap_or(Value::Null);
+        let body = serde_json::json!({ "code": code, "message": message });
+        let text = serde_json::to_string(&body)
+            .unwrap_or_else(|_| format!("daemon RPC failed (code={code}, message={message})"));
+        return Ok(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "isError": true,
+                "content": [{"type": "text", "text": text}],
+            },
+        }));
+    }
     let text = if daemon_result.is_null() {
         "null".to_string()
     } else {
@@ -1101,7 +1114,38 @@ async fn forward_to_daemon(socket: &Path, method: &str, params: Value) -> anyhow
     let mut buf = String::new();
     reader.read_line(&mut buf)?;
     let resp: Value = serde_json::from_str(buf.trim())?;
-    Ok(resp.get("result").cloned().unwrap_or(Value::Null))
+    // Classify the JSON-RPC response. Errors get tagged with
+    // `__rpc_error__: true` so `handle_tools_call` can flip
+    // `isError: true` on the MCP tool result; otherwise the
+    // legitimate result (which may itself be `null`) is forwarded.
+    // Pre-fix bug: errors were silently dropped to `Value::Null`
+    // here, so a parse error from `sql.execute` (e.g. trying to
+    // create a table with `TEXT PRIMARY KEY` inline, which stoolap
+    // rejects) appeared to the operator as a successful `null` return.
+    Ok(classify_daemon_response(resp))
+}
+
+/// Reduce a raw JSON-RPC response from the daemon to either a tagged
+/// error value (when the response has an `error` field) or the
+/// `result` value (when it doesn't). The tagged-error shape is
+/// `{__rpc_error__: true, code, message}`; the caller
+/// (`handle_tools_call`) branches on the tag to flip `isError: true`
+/// on the MCP tool result.
+///
+/// Pure function — no socket, no async, no globals. The hermetic
+/// tests in `mod tests` exercise every branch (error, result, both,
+/// neither) without needing a live daemon.
+fn classify_daemon_response(resp: Value) -> Value {
+    if let Some(err) = resp.get("error") {
+        let code = err.get("code").cloned().unwrap_or(Value::Null);
+        let message = err.get("message").cloned().unwrap_or(Value::Null);
+        return serde_json::json!({
+            "__rpc_error__": true,
+            "code": code,
+            "message": message,
+        });
+    }
+    resp.get("result").cloned().unwrap_or(Value::Null)
 }
 
 fn jsonrpc_error(id: Value, code: i32, message: &str) -> Value {
@@ -1426,5 +1470,177 @@ mod tests {
             descs.len(),
             EXPECTED_TOOL_COUNT
         );
+    }
+
+    // ── classify_daemon_response (2026-07-13) ────────────────────────
+    //
+    // Background: the MCP wrapper used to silently drop JSON-RPC
+    // errors from the daemon by collapsing `resp.error` to
+    // `Value::Null`. The operator would see a content text of
+    // `"null"` and assume the call had succeeded. Real failure
+    // example: `sql.execute("CREATE TABLE t (id TEXT PRIMARY KEY)")`
+    // returns a parse error from stoolap ("PRIMARY KEY column 'id'
+    // must be INTEGER"), but the MCP wrapper ate it. The fix is the
+    // tagged-value pattern in `classify_daemon_response` — the
+    // caller flips `isError: true` on the tool result, and the
+    // operator sees the actual error message.
+
+    #[test]
+    fn classify_daemon_response_tags_error_with_code_and_message() {
+        let resp = serde_json::json!({
+            "id": 1,
+            "error": {
+                "code": -32603,
+                "message": "sql.execute: parse error: PRIMARY KEY column 'id' must be INTEGER",
+            },
+        });
+        let out = classify_daemon_response(resp);
+        assert_eq!(out["__rpc_error__"], serde_json::json!(true));
+        assert_eq!(out["code"], serde_json::json!(-32603));
+        assert!(
+            out["message"].as_str().unwrap().contains("parse error"),
+            "message should propagate verbatim; got: {:?}",
+            out["message"]
+        );
+    }
+
+    #[test]
+    fn classify_daemon_response_forwards_result_when_present() {
+        let resp = serde_json::json!({
+            "id": 1,
+            "result": {"first_keyword": "SELECT", "rows": [[1, 2, 3]], "count": 1},
+        });
+        let out = classify_daemon_response(resp);
+        assert!(out.get("__rpc_error__").is_none());
+        assert_eq!(out["first_keyword"], serde_json::json!("SELECT"));
+        assert_eq!(out["rows"], serde_json::json!([[1, 2, 3]]));
+    }
+
+    #[test]
+    fn classify_daemon_response_preserves_explicit_null_result() {
+        // The daemon can legitimately return `result: null` for DDL
+        // statements whose rows-affected is unit-typed. The helper
+        // must NOT confuse that with an error.
+        let resp = serde_json::json!({"id": 1, "result": null});
+        let out = classify_daemon_response(resp);
+        assert!(out.is_null(), "explicit null must stay null; got {out:?}");
+        assert!(out.get("__rpc_error__").is_none());
+    }
+
+    #[test]
+    fn classify_daemon_response_handles_missing_both_fields() {
+        // Defensive: a malformed daemon response (no `result` and no
+        // `error`) used to map to `null` under the old code. The
+        // helper preserves that — the caller can't differentiate
+        // "null result" from "garbage response" without more
+        // context, but that's fine because legitimate responses
+        // always have exactly one of the two fields.
+        let resp = serde_json::json!({"id": 1});
+        let out = classify_daemon_response(resp);
+        assert!(out.is_null());
+    }
+
+    #[test]
+    fn classify_daemon_response_tolerates_missing_message_field() {
+        // Some error paths may have `code` but no `message` (e.g.
+        // library-internal errors). The helper must not panic; it
+        // should set `message: null` and still tag the error.
+        let resp = serde_json::json!({"id": 1, "error": {"code": -1}});
+        let out = classify_daemon_response(resp);
+        assert_eq!(out["__rpc_error__"], serde_json::json!(true));
+        assert_eq!(out["code"], serde_json::json!(-1));
+        assert!(out["message"].is_null());
+    }
+
+    // ── handle_tools_call end-to-end with a mock daemon socket ────────
+    //
+    // The classify tests above prove the response-classification
+    // helper is correct in isolation. But the live symptom was a
+    // different failure mode: the `code`/`message` fields came
+    // through as `null` in the final MCP response even though
+    // `classify_daemon_response` produces them correctly. So we
+    // need an end-to-end test that drives the full path:
+    //   handle_tools_call -> forward_to_daemon -> classify_daemon_response
+    //
+    // We bind a real unix socket, spawn a server thread that reads
+    // one JSON-RPC request and writes a hardcoded error response,
+    // then call `handle_tools_call` against that socket and assert
+    // the shape of the final MCP tool result.
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_tools_call_propagates_rpc_error_via_is_error() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixListener;
+        use std::time::Duration;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sock_path = tmp.path().join("fake-daemon.sock");
+        let listener = UnixListener::bind(&sock_path).expect("bind socket");
+
+        // Spawn a one-shot daemon thread: accept one connection,
+        // read one JSON-RPC line, write the hardcoded error
+        // response, then drop the stream.
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read request");
+            let resp = r#"{"id":1,"error":{"code":-32603,"message":"sql.execute: parse error: PRIMARY KEY column 'id' must be INTEGER type, got Text."}}"#;
+            writeln!(stream, "{}", resp).expect("write response");
+            stream.flush().expect("flush");
+        });
+
+        // Drive the full MCP path. The req mimics what `serve`
+        // would forward from a stdio MCP client.
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": "sql.execute",
+                "arguments": {"sql": "CREATE TABLE x (id TEXT PRIMARY KEY)"},
+            },
+        });
+        let resp = handle_tools_call(serde_json::json!(99), &req, &sock_path)
+            .await
+            .expect("handle_tools_call");
+
+        // Assert MCP result shape: isError=true, content text contains
+        // the actual error code and message (NOT literal "null").
+        let result = &resp["result"];
+        assert_eq!(
+            result["isError"],
+            serde_json::json!(true),
+            "expected isError:true, got: {resp}"
+        );
+        let text = result["content"][0]["text"]
+            .as_str()
+            .expect("content[0].text is a string");
+        assert!(
+            text.contains("parse error"),
+            "content text should carry the daemon error message; got: {text:?}"
+        );
+        assert!(
+            text.contains("-32603"),
+            "content text should carry the JSON-RPC error code -32603; got: {text:?}"
+        );
+        assert!(
+            !text.contains("\"code\":null"),
+            "code field must not be null; got: {text:?}"
+        );
+        assert!(
+            !text.contains("\"message\":null"),
+            "message field must not be null; got: {text:?}"
+        );
+
+        // Give the server thread a moment to exit cleanly.
+        let join = std::thread::Builder::new()
+            .spawn(move || server.join())
+            .expect("spawn join");
+        // Bound the wait so a stuck server doesn't hang the test.
+        let _ = tokio::time::timeout(Duration::from_secs(2), async {
+            let _ = tokio::task::spawn_blocking(move || join.join()).await.ok();
+        })
+        .await;
     }
 }

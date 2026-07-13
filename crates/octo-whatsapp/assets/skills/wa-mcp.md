@@ -889,6 +889,70 @@ Show details for one linked WhatsApp account.
 
 ---
 
+## 20. Dynamic SQL (3) — `query` cargo feature
+
+Phase 9 surface that lets the operator (or any agent) drive arbitrary
+DDL/DML against the daemon's embedded stoolap database without
+rebuilding. Useful for ad-hoc persistence (e.g. snapshotting
+`groups.info` members into a `group_members` table) and introspection.
+The `query` cargo feature must be enabled at compile time; absent
+builds do not register these tools.
+
+### `sql.execute`
+
+Run a single DDL/DML statement. Allowed first keywords:
+`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `CREATE`, `DROP`, `ALTER`,
+`TRUNCATE`, `BEGIN`, `COMMIT`, `ROLLBACK`, `PRAGMA`, `ANALYZE`,
+`VACUUM`. Multi-statement strings and unrecognized verbs are
+rejected at the daemon before the SQL reaches stoolap.
+
+- **Required**: `sql: string`
+- **Returns**: `{sql, first_keyword, rows_affected}`
+- **Example**:
+  ```json
+  {"sql": "CREATE TABLE demo (k INTEGER PRIMARY KEY, v TEXT)",
+   "first_keyword": "CREATE", "rows_affected": 0}
+  ```
+
+### `sql.query`
+
+Run a read-only `SELECT` / `WITH` / `SHOW` / `EXPLAIN` / `DESCRIBE` /
+`DESC`. Write verbs are rejected. Hard cap: 10000 rows.
+
+- **Required**: `sql: string`
+- **Optional**: `limit: integer` (smaller client-side cap, defaults
+  to 10000).
+- **Returns**: `{sql, first_keyword, columns, rows, count, limit, truncated}`
+- **Example**:
+  ```json
+  {"sql": "SELECT k, v FROM demo ORDER BY k",
+   "first_keyword": "SELECT",
+   "columns": ["k", "v"],
+   "rows": [[1, "hello"], [2, "world"], [3, "foo"]],
+   "count": 3, "limit": 10000, "truncated": false}
+  ```
+
+### `sql.tables`
+
+Shortcut for `SHOW TABLES`. No input.
+
+- **Returns**: `{tables: [string], count: integer}`
+
+**Safety rails (non-negotiable):**
+
+1. Single-statement enforcement — split on `;`, reject >1.
+2. Allow-list per handler — execute admits writes only, query admits
+   reads only. `SHUTDOWN` / `ATTACH DATABASE` / `DETACH DATABASE`
+   are blocked.
+3. Per-RPC future runs the SQL on `spawn_blocking` so cancellation
+   is clean (stoolap is single-threaded; long queries would
+   otherwise wedge the daemon's read path).
+4. Bearer-token gate inherited from `ipc/server.rs` — same as every
+   other RPC.
+5. Hard `MAX_ROWS = 10000` cap on `sql.query` payload.
+
+---
+
 ## Bootstrapping cheat-sheet
 
 When you wire `octo-whatsapp` into a fresh MCP client, walk this list:

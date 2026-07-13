@@ -639,6 +639,24 @@ pub enum QueryAction {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Dynamic DDL/DML against the daemon's embedded SQL store.
+    /// Accepts INSERT/UPDATE/DELETE/CREATE/DROP/ALTER only — for
+    /// reads use `query` or `tables`.
+    Execute {
+        /// Single SQL statement. Anything multi-statement or non-DDL/DML
+        /// is rejected by the daemon before reaching stoolap.
+        sql: String,
+    },
+    /// Read-only SQL: SELECT/WITH/SHOW/EXPLAIN. Returns rows as JSON.
+    Query {
+        /// Single SQL statement.
+        sql: String,
+        /// Optional client-side cap (smaller than the server's 10000).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// List existing tables (introspection; shortcut for SHOW TABLES).
+    Tables,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1519,6 +1537,18 @@ pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
                 "until_ts_unix_ms": until_ts_unix_ms,
                 "limit": limit,
             }),
+        ),
+        QueryAction::Execute { sql } => (
+            "sql.execute",
+            serde_json::json!({ "sql": sql }),
+        ),
+        QueryAction::Query { sql, limit } => (
+            "sql.query",
+            serde_json::json!({ "sql": sql, "limit": limit }),
+        ),
+        QueryAction::Tables => (
+            "sql.tables",
+            serde_json::Value::Null,
         ),
     };
     let result = client.call(method, params)?;

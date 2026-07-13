@@ -45,11 +45,13 @@ async fn fanout_delivers_every_event_to_every_sink() {
     let mut a_ids: Vec<String> = Vec::new();
     let mut b_ids: Vec<String> = Vec::new();
     for _ in 0..5 {
-        match sub_a.recv().await.unwrap() {
+        let (_id, ev) = sub_a.recv().await.unwrap();
+        match ev {
             InboundEvent::Message { id, .. } => a_ids.push(id),
             _ => panic!("expected Message"),
         }
-        match sub_b.recv().await.unwrap() {
+        let (_id, ev) = sub_b.recv().await.unwrap();
+        match ev {
             InboundEvent::Message { id, .. } => b_ids.push(id),
             _ => panic!("expected Message"),
         }
@@ -152,7 +154,7 @@ async fn subscriber_try_recv_returns_none_when_empty() {
     tx.send(dummy_msg("M1")).unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let ev = sub.try_recv().expect("event should be available");
+    let (_id, ev) = sub.try_recv().expect("event should be available");
     match ev {
         InboundEvent::Message { id, .. } => assert_eq!(id, "M1"),
         _ => panic!("expected Message"),

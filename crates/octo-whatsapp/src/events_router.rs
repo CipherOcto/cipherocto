@@ -28,7 +28,7 @@ use crate::observability::metrics::Metrics;
 /// producer-side handle; `EventsSubscriber` is the consumer-side
 /// handle (the `mpsc::Receiver` paired with a `LaggedProbe`).
 pub struct EventsSink {
-    tx: mpsc::Sender<InboundEvent>,
+    tx: mpsc::Sender<(u64, InboundEvent)>,
     lagged: Arc<AtomicU64>,
     /// Static name used in `status.sink_lagged_total` and `warn!`
     /// logs so operators can tell which consumer fell behind. The
@@ -56,8 +56,15 @@ impl EventsSink {
 /// Consumer-side handle. Pairs a bounded `mpsc::Receiver` with a
 /// `LaggedProbe` that lets the consumer observe its own Lagged
 /// counter without holding a reference to the sink.
+///
+/// Channels carry `(buffer_id, InboundEvent)` tuples so consumers
+/// can ingest into derived stores with the SAME id the in-memory
+/// `EventsBuffer` and on-disk NDJSON use. Before 2026-07-12 the
+/// query layer re-derived the id from a process-local atomic that
+/// restarted every boot, colliding with persisted ids and silently
+/// dropping live events on `INSERT OR IGNORE` (PK conflict).
 pub struct EventsSubscriber {
-    rx: mpsc::Receiver<InboundEvent>,
+    rx: mpsc::Receiver<(u64, InboundEvent)>,
     lagged: Arc<AtomicU64>,
 }
 
@@ -70,11 +77,11 @@ impl std::fmt::Debug for EventsSubscriber {
 }
 
 impl EventsSubscriber {
-    /// Await the next event. Returns `None` if the channel is closed
-    /// (router cancelled). Lagged is incremented by the producer
-    /// (router) when a `try_send` fails; this method does NOT mutate
-    /// the counter.
-    pub async fn recv(&mut self) -> Option<InboundEvent> {
+    /// Await the next `(buffer_id, event)` pair. Returns `None` if
+    /// the channel is closed (router cancelled). Lagged is
+    /// incremented by the producer (router) when a `try_send`
+    /// fails; this method does NOT mutate the counter.
+    pub async fn recv(&mut self) -> Option<(u64, InboundEvent)> {
         self.rx.recv().await
     }
 
@@ -84,7 +91,7 @@ impl EventsSubscriber {
 
     /// Try to receive without awaiting. Returns `None` if no event is
     /// available right now (channel still open but empty).
-    pub fn try_recv(&mut self) -> Option<InboundEvent> {
+    pub fn try_recv(&mut self) -> Option<(u64, InboundEvent)> {
         self.rx.try_recv().ok()
     }
 }
@@ -260,8 +267,13 @@ impl EventsRouter {
                                     let kind = event_kind_label(&ev);
                                     m.inc_inbound_event(&kind);
                                 }
-                                self.buffer.push(ev.clone());
-                                self.fanout(ev.clone());
+                                // Buffer is the single source of truth
+                                // for the monotonic id — every sink
+                                // (persister, query, MCP) sees the
+                                // SAME id so NDJSON rows and SQL rows
+                                // correlate 1:1.
+                                let id = self.buffer.push(ev.clone());
+                                self.fanout(id, ev.clone());
                                 // Phase 5 Part F: fire the action-dispatch hook
                                 // (if registered) on a clone so the buffer
                                 // entry + sink fan-out are unaffected.
@@ -295,10 +307,10 @@ impl EventsRouter {
     /// (`Full` or `Closed`) increment that sink's `lagged` counter.
     /// This is the only place that touches the sinks lock during
     /// steady-state operation; it is never held across `.await`.
-    fn fanout(&self, ev: InboundEvent) {
+    fn fanout(&self, id: u64, ev: InboundEvent) {
         let sinks = self.sinks.lock();
         for sink in sinks.iter() {
-            match sink.tx.try_send(ev.clone()) {
+            match sink.tx.try_send((id, ev.clone())) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     // Slow consumer: drop the event for this sink,
@@ -314,6 +326,7 @@ impl EventsRouter {
                             sink = sink.name,
                             lagged_total = now,
                             capacity = sink.tx.capacity(),
+                            id,
                             "events_router: sink lagged (mpsc full); event dropped for this consumer"
                         );
                     }
@@ -391,7 +404,7 @@ mod tests {
         assert_eq!(buffer.len(), 2);
 
         // First sink event has id M1, second M2.
-        let ids: Vec<String> = [&e1, &e2]
+        let ids: Vec<String> = [(&e1.1), (&e2.1)]
             .iter()
             .map(|e| match e {
                 InboundEvent::Message { id, .. } => id.clone(),

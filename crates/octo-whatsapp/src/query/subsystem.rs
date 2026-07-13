@@ -237,7 +237,19 @@ impl QuerySubsystem {
                     _ = cancel.cancelled() => break,
                     ev = sub.recv() => {
                         match ev {
-                            Some(ev) => self.handle_one(&ev),
+                            Some((id, ev)) => {
+                                // Live path: the router already
+                                // minted the monotonic id via
+                                // `EventsBuffer::push` (the single
+                                // source of truth shared with
+                                // NDJSON). We just record the wall
+                                // clock so receipts/presence rows
+                                // have a meaningful chronological
+                                // value when their event-internal ts
+                                // is 0.
+                                let recorded_at = (now_unix_ms(), self.next_mono_ns());
+                                self.handle_one_with_id(id, recorded_at, &ev);
+                            }
                             None => break, // subscriber closed
                         }
                     }

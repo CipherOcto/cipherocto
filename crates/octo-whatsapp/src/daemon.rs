@@ -409,8 +409,8 @@ impl DaemonHandle {
             if let Some(persister_ingress) = self.events_persister_handle() {
                 let mut sub = router.subscribe_named(4096, "persister");
                 tokio::spawn(async move {
-                    while let Some(ev) = sub.recv().await {
-                        persister_ingress.push(ev);
+                    while let Some((id, ev)) = sub.recv().await {
+                        persister_ingress.push_with_id(id, ev);
                     }
                 });
             }

@@ -116,8 +116,15 @@ impl DropCounter {
 /// Handle to the running persister. Send events via [`Self::push`]
 /// (best-effort, non-blocking), request a synchronous fsync via
 /// [`Self::flush_sync`], wait for shutdown via [`Self::join`].
+///
+/// The actor's inbound channel carries `(Option<u64>, InboundEvent)`:
+/// `Some(id)` is the router-supplied buffer id (live path —
+/// persister skips `EventsBuffer::push` and writes NDJSON with the
+/// supplied id so NDJSON / buffer / SQL ids are 1:1). `None` is the
+/// historical path used by tests and direct callers; the actor
+/// allocates an id via the buffer in that case.
 pub struct EventsPersisterHandle {
-    tx: mpsc::Sender<InboundEvent>,
+    tx: mpsc::Sender<(Option<u64>, InboundEvent)>,
     flush: mpsc::Sender<oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
     cancel: CancellationToken,
@@ -168,7 +175,7 @@ fn noop_join_handle() -> tokio::task::JoinHandle<()> {
 /// `drain_events_persister` needs).
 #[derive(Clone)]
 pub struct PersisterIngress {
-    tx: mpsc::Sender<InboundEvent>,
+    tx: mpsc::Sender<(Option<u64>, InboundEvent)>,
     flush: mpsc::Sender<oneshot::Sender<()>>,
     cancel: CancellationToken,
     dropped: Arc<DropCounter>,
@@ -190,7 +197,8 @@ impl PersisterIngress {
     /// clone-friendly type. Used by the router's per-sink
     /// subscriber task.
     pub fn push(&self, ev: InboundEvent) {
-        match self.tx.try_send(ev) {
+        // Caller has no id — actor allocates one via `EventsBuffer::push`.
+        match self.tx.try_send((None, ev)) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped.inc();
@@ -199,6 +207,21 @@ impl PersisterIngress {
                 // Persister actor has exited; silent. The
                 // shutdown drain is the only path to resume.
             }
+        }
+    }
+
+    /// Like [`Self::push`] but the caller already holds the
+    /// monotonic buffer id assigned by the router. Use this from
+    /// the router subscriber so the persister's NDJSON id matches
+    /// the buffer / SQL ids 1:1 (otherwise the actor would need a
+    /// second `EventsBuffer` allocation just to mint ids).
+    pub fn push_with_id(&self, id: u64, ev: InboundEvent) {
+        match self.tx.try_send((Some(id), ev)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped.inc();
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
         }
     }
 
@@ -251,7 +274,7 @@ impl EventsPersisterHandle {
         // the main loop; if any new events arrived in the tiny
         // window between hydrate and spawn they are still in the
         // buffer's mpsc and will be processed.
-        let (tx, rx) = mpsc::channel::<InboundEvent>(4096);
+        let (tx, rx) = mpsc::channel::<(Option<u64>, InboundEvent)>(4096);
         let (flush_tx, flush_rx) = mpsc::channel::<oneshot::Sender<()>>(16);
         let dropped = Arc::new(DropCounter::default());
         let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
@@ -326,7 +349,7 @@ impl EventsPersisterHandle {
     /// Best-effort push. Returns immediately. If the actor's mpsc is
     /// full, the event is dropped and the drop counter increments.
     pub fn push(&self, ev: InboundEvent) -> Result<(), PersistError> {
-        match self.tx.try_send(ev) {
+        match self.tx.try_send((None, ev)) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped.inc();
@@ -388,7 +411,7 @@ impl EventsPersisterHandle {
     /// Clone the upstream event-sink sender so a router subscriber
     /// task can forward parsed events to the persister's actor.
     /// Used by the daemon's `bind_adapter` wiring.
-    pub fn tx_clone(&self) -> mpsc::Sender<InboundEvent> {
+    pub fn tx_clone(&self) -> mpsc::Sender<(Option<u64>, InboundEvent)> {
         self.tx.clone()
     }
 }
@@ -521,7 +544,7 @@ struct ActorState {
 /// The actor loop. Extracted so test paths can exercise it directly.
 async fn run_actor(
     state: ActorState,
-    mut rx: mpsc::Receiver<InboundEvent>,
+    mut rx: mpsc::Receiver<(Option<u64>, InboundEvent)>,
     mut flush_rx: mpsc::Receiver<oneshot::Sender<()>>,
 ) -> Result<(), PersistError> {
     let buffer = state.buffer;
@@ -556,8 +579,11 @@ async fn run_actor(
         tokio::select! {
             _ = cancel.cancelled() => {
                 // Drain remaining events.
-                while let Ok(ev) = rx.try_recv() {
-                    let id = buffer.push(ev.clone());
+                while let Ok((opt_id, ev)) = rx.try_recv() {
+                    let id = match opt_id {
+                        Some(id) => id,
+                        None => buffer.push(ev.clone()),
+                    };
                     if let Some(f) = file.as_mut() {
                         let _ = write_event(f, id, &ev).await;
                     }
@@ -575,9 +601,12 @@ async fn run_actor(
                 }
                 return Ok(());
             }
-            Some(ev) = rx.recv() => {
+            Some((opt_id, ev)) = rx.recv() => {
                 // Write the event we just received.
-                let id = buffer.push(ev.clone());
+                let id = match opt_id {
+                    Some(id) => id,
+                    None => buffer.push(ev.clone()),
+                };
                 if let Some(f) = file.as_mut() {
                     if let Err(e) = write_event(f, id, &ev).await {
                         tracing::warn!(error = %e,
@@ -587,8 +616,11 @@ async fn run_actor(
                 // Drain any additional events that arrived in the
                 // same scheduling slice — avoids 1-event-per-loop
                 // iter overhead during bursts.
-                while let Ok(ev) = rx.try_recv() {
-                    let id = buffer.push(ev.clone());
+                while let Ok((opt_id, ev)) = rx.try_recv() {
+                    let id = match opt_id {
+                        Some(id) => id,
+                        None => buffer.push(ev.clone()),
+                    };
                     if let Some(f) = file.as_mut() {
                         if let Err(e) = write_event(f, id, &ev).await {
                             tracing::warn!(error = %e,
@@ -600,8 +632,11 @@ async fn run_actor(
             Some(ack) = flush_rx.recv() => {
                 // Before acking, drain rx so events already pushed
                 // are on disk. This is the critical correctness path.
-                while let Ok(ev) = rx.try_recv() {
-                    let id = buffer.push(ev.clone());
+                while let Ok((opt_id, ev)) = rx.try_recv() {
+                    let id = match opt_id {
+                        Some(id) => id,
+                        None => buffer.push(ev.clone()),
+                    };
                     if let Some(f) = file.as_mut() {
                         if let Err(e) = write_event(f, id, &ev).await {
                             tracing::warn!(error = %e,

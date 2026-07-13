@@ -10,6 +10,7 @@
 //! that matches the design's verbatim naming).
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use super::super::protocol::RpcError;
 use super::super::server::RpcHandler;
@@ -76,6 +77,14 @@ impl RpcHandler for StatusGet {
             }
             _ => None,
         };
+        let sink_lagged_total: BTreeMap<String, u64> = handle
+            .events_router()
+            .map(|r| {
+                r.sink_lagged_snapshot()
+                    .into_iter()
+                    .collect::<BTreeMap<String, u64>>()
+            })
+            .unwrap_or_default();
         Ok(serde_json::json!({
             "phase": phase,
             "connected": connected,
@@ -90,7 +99,7 @@ impl RpcHandler for StatusGet {
             "daemon_version": env!("CARGO_PKG_VERSION"),
             "api_version": daemon_api_version(),
             "rules_generations_resident": handle.rules().generations_resident(),
-            "sink_lagged_total": {"mcp": 0u64, "cli": 0u64, "rules": 0u64},
+            "sink_lagged_total": sink_lagged_total,
             "stoolap_persist_queue_depth": 0u64,
         }))
     }

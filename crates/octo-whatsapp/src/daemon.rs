@@ -144,6 +144,10 @@ struct DaemonInner {
     /// router (sinks receive InboundEvent) and queried by
     /// `events.list/show/replay` handlers.
     events_buffer: Arc<EventsBuffer>,
+    /// Phase 8: the active [`EventsRouter`], populated by `start`
+    /// (live path) or `build_event_router` (test-helpers path).
+    /// Read by `status.get` to surface per-sink lagged counts.
+    events_router: parking_lot::RwLock<Option<Arc<crate::events_router::EventsRouter>>>,
     /// Phase 3 Part D: optional upstream ingress to the
     /// EventsPersister actor. `None` when persistence is disabled.
     /// Holds ONLY the upstream `Sender` + stats accessor + the
@@ -394,12 +398,16 @@ impl DaemonHandle {
                 router_buffer,
                 router_cancel,
             ));
+            // Expose the router to status.get so per-sink lagged
+            // counts are visible. The router outlives this function;
+            // the Arc is cheap to clone.
+            *self.inner.events_router.write() = Some(router.clone());
             // Subscribe the EventsPersister as a sink before we start
             // the router so we don't lose the first events. The
             // sink forwards via the persister's `push` (try_send,
             // non-blocking).
             if let Some(persister_ingress) = self.events_persister_handle() {
-                let mut sub = router.subscribe(4096);
+                let mut sub = router.subscribe_named(4096, "persister");
                 tokio::spawn(async move {
                     while let Some(ev) = sub.recv().await {
                         persister_ingress.push(ev);
@@ -476,7 +484,7 @@ impl DaemonHandle {
                             tracing::info!("query.rebuild_on_boot = false; skipping NDJSON replay");
                         }
                         let cancel = self.inner.cancel.clone();
-                        let sub = router.subscribe(4096);
+                        let sub = router.subscribe_named(16384, "query");
                         arc.run(sub, cancel);
                     }
                     Err(e) => {
@@ -758,6 +766,13 @@ impl DaemonHandle {
     /// Phase 5 Part B: HTTP `/ready` readiness flag.
     pub fn is_ready_flag(&self) -> Arc<AtomicBool> {
         self.inner.is_ready.clone()
+    }
+
+    /// Phase 8: borrow the active [`EventsRouter`] (or `None` if
+    /// the daemon hasn't bound an adapter yet). Read by
+    /// `status.get` to surface per-sink lagged counts.
+    pub fn events_router(&self) -> Option<Arc<crate::events_router::EventsRouter>> {
+        self.inner.events_router.read().clone()
     }
 
     /// Phase 5 Part B: Unix-epoch millis at daemon boot — used to
@@ -1130,6 +1145,7 @@ impl Daemon {
                 media_buffer,
                 adapter: std::sync::RwLock::new(None),
                 events_buffer,
+                events_router: parking_lot::RwLock::new(None),
                 events_persister,
                 #[cfg(all(feature = "query", any(test, feature = "test-helpers")))]
                 test_embedder: std::sync::RwLock::new(None),

@@ -30,11 +30,17 @@ use crate::observability::metrics::Metrics;
 pub struct EventsSink {
     tx: mpsc::Sender<InboundEvent>,
     lagged: Arc<AtomicU64>,
+    /// Static name used in `status.sink_lagged_total` and `warn!`
+    /// logs so operators can tell which consumer fell behind. The
+    /// default `subscribe()` assigns a numeric fallback; named
+    /// subscribers should use `subscribe_named()`.
+    name: &'static str,
 }
 
 impl std::fmt::Debug for EventsSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventsSink")
+            .field("name", &self.name)
             .field("capacity", &self.tx.capacity())
             .field("lagged", &self.lagged())
             .finish()
@@ -162,12 +168,48 @@ impl EventsRouter {
     pub fn subscribe(self: &Arc<Self>, capacity: usize) -> EventsSubscriber {
         let (tx, rx) = mpsc::channel(capacity);
         let lagged = Arc::new(AtomicU64::new(0));
+        // Auto-generated sink names: each subscribe() without an
+        // explicit name gets "sink-N" so operators always see a
+        // non-empty label in status.
+        let name = format!("sink-{}", self.sinks.lock().len());
+        let name: &'static str = Box::leak(name.into_boxed_str());
         let sink = Arc::new(EventsSink {
             tx,
             lagged: lagged.clone(),
+            name,
         });
         self.sinks.lock().push(sink);
         EventsSubscriber { rx, lagged }
+    }
+
+    /// Like [`Self::subscribe`] but tags the sink with a stable,
+    /// human-readable name (e.g. `"persister"`, `"query"`). Used by
+    /// production wiring so `status.sink_lagged_total` shows the
+    /// real consumer identity instead of numeric placeholders.
+    pub fn subscribe_named(
+        self: &Arc<Self>,
+        capacity: usize,
+        name: &'static str,
+    ) -> EventsSubscriber {
+        let (tx, rx) = mpsc::channel(capacity);
+        let lagged = Arc::new(AtomicU64::new(0));
+        let sink = Arc::new(EventsSink {
+            tx,
+            lagged: lagged.clone(),
+            name,
+        });
+        self.sinks.lock().push(sink);
+        EventsSubscriber { rx, lagged }
+    }
+
+    /// Snapshot of every registered sink as `(name, lagged)`. Used
+    /// by `status.get` to surface per-consumer drop counts.
+    pub fn sink_lagged_snapshot(&self) -> Vec<(String, u64)> {
+        self.sinks
+            .lock()
+            .iter()
+            .map(|s| (s.name.to_string(), s.lagged()))
+            .collect()
     }
 
     /// Number of registered sinks.
@@ -259,8 +301,22 @@ impl EventsRouter {
             match sink.tx.try_send(ev.clone()) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    // Slow consumer: drop the event for this sink, count it.
-                    sink.lagged.fetch_add(1, Ordering::Relaxed);
+                    // Slow consumer: drop the event for this sink,
+                    // count it, and surface the first drop of a burst
+                    // as a warn! so operators see the incident in the
+                    // log instead of only in the post-mortem counter.
+                    // Subsequent drops in the same burst stay quiet
+                    // to avoid log floods (the count remains in
+                    // status.sink_lagged_total).
+                    let now = sink.lagged.fetch_add(1, Ordering::Relaxed) + 1;
+                    if now == 1 || now.is_power_of_two() {
+                        tracing::warn!(
+                            sink = sink.name,
+                            lagged_total = now,
+                            capacity = sink.tx.capacity(),
+                            "events_router: sink lagged (mpsc full); event dropped for this consumer"
+                        );
+                    }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     // Sink consumer dropped its `EventsSubscriber`.
@@ -268,6 +324,10 @@ impl EventsRouter {
                     // be removed by the next call to `subscribe` or by
                     // the router's own pruning pass.
                     sink.lagged.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(
+                        sink = sink.name,
+                        "events_router: sink closed (consumer dropped)"
+                    );
                 }
             }
         }

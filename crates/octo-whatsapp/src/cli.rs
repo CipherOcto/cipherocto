@@ -80,6 +80,12 @@ pub enum Command {
     /// `query` cargo feature on the daemon binary.
     #[cfg(feature = "query")]
     Query(QueryCmd),
+    /// Contact lookup / business profile / save_contact / block / unblock
+    /// (Phase 7.J). Mirrors the `contacts.*` and `contact.*` RPCs.
+    Contacts(ContactsCmd),
+    /// Identity reads (Phase 7.J / Tier 6.4). Mirrors the `identity.*`
+    /// RPCs.
+    Identity(IdentityCmd),
     /// Client session discovery (Phase 3).
     Clients(ClientsCmd),
     /// Phase 6.1: multi-account management.
@@ -657,6 +663,75 @@ pub enum QueryAction {
     },
     /// List existing tables (introspection; shortcut for SHOW TABLES).
     Tables,
+}
+
+/// Phase 7.J: CLI mirror for the 7 contact-handlers. Mirrors the
+/// `contacts.*` and `contact.*` MCP tool descriptors.
+#[derive(Debug, Args)]
+pub struct ContactsCmd {
+    #[command(subcommand)]
+    pub action: ContactsAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContactsAction {
+    /// Check whether a peer JID is a registered WhatsApp user.
+    IsOnWhatsApp {
+        /// Peer JID (canonical `<digits>@s.whatsapp.net`) or E.164.
+        peer: String,
+    },
+    /// Fetch rich user info (status, picture id, business, devices, lid).
+    GetUserInfo {
+        /// Peer JID or E.164.
+        peer: String,
+    },
+    /// Fetch a peer's business profile (description, address, hours).
+    GetBusinessProfile {
+        /// Peer JID (must be a phone-number JID).
+        jid: String,
+    },
+    /// Fetch the profile-picture URL for a peer.
+    GetProfilePicture {
+        /// Peer JID or E.164.
+        peer: String,
+        /// `true` (default) requests the thumbnail; `false` for the full image.
+        #[arg(long)]
+        preview: Option<bool>,
+    },
+    /// Save or rename a contact in the local address book.
+    SaveContact {
+        /// Peer JID or E.164 (must be a phone-number JID).
+        peer: String,
+        /// Full name to record.
+        full_name: String,
+    },
+    /// Add a peer to the local blocklist.
+    Block {
+        /// Peer JID or E.164.
+        peer: String,
+    },
+    /// Remove a peer from the local blocklist. Reverses `block`.
+    Unblock {
+        /// Peer JID or E.164.
+        peer: String,
+    },
+}
+
+/// Phase 7.J / Tier 6.4: CLI mirror for the 3 identity readers.
+#[derive(Debug, Args)]
+pub struct IdentityCmd {
+    #[command(subcommand)]
+    pub action: IdentityAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdentityAction {
+    /// Return this device's PN (phone-number) JID.
+    GetPn,
+    /// Return this device's LID (local-identifier) JID.
+    GetLid,
+    /// Return true if the device has completed the LID migration.
+    IsLidMigrated,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1549,6 +1624,56 @@ pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Phase 7.J: CLI mirror for `contacts.*` and `contact.*` RPCs.
+pub fn dispatch_contacts(cli: &Cli, cmd: &ContactsCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        ContactsAction::IsOnWhatsApp { peer } => (
+            "contacts.is_on_whatsapp",
+            serde_json::json!({ "peer": peer }),
+        ),
+        ContactsAction::GetUserInfo { peer } => (
+            "contacts.get_user_info",
+            serde_json::json!({ "peer": peer }),
+        ),
+        ContactsAction::GetBusinessProfile { jid } => (
+            "contacts.get_business_profile",
+            serde_json::json!({ "jid": jid }),
+        ),
+        ContactsAction::GetProfilePicture { peer, preview } => {
+            let mut p = serde_json::json!({ "peer": peer });
+            if let Some(prev) = preview {
+                p["preview"] = serde_json::json!(prev);
+            }
+            ("contacts.get_profile_picture", p)
+        }
+        ContactsAction::SaveContact { peer, full_name } => (
+            "contacts.save_contact",
+            serde_json::json!({ "peer": peer, "full_name": full_name }),
+        ),
+        ContactsAction::Block { peer } => ("contact.block", serde_json::json!({ "peer": peer })),
+        ContactsAction::Unblock { peer } => {
+            ("contact.unblock", serde_json::json!({ "peer": peer }))
+        }
+    };
+    let result = client.call(method, params)?;
+    let _ = print_result(cli.json, &result);
+    Ok(())
+}
+
+/// Phase 7.J / Tier 6.4: CLI mirror for `identity.*` RPCs.
+pub fn dispatch_identity(cli: &Cli, cmd: &IdentityCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let method = match &cmd.action {
+        IdentityAction::GetPn => "identity.get_pn",
+        IdentityAction::GetLid => "identity.get_lid",
+        IdentityAction::IsLidMigrated => "identity.is_lid_migrated",
+    };
+    let result = client.call(method, serde_json::Value::Null)?;
+    let _ = print_result(cli.json, &result);
+    Ok(())
+}
+
 /// Wire `events list` and `events show <id>` (Task 47).
 pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
     let client = RpcClient::new(resolve_socket_path(cli));
@@ -1775,6 +1900,8 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Actions(ref cmd) => dispatch_actions(&cli, cmd),
         #[cfg(feature = "query")]
         Command::Query(ref cmd) => dispatch_query(&cli, cmd),
+        Command::Contacts(ref cmd) => dispatch_contacts(&cli, cmd),
+        Command::Identity(ref cmd) => dispatch_identity(&cli, cmd),
     }
 }
 

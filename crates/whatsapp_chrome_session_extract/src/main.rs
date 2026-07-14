@@ -229,49 +229,64 @@ async fn main() -> Result<()> {
     );
     sleep(Duration::from_secs(args.wait_secs)).await;
 
-    // Read IndexedDB via Runtime.evaluate.
+    // Read live WA Web process state via Runtime.evaluate. The IndexedDB
+    // values are encrypted at rest (WA Web encrypts noise keys with a key
+    // derived from its auth token). But WA Web's own JS runtime has the
+    // plaintext Noise keys in module-level singletons; we can call
+    // internal APIs to get them.
+    //
+    // Note: WA Web exposes a debug internal API as `WPP` (window property).
+    // The actual Noise keypair is reachable via WPPBridge.SignalStore /
+    // module-level singletons in the current WA Web build. We try several
+    // known entry points and print whatever we find.
     let js = r#"
 (async () => {
-  // Try several known DB / store names that WA Web uses.
-  const candidates = [
-    {db: 'wawc', stores: ['_s']},
-    {db: 'wawc', stores: ['key-version-store', 'prekey-store', 'session-store', 'contact-store']},
-    {db: 'wawdb', stores: []},
-  ];
-  const out = {dbs: [], keys: []};
+  const out = {wpp: null, debugVersion: null, debugKeys: [], storeDump: null};
   try {
-    const dbs = await indexedDB.databases();
-    out.dbs = dbs.map(d => ({name: d.name, version: d.version}));
-  } catch (e) { out.dbsErr = String(e); }
-  for (const c of candidates) {
+    out.wpp = Object.keys(window).filter(k => /^(WPP|Store|Debug|webpack|waNoise|__debug)/.test(k)).slice(0, 60);
+  } catch (e) {}
+  if (window.Debug) {
     try {
-      const req = indexedDB.open(c.db);
-      await new Promise((resolve, reject) => {
-        req.onsuccess = resolve;
-        req.onerror = () => reject(req.error);
-      });
-      const db = req.result;
-      let storeNames = [];
-      try { storeNames = Array.from(db.objectStoreNames); } catch (_) {}
-      for (const sn of storeNames.length ? storeNames : c.stores) {
-        try {
-          const tx = db.transaction(sn, 'readonly');
-          const store = tx.objectStore(sn);
-          const getAll = store.getAllKeys ? store.getAllKeys() : Promise.resolve([]);
-          const getValues = store.getAll ? store.getAll() : Promise.resolve([]);
-          const [keys, values] = await Promise.all([
-            new Promise(r => { getAll.onsuccess = () => r(getAll.result); getAll.onerror = () => r([]); }),
-            new Promise(r => { getValues.onsuccess = () => r(getValues.result); getValues.onerror = () => r([]); }),
-          ]);
-          out.keys.push({db: c.db, store: sn, count: values.length, sampleKey: keys[0] ?? null, sampleValueLen: JSON.stringify(values[0] ?? null).length});
-        } catch (e) {
-          out.keys.push({db: c.db, store: sn, err: String(e)});
-        }
-      }
-      db.close();
-    } catch (e) {
-      out.keys.push({db: c.db, openErr: String(e)});
-    }
+      out.debugVersion = window.Debug.VERSION;
+      out.debugKeys = Object.keys(window.Debug);
+    } catch (_) {}
+  }
+  // Try to get the noise session keys via Debug.Conn or known internal paths.
+  // WA Web's current build (Chrome 150) uses `Debug.Store.getModel()` or similar.
+  // We try a bunch of known patterns and dump whatever we get.
+  const patterns = [
+    () => {
+      const c = window.Debug?.Conn;
+      if (!c) return null;
+      const r = {};
+      for (const k of Object.keys(c)) r[k] = String(c[k]).slice(0, 200);
+      return {label: 'Debug.Conn', data: r};
+    },
+    () => {
+      const c = window.Debug?.AuthStore;
+      if (!c) return null;
+      const r = {};
+      for (const k of Object.keys(c).slice(0, 30)) r[k] = String(c[k]).slice(0, 200);
+      return {label: 'Debug.AuthStore', data: r};
+    },
+    () => {
+      const c = window.Debug?.KeyStore;
+      if (!c) return null;
+      const r = {};
+      for (const k of Object.keys(c).slice(0, 30)) r[k] = String(c[k]).slice(0, 200);
+      return {label: 'Debug.KeyStore', data: r};
+    },
+    () => {
+      const c = window.Debug?.NoiseKeys;
+      if (!c) return null;
+      return {label: 'Debug.NoiseKeys', data: c};
+    },
+  ];
+  for (const p of patterns) {
+    try {
+      const r = p();
+      if (r) out.storeDump = out.storeDump || [], out.storeDump.push(r);
+    } catch (_) {}
   }
   return out;
 })()

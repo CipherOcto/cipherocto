@@ -62,6 +62,13 @@ impl SessionMeta {
 /// still PII).
 ///
 /// R5-M2: if the write fails, the link fails with `CoreError::Adapter`.
+///
+/// Phase 7.J.3 (diagnostic logging): every sidecar write now emits a
+/// `tracing::info!` event with the full content of what was written,
+/// so the operator can audit which `self_phone` / `linked_at` / `mode`
+/// / `groups` actually landed on disk — without re-reading the JSON
+/// later. This is what unblocks the next "the daemon says LoggedOut
+/// 401 vll but my sidecar says ..." debugging cycle.
 pub fn write_sidecar(
     session_path: &Path,
     session: &WhatsAppSession,
@@ -91,13 +98,53 @@ pub fn write_sidecar(
     let json = serde_json::to_string_pretty(&sidecar)
         .map_err(|e| CoreError::Adapter(anyhow::anyhow!("serialize sidecar: {e}")))?;
 
+    tracing::debug!(
+        sidecar.kind = "write_begin",
+        sidecar.mode = ?mode,
+        sidecar.path = %sidecar_path.display(),
+        sidecar.self_phone = ?sidecar.self_phone,
+        sidecar.linked_at = %sidecar.linked_at,
+        sidecar.groups.count = sidecar.groups.len(),
+        "octo-onboard: persisting session_meta sidecar",
+    );
+
     write_atomic(&sidecar_path, json.as_bytes()).map_err(|e| {
+        tracing::error!(
+            sidecar.kind = "write_failed",
+            sidecar.path = %sidecar_path.display(),
+            sidecar.error = %e,
+            "octo-onboard: session_meta sidecar write failed",
+        );
         CoreError::Adapter(anyhow::anyhow!(
             "write sidecar {}: {}",
             sidecar_path.display(),
             e
         ))
     })?;
+
+    let bytes = json.len();
+    #[cfg(unix)]
+    let mode_bits = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(&sidecar_path)
+            .map(|m| m.permissions().mode() & 0o777)
+            .unwrap_or(0)
+    };
+    #[cfg(not(unix))]
+    let mode_bits = 0;
+
+    tracing::info!(
+        sidecar.kind = "write_committed",
+        sidecar.mode = ?mode,
+        sidecar.path = %sidecar_path.display(),
+        sidecar.bytes = bytes,
+        sidecar.unix_mode = mode_bits,
+        sidecar.self_phone = ?sidecar.self_phone,
+        sidecar.linked_at = %sidecar.linked_at,
+        sidecar.groups.count = sidecar.groups.len(),
+        sidecar.content = %json,
+        "octo-onboard: session_meta sidecar written",
+    );
 
     Ok(())
 }

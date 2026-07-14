@@ -74,6 +74,15 @@ pub async fn run(
         let phone = resolve_phone_from_adapter(&adapter)
             .await
             .ok_or(crate::error::CoreError::SessionExpired)?;
+        tracing::info!(
+            onboard.kind = "phone_resolved",
+            onboard.mode = "qr-link",
+            onboard.path = "wait_sync",
+            onboard.self_phone = ?phone,
+            onboard.session_path = %args.session_path.display(),
+            onboard.groups.requested = ?args.groups,
+            "octo-onboard: resolved self_phone after history sync; about to write sidecar",
+        );
         let session = WhatsAppSession {
             self_phone: Some(phone),
             session_path: args.session_path.clone(),
@@ -86,6 +95,15 @@ pub async fn run(
     } else {
         // Standard mode: wait for Event::Connected (or HistorySync fallback).
         let phone = crate::session::wait_for_connected(&adapter, timeout).await?;
+        tracing::info!(
+            onboard.kind = "phone_resolved",
+            onboard.mode = "qr-link",
+            onboard.path = "wait_connected",
+            onboard.self_phone = ?phone,
+            onboard.session_path = %args.session_path.display(),
+            onboard.groups.requested = ?args.groups,
+            "octo-onboard: resolved self_phone after Connected event; about to write sidecar",
+        );
         let session = WhatsAppSession {
             self_phone: Some(phone),
             session_path: args.session_path.clone(),

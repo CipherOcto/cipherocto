@@ -1066,8 +1066,28 @@ impl WhatsAppWebAdapter {
             .with_runtime(whatsapp_rust::TokioRuntime)
             .with_device_props(
                 wacore::store::DevicePropsOverride::new()
-                    .with_os("CipherOcto")
-                    .with_platform_type(waproto::whatsapp::device_props::PlatformType::Desktop),
+                    // Phase 7.J.4: match WA Web's identity on the wire. The
+                    // previous override (`os="CipherOcto"`, `platform_type=Desktop`,
+                    // `version=0.1.0` default) was trivially distinguishable from
+                    // a real Chrome on Linux UA — server accepted the noise
+                    // handshake but rejected the first encrypted-channel request
+                    // with `<failure reason="401" location="..."/>` (location tags
+                    // observed across recent runs: `vll`, `cln`, `lla`).
+                    //
+                    // Reference: WA Web `Client/Payload.js` produces these three
+                    // fields on the noise handshake (visible to the WA server
+                    // alongside the ClientProfile-driven UserAgent block):
+                    //   os            = "Linux"               (browser's host OS)
+                    //   platform_type = WEB                   (matches ClientProfile::web)
+                    //   version       = WA client version, e.g. 2.2412.54
+                    .with_os("Linux")
+                    .with_platform_type(waproto::whatsapp::device_props::PlatformType::CHROME)
+                    .with_version(waproto::whatsapp::device_props::AppVersion {
+                        primary: Some(2),
+                        secondary: Some(2412),
+                        tertiary: Some(54),
+                        ..Default::default()
+                    }),
             )
             .on_event(move |event, client| {
                 let inbound_tx = inbound_tx.clone();
@@ -1371,17 +1391,31 @@ impl WhatsAppWebAdapter {
                             // and pair it with the reason code carried on
                             // the `LoggedOut` event itself.
                             //
-                            // SHA-256 of the 32-byte noise static public key,
-                            // truncated to 16 hex chars. Safe to log: it is a
-                            // fingerprint, not the key. `lo.reason` is the
-                            // `ConnectFailureReason` enum (e.g. `LoggedOut(401)`,
-                            // `LoggedOut(403)` = account locked) — its Debug
-                            // impl prints the numeric code, which we want.
+                            // SHA-256 of the 33-byte serialized noise static
+                            // public key, truncated to 16 hex chars. Safe to
+                            // log: it is a fingerprint, not the key. `lo.reason`
+                            // is the `ConnectFailureReason` enum (e.g.
+                            // `LoggedOut(401)`, `LoggedOut(403)` = account
+                            // locked) — its Debug impl prints the numeric code,
+                            // which we want.
+                            //
+                            // R7.J.4 (fix): previously hashed the bare 32-byte
+                            // `public_key_bytes()` — that omitted the
+                            // `PublicKey::serialize()` 1-byte type prefix
+                            // that wacore actually puts on the wire. The
+                            // truncated hash produced collisions across
+                            // pairs (observed: identical fp for two different
+                            // noise keys) because the prefix-byte boundary
+                            // shifted the digest input by one byte. Hashing
+                            // the full 33-byte serialized form matches what
+                            // the WA server fingerprints on, so this fp is
+                            // now directly comparable to anything the server
+                            // logs on the server side.
                             let noise_fp = {
                                 use sha2::{Digest, Sha256};
                                 let device = client.persistence_manager().get_device_snapshot();
-                                let pk_bytes = device.noise_key.public_key.public_key_bytes();
-                                let digest = Sha256::digest(pk_bytes);
+                                let pk_serialized = device.noise_key.public_key.serialize();
+                                let digest = Sha256::digest(pk_serialized);
                                 hex::encode(&digest[..8])
                             };
                             tracing::warn!(

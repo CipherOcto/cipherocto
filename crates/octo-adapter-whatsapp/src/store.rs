@@ -146,6 +146,58 @@ impl StoolapStore {
         Ok(())
     }
 
+    /// Phase 7.J.4: read the persisted `device` row's three crypto
+    /// blobs for diagnostic use (the `dump_noise_key` binary).
+    ///
+    /// Returns `(noise_key, identity_key, signed_pre_key)` bytes if a
+    /// row exists, `None` if the device row has not been written yet
+    /// (a fresh/empty DB). The three blobs are the
+    /// `wacore::store::Device.noise_key` / `.identity_key` /
+    /// `.signed_pre_key` `KeyPair`s — see the fork's
+    /// `wacore/src/store/device.rs` for the full schema.
+    ///
+    /// Not async because the `dump_noise_key` binary uses a sync
+    /// `try_lock()` (the daemon normally holds the lock). Safe to
+    /// call from any context where the store isn't contended.
+    pub fn read_device_keys(
+        &self,
+    ) -> anyhow::Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32)>> {
+        use anyhow::Context;
+        let db = self
+            .db
+            .try_lock()
+            .map_err(|e| anyhow::anyhow!("db try_lock failed (a daemon may be running): {e}"))?;
+        let mut rows = query(
+            &*db,
+            "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary FROM device WHERE id = 1",
+            vec![],
+        )
+        .map_err(|e| anyhow::Error::msg(format!("SELECT device: {e}")))?;
+        let row = match rows.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
+                return Err(anyhow::Error::msg(format!("row decode: {e}")));
+            }
+            None => return Ok(None),
+        };
+        let noise_key: Vec<u8> = row.get(0).context("noise_key col")?;
+        let identity_key: Vec<u8> = row.get(1).context("identity_key col")?;
+        let signed_pre_key: Vec<u8> = row.get(2).context("signed_pre_key col")?;
+        let push_name: String = row.get(3).context("push_name col")?;
+        let avp: i64 = row.get::<i64>(4).context("app_version_primary col")?;
+        let avs: i64 = row.get::<i64>(5).context("app_version_secondary col")?;
+        let avt: i64 = row.get::<i64>(6).context("app_version_tertiary col")?;
+        Ok(Some((
+            noise_key,
+            identity_key,
+            signed_pre_key,
+            push_name,
+            avp as u32,
+            avs as u32,
+            avt as u32,
+        )))
+    }
+
     fn init_schema_with(&self, db: &stoolap::Database) -> anyhow::Result<()> {
         // R9 / stoolap parser: stoolap's strict SQL parser
         // doesn't accept `PRIMARY KEY (col1, col2)` (the `KEY`

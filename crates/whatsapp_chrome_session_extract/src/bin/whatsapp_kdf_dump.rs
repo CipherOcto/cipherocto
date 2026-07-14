@@ -190,52 +190,38 @@ async fn main() -> Result<()> {
     let hook_js = r#"
 window.__kdfCaptured = [];
 window.__kdfNetworkBodies = {};
-// Hook Network via xhr/fetch interception — capture every JS response
-// body so we can grep for IndexedDB encryption later.
-(function() {
-  const origFetch = window.fetch;
-  if (origFetch) {
-    window.fetch = async function(...args) {
-      const resp = await origFetch.apply(this, args);
-      try {
-        const url = args[0]?.url || String(args[0]);
-        if (url && (url.endsWith('.js') || url.includes('chunk') || url.includes('wawc'))) {
-          const cloned = resp.clone();
-          cloned.text().then(t => { window.__kdfNetworkBodies[url] = t.slice(0, 200000); }).catch(() => {});
+// Probe for WA Web internal crypto APIs at install time AND with a
+// deferred call. The deferred call captures whatever WA Web has
+// populated by then.
+function probeInternals(label) {
+  try {
+    const wpp = window.WPP || window.Debug;
+    if (!wpp) return {label, found: false, reason: 'no WPP/Debug'};
+    const out = {label, found: false, hits: [], wppKeys: Object.keys(wpp).slice(0, 30)};
+    function walk(obj, path, depth) {
+      if (depth > 6 || obj == null || typeof obj !== 'object') return;
+      const keys = Object.keys(obj);
+      for (const k of keys) {
+        const fullPath = path + '.' + k;
+        const v = obj[k];
+        if (typeof v === 'function' && /decrypt|unwrapKey|derive|getKey|encrypt/i.test(k)) {
+          out.hits.push({path: fullPath, name: k});
         }
-      } catch (_) {}
-      return resp;
-    };
-  }
-  // Hook webpackChunkwhatsapp_web_client.push as soon as it exists.
-  let tries = 0;
-  const hookInterval = setInterval(() => {
-    tries++;
-    const chunk = window['webpackChunkwhatsapp_web_client'];
-    if (chunk && Array.isArray(chunk) && !chunk.__kdfHooked) {
-      clearInterval(hookInterval);
-      chunk.__kdfHooked = true;
-      const origPush = chunk.push.bind(chunk);
-      chunk.push = function(...args) {
-        for (const arg of args) {
-          try {
-            if (Array.isArray(arg) && Array.isArray(arg[1])) {
-              for (const m of arg[1]) {
-                if (m && typeof m === 'object' && m.factory) {
-                  try { window.__kdfCaptured.push({factorySrc: m.factory.toString(), modId: m.id ?? m[0] ?? null}); } catch (_) {}
-                } else if (Array.isArray(m) && typeof m[1] === 'function') {
-                  try { window.__kdfCaptured.push({factorySrc: m[1].toString(), modId: m[0] ?? null}); } catch (_) {}
-                }
-              }
-            }
-          } catch (_) {}
-        }
-        return origPush(...args);
-      };
+        if (typeof v === 'object' && v) walk(v, fullPath, depth + 1);
+      }
     }
-    if (tries > 100) clearInterval(hookInterval);
-  }, 50);
-})();
+    walk(wpp, 'window.WPP', 0);
+    return out;
+  } catch (e) {
+    return {label, error: String(e)};
+  }
+}
+// Run probe every 2s, keep last 5 results.
+window.__kdfProbes = [];
+const probeInterval = setInterval(() => {
+  if (window.__kdfProbes.length >= 5) clearInterval(probeInterval);
+  window.__kdfProbes.push(probeInternals('probe-' + window.__kdfProbes.length));
+}, 2000);
 "#;
     send_cdp(
         &mut ws,
@@ -340,10 +326,11 @@ window.__kdfNetworkBodies = {};
   }
   // Simulate user activity to trigger more module loads. Wait for the
   // page to settle + chrome to do its regular activity.
-  await new Promise(r => setTimeout(r, 8000));
+  await new Promise(r => setTimeout(r, 10000));
   out.probe.capturedAfterHook = window.__kdfCaptured.length;
   out.probe.networkBodiesCaptured = Object.keys(window.__kdfNetworkBodies || {}).length;
   out.probe.sampleNetworkUrls = Object.keys(window.__kdfNetworkBodies || {}).slice(0, 10);
+  out.probe.probes = window.__kdfProbes || [];
 
   let seen = 0;
   outer:

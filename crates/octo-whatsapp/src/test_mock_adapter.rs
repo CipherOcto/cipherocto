@@ -741,6 +741,16 @@ impl OctoWhatsAppAdapter for MockAdapter {
         }))
     }
 
+    async fn lid_query(
+        &self,
+        _jids: Vec<String>,
+    ) -> Result<Vec<(String, String)>, PlatformAdapterError> {
+        record_unit_call(&self.state, "lid_query")?;
+        // Mock returns nothing — caller treats empty as "no
+        // resolutions" (test for handler bucket-sort logic).
+        Ok(Vec::new())
+    }
+
     // ── Tier 6.1: privacy + blocklist queries — unit-result ────────
 
     async fn fetch_privacy_settings(

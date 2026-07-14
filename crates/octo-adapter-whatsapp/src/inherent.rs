@@ -2320,6 +2320,72 @@ impl WhatsAppWebAdapter {
         Ok(client.is_lid_migrated().await)
     }
 
+    // ── Phase 7.J.1: batch LID → PN resolution via Usync IqSpec ───
+    //
+    // Mirrors the path WA Web's ContactSyncApi uses to render phone
+    // numbers in group typing-indicator headers and member panels.
+    // Wacore source comment in `iq/usync.rs::LidQuerySpec::build_iq`
+    // explicitly says: "WA Web ContactSyncApi uses 'background' for
+    // LID resolution". One round-trip replaces N individual
+    // `Contacts.getUserInfo` calls.
+    //
+    // Caller passes a list of LID strings (e.g. "@lid" or "@s.whatsapp.net"
+    // forms). Returns one `(phone_number, lid)` pair per resolved JID.
+    // JIDs that the server can't map (privacy-hidden, invalid) are
+    // omitted from the response — not an error.
+    pub async fn lid_query(
+        &self,
+        jids: Vec<String>,
+    ) -> Result<Vec<(String, String)>, PlatformAdapterError> {
+        use wacore::iq::usync::LidQuerySpec;
+        use wacore_binary::Jid;
+
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+
+        // Parse + de-dup the input JIDs. Skip strings that don't parse
+        // — the caller (CLI/RPC) gives us user input that may carry
+        // device-suffix noise.
+        let mut parsed: Vec<Jid> = Vec::with_capacity(jids.len());
+        for raw in jids {
+            match raw.parse::<Jid>() {
+                Ok(j) => parsed.push(j),
+                Err(e) => {
+                    tracing::warn!(?raw, error = %e, "lid_query: skipped unparseable JID");
+                }
+            }
+        }
+        // Preserve original ordering while deduping.
+        let mut seen = std::collections::HashSet::with_capacity(parsed.len());
+        parsed.retain(|j| seen.insert(j.clone()));
+
+        if parsed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let spec = LidQuerySpec::new(parsed, "lid_query");
+        let response =
+            client
+                .execute(spec)
+                .await
+                .map_err(|e| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("lid_query failed: {e:#}"),
+                })?;
+        Ok(response
+            .lid_mappings
+            .into_iter()
+            .map(|m| (m.phone_number.to_string(), m.lid.to_string()))
+            .collect())
+    }
+
     // ── Tier 6.5: newsletter + events (lib wrappers) ─────────────
 
     /// List all newsletters this account is subscribed to.

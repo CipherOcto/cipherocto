@@ -1413,7 +1413,7 @@ impl WhatsAppWebAdapter {
                             // logs on the server side.
                             let noise_fp = {
                                 use sha2::{Digest, Sha256};
-                                let device = client.core_device();
+                                let device = client.persistence_manager().get_device_snapshot();
                                 let pk_serialized = device.noise_key.public_key.serialize();
                                 let digest = Sha256::digest(pk_serialized);
                                 hex::encode(&digest[..8])
@@ -1442,7 +1442,7 @@ impl WhatsAppWebAdapter {
                             // actually saw on the wire.
                             let (noise_fp_full, registration_id) = {
                                 use sha2::{Digest, Sha256};
-                                let device = client.core_device();
+                                let device = client.persistence_manager().get_device_snapshot();
                                 let pk_serialized = device.noise_key.public_key.serialize();
                                 let digest = Sha256::digest(pk_serialized);
                                 (hex::encode(digest), device.registration_id)

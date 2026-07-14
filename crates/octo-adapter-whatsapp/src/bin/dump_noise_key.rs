@@ -56,7 +56,8 @@ fn main() -> anyhow::Result<()> {
     let noise_fp = Sha256::digest(&noise_key);
     let id_fp = Sha256::digest(&identity_key);
     let spk_fp = Sha256::digest(&signed_pre_key);
-    let concat_fp = Sha256::digest([&noise_key[..], &identity_key[..], &signed_pre_key[..]].concat());
+    let concat_fp =
+        Sha256::digest([&noise_key[..], &identity_key[..], &signed_pre_key[..]].concat());
 
     // The daemon captures fingerprints from `device.noise_key.public_key`
     // (33 bytes — `PublicKey::serialize()` = 1 type byte + 32 key bytes).
@@ -81,16 +82,34 @@ fn main() -> anyhow::Result<()> {
     );
     println!();
     println!("Full SHA-256 fingerprints (compare to daemon log fields):");
-    println!("  noise_key blob (64B)     sha256={}", hex::encode(noise_fp));
+    println!(
+        "  noise_key blob (64B)     sha256={}",
+        hex::encode(noise_fp)
+    );
     println!("  identity_key blob (64B)  sha256={}", hex::encode(id_fp));
     println!("  signed_pre_key blob(64B) sha256={}", hex::encode(spk_fp));
-    println!("  noise pubkey last32 (32B) sha256={}", hex::encode(noise_pub_last_fp));
-    println!("  noise pubkey ser(33B,type5) sha256={}", hex::encode(noise_pub_ser_fp));
-    println!("  all 3 concat (192B)      sha256={}", hex::encode(concat_fp));
+    println!(
+        "  noise pubkey last32 (32B) sha256={}",
+        hex::encode(noise_pub_last_fp)
+    );
+    println!(
+        "  noise pubkey ser(33B,type5) sha256={}",
+        hex::encode(noise_pub_ser_fp)
+    );
+    println!(
+        "  all 3 concat (192B)      sha256={}",
+        hex::encode(concat_fp)
+    );
     println!();
     println!("Truncated (16 hex) for eyeballing:");
     println!("  noise_key blob    {}", &hex::encode(&noise_fp)[..16]);
-    println!("  noise pubkey last32  {}", &hex::encode(&noise_pub_last_fp)[..16]);
-    println!("  noise pubkey ser(33B) {}", &hex::encode(&noise_pub_ser_fp)[..16]);
+    println!(
+        "  noise pubkey last32  {}",
+        &hex::encode(&noise_pub_last_fp)[..16]
+    );
+    println!(
+        "  noise pubkey ser(33B) {}",
+        &hex::encode(&noise_pub_ser_fp)[..16]
+    );
     Ok(())
 }

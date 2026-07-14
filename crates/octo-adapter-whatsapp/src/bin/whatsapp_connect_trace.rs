@@ -59,7 +59,9 @@ fn main() -> ExitCode {
     }
     let path: PathBuf = session_path.unwrap_or_else(|| {
         let home = env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(format!("{home}/.local/share/octo/whatsapp/default.session.db"))
+        PathBuf::from(format!(
+            "{home}/.local/share/octo/whatsapp/default.session.db"
+        ))
     });
     if !path.exists() {
         eprintln!("error: session path does not exist: {}", path.display());
@@ -81,13 +83,16 @@ fn main() -> ExitCode {
     // `path` for the cert chain query).
     let cert_chain_info = probe_cert_chain(&path);
     let cert_summary = match &cert_chain_info {
-        Some((len, nb, na)) if *len > 0 => format!("Some ({len} B; not_before={nb}, not_after={na})"),
+        Some((len, nb, na)) if *len > 0 => {
+            format!("Some ({len} B; not_before={nb}, not_after={na})")
+        }
         Some((len, _nb, _na)) => format!("present but empty ({len} B)"),
         None => "None".into(),
     };
-    let cert_chain_validity = cert_chain_info
-        .clone()
-        .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None });
+    let cert_chain_validity =
+        cert_chain_info
+            .clone()
+            .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None });
 
     // Mirror wacore handshake::select_pattern in user-space.
     // `is_registered()` is defined as `self.pn.is_some()` in
@@ -191,10 +196,7 @@ fn probe_cert_chain(session_path: &std::path::Path) -> Option<(usize, i64, i64)>
     let dsn = format!("file://{}", session_path.display());
     let db = stoolap::Database::open(&dsn).ok()?;
     let mut rows = db
-        .query(
-            "SELECT server_cert_chain FROM device WHERE id = 1",
-            (),
-        )
+        .query("SELECT server_cert_chain FROM device WHERE id = 1", ())
         .ok()?;
     let row = match rows.next() {
         Some(Ok(r)) => r,
@@ -224,9 +226,7 @@ fn probe_cert_chain(session_path: &std::path::Path) -> Option<(usize, i64, i64)>
 fn read_pn_column(session_path: &std::path::Path) -> Option<String> {
     let dsn = format!("file://{}", session_path.display());
     let db = stoolap::Database::open(&dsn).ok()?;
-    let mut rows = db
-        .query("SELECT pn FROM device WHERE id = 1", ())
-        .ok()?;
+    let mut rows = db.query("SELECT pn FROM device WHERE id = 1", ()).ok()?;
     let row = rows.next()?;
     row.ok()?.get::<String>(0).ok()
 }
@@ -251,20 +251,24 @@ fn dump_device_row(session_path: &std::path::Path) -> Result<(), Box<dyn std::er
     let mut rows = db.query(&sql, ())?;
     if let Some(Ok(row)) = rows.next() {
         for (i, name) in cols.iter().enumerate() {
-            let v: String = row
-                .get::<String>(i)
-                .unwrap_or_else(|_| "<read err>".into());
+            let v: String = row.get::<String>(i).unwrap_or_else(|_| "<read err>".into());
             let marker = if v.is_empty() { " (EMPTY!)" } else { "" };
             println!("  {name:<24} = {v:?}{marker}");
         }
         // server_cert_chain length only
-        let mut rows2 = db.query("SELECT length(server_cert_chain) FROM device WHERE id = 1", ())?;
+        let mut rows2 = db.query(
+            "SELECT length(server_cert_chain) FROM device WHERE id = 1",
+            (),
+        )?;
         if let Some(Ok(row)) = rows2.next() {
             let len: i64 = row.get(0).unwrap_or(0);
             println!("  server_cert_chain      = {len} bytes (via length())");
         }
         // edge_routing_info length
-        let mut rows3 = db.query("SELECT length(edge_routing_info) FROM device WHERE id = 1", ())?;
+        let mut rows3 = db.query(
+            "SELECT length(edge_routing_info) FROM device WHERE id = 1",
+            (),
+        )?;
         if let Some(Ok(row)) = rows3.next() {
             let len: i64 = row.get(0).unwrap_or(0);
             println!("  edge_routing_info      = {len} bytes (via length())");

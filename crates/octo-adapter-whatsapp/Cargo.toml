@@ -58,12 +58,12 @@ tracing = ["wacore/tracing"]
 
 [dependencies]
 # WhatsApp Web protocol (oxidezap/whatsapp-rust fork at mmacedoeu/whatsapp-rust)
-whatsapp-rust = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
-wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a", default-features = false, features = ["tracing"] }
-wacore-binary = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a", default-features = false }
-waproto = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a", default-features = false }
-whatsapp-rust-tokio-transport = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "e32b51a" }
+whatsapp-rust = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
+wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false, features = ["tracing"] }
+wacore-binary = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false }
+waproto = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false }
+whatsapp-rust-tokio-transport = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574" }
 qrcode = "0.14"
 serde-big-array = "0.5"
 bytes = "1"

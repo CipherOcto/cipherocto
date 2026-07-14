@@ -42,7 +42,9 @@ fn main() -> ExitCode {
     }
     let path: PathBuf = session_path.unwrap_or_else(|| {
         let home = env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(format!("{home}/.local/share/octo/whatsapp/default.session.db"))
+        PathBuf::from(format!(
+            "{home}/.local/share/octo/whatsapp/default.session.db"
+        ))
     });
     if !path.exists() {
         eprintln!("error: session path does not exist: {}", path.display());
@@ -118,8 +120,16 @@ fn dump_text(path: &std::path::Path) {
     };
 
     // Device-level crypto blobs + fingerprints.
-    if let Some((noise_key, identity_key, signed_pre_key, push_name, avp, avs, avt, registration_id)) =
-        store.read_device_keys().ok().flatten()
+    if let Some((
+        noise_key,
+        identity_key,
+        signed_pre_key,
+        push_name,
+        avp,
+        avs,
+        avt,
+        registration_id,
+    )) = store.read_device_keys().ok().flatten()
     {
         println!("\n-- device (key fields) --");
         println!("  registration_id      : {registration_id}");
@@ -343,17 +353,28 @@ fn dump_as_json(p: &std::path::Path) -> anyhow::Result<String> {
 
     // device fields.
     let store = StoolapStore::new(p)?;
-    if let Some((noise_key, identity_key, signed_pre_key, push_name, avp, avs, avt, registration_id)) =
-        store.read_device_keys().ok().flatten()
+    if let Some((
+        noise_key,
+        identity_key,
+        signed_pre_key,
+        push_name,
+        avp,
+        avs,
+        avt,
+        registration_id,
+    )) = store.read_device_keys().ok().flatten()
     {
-        out.insert("device".into(), serde_json::json!({
-            "registration_id": registration_id,
-            "push_name": push_name,
-            "app_version": format!("{avp}.{avs}.{avt}"),
-            "noise_key_sha256": hex::encode(Sha256::digest(&noise_key)),
-            "identity_key_sha256": hex::encode(Sha256::digest(&identity_key)),
-            "signed_pre_key_sha256": hex::encode(Sha256::digest(&signed_pre_key)),
-        }));
+        out.insert(
+            "device".into(),
+            serde_json::json!({
+                "registration_id": registration_id,
+                "push_name": push_name,
+                "app_version": format!("{avp}.{avs}.{avt}"),
+                "noise_key_sha256": hex::encode(Sha256::digest(&noise_key)),
+                "identity_key_sha256": hex::encode(Sha256::digest(&identity_key)),
+                "signed_pre_key_sha256": hex::encode(Sha256::digest(&signed_pre_key)),
+            }),
+        );
     }
     Ok(serde_json::to_string_pretty(&out).unwrap_or_default())
 }

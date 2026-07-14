@@ -48,8 +48,14 @@ What does NOT survive (must be measured or dropped):
 - ❌ "Chrome uses IK with extended fields" — inferred, not measured.
 - ❌ "extended_ciphertext = DH(ext_e_priv, server_static_pub) + AES-GCM(...)" — inferred, not measured.
 - ❌ "pqMode = WA_PQ (4)" — assumed from proto enum, never verified against Chrome's emission.
-- ❌ "wacore's IK is also rejected" — inferred from old trace context, not re-measured post-patch.
-- ❌ "the IK bypass patch (902a9ff8) caused the IK→XX switch" — not re-verified in current wacore state.
+- ❌ **"wacore's IK is also rejected"** — RE-MEASURED 2026-07-14 against `/tmp/daemon-trace-coredev-094957.log` (PRE-902a9ff8): trace shows `Handshake complete (IK), switching to encrypted communication` followed by `401 location=cco`. **So IK and XX BOTH 401 post-handshake.** The IK-vs-XX distinction is NOT the root cause.
+- ❌ "the IK bypass patch (902a9ff8) caused the IK→XX switch" — confirmed: post-patch trace shows XX (location=lla), pre-patch trace shows IK (location=cco). Both fail. The patch only changed which Noise pattern wacore uses; the post-handshake IQ layer still 401s.
+
+**Updated understanding (2026-07-14, evidence-based)**:
+- The 401 fires AFTER Noise handshake completes — both IK and XX paths reach this state
+- Location codes (lla, cco) are WA server routing tokens, not failure cause codes (per `node_io.rs` comment)
+- Real cause is post-handshake AppState IQ format mismatch (Chrome's `frame[5]` = 93B vs wacore est ~50B = +43B gap)
+- IK extended-fields hypothesis (proto: `useExtended`, `extendedCiphertext`, `pqMode`) is irrelevant — that was about Noise handshake shape, which is not where the 401 fires
 
 **Next sessions** (persisted as TaskList #135/#136/#137):
 - S6.5: extend `whatsapp_modern_client_hello` to actually WS-connect + send + verify server verdict

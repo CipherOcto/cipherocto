@@ -241,7 +241,9 @@ async fn main() -> Result<()> {
     // known entry points and print whatever we find.
     let js = r#"
 (async () => {
-  const out = {wpp: null, debugVersion: null, debugKeys: [], storeDump: null};
+  const out = {wpp: null, debugVersion: null, debugKeys: [],
+               localStorage: [], sessionStorage: [],
+               cookies: [], signalStorageMeta: null};
   try {
     out.wpp = Object.keys(window).filter(k => /^(WPP|Store|Debug|webpack|waNoise|__debug)/.test(k)).slice(0, 60);
   } catch (e) {}
@@ -251,43 +253,62 @@ async fn main() -> Result<()> {
       out.debugKeys = Object.keys(window.Debug);
     } catch (_) {}
   }
-  // Try to get the noise session keys via Debug.Conn or known internal paths.
-  // WA Web's current build (Chrome 150) uses `Debug.Store.getModel()` or similar.
-  // We try a bunch of known patterns and dump whatever we get.
-  const patterns = [
-    () => {
-      const c = window.Debug?.Conn;
-      if (!c) return null;
-      const r = {};
-      for (const k of Object.keys(c)) r[k] = String(c[k]).slice(0, 200);
-      return {label: 'Debug.Conn', data: r};
-    },
-    () => {
-      const c = window.Debug?.AuthStore;
-      if (!c) return null;
-      const r = {};
-      for (const k of Object.keys(c).slice(0, 30)) r[k] = String(c[k]).slice(0, 200);
-      return {label: 'Debug.AuthStore', data: r};
-    },
-    () => {
-      const c = window.Debug?.KeyStore;
-      if (!c) return null;
-      const r = {};
-      for (const k of Object.keys(c).slice(0, 30)) r[k] = String(c[k]).slice(0, 200);
-      return {label: 'Debug.KeyStore', data: r};
-    },
-    () => {
-      const c = window.Debug?.NoiseKeys;
-      if (!c) return null;
-      return {label: 'Debug.NoiseKeys', data: c};
-    },
-  ];
-  for (const p of patterns) {
-    try {
-      const r = p();
-      if (r) out.storeDump = out.storeDump || [], out.storeDump.push(r);
-    } catch (_) {}
-  }
+  // Dump full localStorage values (cap each at 8KB so total payload stays
+  // under the CDP 256KB limit). Classify anything matching crypto patterns.
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const v = localStorage.getItem(k);
+      const truncated = v && v.length > 8192;
+      out.localStorage.push({
+        key: k,
+        len: v ? v.length : 0,
+        value: truncated ? v.slice(0, 8192) : v,
+        truncated,
+        kind: /secret|bundle|key|crypt|sign|wau|token|pk|cert|iv|salt|priv/i.test(k) ? 'crypto' : 'config',
+      });
+    }
+  } catch (e) { out.localStorageErr = String(e); }
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      const v = sessionStorage.getItem(k);
+      const truncated = v && v.length > 8192;
+      out.sessionStorage.push({key: k, len: v ? v.length : 0,
+        value: truncated ? v.slice(0, 8192) : v, truncated});
+    }
+  } catch (e) { out.sessionStorageErr = String(e); }
+  // Dump cookies (for `wau=` etc). document.cookie can't read HttpOnly; use
+  // Chrome's CDP Storage.getCookies via Runtime? Not available here. We try
+  // document.cookie and call out that HttpOnly cookies won't appear.
+  try {
+    const raw = document.cookie || '';
+    out.cookies = raw.split(';').map(c => {
+      const [name, ...rest] = c.trim().split('=');
+      return {name: name || '', len: rest.join('=').length,
+        // Cookies are short; dump full
+        value: rest.join('=')};
+    });
+  } catch (e) { out.cookiesErr = String(e); }
+  // Try to read signal-storage's signal-static-pubkey entry directly via
+  // the WA Web internal module. WA Web 150 stripped window.Debug but the
+  // signal-storage JS module is reachable via the import map.
+  try {
+    const db = await new Promise((res, rej) => {
+      const req = indexedDB.open('signal-storage');
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+    const tx = db.transaction('signal-meta-store', 'readonly');
+    const store = tx.objectStore('signal-meta-store');
+    const all = await new Promise((res, rej) => {
+      const r = store.getAll();
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    out.signalStorageMeta = all;
+    db.close();
+  } catch (e) { out.signalStorageMetaErr = String(e); }
   return out;
 })()
 "#;

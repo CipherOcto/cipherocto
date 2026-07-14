@@ -1676,6 +1676,21 @@ impl WhatsAppWebAdapter {
 
         let bot = builder.build().await?;
 
+        // Phase 7.J.5: force Noise XX on the first connect. wacore's
+        // `select_pattern` returns `HandshakePattern::Ik(server_static_pub)`
+        // when a valid `device.server_cert_chain` blob exists in our session.db;
+        // the WA server has dropped IK support for already-paired sessions and
+        // 401s the IK ClientHello before we even reach
+        // `IkServerHelloOutcome::Fallback` (verified live with debug build,
+        // commit e8885fdc). Clearing the cached chain here forces XX on
+        // the very first handshake — matching Chrome 150's behavior on
+        // every reconnect (verified in
+        // `docs/research/2026-07-14-chrome-reconnect-handshake.md`).
+        bot.client()
+            .persistence_manager()
+            .process_command(wacore::store::commands::DeviceCommand::ClearServerCertChain)
+            .await;
+
         // SHORTCAKE_PASSKEY (Session 2 of the wacore-webauthn plan, RFC-0909):
         // if a `PasskeyAuthenticator` is registered on the config, install it on
         // the `Client` BEFORE the WebSocket run loop starts. The SDK consumes

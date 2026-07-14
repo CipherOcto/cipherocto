@@ -57,6 +57,16 @@ What does NOT survive (must be measured or dropped):
 - Real cause is post-handshake AppState IQ format mismatch (Chrome's `frame[5]` = 93B vs wacore est ~50B = +43B gap)
 - IK extended-fields hypothesis (proto: `useExtended`, `extendedCiphertext`, `pqMode`) is irrelevant — that was about Noise handshake shape, which is not where the 401 fires
 
+**S2.5 — Differential IDB analysis (2026-07-14) — CASE 1 CONFIRMED**:
+- Built `whatsapp_idb_cryptokey_diff_gen` + `whatsapp_idb_leveldb_diff` to test 4 Chrome profiles (AES-GCM/HMAC × extractable true/false)
+- Raw 32-byte key bytes FOUND in `IndexedDB/file__0.indexeddb.leveldb/000003.log` for ALL 4 rows regardless of extractable
+- Visible structure at offset 0x418: `5c 4b 01 09 20 07 20 aa*32 a0` (AES-ext-true), `5c 4b 01 09 20 06 20 bb*32 a0` (AES-ext-false), `5c 4b 02 20 06 19 20 cc*32 a0` (HMAC-ext-true), `5c 4b 02 20 06 18 20 dd*32 a0` (HMAC-ext-false)
+- Varint delta 7→6 (AES) and 25→24 (HMAC) matches the extractable bit position — flag IS in file
+- Size delta +12B for extractable=false rows (AES and HMAC both)
+- **Kills Case 2 (wrapped) and Case 3 (handle-only). Confirms Case 1.**
+- Prior S3 hard wall (IDB CryptoKey non-extractable) was based on WebCrypto contract, not Chrome 150's storage implementation. Cliffnote feedback was right.
+- Next: S2.6 — Blink WebCrypto Structured Clone parser. Decrypt `signal-storage` IDB → get Noise identity key + signed prekey + signature. Then S4 redux → decrypt `reconnect.jsonl` frame[2] → get exact `extendedCiphertext` plaintext + `pqMode` enum + `extendedEphemeral` derivation. Then S6 patch once with measured values.
+
 **Next sessions** (persisted as TaskList #135/#136/#137):
 - S6.5: extend `whatsapp_modern_client_hello` to actually WS-connect + send + verify server verdict
 - S6.7: patch wacore's `build_client_hello` to populate modern fields (upstream fork commit on `mmacedoeu/whatsapp-rust`)

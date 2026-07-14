@@ -161,7 +161,7 @@ impl StoolapStore {
     /// call from any context where the store isn't contended.
     pub fn read_device_keys(
         &self,
-    ) -> anyhow::Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32)>> {
+    ) -> anyhow::Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32, u32)>> {
         use anyhow::Context;
         let db = self
             .db
@@ -169,7 +169,7 @@ impl StoolapStore {
             .map_err(|e| anyhow::anyhow!("db try_lock failed (a daemon may be running): {e}"))?;
         let mut rows = query(
             &*db,
-            "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary FROM device WHERE id = 1",
+            "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary, registration_id FROM device WHERE id = 1",
             vec![],
         )
         .map_err(|e| anyhow::Error::msg(format!("SELECT device: {e}")))?;
@@ -187,6 +187,7 @@ impl StoolapStore {
         let avp: i64 = row.get::<i64>(4).context("app_version_primary col")?;
         let avs: i64 = row.get::<i64>(5).context("app_version_secondary col")?;
         let avt: i64 = row.get::<i64>(6).context("app_version_tertiary col")?;
+        let registration_id: i64 = row.get::<i64>(7).context("registration_id col")?;
         Ok(Some((
             noise_key,
             identity_key,
@@ -195,6 +196,7 @@ impl StoolapStore {
             avp as u32,
             avs as u32,
             avt as u32,
+            registration_id as u32,
         )))
     }
 

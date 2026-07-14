@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
 
     let store = StoolapStore::new(&path)?;
 
-    let (noise_key, identity_key, signed_pre_key, push_name, avp, avs, avt) =
+    let (noise_key, identity_key, signed_pre_key, push_name, avp, avs, avt, registration_id) =
         match store.read_device_keys()? {
             Some(t) => t,
             None => {
@@ -59,43 +59,38 @@ fn main() -> anyhow::Result<()> {
     let concat_fp = Sha256::digest([&noise_key[..], &identity_key[..], &signed_pre_key[..]].concat());
 
     // The daemon captures fingerprints from `device.noise_key.public_key`
-    // (32 bytes — the public key half of the KeyPair, NOT the full
-    // serialized 64-byte blob stored in the DB). Mirror that here so
-    // the diagnostic matches what shows up in the daemon trace.
-    //
+    // (33 bytes — `PublicKey::serialize()` = 1 type byte + 32 key bytes).
     // We don't know the exact KeyPair serde layout (private||public or
-    // public||private), so we hash BOTH halves and report both.
+    // public||private), so we hash BOTH halves and report both. To match
+    // the daemon's exact computation, also try prepending the type byte.
     let noise_pub_first = &noise_key[..32];
     let noise_pub_last = &noise_key[32..];
     let noise_pub_first_fp = Sha256::digest(noise_pub_first);
     let noise_pub_last_fp = Sha256::digest(noise_pub_last);
-    let id_pub_first_fp = Sha256::digest(&identity_key[..32]);
-    let id_pub_last_fp = Sha256::digest(&identity_key[32..]);
-    let spk_pub_first_fp = Sha256::digest(&signed_pre_key[..32]);
-    let spk_pub_last_fp = Sha256::digest(&signed_pre_key[32..]);
+    // `PublicKey::serialize()` prepends a 1-byte type code. For Djb
+    // (curve25519) keys, that code is `5` per wacore's `key_type` enum.
+    // Try both common variants to find what the daemon hashes.
+    let mut noise_pub_ser = vec![0x05u8];
+    noise_pub_ser.extend_from_slice(noise_pub_last);
+    let noise_pub_ser_fp = Sha256::digest(&noise_pub_ser);
 
     println!("session_path: {}", path.display());
     println!(
-        "push_name:    {:?}    app_version: {}.{}.{}",
-        push_name, avp, avs, avt
+        "push_name:    {:?}    app_version: {}.{}.{}    registration_id: {}",
+        push_name, avp, avs, avt, registration_id
     );
     println!();
-    println!("Full serialized blobs (64-byte KeyPair):");
-    println!("  noise_key:        sha256={}", &hex::encode(&noise_fp)[..16]);
-    println!("  identity_key:     sha256={}", &hex::encode(&id_fp)[..16]);
-    println!("  signed_pre_key:   sha256={}", &hex::encode(&spk_fp)[..16]);
+    println!("Full SHA-256 fingerprints (compare to daemon log fields):");
+    println!("  noise_key blob (64B)     sha256={}", hex::encode(noise_fp));
+    println!("  identity_key blob (64B)  sha256={}", hex::encode(id_fp));
+    println!("  signed_pre_key blob(64B) sha256={}", hex::encode(spk_fp));
+    println!("  noise pubkey last32 (32B) sha256={}", hex::encode(noise_pub_last_fp));
+    println!("  noise pubkey ser(33B,type5) sha256={}", hex::encode(noise_pub_ser_fp));
+    println!("  all 3 concat (192B)      sha256={}", hex::encode(concat_fp));
     println!();
-    println!("Public-key halves (32 bytes — what the daemon hashes):");
-    println!("  noise_key  first32  sha256={}", &hex::encode(&noise_pub_first_fp)[..16]);
-    println!("  noise_key  last32   sha256={}", &hex::encode(&noise_pub_last_fp)[..16]);
-    println!("  identity   first32  sha256={}", &hex::encode(&id_pub_first_fp)[..16]);
-    println!("  identity   last32   sha256={}", &hex::encode(&id_pub_last_fp)[..16]);
-    println!("  spk        first32  sha256={}", &hex::encode(&spk_pub_first_fp)[..16]);
-    println!("  spk        last32   sha256={}", &hex::encode(&spk_pub_last_fp)[..16]);
-    println!();
-    println!(
-        "all 3 concat (192 bytes) sha256={}",
-        &hex::encode(&concat_fp)[..16]
-    );
+    println!("Truncated (16 hex) for eyeballing:");
+    println!("  noise_key blob    {}", &hex::encode(&noise_fp)[..16]);
+    println!("  noise pubkey last32  {}", &hex::encode(&noise_pub_last_fp)[..16]);
+    println!("  noise pubkey ser(33B) {}", &hex::encode(&noise_pub_ser_fp)[..16]);
     Ok(())
 }

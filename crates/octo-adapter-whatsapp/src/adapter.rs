@@ -1418,8 +1418,26 @@ impl WhatsAppWebAdapter {
                                 let digest = Sha256::digest(pk_serialized);
                                 hex::encode(&digest[..8])
                             };
+                            // R7.J.5: also log the FULL noise_key SHA-256 (no
+                            // truncation) so future debugging can directly
+                            // compare to dump_noise_key's persisted full hash.
+                            // The 16-hex `noise_identity_fp` above is for human
+                            // eyeballing; `noise_identity_fp_full` is for
+                            // correlation. Also log the registration_id —
+                            // a stable u32 from the same Device — so an
+                            // additional correlation dimension exists even
+                            // if the SHA-256 itself somehow collides.
+                            let (noise_fp_full, registration_id) = {
+                                use sha2::{Digest, Sha256};
+                                let device = client.persistence_manager().get_device_snapshot();
+                                let pk_serialized = device.noise_key.public_key.serialize();
+                                let digest = Sha256::digest(pk_serialized);
+                                (hex::encode(digest), device.registration_id)
+                            };
                             tracing::warn!(
                                 noise_identity_fp = %noise_fp,
+                                noise_identity_fp_full = %noise_fp_full,
+                                registration_id = registration_id,
                                 reason = ?lo.reason,
                                 on_connect = lo.on_connect,
                                 "WhatsApp Web logged out"

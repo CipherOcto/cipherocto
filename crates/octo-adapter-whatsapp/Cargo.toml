@@ -40,6 +40,21 @@ test-helpers = []
 # tests continue to compile alongside the live suites when building
 # `cargo check --features live-whatsapp --tests`.
 live-whatsapp = ["test-helpers"]
+# Phase 7.J.2: turn on wacore's `tracing` feature so the adapter
+# emits `tracing::*!` spans for transport-level events. Without this,
+# wacore never calls into the `tracing` crate (the feature is
+# off-by-default in the upstream fork), so even with a
+# `tracing_subscriber` installed at the daemon level, the LoggedOut /
+# connect-handshake path is invisible. Pair with the
+# `octo-whatsapp/tracing-stdout` feature which pulls this in.
+#
+# Note: we tried `whatsapp-rust/tracing` too (which would also enable
+# traces in `pair.rs`, `retry.rs`, `keepalive.rs` — the connection
+# lifecycle), but its `#[tracing::instrument]` annotations on big
+# async fns overflow rustc's recursion limit in this workspace. Keep
+# just the `wacore/tracing` half — it still unlocks appstate_sync,
+# voip, and send-paths (any code path wacore itself emits spans for).
+tracing = ["wacore/tracing"]
 
 [dependencies]
 # WhatsApp Web protocol (oxidezap/whatsapp-rust)

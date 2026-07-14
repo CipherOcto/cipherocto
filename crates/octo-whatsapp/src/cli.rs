@@ -1827,6 +1827,15 @@ pub fn dispatch_onboard(_cli: &Cli, cmd: &OnboardCmd) -> anyhow::Result<()> {
 pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Daemon => {
+            // Phase 7.J.2: install a stderr tracing subscriber early so
+            // every `tracing::*!` from the daemon, wacore, octo_cable, etc.
+            // lands in the operator's terminal (or journalctl) instead of
+            // being swallowed by the default no-subscriber build. Opt-in
+            // via the `tracing-stdout` cargo feature — see
+            // `observability::tracing::init_tracing_stdout`.
+            #[cfg(feature = "tracing-stdout")]
+            crate::observability::init_tracing_stdout();
+
             // The daemon path needs to be async. Build a small runtime so
             // `main()` can stay sync (matching the plan's snippet).
             let runtime = tokio::runtime::Builder::new_multi_thread()

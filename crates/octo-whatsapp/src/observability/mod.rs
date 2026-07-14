@@ -23,3 +23,8 @@ pub mod tracing;
 
 pub use health_server::{run_health_server, HealthServerHandle, METRICS_BEARER_ENV};
 pub use metrics::{hash_label, Metrics, MetricsError};
+// Phase 7.J.2: lightweight stderr tracing — re-exported so
+// `cli::dispatch` can call it unconditionally (it's a no-op when the
+// feature is off).
+#[cfg(feature = "tracing-stdout")]
+pub use tracing::init_tracing_stdout;

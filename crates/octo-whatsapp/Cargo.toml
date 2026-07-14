@@ -131,6 +131,26 @@ live-whatsapp = ["octo-adapter-whatsapp/live-whatsapp"]
 # `init_otlp()` call into `daemon::run` when the feature is enabled
 # (currently a no-op stub per YAGNI R1 finding F11 — the function
 # exists but is not invoked from production).
+
+# Phase 7.J.2: lightweight stderr tracing for transport-level diagnostics.
+# Without a global subscriber installed, every `tracing::*!` call in the
+# daemon (and in wacore, octo_cable, etc.) silently goes nowhere — the
+# log file is always empty. This feature installs a `tracing_subscriber::fmt`
+# layer writing to stderr with `EnvFilter::from_default_env()`, so any
+# `RUST_LOG=octo_cable=trace,wacore=trace,info` style filter works.
+# Cheap (~0 cost when off), unblocks every "why is the daemon X?" debug.
+#
+# Enable with:
+#   cargo build -p octo-whatsapp --features tracing-stdout
+#   RUST_LOG=trace ./target/debug/octo-whatsapp daemon
+# `tracing-subscriber` is already a required dep, so the feature is
+# itself empty — the `cfg(feature = "tracing-stdout")` gates in the
+# source decide whether `init_tracing_stdout()` is wired.
+# Also pulls in `octo-adapter-whatsapp/tracing` so wacore emits its
+# own `tracing::*!` spans (otherwise wacore is silent — the upstream
+# `tracing` feature is off-by-default).
+tracing-stdout = ["octo-adapter-whatsapp/tracing"]
+
 otlp = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",

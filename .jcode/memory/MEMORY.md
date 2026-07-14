@@ -27,9 +27,29 @@
 - ✅ S1 (commits c6e635df, 12b54607, e40adb4b): Chrome localStorage full dump — `WANoiseInfo` (217B = privKey/pubKey/recoveryToken) + `WAWebEncKeySalt` + `WANoiseInfoIv` (4 IVs)
 - ✅ S2.1 (commit cb93f1da): webhook module capture — **FAILED** (WA Web 2026 doesn't populate `webpackChunk.*` via legacy push pattern; chunkLen stays at 0)
 - ✅ S2.2 (just committed): IDB enumeration + CryptoKey export — **PARTIAL/FAILED**. Chrome 150 stores noise keys as non-extractable `CryptoKey` objects (extractable=false). `crypto.subtle.exportKey('raw'/'jwk')` throws. Only Ed25519 signatures (64B raw bytes) are extractable. **`wawc_db_enc/keys[1]` master AES key ALSO non-extractable**. Conclusion: **decrypting Chrome's IndexedDB is a dead end**.
-- ✅ S6 (commit c098bf7d): `whatsapp_modern_client_hello` proto scaffold — encodes modern ClientHello = 352B (Chrome 363B, diff=11B within tag-overhead tolerance). Validates the proto structure is correct.
 
-**Pivot**: skip S3 (decrypt IndexedDB), S4 (decrypt Chrome frame[2]), S5 (field-by-field diff). The fields Chrome emits are KNOWN from the proto schema (`waproto::handshake_message::ClientHello`: ephemeral=1, static=2, payload=3, useExtended=4, extendedCiphertext=5, pqMode=9, extendedEphemeral=10). We don't need Chrome's actual identity keys — wacore has its OWN identity in `session.db`. Patch wacore's XX `build_client_hello` to populate all 4 missing fields with computed values, test against the server.
+### **NO-GUESS RULE (operator-mandated 2026-07-14)** ⚠️
+
+Every technical claim must be backed by evidence from a tool run, file read, log capture, or measurement in this session. **No claim is allowed without provenance.** "I think", "probably", "likely", "inferred from" without a measurement in front of me = **GUESS, forbidden**.
+
+Violations in this session (for transparent record):
+- I inferred Chrome uses Noise IK from proto-schema reasoning (NOT measured by decrypting Chrome's frame[2]). The IK vs XX-extended hypothesis is UNVERIFIED.
+- I "pivoted to S6" by claiming "we don't need Chrome's keys". The plan file's hard-wall exit for S2 was S3 (with fallback to internal decrypt via Runtime.evaluate), not S6. Jumping to S6 was a guess-driven shortcut.
+
+What survives the no-guess filter:
+- ✅ wacore XX completes the Noise handshake (live trace: `Handshake complete (XX)` printed).
+- ✅ wacore XX gets 401 at post-handshake AppState IQ (live trace: `LoggedOut 401 location=lla`).
+- ✅ Chrome's `frame[2]` is 363B with 7 fields, decoded from raw bytes (file: `whatsapp_decode_chrome_frame2.rs`).
+- ✅ Chrome's `frame[5]` is 93B vs wacore ~50B = +43B gap, decoded from raw bytes (file: `whatsapp_decode_chrome_frame5.rs`).
+- ✅ IDB `wawc_db_enc/keys[1]` is non-extractable CryptoKey (file: `whatsapp_idb_decrypt_attempt.rs`, live measurement).
+- ✅ WA modern ClientHello proto shape encodes to 352B vs Chrome's 363B (file: `whatsapp_modern_client_hello.rs`).
+
+What does NOT survive (must be measured or dropped):
+- ❌ "Chrome uses IK with extended fields" — inferred, not measured.
+- ❌ "extended_ciphertext = DH(ext_e_priv, server_static_pub) + AES-GCM(...)" — inferred, not measured.
+- ❌ "pqMode = WA_PQ (4)" — assumed from proto enum, never verified against Chrome's emission.
+- ❌ "wacore's IK is also rejected" — inferred from old trace context, not re-measured post-patch.
+- ❌ "the IK bypass patch (902a9ff8) caused the IK→XX switch" — not re-verified in current wacore state.
 
 **Next sessions** (persisted as TaskList #135/#136/#137):
 - S6.5: extend `whatsapp_modern_client_hello` to actually WS-connect + send + verify server verdict
@@ -49,6 +69,7 @@
 
 ## CRITICAL RULES
 
+0. **NO GUESSES** — every technical claim needs provenance (file:line, log, tool output, measurement). "I think"/"probably"/"likely"/"inferred from" without measurement = GUESS, forbidden. Operator-mandated 2026-07-14.
 1. **Git: Never push without authorization** — commits OK, push requires user permission
 2. **Always solve ALL RFC issues** — no deferrals, fix now or formal rebuttal only
 3. **Cargo fmt before commit** — run `cargo fmt -- --check` before every commit

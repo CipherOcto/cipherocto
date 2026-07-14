@@ -81,9 +81,13 @@ fn main() -> ExitCode {
     // `path` for the cert chain query).
     let cert_chain_info = probe_cert_chain(&path);
     let cert_summary = match &cert_chain_info {
-        Some((len, _nb, _na)) if *len > 0 => format!("Some ({len} B)"),
-        _ => "None".into(),
+        Some((len, nb, na)) if *len > 0 => format!("Some ({len} B; not_before={nb}, not_after={na})"),
+        Some((len, _nb, _na)) => format!("present but empty ({len} B)"),
+        None => "None".into(),
     };
+    let cert_chain_validity = cert_chain_info
+        .clone()
+        .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None });
 
     // Mirror wacore handshake::select_pattern in user-space.
     // `is_registered()` is defined as `self.pn.is_some()` in
@@ -109,10 +113,7 @@ fn main() -> ExitCode {
     if let Err(e) = dump_device_row(&path) {
         println!("  (failed to query device row: {e})");
     }
-    if let Some((nb_leaf, na_leaf)) = cert_chain_info
-        .clone()
-        .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None })
-    {
+    if let Some((nb_leaf, na_leaf)) = cert_chain_validity {
         println!("    leaf not_before  : {nb_leaf}");
         println!("    leaf not_after   : {na_leaf}");
     }
@@ -132,10 +133,7 @@ fn main() -> ExitCode {
     if cert_summary == "None" {
         verdict = "XX".into();
         reasons.push("server_cert_chain is None on disk");
-    } else if let Some((nb_leaf, na_leaf)) = cert_chain_info
-        .clone()
-        .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None })
-    {
+    } else if let Some((nb_leaf, na_leaf)) = cert_chain_validity {
         if now_secs < nb_leaf {
             verdict = "XX".into();
             reasons.push("now < leaf.not_before (clock skew or stale chain)");
@@ -203,28 +201,24 @@ fn probe_cert_chain(session_path: &std::path::Path) -> Option<(usize, i64, i64)>
         _ => return None,
     };
 
-    // Stoolap's BLOB row.get returns Option<Vec<u8>> or empty Vec.
     let chain_bytes: Vec<u8> = row.get(0).ok().unwrap_or_default();
 
     if chain_bytes.is_empty() {
         return Some((0, 0, 0));
     }
 
-    // Best-effort decode as bincode of CachedServerCertChain.
-    // The struct is `pub struct CachedServerCertChain { leaf: VerifiedServerCertLeaf, intermediate: VerifiedServerCertLeaf, expiration: i64 }`
-    // VerifiedServerCertLeaf is `pub struct VerifiedServerCertLeaf { key: [u8; 32], signature: [u8; 64], not_before: i64, not_after: i64 }`.
-    // Header is verification_tickets + leaf struct + intermediate struct + expiration i64.
-    // Without the bincode layout in hand, we fallback to returning only the byte length.
-    let (not_before, not_after) = decode_leaf_not_before_after(&chain_bytes).unwrap_or((0, 0));
-
-    Some((chain_bytes.len(), not_before, not_after))
-}
-
-fn decode_leaf_not_before_after(_bytes: &[u8]) -> Option<(i64, i64)> {
-    // TODO: decode against wacore's bincode layout. For now, we cannot recover
-    // these timestamps from the binary without pulling in wacore as a dep of
-    // this binary. Fall back to length-only reporting.
-    None
+    // Decoder: the StoolapStore saves CachedServerCertChain via
+    // `serde_json::to_vec` (crates/octo-adapter-whatsapp/src/store.rs:1565).
+    // The struct is `{ intermediate: { key: [u8; 32], not_before: i64,
+    // not_after: i64 }, leaf: { ... } }`.
+    let v: serde_json::Value = match serde_json::from_slice(&chain_bytes) {
+        Ok(v) => v,
+        Err(_) => return Some((chain_bytes.len(), 0, 0)),
+    };
+    let leaf = v.get("leaf")?;
+    let nb = leaf.get("not_before")?.as_i64().unwrap_or(0);
+    let na = leaf.get("not_after")?.as_i64().unwrap_or(0);
+    Some((chain_bytes.len(), nb, na))
 }
 
 fn read_pn_column(session_path: &std::path::Path) -> Option<String> {
@@ -267,13 +261,35 @@ fn dump_device_row(session_path: &std::path::Path) -> Result<(), Box<dyn std::er
         let mut rows2 = db.query("SELECT length(server_cert_chain) FROM device WHERE id = 1", ())?;
         if let Some(Ok(row)) = rows2.next() {
             let len: i64 = row.get(0).unwrap_or(0);
-            println!("  server_cert_chain      = {len} bytes");
+            println!("  server_cert_chain      = {len} bytes (via length())");
         }
         // edge_routing_info length
         let mut rows3 = db.query("SELECT length(edge_routing_info) FROM device WHERE id = 1", ())?;
         if let Some(Ok(row)) = rows3.next() {
             let len: i64 = row.get(0).unwrap_or(0);
-            println!("  edge_routing_info      = {len} bytes");
+            println!("  edge_routing_info      = {len} bytes (via length())");
+        }
+        // Dump server_cert_chain — saved as JSON via serde_json::to_vec
+        // in our StoolapStore::save path (crates/octo-adapter-whatsapp/src/store.rs:1565).
+        let mut rows4 = db.query("SELECT server_cert_chain FROM device WHERE id = 1", ())?;
+        if let Some(Ok(row)) = rows4.next() {
+            let bytes: Vec<u8> = row.get(0).unwrap_or_default();
+            println!("  server_cert_chain bytes = {}", bytes.len());
+            if !bytes.is_empty() {
+                // Try JSON parse — `serde_json::to_vec` is the encoder.
+                match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    Ok(v) => println!(
+                        "  server_cert_chain JSON =\n    {}",
+                        serde_json::to_string_pretty(&v)
+                            .unwrap_or_default()
+                            .lines()
+                            .map(|l| format!("    {l}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                    Err(e) => println!("  server_cert_chain JSON parse failed: {e}"),
+                }
+            }
         }
     }
     Ok(())

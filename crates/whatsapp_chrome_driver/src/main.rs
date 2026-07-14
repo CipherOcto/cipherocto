@@ -361,22 +361,38 @@ async fn main() -> Result<()> {
                 }
             }
             "Network.webSocketFrameSent" => {
-                let payload_len = params
+                let payload_b64 = params
                     .pointer("/params/response/payloadData")
                     .and_then(Value::as_str)
-                    .map(|s| s.len())
-                    .unwrap_or(0);
+                    .unwrap_or("");
+                let decoded_len = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    payload_b64,
+                )
+                .map(|v| v.len())
+                .unwrap_or(0);
                 frame_count_sent += 1;
-                summary = format!("sent WS frame (payload {payload_len}B base64)");
+                summary = format!(
+                    "sent WS frame (b64 {}B -> decoded {decoded_len}B): {payload_b64}",
+                    payload_b64.len()
+                );
             }
             "Network.webSocketFrameReceived" => {
-                let payload_len = params
+                let payload_b64 = params
                     .pointer("/params/response/payloadData")
                     .and_then(Value::as_str)
-                    .map(|s| s.len())
-                    .unwrap_or(0);
+                    .unwrap_or("");
+                let decoded_len = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    payload_b64,
+                )
+                .map(|v| v.len())
+                .unwrap_or(0);
                 frame_count_received += 1;
-                summary = format!("recv WS frame (payload {payload_len}B base64)");
+                summary = format!(
+                    "recv WS frame (b64 {}B -> decoded {decoded_len}B): {payload_b64}",
+                    payload_b64.len()
+                );
             }
             "Network.responseReceived" => {
                 let r = params.pointer("/params/response").cloned().unwrap_or(json!({}));

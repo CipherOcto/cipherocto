@@ -22,7 +22,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2"
 base64 = "0.22"
+sha2 = "0.11"
+hex = "0.4"
+# Phase 7.J `whatsapp_noise_local_capture`: re-uses the StoolapStore to
+# read our device row + emit a synthetic XX HandshakeInit envelope for
+# byte-level comparison with chrome_driver's captured frames.
+octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }
 
 [[bin]]
 name = "whatsapp_chrome_driver"
 path = "src/main.rs"
+
+[[bin]]
+name = "whatsapp_noise_local_capture"
+path = "src/bin/whatsapp_noise_local_capture.rs"

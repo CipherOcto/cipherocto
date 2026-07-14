@@ -137,23 +137,24 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&user_data).ok();
 
     info!(
-        "launching chrome (incognito): {} --headless=new --remote-debugging-port={} --user-data-dir={}",
+        "launching chrome (incognito, non-headless for visible QR): {} --remote-debugging-port={} --user-data-dir={}",
         chrome.display(),
         args.port,
         user_data.display()
     );
 
     let mut child = tokio::process::Command::new(&chrome)
-        .arg("--headless=new")
         .arg(format!("--remote-debugging-port={}", args.port))
         .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
         .arg("--disable-features=Translate,InfiniteSessionRestore")
+        .arg("--disable-gpu")
+        .arg("--window-size=900,800")
         .arg(format!("--user-data-dir={}", user_data.display()))
         .arg("--incognito")
-        .arg("about:blank")
+        .arg("https://web.whatsapp.com")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)

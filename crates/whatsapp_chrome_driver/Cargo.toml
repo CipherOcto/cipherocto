@@ -1,0 +1,27 @@
+[package]
+name = "whatsapp_chrome_driver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 7.J investigation binary: drive real Chrome headless against web.whatsapp.com via CDP, capture the device-side fingerprint + WS endpoint + (post-QR) reconnect frames so we can verify the TLS claim: 'server permits BoringSSL-ClientHello Chrome but rejects rustls+ring ClientHello'."
+
+# Stays out of every other crate's dep tree — own workspace member.
+# No `octo-*` deps; no `wacore` dep. Re-implements only what the chrome-driver needs.
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros", "process", "io-util"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+
+[[bin]]
+name = "whatsapp_chrome_driver"
+path = "src/main.rs"

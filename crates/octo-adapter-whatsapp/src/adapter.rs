@@ -1354,7 +1354,43 @@ impl WhatsAppWebAdapter {
                             // waiting on `Notify::notified()`.
                             connected_notify.notify_waiters();
                         }
-                        Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
+                        Event::LoggedOut(ref lo) => {
+                            // Phase 7.J.3 (local enrichment of upstream patch
+                            // b209612+551e574): wacore's WARN in
+                            // `handle_connect_failure` carries the full
+                            // `<failure>` node (reason + location + optional
+                            // server message) but its `tracing::*!` enrichment
+                            // (noise_identity_fp + server_message structured
+                            // fields) is gated behind `whatsapp-rust/tracing`,
+                            // which we can't enable because
+                            // `#[tracing::instrument]` on root-crate async fns
+                            // overflows rustc's recursion limit in this
+                            // workspace. So we re-derive the noise-identity
+                            // fingerprint HERE, where we have access to
+                            // `client.persistence_manager().get_device_snapshot()`,
+                            // and pair it with the reason code carried on
+                            // the `LoggedOut` event itself.
+                            //
+                            // SHA-256 of the 32-byte noise static public key,
+                            // truncated to 16 hex chars. Safe to log: it is a
+                            // fingerprint, not the key. `lo.reason` is the
+                            // `ConnectFailureReason` enum (e.g. `LoggedOut(401)`,
+                            // `LoggedOut(403)` = account locked) — its Debug
+                            // impl prints the numeric code, which we want.
+                            let noise_fp = {
+                                use sha2::{Digest, Sha256};
+                                let device = client.persistence_manager().get_device_snapshot();
+                                let pk_bytes = device.noise_key.public_key.public_key_bytes();
+                                let digest = Sha256::digest(pk_bytes);
+                                hex::encode(&digest[..8])
+                            };
+                            tracing::warn!(
+                                noise_identity_fp = %noise_fp,
+                                reason = ?lo.reason,
+                                on_connect = lo.on_connect,
+                                "WhatsApp Web logged out"
+                            );
+                        }
                         Event::HistorySync(ref lazy) => {
                             // History sync requires an active authenticated
                             // connection. Signal connected_notify as a

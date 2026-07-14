@@ -1413,7 +1413,7 @@ impl WhatsAppWebAdapter {
                             // logs on the server side.
                             let noise_fp = {
                                 use sha2::{Digest, Sha256};
-                                let device = client.persistence_manager().get_device_snapshot();
+                                let device = client.core_device();
                                 let pk_serialized = device.noise_key.public_key.serialize();
                                 let digest = Sha256::digest(pk_serialized);
                                 hex::encode(&digest[..8])
@@ -1427,9 +1427,22 @@ impl WhatsAppWebAdapter {
                             // a stable u32 from the same Device — so an
                             // additional correlation dimension exists even
                             // if the SHA-256 itself somehow collides.
+                            //
+                            // R7.J.6 (live-device fix): switch the snapshot
+                            // source from `persistence_manager().get_device
+                            // _snapshot()` (the cached `Arc<Device>` view
+                            // that lags `modify_device` commits) to
+                            // `core_device()` (the LIVE `Device` wacore
+                            // is actually using for protocol operations).
+                            // Observed: the cached snapshot returned a
+                            // different `noise_key` than both the on-disk
+                            // device and the device used for the failed
+                            // noise handshake. `core_device()` closes that
+                            // gap — the fp now matches what the server
+                            // actually saw on the wire.
                             let (noise_fp_full, registration_id) = {
                                 use sha2::{Digest, Sha256};
-                                let device = client.persistence_manager().get_device_snapshot();
+                                let device = client.core_device();
                                 let pk_serialized = device.noise_key.public_key.serialize();
                                 let digest = Sha256::digest(pk_serialized);
                                 (hex::encode(digest), device.registration_id)

@@ -353,6 +353,16 @@ pub struct GroupMetadata {
     pub admins: Vec<PeerId>,
     pub invite_url: Option<String>,
     pub mode_flags: GroupModeFlags,
+    /// LID (or PN) JID → phone-number JID, populated when the
+    /// underlying platform response carried `phone_number=...` on a
+    /// per-member wire element. E.g. for a WhatsApp LID-addressed
+    /// group, every LID participant gets a mapping from the server's
+    /// `w:g2` `<participant phone_number="NN@s.whatsapp.net">` attr.
+    ///
+    /// Empty for platforms/groups that don't surface the wire
+    /// attribute. Keyed by the same form the member appears in
+    /// `members` (typically `@lid` when the group is LID-addressed).
+    pub phone_for_peer: std::collections::HashMap<PeerId, PeerId>,
 }
 
 /// Per-action capability bit-flags.

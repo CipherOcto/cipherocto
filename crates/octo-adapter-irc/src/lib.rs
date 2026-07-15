@@ -1848,6 +1848,7 @@ impl CoordinatorAdmin for IrcAdapter {
             admins: vec![],
             invite_url: None,
             mode_flags: GroupModeFlags::default(),
+            phone_for_peer: std::collections::HashMap::new(),
         })
     }
 

@@ -47,6 +47,7 @@ pub mod events_create;
 pub mod events_find;
 pub mod events_respond;
 pub mod groups;
+pub mod groups_participants_lid_to_phone;
 pub mod health;
 pub mod identity_get_lid;
 pub mod identity_get_pn;
@@ -158,6 +159,7 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(groups::GroupsCreate))
         .register(Arc::new(groups::GroupsList))
         .register(Arc::new(groups::GroupsInfo))
+        .register(Arc::new(groups_participants_lid_to_phone::GroupsParticipantsLidToPhone))
         .register(Arc::new(groups::GroupsLeave))
         .register(Arc::new(groups::GroupsDestroy))
         .register(Arc::new(groups::GroupsResolveInvite))
@@ -539,6 +541,7 @@ pub const TIER6_PROFILE_METHODS: &[&str] = &[
     // differs (server returns `<user jid="NN@lid" pn_jid="...">`),
     // but the parser handles it transparently.
     "contacts.get_lid_pn_mappings",
+    "groups.participants_lid_to_phone",
 ];
 
 /// RPC method names added in Tier 6.1 (live coverage matrix):

@@ -1063,6 +1063,28 @@ each LID it can resolve.
   where the operator's local address book is missing the PN. Combine
   with `sql.execute` to writeback resolved `phone` values.
 
+### `groups.participants_lid_to_phone`
+
+Group-scoped LID → phone-number resolution. One `w:g2` GroupQueryIq
+(`<query request="interactive"/>`) to the operator's group JID; the
+server populates `phone_number=` on every `<participant>` for
+LID-addressed groups (live capture: 948 of 948 members get a mapping,
+not just business accounts — this is what WA Web uses to render the
+phone-number column in its group-member panel).
+
+- **Required**: `group_jid: string` (e.g. `"120363411021224818@g.us"`)
+- **Returns**: `{mappings: [{lid, phone_number}], not_resolved:
+  [string], resolved_count, requested_count, group_jid}`
+- **Direction**: LID → PN, full-group coverage. **Orthogonal** to
+  `contacts.get_lid_pn_mappings` (usync-based, business-only). Use
+  this whenever a single group covers the majority of unresolved LIDs
+  — the coverage trade is much better (100% for LID-addressed groups
+  vs. ~7-8% for usync LID queries).
+- **Auth**: requires the operator to be a member; server returns
+  `Forbidden` otherwise.
+- **Use case**: primary path for closing the `common_members_*.member_lid`
+  NULL gap when a single group covers most of the LIDs in question.
+
 ### `identity.get_pn`
 
 Resolve a phone-number-only JID to its underlying phone (`user`)

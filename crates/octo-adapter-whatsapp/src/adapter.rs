@@ -3765,8 +3765,14 @@ fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
 fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
     let mut members: Vec<PeerId> = Vec::with_capacity(raw.participants.len());
     let mut admins: Vec<PeerId> = Vec::new();
+    let mut phone_for_peer: std::collections::HashMap<PeerId, PeerId> =
+        std::collections::HashMap::with_capacity(raw.participants.len());
     for p in &raw.participants {
-        members.push(PeerId::new(p.jid.to_string()));
+        let jid = PeerId::new(p.jid.to_string());
+        if let Some(pn) = &p.phone_number {
+            phone_for_peer.insert(jid.clone(), PeerId::new(pn.to_string()));
+        }
+        members.push(jid);
         if p.is_admin() {
             admins.push(PeerId::new(p.jid.to_string()));
         }
@@ -3779,6 +3785,7 @@ fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
         admins,
         invite_url: None, // requires a per-group get_invite_link round trip
         mode_flags: extract_mode_flags(raw),
+        phone_for_peer,
     }
 }
 

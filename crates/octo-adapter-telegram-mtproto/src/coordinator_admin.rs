@@ -627,6 +627,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
                 ephemeral_ttl: None,
                 requires_approval: false,
             },
+            phone_for_peer: std::collections::HashMap::new(),
         })
     }
 

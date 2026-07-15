@@ -1878,6 +1878,7 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
             admins,
             invite_url,
             mode_flags,
+            phone_for_peer: std::collections::HashMap::new(),
         })
     }
 

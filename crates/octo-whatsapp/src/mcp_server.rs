@@ -38,9 +38,9 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 118;
+pub const EXPECTED_TOOL_COUNT: usize = 119;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 112;
+pub const EXPECTED_TOOL_COUNT: usize = 113;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -977,6 +977,18 @@ pub fn tool_descriptors() -> Vec<Value> {
         schema_props_required(&[("lids", "array")], &["lids"]),
     ));
     v.push(td(
+        "groups.participants_lid_to_phone",
+        "Group-scoped LID → phone-number resolution. One `w:g2` \
+         GroupQueryIq (<query request=\"interactive\"/>) to the operator's \
+         group JID; the server populates `phone_number=` on every LID \
+         participant for LID-addressed groups (live capture: 948/948). \
+         Returns {mappings:[{lid, phone_number}], not_resolved:[...], \
+         resolved_count, requested_count, group_jid}. Server returns \
+         Forbidden for non-member groups. \
+         Orthogonal to `contacts.get_lid_pn_mappings` (usync, business-only).",
+        schema_props_required(&[("group_jid", "string")], &["group_jid"]),
+    ));
+    v.push(td(
         "contacts.get_business_profile",
         "Fetch a peer's public business profile (description, address, \
          categories, hours). Returns {status: found|not_found, jid, \
@@ -1085,6 +1097,7 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         // Phase 6.12 groups coordinator surface.
         "groups.destroy" => "groups.destroy",
         "groups.resolve_invite" => "groups.resolve_invite",
+        "groups.participants_lid_to_phone" => "groups.participants_lid_to_phone",
         "groups.add_member" => "groups.add_member",
         "groups.add_members" => "groups.add_members",
         "groups.remove_member" => "groups.remove_member",

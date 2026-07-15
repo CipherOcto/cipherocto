@@ -67,6 +67,11 @@ fn peer_ids_to_json(p: &[PeerId]) -> Vec<&str> {
 }
 
 fn group_metadata_to_json(m: &GroupMetadata) -> Value {
+    let members_with_phone: Vec<Value> = m
+        .phone_for_peer
+        .iter()
+        .map(|(jid, phone)| json!({ "jid": jid.as_str(), "phone": phone.as_str() }))
+        .collect();
     json!({
         "jid": m.id.as_str(),
         "subject": m.subject,
@@ -74,6 +79,7 @@ fn group_metadata_to_json(m: &GroupMetadata) -> Value {
         "members": peer_ids_to_json(&m.members),
         "admins": peer_ids_to_json(&m.admins),
         "invite_url": m.invite_url,
+        "members_with_phone": members_with_phone,
         "mode_flags": {
             "locked": m.mode_flags.locked,
             "announce_only": m.mode_flags.announce_only,

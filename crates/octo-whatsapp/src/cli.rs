@@ -205,6 +205,16 @@ pub enum GroupsAction {
     Destroy { jid: String },
     /// Resolve an invite link/code to a group handle.
     ResolveInvite { code: String },
+    /// Resolve LID → phone for every participant of a group you belong to.
+    /// One `w:g2` IQ; the server populates `phone_number=` for every
+    /// LID participant. Orthogonal to `contacts get-lid-pn-mappings`
+    /// (usync-based, business-only).
+    ParticipantsLidToPhone {
+        /// Group JID (e.g. `120363411021224818@g.us`). Server returns
+        /// `Forbidden` for non-members.
+        #[arg(value_name = "GROUP_JID")]
+        group_jid: String,
+    },
     /// Add a single member to a group.
     AddMember {
         jid: String,
@@ -1169,6 +1179,10 @@ pub fn dispatch_groups(cli: &Cli, cmd: &GroupsCmd) -> anyhow::Result<()> {
         GroupsAction::ResolveInvite { code } => {
             ("groups.resolve_invite", serde_json::json!({"code": code}))
         }
+        GroupsAction::ParticipantsLidToPhone { group_jid } => (
+            "groups.participants_lid_to_phone",
+            serde_json::json!({ "group_jid": group_jid }),
+        ),
         GroupsAction::AddMember {
             jid,
             member,

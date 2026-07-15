@@ -1345,6 +1345,7 @@ impl CoordinatorAdmin for MockCoordinatorAdmin {
             admins: vec![PeerId::new("mock-admin")],
             invite_url: Some("https://chat.whatsapp.com/MOCK".into()),
             mode_flags: GroupModeFlags::default(),
+            phone_for_peer: std::collections::HashMap::new(),
         })
     }
     async fn resolve_invite(&self, _inv: &InviteRef) -> Result<GroupHandle, PlatformAdapterError> {

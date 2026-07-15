@@ -405,6 +405,53 @@ pub struct CommunityLinkResult {
     pub failed: Vec<(String, u32)>,
 }
 
+/// Group-metadata payload returned from `community.create`,
+/// `community.query_linked_group`, and `community.join_subgroup`.
+///
+/// A neutral string-keyed mirror of `whatsapp_rust::GroupMetadata`
+/// after platform-specific `Jid` types have been converted to
+/// `String`. Distinct from [`GroupMetadata`] (which is the
+/// `CoordinatorAdmin` neutral group type keyed by `GroupId` /
+/// `PeerId`) because these community payloads are produced by the
+/// `OctoWhatsAppAdapter` trait surface and must round-trip through
+/// trait methods that take `&str` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GroupMetadataSnapshot {
+    pub jid: String,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    /// All participant JIDs (LID or PN, whichever the group uses).
+    pub members: Vec<String>,
+    /// JIDs of admin participants only.
+    pub admins: Vec<String>,
+    /// `true` for community parent groups. Mutually exclusive with
+    /// `is_default_sub_group` and `is_general_chat`.
+    pub is_parent_group: bool,
+    /// JID of the parent community (only set on subgroups).
+    pub parent_group_jid: Option<String>,
+    /// `true` for the default announcement subgroup of a community.
+    pub is_default_sub_group: bool,
+    /// `true` for the general chat subgroup of a community.
+    pub is_general_chat: bool,
+    /// Total participant count as reported by the server.
+    pub size: Option<u32>,
+}
+
+/// Single participant entry returned by
+/// `community.get_linked_groups_participants`. Flat list across
+/// every linked subgroup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GroupParticipantSnapshot {
+    /// Participant JID (LID or PN, whichever the source group uses).
+    pub jid: String,
+    /// Phone-number JID when the server attached a `phone_number`
+    /// attribute to the wire participant element. `None` for groups
+    /// / participants where the attribute was absent.
+    pub phone_number: Option<String>,
+    /// `true` if the participant is an admin in their subgroup.
+    pub is_admin: bool,
+}
+
 /// Per-action capability bit-flags.
 ///
 /// Returned by [`CoordinatorAdmin::admin_capabilities`]. Callers

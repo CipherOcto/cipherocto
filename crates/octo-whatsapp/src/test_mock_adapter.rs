@@ -603,6 +603,168 @@ impl OctoWhatsAppAdapter for MockAdapter {
         Ok(Vec::new())
     }
 
+    // ── Tier 7.G: community (hermetic mocks) ────────────────────────
+
+    async fn community_create(
+        &self,
+        name: &str,
+        _description: Option<&str>,
+        _closed: bool,
+        _allow_non_admin_sub_group_creation: bool,
+        _create_general_chat: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("community_create").or_insert(0) += 1;
+        Ok(GroupMetadataSnapshot {
+            jid: "120363999999999@g.us".into(),
+            subject: Some(name.to_string()),
+            is_parent_group: true,
+            ..Default::default()
+        })
+    }
+
+    async fn community_deactivate(&self, _jid: &str) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "community_deactivate")
+    }
+
+    async fn community_link_subgroups(
+        &self,
+        _community_jid: &str,
+        subgroup_jids: &[String],
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::CommunityLinkResult;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("community_link_subgroups").or_insert(0) += 1;
+        Ok(CommunityLinkResult {
+            linked_or_unlinked: subgroup_jids.to_vec(),
+            failed: Vec::new(),
+        })
+    }
+
+    async fn community_unlink_subgroups(
+        &self,
+        _community_jid: &str,
+        subgroup_jids: &[String],
+        _remove_orphan_members: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::CommunityLinkResult;
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("community_unlink_subgroups")
+            .or_insert(0) += 1;
+        Ok(CommunityLinkResult {
+            linked_or_unlinked: subgroup_jids.to_vec(),
+            failed: Vec::new(),
+        })
+    }
+
+    async fn community_get_subgroups(
+        &self,
+        _community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot>,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("community_get_subgroups").or_insert(0) += 1;
+        Ok(vec![CommunitySubgroupSnapshot {
+            jid: "120363999999998@g.us".into(),
+            subject: "Fake Subgroup".into(),
+            participant_count: Some(42),
+            is_default_sub_group: true,
+            is_general_chat: false,
+        }])
+    }
+
+    async fn community_get_subgroup_participant_counts(
+        &self,
+        _community_jid: &str,
+    ) -> Result<Vec<(String, u32)>, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("community_get_subgroup_participant_counts")
+            .or_insert(0) += 1;
+        Ok(vec![("120363999999998@g.us".into(), 42)])
+    }
+
+    async fn community_query_linked_group(
+        &self,
+        _community_jid: &str,
+        _subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("community_query_linked_group")
+            .or_insert(0) += 1;
+        Ok(GroupMetadataSnapshot {
+            jid: "120363999999998@g.us".into(),
+            subject: Some("Queried Subgroup".into()),
+            is_default_sub_group: true,
+            ..Default::default()
+        })
+    }
+
+    async fn community_join_subgroup(
+        &self,
+        _community_jid: &str,
+        _subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("community_join_subgroup").or_insert(0) += 1;
+        Ok(GroupMetadataSnapshot {
+            jid: "120363999999998@g.us".into(),
+            subject: Some("Joined Subgroup".into()),
+            is_default_sub_group: false,
+            is_general_chat: true,
+            ..Default::default()
+        })
+    }
+
+    async fn community_get_linked_groups_participants(
+        &self,
+        _community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot>,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("community_get_linked_groups_participants")
+            .or_insert(0) += 1;
+        Ok(vec![
+            GroupParticipantSnapshot {
+                jid: "5511999999999@s.whatsapp.net".into(),
+                phone_number: None,
+                is_admin: true,
+            },
+            GroupParticipantSnapshot {
+                jid: "5511888888888@s.whatsapp.net".into(),
+                phone_number: Some("5511888888888@s.whatsapp.net".into()),
+                is_admin: false,
+            },
+        ])
+    }
+
     // ── Tier 7.F: passkey (response + confirmation) only ────────────
 
     async fn send_passkey_response(

@@ -431,6 +431,99 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         message_id: &str,
     ) -> Result<(), PlatformAdapterError>;
 
+    // ── Tier 7.G: community ──────────────────────────────────────
+
+    /// Create a new community. `name` is required (non-empty).
+    /// Maps to `Client::community().create(options)`.
+    async fn community_create(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        closed: bool,
+        allow_non_admin_sub_group_creation: bool,
+        create_general_chat: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    >;
+
+    /// Deactivate (delete) a community. Subgroups are unlinked but
+    /// not deleted. Maps to `Client::community().deactivate(jid)`.
+    async fn community_deactivate(&self, jid: &str) -> Result<(), PlatformAdapterError>;
+
+    /// Link existing groups as subgroups of a community. Maps to
+    /// `Client::community().link_subgroups(jid, subgroups)`.
+    async fn community_link_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    >;
+
+    /// Unlink subgroups from a community. Maps to
+    /// `Client::community().unlink_subgroups(jid, subgroups, remove_orphan_members)`.
+    async fn community_unlink_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+        remove_orphan_members: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    >;
+
+    /// List all subgroups of a community. Maps to
+    /// `Client::community().get_subgroups(community_jid)`.
+    async fn community_get_subgroups(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot>,
+        PlatformAdapterError,
+    >;
+
+    /// Fetch participant counts per subgroup of a community. Maps
+    /// to `Client::community().get_subgroup_participant_counts(jid)`.
+    async fn community_get_subgroup_participant_counts(
+        &self,
+        community_jid: &str,
+    ) -> Result<Vec<(String, u32)>, PlatformAdapterError>;
+
+    /// Query a linked subgroup's metadata from the parent. Maps to
+    /// `Client::community().query_linked_group(jid, subgroup_jid)`.
+    async fn community_query_linked_group(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    >;
+
+    /// Join a linked subgroup via the parent community. Maps to
+    /// `Client::community().join_subgroup(jid, subgroup_jid)`.
+    async fn community_join_subgroup(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    >;
+
+    /// Get all participants across all linked groups of a community.
+    /// Maps to
+    /// `Client::community().get_linked_groups_participants(jid)`.
+    async fn community_get_linked_groups_participants(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot>,
+        PlatformAdapterError,
+    >;
+
     /// Issue privacy tokens for the given JIDs (typically LID
     /// JIDs). The server returns one token per JID; tokens are
     /// stored locally and exposed via `get_tc_token` /
@@ -1370,6 +1463,101 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         message_id: &str,
     ) -> Result<(), PlatformAdapterError> {
         self.newsletter_revoke_message(jid, message_id).await
+    }
+    // ── Tier 7.G: community ──────────────────────────────────────
+    async fn community_create(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        closed: bool,
+        allow_non_admin_sub_group_creation: bool,
+        create_general_chat: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        self.community_create(
+            name,
+            description,
+            closed,
+            allow_non_admin_sub_group_creation,
+            create_general_chat,
+        )
+        .await
+    }
+    async fn community_deactivate(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        self.community_deactivate(jid).await
+    }
+    async fn community_link_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        self.community_link_subgroups(community_jid, subgroup_jids)
+            .await
+    }
+    async fn community_unlink_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+        remove_orphan_members: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        self.community_unlink_subgroups(community_jid, subgroup_jids, remove_orphan_members)
+            .await
+    }
+    async fn community_get_subgroups(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot>,
+        PlatformAdapterError,
+    > {
+        self.community_get_subgroups(community_jid).await
+    }
+    async fn community_get_subgroup_participant_counts(
+        &self,
+        community_jid: &str,
+    ) -> Result<Vec<(String, u32)>, PlatformAdapterError> {
+        self.community_get_subgroup_participant_counts(community_jid)
+            .await
+    }
+    async fn community_query_linked_group(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        self.community_query_linked_group(community_jid, subgroup_jid)
+            .await
+    }
+    async fn community_join_subgroup(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        self.community_join_subgroup(community_jid, subgroup_jid)
+            .await
+    }
+    async fn community_get_linked_groups_participants(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot>,
+        PlatformAdapterError,
+    > {
+        self.community_get_linked_groups_participants(community_jid)
+            .await
     }
     async fn issue_tc_tokens(
         &self,

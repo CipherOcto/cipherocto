@@ -3613,6 +3613,427 @@ impl WhatsAppWebAdapter {
         Ok(jids)
     }
 
+    // ── Tier 7.G: community (parent groups + linked subgroups) ─────
+
+    /// Helper: build a `GroupMetadataSnapshot` from
+    /// `whatsapp_rust::GroupMetadata`. Lives as an associated fn on
+    /// `WhatsAppWebAdapter` so it is callable from every community
+    /// inherent method below without each re-implementing the
+    /// Jid→String conversion.
+    fn group_metadata_snapshot(
+        m: whatsapp_rust::GroupMetadata,
+    ) -> octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot {
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot {
+            jid: m.id.to_string(),
+            subject: Some(m.subject),
+            description: m.description,
+            members: m.participants.iter().map(|p| p.jid.to_string()).collect(),
+            admins: m
+                .participants
+                .iter()
+                .filter(|p| p.is_admin())
+                .map(|p| p.jid.to_string())
+                .collect(),
+            is_parent_group: m.is_parent_group,
+            parent_group_jid: m.parent_group_jid.as_ref().map(|j| j.to_string()),
+            is_default_sub_group: m.is_default_sub_group,
+            is_general_chat: m.is_general_chat,
+            size: m.size,
+        }
+    }
+
+    /// Create a new community. Wraps
+    /// `Client::community().create(CreateCommunityOptions)`.
+    /// `description` is forwarded into `CreateCommunityOptions`;
+    /// whether the WA server accepts it inline or requires a
+    /// follow-up IQ is upstream behavior — we do not add a
+    /// follow-up `set_description` here.
+    pub async fn community_create(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        closed: bool,
+        allow_non_admin_sub_group_creation: bool,
+        create_general_chat: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let opts = whatsapp_rust::features::CreateCommunityOptions {
+            name: name.into(),
+            description: description.map(String::from),
+            closed,
+            allow_non_admin_sub_group_creation,
+            create_general_chat,
+        };
+        let res = client.community().create(opts).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_create failed: {e}"),
+            }
+        })?;
+        Ok(Self::group_metadata_snapshot(res.metadata))
+    }
+
+    /// Deactivate (delete) a community. Subgroups are unlinked but
+    /// not deleted. Maps to `Client::community().deactivate(jid)`.
+    pub async fn community_deactivate(&self, jid: &str) -> Result<(), PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        client.community().deactivate(parsed).await.map_err(|e| {
+            PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_deactivate({jid}) failed: {e}"),
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Link existing groups as subgroups of a community. Maps to
+    /// `Client::community().link_subgroups(jid, subgroup_jids)`.
+    pub async fn community_link_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        let parsed_community: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let parsed_subgroups: Vec<wacore_binary::Jid> = subgroup_jids
+            .iter()
+            .map(|s| {
+                s.parse::<wacore_binary::Jid>()
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("invalid subgroup JID {s:?}: {e}"),
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let res = client
+            .community()
+            .link_subgroups(&parsed_community, &parsed_subgroups)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_link_subgroups failed: {e}"),
+            })?;
+        Ok(
+            octo_network::dot::adapters::coordinator_admin::CommunityLinkResult {
+                linked_or_unlinked: res.linked_jids.iter().map(|j| j.to_string()).collect(),
+                failed: res
+                    .failed_groups
+                    .iter()
+                    .map(|(j, code)| (j.to_string(), *code))
+                    .collect(),
+            },
+        )
+    }
+
+    /// Unlink subgroups from a community. Maps to
+    /// `Client::community().unlink_subgroups(jid, subgroups, remove_orphan_members)`.
+    pub async fn community_unlink_subgroups(
+        &self,
+        community_jid: &str,
+        subgroup_jids: &[String],
+        remove_orphan_members: bool,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::CommunityLinkResult,
+        PlatformAdapterError,
+    > {
+        let parsed_community: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let parsed_subgroups: Vec<wacore_binary::Jid> = subgroup_jids
+            .iter()
+            .map(|s| {
+                s.parse::<wacore_binary::Jid>()
+                    .map_err(|e| PlatformAdapterError::ApiError {
+                        code: 400,
+                        message: format!("invalid subgroup JID {s:?}: {e}"),
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let res = client
+            .community()
+            .unlink_subgroups(&parsed_community, &parsed_subgroups, remove_orphan_members)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_unlink_subgroups failed: {e}"),
+            })?;
+        Ok(
+            octo_network::dot::adapters::coordinator_admin::CommunityLinkResult {
+                linked_or_unlinked: res.unlinked_jids.iter().map(|j| j.to_string()).collect(),
+                failed: res
+                    .failed_groups
+                    .iter()
+                    .map(|(j, code)| (j.to_string(), *code))
+                    .collect(),
+            },
+        )
+    }
+
+    /// List all subgroups of a community (MEX GraphQL).
+    pub async fn community_get_subgroups(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot>,
+        PlatformAdapterError,
+    > {
+        let parsed: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let subgroups = client
+            .community()
+            .get_subgroups(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_get_subgroups failed: {e}"),
+            })?;
+        Ok(subgroups
+            .into_iter()
+            .map(
+                |s| octo_network::dot::adapters::coordinator_admin::CommunitySubgroupSnapshot {
+                    jid: s.id.to_string(),
+                    subject: s.subject,
+                    participant_count: s.participant_count,
+                    is_default_sub_group: s.is_default_sub_group,
+                    is_general_chat: s.is_general_chat,
+                },
+            )
+            .collect())
+    }
+
+    /// Fetch participant counts per subgroup via MEX (GraphQL).
+    pub async fn community_get_subgroup_participant_counts(
+        &self,
+        community_jid: &str,
+    ) -> Result<Vec<(String, u32)>, PlatformAdapterError> {
+        let parsed: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let counts = client
+            .community()
+            .get_subgroup_participant_counts(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_get_subgroup_participant_counts failed: {e}"),
+            })?;
+        Ok(counts
+            .into_iter()
+            .map(|(j, c)| (j.to_string(), c))
+            .collect())
+    }
+
+    /// Query a linked subgroup's metadata from the parent community.
+    pub async fn community_query_linked_group(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        let parsed_community: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let parsed_subgroup: wacore_binary::Jid =
+            subgroup_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid subgroup JID {subgroup_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let m = client
+            .community()
+            .query_linked_group(&parsed_community, &parsed_subgroup)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_query_linked_group failed: {e}"),
+            })?;
+        Ok(Self::group_metadata_snapshot(m))
+    }
+
+    /// Join a linked subgroup via the parent community.
+    pub async fn community_join_subgroup(
+        &self,
+        community_jid: &str,
+        subgroup_jid: &str,
+    ) -> Result<
+        octo_network::dot::adapters::coordinator_admin::GroupMetadataSnapshot,
+        PlatformAdapterError,
+    > {
+        let parsed_community: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let parsed_subgroup: wacore_binary::Jid =
+            subgroup_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid subgroup JID {subgroup_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let m = client
+            .community()
+            .join_subgroup(&parsed_community, &parsed_subgroup)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_join_subgroup failed: {e}"),
+            })?;
+        Ok(Self::group_metadata_snapshot(m))
+    }
+
+    /// Get all participants across all linked groups of a community.
+    pub async fn community_get_linked_groups_participants(
+        &self,
+        community_jid: &str,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot>,
+        PlatformAdapterError,
+    > {
+        let parsed: wacore_binary::Jid =
+            community_jid
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid community JID {community_jid:?}: {e}"),
+                })?;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let participants = client
+            .community()
+            .get_linked_groups_participants(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("community_get_linked_groups_participants failed: {e}"),
+            })?;
+        Ok(participants
+            .into_iter()
+            .map(
+                |p| octo_network::dot::adapters::coordinator_admin::GroupParticipantSnapshot {
+                    jid: p.jid.to_string(),
+                    phone_number: p.phone_number.as_ref().map(|j| j.to_string()),
+                    is_admin: p.is_admin(),
+                },
+            )
+            .collect())
+    }
+
     // ── Tier 7.F: passkey (response + confirmation) + comments ─────
 
     /// Send the WebAuthn assertion to open a passkey handshake.

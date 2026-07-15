@@ -70,7 +70,8 @@ up (Claude Code, Cursor, Continue.dev, Windsurf, Aider via the bash shim in
 | 21 | Contacts + identity | 11 | `contacts.*`, `contact.{block,unblock}`, `identity.*` |
 | 22 | Query layer | 3 | `daemon.search`, `messages.context`, `events.find` |
 | 23 | Communities (Tier 7.G) | 9 | `community.{create,…}` |
-| **Total** | | **126** | |
+| 24 | Newsletter (Channels, 7.E+) | 14 | `newsletter.{create,join,list_subscribed,…}` |
+| **Total** | | **140** | |
 
 ---
 
@@ -1258,6 +1259,144 @@ aggregation. Large responses — paginate on the server side via
 
 ---
 
+## 24. Newsletter (Channels) (Phase 7.E+, 14)
+
+A WhatsApp **newsletter** (also called **Channel**) is a broadcast-only
+publisher surface — followers subscribe, the owner posts. JIDs end in
+`@newsletter`. Wire protocol: `w:muc` MEX, server-side feature gate (only
+activated for accounts WA has enabled for the channel feature).
+**14 RPCs** total: 8 already wrapped pre-Phase 7.E (list/get_metadata/
+create/join/leave/send_reaction/edit_message/revoke_message) and 6
+newly bridged in Phase 7.E+ (update, set_follower_mute, set_admin_mute,
+get_metadata_by_invite, subscribe_live_updates, get_messages).
+
+### `newsletter.list_subscribed`
+
+List every channel the test account is subscribed to. Shape:
+`{newsletters: [{jid, name?, picture_url?, subscriber_count?}],
+count: N}`.
+
+- **Input**: `{}`
+- **Returns**: `{newsletters: [...], count: N}`
+- **Wire**: w:muc IQ `<query xmlns="w:muc" type="get"/>` listing subscribed
+  channels
+- **Soft-skip** when WA newsletter IQ is not enabled for the account
+  (returns `IQ request failed` at transport layer)
+
+### `newsletter.get_metadata`
+
+Fetch metadata for one channel by JID.
+
+- **Input**: `{jid: string}` (e.g. `123@newsletter`)
+- **Returns**: `{info: {jid, name, description?, picture_url?,
+  subscriber_count?, verification_state?, created_at?}}`
+- **Wire**: w:muc IQ group metadata query
+
+### `newsletter.create`
+
+Create a new channel (you become the owner).
+
+- **Input**: `{name: string, description?: string, picture?: string}`
+  (`picture` is base64-encoded JPEG; omit for default)
+- **Returns**: `{jid, info: {...}}` (new channel JID + metadata)
+
+### `newsletter.join`
+
+Subscribe to a channel you don't yet follow.
+
+- **Input**: `{jid: string}`
+- **Returns**: `{jid, status: "joined"}`
+
+### `newsletter.leave`
+
+Unsubscribe from a channel you currently follow.
+
+- **Input**: `{jid: string}`
+- **Returns**: `{jid, status: "left"}`
+
+### `newsletter.send_reaction`
+
+Send a reaction emoji to a channel message.
+
+- **Input**: `{jid: string, server_id: integer, reaction: string}`
+  (e.g. reaction `"❤️"` or `"👍"`)
+- **Returns**: `{jid, server_id, reaction, status: "sent"}`
+
+### `newsletter.edit_message`
+
+Edit a message in a channel you own.
+
+- **Input**: `{jid: string, message_id: string, new_text: string}`
+- **Returns**: `{jid, message_id, new_text, status: "edited"}`
+- **Owner-only** — server returns `403` for non-owner callers.
+
+### `newsletter.revoke_message`
+
+Delete a message in a channel you own.
+
+- **Input**: `{jid: string, message_id: string}`
+- **Returns**: `{jid, message_id, status: "revoked"}`
+- **Owner-only** — server returns `403` for non-owner callers.
+
+### `newsletter.update`
+
+Update name/description of a channel you own (no picture param —
+`set_picture` follows the group pattern if needed).
+
+- **Input**: `{jid: string, name?: string, description?: string}`
+- **Returns**: `{jid, info: {...}}` (updated metadata)
+
+### `newsletter.set_follower_mute`
+
+Mute / unmute a channel you subscribe to.
+
+- **Input**: `{jid: string, muted: boolean}`
+- **Returns**: `{jid, muted}`
+
+### `newsletter.set_admin_mute`
+
+Mute / unmute notifications on a channel you own (admin-side).
+
+- **Input**: `{jid: string, muted: boolean}`
+- **Returns**: `{jid, muted}`
+
+### `newsletter.get_metadata_by_invite`
+
+Look up a channel by its invite-code (e.g. `ABCD1234`).
+
+- **Input**: `{invite: string}` (the short invite token, NOT a URL)
+- **Returns**: `{info: {jid, name?, description?, subscriber_count?}}`
+- **Wire**: w:muc IQ lookup-by-invite
+
+### `newsletter.subscribe_live_updates`
+
+Subscribe to live-update push notifications for a channel. **Time-boxed**:
+the server returns the duration in seconds the subscription stays
+active (default 300s / 5min). Re-call to refresh.
+
+- **Input**: `{jid: string}`
+- **Returns**: `{jid, duration_seconds: integer}`
+- **Wire**: w:muc IQ `<subscribe_live_updates/>` — **no `on: bool`
+  toggle**, no unsubscribe primitive (wait for expiry or refresh by
+  re-calling)
+- **Use case**: real-time monitoring of a live channel (sports scores,
+  breaking-news publishers)
+
+### `newsletter.get_messages`
+
+Fetch recent messages of a channel (history backfill).
+
+- **Input**: `{jid: string, count?: integer (default 20), before?:
+  integer (server-id cursor)}`
+- **Returns**: `{jid, messages: [{message_id, server_id, sender_jid,
+  ts_unix_ms, text, has_media}], count: N, has_more: boolean}`
+- **Wire**: w:muc IQ messages-list with cursor pagination
+- **Note**: `sender_jid` is currently empty string — wacore's
+  `NewsletterMessage` struct lacks the field; populated as `""`
+  until upstream adds it.
+
+---
+
 ## Bootstrapping cheat-sheet
 
 When you wire `octo-whatsapp` into a fresh MCP client, walk this list:
@@ -1278,7 +1417,7 @@ enumerate.
 
 | File | What it controls |
 |---|---|
-| `crates/octo-whatsapp/src/mcp_server.rs` | the catalog + names + descriptions (`EXPECTED_TOOL_COUNT` = 117 with `query` feature, 111 without) |
+| `crates/octo-whatsapp/src/mcp_server.rs` | the catalog + names + descriptions (`EXPECTED_TOOL_COUNT` = 142 with `query` feature, 136 without) |
 | `crates/octo-whatsapp/src/cli.rs` | CLI subcommand dispatch (kebab-case) |
 | `crates/octo-whatsapp/src/ipc/handlers/*.rs` | daemon-side IPC handlers |
 | `crates/octo-whatsapp/src/lib.rs` | module re-exports |

@@ -1,4 +1,4 @@
-//! `newsletter.get_metadata` — fetch metadata for one newsletter by JID.
+//! `newsletter.set_admin_mute` — mute / unmute a newsletter as an admin.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -10,15 +10,16 @@ use crate::daemon::DaemonHandle;
 #[derive(Deserialize)]
 struct Params {
     jid: String,
+    muted: bool,
 }
 
 #[derive(Debug)]
-pub struct NewsletterGetMetadata;
+pub struct NewsletterSetAdminMute;
 
 #[async_trait::async_trait]
-impl RpcHandler for NewsletterGetMetadata {
+impl RpcHandler for NewsletterSetAdminMute {
     fn name(&self) -> &'static str {
-        "newsletter.get_metadata"
+        "newsletter.set_admin_mute"
     }
 
     async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
@@ -39,18 +40,15 @@ impl RpcHandler for NewsletterGetMetadata {
             message: "no adapter bound to daemon".into(),
             data: None,
         })?;
-        let meta = adapter
-            .newsletter_get_metadata(&p.jid)
+        adapter
+            .set_admin_mute(&p.jid, p.muted)
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::InternalError.as_i32(),
-                message: format!("adapter newsletter_get_metadata failed: {e}"),
+                message: format!("adapter set_admin_mute failed: {e}"),
                 data: None,
             })?;
-        Ok(json!({
-            "status": "ok",
-            "newsletter": meta,
-        }))
+        Ok(json!({"status": "ok", "muted": p.muted}))
     }
 }
 
@@ -76,10 +74,10 @@ mod tests {
 
     #[tokio::test]
     async fn not_connected_returns_minus_32012() {
-        let err = NewsletterGetMetadata
+        let err = NewsletterSetAdminMute
             .call(
                 handle(),
-                serde_json::json!({"jid": "120363012345678901@newsletter"}),
+                serde_json::json!({"jid": "120363012345678901@newsletter", "muted": false}),
             )
             .await
             .unwrap_err();
@@ -89,8 +87,8 @@ mod tests {
     #[tokio::test]
     async fn empty_param_rejected() {
         let (h, _mock) = handle_with_mock();
-        let err = NewsletterGetMetadata
-            .call(h, serde_json::json!({"jid": "   "}))
+        let err = NewsletterSetAdminMute
+            .call(h, serde_json::json!({"jid": "   ", "muted": true}))
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
@@ -99,16 +97,15 @@ mod tests {
     #[tokio::test]
     async fn success_path_with_mock() {
         let (h, mock) = handle_with_mock();
-        let r = NewsletterGetMetadata
+        let r = NewsletterSetAdminMute
             .call(
                 h,
-                serde_json::json!({"jid": "120363012345678901@newsletter"}),
+                serde_json::json!({"jid": "120363012345678901@newsletter", "muted": false}),
             )
             .await
             .unwrap();
         assert_eq!(r["status"], "ok");
-        assert_eq!(r["newsletter"]["name"], "Fake Newsletter");
-        assert_eq!(r["newsletter"]["jid"], "120363012345678901@newsletter");
-        assert_eq!(mock.call_count("newsletter_get_metadata"), 1);
+        assert_eq!(r["muted"], false);
+        assert_eq!(mock.call_count("set_admin_mute"), 1);
     }
 }

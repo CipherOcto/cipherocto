@@ -1,4 +1,4 @@
-//! `newsletter.get_metadata` — fetch metadata for one newsletter by JID.
+//! `newsletter.update` — update name and/or description of a newsletter.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -10,15 +10,19 @@ use crate::daemon::DaemonHandle;
 #[derive(Deserialize)]
 struct Params {
     jid: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct NewsletterGetMetadata;
+pub struct NewsletterUpdate;
 
 #[async_trait::async_trait]
-impl RpcHandler for NewsletterGetMetadata {
+impl RpcHandler for NewsletterUpdate {
     fn name(&self) -> &'static str {
-        "newsletter.get_metadata"
+        "newsletter.update"
     }
 
     async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
@@ -40,11 +44,11 @@ impl RpcHandler for NewsletterGetMetadata {
             data: None,
         })?;
         let meta = adapter
-            .newsletter_get_metadata(&p.jid)
+            .update_newsletter(&p.jid, p.name.as_deref(), p.description.as_deref())
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::InternalError.as_i32(),
-                message: format!("adapter newsletter_get_metadata failed: {e}"),
+                message: format!("adapter update_newsletter failed: {e}"),
                 data: None,
             })?;
         Ok(json!({
@@ -76,7 +80,7 @@ mod tests {
 
     #[tokio::test]
     async fn not_connected_returns_minus_32012() {
-        let err = NewsletterGetMetadata
+        let err = NewsletterUpdate
             .call(
                 handle(),
                 serde_json::json!({"jid": "120363012345678901@newsletter"}),
@@ -89,8 +93,8 @@ mod tests {
     #[tokio::test]
     async fn empty_param_rejected() {
         let (h, _mock) = handle_with_mock();
-        let err = NewsletterGetMetadata
-            .call(h, serde_json::json!({"jid": "   "}))
+        let err = NewsletterUpdate
+            .call(h, serde_json::json!({"jid": ""}))
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
@@ -99,16 +103,19 @@ mod tests {
     #[tokio::test]
     async fn success_path_with_mock() {
         let (h, mock) = handle_with_mock();
-        let r = NewsletterGetMetadata
+        let r = NewsletterUpdate
             .call(
                 h,
-                serde_json::json!({"jid": "120363012345678901@newsletter"}),
+                serde_json::json!({
+                    "jid": "120363012345678901@newsletter",
+                    "name": "Renamed",
+                    "description": "new description",
+                }),
             )
             .await
             .unwrap();
         assert_eq!(r["status"], "ok");
         assert_eq!(r["newsletter"]["name"], "Fake Newsletter");
-        assert_eq!(r["newsletter"]["jid"], "120363012345678901@newsletter");
-        assert_eq!(mock.call_count("newsletter_get_metadata"), 1);
+        assert_eq!(mock.call_count("update_newsletter"), 1);
     }
 }

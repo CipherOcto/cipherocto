@@ -1,4 +1,4 @@
-//! `newsletter.get_metadata` — fetch metadata for one newsletter by JID.
+//! `newsletter.get_metadata_by_invite` — fetch newsletter metadata by invite code.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -9,16 +9,16 @@ use crate::daemon::DaemonHandle;
 
 #[derive(Deserialize)]
 struct Params {
-    jid: String,
+    invite: String,
 }
 
 #[derive(Debug)]
-pub struct NewsletterGetMetadata;
+pub struct NewsletterGetMetadataByInvite;
 
 #[async_trait::async_trait]
-impl RpcHandler for NewsletterGetMetadata {
+impl RpcHandler for NewsletterGetMetadataByInvite {
     fn name(&self) -> &'static str {
-        "newsletter.get_metadata"
+        "newsletter.get_metadata_by_invite"
     }
 
     async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
@@ -27,10 +27,10 @@ impl RpcHandler for NewsletterGetMetadata {
             message: format!("invalid params: {e}"),
             data: None,
         })?;
-        if p.jid.trim().is_empty() {
+        if p.invite.trim().is_empty() {
             return Err(RpcError {
                 code: RpcErrorCode::InvalidParams.as_i32(),
-                message: "jid must be non-empty".into(),
+                message: "invite must be non-empty".into(),
                 data: None,
             });
         }
@@ -40,11 +40,11 @@ impl RpcHandler for NewsletterGetMetadata {
             data: None,
         })?;
         let meta = adapter
-            .newsletter_get_metadata(&p.jid)
+            .newsletter_get_metadata_by_invite(&p.invite)
             .await
             .map_err(|e| RpcError {
                 code: RpcErrorCode::InternalError.as_i32(),
-                message: format!("adapter newsletter_get_metadata failed: {e}"),
+                message: format!("adapter newsletter_get_metadata_by_invite failed: {e}"),
                 data: None,
             })?;
         Ok(json!({
@@ -76,11 +76,8 @@ mod tests {
 
     #[tokio::test]
     async fn not_connected_returns_minus_32012() {
-        let err = NewsletterGetMetadata
-            .call(
-                handle(),
-                serde_json::json!({"jid": "120363012345678901@newsletter"}),
-            )
+        let err = NewsletterGetMetadataByInvite
+            .call(handle(), serde_json::json!({"invite": "ABCD1234"}))
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::NotConnected.as_i32());
@@ -89,8 +86,8 @@ mod tests {
     #[tokio::test]
     async fn empty_param_rejected() {
         let (h, _mock) = handle_with_mock();
-        let err = NewsletterGetMetadata
-            .call(h, serde_json::json!({"jid": "   "}))
+        let err = NewsletterGetMetadataByInvite
+            .call(h, serde_json::json!({"invite": ""}))
             .await
             .unwrap_err();
         assert_eq!(err.code, RpcErrorCode::InvalidParams.as_i32());
@@ -99,16 +96,13 @@ mod tests {
     #[tokio::test]
     async fn success_path_with_mock() {
         let (h, mock) = handle_with_mock();
-        let r = NewsletterGetMetadata
-            .call(
-                h,
-                serde_json::json!({"jid": "120363012345678901@newsletter"}),
-            )
+        let r = NewsletterGetMetadataByInvite
+            .call(h, serde_json::json!({"invite": "ABCD1234"}))
             .await
             .unwrap();
         assert_eq!(r["status"], "ok");
         assert_eq!(r["newsletter"]["name"], "Fake Newsletter");
-        assert_eq!(r["newsletter"]["jid"], "120363012345678901@newsletter");
-        assert_eq!(mock.call_count("newsletter_get_metadata"), 1);
+        assert_eq!(r["newsletter"]["jid"], "0000@newsletter");
+        assert_eq!(mock.call_count("newsletter_get_metadata_by_invite"), 1);
     }
 }

@@ -20,6 +20,7 @@ pub mod clients;
 pub mod contact_block;
 pub mod contact_unblock;
 pub mod contacts_get_business_profile;
+pub mod contacts_get_lid_pn_mappings;
 pub mod contacts_get_pn_lid_mappings;
 pub mod contacts_get_profile_picture;
 pub mod contacts_get_user_info;
@@ -257,6 +258,9 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(contacts_get_user_info::ContactsGetUserInfo))
         .register(Arc::new(
             contacts_get_pn_lid_mappings::ContactsGetPnLidMappings,
+        ))
+        .register(Arc::new(
+            contacts_get_lid_pn_mappings::ContactsGetLidPnMappings,
         ))
         // Tier 6.1: privacy + blocklist queries
         .register(Arc::new(privacy_get::PrivacyGet))
@@ -527,10 +531,14 @@ pub const TIER6_PROFILE_METHODS: &[&str] = &[
     "profile.set_status",
     "contacts.get_user_info",
     // Phase 7.J.1: batch PN → LID resolution via `usync` IQ with
-    // `<lid>` subprotocol. The reverse direction (LID → PN) is not
-    // servable through the public WA protocol — see the handler
-    // module docstring for the wire-level explanation.
+    // `<lid>` subprotocol.
     "contacts.get_pn_lid_mappings",
+    // Phase 7.J.2: batch LID → PN resolution via wacore's
+    // `Contacts::is_on_whatsapp` with LID-form JIDs. Inverse
+    // direction of the PN → LID entry above. The wire shape
+    // differs (server returns `<user jid="NN@lid" pn_jid="...">`),
+    // but the parser handles it transparently.
+    "contacts.get_lid_pn_mappings",
 ];
 
 /// RPC method names added in Tier 6.1 (live coverage matrix):

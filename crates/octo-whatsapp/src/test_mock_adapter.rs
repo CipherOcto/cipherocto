@@ -751,6 +751,16 @@ impl OctoWhatsAppAdapter for MockAdapter {
         Ok(Vec::new())
     }
 
+    async fn is_on_whatsapp_batch(
+        &self,
+        _jids: Vec<String>,
+    ) -> Result<Vec<(String, Option<String>, bool)>, PlatformAdapterError> {
+        record_unit_call(&self.state, "is_on_whatsapp_batch")?;
+        // Mock returns nothing — caller treats empty as "no
+        // resolutions" (test for handler bucket-sort logic).
+        Ok(Vec::new())
+    }
+
     // ── Tier 6.1: privacy + blocklist queries — unit-result ────────
 
     async fn fetch_privacy_settings(

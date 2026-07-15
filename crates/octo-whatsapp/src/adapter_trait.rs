@@ -614,6 +614,26 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         _jids: Vec<String>,
     ) -> Result<Vec<(String, String)>, PlatformAdapterError>;
 
+    /// Batch existence + reverse-mapping check. Maps to
+    /// `wacore::Client::contacts().is_on_whatsapp(&[Jid])`.
+    ///
+    /// Accepts a mixed list of PN + LID JID strings. Wacore splits
+    /// them into separate usync IQs internally. For LID-form input,
+    /// the server returns `<user jid="NN@lid" pn_jid="MM@s.whatsapp.net">`,
+    /// which is the LID→PN direction the `lid_query` (PN→LID) path
+    /// cannot service.
+    ///
+    /// Each returned tuple is `(input_jid, Option<pn_jid>, is_registered)`.
+    /// `pn_jid == None` on a LID-form input means the server refused
+    /// to disclose the associated phone number (privacy / not in
+    /// operator's contacts / not migrated). `is_registered == false`
+    /// means the user exists but is not on WA (contact subprotocol
+    /// `type="out"`).
+    async fn is_on_whatsapp_batch(
+        &self,
+        _jids: Vec<String>,
+    ) -> Result<Vec<(String, Option<String>, bool)>, PlatformAdapterError>;
+
     // ── Group F5: privacy + blocklist queries (Tier 6.1) ───────────
     //
     // Privacy: thin wrappers over `Client::fetch_privacy_settings`
@@ -1469,6 +1489,18 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         jids: Vec<String>,
     ) -> Result<Vec<(String, String)>, PlatformAdapterError> {
         self.lid_query(jids).await
+    }
+
+    /// Phase 7.J.2: batch LID→PN resolution + existence check via
+    /// `wacore::Client::contacts().is_on_whatsapp`. Default impl
+    /// delegates to the inherent method added in
+    /// `octo-adapter-whatsapp::inherent`. Tests / mock adapters
+    /// override directly.
+    async fn is_on_whatsapp_batch(
+        &self,
+        jids: Vec<String>,
+    ) -> Result<Vec<(String, Option<String>, bool)>, PlatformAdapterError> {
+        self.is_on_whatsapp_batch(jids).await
     }
 
     // ── Tier 6.1: privacy + blocklist queries delegation ───────────

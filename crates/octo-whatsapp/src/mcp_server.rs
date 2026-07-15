@@ -38,9 +38,9 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 117;
+pub const EXPECTED_TOOL_COUNT: usize = 118;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 111;
+pub const EXPECTED_TOOL_COUNT: usize = 112;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -926,10 +926,11 @@ pub fn tool_descriptors() -> Vec<Value> {
     // grew to advertise them. Adding the 10 here closes the gap; CLI
     // subcommands (`contacts` / `identity`) live in cli.rs.
     // Phase 7.J.1 adds `contacts.get_pn_lid_mappings` (batch PN→LID
-    // resolution via the WA server's `usync` IQ). The reverse
-    // direction (LID → PN) is structurally unservable through the
-    // public WA protocol — see the handler module docstring for the
-    // wire-level details.
+    // resolution via the WA server's `usync` IQ). Phase 7.J.2 adds
+    // `contacts.get_lid_pn_mappings` — the inverse direction — using
+    // wacore's `Contacts::is_on_whatsapp` with LID-form JIDs. Both
+    // directions of the LID↔PN mapping are now reachable through
+    // public RPCs.
     v.push(td(
         "contacts.is_on_whatsapp",
         "Check whether a peer JID is a registered WhatsApp user. \
@@ -948,8 +949,9 @@ pub fn tool_descriptors() -> Vec<Value> {
     // Phase 7.J.1: batch PN → LID resolution via the WA server's
     // `usync` IQ with the `<lid>` subprotocol. Replaces N individual
     // `contacts.get_user_info` round-trips when the caller only needs
-    // LIDs. The reverse direction (LID → PN) is not servable through
-    // the public WA protocol; use `contacts.save_contact` for that.
+    // LIDs. The inverse direction (LID → PN) is `contacts.get_lid_pn_mappings`
+    // below — uses wacore's `Contacts::is_on_whatsapp` with LID-form
+    // JIDs and reads the server's `pn_jid` response attribute.
     v.push(td(
         "contacts.get_pn_lid_mappings",
         "Batch-resolve phone-number JIDs to their corresponding LIDs \
@@ -958,6 +960,21 @@ pub fn tool_descriptors() -> Vec<Value> {
          resolved_count}. Privacy-hidden phones land in `not_resolved`. \
          Max 100 phones per call (matches WA server `usync` batch limit).",
         schema_props_required(&[("phones", "array")], &["phones"]),
+    ));
+    // Phase 7.J.2: batch LID → PN resolution. Inverse of
+    // `contacts.get_pn_lid_mappings`. Uses the same `Contacts::is_on_whatsapp`
+    // wire shape WA Web's ExistsJob sends for the LID direction — server
+    // returns `<user jid="NN@lid" pn_jid="MM@s.whatsapp.net">`.
+    v.push(td(
+        "contacts.get_lid_pn_mappings",
+        "Batch-resolve LID JIDs to their corresponding phone numbers \
+         via the WA server's `usync` IQ. Returns \
+         {mappings:[{lid, phone_number}], not_resolved:[...], \
+         requested_count, resolved_count}. Privacy-hidden LIDs land in \
+         `not_resolved` (the WA server refuses to disclose the \
+         associated phone number for an account the operator is not \
+         authorized to see). Max 100 LIDs per call.",
+        schema_props_required(&[("lids", "array")], &["lids"]),
     ));
     v.push(td(
         "contacts.get_business_profile",
@@ -1124,6 +1141,7 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "contacts.is_on_whatsapp" => "contacts.is_on_whatsapp",
         "contacts.get_user_info" => "contacts.get_user_info",
         "contacts.get_pn_lid_mappings" => "contacts.get_pn_lid_mappings",
+        "contacts.get_lid_pn_mappings" => "contacts.get_lid_pn_mappings",
         "contacts.get_business_profile" => "contacts.get_business_profile",
         "contacts.get_profile_picture" => "contacts.get_profile_picture",
         "contacts.save_contact" => "contacts.save_contact",
@@ -1584,9 +1602,10 @@ mod tests {
 
     /// Phase 7.J: the 10 contact + identity tools that were long-lived
     /// RPC handlers on the daemon but never had MCP tool descriptors.
-    /// Phase 7.J.1 adds one more (`contacts.get_pn_lid_mappings`).
-    /// Asserts each name shows up in `tools/list` so the
-    /// `tool ... not implemented` MCP error disappears for clients.
+    /// Phase 7.J.1 adds one (`contacts.get_pn_lid_mappings`); Phase 7.J.2
+    /// adds the inverse (`contacts.get_lid_pn_mappings`). Asserts each
+    /// name shows up in `tools/list` so the `tool ... not implemented`
+    /// MCP error disappears for clients.
     #[test]
     fn phase7j_contact_identity_tools_are_advertised() {
         let descs = tool_descriptors();
@@ -1599,6 +1618,8 @@ mod tests {
             "contacts.get_user_info",
             // Phase 7.J.1: batch PN → LID resolution via usync IQ.
             "contacts.get_pn_lid_mappings",
+            // Phase 7.J.2: batch LID → PN resolution via Contacts::is_on_whatsapp.
+            "contacts.get_lid_pn_mappings",
             "contacts.get_business_profile",
             "contacts.get_profile_picture",
             "contacts.save_contact",

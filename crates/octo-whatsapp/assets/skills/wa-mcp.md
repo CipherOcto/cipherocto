@@ -1032,14 +1032,36 @@ to map known phone numbers to their current LID handles.
   e.g. `"5521995544743"` or `"5521995544743@s.whatsapp.net"`)
 - **Returns**: `{mappings: [{phone, lid}], not_resolved: [string],
   requested_count, resolved_count}`
-- **Direction**: PN → LID only. The reverse direction (LID → PN) is
-  not servable through the public WA protocol — the server returns
-  an empty `<list/>` plus a batch-level `<result><lid/></result>`
-  denial. For LID→PN lookups use `contacts.save_contact` to seed
-  the local address book + sync the LID/PN map from there.
+- **Direction**: PN → LID only. For the inverse direction see
+  `contacts.get_lid_pn_mappings` below.
 - **Safety**: invalid JIDs are filtered with a warn-log rather
   than aborting the whole batch. `MAX_BATCH = 100` matches the
   server's usync limit.
+
+### `contacts.get_lid_pn_mappings`
+
+Batch LID → phone-number resolution. Inverse of `contacts.get_pn_lid_mappings`.
+Uses wacore's `Contacts::is_on_whatsapp` with LID-form JIDs — the
+server returns `<user jid="NN@lid" pn_jid="MM@s.whatsapp.net">` for
+each LID it can resolve.
+
+- **Required**: `lids: [string]` (1–100 LID user parts or full `@lid`
+  JIDs, e.g. `"108074580897808"` or `"108074580897808@lid"`)
+- **Returns**: `{mappings: [{lid, phone_number}], not_resolved: [string],
+  requested_count, resolved_count}`
+- **Direction**: LID → PN. This is the direction that
+  `contacts.get_pn_lid_mappings` cannot serve — it issues a different
+  IQ (context=interactive, `<lid/><business/>` query subprotocols)
+  whose response parser reads `pn_jid` instead of `<lid val="...">`.
+- **Privacy**: LIDs whose owners have hidden their phone number from
+  the operator land in `not_resolved` (server returns the LID entry
+  but with `pn_jid` absent). This is a server-side privacy gate, not
+  a protocol error.
+- **Safety**: invalid JIDs filtered with warn-log; `MAX_BATCH = 100`
+  matches the server's usync limit.
+- **Use case**: closing the gap in `common_members_*.member_lid` rows
+  where the operator's local address book is missing the PN. Combine
+  with `sql.execute` to writeback resolved `phone` values.
 
 ### `identity.get_pn`
 

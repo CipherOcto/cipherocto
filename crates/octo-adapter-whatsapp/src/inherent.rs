@@ -2386,6 +2386,83 @@ impl WhatsAppWebAdapter {
             .collect())
     }
 
+    /// Batch existence / reverse-mapping check via the
+    /// `wacore::Client::contacts().is_on_whatsapp` API.
+    ///
+    /// Accepts a mixed list of PN + LID JID strings (wacore splits them
+    /// internally into two separate usync IQs and runs them concurrently).
+    /// For LID-form input, the server returns `<user jid="NN@lid"
+    /// pn_jid="MM@s.whatsapp.net">`, which is the LID→PN direction the
+    /// `lid_query` (PN→LID) path cannot service.
+    ///
+    /// Each returned tuple is `(input_jid, Option<pn_jid>, is_registered)`.
+    /// `is_registered == false` means the server returned the user but the
+    /// contact subprotocol marked them `type="out"` (not on WA); `pn_jid ==
+    /// None` on a LID-form input means the LID exists but the server refused
+    /// to disclose the associated phone number (privacy / not in operator's
+    /// contacts / not migrated). Callers bucket-sort these into `mappings` vs
+    /// `not_resolved` based on which fields populated.
+    pub async fn is_on_whatsapp_batch(
+        &self,
+        jids: Vec<String>,
+    ) -> Result<Vec<(String, Option<String>, bool)>, PlatformAdapterError> {
+        use wacore_binary::{Jid, Server};
+
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+
+        let mut parsed: Vec<Jid> = Vec::with_capacity(jids.len());
+        for raw in jids {
+            match raw.parse::<Jid>() {
+                Ok(j) => parsed.push(j),
+                Err(e) => {
+                    tracing::warn!(?raw, error = %e, "is_on_whatsapp_batch: skipped unparseable JID");
+                }
+            }
+        }
+        // Preserve original ordering while deduping. The wire-side protocol
+        // difference (PN vs LID) is the server's concern, not ours.
+        let mut seen = std::collections::HashSet::with_capacity(parsed.len());
+        parsed.retain(|j| seen.insert(j.clone()));
+
+        if parsed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Group LID-form JIDs first so the IQ's `to` and `mode` lines up
+        // consistently — wacore does its own PN/LID split internally but
+        // presenting LID-first matches the use case (this method exists to
+        // surface LID→PN).
+        parsed.sort_by_key(|j| j.server != Server::Lid);
+
+        let results = client
+            .contacts()
+            .is_on_whatsapp(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("is_on_whatsapp failed: {e:#}"),
+            })?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                (
+                    r.jid.to_string(),
+                    r.pn_jid.map(|p| p.to_string()),
+                    r.is_registered,
+                )
+            })
+            .collect())
+    }
+
     // ── Tier 6.5: newsletter + events (lib wrappers) ─────────────
 
     /// List all newsletters this account is subscribed to.

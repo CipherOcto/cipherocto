@@ -12,6 +12,14 @@ use wacore::store::traits::*;
 use wacore::store::Device as CoreDevice;
 use whatsapp_rust::buffa::Message as BuffaMessage;
 
+/// Diagnostic dump of the device row's crypto blobs + identity metadata.
+///
+/// Tuple alias (not a named struct) because every caller destructures
+/// positionally — `let (noise_key, identity_key, ...) = store.read_device_keys()`
+/// keeps working unchanged. The alias just gives clippy
+/// `type_complexity` a name to point at instead of an inline 8-tuple.
+pub type DeviceKeyDump = (Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32, u32);
+
 /// Helper to convert stoolap errors to StoreError
 fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
     e: E,
@@ -159,16 +167,14 @@ impl StoolapStore {
     /// Not async because the `dump_noise_key` binary uses a sync
     /// `try_lock()` (the daemon normally holds the lock). Safe to
     /// call from any context where the store isn't contended.
-    pub fn read_device_keys(
-        &self,
-    ) -> anyhow::Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32, u32)>> {
+    pub fn read_device_keys(&self) -> anyhow::Result<Option<DeviceKeyDump>> {
         use anyhow::Context;
         let db = self
             .db
             .try_lock()
             .map_err(|e| anyhow::anyhow!("db try_lock failed (a daemon may be running): {e}"))?;
         let mut rows = query(
-            &*db,
+            &db,
             "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary, registration_id FROM device WHERE id = 1",
             vec![],
         )

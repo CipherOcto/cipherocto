@@ -211,10 +211,20 @@ async fn run() -> Result<()> {
     println!("ws upgrade      : OK (101 Switching Protocols — tunnel established)");
 
     // Wrap Chrome's frame[0] in a masked binary WS frame (RFC 6455 §5.3).
-    // Header: FIN=1, opcode=2 (binary), MASK=1, payload len 7-bit (43B fits).
-    let mut ws_frame = Vec::with_capacity(4 + 4 + frame0.len());
-    ws_frame.push(0x82); // FIN + binary
-    ws_frame.push(0x80 | (frame0.len() as u8)); // MASK + len
+    // Use 7-bit len for the 43B XX opener; same helper also handles 16-/64-bit
+    // extended lengths so IK probes with >125B payloads work too.
+    let mut ws_frame = Vec::with_capacity(10 + 4 + frame0.len());
+    ws_frame.push(0x82); // FIN + binary (opcode 2)
+    let payload_len = frame0.len();
+    if payload_len < 126 {
+        ws_frame.push(0x80 | payload_len as u8); // MASK + 7-bit len
+    } else if payload_len < 65536 {
+        ws_frame.push(0x80 | 126);
+        ws_frame.extend_from_slice(&(payload_len as u16).to_be_bytes());
+    } else {
+        ws_frame.push(0x80 | 127);
+        ws_frame.extend_from_slice(&(payload_len as u64).to_be_bytes());
+    }
     let mut mask = [0u8; 4];
     rand::rngs::OsRng.fill_bytes(&mut mask);
     ws_frame.extend_from_slice(&mask);

@@ -353,6 +353,26 @@ fn build_base_registry() -> HandlerRegistry {
         // Tier 7.F: passkey (response + confirmation)
         .register(Arc::new(passkey_send_response::PasskeySendResponse))
         .register(Arc::new(passkey_send_confirmation::PasskeySendConfirmation))
+        // Tier 7.G: community (create / deactivate / link / unlink /
+        // get_subgroups / participant_counts / query_linked /
+        // join_subgroup / get_linked_groups_participants).
+        .register(Arc::new(community_create::CommunityCreate))
+        .register(Arc::new(community_deactivate::CommunityDeactivate))
+        .register(Arc::new(community_link_subgroups::CommunityLinkSubgroups))
+        .register(Arc::new(
+            community_unlink_subgroups::CommunityUnlinkSubgroups,
+        ))
+        .register(Arc::new(community_get_subgroups::CommunityGetSubgroups))
+        .register(Arc::new(
+            community_get_subgroup_participant_counts::CommunityGetSubgroupParticipantCounts,
+        ))
+        .register(Arc::new(
+            community_query_linked_group::CommunityQueryLinkedGroup,
+        ))
+        .register(Arc::new(community_join_subgroup::CommunityJoinSubgroup))
+        .register(Arc::new(
+            community_get_linked_groups_participants::CommunityGetLinkedGroupsParticipants,
+        ))
     // Phase 1 task 12: query layer RPCs. Gated behind the `query`
     // cargo feature; absent builds skip these handlers entirely.
 }
@@ -674,10 +694,26 @@ pub const TIER7_E_NEWSLETTER_TCTOKEN_METHODS: &[&str] = &[
 pub const TIER7_F_PASSKEY_METHODS: &[&str] =
     &["passkey.send_response", "passkey.send_confirmation"];
 
+/// Tier 7.G: community (create / deactivate / link / unlink /
+/// get_subgroups / participant_counts / query_linked /
+/// join_subgroup / get_linked_groups_participants). All 9 RPCs
+/// land now that the upstream `mod community` surface is
+/// available via the wacore re-export.
+pub const TIER7_G_COMMUNITY_METHODS: &[&str] = &[
+    "community.create",
+    "community.deactivate",
+    "community.link_subgroups",
+    "community.unlink_subgroups",
+    "community.get_subgroups",
+    "community.get_subgroup_participant_counts",
+    "community.query_linked_group",
+    "community.join_subgroup",
+    "community.get_linked_groups_participants",
+];
+
 /// Tier 7.H: group gap list (invite link / member labels /
 /// profile pic). All five extend the existing `groups.*`
-/// surface. The community RPCs (Session 7.G) are deferred
-/// until the WA crate publishes the `mod community` surface.
+/// surface.
 pub const TIER7_H_GROUP_METHODS: &[&str] = &[
     "groups.get_invite_link",
     "groups.update_member_label",
@@ -812,6 +848,7 @@ mod tests {
             .chain(TIER7_D_PROFILE_METHODS.iter())
             .chain(TIER7_E_NEWSLETTER_TCTOKEN_METHODS.iter())
             .chain(TIER7_F_PASSKEY_METHODS.iter())
+            .chain(TIER7_G_COMMUNITY_METHODS.iter())
             .chain(TIER7_H_GROUP_METHODS.iter())
             .chain(TIER7_I_DAEMON_METHODS.iter())
             .chain(TIER7_METHODS_TAIL.iter())

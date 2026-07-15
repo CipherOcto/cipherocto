@@ -308,6 +308,7 @@ pub fn event_kind(ev: &InboundEvent) -> &'static str {
         InboundEvent::Call { .. } => "call",
         InboundEvent::Story { .. } => "story",
         InboundEvent::CommunityUpdate { .. } => "community_update",
+        InboundEvent::NewsletterUpdate { .. } => "newsletter_update",
         InboundEvent::Unknown { .. } => "unknown",
     }
 }
@@ -323,6 +324,7 @@ fn peer(ev: &InboundEvent) -> Option<&str> {
         InboundEvent::Call { peer, .. } => Some(peer.as_str()),
         InboundEvent::Story { peer, .. } => Some(peer.as_str()),
         InboundEvent::CommunityUpdate { jid, .. } => Some(jid.as_str()),
+        InboundEvent::NewsletterUpdate { jid, .. } => Some(jid.as_str()),
         InboundEvent::Unknown { .. } => None,
     }
 }

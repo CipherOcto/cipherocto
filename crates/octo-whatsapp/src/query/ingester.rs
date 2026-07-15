@@ -229,6 +229,11 @@ fn event_ts(ev: &InboundEvent) -> (i64, i64) {
             ts_mono_ns,
             ..
         }
+        | InboundEvent::NewsletterUpdate {
+            ts_unix_ms,
+            ts_mono_ns,
+            ..
+        }
         | InboundEvent::Unknown {
             ts_unix_ms,
             ts_mono_ns,
@@ -254,6 +259,7 @@ fn event_kind_tag(ev: &InboundEvent) -> &'static str {
         InboundEvent::Call { .. } => "call",
         InboundEvent::Story { .. } => "story",
         InboundEvent::CommunityUpdate { .. } => "community_update",
+        InboundEvent::NewsletterUpdate { .. } => "newsletter_update",
         InboundEvent::Unknown { .. } => "unknown",
     }
 }
@@ -274,6 +280,9 @@ fn event_variant(ev: &InboundEvent) -> Option<String> {
         InboundEvent::CommunityUpdate { kind, .. } => {
             Some(community_update_kind_str(*kind).to_string())
         }
+        InboundEvent::NewsletterUpdate { kind, .. } => {
+            Some(newsletter_update_kind_str(*kind).to_string())
+        }
         InboundEvent::Reaction { .. } | InboundEvent::Unknown { .. } => None,
     }
 }
@@ -293,6 +302,7 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         InboundEvent::Call { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
         InboundEvent::Story { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
         InboundEvent::CommunityUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
+        InboundEvent::NewsletterUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
         InboundEvent::Presence { jid, .. } => {
             (Some(jid.clone()), Some(jid.clone()), Some(jid.clone()))
         }
@@ -385,6 +395,17 @@ fn community_update_kind_str(k: crate::events::CommunityUpdateKind) -> &'static 
         crate::events::CommunityUpdateKind::Deactivated => "deactivated",
         crate::events::CommunityUpdateKind::Linked => "linked",
         crate::events::CommunityUpdateKind::Unlinked => "unlinked",
+    }
+}
+
+fn newsletter_update_kind_str(k: crate::events::NewsletterUpdateKind) -> &'static str {
+    match k {
+        crate::events::NewsletterUpdateKind::Subscribed => "subscribed",
+        crate::events::NewsletterUpdateKind::Unsubscribed => "unsubscribed",
+        crate::events::NewsletterUpdateKind::MessageReceived => "message_received",
+        crate::events::NewsletterUpdateKind::PictureChanged => "picture_changed",
+        crate::events::NewsletterUpdateKind::NameChanged => "name_changed",
+        crate::events::NewsletterUpdateKind::StateChanged => "state_changed",
     }
 }
 

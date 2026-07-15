@@ -295,6 +295,19 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "ts_unix_ms": ts_unix_ms,
             })
         }
+        InboundEvent::NewsletterUpdate {
+            jid,
+            kind,
+            ts_unix_ms,
+            ..
+        } => {
+            json!({
+                "kind": "newsletter_update",
+                "jid": jid,
+                "newsletter_kind": kind,
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
     }
 }
 

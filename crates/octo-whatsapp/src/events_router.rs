@@ -360,6 +360,7 @@ fn event_kind_label(ev: &InboundEvent) -> String {
         InboundEvent::Call { .. } => "call".into(),
         InboundEvent::Story { .. } => "story".into(),
         InboundEvent::CommunityUpdate { .. } => "community_update".into(),
+        InboundEvent::NewsletterUpdate { .. } => "newsletter_update".into(),
         InboundEvent::Unknown { .. } => "unknown".into(),
     }
 }

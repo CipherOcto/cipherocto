@@ -135,6 +135,17 @@ pub enum InboundEvent {
         ts_unix_ms: i64,
         ts_mono_ns: u64,
     },
+    /// Echo of a newsletter (channel) lifecycle / state change.
+    /// Distinct from `CommunityUpdate` (subgroup structure) — this is
+    /// per-channel: subscribe/unsubscribe/message/profile/admin actions.
+    /// Emitted by the daemon-side broadcast hook when a newsletter RPC
+    /// succeeds or the upstream fires a live channel event.
+    NewsletterUpdate {
+        jid: String,
+        kind: NewsletterUpdateKind,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    },
     Unknown {
         raw: String,
         ts_unix_ms: i64,
@@ -151,6 +162,23 @@ pub enum CommunityUpdateKind {
     Deactivated,
     Linked,
     Unlinked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NewsletterUpdateKind {
+    /// Caller subscribed to the channel (live_updates + initial join).
+    Subscribed,
+    /// Caller unsubscribed / left.
+    Unsubscribed,
+    /// A new message arrived in the channel.
+    MessageReceived,
+    /// Channel profile picture changed.
+    PictureChanged,
+    /// Channel display name changed.
+    NameChanged,
+    /// Channel state changed (Active <-> Suspended by admin or server).
+    StateChanged,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -292,6 +320,7 @@ impl InboundEvent {
             | Self::Call { ts_unix_ms, .. }
             | Self::Story { ts_unix_ms, .. }
             | Self::CommunityUpdate { ts_unix_ms, .. }
+            | Self::NewsletterUpdate { ts_unix_ms, .. }
             | Self::Unknown { ts_unix_ms, .. } => *ts_unix_ms,
             Self::Presence { last_seen, .. } => last_seen.unwrap_or(0),
         }
@@ -309,6 +338,7 @@ impl InboundEvent {
             | Self::Call { ts_mono_ns, .. }
             | Self::Story { ts_mono_ns, .. }
             | Self::CommunityUpdate { ts_mono_ns, .. }
+            | Self::NewsletterUpdate { ts_mono_ns, .. }
             | Self::Unknown { ts_mono_ns, .. } => Some(*ts_mono_ns),
             Self::Presence { .. } => None,
         }

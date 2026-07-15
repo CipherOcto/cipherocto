@@ -38,9 +38,9 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 119;
+pub const EXPECTED_TOOL_COUNT: usize = 128;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 113;
+pub const EXPECTED_TOOL_COUNT: usize = 122;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -1042,6 +1042,78 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Return true if the device has completed the LID migration.",
         schema_empty(),
     ));
+    // ─── Communities (Tier 7.G — Phase 2026-07-15) ─────────────────
+    v.push(td(
+        "community.create",
+        "Create a new WhatsApp community (parent group). Optionally creates \
+         a default 'general' chat and links it.",
+        schema_props_required(
+            &[
+                ("name", "string"),
+                ("description", "string"),
+                ("closed", "boolean"),
+                ("allow_non_admin_sub_group_creation", "boolean"),
+                ("create_general_chat", "boolean"),
+            ],
+            &["name"],
+        ),
+    ));
+    v.push(td(
+        "community.deactivate",
+        "Deactivate (delete) a community by JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "community.link_subgroups",
+        "Link one or more existing subgroups under a community parent.",
+        schema_props_required(
+            &[("community_jid", "string"), ("subgroup_jids", "array")],
+            &["community_jid", "subgroup_jids"],
+        ),
+    ));
+    v.push(td(
+        "community.unlink_subgroups",
+        "Unlink subgroups from a community. Optionally remove orphan members.",
+        schema_props_required(
+            &[
+                ("community_jid", "string"),
+                ("subgroup_jids", "array"),
+                ("remove_orphan_members", "boolean"),
+            ],
+            &["community_jid", "subgroup_jids"],
+        ),
+    ));
+    v.push(td(
+        "community.get_subgroups",
+        "List the subgroups linked under a community.",
+        schema_props_required(&[("community_jid", "string")], &["community_jid"]),
+    ));
+    v.push(td(
+        "community.get_subgroup_participant_counts",
+        "Return a per-subgroup participant count map for a community.",
+        schema_props_required(&[("community_jid", "string")], &["community_jid"]),
+    ));
+    v.push(td(
+        "community.query_linked_group",
+        "Query the metadata of one linked subgroup via the parent community.",
+        schema_props_required(
+            &[("community_jid", "string"), ("subgroup_jid", "string")],
+            &["community_jid", "subgroup_jid"],
+        ),
+    ));
+    v.push(td(
+        "community.join_subgroup",
+        "Join a linked subgroup via its parent community.",
+        schema_props_required(
+            &[("community_jid", "string"), ("subgroup_jid", "string")],
+            &["community_jid", "subgroup_jid"],
+        ),
+    ));
+    v.push(td(
+        "community.get_linked_groups_participants",
+        "Return participants across every group linked under a community.",
+        schema_props_required(&[("community_jid", "string")], &["community_jid"]),
+    ));
     v
 }
 
@@ -1163,6 +1235,16 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "identity.get_pn" => "identity.get_pn",
         "identity.get_lid" => "identity.get_lid",
         "identity.is_lid_migrated" => "identity.is_lid_migrated",
+        // Communities (Tier 7.G — Phase 2026-07-15).
+        "community.create" => "community.create",
+        "community.deactivate" => "community.deactivate",
+        "community.link_subgroups" => "community.link_subgroups",
+        "community.unlink_subgroups" => "community.unlink_subgroups",
+        "community.get_subgroups" => "community.get_subgroups",
+        "community.get_subgroup_participant_counts" => "community.get_subgroup_participant_counts",
+        "community.query_linked_group" => "community.query_linked_group",
+        "community.join_subgroup" => "community.join_subgroup",
+        "community.get_linked_groups_participants" => "community.get_linked_groups_participants",
         "daemon.accounts.list" => "daemon.accounts.list",
         "daemon.accounts.use" => "daemon.accounts.use",
         "daemon.accounts.info" => "daemon.accounts.info",

@@ -1,0 +1,129 @@
+From: octopus operator
+Date: 2026-07-14
+Subject: S6.7 — populate useExtended + extendedCiphertext + pqMode + extendedEphemeral in IK ClientHello
+
+Context
+-------
+
+Phase 7.J S5 measured the gap between wacore's IK ClientHello and Chrome 150's
+IK ClientHello. Chrome emits 363B; wacore emits ~250B. The 113B gap is
+exactly 4 extended HandshakeMessage.ClientHello fields that wacore
+predates:
+
+  - useExtended            (bool=true)
+  - extendedCiphertext     (~80B random)
+  - pqMode                 (enum, WA_PQ=4 or XXKEM_2=1)
+  - extendedEphemeral      (32B random)
+
+Per the no-guess rule, the field VALUES are not measured. The structure
+is settled. This patch adds the fields with placeholders:
+
+  - useExtended            = true
+  - extendedCiphertext     = random 80B (will be replaced with ECDH-derived value later)
+  - pqMode                 = WA_PQ (HandshakePqMode::WA_PQ = 4)
+  - extendedEphemeral      = random 32B (will be replaced with ECDH-derived value later)
+
+If the server rejects, iterate field values per S6.5.
+
+
+diff --git a/wacore/noise/src/handshake.rs b/wacore/noise/src/handshake.rs
+index XXXXXXX..YYYYYYY 100644
+--- a/wacore/noise/src/handshake.rs
++++ b/wacore/noise/src/handshake.rs
+@@ -103,15 +103,39 @@ impl HandshakeUtils {
+     /// Creates an IK ClientHello carrying the encrypted client static and
+     /// the encrypted 0-RTT payload alongside the ephemeral.
+     pub fn build_ik_client_hello(
+         ephemeral_key: &[u8],
+         encrypted_static: Vec<u8>,
+         encrypted_payload: Vec<u8>,
++        extended_ciphertext: Option<Vec<u8>>,
++        extended_ephemeral_pub: Option<&[u8]>,
++        pq_mode: Option<i32>,
++        use_extended: bool,
+     ) -> HandshakeMessage {
++        use rand::RngCore;
++        let mut rng = rand::rng();
++
++        // Phase 7.J S6.7: populate modern WA fields. PLACEHOLDER values.
++        // Real derivation (ECDH over extended_ephemeral_priv × server_static)
++        // will replace these in a follow-up patch.
++        let ext_ct = extended_ciphertext.unwrap_or_else(|| {
++            let mut buf = vec![0u8; 80];
++            rng.fill_bytes(&mut buf);
++            buf
++        });
++        let ext_eph = extended_ephemeral_pub
++            .map(|s| s.to_vec())
++            .unwrap_or_else(|| {
++                let mut buf = vec![0u8; 32];
++                rng.fill_bytes(&mut buf);
++                buf
++            });
++        let pq_mode_val = pq_mode.unwrap_or(4); // WA_PQ = 4
++
+         HandshakeMessage {
+             client_hello: buffa::MessageField::some(wa::handshake_message::ClientHello {
+                 ephemeral: Some(ephemeral_key.to_vec()),
+                 r#static: Some(encrypted_static),
+                 payload: Some(encrypted_payload),
++                use_extended: Some(use_extended),
++                extended_ciphertext: Some(ext_ct),
++                extended_ephemeral: Some(ext_eph),
++                pq_mode: Some(
++                    wa::handshake_message::HandshakePqMode::try_from(pq_mode_val).unwrap_or(
++                        wa::handshake_message::HandshakePqMode::WA_PQ,
++                    ),
++                ),
+                 ..Default::default()
+             }),
+             ..Default::default()
+         }
+     }
+
+
+diff --git a/wacore/noise/src/handshake.rs b/wacore/noise/src/handshake.rs
+index XXXXXXX..YYYYYYY 100644
+--- a/wacore/noise/src/handshake.rs
++++ b/wacore/noise/src/handshake.rs
+@@ -626,12 +650,18 @@ impl IkHandshakeState {
+         // 0-RTT payload (encrypted)
+         let encrypted_payload = self.noise.encrypt(&self.payload)?;
+
+-        let msg = HandshakeUtils::build_ik_client_hello(
+-            &ephemeral_pub_bytes,
+-            encrypted_static,
+-            encrypted_payload,
+-        );
++        // Phase 7.J S6.7: emit extended fields. PLACEHOLDER random values
++        // for extendedCiphertext + extendedEphemeral; WA_PQ=4 for pqMode.
++        // Iterate per S6.5 if server rejects.
++        let msg = HandshakeUtils::build_ik_client_hello(
++            &ephemeral_pub_bytes,
++            encrypted_static,
++            encrypted_payload,
++            None, // TODO: ECDH(extended_ephemeral_priv, server_static_pub)
++            None, // TODO: ECDH(extended_ephemeral_priv, server_static_pub)
++            Some(4), // WA_PQ
++            true,
++        );
+         Ok(msg.encode_to_vec())
+     }
+
+
+After landing this commit on the `patch/connect-failure-tracing` branch of
+mmacedoeu/whatsapp-rust, update octo-adapter-whatsapp/Cargo.toml to pin the
+new rev, e.g.:
+
+  whatsapp-rust   = { ..., rev = "<NEW_COMMIT_HASH>", ... }
+  wacore          = { ..., rev = "<NEW_COMMIT_HASH>", ... }
+  wacore-binary   = { ..., rev = "<NEW_COMMIT_HASH>", ... }
+  waproto         = { ..., rev = "<NEW_COMMIT_HASH>", ... }
+  whatsapp-rust-tokio-transport = { ..., rev = "<NEW_COMMIT_HASH>" }
+
+Then `cargo build -p octo-adapter-whatsapp --release` and run the patched
+daemon against the real WA server. Observe whether the server rejects
+the ClientHello (look for 401 LoggedOut at post-handshake IQ layer). If
+rejected with same location as before (lla/cco), vary field values
+(extended_ciphertext as 80B random vs 80B of DH output; pq_mode 4 vs 1
+vs others; extended_ephemeral from server_static vs random).

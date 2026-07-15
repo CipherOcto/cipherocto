@@ -67,6 +67,15 @@ What does NOT survive (must be measured or dropped):
 - Prior S3 hard wall (IDB CryptoKey non-extractable) was based on WebCrypto contract, not Chrome 150's storage implementation. Cliffnote feedback was right.
 - Next: S2.6 — Blink WebCrypto Structured Clone parser. Decrypt `signal-storage` IDB → get Noise identity key + signed prekey + signature. Then S4 redux → decrypt `reconnect.jsonl` frame[2] → get exact `extendedCiphertext` plaintext + `pqMode` enum + `extendedEphemeral` derivation. Then S6 patch once with measured values.
 
+**S2.6 — Blink SC parser (2026-07-14) — PARTIAL**:
+- Extracted TWO AES-GCM `encKey` CryptoKey blobs from WA's `signal-static-pubkey` + `signal-static-privkey` IDB rows in `https_web.whatsapp.com_0.indexeddb.leveldb/000463.log`
+- encKey raw 16 bytes: signal_static_pubkey = `e101349c3f58531c7cf4f3c7c2a16d2d`; signal_static_privkey = `85e44947b0d78f39a4466c5da1506df2`
+- Both are AES-128 (keyLengthBytes=0x10) wrapping keys for the actual Signal protocol X25519 pubkey/privkey
+- Confirmed: `5c 4b 01` = V8 IDBValue wrapper + kCryptoKeyTag(0x4b) + AesKeyTag(0x01), props `0b 10 06 10`, then 16-byte raw AES key at offsets [+7..+23], then 30B metadata tail + `0xa0` end tag
+- The encrypted `value` field (Signal protocol keys) is wrapped inside a V8 ScriptValueSerialization envelope that we have not fully reverse-engineered
+- Field values (useExtended, extendedCiphertext, pqMode, extendedEphemeral) in Chrome's frame[2] remain UNMEASURED — the captured 363B has unexpected field lengths (field 1 = 48B, not the expected 32B ephemeral)
+- Decision: pivot to S6.7 patch + iterate. Field STRUCTURE is settled; field VALUES will be tuned against the live WA server
+
 **Next sessions** (persisted as TaskList #135/#136/#137):
 - S6.5: extend `whatsapp_modern_client_hello` to actually WS-connect + send + verify server verdict
 - S6.7: patch wacore's `build_client_hello` to populate modern fields (upstream fork commit on `mmacedoeu/whatsapp-rust`)

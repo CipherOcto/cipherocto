@@ -38,9 +38,9 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 128;
+pub const EXPECTED_TOOL_COUNT: usize = 142;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 122;
+pub const EXPECTED_TOOL_COUNT: usize = 136;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -1114,6 +1114,102 @@ pub fn tool_descriptors() -> Vec<Value> {
         "Return participants across every group linked under a community.",
         schema_props_required(&[("community_jid", "string")], &["community_jid"]),
     ));
+    // ─── Channels / Newsletter (14 RPCs) — Phase 7.E+ bridge ─────
+    v.push(td(
+        "newsletter.list_subscribed",
+        "List every newsletter (channel) this account is subscribed to.",
+        schema_empty(),
+    ));
+    v.push(td(
+        "newsletter.get_metadata",
+        "Fetch metadata for one newsletter/channel by JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "newsletter.create",
+        "Create a new newsletter (channel).",
+        schema_props_required(&[("name", "string")], &["name"]),
+    ));
+    v.push(td(
+        "newsletter.join",
+        "Join (subscribe to) a newsletter by its JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "newsletter.leave",
+        "Leave (unsubscribe from) a newsletter by its JID.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "newsletter.send_reaction",
+        "Send a reaction emoji to a newsletter message.",
+        schema_props_required(
+            &[
+                ("jid", "string"),
+                ("server_id", "integer"),
+                ("reaction", "string"),
+            ],
+            &["jid", "server_id", "reaction"],
+        ),
+    ));
+    v.push(td(
+        "newsletter.edit_message",
+        "Edit a message in a newsletter (channel owner only).",
+        schema_props_required(
+            &[
+                ("jid", "string"),
+                ("message_id", "string"),
+                ("new_text", "string"),
+            ],
+            &["jid", "message_id", "new_text"],
+        ),
+    ));
+    v.push(td(
+        "newsletter.revoke_message",
+        "Revoke (delete) a message in a newsletter (channel owner only).",
+        schema_props_required(
+            &[("jid", "string"), ("message_id", "string")],
+            &["jid", "message_id"],
+        ),
+    ));
+    v.push(td(
+        "newsletter.update",
+        "Update name/description of a newsletter you own.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "newsletter.set_follower_mute",
+        "Mute / unmute a channel you subscribe to.",
+        schema_props_required(
+            &[("jid", "string"), ("muted", "boolean")],
+            &["jid", "muted"],
+        ),
+    ));
+    v.push(td(
+        "newsletter.set_admin_mute",
+        "Mute / unmute notifications on a channel you own.",
+        schema_props_required(
+            &[("jid", "string"), ("muted", "boolean")],
+            &["jid", "muted"],
+        ),
+    ));
+    v.push(td(
+        "newsletter.get_metadata_by_invite",
+        "Look up a channel by its invite-code (e.g. ABCD1234).",
+        schema_props_required(&[("invite", "string")], &["invite"]),
+    ));
+    v.push(td(
+        "newsletter.subscribe_live_updates",
+        "Subscribe to live-update push notifications for a channel. \
+         Server returns the duration (in seconds) the subscription is active.",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
+    v.push(td(
+        "newsletter.get_messages",
+        "Fetch recent messages of a channel (history backfill). \
+         Optional: count (default 20), before (server-id cursor).",
+        schema_props_required(&[("jid", "string")], &["jid"]),
+    ));
     v
 }
 
@@ -1245,6 +1341,21 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "community.query_linked_group" => "community.query_linked_group",
         "community.join_subgroup" => "community.join_subgroup",
         "community.get_linked_groups_participants" => "community.get_linked_groups_participants",
+        // Channels / Newsletter (14 RPCs) — Phase 7.E+ bridge.
+        "newsletter.list_subscribed" => "newsletter.list_subscribed",
+        "newsletter.get_metadata" => "newsletter.get_metadata",
+        "newsletter.create" => "newsletter.create",
+        "newsletter.join" => "newsletter.join",
+        "newsletter.leave" => "newsletter.leave",
+        "newsletter.send_reaction" => "newsletter.send_reaction",
+        "newsletter.edit_message" => "newsletter.edit_message",
+        "newsletter.revoke_message" => "newsletter.revoke_message",
+        "newsletter.update" => "newsletter.update",
+        "newsletter.set_follower_mute" => "newsletter.set_follower_mute",
+        "newsletter.set_admin_mute" => "newsletter.set_admin_mute",
+        "newsletter.get_metadata_by_invite" => "newsletter.get_metadata_by_invite",
+        "newsletter.subscribe_live_updates" => "newsletter.subscribe_live_updates",
+        "newsletter.get_messages" => "newsletter.get_messages",
         "daemon.accounts.list" => "daemon.accounts.list",
         "daemon.accounts.use" => "daemon.accounts.use",
         "daemon.accounts.info" => "daemon.accounts.info",

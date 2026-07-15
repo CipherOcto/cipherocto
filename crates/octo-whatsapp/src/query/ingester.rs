@@ -224,6 +224,11 @@ fn event_ts(ev: &InboundEvent) -> (i64, i64) {
             ts_mono_ns,
             ..
         }
+        | InboundEvent::CommunityUpdate {
+            ts_unix_ms,
+            ts_mono_ns,
+            ..
+        }
         | InboundEvent::Unknown {
             ts_unix_ms,
             ts_mono_ns,
@@ -248,6 +253,7 @@ fn event_kind_tag(ev: &InboundEvent) -> &'static str {
         InboundEvent::Connection { .. } => "connection",
         InboundEvent::Call { .. } => "call",
         InboundEvent::Story { .. } => "story",
+        InboundEvent::CommunityUpdate { .. } => "community_update",
         InboundEvent::Unknown { .. } => "unknown",
     }
 }
@@ -265,6 +271,7 @@ fn event_variant(ev: &InboundEvent) -> Option<String> {
             call_state_str(*state)
         )),
         InboundEvent::Story { kind, .. } => Some(story_kind_str(*kind).to_string()),
+        InboundEvent::CommunityUpdate { kind, .. } => Some(community_update_kind_str(*kind).to_string()),
         InboundEvent::Reaction { .. } | InboundEvent::Unknown { .. } => None,
     }
 }
@@ -283,6 +290,9 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         }
         InboundEvent::Call { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
         InboundEvent::Story { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
+        InboundEvent::CommunityUpdate { jid, .. } => {
+            (Some(jid.clone()), None, Some(jid.clone()))
+        }
         InboundEvent::Presence { jid, .. } => {
             (Some(jid.clone()), Some(jid.clone()), Some(jid.clone()))
         }
@@ -366,6 +376,15 @@ fn story_kind_str(k: crate::events::StoryKind) -> &'static str {
     match k {
         crate::events::StoryKind::Posted => "posted",
         crate::events::StoryKind::Viewed => "viewed",
+    }
+}
+
+fn community_update_kind_str(k: crate::events::CommunityUpdateKind) -> &'static str {
+    match k {
+        crate::events::CommunityUpdateKind::Created => "created",
+        crate::events::CommunityUpdateKind::Deactivated => "deactivated",
+        crate::events::CommunityUpdateKind::Linked => "linked",
+        crate::events::CommunityUpdateKind::Unlinked => "unlinked",
     }
 }
 

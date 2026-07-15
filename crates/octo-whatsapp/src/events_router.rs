@@ -359,6 +359,7 @@ fn event_kind_label(ev: &InboundEvent) -> String {
         InboundEvent::Connection { .. } => "connection".into(),
         InboundEvent::Call { .. } => "call".into(),
         InboundEvent::Story { .. } => "story".into(),
+        InboundEvent::CommunityUpdate { .. } => "community_update".into(),
         InboundEvent::Unknown { .. } => "unknown".into(),
     }
 }

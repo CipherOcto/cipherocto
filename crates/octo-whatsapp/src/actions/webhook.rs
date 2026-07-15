@@ -282,6 +282,19 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "raw_sha256": hex::encode(Sha256::digest(raw.as_bytes())),
             })
         }
+        InboundEvent::CommunityUpdate {
+            jid,
+            kind,
+            ts_unix_ms,
+            ..
+        } => {
+            json!({
+                "kind": "community_update",
+                "jid": jid,
+                "community_kind": kind,
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
     }
 }
 

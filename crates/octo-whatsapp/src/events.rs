@@ -125,6 +125,16 @@ pub enum InboundEvent {
         ts_unix_ms: i64,
         ts_mono_ns: u64,
     },
+    /// Echo of a community create / deactivate / link / unlink operation.
+    /// Emitted by the daemon-side broadcast hook when a community RPC
+    /// succeeds (the actual outbound IQ itself is what `events.rs`
+    /// observes).
+    CommunityUpdate {
+        jid: String,
+        kind: CommunityUpdateKind,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    },
     Unknown {
         raw: String,
         ts_unix_ms: i64,
@@ -132,6 +142,15 @@ pub enum InboundEvent {
         #[serde(default)]
         untrusted: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommunityUpdateKind {
+    Created,
+    Deactivated,
+    Linked,
+    Unlinked,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -272,6 +291,7 @@ impl InboundEvent {
             | Self::Receipt { ts_unix_ms, .. }
             | Self::Call { ts_unix_ms, .. }
             | Self::Story { ts_unix_ms, .. }
+            | Self::CommunityUpdate { ts_unix_ms, .. }
             | Self::Unknown { ts_unix_ms, .. } => *ts_unix_ms,
             Self::Presence { last_seen, .. } => last_seen.unwrap_or(0),
         }
@@ -288,6 +308,7 @@ impl InboundEvent {
             | Self::Receipt { ts_mono_ns, .. }
             | Self::Call { ts_mono_ns, .. }
             | Self::Story { ts_mono_ns, .. }
+            | Self::CommunityUpdate { ts_mono_ns, .. }
             | Self::Unknown { ts_mono_ns, .. } => Some(*ts_mono_ns),
             Self::Presence { .. } => None,
         }

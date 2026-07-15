@@ -2570,6 +2570,288 @@ impl WhatsAppWebAdapter {
             })
     }
 
+    // ── Tier 7.E+ newsletter bridge: 7 wacore ops surfaced for the
+    // runtime. Each method flattens the wacore `NewsletterMetadata` /
+    // `NewsletterMessage` into a snapshot type from `crate::*` so the
+    // runtime layer does not depend on wacore types directly.
+
+    /// Fetch metadata for one newsletter by its JID. Maps to
+    /// `Client::newsletter().get_metadata(jid)`.
+    pub async fn newsletter_get_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use crate::NewsletterMetadataSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let n = client
+            .newsletter()
+            .get_metadata(&parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_get_metadata failed: {e:#}"),
+            })?;
+        Ok(NewsletterMetadataSnapshot {
+            jid: n.jid.to_string(),
+            name: n.name,
+            description: n.description,
+            subscriber_count: n.subscriber_count,
+            state: format!("{:?}", n.state),
+            picture_url: n.picture_url,
+            preview_url: n.preview_url,
+            invite_code: n.invite_code,
+            role: n.role.map(|r| format!("{:?}", r)),
+            creation_time: n.creation_time,
+        })
+    }
+
+    /// Update name and/or description of a newsletter this account
+    /// administers. Maps to
+    /// `Client::newsletter().update(jid, name, description)`. Returns
+    /// the freshly-fetched metadata snapshot. wacore (551e574) does
+    /// not expose a picture-upload parameter on `update` — picture
+    /// changes go through a separate profile_picture op.
+    pub async fn update_newsletter(
+        &self,
+        jid: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use crate::NewsletterMetadataSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let n = client
+            .newsletter()
+            .update(&parsed, name, description)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("update_newsletter failed: {e:#}"),
+            })?;
+        Ok(NewsletterMetadataSnapshot {
+            jid: n.jid.to_string(),
+            name: n.name,
+            description: n.description,
+            subscriber_count: n.subscriber_count,
+            state: format!("{:?}", n.state),
+            picture_url: n.picture_url,
+            preview_url: n.preview_url,
+            invite_code: n.invite_code,
+            role: n.role.map(|r| format!("{:?}", r)),
+            creation_time: n.creation_time,
+        })
+    }
+
+    /// Mute or unmute a newsletter **as a follower** (the caller
+    /// subscribes to the channel but does not administer it).
+    /// Maps to `Client::newsletter().set_follower_mute(jid, muted)`.
+    pub async fn set_follower_mute(
+        &self,
+        jid: &str,
+        muted: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .newsletter()
+            .set_follower_mute(&parsed, muted)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_follower_mute failed: {e:#}"),
+            })
+    }
+
+    /// Mute or unmute a newsletter **as an admin** of the channel.
+    /// Maps to `Client::newsletter().set_admin_mute(jid, muted)`.
+    pub async fn set_admin_mute(&self, jid: &str, muted: bool) -> Result<(), PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .newsletter()
+            .set_admin_mute(&parsed, muted)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("set_admin_mute failed: {e:#}"),
+            })
+    }
+
+    /// Fetch newsletter metadata by its invite code (the
+    /// `https://whatsapp.com/channel/XXXX` slug, *not* the full URL).
+    /// Maps to `Client::newsletter().get_metadata_by_invite(invite)`.
+    pub async fn newsletter_get_metadata_by_invite(
+        &self,
+        invite: &str,
+    ) -> Result<crate::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use crate::NewsletterMetadataSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let n = client
+            .newsletter()
+            .get_metadata_by_invite(invite)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_get_metadata_by_invite failed: {e:#}"),
+            })?;
+        Ok(NewsletterMetadataSnapshot {
+            jid: n.jid.to_string(),
+            name: n.name,
+            description: n.description,
+            subscriber_count: n.subscriber_count,
+            state: format!("{:?}", n.state),
+            picture_url: n.picture_url,
+            preview_url: n.preview_url,
+            invite_code: n.invite_code,
+            role: n.role.map(|r| format!("{:?}", r)),
+            creation_time: n.creation_time,
+        })
+    }
+
+    /// Subscribe to live-update push notifications for a newsletter.
+    /// Maps to `Client::newsletter().subscribe_live_updates(jid)`.
+    /// Returns `u64` — the duration in seconds the server keeps the
+    /// subscription alive (typically 300s = 5 min, server-controlled).
+    /// There is no off-switch; the server lets the window expire.
+    pub async fn newsletter_subscribe_live_updates(
+        &self,
+        jid: &str,
+    ) -> Result<u64, PlatformAdapterError> {
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        client
+            .newsletter()
+            .subscribe_live_updates(parsed)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_subscribe_live_updates failed: {e:#}"),
+            })
+    }
+
+    /// Fetch up to `count` historical messages from a newsletter,
+    /// optionally paginating backwards from a given message
+    /// server-id cursor. Maps to
+    /// `Client::newsletter().get_messages(jid, count, before)`.
+    /// `before = None` returns the most-recent page.
+    pub async fn newsletter_get_messages(
+        &self,
+        jid: &str,
+        count: u32,
+        before: Option<u64>,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::NewsletterMessageSnapshot>,
+        PlatformAdapterError,
+    > {
+        use octo_network::dot::adapters::coordinator_admin::NewsletterMessageSnapshot;
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let parsed: wacore_binary::Jid =
+            jid.parse().map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("invalid JID {jid:?}: {e}"),
+            })?;
+        let messages = client
+            .newsletter()
+            .get_messages(parsed, count, before)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("newsletter_get_messages failed: {e:#}"),
+            })?;
+        Ok(messages
+            .into_iter()
+            .map(|m| NewsletterMessageSnapshot {
+                message_id: m.message_id,
+                server_id: m.server_id,
+                // wacore 551e574 does not surface the sender JID on
+                // `NewsletterMessage` directly. Runtime callers
+                // detect "no sender info" by empty string vs. an
+                // outright error.
+                sender_jid: String::new(),
+                ts_unix_ms: (m.timestamp as i64) * 1000,
+                text: None,
+                has_media: format!("{:?}", m.message_type).contains("Media"),
+            })
+            .collect())
+    }
+
     /// Create a WA calendar event. `description` is optional.
     /// Returns the new event's message id.
     pub async fn create_event(

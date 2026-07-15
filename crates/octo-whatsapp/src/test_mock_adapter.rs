@@ -573,6 +573,110 @@ impl OctoWhatsAppAdapter for MockAdapter {
         record_unit_call(&self.state, "newsletter_revoke_message")
     }
 
+    async fn newsletter_get_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("newsletter_get_metadata").or_insert(0) += 1;
+        Ok(NewsletterMetadataSnapshot {
+            jid: jid.into(),
+            name: "Fake Newsletter".into(),
+            description: None,
+            subscriber_count: 0,
+            state: "active".into(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: None,
+            creation_time: None,
+        })
+    }
+
+    async fn update_newsletter(
+        &self,
+        jid: &str,
+        _name: Option<&str>,
+        _description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts.entry("update_newsletter").or_insert(0) += 1;
+        Ok(NewsletterMetadataSnapshot {
+            jid: jid.into(),
+            name: "Fake Newsletter".into(),
+            description: None,
+            subscriber_count: 0,
+            state: "active".into(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: None,
+            creation_time: None,
+        })
+    }
+
+    async fn set_follower_mute(
+        &self,
+        _jid: &str,
+        _muted: bool,
+    ) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_follower_mute")
+    }
+
+    async fn set_admin_mute(&self, _jid: &str, _muted: bool) -> Result<(), PlatformAdapterError> {
+        record_unit_call(&self.state, "set_admin_mute")
+    }
+
+    async fn newsletter_get_metadata_by_invite(
+        &self,
+        _invite: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        use octo_adapter_whatsapp::NewsletterMetadataSnapshot;
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("newsletter_get_metadata_by_invite")
+            .or_insert(0) += 1;
+        Ok(NewsletterMetadataSnapshot {
+            jid: "0000@newsletter".into(),
+            name: "Fake Newsletter".into(),
+            description: None,
+            subscriber_count: 0,
+            state: "active".into(),
+            picture_url: None,
+            preview_url: None,
+            invite_code: None,
+            role: None,
+            creation_time: None,
+        })
+    }
+
+    async fn newsletter_subscribe_live_updates(
+        &self,
+        _jid: &str,
+    ) -> Result<u64, PlatformAdapterError> {
+        let mut s = self.state.lock();
+        *s.call_counts
+            .entry("newsletter_subscribe_live_updates")
+            .or_insert(0) += 1;
+        Ok(300)
+    }
+
+    async fn newsletter_get_messages(
+        &self,
+        _jid: &str,
+        _count: u32,
+        _before: Option<u64>,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::NewsletterMessageSnapshot>,
+        PlatformAdapterError,
+    > {
+        let mut s = self.state.lock();
+        *s.call_counts.entry("newsletter_get_messages").or_insert(0) += 1;
+        Ok(vec![])
+    }
+
     async fn issue_tc_tokens(
         &self,
         _jids: &[String],

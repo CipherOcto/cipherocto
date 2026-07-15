@@ -1590,6 +1590,49 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
     ) -> Result<(), PlatformAdapterError> {
         self.newsletter_revoke_message(jid, message_id).await
     }
+    async fn newsletter_get_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.newsletter_get_metadata(jid).await
+    }
+    async fn update_newsletter(
+        &self,
+        jid: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.update_newsletter(jid, name, description).await
+    }
+    async fn set_follower_mute(&self, jid: &str, muted: bool) -> Result<(), PlatformAdapterError> {
+        self.set_follower_mute(jid, muted).await
+    }
+    async fn set_admin_mute(&self, jid: &str, muted: bool) -> Result<(), PlatformAdapterError> {
+        self.set_admin_mute(jid, muted).await
+    }
+    async fn newsletter_get_metadata_by_invite(
+        &self,
+        invite: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        self.newsletter_get_metadata_by_invite(invite).await
+    }
+    async fn newsletter_subscribe_live_updates(
+        &self,
+        jid: &str,
+    ) -> Result<u64, PlatformAdapterError> {
+        self.newsletter_subscribe_live_updates(jid).await
+    }
+    async fn newsletter_get_messages(
+        &self,
+        jid: &str,
+        count: u32,
+        before: Option<u64>,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::NewsletterMessageSnapshot>,
+        PlatformAdapterError,
+    > {
+        self.newsletter_get_messages(jid, count, before).await
+    }
     // ── Tier 7.G: community ──────────────────────────────────────
     async fn community_create(
         &self,

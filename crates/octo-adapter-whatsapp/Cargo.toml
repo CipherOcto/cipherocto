@@ -57,13 +57,15 @@ live-whatsapp = ["test-helpers"]
 tracing = ["wacore/tracing"]
 
 [dependencies]
-# WhatsApp Web protocol (oxidezap/whatsapp-rust fork at mmacedoeu/whatsapp-rust)
-whatsapp-rust = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
-wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false, features = ["tracing"] }
-wacore-binary = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false }
-waproto = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574", default-features = false }
-whatsapp-rust-tokio-transport = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "551e574" }
+# WhatsApp Web protocol (oxidezap/whatsapp-rust fork at mmacedoeu/whatsapp-rust).
+# b637129 = S6.7 IK ClientHello extended-fields patch (Phase 7.J).
+# parent: e32b51a. tip of patch/connect-failure-tracing.
+whatsapp-rust = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
+wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false, features = ["tracing"] }
+wacore-binary = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+waproto = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+whatsapp-rust-tokio-transport = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129" }
 qrcode = "0.14"
 serde-big-array = "0.5"
 bytes = "1"
@@ -97,7 +99,8 @@ octo-network = { path = "../octo-network" }
 octo-cable = { path = "../octo-cable" }
 # Phase 7.J.3 local enrichment: derive noise-identity fingerprint in the
 # adapter's `Event::LoggedOut` handler. SHA-256 (matches upstream patch in
-# mmacedoeu/whatsapp-rust@551e574) + hex for 16-hex-char truncation.
+# mmacedoeu/whatsapp-rust@551e574, ancestor of current tip b637129) + hex
+# for 16-hex-char truncation.
 sha2 = "0.11"
 hex = "0.4"
 # p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).

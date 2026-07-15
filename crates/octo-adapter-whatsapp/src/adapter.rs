@@ -1170,6 +1170,25 @@ impl WhatsAppWebAdapter {
                                 "Presence(jid: {from_jid:?}, kind: {kind_label}, last_seen: {last_seen_unix:?})"
                             ))
                         }
+                        // Phase 7.E+ T15: bridge wacore's server-pushed
+                        // `Event::NewsletterLiveUpdate` (fires when an
+                        // active `subscribe_live_updates` subscription
+                        // receives reaction-count / message-change
+                        // deltas) into our `InboundEvent::NewsletterUpdate`
+                        // shape. Default Debug output is verbose and the
+                        // events-router parser doesn't recognise it, so
+                        // we format the structured fields explicitly.
+                        // Payload granularity is collapsed to
+                        // `MessageReceived` for now — wacore only carries
+                        // `{messages: [{server_id, reactions}]}` per
+                        // live-update; richer sub-kinds can come later
+                        // when the upstream exposes more frame types.
+                        Event::NewsletterLiveUpdate(nlu) => {
+                            let jid_str = nlu.newsletter_jid.to_string();
+                            Some(format!(
+                                "NewsletterUpdate(jid: {jid_str:?}, kind: MessageReceived)"
+                            ))
+                        }
                         _ => None,
                     };
                     if let Some(desc) = custom_presence_desc {

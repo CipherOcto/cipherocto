@@ -491,6 +491,8 @@ impl InboundEvent {
             parse_call(rest, ts_unix_ms, ts_mono_ns)
         } else if let Some(rest) = raw.strip_prefix("Story(") {
             parse_story(rest, ts_unix_ms, ts_mono_ns)
+        } else if let Some(rest) = raw.strip_prefix("NewsletterUpdate(") {
+            parse_newsletter_update(rest, ts_unix_ms, ts_mono_ns)
         } else {
             return InboundEvent::Unknown {
                 raw: raw.to_string(),
@@ -1692,6 +1694,35 @@ fn parse_story(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
     InboundEvent::Story {
         id: unquote(&field(rest, "id").unwrap_or_default()),
         peer: unquote(&field(rest, "peer").unwrap_or_default()),
+        kind,
+        ts_unix_ms,
+        ts_mono_ns,
+    }
+}
+
+/// Parse a `NewsletterUpdate(jid: "...", kind: ...)` envelope into
+/// `InboundEvent::NewsletterUpdate`. Emitted by the adapter when wacore
+/// fires `Event::NewsletterLiveUpdate` (server-pushed reaction-count /
+/// message-change deltas while a `subscribe_live_updates` subscription
+/// is active). Source: `Event::NewsletterLiveUpdate` in
+/// `wacore/src/types/events.rs`; bridged in adapter's `on_event`
+/// closure (Phase 7.E+ T15).
+///
+/// `kind` accepts the `NewsletterUpdateKind` variants in
+/// PascalCase (matching the format string in adapter.rs). Unknown /
+/// missing → `Subscribed` as a conservative default.
+fn parse_newsletter_update(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
+    let kind = match field(rest, "kind").as_deref() {
+        Some("Subscribed") => NewsletterUpdateKind::Subscribed,
+        Some("Unsubscribed") => NewsletterUpdateKind::Unsubscribed,
+        Some("MessageReceived") => NewsletterUpdateKind::MessageReceived,
+        Some("PictureChanged") => NewsletterUpdateKind::PictureChanged,
+        Some("NameChanged") => NewsletterUpdateKind::NameChanged,
+        Some("StateChanged") => NewsletterUpdateKind::StateChanged,
+        _ => NewsletterUpdateKind::Subscribed,
+    };
+    InboundEvent::NewsletterUpdate {
+        jid: unquote(&field(rest, "jid").unwrap_or_default()),
         kind,
         ts_unix_ms,
         ts_mono_ns,

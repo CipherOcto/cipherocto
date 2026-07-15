@@ -3454,6 +3454,80 @@ async fn live_newsletter_get_messages_skips_without_setup() {
     );
 }
 
+/// `live_newsletter_inbound_event_skips_without_setup` — Phase 7.E+ T15.
+///
+/// Verifies the Phase 7.E+ T15 bridge: when wacore fires
+/// `Event::NewsletterLiveUpdate` (server-pushed reaction-count /
+/// message-change delta while a `subscribe_live_updates` subscription
+/// is active), our adapter's `on_event` closure forwards a
+/// `NewsletterUpdate(jid: "...", kind: ...)` envelope that
+/// `events::InboundEvent::parse` recognises as
+/// `InboundEvent::NewsletterUpdate`.
+///
+/// **Soft-skip** unless `OCTO_WHATSAPP_TEST_NEWSLETTER_JID` is set to
+/// a real `@newsletter` channel. Even with the env var set, this test
+/// is non-deterministic — it requires the live channel to push a
+/// `<live_updates>` frame during the 15s wait window. If no frame
+/// arrives in time, the test logs a warn + passes (NOT a hard fail).
+/// The hermetic parser test
+/// (`events::tests::newsletter_update_parses_message_received`) covers
+/// the structural side; this test covers the end-to-end wire path.
+#[tokio::test]
+async fn live_newsletter_inbound_event_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_inbound_event_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_JID to a real @newsletter JID; the \
+             channel must actively push live_updates for the bridge to fire)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+
+    // Activate the upstream subscription so wacore can fire
+    // `Event::NewsletterLiveUpdate` if the channel pushes during the wait.
+    let _ = conn
+        .call(
+            "newsletter.subscribe_live_updates",
+            json!({"jid": nl_jid.clone()}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.subscribe_live_updates");
+
+    let predicate = |ev: &InboundEvent| {
+        matches!(
+            ev,
+            InboundEvent::NewsletterUpdate { jid, .. } if jid == &nl_jid
+        )
+    };
+    match wait_for(
+        &fix.events_buffer,
+        predicate,
+        Duration::from_secs(15),
+    ) {
+        Ok(InboundEvent::NewsletterUpdate { jid, kind, .. }) => {
+            eprintln!(
+                "live_newsletter_inbound_event_skips_without_setup: OK jid={jid} kind={kind:?}"
+            );
+        }
+        Ok(other) => {
+            eprintln!(
+                "live_newsletter_inbound_event_skips_without_setup: OK other variant {other:?}"
+            );
+        }
+        Err(e) => {
+            // Soft-skip: no live_updates frame arrived in 15s.
+            // The bridge wiring is exercised by the hermetic parser test;
+            // this live test is a best-effort end-to-end smoke.
+            eprintln!(
+                "live_newsletter_inbound_event_skips_without_setup: soft-skip \
+                 (no live_updates frame in 15s); error={e}"
+            );
+        }
+    }
+}
+
 /// `live_events_create_self` — Tier 6.5 calendar event.
 ///
 /// Creates a WA calendar event against our own JID. The server

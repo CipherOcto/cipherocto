@@ -652,3 +652,54 @@ fn parse_iso8601_ms_handles_common_shapes() {
     );
     assert!(parse_iso8601_ms("garbage").is_none());
 }
+
+// ── Phase 7.E+ T15 — NewsletterUpdate parser ────────────────────────
+//
+// Adapter bridges wacore's `Event::NewsletterLiveUpdate` into our
+// `InboundEvent::NewsletterUpdate` via the raw_event_tx bus with this
+// exact string shape. Three hermetic cases cover the happy path, an
+// unknown-kind fallback, and a missing-jid fallback.
+
+#[test]
+fn newsletter_update_parses_message_received() {
+    let raw = r#"NewsletterUpdate(jid: "1234567890@newsletter", kind: MessageReceived)"#;
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::NewsletterUpdate {
+            jid, kind, ..
+        } => {
+            assert_eq!(jid, "1234567890@newsletter");
+            assert_eq!(kind, NewsletterUpdateKind::MessageReceived);
+        }
+        other => panic!("expected NewsletterUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn newsletter_update_unknown_kind_defaults_to_subscribed() {
+    // Garbage / future kind falls back to `Subscribed` (conservative).
+    let raw = r#"NewsletterUpdate(jid: "X@newsletter", kind: FutureKind)"#;
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::NewsletterUpdate { jid, kind, .. } => {
+            assert_eq!(jid, "X@newsletter");
+            assert_eq!(kind, NewsletterUpdateKind::Subscribed);
+        }
+        other => panic!("expected NewsletterUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn newsletter_update_missing_jid_yields_empty_string() {
+    // Garbage envelope (no fields) — jid falls back to empty string;
+    // kind falls back to Subscribed. The parser never errors.
+    let raw = "NewsletterUpdate()";
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::NewsletterUpdate { jid, kind, .. } => {
+            assert_eq!(jid, "");
+            assert_eq!(kind, NewsletterUpdateKind::Subscribed);
+        }
+        other => panic!("expected NewsletterUpdate, got {other:?}"),
+    }
+}

@@ -35,6 +35,79 @@ pub struct Cli {
     pub command: Command,
 }
 
+#[derive(Debug, Args)]
+pub struct CommunityCmd {
+    #[command(subcommand)]
+    pub action: CommunityAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CommunityAction {
+    /// Create a new community.
+    Create {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, default_value_t = false)]
+        closed: bool,
+        #[arg(long, default_value_t = false)]
+        allow_non_admin_sub_group_creation: bool,
+        #[arg(long, default_value_t = true)]
+        create_general_chat: bool,
+    },
+    /// Deactivate (delete) a community.
+    Deactivate {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+    },
+    /// Link subgroups to a community.
+    LinkSubgroups {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+        #[arg(value_name = "SUBGROUP_JID", required = true)]
+        subgroup_jids: Vec<String>,
+    },
+    /// Unlink subgroups from a community.
+    UnlinkSubgroups {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+        #[arg(value_name = "SUBGROUP_JID", required = true)]
+        subgroup_jids: Vec<String>,
+        #[arg(long, default_value_t = false)]
+        remove_orphan_members: bool,
+    },
+    /// List subgroups of a community.
+    GetSubgroups {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+    },
+    /// Get participant counts per subgroup.
+    GetSubgroupParticipantCounts {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+    },
+    /// Query one linked subgroup's metadata.
+    QueryLinkedGroup {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+        #[arg(value_name = "SUBGROUP_JID")]
+        subgroup_jid: String,
+    },
+    /// Join a linked subgroup via the parent.
+    JoinSubgroup {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+        #[arg(value_name = "SUBGROUP_JID")]
+        subgroup_jid: String,
+    },
+    /// Get participants across all linked groups.
+    GetLinkedGroupsParticipants {
+        #[arg(value_name = "COMMUNITY_JID")]
+        community_jid: String,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Run as a long-lived daemon (the default for systemd).
@@ -98,6 +171,8 @@ pub enum Command {
     Audit(AuditCmd),
     /// Action dispatcher operations (Phase 5 Part E; Phase 4 RPC surface).
     Actions(ActionsCmd),
+    /// Community RPCs (Tier 7.G).
+    Community(CommunityCmd),
 }
 
 #[derive(Debug, Args)]
@@ -1592,6 +1667,91 @@ pub fn dispatch_actions(cli: &Cli, cmd: &ActionsCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Tier 7.G: dispatch surface for the 9 community RPCs. Each arm
+/// maps a CLI subcommand to the matching `community.*` JSON-RPC method
+/// on the daemon.
+pub fn dispatch_community(cli: &Cli, cmd: &CommunityCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        CommunityAction::Create {
+            name,
+            description,
+            closed,
+            allow_non_admin_sub_group_creation,
+            create_general_chat,
+        } => (
+            "community.create",
+            serde_json::json!({
+                "name": name,
+                "description": description,
+                "closed": closed,
+                "allow_non_admin_sub_group_creation": allow_non_admin_sub_group_creation,
+                "create_general_chat": create_general_chat,
+            }),
+        ),
+        CommunityAction::Deactivate { community_jid } => (
+            "community.deactivate",
+            serde_json::json!({ "jid": community_jid }),
+        ),
+        CommunityAction::LinkSubgroups {
+            community_jid,
+            subgroup_jids,
+        } => (
+            "community.link_subgroups",
+            serde_json::json!({
+                "community_jid": community_jid,
+                "subgroup_jids": subgroup_jids,
+            }),
+        ),
+        CommunityAction::UnlinkSubgroups {
+            community_jid,
+            subgroup_jids,
+            remove_orphan_members,
+        } => (
+            "community.unlink_subgroups",
+            serde_json::json!({
+                "community_jid": community_jid,
+                "subgroup_jids": subgroup_jids,
+                "remove_orphan_members": remove_orphan_members,
+            }),
+        ),
+        CommunityAction::GetSubgroups { community_jid } => (
+            "community.get_subgroups",
+            serde_json::json!({ "community_jid": community_jid }),
+        ),
+        CommunityAction::GetSubgroupParticipantCounts { community_jid } => (
+            "community.get_subgroup_participant_counts",
+            serde_json::json!({ "community_jid": community_jid }),
+        ),
+        CommunityAction::QueryLinkedGroup {
+            community_jid,
+            subgroup_jid,
+        } => (
+            "community.query_linked_group",
+            serde_json::json!({
+                "community_jid": community_jid,
+                "subgroup_jid": subgroup_jid,
+            }),
+        ),
+        CommunityAction::JoinSubgroup {
+            community_jid,
+            subgroup_jid,
+        } => (
+            "community.join_subgroup",
+            serde_json::json!({
+                "community_jid": community_jid,
+                "subgroup_jid": subgroup_jid,
+            }),
+        ),
+        CommunityAction::GetLinkedGroupsParticipants { community_jid } => (
+            "community.get_linked_groups_participants",
+            serde_json::json!({ "community_jid": community_jid }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
 /// Phase 1 task 14: CLI mirror for the query-layer RPCs.
 #[cfg(feature = "query")]
 pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
@@ -1951,6 +2111,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Query(ref cmd) => dispatch_query(&cli, cmd),
         Command::Contacts(ref cmd) => dispatch_contacts(&cli, cmd),
         Command::Identity(ref cmd) => dispatch_identity(&cli, cmd),
+        Command::Community(ref cmd) => dispatch_community(&cli, cmd),
     }
 }
 

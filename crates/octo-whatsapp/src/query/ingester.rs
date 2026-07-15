@@ -271,7 +271,9 @@ fn event_variant(ev: &InboundEvent) -> Option<String> {
             call_state_str(*state)
         )),
         InboundEvent::Story { kind, .. } => Some(story_kind_str(*kind).to_string()),
-        InboundEvent::CommunityUpdate { kind, .. } => Some(community_update_kind_str(*kind).to_string()),
+        InboundEvent::CommunityUpdate { kind, .. } => {
+            Some(community_update_kind_str(*kind).to_string())
+        }
         InboundEvent::Reaction { .. } | InboundEvent::Unknown { .. } => None,
     }
 }
@@ -290,9 +292,7 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         }
         InboundEvent::Call { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
         InboundEvent::Story { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
-        InboundEvent::CommunityUpdate { jid, .. } => {
-            (Some(jid.clone()), None, Some(jid.clone()))
-        }
+        InboundEvent::CommunityUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
         InboundEvent::Presence { jid, .. } => {
             (Some(jid.clone()), Some(jid.clone()), Some(jid.clone()))
         }

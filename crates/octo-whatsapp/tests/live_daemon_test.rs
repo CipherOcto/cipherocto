@@ -621,6 +621,9 @@ async fn live_send_text_self() {
             InboundEvent::Reaction { id, .. } => format!("Reaction({id})"),
             InboundEvent::Call { id, .. } => format!("Call({id})"),
             InboundEvent::Story { id, .. } => format!("Story({id})"),
+            InboundEvent::CommunityUpdate { jid, kind, .. } => {
+                format!("CommunityUpdate({jid}, {kind:?})")
+            }
             InboundEvent::Unknown { raw, .. } => {
                 format!("Unknown({})", raw.chars().take(2000).collect::<String>())
             }
@@ -739,6 +742,9 @@ async fn live_send_text_peer() {
                 InboundEvent::Reaction { id, .. } => format!("Reaction({id})"),
                 InboundEvent::Call { id, .. } => format!("Call({id})"),
                 InboundEvent::Story { id, .. } => format!("Story({id})"),
+                InboundEvent::CommunityUpdate { jid, kind, .. } => {
+                    format!("CommunityUpdate({jid}, {kind:?})")
+                }
                 InboundEvent::Unknown { raw, .. } => {
                     format!("Unknown({})", raw.chars().take(120).collect::<String>())
                 }
@@ -5211,4 +5217,191 @@ async fn live_passkey_send_confirmation_skips_without_pairing() {
         "passkey.send_confirmation must return status=confirmed; got {resp}"
     );
     eprintln!("live_passkey_send_confirmation_skips_without_pairing: OK confirmed");
+}
+
+// ===========================================================================
+// Tier 7.G — community RPCs
+// ===========================================================================
+
+/// `live_community_create` — Tier 7.G community creation.
+///
+/// **Operator opt-in required.** Set `OCTO_WHATSAPP_COMMUNITY_CREATE_NAME`
+/// to a non-empty string to enable. Creates a real community
+/// against the live WA backend, asserts the response carries
+/// `{status: "created", community: {jid, is_parent_group: true}}`,
+/// then deactivates the community in a follow-up call to clean up
+/// the operator's account. The created JID is eprintln'd for
+/// downstream tests.
+///
+/// Without the env var: skips early.
+#[tokio::test]
+async fn live_community_create() {
+    let Some(name) = std::env::var("OCTO_WHATSAPP_COMMUNITY_CREATE_NAME").ok() else {
+        eprintln!(
+            "live_community_create: skipping (set OCTO_WHATSAPP_COMMUNITY_CREATE_NAME \
+             to enable real community creation)"
+        );
+        return;
+    };
+    if name.trim().is_empty() {
+        eprintln!("live_community_create: skipping (env var is empty)");
+        return;
+    }
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    let resp = conn
+        .call(
+            "community.create",
+            json!({
+                "name": name.clone(),
+                "closed": false,
+            }),
+        )
+        .await;
+    inter_call_delay_for("community.create");
+    assert_eq!(
+        resp["status"], "created",
+        "community.create must return status=created; got {resp}"
+    );
+    let community = &resp["community"];
+    assert!(
+        community.is_object(),
+        "community must be object; got {resp}"
+    );
+    assert_eq!(
+        community["is_parent_group"], true,
+        "community.is_parent_group must be true on freshly-created community; got {community:?}"
+    );
+    let jid = community["jid"]
+        .as_str()
+        .expect("community.jid must be a string");
+    assert!(
+        jid.ends_with("@g.us"),
+        "community.jid must end with @g.us; got {jid}"
+    );
+    eprintln!(
+        "live_community_create: OK created jid={} name={:?}",
+        jid, community["subject"]
+    );
+
+    // Cleanup: deactivate the community. We don't assert on this
+    // shape; the server may already have cleared it server-side or
+    // it may take a moment to propagate.
+    let _ = conn
+        .call("community.deactivate", json!({ "jid": jid }))
+        .await;
+    inter_call_delay_for("community.deactivate");
+}
+
+/// `live_community_link_subgroup` — Tier 7.G subgroup linkage.
+///
+/// **Operator opt-in required.** Set
+/// `OCTO_WHATSAPP_COMMUNITY_LINK_TEST=1` to enable. Creates a
+/// community, creates a regular group via `groups.create`, links
+/// the group as a subgroup of the community, verifies it appears
+/// in `community.get_subgroups`, then unlinks and deactivates.
+///
+/// Without the env var: skips early.
+#[tokio::test]
+async fn live_community_link_subgroup() {
+    let Some(_) = std::env::var("OCTO_WHATSAPP_COMMUNITY_LINK_TEST").ok() else {
+        eprintln!(
+            "live_community_link_subgroup: skipping (set \
+             OCTO_WHATSAPP_COMMUNITY_LINK_TEST=1 to enable)"
+        );
+        return;
+    };
+    let fix = fixture();
+    let mut conn = rpc(fix).await;
+
+    // 1. Create the community.
+    let community = conn
+        .call(
+            "community.create",
+            json!({
+                "name": format!("octo-wa-link-test-{}", std::process::id()),
+                "closed": false,
+            }),
+        )
+        .await;
+    inter_call_delay_for("community.create");
+    let community_jid = community["community"]["jid"]
+        .as_str()
+        .expect("community.create must return community.jid")
+        .to_string();
+    eprintln!("live_community_link_subgroup: created community {community_jid}");
+
+    // 2. Create a regular group via the existing RPC.
+    let group = conn
+        .call(
+            "groups.create",
+            json!({
+                "subject": format!("octo-wa-link-test-sub-{}", std::process::id()),
+            }),
+        )
+        .await;
+    inter_call_delay_for("groups.create");
+    let subgroup_jid = group["group"]["jid"]
+        .as_str()
+        .expect("groups.create must return group.jid")
+        .to_string();
+    eprintln!("live_community_link_subgroup: created subgroup {subgroup_jid}");
+
+    // 3. Link the group as a subgroup of the community.
+    let link_resp = conn
+        .call(
+            "community.link_subgroups",
+            json!({
+                "community_jid": community_jid,
+                "subgroup_jids": [subgroup_jid.clone()],
+            }),
+        )
+        .await;
+    inter_call_delay_for("community.link_subgroups");
+    assert_eq!(
+        link_resp["status"], "linked",
+        "community.link_subgroups must return status=linked; got {link_resp}"
+    );
+    let linked = link_resp["result"]["linked_or_unlinked"]
+        .as_array()
+        .expect("result.linked_or_unlinked must be array");
+    assert!(
+        linked.iter().any(|v| v == &subgroup_jid),
+        "linked_or_unlinked must contain {subgroup_jid}; got {linked:?}"
+    );
+    eprintln!("live_community_link_subgroup: linked {subgroup_jid} to {community_jid}");
+
+    // 4. Verify it appears in get_subgroups.
+    let subgroups = conn
+        .call(
+            "community.get_subgroups",
+            json!({ "community_jid": community_jid }),
+        )
+        .await;
+    inter_call_delay_for("community.get_subgroups");
+    let listed = subgroups["subgroups"]
+        .as_array()
+        .expect("subgroups must be array");
+    assert!(
+        listed.iter().any(|s| s["jid"] == subgroup_jid),
+        "get_subgroups must include the linked {subgroup_jid}; got {listed:?}"
+    );
+
+    // 5. Unlink + deactivate (cleanup).
+    let _ = conn
+        .call(
+            "community.unlink_subgroups",
+            json!({
+                "community_jid": community_jid,
+                "subgroup_jids": [subgroup_jid.clone()],
+            }),
+        )
+        .await;
+    inter_call_delay_for("community.unlink_subgroups");
+    let _ = conn
+        .call("community.deactivate", json!({ "jid": community_jid }))
+        .await;
+    inter_call_delay_for("community.deactivate");
+    eprintln!("live_community_link_subgroup: cleanup OK");
 }

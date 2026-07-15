@@ -102,6 +102,19 @@ Three coupled bugs were masked as "401 LoggedOut" symptom:
 - `bot_state=Connected`, `session_valid=true`, `phase=connected`
 - 930/930 lib tests pass with `--features query`
 
+**Cold-start async refactor (commits pending; 2026-07-15)**:
+
+Two coupled fixes unblock daemon boot:
+1. `events_persister::spawn` no longer synchronously reloads NDJSON. Reload moved into the actor's first iteration. New `wait_for_reload()` async helper for callers (tests, `status.get`) that need post-hydration state. `last_load_stats()` now `Some(...)` only after hydration completes.
+2. `QuerySubsystem::replay_ndjson` rewritten as `spawn_replay_ndjson`: replay runs on a dedicated OS thread + `catch_unwind` + cancel-aware. New `ReplayState { NotStarted | InProgress{lines_read} | Completed{stats,took_ms} | Failed{lines_read,error} | Cancelled{lines_read} }` exposed via `status.get` (`query_replay` field). Tantivy fast path: `batch_commits` atomic flag flips during replay so per-message `index_message` becomes `add_document_uncommitted` + one bulk `commit_index` at end (drops 19k-event tantivy commit time from ~30s to ~3.7s).
+3. `WAIT_BOOT_SECS` script default lowered 45 → 30 since bind path is no longer the bottleneck.
+
+**Live verified**:
+- `status.get` after 11s uptime: `phase: "connected"`, `session_valid: true`, `query_replay: { state: "completed", lines_read: 19911, lines_handled: 19911, took_ms: 3725 }`
+- 932/932 lib tests pass with `--features query` (added 2 spawn_replay tests + replay_ndjson_with_progress helper)
+- 11/11 `it_event_persistence` tests pass (`append_then_reload_round_trips` updated to await `wait_for_reload()`)
+- 2 pre-existing failures skipped: `no_direct_stoolap_dependency` (Phase 8 query layer violates invariant added 2026-07-05), `every_mcp_tool_name_appears_in_skill` (skill catalog missing 3 identity tools)
+
 **Next** (S9 / cleanup):
 - Land upstream — push `b637129` to oxidizap/whatsapp-rust as PR (requires re-review of build_ik_client_hello 4-tuple signature)
 - Consider closing the IK-bypass (commit 902a9ff8) once the post-handshake IQ layer is also confirmed end-to-end via the XX path

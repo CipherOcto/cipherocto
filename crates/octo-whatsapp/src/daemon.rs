@@ -377,10 +377,13 @@ impl DaemonHandle {
         let Some(rx) = a.subscribe_raw_events() else {
             return;
         };
-        let cancel = self.inner.cancel.clone();
+        // Clone the cancel token once per consumer: the watcher
+        // task and the query replay thread each observe shutdown
+        // independently. Cloning is cheap (Arc bump).
+        let cancel_for_watcher = self.inner.cancel.clone();
         let handle = self.clone();
         let join = tokio::spawn(async move {
-            run_connection_watcher(rx, handle, cancel).await;
+            run_connection_watcher(rx, handle, cancel_for_watcher).await;
         });
 
         // Phase 3 Part C: spawn the EventsRouter. This consumes a
@@ -460,26 +463,23 @@ impl DaemonHandle {
                         // a fresh daemon boots with all previously
                         // persisted events searchable. Configurable
                         // via `query.rebuild_on_boot` (default on).
+                        //
+                        // Cold-start latency fix (2026-07-15):
+                        // replay runs on a dedicated OS thread so the
+                        // tokio runtime returns from `bind_adapter`
+                        // immediately. State transitions are visible
+                        // via `status.get` (`query_replay` field).
                         if self.inner.config.query.rebuild_on_boot {
                             let ndjson_path = self
                                 .inner
                                 .config
                                 .events
                                 .resolved_persistence_path(&self.inner.config.data_dir);
-                            match crate::query::replay_ndjson(arc.as_ref(), &ndjson_path) {
-                                Ok(stats) => tracing::info!(
-                                    read = stats.lines_read,
-                                    handled = stats.lines_handled,
-                                    failed_parse = stats.lines_failed_parse,
-                                    path = %ndjson_path.display(),
-                                    "query layer hydrated from NDJSON"
-                                ),
-                                Err(e) => tracing::warn!(
-                                    error = %e,
-                                    path = %ndjson_path.display(),
-                                    "NDJSON replay failed; derived views start empty"
-                                ),
-                            }
+                            tracing::info!(
+                                path = %ndjson_path.display(),
+                                "query layer: spawning background NDJSON replay"
+                            );
+                            arc.spawn_replay_ndjson(ndjson_path, self.inner.cancel.clone());
                         } else {
                             tracing::info!("query.rebuild_on_boot = false; skipping NDJSON replay");
                         }

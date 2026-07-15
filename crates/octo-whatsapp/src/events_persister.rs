@@ -258,11 +258,19 @@ impl PersisterIngress {
 /// (the actor still relays events to the buffer; useful for
 /// hermetic tests).
 ///
-/// If `path` is `Some`, this function performs the cold-start
-/// reload **synchronously** before returning, so the buffer is
-/// hydrated by the time the caller sees the handle. The reload
-/// is a `block_on` of the `load_initial_events` future, which is
-/// short (a single file read + parse).
+/// If `path` is `Some`, the actor performs the cold-start reload
+/// **asynchronously** as its first action. `spawn` returns
+/// immediately (well under a millisecond) so the daemon's boot
+/// path isn't blocked on a 19k-event NDJSON hydrate. Operators
+/// can poll `last_load_stats()` to see when hydration completes.
+///
+/// **Idempotency contract:** live events that arrive in the
+/// small window between `spawn()` and the actor's reload are
+/// buffered in the mpsc and processed AFTER hydration finishes,
+/// so reload-then-live ordering is preserved without duplicate
+/// row writes (the buffer's monotonic id is allocated by the
+/// actor during hydration, and live pushes use the same
+/// allocation path).
 impl EventsPersisterHandle {
     pub fn spawn(
         buffer: Arc<EventsBuffer>,
@@ -270,52 +278,28 @@ impl EventsPersisterHandle {
         flush_interval: Duration,
         cancel: CancellationToken,
     ) -> Result<Self, PersistError> {
-        // Synchronous cold-start reload. The actor task then runs
-        // the main loop; if any new events arrived in the tiny
-        // window between hydrate and spawn they are still in the
-        // buffer's mpsc and will be processed.
-        let (tx, rx) = mpsc::channel::<(Option<u64>, InboundEvent)>(4096);
-        let (flush_tx, flush_rx) = mpsc::channel::<oneshot::Sender<()>>(16);
-        let dropped = Arc::new(DropCounter::default());
-        let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
+        // Touch the parent directory so the actor's append-mode
+        // open doesn't have to deal with ENOENT on a brand-new
+        // data dir. (Cold-start reload used to do this; we still
+        // need it for the actor's `OpenOptions::create(true)`.)
         if let Some(p) = &path {
             if let Some(parent) = p.parent() {
                 if !parent.as_os_str().is_empty() {
                     std::fs::create_dir_all(parent)?;
                 }
             }
-            // `spawn` is sync, but the reload is async. We cannot
-            // call `Handle::block_on` from within a runtime (it
-            // would deadlock). Spin up a dedicated single-thread
-            // runtime for the reload; it completes quickly and
-            // exits.
-            let buffer_for_reload = buffer.clone();
-            let path_for_reload = p.clone();
-            let stats_handle = std::thread::Builder::new()
-                .name("events-reload".into())
-                .spawn(move || -> Result<LoadStats, PersistError> {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("build reload runtime");
-                    rt.block_on(load_initial_events(&path_for_reload, &buffer_for_reload))
-                })
-                .expect("spawn reload thread");
-            let stats = stats_handle.join().expect("join reload thread")?;
-            tracing::info!(
-                loaded = stats.loaded,
-                skipped = stats.skipped_malformed,
-                "events_persister: cold-start reload complete"
-            );
-            *last_load_stats.lock() = Some(stats);
         }
+
+        let (tx, rx) = mpsc::channel::<(Option<u64>, InboundEvent)>(4096);
+        let (flush_tx, flush_rx) = mpsc::channel::<oneshot::Sender<()>>(16);
+        let dropped = Arc::new(DropCounter::default());
+        let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
 
         let task_cancel = cancel.clone();
         let task_buffer = buffer.clone();
         let task_path = path;
         let task_dropped = dropped.clone();
         let task_load_stats = last_load_stats.clone();
-        let _ = task_load_stats; // reserved for future actor-side stats refresh
 
         let join = tokio::spawn(async move {
             if let Err(e) = run_actor(
@@ -325,7 +309,7 @@ impl EventsPersisterHandle {
                     flush_interval,
                     cancel: task_cancel,
                     _dropped: task_dropped,
-                    _last_load_stats: task_load_stats,
+                    last_load_stats: task_load_stats,
                 },
                 rx,
                 flush_rx,
@@ -392,6 +376,43 @@ impl EventsPersisterHandle {
     /// Reload stats from the last cold-start hydrate, if any.
     pub fn last_load_stats(&self) -> Option<LoadStats> {
         self.last_load_stats.lock().clone()
+    }
+
+    /// Block (async poll every ~5ms, no busy-loop) until the
+    /// cold-start reload completes. Returns the stats on success;
+    /// `None` if the actor task exited before completing the
+    /// reload (e.g. daemon shutting down).
+    ///
+    /// **Why:** after the 2026-07-15 cold-start async refactor,
+    /// `spawn` returns before hydration. Tests + the boot-time
+    /// `status.get` use this to gate on "buffer is fully
+    /// hydrated". Production boot does NOT call this — the
+    /// daemon comes up immediately and hydration happens
+    /// alongside connect.
+    pub async fn wait_for_reload(&self) -> Option<LoadStats> {
+        // The polling interval matches the `flush_interval_ms`
+        // minimum so we wake at least once per typical flush
+        // tick. 5ms is a reasonable lower bound — the actor's
+        // NDJSON parse is CPU-bound and won't observe the
+        // mutation mid-parse anyway.
+        let poll = std::time::Duration::from_millis(5);
+        // 30s ceiling matches the daemon's boot timeout.
+        let ceiling = std::time::Duration::from_secs(30);
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(s) = self.last_load_stats() {
+                return Some(s);
+            }
+            if self.join.is_finished() {
+                // Actor exited; no reload will ever land.
+                return self.last_load_stats();
+            }
+            if started.elapsed() > ceiling {
+                tracing::warn!("wait_for_reload: timed out after {ceiling:?}");
+                return self.last_load_stats();
+            }
+            tokio::time::sleep(poll).await;
+        }
     }
 
     /// Build a `PersisterIngress` that shares the upstream channels +
@@ -538,10 +559,23 @@ struct ActorState {
     flush_interval: Duration,
     cancel: CancellationToken,
     _dropped: Arc<DropCounter>,
-    _last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+    /// Updated atomically with the result of the cold-start
+    /// reload. `None` while the actor hasn't run yet, `Some(...)`
+    /// after. Same `Arc` the public handle exposes via
+    /// `last_load_stats()`.
+    last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
 }
 
 /// The actor loop. Extracted so test paths can exercise it directly.
+///
+/// **Cold-start boot fix (2026-07-15):** the cold-start NDJSON
+/// reload happens INSIDE the actor's first iteration (before any
+/// events are processed) so `EventsPersisterHandle::spawn` returns
+/// synchronously and the daemon's `Daemon::new_internal` boot
+/// path isn't blocked on a multi-second file read. The reload
+/// happens lazily inside the actor; live events that arrived in
+/// the spawn-to-reload window are still queued in the mpsc and
+/// get processed AFTER hydration completes.
 async fn run_actor(
     state: ActorState,
     mut rx: mpsc::Receiver<(Option<u64>, InboundEvent)>,
@@ -551,6 +585,35 @@ async fn run_actor(
     let path = state.path;
     let flush_interval = state.flush_interval;
     let cancel = state.cancel;
+    let last_load_stats = state.last_load_stats;
+
+    // === Cold-start reload (moved from spawn() into the actor) ==
+    // Performs the NDJSON hydrate against `buffer` before opening
+    // the file for append. This is the same `load_initial_events`
+    // call that used to block `spawn()`; it now runs on the
+    // actor's runtime so it doesn't block the daemon's boot
+    // thread.
+    if let Some(p) = &path {
+        match load_initial_events(p, &buffer).await {
+            Ok(stats) => {
+                tracing::info!(
+                    loaded = stats.loaded,
+                    skipped = stats.skipped_malformed,
+                    reload_took_ms = stats.reload_took_ms,
+                    "events_persister: cold-start reload complete"
+                );
+                *last_load_stats.lock() = Some(stats);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %p.display(),
+                    "events_persister: cold-start reload failed; continuing with empty buffer"
+                );
+            }
+        }
+    }
+
     // Open file (or create) in append+read mode for both write and
     // the optional mid-life reload. The current design reloads only
     // at boot, so the read side is not used here.
@@ -561,9 +624,6 @@ async fn run_actor(
                     tokio::fs::create_dir_all(parent).await?;
                 }
             }
-            // The cold-start reload was performed synchronously in
-            // `EventsPersisterHandle::spawn`. We just need to open
-            // the file in append mode for new writes.
             Some(OpenOptions::new().create(true).append(true).open(p).await?)
         }
         None => None,

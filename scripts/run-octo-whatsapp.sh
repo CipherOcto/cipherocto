@@ -66,7 +66,12 @@ PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
 LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
 BIN_DIR="$HOME/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/debug"
 BIN="$BIN_DIR/octo-whatsapp"
-WAIT_BOOT_SECS="${WAIT_BOOT_SECS:-45}"
+# Boot wait: with background NDJSON replay (Phase 7.J follow-up,
+# 2026-07-15) the daemon binds its IPC socket in single-digit
+# seconds even on a 19k-event cold-start. 30s is the new default —
+# the prior 45s bound only held because `replay_ndjson` ran in the
+# bind path. 60s is still used for cold-start race-watchdog.
+WAIT_BOOT_SECS="${WAIT_BOOT_SECS:-30}"
 
 ACTION="start"
 

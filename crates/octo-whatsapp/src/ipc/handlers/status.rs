@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 use super::super::protocol::RpcError;
 use super::super::server::RpcHandler;
 use crate::daemon::{DaemonHandle, DaemonPhase};
+#[cfg(feature = "query")]
+use crate::query::ReplayState;
 
 #[derive(Debug)]
 pub struct StatusGet;
@@ -85,6 +87,21 @@ impl RpcHandler for StatusGet {
                     .collect::<BTreeMap<String, u64>>()
             })
             .unwrap_or_default();
+        // Query replay state (cold-start NDJSON hydrate progress).
+        // Operators tail this to know when `daemon.search` /
+        // `messages.context` will return hydrated results. `null`
+        // when the `query` feature is off or no subsystem installed.
+        let query_replay: Value = {
+            #[cfg(feature = "query")]
+            {
+                let subsystem = handle.query_subsystem();
+                encode_query_replay(subsystem.as_deref())
+            }
+            #[cfg(not(feature = "query"))]
+            {
+                Value::Null
+            }
+        };
         Ok(serde_json::json!({
             "phase": phase,
             "connected": connected,
@@ -101,8 +118,51 @@ impl RpcHandler for StatusGet {
             "rules_generations_resident": handle.rules().generations_resident(),
             "sink_lagged_total": sink_lagged_total,
             "stoolap_persist_queue_depth": 0u64,
+            "query_replay": query_replay,
         }))
     }
+}
+
+/// Encode the optional replay state into the `status.get` JSON
+/// shape. Returns `Value::Null` when the subsystem is absent so
+/// CLI/MCP clients can rely on `query_replay === null` as the
+/// "query feature off" sentinel.
+#[cfg(feature = "query")]
+fn encode_query_replay(subsystem: Option<&crate::query::QuerySubsystem>) -> Value {
+    let Some(s) = subsystem else {
+        return Value::Null;
+    };
+    let state = s.replay_status();
+    let mut obj = serde_json::Map::new();
+    obj.insert("state".into(), Value::String(state.label().into()));
+    match state {
+        ReplayState::NotStarted => {}
+        ReplayState::InProgress { lines_read } => {
+            obj.insert("lines_read".into(), Value::Number(lines_read.into()));
+        }
+        ReplayState::Completed {
+            lines_read,
+            lines_handled,
+            lines_failed_parse,
+            took_ms,
+        } => {
+            obj.insert("lines_read".into(), Value::Number(lines_read.into()));
+            obj.insert("lines_handled".into(), Value::Number(lines_handled.into()));
+            obj.insert(
+                "lines_failed_parse".into(),
+                Value::Number(lines_failed_parse.into()),
+            );
+            obj.insert("took_ms".into(), Value::Number(took_ms.into()));
+        }
+        ReplayState::Failed { lines_read, error } => {
+            obj.insert("lines_read".into(), Value::Number(lines_read.into()));
+            obj.insert("error".into(), Value::String(error));
+        }
+        ReplayState::Cancelled { lines_read } => {
+            obj.insert("lines_read".into(), Value::Number(lines_read.into()));
+        }
+    }
+    Value::Object(obj)
 }
 
 fn bot_state_label(bs: crate::daemon::BotStateMirror) -> &'static str {

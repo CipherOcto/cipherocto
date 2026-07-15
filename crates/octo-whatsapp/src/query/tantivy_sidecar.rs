@@ -158,6 +158,45 @@ impl TantivySidecar {
         Ok(())
     }
 
+    /// Add a doc WITHOUT committing. Used by bulk importers (the
+    /// NDJSON replay) to avoid 1 commit per message — a 19k-event
+    /// cold-start would otherwise spend 30+ seconds in tantivy
+    /// commits alone. Caller MUST invoke [`Self::commit_index`]
+    /// exactly once after the batch is finished so the writer's
+    /// pending docs become visible to readers.
+    ///
+    /// `commit_index` holds the same internal writer mutex as
+    /// `index_message`, so concurrent callers naturally serialize.
+    pub fn add_document_uncommitted(&self, doc: IndexedMessage<'_>) -> Result<(), TantivyError> {
+        let fields = self.fields();
+        let writer_guard = self.writer.lock().expect("writer mutex poisoned");
+        // Same replay-safety delete as the per-message path —
+        // re-importing the same event_id must collapse, not append.
+        let event_id_term = Term::from_field_i64(fields.event_id, doc.event_id);
+        writer_guard.delete_term(event_id_term);
+        writer_guard.add_document(doc!(
+            fields.event_id => doc.event_id,
+            fields.text => doc.text,
+            fields.peer => doc.peer.unwrap_or(""),
+            fields.sender => doc.sender.unwrap_or(""),
+            fields.kind => doc.kind.unwrap_or(""),
+            fields.ts_unix_ms => doc.ts_unix_ms,
+            fields.from_me => if doc.from_me { 1i64 } else { 0i64 },
+        ))?;
+        // NO commit — caller batches.
+        Ok(())
+    }
+
+    /// Flush the writer's pending docs in a single commit. Cheap
+    /// when the queue is empty (tantivy elides the segment merge).
+    /// Safe to call from a background thread (the mutex serializes
+    /// against the per-message `index_message` path).
+    pub fn commit_index(&self) -> Result<(), TantivyError> {
+        let mut writer_guard = self.writer.lock().expect("writer mutex poisoned");
+        writer_guard.commit()?;
+        Ok(())
+    }
+
     /// Run a full-text query. Returns up to `limit` hits sorted by
     /// BM25 descending.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<TextHit>, TantivyError> {

@@ -75,13 +75,22 @@ async fn append_then_reload_round_trips() {
     // New buffer + new actor, same path. Reload should hydrate.
     let buffer2 = EventsBuffer::new(100);
     let token2 = new_token();
-    let _handle2 = EventsPersisterHandle::spawn(
+    let handle2 = EventsPersisterHandle::spawn(
         buffer2.clone(),
         Some(path),
         Duration::from_millis(50),
         token2.clone(),
     )
     .expect("spawn 2");
+
+    // Cold-start fix (2026-07-15): reload happens inside the
+    // actor task, so we wait for hydration to complete before
+    // asserting on the buffer state. Without this await the
+    // test would race the actor's `load_initial_events` future.
+    handle2
+        .wait_for_reload()
+        .await
+        .expect("reload must complete");
 
     assert_eq!(buffer2.len(), 3, "all 3 events must reload");
     // Next push continues ids from 4, not 1.

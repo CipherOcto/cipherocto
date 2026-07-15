@@ -76,6 +76,17 @@ What does NOT survive (must be measured or dropped):
 - Field values (useExtended, extendedCiphertext, pqMode, extendedEphemeral) in Chrome's frame[2] remain UNMEASURED — the captured 363B has unexpected field lengths (field 1 = 48B, not the expected 32B ephemeral)
 - Decision: pivot to S6.7 patch + iterate. Field STRUCTURE is settled; field VALUES will be tuned against the live WA server
 
+**S6.7 — wacore IK ClientHello extended fields patch — LANDED**:
+- Fork: `mmacedoeu/whatsapp-rust@patch/connect-failure-tracing` at `b637129` (parent: `e32b51a`)
+- Pushed to `origin/patch/connect-failure-tracing` on the fork
+- 2 hunks in `wacore/noise/src/handshake.rs`:
+  - `build_ik_client_hello` signature extended with 4 args (`extended_ciphertext`, `extended_ephemeral_pub`, `pq_mode`, `use_extended`). Defaults to random placeholder values when caller passes `None`
+  - `IkHandshakeState::build_client_hello` caller passes `Some(WA_PQ)`, `true`, `None`/`None` for the ECDH-derived fields
+- All 7 handshake round-trip tests pass (xx/ik round-trip, ik-to-xx fallback, wrong-server-static fails at decrypt)
+- Clippy clean (`-D warnings`), cargo fmt clean
+- Cargo.toml pin bumped from `551e574` → `b637129` on adapter side
+- **Live verification (S7) pending**: need an active WA Web session to confirm server accepts the new ClientHello shape and stops 401-ing the post-handshake AppState IQ layer. If rejected with same location (lla/cco), iterate per S6.5 (try `XXKEM_2` / `IKKEM` / `IKKEM_FS` enum variants, replace placeholders with ECDH-derived values)
+
 **Next sessions** (persisted as TaskList #135/#136/#137):
 - S6.5: extend `whatsapp_modern_client_hello` to actually WS-connect + send + verify server verdict
 - S6.7: patch wacore's `build_client_hello` to populate modern fields (upstream fork commit on `mmacedoeu/whatsapp-rust`)

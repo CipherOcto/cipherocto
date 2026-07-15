@@ -108,6 +108,121 @@ pub enum CommunityAction {
     },
 }
 
+#[derive(Debug, Args)]
+pub struct NewsletterCmd {
+    #[command(subcommand)]
+    pub action: NewsletterAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NewsletterAction {
+    /// List every newsletter (channel) this account is subscribed to.
+    ListSubscribed,
+
+    /// Fetch metadata for one newsletter by its JID.
+    GetMetadata {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+    },
+
+    /// Create a new newsletter (channel).
+    Create {
+        #[arg(value_name = "NAME")]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// Join (subscribe to) a newsletter by its JID.
+    Join {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+    },
+
+    /// Leave (unsubscribe from) a newsletter by its JID.
+    Leave {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+    },
+
+    /// Send a reaction emoji to a newsletter message.
+    SendReaction {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(value_name = "SERVER_ID")]
+        server_id: u64,
+        #[arg(value_name = "EMOJI")]
+        reaction: String,
+    },
+
+    /// Edit a message in a newsletter (channel owner only).
+    EditMessage {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(value_name = "MESSAGE_ID")]
+        message_id: String,
+        #[arg(value_name = "NEW_TEXT")]
+        new_text: String,
+    },
+
+    /// Revoke (delete) a message in a newsletter (channel owner only).
+    RevokeMessage {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(value_name = "MESSAGE_ID")]
+        message_id: String,
+    },
+
+    /// Update the name/description of a newsletter you own.
+    Update {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// Mute / unmute a channel you subscribe to.
+    SetFollowerMute {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(long)]
+        muted: bool,
+    },
+
+    /// Mute / unmute notifications on a channel you own.
+    SetAdminMute {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(long)]
+        muted: bool,
+    },
+
+    /// Look up a channel by its invite-code (e.g. `ABCD1234`).
+    GetMetadataByInvite {
+        #[arg(value_name = "INVITE")]
+        invite: String,
+    },
+
+    /// Subscribe to live-update push notifications for a channel.
+    /// Server returns the duration (in seconds) the subscription is active.
+    SubscribeLiveUpdates {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+    },
+
+    /// Fetch recent messages of a channel (history backfill).
+    GetMessages {
+        #[arg(value_name = "NEWSLETTER_JID")]
+        jid: String,
+        #[arg(long, default_value = "20")]
+        count: u32,
+        #[arg(long)]
+        before: Option<String>,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Run as a long-lived daemon (the default for systemd).
@@ -173,6 +288,8 @@ pub enum Command {
     Actions(ActionsCmd),
     /// Community RPCs (Tier 7.G).
     Community(CommunityCmd),
+    /// Newsletter (channel) RPCs (Tier 7.E+).
+    Newsletter(NewsletterCmd),
 }
 
 #[derive(Debug, Args)]
@@ -1752,6 +1869,101 @@ pub fn dispatch_community(cli: &Cli, cmd: &CommunityCmd) -> anyhow::Result<()> {
     print_result(cli.json, &result)
 }
 
+/// Phase 7.E+ Newsletter bridge: CLI mirror for the 14 `newsletter.*` RPCs.
+pub fn dispatch_newsletter(cli: &Cli, cmd: &NewsletterCmd) -> anyhow::Result<()> {
+    let client = RpcClient::new(resolve_socket_path(cli));
+    let (method, params) = match &cmd.action {
+        NewsletterAction::ListSubscribed => ("newsletter.list_subscribed", serde_json::json!({})),
+        NewsletterAction::GetMetadata { jid } => {
+            ("newsletter.get_metadata", serde_json::json!({ "jid": jid }))
+        }
+        NewsletterAction::Create { name, description } => (
+            "newsletter.create",
+            serde_json::json!({
+                "name": name,
+                "description": description,
+            }),
+        ),
+        NewsletterAction::Join { jid } => ("newsletter.join", serde_json::json!({ "jid": jid })),
+        NewsletterAction::Leave { jid } => ("newsletter.leave", serde_json::json!({ "jid": jid })),
+        NewsletterAction::SendReaction {
+            jid,
+            server_id,
+            reaction,
+        } => (
+            "newsletter.send_reaction",
+            serde_json::json!({
+                "jid": jid,
+                "server_id": server_id,
+                "reaction": reaction,
+            }),
+        ),
+        NewsletterAction::EditMessage {
+            jid,
+            message_id,
+            new_text,
+        } => (
+            "newsletter.edit_message",
+            serde_json::json!({
+                "jid": jid,
+                "message_id": message_id,
+                "new_text": new_text,
+            }),
+        ),
+        NewsletterAction::RevokeMessage { jid, message_id } => (
+            "newsletter.revoke_message",
+            serde_json::json!({
+                "jid": jid,
+                "message_id": message_id,
+            }),
+        ),
+        NewsletterAction::Update {
+            jid,
+            name,
+            description,
+        } => (
+            "newsletter.update",
+            serde_json::json!({
+                "jid": jid,
+                "name": name,
+                "description": description,
+            }),
+        ),
+        NewsletterAction::SetFollowerMute { jid, muted } => (
+            "newsletter.set_follower_mute",
+            serde_json::json!({
+                "jid": jid,
+                "muted": muted,
+            }),
+        ),
+        NewsletterAction::SetAdminMute { jid, muted } => (
+            "newsletter.set_admin_mute",
+            serde_json::json!({
+                "jid": jid,
+                "muted": muted,
+            }),
+        ),
+        NewsletterAction::GetMetadataByInvite { invite } => (
+            "newsletter.get_metadata_by_invite",
+            serde_json::json!({ "invite": invite }),
+        ),
+        NewsletterAction::SubscribeLiveUpdates { jid } => (
+            "newsletter.subscribe_live_updates",
+            serde_json::json!({ "jid": jid }),
+        ),
+        NewsletterAction::GetMessages { jid, count, before } => (
+            "newsletter.get_messages",
+            serde_json::json!({
+                "jid": jid,
+                "count": count,
+                "before": before,
+            }),
+        ),
+    };
+    let result = client.call(method, params)?;
+    print_result(cli.json, &result)
+}
+
 /// Phase 1 task 14: CLI mirror for the query-layer RPCs.
 #[cfg(feature = "query")]
 pub fn dispatch_query(cli: &Cli, cmd: &QueryCmd) -> anyhow::Result<()> {
@@ -2112,6 +2324,7 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Command::Contacts(ref cmd) => dispatch_contacts(&cli, cmd),
         Command::Identity(ref cmd) => dispatch_identity(&cli, cmd),
         Command::Community(ref cmd) => dispatch_community(&cli, cmd),
+        Command::Newsletter(ref cmd) => dispatch_newsletter(&cli, cmd),
     }
 }
 

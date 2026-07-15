@@ -89,9 +89,22 @@ What does NOT survive (must be measured or dropped):
 **S7 — `whatsapp_ik_session_probe` binary landed (commit `b4a5cb5b`)**:
 Drives wacore's `IkHandshakeState::build_client_hello` against live WA server using the IK identity in `default.session.db`. Reads noise_key (64B = 32B priv + 32B raw pub), parses server_cert_chain JSON (`leaf.key` is JSON array of ints, NOT hex — verified live), constructs `KeyPair` via `from_public_and_private` (prepends `0x05` KeyType::Djb), builds IK ClientHello with S6.7 fields auto-applied, wraps in WA envelope + masked WS binary frame, sends to `web.whatsapp.com:5222`. Verdict: server reaches Noise layer (close code **1011 internal error**, not 1002 protocol error) — wire shape ACCEPTED, handshake contents rejected. Confirms S6.7 fix unblocks the wire layer. Bugfix in `whatsapp_xx_session_probe`: WS frame length cast-to-u8 truncated any payload >127B → now uses full RFC 6455 §5.3 7-bit/16-bit/64-bit extended length encoding. 159/159 lib tests pass. `cargo build --release` succeeds.
 
-**Next sessions** (persisted as TaskList):
-- S8: pair a fresh WA session and observe `bot_state=Connected` after the patched wacore completes handshake + post-handshake IQ. If still 401 at AppState layer, investigate the 6 frame bytes Chrome emits beyond wacore's IK ClientHello (the +43B gap measured in S5).
-- S9: land upstream — open PR to `mmacedoeu/whatsapp-rust` and consider forwarding to `oxidezap/whatsapp-rust` (requires re-review of S6.7 commit + 4-tuple args)
+**Phase 7.J RESOLVED — commit `ef3131d9` (2026-07-15)**:
+Three coupled bugs were masked as "401 LoggedOut" symptom:
+1. wacore@551e574's IK ClientHello missing modern fields (frames[0] shape) → fixed by S6.7 patch at `b637129`.
+2. Daemon's `adapter_config` hardcoded `$data_dir/$account/session.db` (subdir layout) while `octo-whatsapp-onboard` always writes `$data_dir/$account.session.db` (dot-separated). Daemon opened empty DB → reported LoggedOut at post-handshake. Fixed in commit `ef3131d9` by changing the default derivation; `OCTO_WHATSAPP_SESSION_PATH` env var added for explicit override; launch script passes it through.
+3. WAIT_BOOT_SECS=45 too tight for cold-start ndjson_replay of 19k events.
+
+**Live verified — first successful reconnect in this worktree**:
+- Fresh QR pair → `/home/mmacedoeu/.local/share/octo/whatsapp/default.session.db`
+- Patched daemon reads the same path via OCTO_WHATSAPP_SESSION_PATH
+- `Handshake complete (XX)` (XX took precedence via existing 902a9ff8 bypass; S6.7 patch is in the binary and would fire on next reconnect if IK path triggers)
+- `bot_state=Connected`, `session_valid=true`, `phase=connected`
+- 930/930 lib tests pass with `--features query`
+
+**Next** (S9 / cleanup):
+- Land upstream — push `b637129` to oxidizap/whatsapp-rust as PR (requires re-review of build_ik_client_hello 4-tuple signature)
+- Consider closing the IK-bypass (commit 902a9ff8) once the post-handshake IQ layer is also confirmed end-to-end via the XX path
 
 **Key source pointers**:
 - `crates/octo-adapter-whatsapp/src/bin/whatsapp_xx_session_probe.rs`: WS+Noise opener that confirms server accepts our frame[0] wire shape

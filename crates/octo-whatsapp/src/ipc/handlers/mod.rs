@@ -17,6 +17,8 @@ pub mod chats_pin;
 pub mod chats_typing;
 pub mod chats_unpin;
 pub mod clients;
+pub mod community_create;
+pub mod community_deactivate;
 pub mod contact_block;
 pub mod contact_unblock;
 pub mod contacts_get_business_profile;
@@ -159,7 +161,9 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(groups::GroupsCreate))
         .register(Arc::new(groups::GroupsList))
         .register(Arc::new(groups::GroupsInfo))
-        .register(Arc::new(groups_participants_lid_to_phone::GroupsParticipantsLidToPhone))
+        .register(Arc::new(
+            groups_participants_lid_to_phone::GroupsParticipantsLidToPhone,
+        ))
         .register(Arc::new(groups::GroupsLeave))
         .register(Arc::new(groups::GroupsDestroy))
         .register(Arc::new(groups::GroupsResolveInvite))

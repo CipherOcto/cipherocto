@@ -1849,6 +1849,10 @@ impl CoordinatorAdmin for IrcAdapter {
             invite_url: None,
             mode_flags: GroupModeFlags::default(),
             phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
 

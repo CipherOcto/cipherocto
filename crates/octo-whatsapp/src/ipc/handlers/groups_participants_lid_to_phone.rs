@@ -95,14 +95,11 @@ impl RpcHandler for GroupsParticipantsLidToPhone {
         })?;
 
         let gid = GroupId::new(p.group_jid.clone());
-        let meta = coord
-            .get_group_metadata(&gid)
-            .await
-            .map_err(|e| RpcError {
-                code: RpcErrorCode::InternalError.as_i32(),
-                message: format!("groups.participants_lid_to_phone failed: {e}"),
-                data: Some(json!({"group_jid": p.group_jid})),
-            })?;
+        let meta = coord.get_group_metadata(&gid).await.map_err(|e| RpcError {
+            code: RpcErrorCode::InternalError.as_i32(),
+            message: format!("groups.participants_lid_to_phone failed: {e}"),
+            data: Some(json!({"group_jid": p.group_jid})),
+        })?;
 
         // Build mapping list from `phone_for_peer` (populated by the
         // WA adapter's `extract_group_metadata` from
@@ -185,14 +182,24 @@ mod tests {
         // Pre-canned metadata with two LID participants both
         // carrying `phone_number` (mimics a server response).
         let mut phones = HashMap::new();
-        phones.insert("142670844444773@lid".to_string(), "5521959473159@s.whatsapp.net".to_string());
-        phones.insert("245169735610485@lid".to_string(), "5521979958315@s.whatsapp.net".to_string());
+        phones.insert(
+            "142670844444773@lid".to_string(),
+            "5521959473159@s.whatsapp.net".to_string(),
+        );
+        phones.insert(
+            "245169735610485@lid".to_string(),
+            "5521979958315@s.whatsapp.net".to_string(),
+        );
 
         let canned_meta = octo_network::dot::adapters::coordinator_admin::GroupMetadata {
             id: octo_network::dot::GroupId::new(String::from("120363411021224818@g.us")),
             subject: Some("mock".into()),
             description: None,
-            members: phones.keys().cloned().map(octo_network::dot::PeerId::new).collect(),
+            members: phones
+                .keys()
+                .cloned()
+                .map(octo_network::dot::PeerId::new)
+                .collect(),
             admins: vec![],
             invite_url: None,
             mode_flags: octo_network::dot::adapters::coordinator_admin::GroupModeFlags::default(),
@@ -205,18 +212,20 @@ mod tests {
                     )
                 })
                 .collect(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         };
 
         let h = handle();
         let mock = Arc::new(MockAdapter::new());
-        mock.coord_admin.set_canned_metadata("120363411021224818@g.us", canned_meta);
+        mock.coord_admin
+            .set_canned_metadata("120363411021224818@g.us", canned_meta);
         h.bind_adapter(mock);
 
         let r = GroupsParticipantsLidToPhone
-            .call(
-                h,
-                json!({ "group_jid": "120363411021224818@g.us" }),
-            )
+            .call(h, json!({ "group_jid": "120363411021224818@g.us" }))
             .await
             .expect("ok");
 
@@ -224,7 +233,11 @@ mod tests {
         assert_eq!(r["resolved_count"], 2);
         assert_eq!(r["requested_count"], 2);
         let empty = r["not_resolved"].as_array().unwrap();
-        assert_eq!(empty.len(), 0, "expected no not_resolved entries, got {empty:?}");
+        assert_eq!(
+            empty.len(),
+            0,
+            "expected no not_resolved entries, got {empty:?}"
+        );
 
         let mappings = r["mappings"].as_array().unwrap();
         assert!(mappings
@@ -239,7 +252,10 @@ mod tests {
     async fn lid_without_phone_lands_in_not_resolved() {
         // Two members: one carries phone_number, one doesn't.
         let mut phones = HashMap::new();
-        phones.insert("142670844444773@lid".to_string(), "5521959473159@s.whatsapp.net".to_string());
+        phones.insert(
+            "142670844444773@lid".to_string(),
+            "5521959473159@s.whatsapp.net".to_string(),
+        );
 
         let mut members = vec![
             octo_network::dot::PeerId::new("142670844444773@lid".to_string()),
@@ -264,34 +280,43 @@ mod tests {
                     )
                 })
                 .collect(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         };
 
         let h = handle();
         let mock = Arc::new(MockAdapter::new());
-        mock.coord_admin.set_canned_metadata("120363411021224818@g.us", canned_meta);
+        mock.coord_admin
+            .set_canned_metadata("120363411021224818@g.us", canned_meta);
         h.bind_adapter(mock);
 
         let r = GroupsParticipantsLidToPhone
-            .call(
-                h,
-                json!({ "group_jid": "120363411021224818@g.us" }),
-            )
+            .call(h, json!({ "group_jid": "120363411021224818@g.us" }))
             .await
             .expect("ok");
 
         assert_eq!(r["resolved_count"], 1);
         assert_eq!(r["requested_count"], 2);
         let not_resolved = r["not_resolved"].as_array().unwrap();
-        assert!(not_resolved
-            .iter()
-            .any(|v| v == "99999999999999@lid"));
+        assert!(not_resolved.iter().any(|v| v == "99999999999999@lid"));
     }
 
     #[test]
     fn strip_jid_decoration_matches_lid_pn_handler() {
-        assert_eq!(strip_jid_decoration("142670844444773@lid"), "142670844444773");
-        assert_eq!(strip_jid_decoration("5521959473159@s.whatsapp.net"), "5521959473159");
+        assert_eq!(
+            strip_jid_decoration("142670844444773@lid"),
+            "142670844444773"
+        );
+        assert_eq!(
+            strip_jid_decoration("5521959473159@s.whatsapp.net"),
+            "5521959473159"
+        );
         assert_eq!(strip_jid_decoration("+5521995544743"), "5521995544743");
-        assert_eq!(strip_jid_decoration("108074580897808:42"), "108074580897808");
+        assert_eq!(
+            strip_jid_decoration("108074580897808:42"),
+            "108074580897808"
+        );
     }
 }

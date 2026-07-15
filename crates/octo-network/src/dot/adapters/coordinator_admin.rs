@@ -363,6 +363,19 @@ pub struct GroupMetadata {
     /// attribute. Keyed by the same form the member appears in
     /// `members` (typically `@lid` when the group is LID-addressed).
     pub phone_for_peer: std::collections::HashMap<PeerId, PeerId>,
+    /// `true` for community parent groups. Mutually exclusive with
+    /// `is_default_sub_group` and `is_general_chat`.
+    #[serde(default)]
+    pub is_parent_group: bool,
+    /// JID of the parent community (only set on subgroups).
+    #[serde(default)]
+    pub parent_group_jid: Option<String>,
+    /// `true` for the default announcement subgroup of a community.
+    #[serde(default)]
+    pub is_default_sub_group: bool,
+    /// `true` for the general chat subgroup of a community.
+    #[serde(default)]
+    pub is_general_chat: bool,
 }
 
 /// Per-action capability bit-flags.

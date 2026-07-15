@@ -1346,6 +1346,10 @@ impl CoordinatorAdmin for MockCoordinatorAdmin {
             invite_url: Some("https://chat.whatsapp.com/MOCK".into()),
             mode_flags: GroupModeFlags::default(),
             phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
     async fn resolve_invite(&self, _inv: &InviteRef) -> Result<GroupHandle, PlatformAdapterError> {

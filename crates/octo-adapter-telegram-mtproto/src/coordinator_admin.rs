@@ -628,6 +628,10 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
                 requires_approval: false,
             },
             phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
 

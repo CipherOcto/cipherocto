@@ -3786,6 +3786,10 @@ fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
         invite_url: None, // requires a per-group get_invite_link round trip
         mode_flags: extract_mode_flags(raw),
         phone_for_peer,
+        is_parent_group: raw.is_parent_group,
+        parent_group_jid: raw.parent_group_jid.as_ref().map(|j| j.to_string()),
+        is_default_sub_group: raw.is_default_sub_group,
+        is_general_chat: raw.is_general_chat,
     }
 }
 

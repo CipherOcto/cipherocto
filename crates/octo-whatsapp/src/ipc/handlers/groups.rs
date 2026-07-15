@@ -80,6 +80,10 @@ fn group_metadata_to_json(m: &GroupMetadata) -> Value {
         "admins": peer_ids_to_json(&m.admins),
         "invite_url": m.invite_url,
         "members_with_phone": members_with_phone,
+        "is_parent_group": m.is_parent_group,
+        "parent_group_jid": m.parent_group_jid,
+        "is_default_sub_group": m.is_default_sub_group,
+        "is_general_chat": m.is_general_chat,
         "mode_flags": {
             "locked": m.mode_flags.locked,
             "announce_only": m.mode_flags.announce_only,

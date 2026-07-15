@@ -925,8 +925,11 @@ pub fn tool_descriptors() -> Vec<Value> {
     // since Tier 4 / Tier 6.4 but the MCP tool descriptor list never
     // grew to advertise them. Adding the 10 here closes the gap; CLI
     // subcommands (`contacts` / `identity`) live in cli.rs.
-    // Phase 7.J.1 adds `contacts.get_lid_pn_mappings` (batch LID→PN
-    // resolution via the WA server's `usync` IQ).
+    // Phase 7.J.1 adds `contacts.get_pn_lid_mappings` (batch PN→LID
+    // resolution via the WA server's `usync` IQ). The reverse
+    // direction (LID → PN) is structurally unservable through the
+    // public WA protocol — see the handler module docstring for the
+    // wire-level details.
     v.push(td(
         "contacts.is_on_whatsapp",
         "Check whether a peer JID is a registered WhatsApp user. \
@@ -942,18 +945,19 @@ pub fn tool_descriptors() -> Vec<Value> {
          when the WA server has no record (privacy-hidden).",
         schema_props_required(&[("peer", "string")], &["peer"]),
     ));
-    // Phase 7.J.1: batch LID → PN resolution via the WA server's
-    // `usync` IQ with the `<lid>` subprotocol (mirrors WA Web
-    // ContactSyncApi). Replaces N individual `contacts.get_user_info`
-    // round-trips when the caller only needs phone numbers.
+    // Phase 7.J.1: batch PN → LID resolution via the WA server's
+    // `usync` IQ with the `<lid>` subprotocol. Replaces N individual
+    // `contacts.get_user_info` round-trips when the caller only needs
+    // LIDs. The reverse direction (LID → PN) is not servable through
+    // the public WA protocol; use `contacts.save_contact` for that.
     v.push(td(
-        "contacts.get_lid_pn_mappings",
-        "Batch-resolve LIDs to phone-number forms via the WA server's \
-         `usync` IQ. Returns {mappings:[{lid, phone_number}], \
-         not_resolved:[...], requested_count, resolved_count}. Privacy-\
-         hidden LIDs land in `not_resolved`. Max 100 LIDs per call \
-         (matches WA server `usync` batch limit).",
-        schema_props_required(&[("lids", "array")], &["lids"]),
+        "contacts.get_pn_lid_mappings",
+        "Batch-resolve phone-number JIDs to their corresponding LIDs \
+         via the WA server's `usync` IQ. Returns \
+         {mappings:[{phone, lid}], not_resolved:[...], requested_count, \
+         resolved_count}. Privacy-hidden phones land in `not_resolved`. \
+         Max 100 phones per call (matches WA server `usync` batch limit).",
+        schema_props_required(&[("phones", "array")], &["phones"]),
     ));
     v.push(td(
         "contacts.get_business_profile",
@@ -1119,7 +1123,7 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         // gap note in tool_descriptors().
         "contacts.is_on_whatsapp" => "contacts.is_on_whatsapp",
         "contacts.get_user_info" => "contacts.get_user_info",
-        "contacts.get_lid_pn_mappings" => "contacts.get_lid_pn_mappings",
+        "contacts.get_pn_lid_mappings" => "contacts.get_pn_lid_mappings",
         "contacts.get_business_profile" => "contacts.get_business_profile",
         "contacts.get_profile_picture" => "contacts.get_profile_picture",
         "contacts.save_contact" => "contacts.save_contact",
@@ -1580,7 +1584,7 @@ mod tests {
 
     /// Phase 7.J: the 10 contact + identity tools that were long-lived
     /// RPC handlers on the daemon but never had MCP tool descriptors.
-    /// Phase 7.J.1 adds one more (`contacts.get_lid_pn_mappings`).
+    /// Phase 7.J.1 adds one more (`contacts.get_pn_lid_mappings`).
     /// Asserts each name shows up in `tools/list` so the
     /// `tool ... not implemented` MCP error disappears for clients.
     #[test]
@@ -1593,8 +1597,8 @@ mod tests {
         for m in &[
             "contacts.is_on_whatsapp",
             "contacts.get_user_info",
-            // Phase 7.J.1: batch LID → PN resolution via usync IQ.
-            "contacts.get_lid_pn_mappings",
+            // Phase 7.J.1: batch PN → LID resolution via usync IQ.
+            "contacts.get_pn_lid_mappings",
             "contacts.get_business_profile",
             "contacts.get_profile_picture",
             "contacts.save_contact",

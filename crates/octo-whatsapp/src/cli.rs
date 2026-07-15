@@ -690,13 +690,15 @@ pub enum ContactsAction {
         /// Peer JID (must be a phone-number JID).
         jid: String,
     },
-    /// Batch-resolve LIDs to phone-number forms via the WA server's
-    /// `usync` IQ with the `<lid>` subprotocol (mirrors the
-    /// mechanism WA Web uses to render phone numbers in groups).
-    GetLidPnMappings {
-        /// List of LID JIDs (e.g. `108074580897808@lid`). Max 100 per call.
+    /// Batch-resolve phone-number JIDs to their corresponding LIDs via the
+    /// WA server's `usync` IQ with the `<lid>` subprotocol. The reverse
+    /// direction (LID → PN) is not servable through the public WA
+    /// protocol; use `contacts.save_contact` for that.
+    GetPnLidMappings {
+        /// List of phone-number JIDs (`5521995544743@s.whatsapp.net`) or
+        /// bare E.164 numbers (`5521995544743`). Max 100 per call.
         #[arg(required = true, num_args = 1..=100)]
-        lids: Vec<String>,
+        phones: Vec<String>,
     },
     /// Fetch the profile-picture URL for a peer.
     GetProfilePicture {
@@ -1648,9 +1650,9 @@ pub fn dispatch_contacts(cli: &Cli, cmd: &ContactsCmd) -> anyhow::Result<()> {
             "contacts.get_business_profile",
             serde_json::json!({ "jid": jid }),
         ),
-        ContactsAction::GetLidPnMappings { lids } => (
-            "contacts.get_lid_pn_mappings",
-            serde_json::json!({ "lids": lids }),
+        ContactsAction::GetPnLidMappings { phones } => (
+            "contacts.get_pn_lid_mappings",
+            serde_json::json!({ "phones": phones }),
         ),
         ContactsAction::GetProfilePicture { peer, preview } => {
             let mut p = serde_json::json!({ "peer": peer });

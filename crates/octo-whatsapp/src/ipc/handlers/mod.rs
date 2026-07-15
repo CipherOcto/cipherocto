@@ -20,7 +20,7 @@ pub mod clients;
 pub mod contact_block;
 pub mod contact_unblock;
 pub mod contacts_get_business_profile;
-pub mod contacts_get_lid_pn_mappings;
+pub mod contacts_get_pn_lid_mappings;
 pub mod contacts_get_profile_picture;
 pub mod contacts_get_user_info;
 pub mod contacts_is_on_whatsapp;
@@ -256,7 +256,7 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(profile_set_status::ProfileSetStatus))
         .register(Arc::new(contacts_get_user_info::ContactsGetUserInfo))
         .register(Arc::new(
-            contacts_get_lid_pn_mappings::ContactsGetLidPnMappings,
+            contacts_get_pn_lid_mappings::ContactsGetPnLidMappings,
         ))
         // Tier 6.1: privacy + blocklist queries
         .register(Arc::new(privacy_get::PrivacyGet))
@@ -526,9 +526,11 @@ pub const TIER6_PROFILE_METHODS: &[&str] = &[
     "profile.set_push_name",
     "profile.set_status",
     "contacts.get_user_info",
-    // Phase 7.J.1: batch LID → PN resolution via `usync` IQ with
-    // `<lid>` subprotocol. Mirrors WA Web ContactSyncApi.
-    "contacts.get_lid_pn_mappings",
+    // Phase 7.J.1: batch PN → LID resolution via `usync` IQ with
+    // `<lid>` subprotocol. The reverse direction (LID → PN) is not
+    // servable through the public WA protocol — see the handler
+    // module docstring for the wire-level explanation.
+    "contacts.get_pn_lid_mappings",
 ];
 
 /// RPC method names added in Tier 6.1 (live coverage matrix):

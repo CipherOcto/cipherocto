@@ -544,10 +544,12 @@ impl WhatsAppRuntimeConfig {
             if !p.is_empty() {
                 PathBuf::from(p)
             } else {
-                self.data_dir.join(format!("{}.session.db", self.account_id))
+                self.data_dir
+                    .join(format!("{}.session.db", self.account_id))
             }
         } else {
-            self.data_dir.join(format!("{}.session.db", self.account_id))
+            self.data_dir
+                .join(format!("{}.session.db", self.account_id))
         };
         WhatsAppConfig {
             session_path: session_path.to_string_lossy().into_owned(),

@@ -1022,15 +1022,21 @@ Reverse of `contact.block`. Idempotent.
 - **Required**: `jid: string`
 - **Returns**: `{jid, blocked: false}`
 
-### `contacts.get_lid_pn_mappings`
+### `contacts.get_pn_lid_mappings`
 
-Batch LID → phone-number resolution. Issues a single `usync` IQ
-with the `<lid>` subprotocol — the same mechanism WA Web's
-`ContactSyncApi` uses to populate phone numbers in group panels.
+Batch phone-number → LID resolution. Issues a single `usync` IQ
+with the `<lid>` subprotocol — the mechanism WA Web uses internally
+to map known phone numbers to their current LID handles.
 
-- **Required**: `lids: [string]` (1–100 LIDs)
-- **Returns**: `{mappings: [{lid, phone_number}], not_resolved: [string],
+- **Required**: `phones: [string]` (1–100 phone JIDs or E.164 numbers,
+  e.g. `"5521995544743"` or `"5521995544743@s.whatsapp.net"`)
+- **Returns**: `{mappings: [{phone, lid}], not_resolved: [string],
   requested_count, resolved_count}`
+- **Direction**: PN → LID only. The reverse direction (LID → PN) is
+  not servable through the public WA protocol — the server returns
+  an empty `<list/>` plus a batch-level `<result><lid/></result>`
+  denial. For LID→PN lookups use `contacts.save_contact` to seed
+  the local address book + sync the LID/PN map from there.
 - **Safety**: invalid JIDs are filtered with a warn-log rather
   than aborting the whole batch. `MAX_BATCH = 100` matches the
   server's usync limit.

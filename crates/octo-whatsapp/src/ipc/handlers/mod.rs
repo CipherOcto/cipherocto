@@ -19,6 +19,8 @@ pub mod chats_unpin;
 pub mod clients;
 pub mod community_create;
 pub mod community_deactivate;
+pub mod community_link_subgroups;
+pub mod community_unlink_subgroups;
 pub mod contact_block;
 pub mod contact_unblock;
 pub mod contacts_get_business_profile;

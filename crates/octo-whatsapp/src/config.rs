@@ -536,15 +536,19 @@ impl WhatsAppRuntimeConfig {
 
     /// Derive the adapter-layer `WhatsAppConfig` from the runtime config.
     ///
-    /// `session_path` is computed as `$data_dir/{account_id}/session.db`,
-    /// paralleling the socket-path derivation (`$socket_dir/octo-whatsapp-{name}.sock`).
-    /// `groups` and `sender_allowlist` flow through directly so the
-    /// adapter subscribes to the configured group set with the per-group
-    /// sender restrictions.
+    /// `session_path` is computed as `$data_dir/{account_id}.session.db`.
+    /// Override with `OCTO_WHATSAPP_SESSION_PATH` for explicit operator
+    /// control.
     pub fn adapter_config(&self) -> WhatsAppConfig {
-        let mut session_path = self.data_dir.clone();
-        session_path.push(&self.account_id);
-        session_path.push("session.db");
+        let session_path = if let Ok(p) = std::env::var("OCTO_WHATSAPP_SESSION_PATH") {
+            if !p.is_empty() {
+                PathBuf::from(p)
+            } else {
+                self.data_dir.join(format!("{}.session.db", self.account_id))
+            }
+        } else {
+            self.data_dir.join(format!("{}.session.db", self.account_id))
+        };
         WhatsAppConfig {
             session_path: session_path.to_string_lossy().into_owned(),
             ws_url: None,

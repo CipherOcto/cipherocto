@@ -52,6 +52,10 @@ DATA_DIR="${OCTO_WHATSAPP_DATA_DIR:-$HOME/.local/share/octo/whatsapp}"
 # system XDG runtime dir otherwise.
 SOCKET_DIR="${OCTO_WHATSAPP_SOCKET_DIR:-/tmp/octo-wa-run}"
 SOCKET="$SOCKET_DIR/octo-whatsapp-$NAME.sock"
+# Session DB path. Default matches `octo-whatsapp-onboard`'s dot-separated
+# layout ($data_dir/$NAME.session.db). Override with
+# OCTO_WHATSAPP_SESSION_PATH for explicit control.
+SESSION_PATH="${OCTO_WHATSAPP_SESSION_PATH:-$DATA_DIR/$NAME.session.db}"
 # Daemon-side tracing log dir (Rust config log_dir). Default to a writable
 # per-user path because the compiled-in default is /var/log/octo/whatsapp
 # which an unprivileged user cannot create.
@@ -185,6 +189,7 @@ Type=simple
 Environment=OCTO_WHATSAPP_DATA_DIR=$DATA_DIR
 Environment=OCTO_WHATSAPP_SOCKET_DIR=$SOCKET_DIR
 Environment=OCTO_WHATSAPP_LOG_DIR=$LOG_DIR
+Environment=OCTO_WHATSAPP_SESSION_PATH=$SESSION_PATH
 ExecStart=$BIN --socket $SOCKET --name $NAME daemon
 Restart=on-failure
 RestartSec=2
@@ -238,6 +243,7 @@ EOF
             OCTO_WHATSAPP_DATA_DIR="$DATA_DIR" \
             OCTO_WHATSAPP_SOCKET_DIR="$SOCKET_DIR" \
             OCTO_WHATSAPP_LOG_DIR="$LOG_DIR" \
+            OCTO_WHATSAPP_SESSION_PATH="$SESSION_PATH" \
             "$BIN" \
             --socket "$SOCKET" \
             --name "$NAME" \

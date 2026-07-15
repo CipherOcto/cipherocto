@@ -56,15 +56,15 @@ fn adapter_config_derives_session_path_from_data_dir_and_account_id() {
         ..Default::default()
     };
     let ac = cfg.adapter_config();
-    assert_eq!(ac.session_path, "/var/lib/octo/whatsapp/work/session.db");
+    assert_eq!(ac.session_path, "/var/lib/octo/whatsapp/work.session.db");
 }
 
 #[test]
-fn adapter_config_default_account_id_uses_default_subdir() {
+fn adapter_config_default_account_id_uses_dot_separated_path() {
     let cfg = WhatsAppRuntimeConfig::default();
     let ac = cfg.adapter_config();
     assert!(
-        ac.session_path.ends_with("/default/session.db"),
+        ac.session_path.ends_with("/default.session.db"),
         "got {:?}",
         ac.session_path
     );

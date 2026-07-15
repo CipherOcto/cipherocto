@@ -378,6 +378,24 @@ pub struct GroupMetadata {
     pub is_general_chat: bool,
 }
 
+/// One subgroup belonging to a community, as exposed by the runtime
+/// (after conversion from the WA-specific `CommunitySubgroup`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunitySubgroupSnapshot {
+    pub jid: String,
+    pub subject: String,
+    pub participant_count: Option<u32>,
+    pub is_default_sub_group: bool,
+    pub is_general_chat: bool,
+}
+
+/// Result of linking or unlinking subgroups to/from a community.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CommunityLinkResult {
+    pub linked_or_unlinked: Vec<String>,
+    pub failed: Vec<(String, u32)>,
+}
+
 /// Per-action capability bit-flags.
 ///
 /// Returned by [`CoordinatorAdmin::admin_capabilities`]. Callers

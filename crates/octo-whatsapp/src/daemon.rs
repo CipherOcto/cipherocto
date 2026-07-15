@@ -1679,6 +1679,15 @@ async fn run_connection_watcher_inner(
                                     _ => DaemonPhase::SessionLost,
                                 };
                                 handle.set_phase(phase).await;
+                                // Spec compliance F17: keep the readiness
+                                // atomic in lockstep with phase. The atomic
+                                // powers `status.get.connected` +
+                                // `status.get.ready` + `/health/ready`;
+                                // without this it stayed false forever
+                                // because no production code path called
+                                // `set_ready(true)` — the only call site
+                                // was a test fixture in handlers/health.rs.
+                                handle.set_ready(matches!(mirror, BotStateMirror::Connected));
                             }
                             // Manage the pairing stall timer in lockstep
                             // with the state machine.

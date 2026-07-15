@@ -69,7 +69,8 @@ up (Claude Code, Cursor, Continue.dev, Windsurf, Aider via the bash shim in
 | 20 | Dynamic SQL | 3 | `sql.*` (Phase 9, `query` feature) |
 | 21 | Contacts + identity | 11 | `contacts.*`, `contact.{block,unblock}`, `identity.*` |
 | 22 | Query layer | 3 | `daemon.search`, `messages.context`, `events.find` |
-| **Total** | | **117** | |
+| 23 | Communities (Tier 7.G) | 9 | `community.{create,…}` |
+| **Total** | | **126** | |
 
 ---
 
@@ -1152,6 +1153,108 @@ that don't surface in FTS.
   `peer`, `since_ts_unix_ms`, `until_ts_unix_ms`, `limit`
 - **Returns**: `{events: [{event_id, kind, variant, peer, sender,
   chat_jid, ts_unix_ms, payload}], count, limit}`
+
+---
+
+## 23. Communities (Tier 7.G) (9)
+
+A WhatsApp **community** is a parent group that owns a set of
+linked subgroups (announcement / general / topical chats). Mutations
+happen via `w:g2` IQs (`create` / `deactivate` / `link` /
+`unlink` / `query_linked_group` / `join_subgroup` /
+`get_linked_groups_participants`); the two roster reads
+(`get_subgroups` / `get_subgroup_participant_counts`) use
+`w:muc` MEX/GraphQL under the hood. Every successful community RPC
+emits a `InboundEvent::CommunityUpdate` echo (kind = created /
+deactivated / linked / unlinked) so downstream consumers see
+lifecycle changes without polling.
+
+### `community.create`
+
+Create a new community. The optional `create_general_chat`
+flag also creates a default `general` subgroup and links it.
+
+- **Required**: `name: string`
+- **Optional**: `description: string`, `closed: bool`,
+  `allow_non_admin_sub_group_creation: bool`,
+  `create_general_chat: bool` (default `true`)
+- **Returns**: `{jid: string, general_chat_jid?: string}`
+
+### `community.deactivate`
+
+Deactivate (delete) a community. Irreversible server-side.
+
+- **Required**: `jid: string`
+- **Returns**: `{jid: string, deactivated: true}`
+
+### `community.link_subgroups`
+
+Link one or more existing subgroups under a community parent.
+Each subgroup JID must be in `X-Y@g.us` form and currently be
+administered by the bot.
+
+- **Required**: `community_jid: string`,
+  `subgroup_jids: [string]`
+- **Returns**: `{community_jid, linked: [string], failed: [
+  {jid, reason}]}`
+
+### `community.unlink_subgroups`
+
+Unlink subgroups from a community. With `remove_orphan_members`
+the bot is also removed from any subgroup it would have lost
+visibility into via the parent link.
+
+- **Required**: `community_jid: string`,
+  `subgroup_jids: [string]`
+- **Optional**: `remove_orphan_members: bool` (default `false`)
+- **Returns**: `{community_jid, unlinked: [string], failed: [
+  {jid, reason}]}`
+
+### `community.get_subgroups`
+
+List every subgroup currently linked under a community.
+
+- **Required**: `community_jid: string`
+- **Returns**: `{community_jid, subgroups: [{jid, name?,
+  subject?, participant_count?}]}`
+
+### `community.get_subgroup_participant_counts`
+
+Return a per-subgroup participant count map. Useful as a quick
+"are members still active?" check without joining every subgroup.
+
+- **Required**: `community_jid: string`
+- **Returns**: `{community_jid, counts: {subgroup_jid:
+  integer}}`
+
+### `community.query_linked_group`
+
+Query one linked subgroup's metadata via the parent community
+(safer than a direct `groups.info` when the bot is a member only
+through the link).
+
+- **Required**: `community_jid: string`, `subgroup_jid: string`
+- **Returns**: `{subgroup_jid, subject?, participant_count?,
+  linked_at_unix_ms?}`
+
+### `community.join_subgroup`
+
+Join a linked subgroup via its parent. Lets the bot opt into a
+topic subgroup without first needing a direct invite to it.
+
+- **Required**: `community_jid: string`, `subgroup_jid: string`
+- **Returns**: `{subgroup_jid, joined: true}`
+
+### `community.get_linked_groups_participants`
+
+Return participants across every group linked under a
+community. Mirrors the WA Web `CommunityParticipantsFetcher`
+aggregation. Large responses — paginate on the server side via
+`limit` once the upstream accepts it.
+
+- **Required**: `community_jid: string`
+- **Returns**: `{community_jid, participants: {subgroup_jid:
+  [string]}}`
 
 ---
 

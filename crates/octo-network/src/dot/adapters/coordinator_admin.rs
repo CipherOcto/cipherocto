@@ -385,14 +385,23 @@ pub struct CommunitySubgroupSnapshot {
     pub jid: String,
     pub subject: String,
     pub participant_count: Option<u32>,
+    /// Whether this is the default announcement subgroup of a community.
     pub is_default_sub_group: bool,
+    /// Whether this is the general chat subgroup of a community.
     pub is_general_chat: bool,
 }
 
 /// Result of linking or unlinking subgroups to/from a community.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CommunityLinkResult {
+    /// JIDs successfully linked (for a `community.link_subgroups` call)
+    /// or unlinked (for a `community.unlink_subgroups` call). The
+    /// direction is implied by the calling RPC, not by this field.
     pub linked_or_unlinked: Vec<String>,
+    /// `(jid, code)` tuples for subgroups the server rejected.
+    /// `code` is the platform-specific WA `w:g2` error attribute
+    /// carried verbatim from the wire (open-ended code space; `0`
+    /// if unknown).
     pub failed: Vec<(String, u32)>,
 }
 

@@ -352,6 +352,20 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(newsletter_send_reaction::NewsletterSendReaction))
         .register(Arc::new(newsletter_edit_message::NewsletterEditMessage))
         .register(Arc::new(newsletter_revoke_message::NewsletterRevokeMessage))
+        // Tier 7.E+: newsletter management + read (update / mutes /
+        // metadata_by_invite / live_updates / get_messages).
+        .register(Arc::new(newsletter_update::NewsletterUpdate))
+        .register(Arc::new(
+            newsletter_set_follower_mute::NewsletterSetFollowerMute,
+        ))
+        .register(Arc::new(newsletter_set_admin_mute::NewsletterSetAdminMute))
+        .register(Arc::new(
+            newsletter_get_metadata_by_invite::NewsletterGetMetadataByInvite,
+        ))
+        .register(Arc::new(
+            newsletter_subscribe_live_updates::NewsletterSubscribeLiveUpdates,
+        ))
+        .register(Arc::new(newsletter_get_messages::NewsletterGetMessages))
         .register(Arc::new(tctoken_issue::TcTokenIssue))
         .register(Arc::new(tctoken_get::TcTokenGet))
         .register(Arc::new(tctoken_prune_expired::TcTokenPruneExpired))
@@ -681,13 +695,22 @@ pub const TIER7_D_PROFILE_METHODS: &[&str] = &[
     "daemon.set_force_active_delivery_receipts",
 ];
 
-/// Tier 7.E: newsletter (5 RPCs) + tctoken (4 RPCs).
+/// Tier 7.E: newsletter (5 RPCs) + tctoken (4 RPCs) + Tier 7.E+
+/// newsletter management/read (6 RPCs: update / set_follower_mute /
+/// set_admin_mute / get_metadata_by_invite / subscribe_live_updates /
+/// get_messages).
 pub const TIER7_E_NEWSLETTER_TCTOKEN_METHODS: &[&str] = &[
     "newsletter.create",
     "newsletter.join",
     "newsletter.send_reaction",
     "newsletter.edit_message",
     "newsletter.revoke_message",
+    "newsletter.update",
+    "newsletter.set_follower_mute",
+    "newsletter.set_admin_mute",
+    "newsletter.get_metadata_by_invite",
+    "newsletter.subscribe_live_updates",
+    "newsletter.get_messages",
     "tctoken.issue",
     "tctoken.get",
     "tctoken.prune_expired",

@@ -1,13 +1,13 @@
 ---
 name: wa-mcp
-description: Comprehensive reference for all 100 MCP tools exposed by `octo-whatsapp` daemon. Use when an MCP-capable agent (Claude Code, Cursor, Continue.dev, Windsurf) needs to discover, call, or reason about WhatsApp operations through the `octo-whatsapp mcp` stdio transport. Covers tool name, parameters, return shape, and one working example per tool. Load this skill before calling any `mcp__octo-whatsapp__*` tool.
+description: Comprehensive reference for all 142 MCP tools exposed by `octo-whatsapp` daemon (140 without the `query` feature). Use when an MCP-capable agent (Claude Code, Cursor, Continue.dev, Windsurf) needs to discover, call, or reason about WhatsApp operations through the `octo-whatsapp mcp` stdio transport. Covers tool name, parameters, return shape, and one working example per tool. Load this skill before calling any `mcp__octo_whatsapp__*` tool.
 metadata:
-  version: "1.0.0"
-  tool_count: 100
-  source: crates/octo-whatsapp/src/mcp_server.rs (EXPECTED_TOOL_COUNT=100)
+  version: "1.1.0"
+  tool_count: 142
+  source: crates/octo-whatsapp/src/mcp_server.rs (EXPECTED_TOOL_COUNT=142 with query, 136 without)
 ---
 
-# wa-mcp — full MCP tool reference (117 tools, query feature on)
+# wa-mcp — full MCP tool reference (140 tools, 142 with `query` feature on)
 
 The `octo-whatsapp` daemon speaks MCP over stdio. When the MCP client is wired
 up (Claude Code, Cursor, Continue.dev, Windsurf, Aider via the bash shim in

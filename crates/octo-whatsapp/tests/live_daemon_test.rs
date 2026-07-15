@@ -624,6 +624,9 @@ async fn live_send_text_self() {
             InboundEvent::CommunityUpdate { jid, kind, .. } => {
                 format!("CommunityUpdate({jid}, {kind:?})")
             }
+            InboundEvent::NewsletterUpdate { jid, kind, .. } => {
+                format!("NewsletterUpdate({jid}, {kind:?})")
+            }
             InboundEvent::Unknown { raw, .. } => {
                 format!("Unknown({})", raw.chars().take(2000).collect::<String>())
             }
@@ -744,6 +747,9 @@ async fn live_send_text_peer() {
                 InboundEvent::Story { id, .. } => format!("Story({id})"),
                 InboundEvent::CommunityUpdate { jid, kind, .. } => {
                     format!("CommunityUpdate({jid}, {kind:?})")
+                }
+                InboundEvent::NewsletterUpdate { jid, kind, .. } => {
+                    format!("NewsletterUpdate({jid}, {kind:?})")
                 }
                 InboundEvent::Unknown { raw, .. } => {
                     format!("Unknown({})", raw.chars().take(120).collect::<String>())
@@ -3241,6 +3247,211 @@ async fn live_newsletter_leave_skips_without_setup() {
     );
     assert_eq!(resp["jid"], nl_jid);
     eprintln!("live_newsletter_leave_skips_without_setup: OK jid={nl_jid}");
+}
+
+/// `live_newsletter_update_skips_without_setup` — Phase 7.E+ T12.
+/// Owner-gated: skips unless `OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID`
+/// is set to a channel the test account owns. Calls `newsletter.update`
+/// with the original name (no-op rename) and asserts the response shape
+/// echoes the JID + updated info.
+#[tokio::test]
+async fn live_newsletter_update_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_update_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID to a newsletter JID you own)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.update",
+            json!({"jid": nl_jid.clone(), "name": "octo-wa-newsletter-test"}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.update");
+    assert_eq!(
+        resp["jid"], nl_jid,
+        "newsletter.update must echo jid; got {resp}"
+    );
+    assert!(resp["info"].is_object(), "info must be object; got {resp}");
+    eprintln!(
+        "live_newsletter_update_skips_without_setup: OK jid={nl_jid} info={}",
+        resp["info"]
+    );
+}
+
+/// `live_newsletter_set_follower_mute_skips_without_setup` —
+/// Phase 7.E+ T12. Skips unless `OCTO_WHATSAPP_TEST_NEWSLETTER_JID`
+/// is set. Calls `newsletter.set_follower_mute {muted: true}` and
+/// asserts the response echoes jid+muted=true.
+#[tokio::test]
+async fn live_newsletter_set_follower_mute_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_set_follower_mute_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_JID to a newsletter JID)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.set_follower_mute",
+            json!({"jid": nl_jid.clone(), "muted": true}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.set_follower_mute");
+    assert_eq!(
+        resp["jid"], nl_jid,
+        "newsletter.set_follower_mute must echo jid; got {resp}"
+    );
+    assert_eq!(
+        resp["muted"], true,
+        "newsletter.set_follower_mute must echo muted=true; got {resp}"
+    );
+    eprintln!("live_newsletter_set_follower_mute_skips_without_setup: OK jid={nl_jid}");
+}
+
+/// `live_newsletter_set_admin_mute_skips_without_setup` —
+/// Phase 7.E+ T12. Owner-gated: skips unless
+/// `OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID` is set.
+#[tokio::test]
+async fn live_newsletter_set_admin_mute_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_set_admin_mute_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_OWNER_JID to a newsletter JID you own)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.set_admin_mute",
+            json!({"jid": nl_jid.clone(), "muted": true}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.set_admin_mute");
+    assert_eq!(
+        resp["jid"], nl_jid,
+        "newsletter.set_admin_mute must echo jid; got {resp}"
+    );
+    assert_eq!(
+        resp["muted"], true,
+        "newsletter.set_admin_mute must echo muted=true; got {resp}"
+    );
+    eprintln!("live_newsletter_set_admin_mute_skips_without_setup: OK jid={nl_jid}");
+}
+
+/// `live_newsletter_get_metadata_by_invite_skips_without_setup` —
+/// Phase 7.E+ T12. Skips unless `OCTO_WHATSAPP_TEST_NEWSLETTER_INVITE`
+/// is set to a real invite-code (e.g. `ABCD1234`). Calls
+/// `newsletter.get_metadata_by_invite` and asserts info.jid looks
+/// like a newsletter JID.
+#[tokio::test]
+async fn live_newsletter_get_metadata_by_invite_skips_without_setup() {
+    let fix = fixture();
+    let Some(invite) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_INVITE").ok() else {
+        eprintln!(
+            "live_newsletter_get_metadata_by_invite_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_INVITE to a real invite-code)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.get_metadata_by_invite",
+            json!({"invite": invite.clone()}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.get_metadata_by_invite");
+    let info = &resp["info"];
+    assert!(info.is_object(), "info must be object; got {resp}");
+    let jid = info["jid"].as_str().unwrap_or("");
+    assert!(
+        jid.ends_with("@newsletter"),
+        "info.jid must end with @newsletter; got {jid}"
+    );
+    eprintln!(
+        "live_newsletter_get_metadata_by_invite_skips_without_setup: OK invite={invite} jid={jid}"
+    );
+}
+
+/// `live_newsletter_subscribe_live_updates_skips_without_setup` —
+/// Phase 7.E+ T12. Skips unless `OCTO_WHATSAPP_TEST_NEWSLETTER_JID`
+/// is set. Calls `newsletter.subscribe_live_updates` and asserts the
+/// response carries `duration_seconds` > 0 (server time-boxes the
+/// subscription; default 300s).
+#[tokio::test]
+async fn live_newsletter_subscribe_live_updates_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_subscribe_live_updates_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_JID to a newsletter JID)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.subscribe_live_updates",
+            json!({"jid": nl_jid.clone()}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.subscribe_live_updates");
+    assert_eq!(
+        resp["jid"], nl_jid,
+        "subscribe_live_updates must echo jid; got {resp}"
+    );
+    let dur = resp["duration_seconds"].as_u64().unwrap_or(0);
+    assert!(
+        dur > 0,
+        "duration_seconds must be > 0; got {dur} (whole resp: {resp})"
+    );
+    eprintln!(
+        "live_newsletter_subscribe_live_updates_skips_without_setup: OK jid={nl_jid} duration={dur}s"
+    );
+}
+
+/// `live_newsletter_get_messages_skips_without_setup` —
+/// Phase 7.E+ T12. Skips unless `OCTO_WHATSAPP_TEST_NEWSLETTER_JID`
+/// is set. Calls `newsletter.get_messages {count: 5}` and asserts
+/// the response carries a `messages` array (possibly empty for a
+/// brand-new channel).
+#[tokio::test]
+async fn live_newsletter_get_messages_skips_without_setup() {
+    let fix = fixture();
+    let Some(nl_jid) = std::env::var("OCTO_WHATSAPP_TEST_NEWSLETTER_JID").ok() else {
+        eprintln!(
+            "live_newsletter_get_messages_skips_without_setup: skipping (set \
+             OCTO_WHATSAPP_TEST_NEWSLETTER_JID to a newsletter JID)"
+        );
+        return;
+    };
+    let mut conn = rpc(fix).await;
+    let resp = conn
+        .call(
+            "newsletter.get_messages",
+            json!({"jid": nl_jid.clone(), "count": 5}),
+        )
+        .await;
+    inter_call_delay_for("newsletter.get_messages");
+    assert!(
+        resp["messages"].is_array(),
+        "messages must be array; got {resp}"
+    );
+    let msgs = resp["messages"].as_array().unwrap();
+    eprintln!(
+        "live_newsletter_get_messages_skips_without_setup: OK jid={nl_jid} count={}",
+        msgs.len()
+    );
 }
 
 /// `live_events_create_self` — Tier 6.5 calendar event.

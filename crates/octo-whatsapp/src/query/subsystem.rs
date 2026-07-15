@@ -40,7 +40,7 @@ fn now_unix_ms() -> i64 {
 }
 use crate::events_router::EventsSubscriber;
 use crate::query::embedder::Embedder;
-#[cfg(any(test, feature = "test-helpers"))]
+#[cfg(test)]
 use crate::query::embedder::MockEmbedder;
 use crate::query::embedder_job::{EmbedderJob, EmbedderQueue, JobConfig};
 use crate::query::ingester::{QueryError, QueryIngester};

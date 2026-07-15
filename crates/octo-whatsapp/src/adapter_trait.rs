@@ -431,6 +431,132 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         message_id: &str,
     ) -> Result<(), PlatformAdapterError>;
 
+    // ── Tier 7.E+ newsletter bridge: wacore ops not yet exposed ──
+    //
+    // The next 7 methods map to wacore `Client::newsletter().X(...)`
+    // ops that are not yet wired through to the runtime. They have
+    // default `Unimplemented` bodies so that MockAdapter (which only
+    // records call counts for the existing 5) and any future
+    // adapter automatically get a structured error rather than a
+    // compile break. Each new handler in T04 calls one of these
+    // directly.
+
+    /// Fetch metadata for one newsletter by its JID. Maps to
+    /// `Client::newsletter().get_metadata(jid)`. The live adapter
+    /// is expected to flatten the wacore `NewsletterMetadata` into
+    /// [`octo_adapter_whatsapp::NewsletterMetadataSnapshot`].
+    async fn newsletter_get_metadata(
+        &self,
+        jid: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        let _ = (jid,);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "newsletter_get_metadata".into(),
+        })
+    }
+
+    /// Update the name and/or description of a newsletter this
+    /// account administers. Maps to
+    /// `Client::newsletter().update(jid, name, description)`. Returns
+    /// the freshly-fetched metadata snapshot. wacore (551e574) does
+    /// not expose a picture-upload parameter on `update` — picture
+    /// changes go through `profile_picture` separately.
+    async fn update_newsletter(
+        &self,
+        jid: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        let _ = (jid, name, description);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "update_newsletter".into(),
+        })
+    }
+
+    /// Mute or unmute a newsletter **as a follower** (the caller
+    /// subscribes to the channel but does not administer it).
+    /// Maps to `Client::newsletter().set_follower_mute(jid, muted)`.
+    async fn set_follower_mute(&self, jid: &str, muted: bool) -> Result<(), PlatformAdapterError> {
+        let _ = (jid, muted);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "set_follower_mute".into(),
+        })
+    }
+
+    /// Mute or unmute a newsletter **as an admin** of the channel.
+    /// Maps to `Client::newsletter().set_admin_mute(jid, muted)`.
+    async fn set_admin_mute(&self, jid: &str, muted: bool) -> Result<(), PlatformAdapterError> {
+        let _ = (jid, muted);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "set_admin_mute".into(),
+        })
+    }
+
+    /// Fetch newsletter metadata by its invite code (the
+    /// `https://whatsapp.com/channel/XXXX` slug, *not* the full URL).
+    /// Maps to
+    /// `Client::newsletter().get_metadata_by_invite(invite_code)`.
+    async fn newsletter_get_metadata_by_invite(
+        &self,
+        invite_code: &str,
+    ) -> Result<octo_adapter_whatsapp::NewsletterMetadataSnapshot, PlatformAdapterError> {
+        let _ = (invite_code,);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "newsletter_get_metadata_by_invite".into(),
+        })
+    }
+
+    /// Subscribe to live-update push notifications for a newsletter
+    /// (reaction counts, message changes). The server dispatches
+    /// `<notification type="newsletter">` stanzas containing
+    /// `<live_updates>` children as `Event::NewsletterLiveUpdate`.
+    /// Maps to `Client::newsletter().subscribe_live_updates(jid)`.
+    ///
+    /// Note: wacore (551e574) does NOT take an `on: bool` toggle —
+    /// live-update subscriptions are time-boxed. The wacore call
+    /// returns `u64` — the number of seconds the subscription is
+    /// active for (typically 300s = 5 min, server-controlled). To
+    /// stop early, wait for expiry or re-call with the same `jid`
+    /// to refresh/extend the window. There is no `off` primitive
+    /// exposed; the server lets the subscription lapse.
+    async fn newsletter_subscribe_live_updates(
+        &self,
+        jid: &str,
+    ) -> Result<u64, PlatformAdapterError> {
+        let _ = jid;
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "newsletter.subscribe_live_updates".into(),
+        })
+    }
+
+    /// Fetch up to `count` historical messages from a newsletter,
+    /// optionally paginating backwards from a given message
+    /// server-id. Maps to
+    /// `Client::newsletter().get_messages(jid, count, before)`.
+    /// `before` is the `server_id` cursor (wacore: `Option<u64>`)
+    /// — `None` returns the most-recent page.
+    async fn newsletter_get_messages(
+        &self,
+        jid: &str,
+        count: u32,
+        before: Option<u64>,
+    ) -> Result<
+        Vec<octo_network::dot::adapters::coordinator_admin::NewsletterMessageSnapshot>,
+        PlatformAdapterError,
+    > {
+        let _ = (jid, count, before);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: "whatsapp".into(),
+            action: "newsletter_get_messages".into(),
+        })
+    }
+
     // ── Tier 7.G: community ──────────────────────────────────────
 
     /// Create a new community. `name` is required (non-empty).

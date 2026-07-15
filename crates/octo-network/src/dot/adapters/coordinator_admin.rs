@@ -437,6 +437,22 @@ pub struct GroupMetadataSnapshot {
     pub size: Option<u32>,
 }
 
+/// Generic newsletter message snapshot returned by
+/// `newsletter.get_messages`. Field shape mirrors what
+/// `Client::newsletter().get_messages` returns, flattened to
+/// primitives so the runtime layer does not depend on wacore
+/// types. `server_id` is the WA-side cursor used for
+/// `before`-pagination in subsequent calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsletterMessageSnapshot {
+    pub message_id: String,
+    pub server_id: u64,
+    pub sender_jid: String,
+    pub ts_unix_ms: i64,
+    pub text: Option<String>,
+    pub has_media: bool,
+}
+
 /// Single participant entry returned by
 /// `community.get_linked_groups_participants`. Flat list across
 /// every linked subgroup.

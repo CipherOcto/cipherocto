@@ -7,7 +7,7 @@ metadata:
   source: crates/octo-whatsapp/src/mcp_server.rs (EXPECTED_TOOL_COUNT=100)
 ---
 
-# wa-mcp — full MCP tool reference (100 tools)
+# wa-mcp — full MCP tool reference (117 tools, query feature on)
 
 The `octo-whatsapp` daemon speaks MCP over stdio. When the MCP client is wired
 up (Claude Code, Cursor, Continue.dev, Windsurf, Aider via the bash shim in
@@ -66,7 +66,10 @@ up (Claude Code, Cursor, Continue.dev, Windsurf, Aider via the bash shim in
 | 17 | Audit hash chain | 2 | `audit.{tail,verify}` |
 | 18 | Actions | 1 | `actions.escalate` |
 | 19 | Accounts (multi-bot) | 3 | `daemon.accounts.{list,use,info}` |
-| **Total** | | **100** | |
+| 20 | Dynamic SQL | 3 | `sql.*` (Phase 9, `query` feature) |
+| 21 | Contacts + identity | 11 | `contacts.*`, `contact.{block,unblock}`, `identity.*` |
+| 22 | Query layer | 3 | `daemon.search`, `messages.context`, `events.find` |
+| **Total** | | **117** | |
 
 ---
 
@@ -953,6 +956,155 @@ Shortcut for `SHOW TABLES`. No input.
 
 ---
 
+## 21. Contacts + identity (11)
+
+Phase 7.J contact + identity surface. The 8 `contacts.*` tools query
+WhatsApp's user-info / business-profile / profile-picture endpoints;
+the 2 `contact.{block,unblock}` tools (singular prefix) toggle the
+blocking flag on a peer; the 3 `identity.*` tools resolve PN ↔ LID
+(post-migration identifier scheme). Read-side heavy; mutations are
+scoped to the block/unblock pair.
+
+### `contacts.is_on_whatsapp`
+
+Quick probe: does the daemon have a recent presence record for this
+peer?
+
+- **Required**: `phone: string` (E.164, no `+`)
+- **Returns**: `{phone, on_whatsapp, last_seen_unix_ms?}`
+
+### `contacts.get_user_info`
+
+Enriched contact card: `status`, `profile_picture_url`,
+`verified_name`, `business_account`. Hits the WA presence cache when
+warm; falls back to a server `GetUserInfo` IQ otherwise.
+
+- **Required**: `phones: [string]` (1–100 entries)
+- **Returns**: `{contacts: [{phone, jid, status, profile_picture_url,
+  verified_name, business: bool}, ...], queried_count, found_count}`
+
+### `contacts.get_business_profile`
+
+Business-only fields (`description`, `category`, `email`,
+`website`, `hours`, `address`) for a verified business account.
+
+- **Required**: `jid: string`
+- **Returns**: `{jid, description, category, email?, website?, hours?,
+  address?}`
+
+### `contacts.get_profile_picture`
+
+Fetch the current avatar URL for a peer.
+
+- **Required**: `jid: string`, `preview: bool` (default `false`)
+- **Returns**: `{jid, url?, preview_url?, has_picture: bool}`
+
+### `contacts.save_contact`
+
+Persist a contact entry to the device's address book. Mirrors the
+WA Android "Save Contact" action.
+
+- **Required**: `phone: string`, `name: string`
+- **Returns**: `{phone, name, saved: true}`
+
+### `contact.block`
+
+Block a peer. The blocked peer cannot message this account; their
+presence stays hidden.
+
+- **Required**: `jid: string`
+- **Returns**: `{jid, blocked: true}`
+
+### `contact.unblock`
+
+Reverse of `contact.block`. Idempotent.
+
+- **Required**: `jid: string`
+- **Returns**: `{jid, blocked: false}`
+
+### `contacts.get_lid_pn_mappings`
+
+Batch LID → phone-number resolution. Issues a single `usync` IQ
+with the `<lid>` subprotocol — the same mechanism WA Web's
+`ContactSyncApi` uses to populate phone numbers in group panels.
+
+- **Required**: `lids: [string]` (1–100 LIDs)
+- **Returns**: `{mappings: [{lid, phone_number}], not_resolved: [string],
+  requested_count, resolved_count}`
+- **Safety**: invalid JIDs are filtered with a warn-log rather
+  than aborting the whole batch. `MAX_BATCH = 100` matches the
+  server's usync limit.
+
+### `identity.get_pn`
+
+Resolve a phone-number-only JID to its underlying phone (`user`)
+portion. Inverse of `identity.get_lid`.
+
+- **Required**: `jid: string` (PN-formatted)
+- **Returns**: `{jid, phone, is_lid: false}`
+
+### `identity.get_lid`
+
+Resolve a phone-number JID to its LID counterpart. Useful when
+the calling client only has the PN from before the migration.
+
+- **Required**: `jid: string`
+- **Returns**: `{jid, lid?, is_migrated: bool}`
+
+### `identity.is_lid_migrated`
+
+Standalone migration check. Cheap (no IQ fires if cache is warm).
+
+- **Required**: `phone: string`
+- **Returns**: `{phone, migrated: bool, lid?}`
+
+---
+
+## 22. Query layer (3) — `query` cargo feature
+
+Phase 8/9 read path over the derived SQL + Tantivy views. The 3
+tools below are the read-side complement to the `sql.*` write
+side; live broadcasts populate the views in the background and
+search returns whatever has been ingested by the time the call
+lands. Progress is visible via `status.get` → `query_replay.state`.
+
+### `daemon.search`
+
+Full-text + semantic search across the `messages` derived view.
+Combines BM25 (Tantivy) with cosine similarity (candle-derived
+embeddings). Filters: `peer`, `kind`, `since_ts_unix_ms`,
+`until_ts_unix_ms`. Pagination: `limit` (default 50, max 200).
+
+- **Required**: `query: string`
+- **Optional**: `peer`, `kind`, `since_ts_unix_ms`,
+  `until_ts_unix_ms`, `limit`
+- **Returns**: `{hits: [{event_id, peer, sender, ts_unix_ms, kind,
+  text, score}], query, count, limit}`
+
+### `messages.context`
+
+Windowed context around a specific event. Returns N preceding + N
+following messages from the same chat (default N=5). Sparse chats
+return fewer; isolated events return just the anchor.
+
+- **Required**: `event_id: integer`
+- **Optional**: `window` (default 5, max 50)
+- **Returns**: `{event_id, before: [...], anchor: {...}, after: [...],
+  total: integer}`
+
+### `events.find`
+
+Raw events-table filter (not the `messages` view). Useful for
+operators tailing `Receipt` / `Presence` / `Unknown` variants
+that don't surface in FTS.
+
+- **Optional**: `kind` (`Message|Receipt|Presence|Unknown`),
+  `peer`, `since_ts_unix_ms`, `until_ts_unix_ms`, `limit`
+- **Returns**: `{events: [{event_id, kind, variant, peer, sender,
+  chat_jid, ts_unix_ms, payload}], count, limit}`
+
+---
+
 ## Bootstrapping cheat-sheet
 
 When you wire `octo-whatsapp` into a fresh MCP client, walk this list:
@@ -973,7 +1125,7 @@ enumerate.
 
 | File | What it controls |
 |---|---|
-| `crates/octo-whatsapp/src/mcp_server.rs` | the 100-tool catalog + names + descriptions |
+| `crates/octo-whatsapp/src/mcp_server.rs` | the catalog + names + descriptions (`EXPECTED_TOOL_COUNT` = 117 with `query` feature, 111 without) |
 | `crates/octo-whatsapp/src/cli.rs` | CLI subcommand dispatch (kebab-case) |
 | `crates/octo-whatsapp/src/ipc/handlers/*.rs` | daemon-side IPC handlers |
 | `crates/octo-whatsapp/src/lib.rs` | module re-exports |

@@ -766,6 +766,8 @@ fn replay_ndjson_hydrates_derived_views() {
             ts_mono_ns: 0,
             from_me: false,
             is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
         };
         serde_json::to_string(&PersistedEvent {
             id,
@@ -839,6 +841,8 @@ fn replay_ndjson_is_idempotent() {
         ts_mono_ns: 0,
         from_me: false,
         is_group: false,
+        view_once: false,
+        ephemeral_expires_at_seconds: None,
     };
     let line = serde_json::to_string(&PersistedEvent {
         id: 1,

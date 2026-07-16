@@ -619,6 +619,8 @@ mod tests {
             mentions: Vec::new(),
             from_me: false,
             is_group,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
         }
     }
 

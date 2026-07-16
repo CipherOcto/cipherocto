@@ -70,6 +70,20 @@ pub enum InboundEvent {
         #[serde(default)]
         from_me: bool,
         is_group: bool,
+        /// `true` when this message was sent as a view-once (ephemeral
+        /// single-view) media message. Mirrors
+        /// `wacore::proto_helpers::MessageExt::is_view_once()`. Defaults
+        /// to `false` on deserialization to preserve NDJSON back-compat
+        /// with records written before this field existed.
+        #[serde(default)]
+        view_once: bool,
+        /// The disappearing-message expiration timer in seconds when the
+        /// chat has ephemeral messages enabled (from
+        /// `MessageInfo.ephemeral_expiration`). `None` when the timer is
+        /// inactive. Defaults to `None` on deserialization for NDJSON
+        /// back-compat.
+        #[serde(default)]
+        ephemeral_expires_at_seconds: Option<u32>,
     },
     Reaction {
         id: String,
@@ -411,6 +425,8 @@ impl InboundEvent {
             mentions_truncated: false,
             from_me: true,
             is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
         }
     }
 
@@ -452,6 +468,8 @@ impl InboundEvent {
             mentions_truncated: false,
             from_me: true,
             is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
         }
     }
 
@@ -631,6 +649,49 @@ fn unquote(s: &str) -> String {
     }
 }
 
+/// Extract view-once + disappearing-message flags from a decoded
+/// `message` block and its sibling `info` block.
+///
+/// Mirrors `wacore::proto_helpers::MessageExt::is_view_once()` on the
+/// `Debug` string form:
+/// * `view_once = true` iff any of the dedicated view-once wrappers is
+///   present (`view_once_message` / `view_once_message_v2` /
+///   `view_once_message_v2_extension` with a `MessageField::Set(...)`
+///   payload), OR a nested media block (`image_message` / `video_message`
+///   / `audio_message` / `extended_text_message`) carries
+///   `view_once: Some(true)`.
+/// * `ephemeral_expires_at_seconds = Some(N)` when `info.ephemeral_expiration`
+///   is an active `Some(N)` timer, else `None`.
+fn extract_message_flags(message_body: &str, info_body: &str) -> (bool, Option<u32>) {
+    let has_view_once_wrapper = [
+        "view_once_message",
+        "view_once_message_v2",
+        "view_once_message_v2_extension",
+    ]
+    .iter()
+    .any(|key| {
+        field(message_body, key)
+            .and_then(|s| unwrap_message_field_set(&s))
+            .is_some()
+    });
+    let nested_view_once = [
+        "image_message",
+        "video_message",
+        "audio_message",
+        "extended_text_message",
+    ]
+    .iter()
+    .filter_map(|key| field(message_body, key).and_then(|s| unwrap_message_field_set(&s)))
+    .any(|block| block.contains("view_once: Some(true)"));
+    let view_once = has_view_once_wrapper || nested_view_once;
+
+    let ephemeral_expires_at_seconds = field(info_body, "ephemeral_expiration")
+        .and_then(|v| unwrap_some(&v))
+        .and_then(|v| v.trim().parse::<u32>().ok());
+
+    (view_once, ephemeral_expires_at_seconds)
+}
+
 fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
     let id = unquote(&field(rest, "id").unwrap_or_default());
     let peer = unquote(&field(rest, "peer").unwrap_or_default());
@@ -647,6 +708,11 @@ fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         .map(|v| v == "true")
         .unwrap_or(false);
     let from_me = field(rest, "from_me").map(|v| v == "true").unwrap_or(false);
+    let view_once = field(rest, "view_once")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let ephemeral_expires_at_seconds =
+        field(rest, "ephemeral_expires_at_seconds").and_then(|v| v.trim().parse::<u32>().ok());
     let kind = match field(rest, "kind").as_deref() {
         Some("Text") => MessageKind::Text,
         Some("Image") => MessageKind::Image,
@@ -675,6 +741,8 @@ fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
         mentions_truncated,
         from_me,
         is_group,
+        view_once,
+        ephemeral_expires_at_seconds,
     }
 }
 
@@ -805,6 +873,12 @@ fn parse_inbound_message(
     // message: Message { conversation, extended_text_message, image_message, ... }
     let message_body = extract_nested_block(body, "message")?;
 
+    // View-once + disappearing-message flags, computed once and threaded
+    // into every constructor site below. Mirrors
+    // `wacore::proto_helpers::MessageExt::is_view_once()` on the Debug
+    // string form, and reads `MessageInfo.ephemeral_expiration`.
+    let (view_once, ephemeral_expires_at_seconds) = extract_message_flags(message_body, info_body);
+
     // Pull the first `MessageField::Set(<InnerType> { ... text fields ... })`
     // we recognise. Earlier fields win so plain `conversation` beats
     // `extended_text_message.text` if both are present (which they
@@ -829,6 +903,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     if let Some(ext) =
@@ -849,6 +925,8 @@ fn parse_inbound_message(
                 mentions_truncated: false,
                 from_me,
                 is_group,
+                view_once,
+                ephemeral_expires_at_seconds,
             });
         }
     }
@@ -871,6 +949,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Video
@@ -892,6 +972,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Document
@@ -913,6 +995,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Audio (no caption field — just media_key)
@@ -934,6 +1018,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Voice (ptv_message or legacy voice fields)
@@ -953,6 +1039,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Sticker
@@ -974,6 +1062,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Contact
@@ -995,6 +1085,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Location
@@ -1016,6 +1108,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Poll
@@ -1038,6 +1132,8 @@ fn parse_inbound_message(
             mentions_truncated: false,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
         });
     }
     // Reaction (nested in batch — synthesize a Reaction event)

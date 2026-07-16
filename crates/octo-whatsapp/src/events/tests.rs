@@ -42,6 +42,43 @@ fn message_text_parses() {
 }
 
 #[test]
+fn inbound_message_with_view_once_flag_round_trips() {
+    let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "", kind: Image, media_token: "tok", view_once: true, ephemeral_expires_at_seconds: 86400, is_group: false)"#;
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::Message {
+            view_once,
+            ephemeral_expires_at_seconds,
+            kind,
+            ..
+        } => {
+            assert!(view_once);
+            assert_eq!(ephemeral_expires_at_seconds, Some(86400));
+            assert_eq!(kind, MessageKind::Image);
+        }
+        other => panic!("expected Message, got {other:?}"),
+    }
+}
+
+#[test]
+fn inbound_message_without_flags_round_trips_with_defaults() {
+    let raw =
+        r#"Message(id: "M1", peer: "X", sender: "Y", text: "hi", kind: Text, is_group: false)"#;
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::Message {
+            view_once,
+            ephemeral_expires_at_seconds,
+            ..
+        } => {
+            assert!(!view_once);
+            assert_eq!(ephemeral_expires_at_seconds, None);
+        }
+        other => panic!("expected Message, got {other:?}"),
+    }
+}
+
+#[test]
 fn message_image_with_caption() {
     let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "caption here", kind: Image, media_token: "tok-abc", is_group: true)"#;
     let ev = InboundEvent::parse(env(raw));
@@ -665,9 +702,7 @@ fn newsletter_update_parses_message_received() {
     let raw = r#"NewsletterUpdate(jid: "1234567890@newsletter", kind: MessageReceived)"#;
     let ev = InboundEvent::parse(env(raw));
     match ev {
-        InboundEvent::NewsletterUpdate {
-            jid, kind, ..
-        } => {
+        InboundEvent::NewsletterUpdate { jid, kind, .. } => {
             assert_eq!(jid, "1234567890@newsletter");
             assert_eq!(kind, NewsletterUpdateKind::MessageReceived);
         }

@@ -167,6 +167,8 @@ mod tests {
             mentions_truncated: false,
             from_me: false,
             is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
         }
     }
 

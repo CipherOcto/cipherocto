@@ -197,6 +197,8 @@ mod tests {
                 mentions: Vec::new(),
                 from_me: false,
                 is_group: false,
+                view_once: false,
+                ephemeral_expires_at_seconds: None,
             }),
             caller_uid: "test".into(),
             now_ms: 0,

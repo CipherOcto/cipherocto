@@ -13,7 +13,6 @@
 //!           --profile-dir /tmp/wa-observer/run-1784043740549/chrome-profile/Default --wait-secs 60
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -34,11 +33,15 @@ struct Args {
     log_dir: PathBuf,
     #[arg(long, default_value_t = 25)]
     wait_secs: u64,
-    #[arg(long, default_value = "/tmp/wa-observer/run-1784043740549/captured-import-keys.json")]
+    #[arg(
+        long,
+        default_value = "/tmp/wa-observer/run-1784043740549/captured-import-keys.json"
+    )]
     captured_path: PathBuf,
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct CdpPage {
     #[serde(default)]
     id: String,
@@ -50,8 +53,11 @@ struct CdpPage {
 
 fn auto_find_chrome() -> Option<PathBuf> {
     for c in [
-        "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium-browser", "/usr/bin/chromium", "/snap/bin/chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+        "/snap/bin/chromium",
     ] {
         if std::path::Path::new(c).exists() {
             return Some(PathBuf::from(c));
@@ -61,7 +67,8 @@ fn auto_find_chrome() -> Option<PathBuf> {
 }
 
 fn find_latest_profile(log_dir: &std::path::Path) -> Option<PathBuf> {
-    let candidates: Vec<_> = std::fs::read_dir(log_dir).ok()?
+    let candidates: Vec<_> = std::fs::read_dir(log_dir)
+        .ok()?
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("run-"))
         .map(|e| e.path().join("chrome-profile").join("Default"))
@@ -74,63 +81,126 @@ fn find_latest_profile(log_dir: &std::path::Path) -> Option<PathBuf> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     tracing_subscriber::fmt()
-        .with_env_filter("info").with_writer(std::io::stderr).init();
+        .with_env_filter("info")
+        .with_writer(std::io::stderr)
+        .init();
 
     let captured: Value = serde_json::from_str(&std::fs::read_to_string(&args.captured_path)?)?;
-    let captured_imports = captured.get("imports").and_then(Value::as_array)
-        .context("no imports array")?.clone();
+    let captured_imports = captured
+        .get("imports")
+        .and_then(Value::as_array)
+        .context("no imports array")?
+        .clone();
 
     // Extract AES-GCM raw imports
-    let aes_keys: Vec<String> = captured_imports.iter()
+    let aes_keys: Vec<String> = captured_imports
+        .iter()
         .filter(|i| {
-            i.get("algName").and_then(Value::as_str).map(|s| s.contains("AES")).unwrap_or(false)
+            i.get("algName")
+                .and_then(Value::as_str)
+                .map(|s| s.contains("AES"))
+                .unwrap_or(false)
                 && i.get("format").and_then(Value::as_str) == Some("raw")
-                && i.get("keyDataHex").and_then(Value::as_str).map(|s| s.len() == 64).unwrap_or(false)
+                && i.get("keyDataHex")
+                    .and_then(Value::as_str)
+                    .map(|s| s.len() == 64)
+                    .unwrap_or(false)
         })
-        .filter_map(|i| i.get("keyDataHex").and_then(Value::as_str).map(|s| s.to_string()))
+        .filter_map(|i| {
+            i.get("keyDataHex")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string())
+        })
         .collect();
-    info!("using {} AES-GCM raw keys from captured imports", aes_keys.len());
+    info!(
+        "using {} AES-GCM raw keys from captured imports",
+        aes_keys.len()
+    );
 
-    let chrome = args.chrome.clone().or_else(auto_find_chrome).context("no Chrome")?;
-    let profile = if let Some(p) = args.profile_dir.clone() { p } else { find_latest_profile(&args.log_dir).context("no profile")? };
+    let chrome = args
+        .chrome
+        .clone()
+        .or_else(auto_find_chrome)
+        .context("no Chrome")?;
+    let profile = if let Some(p) = args.profile_dir.clone() {
+        p
+    } else {
+        find_latest_profile(&args.log_dir).context("no profile")?
+    };
 
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox").arg("--no-first-run").arg("--no-default-browser-check")
-        .arg("--disable-extensions").arg("--disable-features=Translate,InfiniteSessionRestore")
-        .arg("--disable-gpu").arg("--window-size=1200,900")
-        .arg(format!("--user-data-dir={}", profile.parent().unwrap_or(&profile).display()))
+        .arg("--no-sandbox")
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-extensions")
+        .arg("--disable-features=Translate,InfiniteSessionRestore")
+        .arg("--disable-gpu")
+        .arg("--window-size=1200,900")
+        .arg(format!(
+            "--user-data-dir={}",
+            profile.parent().unwrap_or(&profile).display()
+        ))
         .arg("https://web.whatsapp.com")
-        .stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true)
-        .spawn().context("spawn chrome")?;
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context("spawn chrome")?;
 
     let endpoint_url = format!("http://127.0.0.1:{}", args.port);
-    for _ in 0..60 { if reqwest::get(&endpoint_url).await.is_ok() { break; } sleep(Duration::from_millis(250)).await; }
+    for _ in 0..60 {
+        if reqwest::get(&endpoint_url).await.is_ok() {
+            break;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
 
-    let list: Vec<Value> = reqwest::get(format!("{endpoint_url}/json/list")).await?.json().await?;
-    let tab = list.iter().find(|v| v["type"] == "page" && v["webSocketDebuggerUrl"].is_string()).context("no tab")?;
-    let (mut ws, _) = tokio_tungstenite::connect_async(tab["webSocketDebuggerUrl"].as_str().unwrap()).await?;
+    let list: Vec<Value> = reqwest::get(format!("{endpoint_url}/json/list"))
+        .await?
+        .json()
+        .await?;
+    let tab = list
+        .iter()
+        .find(|v| v["type"] == "page" && v["webSocketDebuggerUrl"].is_string())
+        .context("no tab")?;
+    let (mut ws, _) =
+        tokio_tungstenite::connect_async(tab["webSocketDebuggerUrl"].as_str().unwrap()).await?;
     let mut next_id: u64 = 1;
 
     async fn send_cdp(
-        ws: &mut (impl futures::Sink<tokio_tungstenite::tungstenite::Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
-        next_id: &mut u64, method: &str, params: Value,
+        ws: &mut (impl futures::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + Unpin),
+        next_id: &mut u64,
+        method: &str,
+        params: Value,
     ) -> Result<u64> {
-        let id = *next_id; *next_id += 1;
+        let id = *next_id;
+        *next_id += 1;
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
-            json!({"id": id, "method": method, "params": params}).to_string()
-        )).await?;
+            json!({"id": id, "method": method, "params": params}).to_string(),
+        ))
+        .await?;
         Ok(id)
     }
 
     send_cdp(&mut ws, &mut next_id, "Page.enable", json!({})).await?;
-    send_cdp(&mut ws, &mut next_id, "Page.navigate", json!({"url": "https://web.whatsapp.com"})).await?;
+    send_cdp(
+        &mut ws,
+        &mut next_id,
+        "Page.navigate",
+        json!({"url": "https://web.whatsapp.com"}),
+    )
+    .await?;
 
     info!("waiting {}s for WA Web to load...", args.wait_secs);
     sleep(Duration::from_secs(args.wait_secs)).await;
 
     let aes_keys_json = serde_json::to_string(&aes_keys)?;
-    let js = format!(r#"
+    let js = format!(
+        r#"
 (async () => {{
   const keys = {aes_keys_json};
   function b64d(s) {{
@@ -243,11 +313,19 @@ async fn main() -> Result<()> {
 
   return out;
 }})()
-"#, aes_keys_json = aes_keys_json);
+"#,
+        aes_keys_json = aes_keys_json
+    );
 
-    let eval_id = send_cdp(&mut ws, &mut next_id, "Runtime.evaluate", json!({
-        "expression": js, "returnByValue": true, "awaitPromise": true,
-    })).await?;
+    let eval_id = send_cdp(
+        &mut ws,
+        &mut next_id,
+        "Runtime.evaluate",
+        json!({
+            "expression": js, "returnByValue": true, "awaitPromise": true,
+        }),
+    )
+    .await?;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut result: Option<Value> = None;
@@ -262,22 +340,38 @@ async fn main() -> Result<()> {
             tokio_tungstenite::tungstenite::Message::Text(t) => t,
             other => {
                 if let tokio_tungstenite::tungstenite::Message::Ping(p) = other {
-                    ws.send(tokio_tungstenite::tungstenite::Message::Pong(p)).await.ok();
+                    ws.send(tokio_tungstenite::tungstenite::Message::Pong(p))
+                        .await
+                        .ok();
                 }
                 continue;
             }
         };
-        let v: Value = match serde_json::from_str(&text) { Ok(v) => v, Err(_) => continue };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         if v.get("id").and_then(Value::as_u64) == Some(eval_id) {
-            if let Some(err) = v.get("error") { bail!("CDP err: {err}"); }
-            result = v.get("result").and_then(|r| r.get("result")).and_then(|r| r.get("value")).cloned();
+            if let Some(err) = v.get("error") {
+                bail!("CDP err: {err}");
+            }
+            result = v
+                .get("result")
+                .and_then(|r| r.get("result"))
+                .and_then(|r| r.get("value"))
+                .cloned();
             break;
         }
     }
     let _ = ws.close(None).await;
     let _ = child.kill().await;
 
-    let out_path = profile.parent().unwrap().parent().unwrap().join("decrypt-attempts.json");
+    let out_path = profile
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("decrypt-attempts.json");
     if let Some(v) = result {
         std::fs::write(&out_path, serde_json::to_string_pretty(&v)?)?;
         println!("== whatsapp_decrypt_with_captured_keys ==");
@@ -287,15 +381,17 @@ async fn main() -> Result<()> {
         let attempts = v.get("attempts").and_then(Value::as_array);
         let n = attempts.map(|a| a.len()).unwrap_or(0);
         let oks: Vec<&Value> = match attempts {
-            Some(arr) => {
-                arr.iter()
-                    .filter(|x| {
-                        let ok = x.get("ok");
-                        ok.and_then(Value::as_bool).unwrap_or(false)
-                            || ok.and_then(Value::as_str).map(|s| s == "exported").unwrap_or(false)
-                    })
-                    .collect()
-            }
+            Some(arr) => arr
+                .iter()
+                .filter(|x| {
+                    let ok = x.get("ok");
+                    ok.and_then(Value::as_bool).unwrap_or(false)
+                        || ok
+                            .and_then(Value::as_str)
+                            .map(|s| s == "exported")
+                            .unwrap_or(false)
+                })
+                .collect(),
             None => Vec::new(),
         };
         println!("total attempts : {n}");
@@ -305,7 +401,8 @@ async fn main() -> Result<()> {
         }
         // Specific: any exported raw key?
         let exported: Vec<&Value> = match attempts {
-            Some(arr) => arr.iter()
+            Some(arr) => arr
+                .iter()
                 .filter(|x| x.get("ok").and_then(Value::as_str) == Some("exported"))
                 .collect(),
             None => Vec::new(),

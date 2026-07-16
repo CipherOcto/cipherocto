@@ -124,12 +124,11 @@ fn find_seq(haystack: &[u8], start: usize, needle: &[u8]) -> Option<usize> {
 }
 
 fn find_byte(haystack: &[u8], start: usize, target: u8, max: usize) -> Option<usize> {
-    for i in start..std::cmp::min(haystack.len(), start + max) {
-        if haystack[i] == target {
-            return Some(i);
-        }
-    }
-    None
+    let end = std::cmp::min(haystack.len(), start + max);
+    haystack[start..end]
+        .iter()
+        .position(|&b| b == target)
+        .map(|i| i + start)
 }
 
 fn hex_lower(b: &[u8]) -> String {

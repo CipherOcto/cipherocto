@@ -30,7 +30,7 @@ fn main() -> ExitCode {
     let mut session_path: Option<PathBuf> = None;
     let mut json_mode = false;
     let mut args = env::args().skip(1);
-    while let Some(a) = args.next() {
+    for a in args.by_ref() {
         match a.as_str() {
             "--json" => json_mode = true,
             other => {
@@ -40,6 +40,7 @@ fn main() -> ExitCode {
             }
         }
     }
+    // for-loop over args (was while-let Some(a) = args.next())
     let path: PathBuf = session_path.unwrap_or_else(|| {
         let home = env::var("HOME").unwrap_or_else(|_| ".".into());
         PathBuf::from(format!(

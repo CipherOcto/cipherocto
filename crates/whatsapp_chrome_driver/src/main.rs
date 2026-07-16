@@ -43,7 +43,10 @@ use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "whatsapp_chrome_driver", about = "Headless Chrome → web.whatsapp.com via CDP")]
+#[command(
+    name = "whatsapp_chrome_driver",
+    about = "Headless Chrome → web.whatsapp.com via CDP"
+)]
 struct Args {
     /// Path to google-chrome / chromium binary (auto-detected if omitted).
     #[arg(long)]
@@ -202,13 +205,15 @@ async fn main() -> Result<()> {
     let pages: Vec<CdpPage> = raw_list
         .into_iter()
         .enumerate()
-        .filter_map(|(i, v)| match serde_json::from_value::<CdpPage>(v.clone()) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                tracing::warn!("tab[{i}] decode err: {e}; raw={v}");
-                None
-            }
-        })
+        .filter_map(
+            |(i, v)| match serde_json::from_value::<CdpPage>(v.clone()) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!("tab[{i}] decode err: {e}; raw={v}");
+                    None
+                }
+            },
+        )
         .collect();
 
     // Prefer the first type=page tab with a webSocketDebuggerUrl. Background
@@ -232,24 +237,26 @@ async fn main() -> Result<()> {
         );
     }
     let tab = owned_tab.context("could not find or create a CDP page tab")?;
-    info!(
-        "driving tab id={} url={:?}",
-        tab.id, tab.url
-    );
+    info!("driving tab id={} url={:?}", tab.id, tab.url);
 
     // Open WS to tab.
     let (mut ws, _) = tokio_tungstenite::connect_async(&tab.web_socket_debugger_url).await?;
     let mut next_id: u64 = 1;
     async fn send_cdp(
-        ws: &mut (impl futures::Sink<tokio_tungstenite::tungstenite::Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
+        ws: &mut (impl futures::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + Unpin),
         next_id: &mut u64,
         method: &str,
         params: Value,
     ) -> Result<()> {
         let msg = json!({"id": *next_id, "method": method, "params": params});
         *next_id += 1;
-        ws.send(tokio_tungstenite::tungstenite::Message::Text(msg.to_string()))
-            .await?;
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            msg.to_string(),
+        ))
+        .await?;
         Ok(())
     }
 
@@ -326,12 +333,12 @@ async fn main() -> Result<()> {
         let mut summary = String::new();
         match method {
             "Network.requestWillBeSent" => {
-                let req = params.pointer("/params/request").cloned().unwrap_or(json!({}));
+                let req = params
+                    .pointer("/params/request")
+                    .cloned()
+                    .unwrap_or(json!({}));
                 let url = req.get("url").and_then(Value::as_str).unwrap_or("");
-                let method_r = req
-                    .get("method")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let method_r = req.get("method").and_then(Value::as_str).unwrap_or("");
                 let headers = req
                     .get("headers")
                     .and_then(Value::as_object)
@@ -365,12 +372,10 @@ async fn main() -> Result<()> {
                     .pointer("/params/response/payloadData")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let decoded_len = base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    payload_b64,
-                )
-                .map(|v| v.len())
-                .unwrap_or(0);
+                let decoded_len =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_b64)
+                        .map(|v| v.len())
+                        .unwrap_or(0);
                 frame_count_sent += 1;
                 summary = format!(
                     "sent WS frame (b64 {}B -> decoded {decoded_len}B): {payload_b64}",
@@ -382,12 +387,10 @@ async fn main() -> Result<()> {
                     .pointer("/params/response/payloadData")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let decoded_len = base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    payload_b64,
-                )
-                .map(|v| v.len())
-                .unwrap_or(0);
+                let decoded_len =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_b64)
+                        .map(|v| v.len())
+                        .unwrap_or(0);
                 frame_count_received += 1;
                 summary = format!(
                     "recv WS frame (b64 {}B -> decoded {decoded_len}B): {payload_b64}",
@@ -395,10 +398,16 @@ async fn main() -> Result<()> {
                 );
             }
             "Network.responseReceived" => {
-                let r = params.pointer("/params/response").cloned().unwrap_or(json!({}));
+                let r = params
+                    .pointer("/params/response")
+                    .cloned()
+                    .unwrap_or(json!({}));
                 let url = r.get("url").and_then(Value::as_str).unwrap_or("");
                 if url.contains("whatsapp") {
-                    summary = format!("response {url} status={}", r.get("status").unwrap_or(&json!(0)));
+                    summary = format!(
+                        "response {url} status={}",
+                        r.get("status").unwrap_or(&json!(0))
+                    );
                 }
             }
             "Page.frameNavigated" => {
@@ -449,10 +458,7 @@ async fn main() -> Result<()> {
 
     println!();
     println!("== whatsapp_chrome_driver summary ==");
-    println!(
-        "  chrome binary            : {}",
-        chrome.display()
-    );
+    println!("  chrome binary            : {}", chrome.display());
     println!("  cdp port                 : {}", args.port);
     println!("  target url               : {}", args.url);
     println!("  duration                 : {}s", args.duration);

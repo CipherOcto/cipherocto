@@ -116,7 +116,7 @@ impl RpcHandler for MessagesListUnavailable {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "query"))]
 mod tests {
     use super::*;
     use crate::daemon::Daemon;

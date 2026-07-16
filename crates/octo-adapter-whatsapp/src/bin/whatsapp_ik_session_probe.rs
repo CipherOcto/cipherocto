@@ -4,41 +4,34 @@
 //! WA server using the IK identity persisted in `default.session.db`.
 //!
 //! Why a separate binary from `whatsapp_xx_session_probe`:
-//!   - That binary sends a raw XX opener (ephemeral only, no identity) and
-//!     confirms the WA binary envelope is accepted at the WS layer.
-//!   - This binary drives the FULL IK path — server_cert_chain reuse, identity
-//!     static pub encrypted into frame[0], 0-RTT payload — using the modern
-//!     `HandshakeMessage.ClientHello` shape patched in S6.7
-//!     (useExtended + extendedCiphertext + pqMode + extendedEphemeral).
+//!     - That binary sends a raw XX opener (ephemeral only, no identity) and
+//!       confirms the WA binary envelope is accepted at the WS layer.
+//!     - This binary drives the FULL IK path — server_cert_chain reuse, identity
+//!       static pub encrypted into frame[0], 0-RTT payload — using the modern
+//!       `HandshakeMessage.ClientHello` shape patched in S6.7
+//!       (useExtended + extendedCiphertext + pqMode + extendedEphemeral).
 //!
 //! End-state for S7:
 //!
-//! - Server replies with frame[1] (server hello, ephemeral + enc(server_static)
-//!   + enc(cert)) — IK ClientHello shape ACCEPTED. The S6.7 patch was
-//!   the right fix at the handshake layer. Downstream post-handshake IQ
-//!   401 may still fire, but the noise layer is no longer the gate.
-//! - Server replies with 401 / closes connection — server rejects the
-//!   modern ClientHello shape. Iterate per S6.5: try XXKEM_2 / IKKEM /
-//!   IKKEM_FS pqMode variants, replace random placeholders with
-//!   ECDH-derived extendedCiphertext / extendedEphemeral.
-//! - Server replies with `Wa-6` / 460 — noise-layer rejection (cert chain
-//!   stale, IK not enabled). Means we need to re-pair first.
+//! - Server replies with frame[1] (server hello, ephemeral + enc(server_static) + enc(cert)). IK ClientHello shape ACCEPTED. The S6.7 patch was the right fix at the handshake layer. Downstream post-handshake IQ 401 may still fire, but the noise layer is no longer the gate. Server closes the connection shortly after with code 1011.
+//! - Server replies with 401 / closes connection. Server rejects the modern ClientHello shape. Iterate per S6.5: try XXKEM_2 / IKKEM / IKKEM_FS pqMode variants, replace random placeholders with ECDH-derived extendedCiphertext / extendedEphemeral.
+//! - Server replies with `Wa-6` / 460. Noise-layer rejection (cert chain stale, IK not enabled). Means we need to re-pair first.
 //!
 //! Run:
-//!     cargo run -p octo-adapter-whatsapp --bin whatsapp_ik_session_probe --release
+//!       cargo run -p octo-adapter-whatsapp --bin whatsapp_ik_session_probe --release
 //!
 //! Output (stdout):
-//!     == whatsapp_ik_session_probe ==
-//!     session path    : /.../default.session.db
-//!     ik_identity_fp  : <16 hex chars>          ← SHA-256 of noise_key (truncated)
-//!     server_cert     : Some (N B; not_before=X, not_after=Y)
-//!     ik enabled      : true/false              ← leaf validity window vs now
-//!     server          : web.whatsapp.com:5222
-//!     frame[0] hex    : <N bytes>
-//!     ws upgrade resp : HTTP/1.1 101 Switching Protocols
-//!     server reply    : <N bytes>
-//!     server reply head: <hex>
-//!     verdict         : MATCHES WA FRAME[1] SHAPE / DIFFERENT / NO REPLY / 401
+//!       == whatsapp_ik_session_probe ==
+//!       session path    : /.../default.session.db
+//!       ik_identity_fp  : <16 hex chars>          ← SHA-256 of noise_key (truncated)
+//!       server_cert     : Some (N B; not_before=X, not_after=Y)
+//!       ik enabled      : true/false              ← leaf validity window vs now
+//!       server          : web.whatsapp.com:5222
+//!       frame[0] hex    : <N bytes>
+//!       ws upgrade resp : HTTP/1.1 101 Switching Protocols
+//!       server reply    : <N bytes>
+//!       server reply head: <hex>
+//!       verdict         : MATCHES WA FRAME[1] SHAPE / DIFFERENT / NO REPLY / 401
 //!
 //! Local-only / no push. Standalone investigation binary.
 
@@ -460,18 +453,14 @@ fn strip_ws_header(buf: &[u8]) -> Vec<u8> {
     let masked = (buf[1] & 0x80) != 0;
     let mut payload_len = (buf[1] & 0x7f) as usize;
     let mut header_len = 2;
-    if payload_len == 126 {
-        if buf.len() >= 4 {
-            payload_len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-            header_len = 4;
-        }
-    } else if payload_len == 127 {
-        if buf.len() >= 10 {
-            payload_len = u64::from_be_bytes([
-                buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-            ]) as usize;
-            header_len = 10;
-        }
+    if payload_len == 126 && buf.len() >= 4 {
+        payload_len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+        header_len = 4;
+    } else if payload_len == 127 && buf.len() >= 10 {
+        payload_len = u64::from_be_bytes([
+            buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
+        ]) as usize;
+        header_len = 10;
     }
     if masked {
         if buf.len() >= header_len + 4 {

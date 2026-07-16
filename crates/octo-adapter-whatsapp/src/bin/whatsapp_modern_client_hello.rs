@@ -57,14 +57,24 @@ fn main() -> Result<()> {
     println!("== whatsapp_modern_client_hello ==");
     println!("modern ClientHello bytes : {}", proto_bytes.len());
     println!("  ephemeral              : 32B");
-    println!("  encrypted static       : {}B ({}B cipher + 16B tag)", encrypted_static.len(), encrypted_static.len() - 16);
-    println!("  encrypted payload      : {}B (signed cert)", encrypted_payload.len());
+    println!(
+        "  encrypted static       : {}B ({}B cipher + 16B tag)",
+        encrypted_static.len(),
+        encrypted_static.len() - 16
+    );
+    println!(
+        "  encrypted payload      : {}B (signed cert)",
+        encrypted_payload.len()
+    );
     println!("  useExtended            : true");
     println!("  extendedCiphertext     : {}B", extended_ciphertext.len());
     println!("  pqMode                 : WA_PQ ({pq_mode})");
     println!("  extendedEphemeral      : 32B");
     println!();
-    println!("plain XX ClientHello     : {}B (only ephemeral)", plain_xx_bytes.len());
+    println!(
+        "plain XX ClientHello     : {}B (only ephemeral)",
+        plain_xx_bytes.len()
+    );
     println!();
     println!("Chrome 150 observed      : {CHROME_EXPECTED_FRAME2_LEN}B");
     // Suppress unused-const warnings
@@ -81,8 +91,14 @@ fn main() -> Result<()> {
         gap
     );
     println!();
-    println!("Encoded (modern) hex prefix : {}", hex::encode(&proto_bytes[..32.min(proto_bytes.len())]));
-    println!("Encoded (plain XX) hex prefix: {}", hex::encode(&plain_xx_bytes));
+    println!(
+        "Encoded (modern) hex prefix : {}",
+        hex::encode(&proto_bytes[..32.min(proto_bytes.len())])
+    );
+    println!(
+        "Encoded (plain XX) hex prefix: {}",
+        hex::encode(&plain_xx_bytes)
+    );
 
     Ok(())
 }

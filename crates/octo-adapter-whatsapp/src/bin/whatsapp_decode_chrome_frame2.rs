@@ -168,7 +168,7 @@ fn run() -> Result<()> {
         "  reconnect server ephem (32B hex)  : {}",
         &f1_recon_payload[4..68]
     );
-    let same_ephem = &f1_init_payload[4..68] == &f1_recon_payload[4..68];
+    let same_ephem = f1_init_payload[4..68] == f1_recon_payload[4..68];
     println!(
         "  same ephemeral?                   : {}",
         if same_ephem { "YES" } else { "NO" }

@@ -18,11 +18,11 @@
 //! Run:
 //!   cargo run -p octo-adapter-whatsapp --bin whatsapp_decode_frame2_full --release
 
-use std::process::ExitCode;
-use std::path::PathBuf;
 use anyhow::{Context, Result};
 use base64::Engine;
 use serde::Deserialize;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 #[derive(Debug, Deserialize)]
 struct CapturedEvent {
@@ -51,14 +51,19 @@ fn run() -> Result<()> {
     let run_dir = std::fs::read_dir(&trace_dir)?
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("run-"))
-        .max_by_key(|e| e.file_name()).context("no run-* dirs found")?.path();
+        .max_by_key(|e| e.file_name())
+        .context("no run-* dirs found")?
+        .path();
 
     let candidates: Vec<_> = std::fs::read_dir(&trace_dir)?
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("run-"))
-        .map(|e| e.path()).collect();
-    let mut with_both: Vec<_> = candidates.iter()
-        .filter(|p| p.join("reconnect.jsonl").exists()).collect();
+        .map(|e| e.path())
+        .collect();
+    let mut with_both: Vec<_> = candidates
+        .iter()
+        .filter(|p| p.join("reconnect.jsonl").exists())
+        .collect();
     with_both.sort();
     let chosen = with_both.last().cloned().unwrap_or(&run_dir).clone();
     println!("== whatsapp_decode_frame2_full ==");
@@ -68,7 +73,10 @@ fn run() -> Result<()> {
     println!("frame[2]       : {}B (decoded from b64)", frame2.len());
 
     // Dump hex
-    let hex_str = frame2.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex_str = frame2
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     println!();
     println!("[hex dump] full {} bytes:", hex_str.len() / 2);
     for (i, chunk) in hex_str.as_bytes().chunks(64).enumerate() {
@@ -84,7 +92,10 @@ fn run() -> Result<()> {
     // at offset +6.
     let payload = &frame2[6..];
     println!();
-    println!("[protobuf] HandshakeMessage.ClientHello (full {}B):", payload.len());
+    println!(
+        "[protobuf] HandshakeMessage.ClientHello (full {}B):",
+        payload.len()
+    );
 
     let mut pos = 0;
     while pos < payload.len() {
@@ -110,8 +121,15 @@ fn run() -> Result<()> {
                     break;
                 }
                 let slice = &payload[pos..pos + len];
-                let preview = slice.iter().take(32).map(|b| format!("{b:02x}")).collect::<String>();
-                println!("  field {field_number:2} (LEN={len:3}B): head={preview}{}", if len > 32 { "..." } else { "" });
+                let preview = slice
+                    .iter()
+                    .take(32)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                println!(
+                    "  field {field_number:2} (LEN={len:3}B): head={preview}{}",
+                    if len > 32 { "..." } else { "" }
+                );
                 // For field 3 (payload), show the proto-encoded signed cert contents
                 if field_number == 3 && len > 0 {
                     // Try to decode the inner protobuf
@@ -133,14 +151,18 @@ fn run() -> Result<()> {
             }
             1 => {
                 // FIXED64
-                if pos + 8 > payload.len() { break; }
+                if pos + 8 > payload.len() {
+                    break;
+                }
                 let _ = &payload[pos..pos + 8];
                 pos += 8;
                 println!("  field {field_number:2} (FIXED64)");
             }
             5 => {
                 // FIXED32
-                if pos + 4 > payload.len() { break; }
+                if pos + 4 > payload.len() {
+                    break;
+                }
                 let _ = &payload[pos..pos + 4];
                 pos += 4;
                 println!("  field {field_number:2} (FIXED32)");
@@ -174,10 +196,15 @@ fn decode_inner_payload(slice: &[u8], indent: &str) {
                 };
                 pos += n2;
                 let len = len as usize;
-                if pos + len > slice.len() { break; }
+                if pos + len > slice.len() {
+                    break;
+                }
                 let pre = &slice[pos..pos + len.min(20)];
                 let phex = pre.iter().map(|b| format!("{b:02x}")).collect::<String>();
-                println!("{indent}field {fnum:2} (LEN={len:3}B): head={phex}{}", if len > 20 { "..." } else { "" });
+                println!(
+                    "{indent}field {fnum:2} (LEN={len:3}B): head={phex}{}",
+                    if len > 20 { "..." } else { "" }
+                );
                 pos += len;
             }
             0 => {
@@ -214,7 +241,9 @@ fn read_frame_b64(path: &PathBuf, idx: usize, suffix: &str) -> Result<Vec<u8>> {
     let mut counter = 0usize;
     for line in std::io::BufRead::lines(reader) {
         let line = line?;
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let event: CapturedEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(_) => continue,
@@ -222,13 +251,21 @@ fn read_frame_b64(path: &PathBuf, idx: usize, suffix: &str) -> Result<Vec<u8>> {
         let method = format!("Network.webSocket{suffix}");
         if event.method == method {
             if counter == idx {
-                let payload_b64 = event.params.pointer("/response/payloadData")
-                    .and_then(serde_json::Value::as_str).unwrap_or("");
-                return Ok(base64::engine::general_purpose::STANDARD.decode(payload_b64)
-                    .with_context(|| format!("decode b64 frame {idx}"))?);
+                let payload_b64 = event
+                    .params
+                    .pointer("/response/payloadData")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(payload_b64)
+                    .with_context(|| format!("decode b64 frame {idx}"))?;
+                return Ok(decoded);
             }
             counter += 1;
         }
     }
-    anyhow::bail!("could not find Network.webSocket{suffix} #{idx} in {}", path.display())
+    anyhow::bail!(
+        "could not find Network.webSocket{suffix} #{idx} in {}",
+        path.display()
+    )
 }

@@ -157,12 +157,7 @@ fn page_html(row: &str, algo: &str, extractable: bool, key_bytes_hex: &str) -> S
     )
 }
 
-async fn drive_one(
-    chrome: &PathBuf,
-    port: u16,
-    profile_dir: PathBuf,
-    html: &str,
-) -> Result<Value> {
+async fn drive_one(chrome: &PathBuf, port: u16, profile_dir: PathBuf, html: &str) -> Result<Value> {
     let profile_user_dir = profile_dir.join("chrome-user-data");
     std::fs::create_dir_all(&profile_user_dir).ok();
 
@@ -217,8 +212,7 @@ async fn drive_one(
     let tab = tab.context("no page tab")?;
     info!("driving tab id={}", tab.id);
 
-    let (mut ws, _) =
-        tokio_tungstenite::connect_async(&tab.web_socket_debugger_url).await?;
+    let (mut ws, _) = tokio_tungstenite::connect_async(&tab.web_socket_debugger_url).await?;
     let mut next_id: u64 = 1;
 
     async fn send_cdp(
@@ -347,7 +341,9 @@ async fn main() -> Result<()> {
         .init();
 
     let chrome = auto_find_chrome().context("no chrome")?;
-    let chrome_ver = std::process::Command::new(&chrome).arg("--version").output()?;
+    let chrome_ver = std::process::Command::new(&chrome)
+        .arg("--version")
+        .output()?;
     info!(
         "chrome version: {}",
         String::from_utf8_lossy(&chrome_ver.stdout).trim()
@@ -359,9 +355,9 @@ async fn main() -> Result<()> {
     // (CC..CCDD..DD) are designed so a byte-exact grep through the LDB files
     // can detect Case 1 (raw embedded). All 4 keys are distinct.
     let rows = [
-        ("aes-ext-true",  "AES-GCM", true,  "aa".repeat(32)),
+        ("aes-ext-true", "AES-GCM", true, "aa".repeat(32)),
         ("aes-ext-false", "AES-GCM", false, "bb".repeat(32)),
-        ("hmac-ext-true",  "HMAC", true,  "cc".repeat(32)),
+        ("hmac-ext-true", "HMAC", true, "cc".repeat(32)),
         ("hmac-ext-false", "HMAC", false, "dd".repeat(32)),
     ];
 
@@ -394,7 +390,11 @@ async fn main() -> Result<()> {
         let html = page_html(row, algo, *ext, key_hex);
         info!(
             "row={} algo={} extractable={} key={} port={}",
-            row, algo, ext, &hex(key_hex.as_bytes())[..16], port
+            row,
+            algo,
+            ext,
+            &hex(key_hex.as_bytes())[..16],
+            port
         );
 
         let diag = drive_one(&chrome, port, profile_dir.clone(), &html).await?;
@@ -405,10 +405,7 @@ async fn main() -> Result<()> {
 
         // Save the key bytes alongside the profile so the diff binary knows
         // what to grep for.
-        std::fs::write(
-            profile_dir.join("expected-key.hex"),
-            key_hex.as_bytes(),
-        )?;
+        std::fs::write(profile_dir.join("expected-key.hex"), key_hex.as_bytes())?;
     }
 
     let final_manifest = json!({
@@ -417,10 +414,7 @@ async fn main() -> Result<()> {
         "rows": manifest_arr,
     });
     let final_path = manifest_path.clone();
-    std::fs::write(
-        final_path,
-        serde_json::to_string_pretty(&final_manifest)?,
-    )?;
+    std::fs::write(final_path, serde_json::to_string_pretty(&final_manifest)?)?;
     println!("manifest written to {}", manifest_path.display());
     println!("run `whatsapp_idb_leveldb_diff` next");
     Ok(())

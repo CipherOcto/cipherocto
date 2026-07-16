@@ -203,7 +203,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    info!("navigated; waiting {}s for WA Web to boot...", args.wait_secs);
+    info!(
+        "navigated; waiting {}s for WA Web to boot...",
+        args.wait_secs
+    );
     sleep(Duration::from_secs(args.wait_secs)).await;
 
     // Brute-force KDF candidates. The IndexedDB signal-static-pubkey
@@ -595,30 +598,53 @@ async fn main() -> Result<()> {
 
             // Summarize
             if let Some(attempts) = v.get("attempts").and_then(Value::as_array) {
-                let ok_count = attempts.iter().filter(|a| a.get("ok") == Some(&json!(true))).count();
+                let ok_count = attempts
+                    .iter()
+                    .filter(|a| a.get("ok") == Some(&json!(true)))
+                    .count();
                 let fatal = v.get("fatal");
-                println!("attempts       : {} total, {} decrypted cleanly", attempts.len(), ok_count);
+                println!(
+                    "attempts       : {} total, {} decrypted cleanly",
+                    attempts.len(),
+                    ok_count
+                );
                 if let Some(f) = fatal {
                     println!("fatal          : {f}");
                 }
                 if let Some(sm) = v.get("signalMeta") {
-                    println!("storedType     : {}", sm.get("storedType").cloned().unwrap_or(json!("?")));
-                    println!("storedCtor     : {}", sm.get("storedCtor").cloned().unwrap_or(json!("?")));
-                    println!("exportable     : {}", sm.get("exportable").cloned().unwrap_or(json!("?")));
+                    println!(
+                        "storedType     : {}",
+                        sm.get("storedType").cloned().unwrap_or(json!("?"))
+                    );
+                    println!(
+                        "storedCtor     : {}",
+                        sm.get("storedCtor").cloned().unwrap_or(json!("?"))
+                    );
+                    println!(
+                        "exportable     : {}",
+                        sm.get("exportable").cloned().unwrap_or(json!("?"))
+                    );
                     if let Some(ct) = sm.get("ciphertextLen") {
                         println!("ciphertextLen  : {ct}");
                     }
                 }
                 println!();
-                let oks: Vec<&Value> = attempts.iter().filter(|a| a.get("ok") == Some(&json!(true))).collect();
+                let oks: Vec<&Value> = attempts
+                    .iter()
+                    .filter(|a| a.get("ok") == Some(&json!(true)))
+                    .collect();
                 if !oks.is_empty() {
                     println!("DECRYPTION SUCCEEDED:");
                     for ok in oks {
-                        println!("  {} iv={} len={} ptHead={}",
+                        println!(
+                            "  {} iv={} len={} ptHead={}",
                             ok.get("name").and_then(Value::as_str).unwrap_or("?"),
                             ok.get("ivIdx").cloned().unwrap_or(json!("?")),
                             ok.get("plaintextLen").cloned().unwrap_or(json!("?")),
-                            ok.get("plaintextHead").and_then(Value::as_str).unwrap_or("?"));
+                            ok.get("plaintextHead")
+                                .and_then(Value::as_str)
+                                .unwrap_or("?")
+                        );
                     }
                 } else {
                     println!("NO KDF CANDIDATE DECRYPTED.");

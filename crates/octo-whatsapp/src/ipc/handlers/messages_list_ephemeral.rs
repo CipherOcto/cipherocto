@@ -96,7 +96,7 @@ impl RpcHandler for MessagesListEphemeral {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "query"))]
 mod tests {
     use super::*;
     use crate::daemon::Daemon;

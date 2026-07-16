@@ -67,8 +67,15 @@ fn main() -> Result<()> {
             .map(|b| format!("{:02x}", b))
             .collect::<String>();
         // Pretty print in 32-hex (16 byte) rows
-        println!("--- hit #{} offset={} (file range [{}..{})) ---", n, pos, lo, hi);
-        for line in hex.as_bytes().chunks(48).map(|c| std::str::from_utf8(c).unwrap_or("")) {
+        println!(
+            "--- hit #{} offset={} (file range [{}..{})) ---",
+            n, pos, lo, hi
+        );
+        for line in hex
+            .as_bytes()
+            .chunks(48)
+            .map(|c| std::str::from_utf8(c).unwrap_or(""))
+        {
             println!("  {}", line);
         }
     }

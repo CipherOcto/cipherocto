@@ -3501,11 +3501,7 @@ async fn live_newsletter_inbound_event_skips_without_setup() {
             InboundEvent::NewsletterUpdate { jid, .. } if jid == &nl_jid
         )
     };
-    match wait_for(
-        &fix.events_buffer,
-        predicate,
-        Duration::from_secs(15),
-    ) {
+    match wait_for(&fix.events_buffer, predicate, Duration::from_secs(15)) {
         Ok(InboundEvent::NewsletterUpdate { jid, kind, .. }) => {
             eprintln!(
                 "live_newsletter_inbound_event_skips_without_setup: OK jid={jid} kind={kind:?}"

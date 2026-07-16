@@ -162,7 +162,7 @@ async fn run() -> Result<()> {
     use rand::RngCore;
     let mut key_bytes = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut key_bytes);
-    let ws_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &key_bytes);
+    let ws_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_bytes);
     let upgrade_req = format!(
         "GET /ws/chat HTTP/1.1\r\n\
          Host: {server_host}:{server_port}\r\n\
@@ -253,18 +253,14 @@ async fn run() -> Result<()> {
                 let masked = (buf[1] & 0x80) != 0;
                 let mut payload_len = (buf[1] & 0x7f) as usize;
                 let mut header_len = 2;
-                if payload_len == 126 {
-                    if n >= 4 {
-                        payload_len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-                        header_len = 4;
-                    }
-                } else if payload_len == 127 {
-                    if n >= 10 {
-                        payload_len = u64::from_be_bytes([
-                            buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
-                        ]) as usize;
-                        header_len = 10;
-                    }
+                if payload_len == 126 && n >= 4 {
+                    payload_len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                    header_len = 4;
+                } else if payload_len == 127 && n >= 10 {
+                    payload_len = u64::from_be_bytes([
+                        buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8], buf[9],
+                    ]) as usize;
+                    header_len = 10;
                 }
                 if masked {
                     if n >= header_len + 4 {

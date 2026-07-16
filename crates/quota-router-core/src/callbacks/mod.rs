@@ -330,6 +330,18 @@ impl Drop for CallbackExecutor {
 mod tests {
     use super::*;
 
+    struct MockCallbackTarget;
+
+    #[async_trait::async_trait]
+    impl CallbackTarget for MockCallbackTarget {
+        async fn fire(&self, _event: &CallbackEvent) -> Result<(), CallbackError> {
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
     #[test]
     fn test_callback_type_variants() {
         let types = [
@@ -533,17 +545,5 @@ mod tests {
                 queue_time_ms: 0,
             },
         }
-    }
-}
-
-struct MockCallbackTarget;
-
-#[async_trait::async_trait]
-impl CallbackTarget for MockCallbackTarget {
-    async fn fire(&self, _event: &CallbackEvent) -> Result<(), CallbackError> {
-        Ok(())
-    }
-    fn name(&self) -> &str {
-        "mock"
     }
 }

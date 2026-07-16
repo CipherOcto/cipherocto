@@ -42,9 +42,11 @@ struct Row {
     algo: String,
     extractable: bool,
     key_hex: String,
+    #[allow(dead_code)]
     key_id: String,
     db_name: String,
     profile_dir: String,
+    #[allow(dead_code)]
     port: u16,
 }
 
@@ -135,9 +137,7 @@ fn slurp_profile(profile_root: &std::path::Path) -> std::collections::BTreeMap<S
 fn ldb_total(by_path: &std::collections::BTreeMap<String, Vec<u8>>) -> usize {
     by_path
         .iter()
-        .filter(|(k, _)| {
-            k.ends_with(".ldb") || k.ends_with(".log") || k.starts_with("MANIFEST")
-        })
+        .filter(|(k, _)| k.ends_with(".ldb") || k.ends_with(".log") || k.starts_with("MANIFEST"))
         .map(|(_, v)| v.len())
         .sum()
 }
@@ -155,8 +155,7 @@ fn diff_slurps(
     b: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut all_keys: std::collections::BTreeSet<&String> =
-        a.keys().chain(b.keys()).collect();
+    let all_keys: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
     for k in &all_keys {
         let va = a.get(*k);
         let vb = b.get(*k);
@@ -170,11 +169,7 @@ fn diff_slurps(
                         vb.len()
                     ));
                 } else if va != vb {
-                    let diffs: usize = va
-                        .iter()
-                        .zip(vb.iter())
-                        .filter(|(x, y)| x != y)
-                        .count();
+                    let diffs: usize = va.iter().zip(vb.iter()).filter(|(x, y)| x != y).count();
                     lines.push(format!(
                         "  BYTE DIFF {} : same len {}B, {} byte(s) differ",
                         k,
@@ -195,7 +190,10 @@ fn diff_slurps(
     lines
 }
 
-fn grep_blob(by_path: &std::collections::BTreeMap<String, Vec<u8>>, needle: &[u8]) -> Vec<(String, usize, Vec<usize>)> {
+fn grep_blob(
+    by_path: &std::collections::BTreeMap<String, Vec<u8>>,
+    needle: &[u8],
+) -> Vec<(String, usize, Vec<usize>)> {
     let mut hits = Vec::new();
     for (k, v) in by_path {
         let positions = find_all(v, needle);
@@ -216,8 +214,7 @@ async fn main() -> Result<()> {
 
     let manifest_bytes = std::fs::read(&args.manifest)
         .with_context(|| format!("manifest not found: {}", args.manifest.display()))?;
-    let manifest: Manifest =
-        serde_json::from_slice(&manifest_bytes).context("parse manifest")?;
+    let manifest: Manifest = serde_json::from_slice(&manifest_bytes).context("parse manifest")?;
     info!("loaded manifest with {} rows", manifest.rows.len());
 
     if manifest.rows.len() != 4 {
@@ -228,21 +225,24 @@ async fn main() -> Result<()> {
     }
 
     // Map row name -> slurped LDB files
-    let mut slurps: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<u8>>> =
-        std::collections::BTreeMap::new();
+    let mut slurps: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, Vec<u8>>,
+    > = std::collections::BTreeMap::new();
     for row in &manifest.rows {
         let profile_root = PathBuf::from(&row.profile_dir);
         let s = slurp_profile(&profile_root);
         let total = ldb_total(&s);
-        info!("row={} db={} profile={} total LDB bytes={}",
-              row.row, row.db_name, profile_root.display(), total);
+        info!(
+            "row={} db={} profile={} total LDB bytes={}",
+            row.row,
+            row.db_name,
+            profile_root.display(),
+            total
+        );
         println!(
             "row={:20} algo={:6} ext={:5} db={:25} ldb+log+manifest_bytes={}",
-            row.row,
-            row.algo,
-            row.extractable,
-            row.db_name,
-            total
+            row.row, row.algo, row.extractable, row.db_name, total
         );
         for p in filt_ldb_paths(&s) {
             println!("    {}", p);
@@ -303,7 +303,10 @@ async fn main() -> Result<()> {
                     hits.len()
                 );
                 for (path, file_len, positions) in &hits {
-                    println!("    {}: file {}B, hits at offsets {:?}", path, file_len, positions);
+                    println!(
+                        "    {}: file {}B, hits at offsets {:?}",
+                        path, file_len, positions
+                    );
                 }
             }
         }
@@ -325,10 +328,7 @@ async fn main() -> Result<()> {
                 continue;
             }
             let take = bytes.len().min(args.head_bytes);
-            let head_hex: String = bytes[..take]
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect();
+            let head_hex: String = bytes[..take].iter().map(|b| format!("{:02x}", b)).collect();
             // Print in 64-char chunks
             println!("  {} ({}B total)", path, bytes.len());
             for chunk in head_hex

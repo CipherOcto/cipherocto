@@ -82,6 +82,7 @@ fn find_latest_profile(log_dir: &std::path::Path) -> Option<PathBuf> {
     candidates.last().cloned()
 }
 
+#[allow(dead_code)]
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
@@ -137,12 +138,19 @@ async fn main() -> Result<()> {
 
     let endpoint_url = format!("http://127.0.0.1:{}", args.port);
     for _ in 0..60 {
-        if reqwest::get(&endpoint_url).await.is_ok() { break; }
+        if reqwest::get(&endpoint_url).await.is_ok() {
+            break;
+        }
         sleep(Duration::from_millis(250)).await;
     }
 
     let http = reqwest::Client::new();
-    let list: Vec<Value> = http.get(format!("{endpoint_url}/json/list")).send().await?.json().await?;
+    let list: Vec<Value> = http
+        .get(format!("{endpoint_url}/json/list"))
+        .send()
+        .await?
+        .json()
+        .await?;
     let mut tab: Option<CdpPage> = None;
     for v in list {
         if let Ok(p) = serde_json::from_value::<CdpPage>(v) {
@@ -233,7 +241,10 @@ window.__capturedDerives.origDerive = _origDerive;
     )
     .await?;
 
-    info!("waiting {}s for WA Web to load and call importKey...", args.wait_secs);
+    info!(
+        "waiting {}s for WA Web to load and call importKey...",
+        args.wait_secs
+    );
     sleep(Duration::from_secs(args.wait_secs)).await;
 
     // Pull captured imports
@@ -255,7 +266,10 @@ window.__capturedDerives.origDerive = _origDerive;
         let recv = tokio::time::timeout(remain, ws.next()).await;
         let msg = match recv {
             Ok(Some(Ok(m))) => m,
-            Ok(Some(Err(e))) => { warn!("ws read err {e}"); break; }
+            Ok(Some(Err(e))) => {
+                warn!("ws read err {e}");
+                break;
+            }
             Ok(None) => break,
             Err(_) => break,
         };
@@ -263,18 +277,27 @@ window.__capturedDerives.origDerive = _origDerive;
             tokio_tungstenite::tungstenite::Message::Text(t) => t,
             other => {
                 if let tokio_tungstenite::tungstenite::Message::Ping(p) = other {
-                    ws.send(tokio_tungstenite::tungstenite::Message::Pong(p)).await.ok();
+                    ws.send(tokio_tungstenite::tungstenite::Message::Pong(p))
+                        .await
+                        .ok();
                 }
                 continue;
             }
         };
-        let v: Value = match serde_json::from_str(&text) { Ok(v) => v, Err(_) => continue };
+        let v: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         if v.get("id").and_then(Value::as_u64) == Some(eval_id) {
             if let Some(err) = v.get("error") {
                 warn!("eval err: {err}");
                 break;
             }
-            result = v.get("result").and_then(|r| r.get("result")).and_then(|r| r.get("value")).cloned();
+            result = v
+                .get("result")
+                .and_then(|r| r.get("result"))
+                .and_then(|r| r.get("value"))
+                .cloned();
             break;
         }
     }
@@ -282,7 +305,12 @@ window.__capturedDerives.origDerive = _origDerive;
     let _ = ws.close(None).await;
     let _ = child.kill().await;
 
-    let out_path = profile.parent().unwrap().parent().unwrap().join("captured-import-keys.json");
+    let out_path = profile
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("captured-import-keys.json");
     match result {
         Some(s) => {
             // s is a JSON string
@@ -302,18 +330,46 @@ window.__capturedDerives.origDerive = _origDerive;
             println!();
             if let Some(imps) = imports {
                 // Look for AES-GCM imports (master AES key candidates)
-                let aes_gcm: Vec<&Value> = imps.iter().filter(|i| {
-                    i.get("algName").and_then(Value::as_str).map(|s| s.contains("AES")).unwrap_or(false)
-                        && i.get("format").and_then(Value::as_str) == Some("raw")
-                }).collect();
-                println!("AES-GCM raw imports (master key candidates): {}", aes_gcm.len());
+                let aes_gcm: Vec<&Value> = imps
+                    .iter()
+                    .filter(|i| {
+                        i.get("algName")
+                            .and_then(Value::as_str)
+                            .map(|s| s.contains("AES"))
+                            .unwrap_or(false)
+                            && i.get("format").and_then(Value::as_str) == Some("raw")
+                    })
+                    .collect();
+                println!(
+                    "AES-GCM raw imports (master key candidates): {}",
+                    aes_gcm.len()
+                );
                 for (idx, i) in aes_gcm.iter().enumerate() {
                     let len = i.get("keyDataLen").and_then(Value::as_u64).unwrap_or(0);
                     let hex_v = i.get("keyDataHex").and_then(Value::as_str).unwrap_or("");
-                    let ext = i.get("extractable").and_then(Value::as_bool).unwrap_or(false);
-                    let usage = i.get("usages").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default();
-                    let head = if hex_v.len() > 64 { format!("{}...", &hex_v[..64]) } else { hex_v.to_string() };
-                    println!("  [{}] len={}B extractable={} usage=[{}] hex={}", idx, len, ext, usage, head);
+                    let ext = i
+                        .get("extractable")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let usage = i
+                        .get("usages")
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default();
+                    let head = if hex_v.len() > 64 {
+                        format!("{}...", &hex_v[..64])
+                    } else {
+                        hex_v.to_string()
+                    };
+                    println!(
+                        "  [{}] len={}B extractable={} usage=[{}] hex={}",
+                        idx, len, ext, usage, head
+                    );
                 }
             }
         }

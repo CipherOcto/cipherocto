@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
     // the daemon's exact computation, also try prepending the type byte.
     let noise_pub_first = &noise_key[..32];
     let noise_pub_last = &noise_key[32..];
-    let noise_pub_first_fp = Sha256::digest(noise_pub_first);
+    let _noise_pub_first_fp = Sha256::digest(noise_pub_first);
     let noise_pub_last_fp = Sha256::digest(noise_pub_last);
     // `PublicKey::serialize()` prepends a 1-byte type code. For Djb
     // (curve25519) keys, that code is `5` per wacore's `key_type` enum.
@@ -102,14 +102,14 @@ fn main() -> anyhow::Result<()> {
     );
     println!();
     println!("Truncated (16 hex) for eyeballing:");
-    println!("  noise_key blob    {}", &hex::encode(&noise_fp)[..16]);
+    println!("  noise_key blob    {}", &hex::encode(noise_fp)[..16]);
     println!(
         "  noise pubkey last32  {}",
-        &hex::encode(&noise_pub_last_fp)[..16]
+        &hex::encode(noise_pub_last_fp)[..16]
     );
     println!(
         "  noise pubkey ser(33B) {}",
-        &hex::encode(&noise_pub_ser_fp)[..16]
+        &hex::encode(noise_pub_ser_fp)[..16]
     );
     Ok(())
 }

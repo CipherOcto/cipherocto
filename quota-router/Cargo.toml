@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "quota-router"
 version = "0.1.0"

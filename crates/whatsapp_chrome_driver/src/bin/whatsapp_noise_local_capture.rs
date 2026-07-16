@@ -39,8 +39,16 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let Some((noise_key, _identity_key, _signed_pre_key, push_name, avp, avs, avt, registration_id)) =
-        store.read_device_keys().ok().flatten()
+    let Some((
+        noise_key,
+        _identity_key,
+        _signed_pre_key,
+        push_name,
+        avp,
+        avs,
+        avt,
+        registration_id,
+    )) = store.read_device_keys().ok().flatten()
     else {
         eprintln!("no device row in {}", path.display());
         return ExitCode::from(1);

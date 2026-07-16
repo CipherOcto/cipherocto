@@ -221,7 +221,7 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "query"))]
 mod tests {
     use super::*;
     use crate::daemon::Daemon;

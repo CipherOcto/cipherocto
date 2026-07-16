@@ -32,14 +32,10 @@ use rustls_pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
-use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+use x25519_dalek::{PublicKey, StaticSecret};
 
-use whatsapp_rust::wacore::noise::{
-    generate_iv, HandshakeUtils, NoiseCipher, NoiseHandshake,
-};
-use whatsapp_rust::wacore_binary::consts::{
-    NOISE_PATTERN_XX, WA_CONN_HEADER,
-};
+use whatsapp_rust::wacore::noise::{generate_iv, HandshakeUtils, NoiseHandshake};
+use whatsapp_rust::wacore_binary::consts::{NOISE_PATTERN_XX, WA_CONN_HEADER};
 
 const SERVER_HOST: &str = "web.whatsapp.com";
 const SERVER_PORT: u16 = 5222;
@@ -72,12 +68,16 @@ async fn run() -> Result<()> {
         .open(&out_path)
         .await?;
     let start_ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?.as_millis();
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
 
-    let mut log = |dir: &str, idx: u32, len: usize, head: &[u8]| {
+    let log = |dir: &str, idx: u32, len: usize, head: &[u8]| {
         let head_hex: String = head.iter().take(48).map(|b| format!("{:02x}", b)).collect();
         let ts_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() - start_ts;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            - start_ts;
         let line = format!(
             "{{\"ts_ms\":{},\"dir\":\"{}\",\"idx\":{},\"len\":{},\"head_hex\":\"{}\"}}\n",
             ts_ms, dir, idx, len, head_hex
@@ -85,12 +85,14 @@ async fn run() -> Result<()> {
         // Use blocking write inside the async fn via `tokio::task::spawn_blocking`
         let line_owned = line;
         let path = out_path.clone();
-        let _ = std::fs::OpenOptions::new().append(true).open(&path)
+        let _ = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
             .and_then(|mut f| std::io::Write::write_all(&mut f, line_owned.as_bytes()));
     };
 
     // Generate ephemeral + identity (x25519-dalek — wacore's KeyPair::generate
-// requires rand 0.10 traits which aren't available in our workspace's rand 0.9)
+    // requires rand 0.10 traits which aren't available in our workspace's rand 0.9)
     let e_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
     let e_pub_arr: [u8; 32] = *PublicKey::from(&e_secret).as_bytes();
     let e_secret_bytes = e_secret.to_bytes();
@@ -146,8 +148,7 @@ async fn run() -> Result<()> {
 
     let server_hello_protobuf = &frame1[3..];
     let (server_ephemeral, server_static_ct, cert_ct) =
-        HandshakeUtils::parse_server_hello(server_hello_protobuf)
-            .context("parse_server_hello")?;
+        HandshakeUtils::parse_server_hello(server_hello_protobuf).context("parse_server_hello")?;
     info!(
         "server_eph={}B server_static_ct={}B cert_ct={}B",
         server_ephemeral.len(),
@@ -159,20 +160,28 @@ async fn run() -> Result<()> {
     let mut noise = NoiseHandshake::new(NOISE_PATTERN_XX, &WA_CONN_HEADER)?;
     noise.authenticate(&e_pub_arr);
     noise.authenticate(&server_ephemeral);
-    noise.mix_shared_secret(&e_secret_bytes, &server_ephemeral)
+    noise
+        .mix_shared_secret(&e_secret_bytes, &server_ephemeral)
         .context("ee")?;
     let server_static_plain = noise.decrypt(&server_static_ct).context("decrypt static")?;
-    let server_static_pub: [u8; 32] = server_static_plain.as_slice().try_into()
+    let server_static_pub: [u8; 32] = server_static_plain
+        .as_slice()
+        .try_into()
         .map_err(|_| anyhow::anyhow!("server_static not 32B"))?;
-    info!("server_static_pub extracted: {}", hex::encode(server_static_pub));
+    info!(
+        "server_static_pub extracted: {}",
+        hex::encode(server_static_pub)
+    );
 
-    noise.mix_shared_secret(&e_secret_bytes, &server_static_pub)
+    noise
+        .mix_shared_secret(&e_secret_bytes, &server_static_pub)
         .context("es")?;
     let _cert = noise.decrypt(&cert_ct).context("decrypt cert")?;
 
     // frame[2] = client finish = enc(identity_pub) + payload
     let encrypted_pubkey = noise.encrypt(&identity_pub_arr).context("enc pubkey")?;
-    noise.mix_shared_secret(&identity_secret.to_bytes(), &server_ephemeral)
+    noise
+        .mix_shared_secret(&identity_secret.to_bytes(), &server_ephemeral)
         .context("se")?;
     let encrypted_payload = noise.encrypt(&client_payload).context("enc payload")?;
 
@@ -187,8 +196,11 @@ async fn run() -> Result<()> {
     match tokio::time::timeout(Duration::from_secs(8), read_ws_binary_frame(&mut tls)).await {
         Ok(Ok(frame3)) => {
             log("recv", 3, frame3.len(), &frame3);
-            println!("server frame[3] len={} head={}", frame3.len(),
-                hex::encode(&frame3[..frame3.len().min(48)]));
+            println!(
+                "server frame[3] len={} head={}",
+                frame3.len(),
+                hex::encode(&frame3[..frame3.len().min(48)])
+            );
         }
         Ok(Err(e)) => warn!("recv frame[3] err: {e}"),
         Err(_) => warn!("recv frame[3] timeout (8s)"),
@@ -274,9 +286,13 @@ async fn read_ws_binary_frame(
             } else {
                 assembled = Some(data);
             }
-            if fin { return Ok(assembled.unwrap()); }
+            if fin {
+                return Ok(assembled.unwrap());
+            }
         }
     }
 }
 
-fn _unused_iv() { let _ = generate_iv(0); }
+fn _unused_iv() {
+    let _ = generate_iv(0);
+}

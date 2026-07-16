@@ -4,8 +4,10 @@
 //!
 //! Usage:
 //!   cargo run -p octo-whatsapp --features query --example diag_count
+#[cfg(feature = "query")]
 use stoolap::Database;
 
+#[cfg(feature = "query")]
 fn main() {
     let home = std::env::var("HOME").expect("HOME");
     let qdir = format!("{home}/.local/share/octo/whatsapp");
@@ -337,9 +339,16 @@ fn main() {
     }
 }
 
+#[cfg(feature = "query")]
 fn try_count(db: &Database, t: &str) -> Option<i64> {
     let sql = format!("SELECT COUNT(*) FROM {t}");
     let mut rows = db.query(&sql, ()).ok()?;
     let r = rows.next()?.ok()?;
     r.get::<i64>(0).ok()
+}
+
+#[cfg(not(feature = "query"))]
+fn main() {
+    eprintln!("diag_count requires --features query");
+    std::process::exit(2);
 }

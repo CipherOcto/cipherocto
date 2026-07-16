@@ -90,9 +90,7 @@ fn main() -> ExitCode {
         None => "None".into(),
     };
     let cert_chain_validity =
-        cert_chain_info
-            .clone()
-            .and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None });
+        cert_chain_info.and_then(|(len, nb, na)| if len > 0 { Some((nb, na)) } else { None });
 
     // Mirror wacore handshake::select_pattern in user-space.
     // `is_registered()` is defined as `self.pn.is_some()` in

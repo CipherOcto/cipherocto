@@ -76,11 +76,14 @@ pub mod messages_edit_encrypted;
 pub mod messages_forward;
 pub mod messages_get;
 pub mod messages_list;
+#[cfg(feature = "query")]
 pub mod messages_list_ephemeral;
+#[cfg(feature = "query")]
 pub mod messages_list_unavailable;
 pub mod messages_mark_as_played;
 pub mod messages_mark_read;
 pub mod messages_pin;
+#[cfg(feature = "query")]
 pub mod messages_read_view_once;
 pub mod messages_search;
 pub mod messages_star;
@@ -315,9 +318,6 @@ fn build_base_registry() -> HandlerRegistry {
         // Tier 7.A: pin / unpin / forward / edit-encrypted + sticker_pack
         .register(Arc::new(messages_pin::MessagesPin))
         .register(Arc::new(messages_unpin::MessagesUnpin))
-        .register(Arc::new(messages_read_view_once::MessagesReadViewOnce))
-        .register(Arc::new(messages_list_unavailable::MessagesListUnavailable))
-        .register(Arc::new(messages_list_ephemeral::MessagesListEphemeral))
         .register(Arc::new(messages_forward::MessagesForward))
         .register(Arc::new(messages_edit_encrypted::MessagesEditEncrypted))
         .register(Arc::new(media_fetch_sticker_pack::MediaFetchStickerPack))
@@ -411,6 +411,12 @@ fn append_query_layer_handlers(reg: HandlerRegistry) -> HandlerRegistry {
         .register(Arc::new(sql::SqlExecute))
         .register(Arc::new(sql::SqlQuery))
         .register(Arc::new(sql::SqlTables))
+        // Phase 7.K — View-Once + Disappearing Messages (read path).
+        // These query the `messages` + `unavailable_messages` tables,
+        // so they only make sense when the query layer is enabled.
+        .register(Arc::new(messages_read_view_once::MessagesReadViewOnce))
+        .register(Arc::new(messages_list_unavailable::MessagesListUnavailable))
+        .register(Arc::new(messages_list_ephemeral::MessagesListEphemeral))
 }
 
 /// Every RPC method name exposed in Phase 1 (used by tests + CLI/MCP surface).

@@ -591,6 +591,40 @@ pub enum MessagesAction {
         media_ref_token: String,
         out: PathBuf,
     },
+    /// Read the media body for a view-once message (one-shot). The
+    /// message row's `consumed_at` is set on first read; subsequent
+    /// reads return `consumed`.
+    ReadViewOnce {
+        /// `event_id` of the message row.
+        #[arg(value_name = "EVENT_ID")]
+        event_id: i64,
+    },
+    /// List messages whose content was unavailable (companion fanouts,
+    /// bot/hosted). Filter by `kind` (`view_once` | `hosted` | `bot` |
+    /// `unknown` | `all`), `peer`, `since_ts_unix_ms`, `until_ts_unix_ms`,
+    /// or `limit` (default 100, hard cap 500).
+    ListUnavailable {
+        #[arg(long, default_value = "all")]
+        kind: String,
+        #[arg(long)]
+        peer: Option<String>,
+        #[arg(long)]
+        since_ts_unix_ms: Option<i64>,
+        #[arg(long)]
+        until_ts_unix_ms: Option<i64>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// List ephemeral (disappearing) messages currently in flight.
+    /// Filter by `peer`, `kind`, or `limit` (default 100, hard cap 500).
+    ListEphemeral {
+        #[arg(long)]
+        peer: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
 }
 
 /// Top-level Chats subcommand tree (Task 55). Mirrors the `chats.*` RPC
@@ -1544,6 +1578,52 @@ pub fn dispatch_messages(cli: &Cli, cmd: &MessagesCmd) -> anyhow::Result<()> {
                 "out": out.to_string_lossy(),
             }),
         ),
+        MessagesAction::ReadViewOnce { event_id } => (
+            "messages.read_view_once",
+            serde_json::json!({"event_id": event_id}),
+        ),
+        MessagesAction::ListUnavailable {
+            kind,
+            peer,
+            since_ts_unix_ms,
+            until_ts_unix_ms,
+            limit,
+        } => {
+            let mut p = serde_json::Map::new();
+            // The handler accepts "all" as a no-filter sentinel (matches
+            // the spec for ListUnavailableKind::All on the RPC side).
+            if !kind.is_empty() && kind != "all" {
+                p.insert("kind".into(), serde_json::Value::String(kind.clone()));
+            }
+            if let Some(peer) = peer {
+                p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            }
+            if let Some(since) = since_ts_unix_ms {
+                p.insert(
+                    "since_ts_unix_ms".into(),
+                    serde_json::Value::Number((*since).into()),
+                );
+            }
+            if let Some(until) = until_ts_unix_ms {
+                p.insert(
+                    "until_ts_unix_ms".into(),
+                    serde_json::Value::Number((*until).into()),
+                );
+            }
+            p.insert("limit".into(), serde_json::Value::Number((*limit).into()));
+            ("messages.list_unavailable", serde_json::Value::Object(p))
+        }
+        MessagesAction::ListEphemeral { peer, kind, limit } => {
+            let mut p = serde_json::Map::new();
+            if let Some(peer) = peer {
+                p.insert("peer".into(), serde_json::Value::String(peer.clone()));
+            }
+            if let Some(kind) = kind {
+                p.insert("kind".into(), serde_json::Value::String(kind.clone()));
+            }
+            p.insert("limit".into(), serde_json::Value::Number((*limit).into()));
+            ("messages.list_ephemeral", serde_json::Value::Object(p))
+        }
     };
     let result = client.call(method, params)?;
     print_result(cli.json, &result)
@@ -2557,6 +2637,94 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(c.command, Command::Messages(_)));
+    }
+
+    #[test]
+    fn cli_parses_messages_read_view_once() {
+        let c =
+            Cli::try_parse_from(["octo-whatsapp", "messages", "read-view-once", "1234"]).unwrap();
+        match c.command {
+            Command::Messages(cmd) => match cmd.action {
+                MessagesAction::ReadViewOnce { event_id } => {
+                    assert_eq!(event_id, 1234);
+                }
+                _ => panic!("expected MessagesAction::ReadViewOnce"),
+            },
+            _ => panic!("expected Command::Messages"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_messages_list_unavailable_defaults() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "messages", "list-unavailable"]).unwrap();
+        match c.command {
+            Command::Messages(cmd) => match cmd.action {
+                MessagesAction::ListUnavailable {
+                    ref kind,
+                    ref peer,
+                    ref limit,
+                    ..
+                } => {
+                    assert_eq!(kind, "all");
+                    assert!(peer.is_none());
+                    assert_eq!(*limit, 100);
+                }
+                _ => panic!("expected MessagesAction::ListUnavailable"),
+            },
+            _ => panic!("expected Command::Messages"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_messages_list_unavailable_with_filters() {
+        let c = Cli::try_parse_from([
+            "octo-whatsapp",
+            "messages",
+            "list-unavailable",
+            "--kind",
+            "view_once",
+            "--peer",
+            "5511999@s.whatsapp.net",
+            "--limit",
+            "25",
+        ])
+        .unwrap();
+        match c.command {
+            Command::Messages(cmd) => match cmd.action {
+                MessagesAction::ListUnavailable {
+                    ref kind,
+                    ref peer,
+                    ref limit,
+                    ..
+                } => {
+                    assert_eq!(kind, "view_once");
+                    assert_eq!(peer.as_deref(), Some("5511999@s.whatsapp.net"));
+                    assert_eq!(*limit, 25);
+                }
+                _ => panic!("expected MessagesAction::ListUnavailable"),
+            },
+            _ => panic!("expected Command::Messages"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_messages_list_ephemeral_defaults() {
+        let c = Cli::try_parse_from(["octo-whatsapp", "messages", "list-ephemeral"]).unwrap();
+        match c.command {
+            Command::Messages(cmd) => match cmd.action {
+                MessagesAction::ListEphemeral {
+                    ref peer,
+                    ref kind,
+                    ref limit,
+                } => {
+                    assert!(peer.is_none());
+                    assert!(kind.is_none());
+                    assert_eq!(*limit, 100);
+                }
+                _ => panic!("expected MessagesAction::ListEphemeral"),
+            },
+            _ => panic!("expected Command::Messages"),
+        }
     }
 
     #[test]

@@ -1023,6 +1023,7 @@ impl Daemon {
             groups: Vec::new(),
             sender_allowlist: std::collections::BTreeMap::new(),
             query: crate::config::QueryConfig::default(),
+            media: crate::config::MediaConfig::default(),
         };
 
         // Open the store at tmpdir/data/index.json — NOT via open_default().

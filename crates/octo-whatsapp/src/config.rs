@@ -132,6 +132,46 @@ impl Default for QueryConfig {
     }
 }
 
+/// Phase 7.K — Media persistence gates.
+///
+/// Default behaviour for view-once media is **off**: the inbound
+/// view-once row gets its `media_token` zeroed before the row is
+/// written to the events table / SQL store. The operator must call
+/// `messages.read_view_once` to fetch the CDN URL + key — at which
+/// point the row's `consumed_at` is set and subsequent reads fail.
+/// Set `view_once_media_persist = true` only when the operator
+/// explicitly wants the media key on disk (e.g. headless archive
+/// pipelines).
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MediaConfig {
+    /// Phase 7.K: when `false` (default), inbound view-once media
+    /// rows are stripped of their `media_token` before persistence.
+    pub view_once_media_persist: bool,
+}
+
+impl MediaConfig {
+    /// Resolve a `MediaConfig` from the `OCTO_WA_MEDIA__VIEW_ONCE_PERSIST`
+    /// env override (matches the `__` separator used by env-overridable
+    /// knob fields). When unset / empty / unparseable, returns
+    /// `MediaConfig::default()`.
+    pub fn from_env_or_default() -> Self {
+        let mut cfg = Self::default();
+        if let Ok(v) = std::env::var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST") {
+            match v.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => cfg.view_once_media_persist = true,
+                "0" | "false" | "no" | "off" | "" => cfg.view_once_media_persist = false,
+                _ => {
+                    // Unparseable values fall back to default + warn via
+                    // log; never panic the boot path on a malformed env.
+                    cfg.view_once_media_persist = false;
+                }
+            }
+        }
+        cfg
+    }
+}
+
 fn default_events_persistence_enabled() -> bool {
     true
 }
@@ -209,6 +249,13 @@ pub struct WhatsAppRuntimeConfig {
     /// (no silent fallbacks).
     #[serde(default)]
     pub rules: RulesConfig,
+    /// Phase 7.K: media persistence gates. Default
+    /// `view_once_media_persist = false` zero-strips view-once
+    /// media tokens before persistence; operators must opt in
+    /// explicitly via `[media] view_once_media_persist = true`
+    /// (or the `OCTO_WA_MEDIA__VIEW_ONCE_PERSIST` env override).
+    #[serde(default)]
+    pub media: MediaConfig,
 }
 
 /// Phase 5 Part C: rules persistence configuration. Discovers the
@@ -471,6 +518,7 @@ impl Default for WhatsAppRuntimeConfig {
             observability: ObservabilityConfig::default(),
             rules: RulesConfig::default(),
             query: QueryConfig::default(),
+            media: MediaConfig::default(),
         }
     }
 }

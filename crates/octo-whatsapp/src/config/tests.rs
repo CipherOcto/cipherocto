@@ -236,3 +236,40 @@ fn query_config_defaults_when_field_omitted_in_toml() {
     assert_eq!(cfg.query.batch_size, 32);
     assert!(cfg.query.rebuild_on_boot);
 }
+
+#[test]
+fn media_config_default_disables_view_once_persistence() {
+    let c = MediaConfig::default();
+    assert!(!c.view_once_media_persist);
+}
+
+#[test]
+fn media_config_env_override_enables_persistence() {
+    // SAFETY: tests run on a single thread per `cargo test` test binary.
+    let prev = std::env::var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST").ok();
+    std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", "true");
+    let c = MediaConfig::from_env_or_default();
+    assert!(c.view_once_media_persist);
+    match prev {
+        Some(v) => std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", v),
+        None => std::env::remove_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST"),
+    }
+}
+
+#[test]
+fn media_config_env_override_disables_persistence_when_false() {
+    let prev = std::env::var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST").ok();
+    std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", "false");
+    let c = MediaConfig::from_env_or_default();
+    assert!(!c.view_once_media_persist);
+    match prev {
+        Some(v) => std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", v),
+        None => std::env::remove_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST"),
+    }
+}
+
+#[test]
+fn media_config_runtime_root_carries_default_off() {
+    let cfg = WhatsAppRuntimeConfig::default();
+    assert!(!cfg.media.view_once_media_persist);
+}

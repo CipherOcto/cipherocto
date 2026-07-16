@@ -125,7 +125,7 @@ mod tests {
             r#"Message(id: "E{id}", peer: "120363411021224818@g.us", sender: "u1", text: "vanishing", kind: Text, ephemeral_expires_at_seconds: {ttl_seconds}, is_group: true)"#
         );
         let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
+            raw,
             ts_unix_ms: 1000,
             ts_mono_ns: 0,
         });
@@ -141,7 +141,7 @@ mod tests {
             r#"Message(id: "P{id}", peer: "120363411021224818@g.us", sender: "u1", text: "permanent", kind: Text, is_group: true)"#
         );
         let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
+            raw,
             ts_unix_ms: 1000,
             ts_mono_ns: 0,
         });

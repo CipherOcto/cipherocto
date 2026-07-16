@@ -148,7 +148,7 @@ mod tests {
             r#"Unavailable(id: "U{id}", peer: "120363411021224818@g.us", sender: "u1", kind: {kind}, ts: 1000, is_unavailable: true)"#
         );
         let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
+            raw,
             ts_unix_ms: 1000,
             ts_mono_ns: 0,
         });

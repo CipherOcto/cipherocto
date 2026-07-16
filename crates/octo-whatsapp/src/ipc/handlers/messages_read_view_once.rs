@@ -265,7 +265,7 @@ mod tests {
             r#"Message(id: "M{id}", peer: "X", sender: "Y", text: "{text}", kind: Image, media_token: "tok-123", view_once: true, is_group: false)"#
         );
         let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
+            raw,
             ts_unix_ms: 1000,
             ts_mono_ns: 0,
         });

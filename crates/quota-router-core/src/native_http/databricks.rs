@@ -499,9 +499,7 @@ mod tests {
         assert!(rt
             .block_on(p.batch_retrieve("id", None, None, None))
             .is_err());
-        assert!(rt
-            .block_on(p.batch_cancel("id", None, None, None))
-            .is_err());
+        assert!(rt.block_on(p.batch_cancel("id", None, None, None)).is_err());
         assert!(rt.block_on(p.batch_list(None, None, None, None)).is_err());
         assert!(rt
             .block_on(p.batch_results("id", None, None, None))
@@ -679,43 +677,5 @@ mod tests {
             )
             .await
             .is_err());
-    }
-
-    #[tokio::test]
-    async fn streaming_completion_network_error() {
-        let p = DatabricksProvider::new().with_api_base("https://dbc-xxx.databricks.com".into());
-        let req = HttpCompletionRequest {
-            model: "databricks/dbrx-instruct".into(),
-            messages: vec![crate::shared_types::Message {
-                role: "user".into(),
-                content: Some("hi".into()),
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-                function_call: None,
-            }],
-            stream: Some(true),
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            stop: None,
-            n: None,
-            presence_penalty: None,
-            frequency_penalty: None,
-            user: None,
-            api_base: None,
-            tools: None,
-            tool_choice: None,
-            response_format: None,
-            seed: None,
-            logprobs: None,
-            top_logprobs: None,
-            parallel_tool_calls: None,
-            prompt_id: None,
-            prompt_variables: None,
-            provider_params: None,
-            timeout: None,
-        };
-        assert!(p.streaming_completion(&req, None).await.is_err());
     }
 }

@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn rate_limiter_default_config() {
-        let rl = RateLimiter::new(100, 500);
+        let rl = RateLimiter::new(0, 500);
         let consumer = [1u8; 32];
         for _ in 0..500 {
             assert!(rl.check_consumer(&consumer));

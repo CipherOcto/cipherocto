@@ -160,7 +160,10 @@ mod tests {
     #[test]
     fn test_default_endpoint_google() {
         let endpoint = default_endpoint("google");
-        assert_eq!(endpoint, Some("https://generativelanguage.googleapis.com".to_string()));
+        assert_eq!(
+            endpoint,
+            Some("https://generativelanguage.googleapis.com".to_string())
+        );
     }
 
     #[test]

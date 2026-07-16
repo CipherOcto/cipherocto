@@ -33,7 +33,8 @@ fn wait_for_healthy(timeout: Duration) {
     loop {
         let output = docker_compose(&["ps", "--format", "json"]);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let healthy_count = stdout.lines()
+        let healthy_count = stdout
+            .lines()
             .filter(|l| l.contains("\"Health\":\"healthy\""))
             .count();
         if healthy_count >= 2 {
@@ -49,7 +50,8 @@ fn wait_for_healthy(timeout: Duration) {
 fn count_running() -> usize {
     let ps = docker_compose(&["ps", "--format", "json"]);
     let stdout = String::from_utf8_lossy(&ps.stdout);
-    stdout.lines()
+    stdout
+        .lines()
         .filter(|l| l.contains("\"State\":\"running\""))
         .count()
 }

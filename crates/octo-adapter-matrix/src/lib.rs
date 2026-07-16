@@ -704,13 +704,18 @@ mod tests {
         assert!(caps.media_capabilities.is_some());
         let media = caps.media_capabilities.unwrap();
         assert_eq!(media.max_upload_bytes, 50 * 1024 * 1024);
-        assert!(media.supported_mime_types.contains(&"image/jpeg".to_string()));
+        assert!(media
+            .supported_mime_types
+            .contains(&"image/jpeg".to_string()));
     }
 
     #[test]
     fn test_trait_platform_type() {
         let adapter = make_test_adapter();
-        assert_eq!(PlatformAdapter::platform_type(&adapter), PlatformType::Matrix);
+        assert_eq!(
+            PlatformAdapter::platform_type(&adapter),
+            PlatformType::Matrix
+        );
     }
 
     #[test]

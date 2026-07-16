@@ -15,16 +15,6 @@
 
 - **Determinism**: Class A (Protocol), Class B (Off-Chain), Class C (Probabilistic)
 
-## GitNexus MCP
-
-**Setup:** Connected via `~/.jcode/mcp.json` with command `gitnexus mcp`
-
-**12 repos indexed:**
-- cipherocto (3,761 nodes, 8,573 edges, 291 processes, 2,436 embeddings)
-- stoolap, litellm, langflow, openclaw, any-llm, and more
-
-**Tools:** list_repos, query, context, impact, detect_changes, rename, cypher
-
 ---
 
 ## CRITICAL RULES
@@ -88,4 +78,3 @@ grep "^### Section:" accepted/file.md
 ## Dependencies
 
 - Rust (cargo, tokio, hyper, clap), Python (PyO3)
-- GitNexus MCP for code intelligence

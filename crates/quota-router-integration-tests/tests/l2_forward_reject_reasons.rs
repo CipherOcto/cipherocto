@@ -8,14 +8,10 @@ use quota_router_core::node::gossip::{monotonic_now, CapacityGossipPayload};
 use quota_router_core::node::provider::{
     ModelPricing, NetworkId, ProviderCapacity, ProviderHealth, ProviderId, RouterNodeId,
 };
-use quota_router_core::node::{envelope, DISC_FORWARD_REQUEST, DISC_CAPACITY_GOSSIP};
-use quota_router_integration_tests::{TestCluster, make_request};
+use quota_router_core::node::{envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REQUEST};
+use quota_router_integration_tests::{make_request, TestCluster};
 
-fn make_fwd_request(
-    request_id: [u8; 32],
-    model: &str,
-    ttl: u8,
-) -> ForwardRequestPayload {
+fn make_fwd_request(request_id: [u8; 32], model: &str, ttl: u8) -> ForwardRequestPayload {
     ForwardRequestPayload {
         request_id,
         network_id: NetworkId([1u8; 32]),
@@ -42,7 +38,10 @@ async fn l2_reject_ttl_expired() {
         sender_id: None,
     };
     let r = cluster.nodes[0].node.receive(&framed, &ctx).await;
-    assert!(r.is_ok(), "TTL=0 should be accepted and rejected internally");
+    assert!(
+        r.is_ok(),
+        "TTL=0 should be accepted and rejected internally"
+    );
 }
 
 /// ForwardRequest for unknown model → NoProvider rejection.
@@ -99,7 +98,12 @@ async fn l2_gossip_valid_hmac_merges() {
     let r = cluster.nodes[0].node.receive(&framed, &ctx).await;
     assert!(r.is_ok());
 
-    let snap = cluster.nodes[0].node.gossip_cache.lock().unwrap().snapshot();
+    let snap = cluster.nodes[0]
+        .node
+        .gossip_cache
+        .lock()
+        .unwrap()
+        .snapshot();
     assert_eq!(snap.len(), 1, "gossip should have 1 entry after merge");
     assert_eq!(snap[0].0, sender);
     assert_eq!(snap[0].1[0].requests_remaining, 100);
@@ -153,7 +157,11 @@ async fn l2_gossip_known_peers_populates_cache() {
     let _ = cluster.nodes[0].node.receive(&framed, &ctx).await;
 
     let peers = cluster.nodes[0].node.peer_count();
-    assert!(peers >= 2, "known_peers should populate cache, got {}", peers);
+    assert!(
+        peers >= 2,
+        "known_peers should populate cache, got {}",
+        peers
+    );
 }
 
 /// RouterAnnounce with valid HMAC adds peer if model overlap.
@@ -241,7 +249,10 @@ async fn l2_withdraw_removes_peer() {
         mission_id: [0u8; 32],
         sender_id: Some(peer_id.0),
     };
-    let _ = cluster.nodes[0].node.receive(&envelope(DISC_ROUTER_ANNOUNCE, &announce).unwrap(), &ctx).await;
+    let _ = cluster.nodes[0]
+        .node
+        .receive(&envelope(DISC_ROUTER_ANNOUNCE, &announce).unwrap(), &ctx)
+        .await;
     assert!(cluster.nodes[0].node.peer_count() >= 1);
 
     // Now withdraw

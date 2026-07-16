@@ -102,7 +102,10 @@ mod tests {
     #[test]
     fn test_balance_error_display() {
         let err = BalanceError::Insufficient(50, 100);
-        assert_eq!(format!("{}", err), "Insufficient balance: have 50, need 100");
+        assert_eq!(
+            format!("{}", err),
+            "Insufficient balance: have 50, need 100"
+        );
     }
 
     #[test]

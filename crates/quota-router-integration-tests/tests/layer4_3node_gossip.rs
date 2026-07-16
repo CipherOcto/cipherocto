@@ -33,7 +33,8 @@ fn wait_for_all_healthy(timeout: Duration) {
     loop {
         let output = docker_compose(&["ps", "--format", "json"]);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let healthy_count = stdout.lines()
+        let healthy_count = stdout
+            .lines()
             .filter(|l| l.contains("\"Health\":\"healthy\""))
             .count();
         if healthy_count >= 3 {
@@ -58,7 +59,8 @@ fn layer4_3node_gossip() {
     // Verify all 3 running
     let ps = docker_compose(&["ps", "--format", "json"]);
     let stdout = String::from_utf8_lossy(&ps.stdout);
-    let running = stdout.lines()
+    let running = stdout
+        .lines()
         .filter(|l| l.contains("\"State\":\"running\""))
         .count();
     assert_eq!(running, 3, "should have 3 running containers");
@@ -81,7 +83,8 @@ fn layer4_3node_gossip() {
 
     let ps2 = docker_compose(&["ps", "--format", "json"]);
     let stdout2 = String::from_utf8_lossy(&ps2.stdout);
-    let still_running = stdout2.lines()
+    let still_running = stdout2
+        .lines()
         .filter(|l| l.contains("\"State\":\"running\""))
         .count();
     assert_eq!(

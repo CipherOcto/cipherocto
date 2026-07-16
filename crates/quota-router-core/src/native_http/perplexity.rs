@@ -573,9 +573,7 @@ mod tests {
         assert!(rt
             .block_on(p.batch_retrieve("id", None, None, None))
             .is_err());
-        assert!(rt
-            .block_on(p.batch_cancel("id", None, None, None))
-            .is_err());
+        assert!(rt.block_on(p.batch_cancel("id", None, None, None)).is_err());
         assert!(rt.block_on(p.batch_list(None, None, None, None)).is_err());
         assert!(rt
             .block_on(p.batch_results("id", None, None, None))
@@ -717,7 +715,10 @@ mod tests {
             hyper::Response::builder()
                 .status(200)
                 .header("content-type", "text/event-stream")
-                .body("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n".to_string())
+                .body(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"
+                        .to_string(),
+                )
                 .unwrap()
         })
         .await;
@@ -759,6 +760,9 @@ mod tests {
         let p = PerplexityProvider::new();
         let mut r = p.streaming_completion(&req, Some("k")).await.unwrap();
         let chunk = r.receiver.recv().await.unwrap().unwrap();
-        assert!(matches!(chunk, crate::native_http::StreamingChunk::RawSSE(_)));
+        assert!(matches!(
+            chunk,
+            crate::native_http::StreamingChunk::RawSSE(_)
+        ));
     }
 }

@@ -562,21 +562,30 @@ mod tests {
     async fn streaming_completion_auth_error() {
         let s = MockHttpServer::unauthorized().await;
         let p = AzureProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gpt-4"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gpt-4"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_rate_limit() {
         let s = MockHttpServer::rate_limited().await;
         let p = AzureProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gpt-4"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gpt-4"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_server_error() {
         let s = MockHttpServer::error().await;
         let p = AzureProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gpt-4"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gpt-4"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -585,12 +594,18 @@ mod tests {
             hyper::Response::builder()
                 .status(200)
                 .header("content-type", "text/event-stream")
-                .body("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n".to_string())
+                .body(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"
+                        .to_string(),
+                )
                 .unwrap()
         })
         .await;
         let p = AzureProvider::new().with_api_base(s.base_url());
-        let mut r = p.streaming_completion(&req("gpt-4"), Some("k")).await.unwrap();
+        let mut r = p
+            .streaming_completion(&req("gpt-4"), Some("k"))
+            .await
+            .unwrap();
         let chunk = r.receiver.recv().await.unwrap().unwrap();
         assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
     }

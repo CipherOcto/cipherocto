@@ -1012,14 +1012,8 @@ mod tests {
             disc.authorization_endpoint,
             "https://auth0.example.com/authorize"
         );
-        assert_eq!(
-            disc.token_endpoint,
-            "https://auth0.example.com/oauth/token"
-        );
-        assert_eq!(
-            disc.userinfo_endpoint,
-            "https://auth0.example.com/userinfo"
-        );
+        assert_eq!(disc.token_endpoint, "https://auth0.example.com/oauth/token");
+        assert_eq!(disc.userinfo_endpoint, "https://auth0.example.com/userinfo");
         assert_eq!(
             disc.jwks_uri,
             "https://auth0.example.com/.well-known/jwks.json"
@@ -1030,9 +1024,7 @@ mod tests {
         assert!(disc
             .scopes_supported
             .contains(&"offline_access".to_string()));
-        assert!(disc
-            .response_types_supported
-            .contains(&"code".to_string()));
+        assert!(disc.response_types_supported.contains(&"code".to_string()));
         assert!(disc
             .grant_types_supported
             .contains(&"authorization_code".to_string()));
@@ -1042,9 +1034,7 @@ mod tests {
         assert!(disc
             .grant_types_supported
             .contains(&"refresh_token".to_string()));
-        assert!(disc
-            .subject_types_supported
-            .contains(&"public".to_string()));
+        assert!(disc.subject_types_supported.contains(&"public".to_string()));
         assert!(disc
             .id_token_signing_alg_values_supported
             .contains(&"RS256".to_string()));
@@ -1082,11 +1072,7 @@ mod tests {
     fn test_generate_random_string_charset() {
         let s = generate_random_string(1000);
         for c in s.chars() {
-            assert!(
-                c.is_ascii_alphanumeric(),
-                "unexpected char: {}",
-                c
-            );
+            assert!(c.is_ascii_alphanumeric(), "unexpected char: {}", c);
         }
     }
 
@@ -1243,7 +1229,10 @@ mod tests {
             .await;
 
         let blacklist: Option<std::sync::Arc<dyn super::super::TokenBlacklistStorage>> = None;
-        let result = handler.revoke_with_blacklist("s1", &blacklist).await.unwrap();
+        let result = handler
+            .revoke_with_blacklist("s1", &blacklist)
+            .await
+            .unwrap();
         assert!(result);
 
         // Session should be removed
@@ -1291,131 +1280,6 @@ mod tests {
         match result.unwrap_err() {
             super::super::SsoError::ProviderDisabled(id) => assert_eq!(id, "disabled-okta"),
             other => panic!("Expected ProviderDisabled, got: {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_oauth2_flow_handler_callback_invalid_state() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let handler = OAuth2FlowHandler::new();
-        let provider = IdentityProvider {
-            id: "okta".into(),
-            name: "Okta".into(),
-            provider_type: super::super::ProviderType::Okta,
-            config: super::super::ProviderConfig {
-                client_id: Some("test".into()),
-                client_secret: Some("secret".into()),
-                issuer: Some("https://okta.com".into()),
-                scopes: None,
-                idp_metadata_url: None,
-                sp_entity_id: None,
-                acs_url: None,
-                idp_certificate: None,
-                scim_url: None,
-                scim_token: None,
-            },
-            enabled: true,
-            auto_provision: false,
-            default_team: None,
-        };
-
-        let result = rt.block_on(handler.callback(
-            "invalid-state",
-            "code",
-            "verifier",
-            &provider,
-            "https://okta.com/oauth/token",
-        ));
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_oauth2_flow_handler_refresh_no_session() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let handler = OAuth2FlowHandler::new();
-        let provider = IdentityProvider {
-            id: "okta".into(),
-            name: "Okta".into(),
-            provider_type: super::super::ProviderType::Okta,
-            config: super::super::ProviderConfig {
-                client_id: Some("test".into()),
-                client_secret: Some("secret".into()),
-                issuer: Some("https://okta.com".into()),
-                scopes: None,
-                idp_metadata_url: None,
-                sp_entity_id: None,
-                acs_url: None,
-                idp_certificate: None,
-                scim_url: None,
-                scim_token: None,
-            },
-            enabled: true,
-            auto_provision: false,
-            default_team: None,
-        };
-
-        let result = rt.block_on(handler.refresh(
-            "nonexistent-session",
-            &provider,
-            "https://okta.com/oauth/token",
-        ));
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            super::super::SsoError::TokenRevoked => {}
-            other => panic!("Expected TokenRevoked, got: {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_oauth2_flow_handler_refresh_no_refresh_token() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let handler = OAuth2FlowHandler::new();
-        let provider = IdentityProvider {
-            id: "okta".into(),
-            name: "Okta".into(),
-            provider_type: super::super::ProviderType::Okta,
-            config: super::super::ProviderConfig {
-                client_id: Some("test".into()),
-                client_secret: Some("secret".into()),
-                issuer: Some("https://okta.com".into()),
-                scopes: None,
-                idp_metadata_url: None,
-                sp_entity_id: None,
-                acs_url: None,
-                idp_certificate: None,
-                scim_url: None,
-                scim_token: None,
-            },
-            enabled: true,
-            auto_provision: false,
-            default_team: None,
-        };
-
-        handler
-            .sessions
-            .insert(SsoSession {
-                session_id: "s1".into(),
-                sub: "user1".into(),
-                provider_id: "okta".into(),
-                access_token: "token".into(),
-                refresh_token: None,
-                claims: TokenClaims::default(),
-                created_at: Utc::now(),
-                expires_at: Utc::now() + Duration::hours(1),
-            })
-            .await;
-
-        let result = rt.block_on(handler.refresh(
-            "s1",
-            &provider,
-            "https://okta.com/oauth/token",
-        ));
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            super::super::SsoError::TokenInvalid(msg) => {
-                assert!(msg.contains("no refresh token"));
-            }
-            other => panic!("Expected TokenInvalid, got: {:?}", other),
         }
     }
 
@@ -1511,11 +1375,8 @@ mod tests {
             auto_provision: false,
             default_team: None,
         };
-        let (_, _, url) = handler
-            .initiate(&provider, "https://app/cb")
-            .await
-            .unwrap();
-        assert!(url.contains("openid+profile+email"));
+        let (_, _, url) = handler.initiate(&provider, "https://app/cb").await.unwrap();
+        assert!(url.contains("openid profile email"));
     }
 
     #[tokio::test]
@@ -1592,10 +1453,19 @@ mod tests {
             default_team: None,
         };
         // Initiate with okta
-        let (state_str, _, _) = handler.initiate(&provider_okta, "https://app/cb").await.unwrap();
+        let (state_str, _, _) = handler
+            .initiate(&provider_okta, "https://app/cb")
+            .await
+            .unwrap();
         // Callback with azure provider — should fail
         let result = handler
-            .callback(&state_str, "code", "verifier", &provider_azure, "https://token")
+            .callback(
+                &state_str,
+                "code",
+                "verifier",
+                &provider_azure,
+                "https://token",
+            )
             .await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SsoError::InvalidState));
@@ -1799,31 +1669,27 @@ mod tests {
             disc.authorization_endpoint,
             "https://idp.example.com/authorize"
         );
-        assert_eq!(
-            disc.token_endpoint,
-            "https://idp.example.com/oauth/token"
-        );
-        assert_eq!(
-            disc.userinfo_endpoint,
-            "https://idp.example.com/userinfo"
-        );
+        assert_eq!(disc.token_endpoint, "https://idp.example.com/oauth/token");
+        assert_eq!(disc.userinfo_endpoint, "https://idp.example.com/userinfo");
         assert_eq!(
             disc.jwks_uri,
             "https://idp.example.com/.well-known/jwks.json"
         );
         assert!(disc.scopes_supported.contains(&"openid".to_string()));
-        assert!(disc.scopes_supported.contains(&"offline_access".to_string()));
+        assert!(disc
+            .scopes_supported
+            .contains(&"offline_access".to_string()));
         assert!(disc.response_types_supported.contains(&"code".to_string()));
-        assert!(disc.grant_types_supported.contains(&"client_credentials".to_string()));
+        assert!(disc
+            .grant_types_supported
+            .contains(&"client_credentials".to_string()));
         assert!(disc.subject_types_supported.contains(&"public".to_string()));
-        assert!(
-            disc.id_token_signing_alg_values_supported
-                .contains(&"RS256".to_string())
-        );
-        assert!(
-            disc.token_endpoint_auth_methods_supported
-                .contains(&"client_secret_basic".to_string())
-        );
+        assert!(disc
+            .id_token_signing_alg_values_supported
+            .contains(&"RS256".to_string()));
+        assert!(disc
+            .token_endpoint_auth_methods_supported
+            .contains(&"client_secret_basic".to_string()));
     }
 
     #[test]

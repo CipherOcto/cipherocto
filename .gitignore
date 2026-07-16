@@ -66,3 +66,26 @@ uv.lock
 # crates/octo-adapter-telegram-mtproto/sessions.db*
 # **/telegram*.json
 # **/sessions.db*
+
+# AI coding-tool local config (per-tool drop-in dirs; never committed)
+/.agents/
+/.clinerules/
+/.continue/
+/.cursor/
+/.mimocode/
+/.opencode/
+/.playwright-mcp/
+/.roo/
+/.windsurf/
+/.github/copilot-instructions.md
+/skills-lock.json
+
+# Local scratch / debug logs (investigation one-offs, kept out of repo)
+/hook-log-1.md
+/inspect-waweb-step1.md
+/passkey-hooks-1.md
+/os
+/tarpaulin-report.json
+
+# Local debug screenshots (WA Web reconnect drills)
+/wa-*.png

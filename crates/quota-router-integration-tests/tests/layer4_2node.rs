@@ -42,7 +42,8 @@ fn wait_for_healthy(timeout: Duration) {
     loop {
         let output = docker_compose(&["ps", "--format", "json"]);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let healthy_count = stdout.lines()
+        let healthy_count = stdout
+            .lines()
             .filter(|l| l.contains("\"Health\":\"healthy\""))
             .count();
         if healthy_count >= 2 {
@@ -82,7 +83,8 @@ fn layer4_2node() {
     // Verify both containers are running
     let ps = docker_compose(&["ps", "--format", "json"]);
     let stdout = String::from_utf8_lossy(&ps.stdout);
-    let running = stdout.lines()
+    let running = stdout
+        .lines()
         .filter(|l| l.contains("\"State\":\"running\""))
         .count();
     assert!(

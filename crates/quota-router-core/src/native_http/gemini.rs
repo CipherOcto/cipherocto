@@ -540,7 +540,10 @@ mod tests {
     #[tokio::test]
     async fn completion_network_error() {
         let p = GeminiProvider::new().with_api_base("http://127.0.0.1:1".into());
-        let err = p.completion(&req("gemini-2.5-flash"), None).await.unwrap_err();
+        let err = p
+            .completion(&req("gemini-2.5-flash"), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProviderError::Network(_)));
     }
 
@@ -548,9 +551,15 @@ mod tests {
     async fn completion_success() {
         let s = MockHttpServer::with_json(&ok_response()).await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        let r = p.completion(&req("gemini-2.5-flash"), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices.len(), 1);
-        assert_eq!(r.choices[0].message.content, Some("Hello from Gemini!".into()));
+        assert_eq!(
+            r.choices[0].message.content,
+            Some("Hello from Gemini!".into())
+        );
         assert_eq!(r.usage.prompt_tokens, 10);
         assert_eq!(r.usage.completion_tokens, 5);
     }
@@ -608,7 +617,9 @@ mod tests {
         let s = MockHttpServer::with_response(reqwest::StatusCode::OK, "not-json").await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
         assert!(matches!(
-            p.completion(&req("gemini-2.5-flash"), None).await.unwrap_err(),
+            p.completion(&req("gemini-2.5-flash"), None)
+                .await
+                .unwrap_err(),
             ProviderError::InvalidResponse(_)
         ));
     }
@@ -627,7 +638,10 @@ mod tests {
         });
         let s = MockHttpServer::with_json(&resp).await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        let r = p.completion(&req("gemini-2.5-flash"), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices[0].finish_reason, "stop");
     }
 
@@ -639,7 +653,10 @@ mod tests {
         });
         let s = MockHttpServer::with_json(&resp).await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        let r = p.completion(&req("gemini-2.5-flash"), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices[0].message.content, Some("".into()));
     }
 
@@ -748,28 +765,40 @@ mod tests {
     #[tokio::test]
     async fn streaming_completion_network_error() {
         let p = GeminiProvider::new().with_api_base("http://127.0.0.1:1".into());
-        assert!(p.streaming_completion(&req("gemini-2.5-flash"), None).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), None)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_auth_error() {
         let s = MockHttpServer::unauthorized().await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gemini-2.5-flash"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_rate_limit() {
         let s = MockHttpServer::rate_limited().await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gemini-2.5-flash"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_server_error() {
         let s = MockHttpServer::error().await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        assert!(p.streaming_completion(&req("gemini-2.5-flash"), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -783,7 +812,10 @@ mod tests {
         })
         .await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        let mut r = p.streaming_completion(&req("gemini-2.5-flash"), Some("k")).await.unwrap();
+        let mut r = p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
         let chunk = r.receiver.recv().await.unwrap().unwrap();
         assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
     }
@@ -799,7 +831,10 @@ mod tests {
         })
         .await;
         let p = GeminiProvider::new().with_api_base(s.base_url());
-        let mut r = p.streaming_completion(&req("gemini-2.5-flash"), Some("k")).await.unwrap();
+        let mut r = p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
         let chunk = r.receiver.recv().await;
         assert!(chunk.is_none());
     }

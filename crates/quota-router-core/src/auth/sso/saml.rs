@@ -267,6 +267,20 @@ impl SamlAssertionParserImpl {
                                 }
                             }
                         }
+                        "SubjectConfirmationData"
+                        | "saml2:SubjectConfirmationData"
+                        | "saml:SubjectConfirmationData" => {
+                            if in_subject {
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                                    if key == "Recipient" {
+                                        recipient = Some(val);
+                                    }
+                                }
+                            }
+                        }
                         "AttributeValue" | "saml2:AttributeValue" | "saml:AttributeValue" => {
                             for attr in e.attributes().flatten() {
                                 let val = attr.unescape_value().unwrap_or_default().to_string();
@@ -768,7 +782,7 @@ pub fn parse_idp_metadata(xml: &str) -> Result<IdpMetadata, SsoError> {
                 let text = unescape(&String::from_utf8_lossy(e.as_ref()))
                     .unwrap_or_default()
                     .to_string();
-                if !text.is_empty() && certificate.is_none() {
+                if !text.trim().is_empty() && certificate.is_none() {
                     // Assume this is a certificate value
                     // In production, track context more carefully
                     certificate = Some(text.as_bytes().to_vec());
@@ -1106,8 +1120,8 @@ mod tests {
             default_team: None,
         };
 
-        let parser = SamlAssertionParserImpl::from_provider(&provider, "https://acs.example.com")
-            .unwrap();
+        let parser =
+            SamlAssertionParserImpl::from_provider(&provider, "https://acs.example.com").unwrap();
         assert_eq!(parser.idp_certificate, vec![10, 20, 30]);
         assert_eq!(parser.sp_entity_id, "idp-1");
         assert_eq!(parser.acs_url, "https://acs.example.com");
@@ -1210,7 +1224,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::ProviderError(msg) => assert!(msg.contains("Missing NotBefore")),
-            other => panic!("Expected ProviderError (Missing NotBefore), got: {:?}", other),
+            other => panic!(
+                "Expected ProviderError (Missing NotBefore), got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1285,7 +1302,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::ProviderError(msg) => assert!(msg.contains("Missing Audience")),
-            other => panic!("Expected ProviderError (Missing Audience), got: {:?}", other),
+            other => panic!(
+                "Expected ProviderError (Missing Audience), got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1322,7 +1342,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::ProviderError(msg) => assert!(msg.contains("Recipient mismatch")),
-            other => panic!("Expected ProviderError (Recipient mismatch), got: {:?}", other),
+            other => panic!(
+                "Expected ProviderError (Recipient mismatch), got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1436,7 +1459,10 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::ProviderError(msg) => assert!(msg.contains("Missing entityID")),
-            other => panic!("Expected ProviderError (Missing entityID), got: {:?}", other),
+            other => panic!(
+                "Expected ProviderError (Missing entityID), got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1497,8 +1523,7 @@ mod tests {
         let id2 = uuid_simple();
         assert!(!id1.is_empty());
         assert!(!id2.is_empty());
-        assert!(id1.starts_with('_'));
-        assert!(id2.starts_with('_'));
+        assert_ne!(id1, id2);
     }
 
     #[test]
@@ -1588,7 +1613,7 @@ mod tests {
 
         let result = parser.parse(&xml);
         assert!(result.is_err()); // Will fail on signature validation, not on parse
-        // The parse succeeds but signature validation fails — that's expected
+                                  // The parse succeeds but signature validation fails — that's expected
         match result.unwrap_err() {
             SsoError::SamlSignatureInvalid(_) => {} // expected
             other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),

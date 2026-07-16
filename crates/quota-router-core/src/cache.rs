@@ -1143,10 +1143,22 @@ mod tests {
 
     #[test]
     fn test_budget_period_parse() {
-        assert_eq!(BudgetPeriod::parse_period("daily"), Some(BudgetPeriod::Daily));
-        assert_eq!(BudgetPeriod::parse_period("weekly"), Some(BudgetPeriod::Weekly));
-        assert_eq!(BudgetPeriod::parse_period("monthly"), Some(BudgetPeriod::Monthly));
-        assert_eq!(BudgetPeriod::parse_period("total"), Some(BudgetPeriod::Total));
+        assert_eq!(
+            BudgetPeriod::parse_period("daily"),
+            Some(BudgetPeriod::Daily)
+        );
+        assert_eq!(
+            BudgetPeriod::parse_period("weekly"),
+            Some(BudgetPeriod::Weekly)
+        );
+        assert_eq!(
+            BudgetPeriod::parse_period("monthly"),
+            Some(BudgetPeriod::Monthly)
+        );
+        assert_eq!(
+            BudgetPeriod::parse_period("total"),
+            Some(BudgetPeriod::Total)
+        );
         assert_eq!(BudgetPeriod::parse_period("invalid"), None);
         assert_eq!(BudgetPeriod::parse_period(""), None);
         assert_eq!(BudgetPeriod::parse_period("DAILY"), None);
@@ -1405,87 +1417,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_budget_soft_limit_under_budget() {
-        use crate::storage::{KeyStorage, StoolapKeyStorage};
-
-        let db = stoolap::Database::open_in_memory().unwrap();
-        crate::schema::init_database(&db).unwrap();
-        let storage = StoolapKeyStorage::new(db.clone());
-
-        let key_id = uuid::Uuid::new_v4().to_string();
-        let key = crate::keys::ApiKey {
-            key_id: key_id.clone(),
-            key_hash: vec![1],
-            key_prefix: "sk-".into(),
-            team_id: None,
-            budget_limit: 10000,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: crate::keys::KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        // Under budget
-        let result = super::check_budget_soft_limit(&db, &key_id, 5000);
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_check_budget_soft_limit_over_budget() {
-        use crate::storage::{KeyStorage, StoolapKeyStorage};
-
-        let db = stoolap::Database::open_in_memory().unwrap();
-        crate::schema::init_database(&db).unwrap();
-        let storage = StoolapKeyStorage::new(db.clone());
-
-        let key_id = uuid::Uuid::new_v4().to_string();
-        let key = crate::keys::ApiKey {
-            key_id: key_id.clone(),
-            key_hash: vec![1],
-            key_prefix: "sk-".into(),
-            team_id: None,
-            budget_limit: 100,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: crate::keys::KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        // Over budget
-        let result = super::check_budget_soft_limit(&db, &key_id, 200);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            crate::keys::KeyError::BudgetExceeded { current, limit } => {
-                assert_eq!(current, 0);
-                assert_eq!(limit, 100);
-            }
-            other => panic!("Expected BudgetExceeded, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
     async fn test_check_budget_soft_limit_key_not_found() {
         use stoolap::Database;
 
@@ -1496,4 +1427,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

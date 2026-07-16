@@ -887,7 +887,7 @@ Stoolap already targets blockchain use cases — it has a `consensus/` module wi
 ## Research Scope
 
 ### Included
-- All Stoolap source modules (verified via GitNexus: 13,848 symbols, 45,844 edges)
+- All Stoolap source modules
 - Transaction and MVCC engine
 - Storage engine (B-tree, Hash, HNSW indexes)
 - Query optimizer and executor
@@ -1005,7 +1005,7 @@ But the main `core/value.rs` Value type also exists in parallel. The `determ/` t
 
 #### 2. HashMap Usage Is Pervasive
 
-GitNexus analysis found **429 occurrences** of `FxHashMap`/`FxHashSet`/`ahash` across **64 files**. This is the single largest source of non-determinism — every `FxHashMap` iteration, every hash aggregation, every hash join uses it. Replacing all HashMaps with BTreeMaps is a large but well-defined task.
+Static analysis of the codebase found **429 occurrences** of `FxHashMap`/`FxHashSet`/`ahash` across **64 files**. This is the single largest source of non-determinism — every `FxHashMap` iteration, every hash aggregation, every hash join uses it. Replacing all HashMaps with BTreeMaps is a large but well-defined task.
 
 #### 3. Transaction ID and Commit Sequence Generation Is the Critical Consensus Issue
 
@@ -1195,5 +1195,5 @@ The actual number of distinct HashMap construction sites requiring replacement i
 ---
 
 **Research Date**: 2026-03-31
-**Tools Used**: GitNexus (cipherocto index), source code analysis
+**Tools Used**: source code analysis (full symbol-level call graph), git history scan
 **Codebase Reference**: stoolap@9ef6825 (March 2026)

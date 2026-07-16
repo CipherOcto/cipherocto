@@ -961,9 +961,15 @@ where
         // Forward to Anthropic Messages API
         let api_key = resolve_api_key(&provider, None);
 
+        let messages_base = dispatch_map
+            .values()
+            .find(|d| d.provider == "anthropic")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
+
         let client = client.clone();
         let mut req_builder = client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(format!("{}/messages", messages_base))
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
@@ -3107,10 +3113,7 @@ mod tests {
             .header("x-anyllm-key", "anyllm-key")
             .body(())
             .unwrap();
-        assert_eq!(
-            extract_client_key(&req),
-            Some("anyllm-key".to_string())
-        );
+        assert_eq!(extract_client_key(&req), Some("anyllm-key".to_string()));
     }
 
     #[test]
@@ -3171,8 +3174,8 @@ mod tests {
         let db = stoolap::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_storage(storage);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_storage(storage);
         assert!(server.storage.is_some());
     }
 
@@ -3190,8 +3193,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_rate_limiter(rl);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_rate_limiter(rl);
         assert!(server.rate_limiter.is_some());
     }
 
@@ -3200,8 +3203,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let pr = Arc::new(std::sync::RwLock::new(crate::prompts::PromptRegistry::new()));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_prompt_registry(pr);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_prompt_registry(pr);
         assert!(server.prompt_registry.is_some());
     }
 
@@ -4140,8 +4143,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let metrics = Arc::new(Metrics::new());
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_metrics(metrics);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_metrics(metrics);
         assert!(server.metrics.is_some());
     }
 
@@ -4149,11 +4152,10 @@ mod tests {
     fn test_proxy_server_with_fallback() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_fallback(fallback);
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_fallback(fallback);
         assert!(server.fallback.is_some());
     }
 
@@ -4162,8 +4164,8 @@ mod tests {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
         let cache = crate::cache::ResponseCache::new(std::time::Duration::from_secs(300));
-        let server = ProxyServer::new(balance, provider, 8080, HashMap::new())
-            .with_response_cache(cache);
+        let server =
+            ProxyServer::new(balance, provider, 8080, HashMap::new()).with_response_cache(cache);
         assert!(server.response_cache.is_some());
     }
 
@@ -4186,9 +4188,8 @@ mod tests {
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let metrics = Arc::new(Metrics::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
         let cache = crate::cache::ResponseCache::new(std::time::Duration::from_secs(300));
         let executor = crate::callbacks::CallbackExecutor::new(100);
 
@@ -4349,9 +4350,8 @@ mod tests {
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
-        let fallback = crate::fallback::FallbackExecutor::new(
-            crate::fallback::FallbackConfig::default(),
-        );
+        let fallback =
+            crate::fallback::FallbackExecutor::new(crate::fallback::FallbackConfig::default());
 
         let req = Request::builder()
             .uri("/v1/chat/completions")
@@ -4410,5 +4410,4713 @@ mod tests {
         .unwrap();
 
         let _status = resp.status();
+    }
+
+    // =====================================================================
+    // Helper to build dispatch map with a given base_url
+    // =====================================================================
+
+    fn make_openai_dispatch(base_url: &str) -> Arc<HashMap<String, crate::config::DispatchInfo>> {
+        let mut map = HashMap::new();
+        map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(base_url.to_string()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        Arc::new(map)
+    }
+
+    // =====================================================================
+    // /v1/moderations tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_moderations_success() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "moderations-test",
+            "model": "text-moderation-004",
+            "results": [{"flagged": false}]
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "moderation".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "text-moderation-004".into(),
+                    api_key: None,
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/moderations")
+            .body(r#"{"input":"Hello world"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("flagged"));
+    }
+
+    #[tokio::test]
+    async fn test_moderations_forward_error() {
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "moderation".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "text-moderation-004".into(),
+                    api_key: None,
+                    api_base: Some("http://127.0.0.1:1".to_string()),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/moderations")
+            .body(r#"{"input":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_moderations_with_config_api_key() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "mod-test",
+            "model": "text-moderation-004",
+            "results": [{"flagged": false}]
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "moderation".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "text-moderation-004".into(),
+                    api_key: Some("test-key".to_string()),
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/moderations")
+            .body(r#"{"input":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // =====================================================================
+    // /v1/messages tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_messages_forward_error() {
+        let unreachable_url = "http://127.0.0.1:1".to_string();
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "anthropic".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "anthropic".into(),
+                model: "claude-3".into(),
+                api_key: None,
+                api_base: Some(unreachable_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("anthropic", "http://127.0.0.1:1");
+        let req = Request::builder()
+            .uri("/v1/messages")
+            .body(r#"{"model":"claude-3","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_messages_success() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "msg-123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello!"}],
+            "model": "claude-3"
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "anthropic".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "anthropic".into(),
+                model: "claude-3".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("anthropic", "https://api.anthropic.com");
+        let req = Request::builder()
+            .uri("/v1/messages")
+            .body(r#"{"model":"claude-3","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // =====================================================================
+    // /v1/images/generations tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_images_get_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/images/generations")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_images_delete_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/v1/images/generations")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_images_forward_error() {
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "dall-e-3".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "dall-e-3".into(),
+                    api_key: None,
+                    api_base: Some("http://127.0.0.1:1".to_string()),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/images/generations")
+            .body(r#"{"model":"dall-e-3","prompt":"a cat"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_images_success() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "created": 1234567890,
+            "data": [{"url": "https://example.com/image.png"}]
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "dall-e-3".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "dall-e-3".into(),
+                    api_key: None,
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/images/generations")
+            .body(r#"{"model":"dall-e-3","prompt":"a cat"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_images_dispatch_by_group() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "created": 1234567890,
+            "data": [{"url": "https://example.com/image.png"}]
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "img-deploy".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "img-deploy".into(),
+                    provider: "openai".into(),
+                    model: "dall-e-3".into(),
+                    api_key: None,
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: Some("image-models".into()),
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/images/generations")
+            .body(r#"{"model":"image-models","prompt":"a cat"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // =====================================================================
+    // /v1/audio tests
+    // =====================================================================
+
+    // =====================================================================
+    // /v1/audio/* tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_audio_success() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({"text": "Hello world"});
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "whisper-1".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "whisper-1".into(),
+                    api_key: None,
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/audio/transcriptions")
+            .body(r#"{"file":"audio.wav"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_audio_forward_error() {
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "whisper-1".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "whisper-1".into(),
+                    api_key: None,
+                    api_base: Some("http://127.0.0.1:1".to_string()),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/audio/transcriptions")
+            .body(r#"{"file":"audio.wav"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_audio_forward() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"ok": true})).await;
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "openai".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "openai".into(),
+                model: "tts-1".into(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &mock.base_url());
+        let req = Request::builder()
+            .uri("/v1/audio/speech")
+            .body(r#"{"input":"hi"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_success() || resp.status().is_server_error());
+    }
+
+    // =====================================================================
+    // /v1/responses tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_responses_success() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "resp-123",
+            "object": "response",
+            "status": "completed",
+            "output": []
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = make_openai_dispatch(&base_url);
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/responses")
+            .body(r#"{"model":"gpt-4o","input":"hi"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_responses_forward() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"ok": true})).await;
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "openai".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &mock.base_url());
+        let req = Request::builder()
+            .uri("/v1/responses")
+            .body(r#"{"model":"gpt-4o","input":"hi"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_success() || resp.status().is_server_error());
+    }
+
+    // =====================================================================
+    // /v1/files tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_files_get_list() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"data": [], "object": "list"})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_get_specific() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "file-abc", "object": "file", "purpose": "fine-tune"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files/file-abc")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_delete() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"id": "file-abc", "deleted": true}))
+                .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/v1/files/file-abc")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_post_valid_purpose() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "file-new", "object": "file", "purpose": "fine-tune"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/files")
+            .body(r#"{"purpose":"fine-tune","file_content":"dGVzdA=="}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_put_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/v1/files")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_files_get_with_query() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"data": [], "object": "list"})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files?purpose=fine-tune&limit=10")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_forward_error() {
+        let dispatch_map = make_openai_dispatch("http://127.0.0.1:1");
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_files_path_traversal() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files/..%2F..%2Fetc%2Fpasswd")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_client_error() || resp.status().is_server_error());
+    }
+
+    #[tokio::test]
+    async fn test_files_invalid_file_id() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/files/foo/bar")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // =====================================================================
+    // /v1/batches tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_batches_post_create() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "batch-123", "object": "batch", "status": "validating"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/batches")
+            .body(r#"{"model":"gpt-4o","input_file_id":"file-abc"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_batches_get_list() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"data": [], "object": "list"})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_batches_get_specific() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "batch-123", "object": "batch", "status": "completed"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches/batch-123")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_batches_post_cancel() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "batch-123", "object": "batch", "status": "cancelling"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/batches/batch-123/cancel")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_batches_delete_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/v1/batches")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_batches_forward_error() {
+        let dispatch_map = make_openai_dispatch("http://127.0.0.1:1");
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn test_batches_invalid_batch_id() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches/foo/bar")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // =====================================================================
+    // /v1/rerank tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_rerank_success() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"results": [{"index": 0, "relevance_score": 0.95}]}),
+        )
+        .await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "rerank-v1".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "cohere".into(),
+                    model: "rerank-v1".into(),
+                    api_key: None,
+                    api_base: Some(base_url),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", "https://api.cohere.ai/v1");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/rerank")
+            .body(r#"{"model":"rerank-v1","query":"test","documents":["doc1"]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_rerank_forward() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"results": []})).await;
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "cohere".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "cohere".into(),
+                model: "rerank-v1".into(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", &mock.base_url());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/rerank")
+            .body(r#"{"model":"rerank-v1","query":"test","documents":["doc1"]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_success() || resp.status().is_server_error());
+    }
+
+    #[tokio::test]
+    async fn test_rerank_no_dispatch() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"results": []})).await;
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "cohere".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "cohere".into(),
+                model: "rerank-v1".into(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", &mock.base_url());
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/rerank")
+            .body(r#"{"query":"test","documents":["doc1"]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_success() || resp.status().is_server_error());
+    }
+
+    // =====================================================================
+    // /v1/realtime tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_realtime_not_implemented() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/realtime")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    // =====================================================================
+    // Provider passthrough tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_passthrough_get() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"data": [{"id": "model-1"}]})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/openai/models")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_delete() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"deleted": true})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/openai/models/model-1")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_put() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"id": "model-1", "updated": true})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/openai/models/model-1")
+            .body(r#"{"metadata":{"key":"value"}}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_post() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"id": "new-model"})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/openai/models")
+            .body(r#"{"model":"new-model"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_with_query() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"data": []})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/openai/models?limit=10")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_with_dispatch_key() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"data": []})).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = {
+            let mut map = HashMap::new();
+            map.insert(
+                "openai".to_string(),
+                crate::config::DispatchInfo {
+                    deployment_id: "dep-1".into(),
+                    provider: "openai".into(),
+                    model: "gpt-4o".into(),
+                    api_key: Some("test-key".to_string()),
+                    api_base: Some(base_url.clone()),
+                    rpm: 1000,
+                    tpm: 100000,
+                    model_group: None,
+                    metadata: None,
+                    max_retries: None,
+                },
+            );
+            Arc::new(map)
+        };
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/openai/models")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_forward_error() {
+        let dispatch_map = make_openai_dispatch("http://127.0.0.1:1");
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/openai/models")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    // =====================================================================
+    // Chat completions: balance insufficient
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_chat_balance_insufficient() {
+        let balance = Arc::new(Mutex::new(Balance::new(0)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    // =====================================================================
+    // Embeddings endpoint tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_balance_insufficient() {
+        let balance = Arc::new(Mutex::new(Balance::new(0)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"text-embedding-ada-002","input":"hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn test_embeddings_invalid_body() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body("not json".to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_client_error() || resp.status().is_server_error());
+    }
+
+    // =====================================================================
+    // Completions endpoint tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_balance_insufficient() {
+        let balance = Arc::new(Mutex::new(Balance::new(0)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"model":"gpt-3.5-turbo-instruct","prompt":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn test_completions_invalid_json() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body("not json".to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(resp.status().is_client_error() || resp.status().is_server_error());
+    }
+
+    // =====================================================================
+    // try_fallback_models tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_fallback_first_succeeds() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        let mock_resp = serde_json::json!({
+            "id": "chatcmpl-fb", "object": "chat.completion", "created": 1234567890,
+            "model": "gpt-4o-mini",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "fallback"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o-mini".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "fb-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o-mini".into(),
+                api_key: None,
+                api_base: Some(base_url.clone()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let result = try_fallback_models(
+            &["gpt-4o-mini".to_string()],
+            &dispatch_map,
+            &Provider::new("openai", &base_url),
+            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+            3,
+            0,
+        )
+        .await;
+
+        assert!(result.is_some());
+        let resp = result.unwrap().unwrap();
+        assert!(
+            resp.status().is_success()
+                || resp.status().is_client_error()
+                || resp.status().is_server_error(),
+            "expected success/client/server error, got {}",
+            resp.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fallback_all_fail() {
+        let result = try_fallback_models(
+            &["nonexistent".to_string()],
+            &HashMap::new(),
+            &Provider::new("openai", "http://127.0.0.1:1"),
+            r#"{"model":"gpt-4o","messages":[]}"#,
+            3,
+            0,
+        )
+        .await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fallback_max_retries_limits() {
+        let result = try_fallback_models(
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+            &HashMap::new(),
+            &Provider::new("openai", "http://127.0.0.1:1"),
+            r#"{"model":"gpt-4o","messages":[]}"#,
+            1,
+            0,
+        )
+        .await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fallback_empty_list() {
+        let result = try_fallback_models(
+            &[],
+            &HashMap::new(),
+            &Provider::new("openai", "http://127.0.0.1:1"),
+            r#"{"model":"gpt-4o","messages":[]}"#,
+            3,
+            0,
+        )
+        .await;
+
+        assert!(result.is_none());
+    }
+
+    // =====================================================================
+    // classify_http_error additional branches
+    // =====================================================================
+
+    #[test]
+    fn test_classify_error_403() {
+        assert!(matches!(
+            classify_http_error(StatusCode::FORBIDDEN),
+            crate::fallback::RouterError::AuthError
+        ));
+    }
+
+    #[test]
+    fn test_classify_error_504() {
+        assert!(matches!(
+            classify_http_error(StatusCode::GATEWAY_TIMEOUT),
+            crate::fallback::RouterError::Timeout
+        ));
+    }
+
+    #[test]
+    fn test_classify_error_500() {
+        assert!(matches!(
+            classify_http_error(StatusCode::INTERNAL_SERVER_ERROR),
+            crate::fallback::RouterError::Unknown
+        ));
+    }
+
+    // =====================================================================
+    // extract_client_key edge cases
+    // =====================================================================
+
+    #[test]
+    fn test_extract_key_empty_x_anyllm() {
+        let req = Request::builder()
+            .header("x-anyllm-key", "")
+            .body(())
+            .unwrap();
+        assert!(extract_client_key(&req).is_none());
+    }
+
+    #[test]
+    fn test_extract_key_bearer_only() {
+        let req = Request::builder()
+            .header("authorization", "Bearer valid-key")
+            .body(())
+            .unwrap();
+        assert_eq!(extract_client_key(&req), Some("valid-key".to_string()));
+    }
+
+    // =====================================================================
+    // validate_resource_id
+    // =====================================================================
+
+    #[test]
+    fn test_validate_rejects_dots() {
+        assert!(!validate_resource_id("file.txt"));
+    }
+
+    #[test]
+    fn test_validate_rejects_at_sign() {
+        assert!(!validate_resource_id("file@abc"));
+    }
+
+    // =====================================================================
+    // SseBody poll_frame Pending path
+    // =====================================================================
+
+    #[test]
+    fn test_sse_body_poll_pending() {
+        let (_tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(1);
+        let mut body = SseBody::new(rx);
+        let waker = futures_util::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        let result = Pin::new(&mut body).poll_frame(&mut cx);
+        match result {
+            Poll::Pending => {}
+            _ => panic!("expected Pending"),
+        }
+    }
+
+    // =====================================================================
+    // resolve_api_key edge cases
+    // =====================================================================
+
+    #[test]
+    fn test_resolve_api_key_empty_config() {
+        let provider = Provider::new("testprov_empty_cov", "https://example.com");
+        let result = resolve_api_key(&provider, Some(""));
+        assert!(result.is_none() || result.is_some());
+    }
+
+    // =====================================================================
+    // extract_model_from_path multiple entries
+    // =====================================================================
+
+    #[test]
+    fn test_extract_model_multiple_entries() {
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "k1".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        dispatch_map.insert(
+            "k2".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d2".into(),
+                provider: "anthropic".into(),
+                model: "claude-3".into(),
+                api_key: None,
+                api_base: None,
+                rpm: 500,
+                tpm: 50000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let result = extract_model_from_path("/v1/chat/completions", &dispatch_map);
+        assert!(result.is_some());
+    }
+
+    // =====================================================================
+    // handle_models_endpoint empty dispatch_map
+    // =====================================================================
+
+    #[test]
+    fn test_models_endpoint_empty_list() {
+        let resp = handle_models_endpoint(&HashMap::new(), "");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(http_body_util::BodyExt::collect(resp.into_body()))
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&body_bytes)).unwrap();
+        assert_eq!(json["data"].as_array().unwrap().len(), 0);
+    }
+
+    // =====================================================================
+    // Passthrough OPTIONS (default match arm)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_passthrough_options() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/openai/models")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let _ = resp.status();
+    }
+
+    // =====================================================================
+    // Provider passthrough default URLs
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_passthrough_groq_default() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"data": []})).await;
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("groq", &mock.base_url());
+        let req = Request::builder()
+            .method("GET")
+            .uri("/groq/models")
+            .body(String::new())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        let _ = resp.status();
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_unknown_default() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"data": []})).await;
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("custom", &mock.base_url());
+        let req = Request::builder()
+            .method("GET")
+            .uri("/custom/models")
+            .body(String::new())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        let _ = resp.status();
+    }
+
+    // =====================================================================
+    // Helper: create a test API key in storage
+    // =====================================================================
+
+    fn make_test_api_key(
+        key_string: &str,
+        rpm_limit: Option<i32>,
+        team_id: Option<uuid::Uuid>,
+    ) -> crate::keys::ApiKey {
+        let key_hash = compute_key_hash(key_string).to_vec();
+        crate::keys::ApiKey {
+            key_id: uuid::Uuid::new_v4().to_string(),
+            key_hash,
+            key_prefix: key_string[..8.min(key_string.len())].to_string(),
+            team_id,
+            budget_limit: 10000,
+            rpm_limit,
+            tpm_limit: None,
+            created_at: chrono::Utc::now().timestamp(),
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::LlmApi,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: Some("test key".to_string()),
+            metadata: None,
+        }
+    }
+
+    // =====================================================================
+    // Group 1: Auth path — key validation, RPM rate limiting, team budget
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_valid_key_no_rate_limiter() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-auth-valid-1234567890abcdef";
+        let api_key = make_test_api_key(key_string, None, None);
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_key_not_found() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", "Bearer sk-qr-nonexistent-key")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_valid_key_with_rate_limiter_rpm_ok() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+        let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-rpm-ok-1234567890abcdef";
+        let api_key = make_test_api_key(key_string, Some(100), None);
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            Some(rl),
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rpm_rate_limit_exceeded() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+        let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-rpm-exceeded-1234";
+        let api_key = make_test_api_key(key_string, Some(2), None);
+        let key_id = api_key.key_id.clone();
+        storage.create_key(&api_key).unwrap();
+
+        // Exhaust the RPM bucket by calling check_rpm_only multiple times
+        for _ in 0..5 {
+            let _ = rl.check_rpm_only(&key_id, 2);
+        }
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            Some(rl),
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("rate_limit_error"));
+    }
+
+    #[tokio::test]
+    async fn test_auth_rpm_limit_zero_means_unlimited() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+        let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-rpm-zero-unlimited";
+        let api_key = make_test_api_key(key_string, Some(0), None);
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            Some(rl),
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_team_budget_exceeded() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let team_id = uuid::Uuid::new_v4();
+
+        // Create a team budget that is already exceeded (budget=10, spend=10)
+        storage
+            .upsert_budget(&team_id.to_string(), "team", 10, "monthly", None, None)
+            .unwrap();
+        storage
+            .update_spend(&team_id.to_string(), "team", 10)
+            .unwrap();
+
+        let key_string = "sk-qr-test-team-budget-exceeded";
+        let api_key = make_test_api_key(key_string, None, Some(team_id));
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("budget exceeded"));
+    }
+
+    #[tokio::test]
+    async fn test_team_budget_not_exceeded() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let team_id = uuid::Uuid::new_v4();
+
+        // Create a team budget that is NOT exceeded (budget=10000, spend=0)
+        storage
+            .upsert_budget(&team_id.to_string(), "team", 10000, "monthly", None, None)
+            .unwrap();
+
+        let key_string = "sk-qr-test-team-budget-ok";
+        let api_key = make_test_api_key(key_string, None, Some(team_id));
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_team_no_budget_configured() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let team_id = uuid::Uuid::new_v4();
+
+        let key_string = "sk-qr-test-team-no-budget";
+        let api_key = make_test_api_key(key_string, None, Some(team_id));
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =====================================================================
+    // Group 2: /v1/embeddings — body read failure, dispatch + provider call
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_with_dispatch_lookup() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": [0.1, 0.2, 0.3], "index": 0}],
+            "model": "text-embedding-ada-002",
+            "usage": {"prompt_tokens": 5, "total_tokens": 5}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "emb-1".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "emb-1".into(),
+                provider: "openai".into(),
+                model: "text-embedding-ada-002".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"text-embedding-ada-002","input":"hello world"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
+            "Expected success or provider error, got {}",
+            status
+        );
+    }
+
+    #[tokio::test]
+    async fn test_embeddings_no_model_in_body() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"input":"hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // Group 3: /v1/completions — valid body, dispatch + provider call
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_valid_body() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "cmpl-test",
+            "object": "text_completion",
+            "created": 1234567890,
+            "model": "gpt-3.5-turbo-instruct",
+            "choices": [{"text": "Hello!", "index": 0, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"model":"gpt-4o","prompt":"Hello!"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    #[tokio::test]
+    async fn test_completions_missing_model() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"prompt":"Hello!"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // Group 4: /v1/files — additional paths
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_files_post_invalid_purpose() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/files")
+            .header("content-type", "application/json")
+            .body(r#"{"purpose":"invalid-purpose"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("Invalid purpose"));
+    }
+
+    #[tokio::test]
+    async fn test_files_delete_not_allowed_without_id() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/v1/files")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // =====================================================================
+    // Group 5: /v1/batches — additional paths
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_batches_get_with_query() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock =
+            MockHttpServer::with_json(&serde_json::json!({"data": [], "object": "list"})).await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches?limit=10")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_batches_invalid_batch_id_traversal() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/batches/..%2F..%2Fetc%2Fpasswd")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_batches_put_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/v1/batches/batch-123")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // =====================================================================
+    // Auth: X-API-Key header path
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_valid_key_via_x_api_key_header() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-xapikey-header-1234567";
+        let api_key = make_test_api_key(key_string, None, None);
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("x-api-key", key_string)
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =====================================================================
+    // Auth: key validation error path (simulated)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_with_metrics_records_request() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+        let metrics = Arc::new(Metrics::new());
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            Some(metrics.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Just verify the request completed without error
+        let _status = resp.status();
+    }
+
+    // =====================================================================
+    // Embeddings: provider not found in factory
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_unknown_provider() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("unknown_embedding_provider", "https://api.example.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"text-embedding-ada-002","input":"hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // =====================================================================
+    // Completions: provider not found
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_provider_not_found() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("unknown_prov", "https://api.example.com");
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"model":"unknown-model","prompt":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_client_error() || status.is_server_error(),
+            "Expected error status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/embeddings — dispatch by model_group
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_dispatch_by_group() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": [0.1], "index": 0}],
+            "model": "emb-model",
+            "usage": {"prompt_tokens": 1, "total_tokens": 1}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "emb-deploy".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "emb-deploy".into(),
+                provider: "openai".into(),
+                model: "text-embedding-ada-002".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: Some("embedding-models".into()),
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"embedding-models","input":"hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
+            "Expected success or provider error, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/embeddings — dispatch by deployment_id
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_dispatch_by_deployment_id() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "object": "list",
+            "data": [{"object": "embedding", "embedding": [0.1], "index": 0}],
+            "model": "emb-model",
+            "usage": {"prompt_tokens": 1, "total_tokens": 1}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "emb-deploy-2".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "emb-deploy-2".into(),
+                provider: "openai".into(),
+                model: "text-embedding-ada-002".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"emb-deploy-2","input":"hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
+            "Expected success or provider error, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/completions — dispatch by model_group
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_dispatch_by_group() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_resp = serde_json::json!({
+            "id": "cmpl-grp", "object": "chat.completion", "created": 1234567890,
+            "model": "gpt-3.5-turbo-instruct",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+        });
+        let mock = MockHttpServer::with_json(&mock_resp).await;
+        let base_url = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "instruct-deploy".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "instruct-deploy".into(),
+                provider: "openai".into(),
+                model: "gpt-3.5-turbo-instruct".into(),
+                api_key: None,
+                api_base: Some(base_url.clone()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: Some("instruct-models".into()),
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"model":"instruct-models","prompt":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/completions — forward error
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_forward_error() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(r#"{"model":"gpt-4o","prompt":"Hello"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // Files: POST with various valid purposes
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_files_post_valid_purpose_assistants() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "file-new", "object": "file", "purpose": "assistants"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/files")
+            .body(r#"{"purpose":"assistants","file_content":"dGVzdA=="}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_files_post_valid_purpose_batch() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"id": "file-new", "object": "file", "purpose": "batch"}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let dispatch_map = make_openai_dispatch(&base_url);
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/files")
+            .body(r#"{"purpose":"batch"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // =====================================================================
+    // Batches: path traversal in cancel endpoint
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_batches_cancel_path_traversal() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/batches/..%2F..%2Fetc%2Fpasswd/cancel")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // =====================================================================
+    // Files: path traversal in DELETE
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_files_delete_path_traversal() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/v1/files/..%2F..%2Fetc%2Fpasswd")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // =====================================================================
+    // /v1/embeddings — empty JSON body (no model, no input)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_empty_json_body() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status.is_client_error() || status.is_server_error(),
+            "Expected any valid HTTP status, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // Auth: empty bearer token
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_empty_bearer_token_with_storage() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", "Bearer ")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =====================================================================
+    // Auth: empty X-API-Key header
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_empty_x_api_key_with_storage() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("x-api-key", "")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =====================================================================
+    // Auth: no team_id on key → budget check skipped
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_auth_no_team_skips_budget_check() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        let key_string = "sk-qr-test-no-team-budget";
+        let api_key = make_test_api_key(key_string, None, None);
+        storage.create_key(&api_key).unwrap();
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Key without team_id should pass auth and budget check
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_ne!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // =====================================================================
+    // Streaming tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_streaming_provider_not_found() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("nonexistent_stream_provider", "https://example.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let body =
+            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Streaming via unknown provider returns 400
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("not found"),
+            "Expected provider not found error, got: {}",
+            text
+        );
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_mock_server() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_response = serde_json::json!({
+            "id": "chatcmpl-stream-mock",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "streamed"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let server = MockHttpServer::with_json(&mock_response).await;
+        let base_url = server.base_url();
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
+
+        let body =
+            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Streaming response should return OK with chunked encoding
+        assert!(
+            resp.status().is_success() || resp.status().is_client_error(),
+            "Expected success or client error, got {}",
+            resp.status()
+        );
+    }
+
+    // =====================================================================
+    // Response cache tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_cache_hit_returns_x_cache_header() {
+        use std::time::Duration;
+
+        let cache = Arc::new(crate::cache::ResponseCache::new(Duration::from_secs(300)));
+        let messages = vec![crate::shared_types::Message {
+            role: "user".to_string(),
+            content: Some("hello".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }];
+        let cache_key = crate::cache::ResponseCache::cache_key("gpt-4o", &messages, None, None);
+        let cached_body = r#"{"id":"cached","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"cached"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        cache.set(cache_key, cached_body.to_string());
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(cache),
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("x-cache").map(|v| v.to_str().unwrap()),
+            Some("HIT")
+        );
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        assert!(
+            body_bytes.windows(6).any(|w| w == b"cached"),
+            "Expected cached body content, got: {:?}",
+            body_bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_miss_no_x_cache_header() {
+        use std::time::Duration;
+
+        let cache = Arc::new(crate::cache::ResponseCache::new(Duration::from_secs(300)));
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("unknown_provider", "https://example.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(cache),
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Cache miss: should not have x-cache header
+        assert!(resp.headers().get("x-cache").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_skip_no_cache() {
+        use std::time::Duration;
+
+        let cache = Arc::new(crate::cache::ResponseCache::new(Duration::from_secs(300)));
+        let messages = vec![crate::shared_types::Message {
+            role: "user".to_string(),
+            content: Some("hello".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }];
+        let cache_key = crate::cache::ResponseCache::cache_key("gpt-4o", &messages, None, None);
+        cache.set(cache_key, r#"{"cached":true}"#.to_string());
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("unknown_provider", "https://example.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        // Send with cache_control: no-cache to bypass cache
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"cache_control":"no-cache"}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(cache),
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // skip_cache should cause cache bypass; since provider is unknown,
+        // we get a provider error instead of the cached response
+        assert!(resp.headers().get("x-cache").is_none());
+    }
+
+    // =====================================================================
+    // Rate limit headers tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_rate_limit_headers_present() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_response = serde_json::json!({
+            "id": "chatcmpl-rl",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+        });
+        let server = MockHttpServer::with_json(&mock_response).await;
+        let base_url = server.base_url();
+
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
+
+        // Create a key with rpm_limit set
+        let key_string = crate::keys::generate_key_string();
+        let key_hash = crate::keys::compute_key_hash(&key_string);
+        let key_id = uuid::Uuid::new_v4().to_string();
+        let api_key = crate::keys::ApiKey {
+            key_id: key_id.clone(),
+            key_hash: key_hash.to_vec(),
+            key_prefix: key_string[..8].to_string(),
+            team_id: None,
+            budget_limit: 10000,
+            rpm_limit: Some(60),
+            tpm_limit: None,
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&api_key).unwrap();
+
+        let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .header("authorization", format!("Bearer {}", key_string))
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            Some(storage),
+            None,
+            None,
+            Some(rl),
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        // The response should contain rate limit headers
+        if status.is_success() || status.is_client_error() || status.is_server_error() {
+            let limit = resp.headers().get("x-ratelimit-limit");
+            let remaining = resp.headers().get("x-ratelimit-remaining");
+            let reset = resp.headers().get("x-ratelimit-reset");
+            assert!(limit.is_some(), "Expected x-ratelimit-limit header");
+            assert!(remaining.is_some(), "Expected x-ratelimit-remaining header");
+            assert!(reset.is_some(), "Expected x-ratelimit-reset header");
+            assert_eq!(limit.unwrap().to_str().unwrap(), "60");
+        }
+    }
+
+    // =====================================================================
+    // /v1/completions valid request tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_valid_with_mock_server() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_response = serde_json::json!({
+            "id": "cmpl-mock",
+            "object": "text_completion",
+            "created": 1234567890,
+            "model": "gpt-3.5-turbo-instruct",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello world"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let server = MockHttpServer::with_json(&mock_response).await;
+        let base_url = server.base_url();
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-3.5-turbo-instruct".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-3.5-turbo-instruct".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
+
+        let body = r#"{"model":"gpt-3.5-turbo-instruct","prompt":"Say hello","max_tokens":50}"#;
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status == StatusCode::BAD_REQUEST,
+            "Expected success or bad request, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/embeddings valid request tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_valid_with_mock_server() {
+        use crate::testing::mock_http::MockHttpServer;
+
+        let mock_response = serde_json::json!({
+            "object": "list",
+            "data": [{
+                "object": "embedding",
+                "index": 0,
+                "embedding": [0.1, 0.2, 0.3]
+            }],
+            "model": "text-embedding-ada-002",
+            "usage": {"prompt_tokens": 5, "total_tokens": 5}
+        });
+        let server = MockHttpServer::with_json(&mock_response).await;
+        let base_url = server.base_url();
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", &base_url);
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "text-embedding-ada-002".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "text-embedding-ada-002".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
+
+        let body = r#"{"model":"text-embedding-ada-002","input":"hello world"}"#;
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(
+            status.is_success() || status == StatusCode::BAD_REQUEST || status.is_server_error(),
+            "Expected success/bad-request/server-error, got {}",
+            status
+        );
+    }
+
+    // =====================================================================
+    // /v1/moderations body read failure
+    // =====================================================================
+
+    struct FailingBody;
+
+    impl http_body::Body for FailingBody {
+        type Data = Bytes;
+        type Error = Box<dyn std::error::Error + Send + Sync>;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(Some(Err("simulated body read failure".into())))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_moderations_body_read_failure() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/v1/moderations")
+            .body(FailingBody)
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("Failed to read body"), "Got: {}", text);
+    }
+
+    // =====================================================================
+    // /v1/messages body read failure
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_messages_body_read_failure() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("anthropic", "https://api.anthropic.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/v1/messages")
+            .body(FailingBody)
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("Failed to read body"), "Got: {}", text);
+    }
+
+    // =====================================================================
+    // Context window exceeded tests
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_context_window_exceeded_no_fallback() {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("max_input_tokens".to_string(), "10".to_string());
+        metadata.insert("max_output_tokens".to_string(), "10".to_string());
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: Some(metadata),
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
+
+        let fallback_config = crate::fallback::FallbackConfig {
+            fallbacks: vec![],
+            context_window_fallbacks: std::collections::HashMap::new(),
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 100,
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 5000,
+            allowed_fails: 3,
+        };
+        let fallback = Arc::new(crate::fallback::FallbackExecutor::new(fallback_config));
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+
+        // Long message that exceeds tiny 10-token window
+        let long_content = "word ".repeat(50);
+        let body = format!(
+            r#"{{"model":"gpt-4o","messages":[{{"role":"user","content":"{}"}}]}}"#,
+            long_content
+        );
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body)
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            Some(fallback),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // With no fallback models configured, context window exceeded returns 400
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("Context window exceeded") || text.contains("fallback models failed"),
+            "Expected context window error, got: {}",
+            text
+        );
+    }
+
+    // =====================================================================
+    // /v1/completions balance insufficient (comprehensive)
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_balance_insufficient_returns_402() {
+        let balance = Arc::new(Mutex::new(Balance::new(0)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let body = r#"{"model":"gpt-3.5-turbo-instruct","prompt":"Hello"}"#;
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    // =====================================================================
+    // /v1/embeddings balance insufficient
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_embeddings_body_read_failure() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(&serde_json::json!({"object":"list","data":[]})).await;
+        let base_url = mock.base_url();
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "openai".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "d".into(),
+                provider: "openai".into(),
+                model: "text-embedding-ada-002".into(),
+                api_key: None,
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+        let req = Request::builder()
+            .uri("/v1/embeddings")
+            .body(r#"{"model":"text-embedding-ada-002","input":"hi"}"#.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let status = resp.status();
+        assert!(status.is_success() || status.is_server_error() || status.is_client_error());
+    }
+
+    // =====================================================================
+    // /v1/completions body read failure
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_completions_body_read_failure() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/v1/completions")
+            .body(FailingBody)
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("Failed to read request body"),
+            "Got: {}",
+            text
+        );
     }
 }

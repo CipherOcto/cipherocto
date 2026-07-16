@@ -2458,7 +2458,7 @@ Specific validation rules:
 For a more rigorous comparison, the next step would be:
 - A line-level `diff` of any shared concepts (e.g., both have a `Provider` trait, both have a `Tool` trait, both have a `Compaction` system).
 - A test pass — run the upstream test suite on each binary and see what breaks.
-- A static call graph analysis using each project's GitNexus index (jcode is already indexed as `cipherocto` per AGENTS.md).
+- A static call graph analysis using a symbol-level index over each project's source (jcode ships an AGENTS.md with the call-graph manifest).
 
 ### 21.5 Appendix E: Convergent vs Divergent Design Patterns
 

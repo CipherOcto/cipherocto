@@ -111,8 +111,7 @@ async fn tcp_adapter_sends_payload_over_wire() {
             break;
         }
     }
-    let frame_start =
-        found_at.expect("total-length prefix must appear in captured wire bytes");
+    let frame_start = found_at.expect("total-length prefix must appear in captured wire bytes");
 
     // 8. Verify wire envelope bytes (right after the total_len prefix)
     let env_start = frame_start + 4;
@@ -183,7 +182,10 @@ async fn tcp_adapter_receives_payload_from_wire() {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(3000);
     let mut messages = Vec::new();
     while messages.is_empty() && tokio::time::Instant::now() < deadline {
-        messages = receiver.receive_messages(&domain_drain).await.unwrap_or_default();
+        messages = receiver
+            .receive_messages(&domain_drain)
+            .await
+            .unwrap_or_default();
         if messages.is_empty() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

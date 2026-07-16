@@ -85,11 +85,20 @@ mod tests {
     #[test]
     fn transport_error_display() {
         let cases = vec![
-            (TransportError::AdapterFailure("test".into()), "adapter failure: test"),
+            (
+                TransportError::AdapterFailure("test".into()),
+                "adapter failure: test",
+            ),
             (TransportError::AllTransportsFailed, "all transports failed"),
-            (TransportError::EnvelopeConstruction("bad".into()), "envelope construction failed: bad"),
+            (
+                TransportError::EnvelopeConstruction("bad".into()),
+                "envelope construction failed: bad",
+            ),
             (TransportError::Unhealthy, "transport unhealthy"),
-            (TransportError::GovernanceViolation("denied".into()), "governance violation: denied"),
+            (
+                TransportError::GovernanceViolation("denied".into()),
+                "governance violation: denied",
+            ),
         ];
         for (err, expected) in cases {
             assert_eq!(format!("{}", err), expected);

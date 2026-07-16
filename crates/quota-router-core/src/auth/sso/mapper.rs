@@ -118,8 +118,8 @@ impl SsoKeyMapper {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::{ProviderConfig, ProviderType};
+    use super::*;
 
     #[test]
     fn test_map_role() {

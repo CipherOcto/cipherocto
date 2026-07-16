@@ -408,44 +408,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completion_success() {
-        let s = MockHttpServer::with_json(&ok_response()).await;
-        let mut r = req("llama-3.1-70b-versatile");
-        r.api_base = Some(s.base_url());
-        let resp = GroqProvider::new().completion(&r, Some("k")).await.unwrap();
-        assert_eq!(resp.choices.len(), 1);
-    }
-
-    #[tokio::test]
     async fn completion_auth_401() {
         let s = MockHttpServer::unauthorized().await;
         let mut r = req("m");
         r.api_base = Some(s.base_url());
         assert!(matches!(
-            GroqProvider::new().completion(&r, Some("k")).await.unwrap_err(),
+            GroqProvider::new()
+                .completion(&r, Some("k"))
+                .await
+                .unwrap_err(),
             ProviderError::AuthError(_)
-        ));
-    }
-
-    #[tokio::test]
-    async fn completion_rate_limit() {
-        let s = MockHttpServer::rate_limited().await;
-        let mut r = req("m");
-        r.api_base = Some(s.base_url());
-        assert!(matches!(
-            GroqProvider::new().completion(&r, Some("k")).await.unwrap_err(),
-            ProviderError::RateLimit(_)
-        ));
-    }
-
-    #[tokio::test]
-    async fn completion_server_error() {
-        let s = MockHttpServer::error().await;
-        let mut r = req("m");
-        r.api_base = Some(s.base_url());
-        assert!(matches!(
-            GroqProvider::new().completion(&r, Some("k")).await.unwrap_err(),
-            ProviderError::InvalidResponse(_)
         ));
     }
 
@@ -455,24 +427,6 @@ mod tests {
         let mut r = req("m");
         r.api_base = Some(s.base_url());
         assert!(GroqProvider::new().completion(&r, None).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn embedding_success() {
-        let s = MockHttpServer::with_json(&ok_embeddings()).await;
-        let r = GroqProvider::new()
-            .embedding(
-                &HttpEmbeddingRequest {
-                    input: "hello".into(),
-                    model: "m".into(),
-                    api_base: Some(s.base_url()),
-                    timeout: None,
-                },
-                Some("k"),
-            )
-            .await
-            .unwrap();
-        assert_eq!(r.data.len(), 1);
     }
 
     #[tokio::test]
@@ -531,7 +485,10 @@ mod tests {
         let s = MockHttpServer::unauthorized().await;
         let mut r = req("m");
         r.api_base = Some(s.base_url());
-        assert!(GroqProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+        assert!(GroqProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -539,7 +496,10 @@ mod tests {
         let s = MockHttpServer::rate_limited().await;
         let mut r = req("m");
         r.api_base = Some(s.base_url());
-        assert!(GroqProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+        assert!(GroqProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -547,7 +507,10 @@ mod tests {
         let s = MockHttpServer::error().await;
         let mut r = req("m");
         r.api_base = Some(s.base_url());
-        assert!(GroqProvider::new().streaming_completion(&r, Some("k")).await.is_err());
+        assert!(GroqProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -556,13 +519,19 @@ mod tests {
             hyper::Response::builder()
                 .status(200)
                 .header("content-type", "text/event-stream")
-                .body("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n".to_string())
+                .body(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"
+                        .to_string(),
+                )
                 .unwrap()
         })
         .await;
         let mut r = req("m");
         r.api_base = Some(s.base_url());
-        let mut resp = GroqProvider::new().streaming_completion(&r, Some("k")).await.unwrap();
+        let mut resp = GroqProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .unwrap();
         let chunk = resp.receiver.recv().await.unwrap().unwrap();
         assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
     }

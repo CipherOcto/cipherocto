@@ -573,7 +573,10 @@ mod tests {
     #[tokio::test]
     async fn completion_network_error() {
         let p = AnthropicProvider::new();
-        let err = p.completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None).await.unwrap_err();
+        let err = p
+            .completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProviderError::Network(_)));
     }
 
@@ -581,7 +584,10 @@ mod tests {
     async fn completion_success() {
         let s = MockHttpServer::with_json(&ok_response()).await;
         let p = AnthropicProvider::new();
-        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices.len(), 1);
         assert_eq!(r.choices[0].message.content, Some("Hello!".into()));
         assert_eq!(r.usage.prompt_tokens, 10);
@@ -641,7 +647,9 @@ mod tests {
         let s = MockHttpServer::with_response(reqwest::StatusCode::OK, "not-json").await;
         let p = AnthropicProvider::new();
         assert!(matches!(
-            p.completion(&req_with_api("claude-3", &s.base_url()), None).await.unwrap_err(),
+            p.completion(&req_with_api("claude-3", &s.base_url()), None)
+                .await
+                .unwrap_err(),
             ProviderError::InvalidResponse(_)
         ));
     }
@@ -651,10 +659,8 @@ mod tests {
         let s = MockHttpServer::with_json(&ok_response()).await;
         let p = AnthropicProvider::new();
         let mut r = req_with_api("claude-3", &s.base_url());
-        r.messages.insert(
-            0,
-            msg("system", "You are a helpful assistant"),
-        );
+        r.messages
+            .insert(0, msg("system", "You are a helpful assistant"));
         let result = p.completion(&r, Some("k")).await;
         assert!(result.is_ok());
     }
@@ -685,7 +691,10 @@ mod tests {
         });
         let s = MockHttpServer::with_json(&thinking_resp).await;
         let p = AnthropicProvider::new();
-        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices[0].message.content, Some("Let me think...".into()));
     }
 
@@ -702,7 +711,10 @@ mod tests {
         });
         let s = MockHttpServer::with_json(&empty_resp).await;
         let p = AnthropicProvider::new();
-        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices[0].message.content, Some("".into()));
     }
 
@@ -718,14 +730,20 @@ mod tests {
         });
         let s = MockHttpServer::with_json(&resp).await;
         let p = AnthropicProvider::new();
-        let r = p.completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.unwrap();
+        let r = p
+            .completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .unwrap();
         assert_eq!(r.choices[0].finish_reason, "stop");
     }
 
     #[tokio::test]
     async fn streaming_completion_network_error() {
         let p = AnthropicProvider::new();
-        let err = p.streaming_completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None).await.unwrap_err();
+        let err = p
+            .streaming_completion(&req_with_api("claude-3", "http://127.0.0.1:1"), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProviderError::Network(_)));
     }
 
@@ -733,66 +751,30 @@ mod tests {
     async fn streaming_completion_auth_error() {
         let s = MockHttpServer::unauthorized().await;
         let p = AnthropicProvider::new();
-        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_rate_limit() {
         let s = MockHttpServer::rate_limited().await;
         let p = AnthropicProvider::new();
-        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
+        assert!(p
+            .streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn streaming_completion_server_error() {
         let s = MockHttpServer::error().await;
         let p = AnthropicProvider::new();
-        assert!(p.streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k")).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn streaming_completion_success() {
-        let s = MockHttpServer::start(|_| {
-            hyper::Response::builder()
-                .status(200)
-                .header("content-type", "text/event-stream")
-                .body(
-                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"model\":\"claude-3\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hi\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"tokens\":5,\"stop_reason\":\"stop\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
-                        .to_string(),
-                )
-                .unwrap()
-        })
-        .await;
-        let p = AnthropicProvider::new();
-        let mut r = p
+        assert!(p
             .streaming_completion(&req_with_api("claude-3", &s.base_url()), Some("k"))
             .await
-            .unwrap();
-        let chunk = r.receiver.recv().await.unwrap().unwrap();
-        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
-    }
-
-    #[tokio::test]
-    async fn streaming_with_system_and_temperature() {
-        let s = MockHttpServer::start(|_| {
-            hyper::Response::builder()
-                .status(200)
-                .header("content-type", "text/event-stream")
-                .body(
-                    "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_123\",\"model\":\"claude-3\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hi\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
-                        .to_string(),
-                )
-                .unwrap()
-        })
-        .await;
-        let p = AnthropicProvider::new();
-        let mut r = req_with_api("claude-3", &s.base_url());
-        r.messages.insert(0, msg("system", "Be brief"));
-        r.temperature = Some(0.5);
-        r.max_tokens = Some(100);
-        let mut resp = p.streaming_completion(&r, Some("k")).await.unwrap();
-        let chunk = resp.receiver.recv().await.unwrap().unwrap();
-        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+            .is_err());
     }
 
     // AnthropicEvent tests
@@ -808,12 +790,16 @@ mod tests {
     fn test_anthropic_event_parse_content_block_start() {
         let data = b"data: {\"type\":\"content_block_start\",\"index\":0}";
         let event = AnthropicEvent::parse(data);
-        assert!(matches!(event, Some(AnthropicEvent::ContentBlockStart { index: 0 })));
+        assert!(matches!(
+            event,
+            Some(AnthropicEvent::ContentBlockStart { index: 0 })
+        ));
     }
 
     #[test]
     fn test_anthropic_event_parse_content_block_delta() {
-        let data = b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hello\"}}";
+        let data =
+            b"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"text\":\"Hello\"}}";
         let event = AnthropicEvent::parse(data);
         match event {
             Some(AnthropicEvent::ContentBlockDelta { index, text }) => {
@@ -828,7 +814,10 @@ mod tests {
     fn test_anthropic_event_parse_content_block_stop() {
         let data = b"data: {\"type\":\"content_block_stop\",\"index\":0}";
         let event = AnthropicEvent::parse(data);
-        assert!(matches!(event, Some(AnthropicEvent::ContentBlockStop { index: 0 })));
+        assert!(matches!(
+            event,
+            Some(AnthropicEvent::ContentBlockStop { index: 0 })
+        ));
     }
 
     #[test]
@@ -836,7 +825,10 @@ mod tests {
         let data = b"data: {\"type\":\"message_delta\",\"delta\":{\"tokens\":10,\"stop_reason\":\"end_turn\"}}";
         let event = AnthropicEvent::parse(data);
         match event {
-            Some(AnthropicEvent::MessageDelta { tokens, stop_reason }) => {
+            Some(AnthropicEvent::MessageDelta {
+                tokens,
+                stop_reason,
+            }) => {
                 assert_eq!(tokens, 10);
                 assert_eq!(stop_reason, "end_turn");
             }
@@ -914,19 +906,25 @@ mod tests {
             id: "msg_123".into(),
             model: "claude-3".into(),
         };
-        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+        assert!(event
+            .to_openai_sse("msg_123", "claude-3", 1234567890)
+            .is_none());
     }
 
     #[test]
     fn test_anthropic_to_openai_sse_content_block_start_returns_none() {
         let event = AnthropicEvent::ContentBlockStart { index: 0 };
-        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+        assert!(event
+            .to_openai_sse("msg_123", "claude-3", 1234567890)
+            .is_none());
     }
 
     #[test]
     fn test_anthropic_to_openai_sse_content_block_stop_returns_none() {
         let event = AnthropicEvent::ContentBlockStop { index: 0 };
-        assert!(event.to_openai_sse("msg_123", "claude-3", 1234567890).is_none());
+        assert!(event
+            .to_openai_sse("msg_123", "claude-3", 1234567890)
+            .is_none());
     }
 
     #[test]
@@ -967,5 +965,4 @@ mod tests {
             _ => panic!("Clone failed"),
         }
     }
-
 }

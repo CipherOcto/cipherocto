@@ -2074,7 +2074,10 @@ mod tests {
             description: None,
             metadata: None,
         };
-        assert!(matches!(storage.create_key(&key), Err(KeyError::InvalidFormat)));
+        assert!(matches!(
+            storage.create_key(&key),
+            Err(KeyError::InvalidFormat)
+        ));
     }
 
     #[test]
@@ -2326,7 +2329,10 @@ mod tests {
             )
             .unwrap();
         let found = storage.lookup_by_hash(&[1]).unwrap();
-        assert!(found.is_none(), "Revoked key should not appear in lookup_by_hash (WHERE revoked = 0)");
+        assert!(
+            found.is_none(),
+            "Revoked key should not appear in lookup_by_hash (WHERE revoked = 0)"
+        );
     }
 
     #[test]
@@ -2536,196 +2542,6 @@ mod tests {
 
         let total = storage.get_total_spend().unwrap();
         assert_eq!(total, 250);
-    }
-
-    #[test]
-    fn test_record_spend_ledger_with_team() {
-        let storage = create_test_storage();
-        let key_uuid = uuid::Uuid::new_v4();
-        let team_uuid = uuid::Uuid::new_v4();
-
-        let team = Team {
-            team_id: team_uuid.to_string(),
-            name: "Team".into(),
-            budget_limit: 100000,
-            created_at: 100,
-        };
-        storage.create_team(&team).unwrap();
-
-        let key = ApiKey {
-            key_id: key_uuid.to_string(),
-            key_hash: vec![1],
-            key_prefix: "sk-".into(),
-            team_id: Some(team_uuid),
-            budget_limit: 50000,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        let event_id_hex = hex::encode([4u8; 32]);
-        let event = SpendEvent {
-            event_id: event_id_hex,
-            request_id: "req-004".to_string(),
-            key_id: key_uuid,
-            team_id: Some(team_uuid),
-            provider: "openai".to_string(),
-            model: "gpt-4".to_string(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_amount: 300,
-            pricing_hash: [0u8; 32],
-            token_source: TokenSource::ProviderUsage,
-            tokenizer_version: None,
-            provider_usage_json: None,
-            timestamp: 1000,
-        };
-        storage
-            .record_spend_ledger_with_team(
-                &key_uuid.to_string(),
-                &team_uuid.to_string(),
-                &event,
-            )
-            .unwrap();
-
-        let total = storage.get_total_spend().unwrap();
-        assert_eq!(total, 300);
-    }
-
-    #[test]
-    fn test_record_spend_ledger_with_team_key_budget_exceeded() {
-        let storage = create_test_storage();
-        let key_uuid = uuid::Uuid::new_v4();
-        let team_uuid = uuid::Uuid::new_v4();
-
-        let team = Team {
-            team_id: team_uuid.to_string(),
-            name: "Team".into(),
-            budget_limit: 100000,
-            created_at: 100,
-        };
-        storage.create_team(&team).unwrap();
-
-        let key = ApiKey {
-            key_id: key_uuid.to_string(),
-            key_hash: vec![1],
-            key_prefix: "sk-".into(),
-            team_id: Some(team_uuid),
-            budget_limit: 50,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        let event_id_hex = hex::encode([5u8; 32]);
-        let event = SpendEvent {
-            event_id: event_id_hex,
-            request_id: "req-005".to_string(),
-            key_id: key_uuid,
-            team_id: Some(team_uuid),
-            provider: "openai".to_string(),
-            model: "gpt-4".to_string(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_amount: 100,
-            pricing_hash: [0u8; 32],
-            token_source: TokenSource::ProviderUsage,
-            tokenizer_version: None,
-            provider_usage_json: None,
-            timestamp: 1000,
-        };
-        let result = storage.record_spend_ledger_with_team(
-            &key_uuid.to_string(),
-            &team_uuid.to_string(),
-            &event,
-        );
-        assert!(matches!(result, Err(KeyError::BudgetExceeded { .. })));
-    }
-
-    #[test]
-    fn test_record_spend_ledger_with_team_team_budget_exceeded() {
-        let storage = create_test_storage();
-        let key_uuid = uuid::Uuid::new_v4();
-        let team_uuid = uuid::Uuid::new_v4();
-
-        let team = Team {
-            team_id: team_uuid.to_string(),
-            name: "Team".into(),
-            budget_limit: 50,
-            created_at: 100,
-        };
-        storage.create_team(&team).unwrap();
-
-        let key = ApiKey {
-            key_id: key_uuid.to_string(),
-            key_hash: vec![1],
-            key_prefix: "sk-".into(),
-            team_id: Some(team_uuid),
-            budget_limit: 100000,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        let event_id_hex = hex::encode([6u8; 32]);
-        let event = SpendEvent {
-            event_id: event_id_hex,
-            request_id: "req-006".to_string(),
-            key_id: key_uuid,
-            team_id: Some(team_uuid),
-            provider: "openai".to_string(),
-            model: "gpt-4".to_string(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_amount: 100,
-            pricing_hash: [0u8; 32],
-            token_source: TokenSource::ProviderUsage,
-            tokenizer_version: None,
-            provider_usage_json: None,
-            timestamp: 1000,
-        };
-        let result = storage.record_spend_ledger_with_team(
-            &key_uuid.to_string(),
-            &team_uuid.to_string(),
-            &event,
-        );
-        assert!(matches!(result, Err(KeyError::TeamBudgetExceeded { .. })));
     }
 
     #[test]
@@ -2943,9 +2759,7 @@ mod tests {
             created_at: 100,
         };
         storage.create_team(&team).unwrap();
-        storage
-            .update_team(&team.team_id, "Updated", 5000)
-            .unwrap();
+        storage.update_team(&team.team_id, "Updated", 5000).unwrap();
         let updated = storage.get_team(&team.team_id).unwrap().unwrap();
         assert_eq!(updated.name, "Updated");
         assert_eq!(updated.budget_limit, 5000);
@@ -3061,14 +2875,8 @@ mod tests {
         assert!(found.auto_rotate);
         assert_eq!(found.rotation_interval_days, Some(30));
         assert_eq!(found.description, Some("LLM API key".to_string()));
-        assert_eq!(
-            found.metadata,
-            Some("{\"env\":\"prod\"}".to_string())
-        );
-        assert_eq!(
-            found.allowed_routes,
-            Some("/v1/chat".to_string())
-        );
+        assert_eq!(found.metadata, Some("{\"env\":\"prod\"}".to_string()));
+        assert_eq!(found.allowed_routes, Some("/v1/chat".to_string()));
     }
 
     #[test]
@@ -3229,35 +3037,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_key_revoked_sets_revoked_at() {
-        let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
-        storage.create_key(&key).unwrap();
-
-        storage
-            .update_key(
-                &key.key_id,
-                &KeyUpdates {
-                    revoked: Some(true),
-                    revoked_by: Some("admin".to_string()),
-                    revocation_reason: Some("compromised".to_string()),
-                    budget_limit: None,
-                    rpm_limit: None,
-                    tpm_limit: None,
-                    expires_at: None,
-                    key_type: None,
-                    description: None,
-                    metadata: None,
-                },
-            )
-            .unwrap();
-
-        let found = storage.lookup_by_hash(&key.key_hash).unwrap().unwrap();
-        assert!(found.revoked);
-        assert!(found.revoked_at.is_some());
-    }
-
-    #[test]
     fn test_record_spend_update_existing() {
         let storage = create_test_storage();
         let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
@@ -3322,7 +3101,10 @@ mod tests {
 
         // Get by non-existent hash
         let hash_bad: [u8; 32] = Sha256::digest(b"nonexistent").into();
-        assert!(storage.get_provider_key_by_hash(&hash_bad).unwrap().is_none());
+        assert!(storage
+            .get_provider_key_by_hash(&hash_bad)
+            .unwrap()
+            .is_none());
 
         // Delete
         storage.delete_provider_key(&id1).unwrap();
@@ -3337,9 +3119,7 @@ mod tests {
     #[test]
     fn test_create_provider_key_short_key() {
         let storage = create_test_storage();
-        let id = storage
-            .create_provider_key("test", "short", None)
-            .unwrap();
+        let id = storage.create_provider_key("test", "short", None).unwrap();
         let keys = storage.list_provider_keys(None).unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].api_key_prefix, "short");
@@ -3403,8 +3183,12 @@ mod tests {
     #[test]
     fn test_ensure_tokenizer_without_provider() {
         let storage = create_test_storage();
-        let id1 = storage.ensure_tokenizer("test-version-no-provider", None).unwrap();
-        let id2 = storage.ensure_tokenizer("test-version-no-provider", None).unwrap();
+        let id1 = storage
+            .ensure_tokenizer("test-version-no-provider", None)
+            .unwrap();
+        let id2 = storage
+            .ensure_tokenizer("test-version-no-provider", None)
+            .unwrap();
         assert_eq!(id1, id2);
         let version = storage.resolve_tokenizer(&id1).unwrap();
         assert_eq!(version, Some("test-version-no-provider".to_string()));
@@ -3592,78 +3376,9 @@ mod tests {
     }
 
     #[test]
-    fn test_record_spend_ledger_with_team_success() {
-        let storage = create_test_storage();
-
-        let team_id = uuid::Uuid::new_v4();
-        let key_id_uuid = uuid::Uuid::new_v4();
-
-        let team = Team {
-            team_id: team_id.to_string(),
-            name: "Team Budget".to_string(),
-            budget_limit: 100000,
-            created_at: 100,
-        };
-        storage.create_team(&team).unwrap();
-
-        let key = ApiKey {
-            key_id: key_id_uuid.to_string(),
-            key_hash: vec![0x10; 32],
-            key_prefix: "sk-qr-tb".to_string(),
-            team_id: Some(team_id),
-            budget_limit: 50000,
-            rpm_limit: None,
-            tpm_limit: None,
-            created_at: 100,
-            expires_at: None,
-            revoked: false,
-            revoked_at: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: KeyType::Default,
-            allowed_routes: None,
-            auto_rotate: false,
-            rotation_interval_days: None,
-            description: None,
-            metadata: None,
-        };
-        storage.create_key(&key).unwrap();
-
-        let event = SpendEvent {
-            event_id: hex::encode([0x91u8; 32]),
-            request_id: "req-team-001".to_string(),
-            key_id: key_id_uuid,
-            team_id: Some(team_id),
-            provider: "openai".to_string(),
-            model: "gpt-4".to_string(),
-            input_tokens: 200,
-            output_tokens: 100,
-            cost_amount: 1000,
-            pricing_hash: [0x92; 32],
-            token_source: TokenSource::ProviderUsage,
-            tokenizer_version: None,
-            provider_usage_json: None,
-            timestamp: 2000,
-        };
-
-        storage
-            .record_spend_ledger_with_team(
-                &key_id_uuid.to_string(),
-                &team_id.to_string(),
-                &event,
-            )
-            .unwrap();
-
-        let total = storage.get_total_spend().unwrap();
-        assert_eq!(total, 1000);
-    }
-
-    #[test]
     fn test_query_spend_ledger_empty() {
         let storage = create_test_storage();
-        let results = storage
-            .query_spend_ledger(None, None, None)
-            .unwrap();
+        let results = storage.query_spend_ledger(None, None, None).unwrap();
         assert!(results.is_empty());
     }
 

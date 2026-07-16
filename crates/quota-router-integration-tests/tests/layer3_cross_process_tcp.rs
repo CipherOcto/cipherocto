@@ -24,12 +24,11 @@ use std::sync::Arc;
 use quota_router_core::node::announce::SignedPayload;
 use quota_router_core::node::gossip::{monotonic_now, CapacityGossipPayload};
 use quota_router_core::node::provider::{
-    LocalProvider, ModelPricing, NetworkId, ProviderAuth, ProviderCapacity,
-    ProviderConfig, ProviderError, ProviderHealth, ProviderId,
-    RouterNodeId,
+    LocalProvider, ModelPricing, NetworkId, ProviderAuth, ProviderCapacity, ProviderConfig,
+    ProviderError, ProviderHealth, ProviderId, RouterNodeId,
 };
 use quota_router_core::node::request::{ForwardingConfig, RequestContext, RoutingPolicy};
-use quota_router_core::node::{envelope, DISC_CAPACITY_GOSSIP, QuotaRouterNode};
+use quota_router_core::node::{envelope, QuotaRouterNode, DISC_CAPACITY_GOSSIP};
 
 /// Path to the built CLI binary
 fn cli_binary() -> PathBuf {
@@ -48,10 +47,7 @@ fn write_network_config(
     models: &[&str],
 ) -> PathBuf {
     let path = dir.join("network.toml");
-    let models_toml: Vec<String> = models
-        .iter()
-        .map(|m| format!("\"{}\"", m))
-        .collect();
+    let models_toml: Vec<String> = models.iter().map(|m| format!("\"{}\"", m)).collect();
     let toml = format!(
         r#"
 node_id = "{}"
@@ -71,11 +67,7 @@ models = [{}]
 }
 
 /// Spawn a `quota-router serve` process and return the child handle.
-fn spawn_serve(
-    listen_addr: SocketAddr,
-    config_path: &std::path::Path,
-    peers: &[String],
-) -> Child {
+fn spawn_serve(listen_addr: SocketAddr, config_path: &std::path::Path, peers: &[String]) -> Child {
     let mut cmd = Command::new(cli_binary());
     cmd.arg("serve")
         .arg("--listen-addr")
@@ -115,10 +107,7 @@ impl LocalProvider for MockProvider {
 }
 
 /// Build an in-process node with a TcpAdapter connected to a remote address.
-async fn build_tcp_node(
-    node_id: RouterNodeId,
-    remote_addr: SocketAddr,
-) -> Arc<QuotaRouterNode> {
+async fn build_tcp_node(node_id: RouterNodeId, remote_addr: SocketAddr) -> Arc<QuotaRouterNode> {
     let tcp_adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();
@@ -126,12 +115,8 @@ async fn build_tcp_node(
     // Connect to the remote serve process
     tcp_adapter.connect(remote_addr).await.unwrap();
 
-    let adapter: Arc<dyn octo_network::dot::adapters::PlatformAdapter> =
-        Arc::new(tcp_adapter);
-    let domain = BroadcastDomainId::new(
-        PlatformType::Tcp,
-        &hex::encode(node_id.0),
-    );
+    let adapter: Arc<dyn octo_network::dot::adapters::PlatformAdapter> = Arc::new(tcp_adapter);
+    let domain = BroadcastDomainId::new(PlatformType::Tcp, &hex::encode(node_id.0));
     let bridge = PlatformAdapterBridge::new(adapter, domain);
     let sender: Arc<dyn octo_transport::sender::NetworkSender> = Arc::new(bridge);
     let transport = Arc::new(NodeTransport::new(vec![sender]));

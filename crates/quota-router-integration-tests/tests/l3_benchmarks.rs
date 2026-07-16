@@ -101,7 +101,9 @@ async fn l3_b5_concurrent_routing_throughput() {
 
 #[test]
 fn l3_b6_select_destinations_benchmark() {
-    use quota_router_core::node::provider::{ModelPricing, ProviderCapacity, ProviderHealth, ProviderId};
+    use quota_router_core::node::provider::{
+        ModelPricing, ProviderCapacity, ProviderHealth, ProviderId,
+    };
     use quota_router_core::node::request::RoutingPolicy;
     use quota_router_core::node::scorer::select_destinations;
 

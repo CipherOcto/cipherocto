@@ -11,14 +11,12 @@ use std::sync::{Arc, Mutex};
 use quota_router_core::node::announce::SignedPayload;
 use quota_router_core::node::gossip::{monotonic_now, CapacityGossipPayload};
 use quota_router_core::node::provider::{
-    LocalProvider, ModelPricing, NetworkId, ProviderAuth, ProviderCapacity,
-    ProviderConfig, ProviderError, ProviderHealth, ProviderId, RouterNodeId,
+    LocalProvider, ModelPricing, NetworkId, ProviderAuth, ProviderCapacity, ProviderConfig,
+    ProviderError, ProviderHealth, ProviderId, RouterNodeId,
 };
 use quota_router_core::node::request::{ForwardingConfig, RequestContext, RoutingPolicy};
-use quota_router_core::node::testing::in_memory_adapter::{
-    InMemoryChannelAdapter, PeerInboxMap,
-};
-use quota_router_core::node::{envelope, DISC_CAPACITY_GOSSIP, QuotaRouterNode};
+use quota_router_core::node::testing::in_memory_adapter::{InMemoryChannelAdapter, PeerInboxMap};
+use quota_router_core::node::{envelope, QuotaRouterNode, DISC_CAPACITY_GOSSIP};
 
 /// MockLocalProvider that returns a deterministic response.
 struct TestProvider;
@@ -50,10 +48,7 @@ fn build_node_with_adapter(
         PlatformType::NativeP2P,
         &hex::encode(node_id.0),
     );
-    let domain = BroadcastDomainId::new(
-        PlatformType::NativeP2P,
-        &hex::encode(node_id.0),
-    );
+    let domain = BroadcastDomainId::new(PlatformType::NativeP2P, &hex::encode(node_id.0));
     let bridge = PlatformAdapterBridge::new(Arc::new(adapter), domain);
     let sender: Arc<dyn octo_transport::sender::NetworkSender> = Arc::new(bridge);
     let transport = Arc::new(NodeTransport::new(vec![sender]));

@@ -1150,7 +1150,7 @@ mod tests {
             .unwrap();
         // Override rate limiter with very small burst. The `rate_limiter`
         // is behind a Mutex so the swap works through the Arc.
-        *arc.rate_limiter.lock().unwrap() = ratelimit::RateLimiter::new(100, 1);
+        *arc.rate_limiter.lock().unwrap() = ratelimit::RateLimiter::new(0, 1);
         let ctx = RequestContext {
             model: "gpt-4o".into(),
             preferred_provider: None,

@@ -135,6 +135,7 @@ fn live_config() -> WhatsAppConfig {
         // can route the envelope via domain→JID lookup.
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
+        passkey_authenticator: None,
     }
 }
 

@@ -1,0 +1,129 @@
+.TH OCTO-WHATSAPP 1 "2026-07-07" "1.0.0+phase5" "Octo WhatsApp Runtime"
+.SH NAME
+octo-whatsapp \- WhatsApp Web runtime daemon + CLI + MCP mirror
+.SH SYNOPSIS
+.B octo-whatsapp
+[\fIOPTIONS\fR]
+\fICOMMAND\fR
+.SH DESCRIPTION
+\fBocto-whatsapp\fR is the runtime daemon for the CipherOcto WhatsApp
+Web substrate. It exposes a JSON-RPC interface over a unix socket, a
+mirrored operator CLI, and a Model Context Protocol (MCP) server.
+
+Phase 5 hardens the daemon with token rotation, bearer auth,
+Prometheus metrics, HTTP health/readiness surfaces, and OTLP tracing.
+.SH OPTIONS
+.TP
+\fB\-\-socket\fR \fIPATH\fR
+Path to the daemon's unix control socket. Default: derived from
+$XDG_RUNTIME_DIR.
+.TP
+\fB\-\-name\fR \fINAME\fR
+Daemon instance name (multi-instance support). Default: \fBdefault\fR.
+.TP
+\fB\-\-json\fR
+Emit JSON instead of human-friendly text.
+.TP
+\fB\-\-help\fR
+Print help information.
+.TP
+\fB\-\-version\fR
+Print version.
+.SH COMMANDS
+.SS Daemon control
+.TP
+.B daemon
+Run as a long-lived daemon (the default for systemd).
+.TP
+.B mcp
+Run as an MCP server over stdio.
+.TP
+.B version
+Print daemon version (e.g. \fB1.0.0+phase5\fR).
+.TP
+.B status
+Print daemon phase + connection state.
+.TP
+.B health
+Print daemon health (extended JSON: uptime, ready, live).
+.TP
+.B reconnect
+Force reconnect to the WhatsApp Web socket.
+.TP
+.B shutdown
+Gracefully shut down the daemon.
+.SS Outbound
+.TP
+.B send \fIARGS\fR
+Send a message: text, image, video, audio, voice, sticker,
+reaction, poll, contact, location, document, or delete.
+.SS Resource queries
+.TP
+.B groups \fISUBCMD\fR
+Group operations: list, info, create, leave, members, admins,
+invite, subject, description, etc.
+.TP
+.B messages \fISUBCMD\fR
+Message operations: list, get, search, edit, mark-read, download.
+.TP
+.B chats \fISUBCMD\fR
+Chat operations: list, info, pin, mute, archive, delete, typing.
+.TP
+.B envelope \fISUBCMD\fR
+DOT envelope operations: encode, decode, send, send-native.
+.TP
+.B media \fISUBCMD\fR
+Media operations: info, upload, download.
+.SS Rules + triggers + actions (Phase 4)
+.TP
+.B rules \fISUBCMD\fR
+Rule operations: list, get, create, update, patch, delete, enable,
+disable, approve, reload, flush, test.
+.TP
+.B triggers \fISUBCMD\fR
+Trigger operations: list, get, create, update, delete, run.
+.TP
+.B audit \fISUBCMD\fR
+Audit log operations: tail, verify.
+.TP
+.B actions \fISUBCMD\fR
+Action operations: escalate.
+.SS Events + clients (Phase 3)
+.TP
+.B events \fISUBCMD\fR
+Event operations: list, show, tail, replay.
+.TP
+.B clients \fISUBCMD\fR
+MCP client discovery: list.
+.TP
+.B methods \fISUBCMD\fR
+Daemon method discovery: list, help.
+.SS Discovery + capability
+.TP
+.B capabilities
+Print platform capabilities (payload sizes, media caps).
+.TP
+.B domain \fISUBCMD\fR
+Domain operations: compute-hash.
+.SH EXAMPLES
+.TP
+Start the daemon in the foreground:
+.B octo-whatsapp daemon
+.TP
+Query daemon version:
+.B octo-whatsapp version
+.TP
+List all rules:
+.B octo-whatsapp rules list
+.TP
+Tail the audit log (last 100 entries):
+.B octo-whatsapp audit tail --limit 100
+.TP
+Send a text message:
+.B octo-whatsapp send text --peer 1234567890@s.whatsapp.net --text "hi"
+.SH SEE ALSO
+.BR octo-whatsapp-onboard (1)
+.SH AUTHORS
+CipherOcto <ops@cipherocto.example>.
+.SH BUGS
+Report bugs to <https://github.com/cipherocto/octo-whatsapp/issues>.

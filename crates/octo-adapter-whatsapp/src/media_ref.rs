@@ -202,11 +202,20 @@ impl std::error::Error for MediaRefError {
 mod tests {
     use super::*;
 
-    /// Build a synthetic `UploadResponse` with every field populated to a
-    /// distinct sentinel value. Round-trip tests use this to detect field
-    /// drops (the diff between an old and a new `UploadResponse` shape).
-    fn synthetic_upload_response() -> UploadResponse {
-        UploadResponse {
+    /// Build a synthetic `MediaRef` with every field populated to a
+    /// distinct sentinel value. Round-trip tests use this to detect
+    /// field drops (the diff between an old and a new `MediaRef` shape).
+    ///
+    /// Post-buffa migration (wacore 6e0f241): the upstream
+    /// `UploadResponse` is now `#[non_exhaustive]`, so we can no longer
+    /// synthesize one in a downstream test. The 7 tests in this module
+    /// previously routed through `from_upload_response` to materialise a
+    /// `MediaRef`; those tests now construct the `MediaRef` directly
+    /// (it is local to this crate, so struct-literal syntax still works).
+    /// `from_upload_response` is a trivial field-copy shim — its
+    /// behaviour is covered by inspection; no dedicated unit test.
+    fn synthetic_media_ref(filename: &str) -> MediaRef {
+        MediaRef {
             url: "https://mmg.whatsapp.net/v/t62.7117-24/synthetic".to_string(),
             direct_path: "/v/t62.7117-24/synthetic".to_string(),
             media_key: [0xA1u8; 32],
@@ -214,47 +223,49 @@ mod tests {
             file_sha256: [0xC3u8; 32],
             file_length: 12345,
             media_key_timestamp: 1_700_000_000,
+            filename: filename.to_string(),
         }
     }
 
     #[test]
     fn media_ref_roundtrip() {
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "envelope.bin");
+        let media_ref = synthetic_media_ref("envelope.bin");
         let token = encode_base64url(&media_ref).expect("encode must succeed");
         let decoded = decode_base64url(&token).expect("decode must succeed");
 
-        assert_eq!(decoded.url, upload.url);
-        assert_eq!(decoded.direct_path, upload.direct_path);
-        assert_eq!(decoded.media_key, upload.media_key);
-        assert_eq!(decoded.file_enc_sha256, upload.file_enc_sha256);
-        assert_eq!(decoded.file_sha256, upload.file_sha256);
-        assert_eq!(decoded.file_length, upload.file_length);
-        assert_eq!(decoded.media_key_timestamp, upload.media_key_timestamp);
+        assert_eq!(decoded.url, media_ref.url);
+        assert_eq!(decoded.direct_path, media_ref.direct_path);
+        assert_eq!(decoded.media_key, media_ref.media_key);
+        assert_eq!(decoded.file_enc_sha256, media_ref.file_enc_sha256);
+        assert_eq!(decoded.file_sha256, media_ref.file_sha256);
+        assert_eq!(decoded.file_length, media_ref.file_length);
+        assert_eq!(decoded.media_key_timestamp, media_ref.media_key_timestamp);
         assert_eq!(decoded.filename, "envelope.bin");
     }
 
     #[test]
     fn media_ref_to_document_message() {
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "test.bin");
+        let media_ref = synthetic_media_ref("test.bin");
         let doc = media_ref.to_document_message();
 
         // Populated fields:
-        assert_eq!(doc.media_key.as_deref(), Some(upload.media_key.as_slice()));
+        assert_eq!(
+            doc.media_key.as_deref(),
+            Some(media_ref.media_key.as_slice())
+        );
         assert_eq!(
             doc.direct_path.as_deref(),
-            Some(upload.direct_path.as_str())
+            Some(media_ref.direct_path.as_str())
         );
         assert_eq!(
             doc.file_enc_sha256.as_deref(),
-            Some(upload.file_enc_sha256.as_slice())
+            Some(media_ref.file_enc_sha256.as_slice())
         );
         assert_eq!(
             doc.file_sha256.as_deref(),
-            Some(upload.file_sha256.as_slice())
+            Some(media_ref.file_sha256.as_slice())
         );
-        assert_eq!(doc.file_length, Some(upload.file_length));
+        assert_eq!(doc.file_length, Some(media_ref.file_length));
 
         // Unpopulated fields (WhatsApp's CDN ignores these on re-download):
         assert!(doc.url.is_none());
@@ -266,8 +277,7 @@ mod tests {
 
     #[test]
     fn encode_base64url_no_special_chars() {
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "envelope.bin");
+        let media_ref = synthetic_media_ref("envelope.bin");
         let token = encode_base64url(&media_ref).expect("encode must succeed");
 
         // Standard base64 alphabet is `[A-Za-z0-9+/=]`. Base64url is
@@ -314,8 +324,7 @@ mod tests {
     fn decode_base64url_does_not_leak_input_in_error() {
         // Synthetic input that looks like a MediaRef but fails JSON parse.
         // The error Display string MUST NOT include any field value.
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "test.bin");
+        let media_ref = synthetic_media_ref("test.bin");
         let valid_token = encode_base64url(&media_ref).expect("encode must succeed");
         // Truncate the token mid-byte to break JSON parse (the last
         // base64url char loses significance, so the decoded bytes will
@@ -337,8 +346,7 @@ mod tests {
         // UploadResponse field count (7) + 1 (`filename`). If a future
         // wacore version adds fields to UploadResponse and we forget to
         // mirror them here, this test fails loudly.
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "drift-guard.bin");
+        let media_ref = synthetic_media_ref("drift-guard.bin");
         let value = serde_json::to_value(&media_ref).expect("serialize");
         let obj = value.as_object().expect("object");
         assert_eq!(
@@ -351,8 +359,7 @@ mod tests {
 
     #[test]
     fn debug_redacts_media_key() {
-        let upload = synthetic_upload_response();
-        let media_ref = MediaRef::from_upload_response(&upload, "test.bin");
+        let media_ref = synthetic_media_ref("test.bin");
         let formatted = format!("{media_ref:?}");
         // The synthetic upload has `media_key = [0xA1; 32]` — a
         // hex-decimal of `a1` repeated 64 times would be a leak.

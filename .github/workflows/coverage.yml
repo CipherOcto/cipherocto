@@ -69,6 +69,20 @@ jobs:
           cargo llvm-cov --no-default-features --features full -p quota-router-core \
             --lcov --output-path lcov-quota-router-core.info
 
+      - name: Generate coverage for octo-whatsapp
+        run: |
+          # octo-whatsapp uses MockAdapter via the `test-helpers`
+          # feature (gated by #[cfg(any(test, feature = "test-helpers"))])
+          # so handler success paths can be exercised in-process without
+          # a live WhatsApp session. `live-whatsapp` is intentionally
+          # NOT enabled here — those tests require real credentials
+          # and are excluded from CI coverage per the design doc
+          # §1114. The `live-whatsapp` feature implies `test-helpers`
+          # (Cargo.toml) so adding it later for live verification does
+          # not affect which coverage gates apply.
+          cargo llvm-cov --no-default-features --features test-helpers -p octo-whatsapp \
+            --lcov --output-path lcov-octo-whatsapp.info
+
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         continue-on-error: true
@@ -76,6 +90,7 @@ jobs:
           files: |
             ./lcov.info
             ./lcov-quota-router-core.info
+            ./lcov-octo-whatsapp.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
@@ -88,9 +103,12 @@ jobs:
             --exclude octo-telegram-onboard-core \
             --exclude octo-adapter-whatsapp \
             --exclude quota-router-core \
+            --exclude octo-whatsapp \
             --json --output-path coverage.json
           cargo llvm-cov --no-default-features --features full -p quota-router-core \
             --json --output-path coverage-quota-router-core.json
+          cargo llvm-cov --no-default-features --features test-helpers -p octo-whatsapp \
+            --json --output-path coverage-octo-whatsapp.json
           echo "Coverage report generated"
 
       - name: Check coverage threshold
@@ -117,3 +135,24 @@ jobs:
             exit 1
           fi
           echo "Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
+
+      - name: Check octo-whatsapp coverage gate
+        run: |
+          # Phase coverage push (commit b7f22f65) brought octo-whatsapp
+          # to 85.53% lines / 86.74% branches. Enforce both design-doc
+          # §1624 gates: >=85% lines AND >=75% branches.
+          python3 -c "
+          import json, sys
+          with open('coverage-octo-whatsapp.json') as f:
+              data = json.load(f)
+          lines = data['data'][0]['totals']['lines']
+          branches = data['data'][0]['totals']['branches']
+          line_pct = lines['covered'] / lines['count'] * 100 if lines['count'] > 0 else 0.0
+          branch_pct = branches['covered'] / branches['count'] * 100 if branches['count'] > 0 else 0.0
+          print(f'octo-whatsapp: {line_pct:.2f}% lines / {branch_pct:.2f}% branches')
+          if line_pct < 85.0:
+              print(f'FAIL: lines {line_pct:.2f}% < 85%'); sys.exit(1)
+          if branch_pct < 75.0:
+              print(f'FAIL: branches {branch_pct:.2f}% < 75%'); sys.exit(1)
+          print('PASS')
+          "

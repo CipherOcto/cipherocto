@@ -1,0 +1,65 @@
+[package]
+name = "octo-cable"
+version = "0.1.0"
+edition = "2021"
+description = "caBLE (Cloud Assisted BLE) hybrid authenticator transport for WebAuthn cross-device flows. Includes the FIDO:/<digits> QR codec, the HandshakeV2 bootstrap, and the QR-only relay transport."
+
+[dependencies]
+# CTAP2 canonical CBOR encoder/decoder.
+ciborium = "0.2"
+# Base64 for secondary URI formats + WebAuthn `id` / `rawId` encoding.
+base64 = "0.22"
+thiserror = "1"
+# hex for tunnel_id upper-hex formatting in tunnel URLs
+hex = "0.4"
+# WebAuthn JSON ↔ CTAP2 CBOR mapping (Session 7+)
+serde_json = "1"
+
+# Tunnel transport (Session 6+)
+# Async runtime + WebSocket. We use rustls because OpenSSL is heavier and
+# the WA / Chromium caBLE endpoints all support modern TLS.
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# Rustls needs a default crypto provider. We use `ring` (most common)
+# via a direct dep so the `CryptoProvider::install_default()` call in
+# the example / tunnel entry point can pick it up.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+futures = "0.3"
+
+# Noise NKpsk0_P256_AESGCM_SHA256 primitives.
+p256 = { version = "0.13", features = ["ecdh"] }
+aes-gcm = "0.10"
+aes = "0.8"
+ctr = "0.9"
+hmac = "0.12"
+subtle = "2"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
+# Session 15: BLE service-data advertiser for caBLE v2 phase 2.
+# The caBLE v2 protocol carries the encrypted Eid (containing our
+# nonce + routing_id) over a BLE advertisement, NOT over the
+# WebSocket tunnel. The phone's gms FIDO module scans for the
+# 16-bit service UUID 0xfff9, decrypts the service data with the
+# EidKey derived from the QR's `secret`, and uses the recovered
+# Eid to derive the same PSK as our responder. Without this ad
+# the phone cannot compute the matching PSK and the Noise
+# handshake silently fails ("connecting to other device" forever).
+#
+# `bluer` is Linux-only (talks to bluez over D-Bus). On non-Linux
+# targets the `ble` module's `start_advertisement` returns an
+# `Unsupported` error, which the CLI surfaces as a clear
+# "BLE adapter required" message.
+bluer = { version = "0.17", default-features = false, features = ["bluetoothd"] }
+tracing = "0.1"
+
+[dev-dependencies]
+hex = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "ble_smoke"
+path = "examples/ble_smoke.rs"

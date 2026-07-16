@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "octo-sync"
 version = "0.1.0"

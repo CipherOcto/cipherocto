@@ -319,6 +319,13 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
             can_resolve_invite: true,  // `messages.checkChatInvite`
             // Handoff
             can_transfer_ownership: true, // `channels.editCreator` for supergroups
+
+            // Misc admin (Session 7.H)
+            can_get_invite_link: true, // `messages.exportChatInvite` for basic + supergroups
+            can_update_member_label: true, // `channels.editAdmin` for supergroups admin title
+            can_get_profile_pictures: true, // `photos.getUserPhotos` + chat-profile equivalents
+            can_set_profile_picture: true, // `messages.setChatPhoto` / `photos.updateProfilePhoto`
+            can_remove_profile_picture: true, // `messages.deleteChatPhoto` / equivalent
         }
     }
 
@@ -627,6 +634,11 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> CoordinatorAdmin
                 ephemeral_ttl: None,
                 requires_approval: false,
             },
+            phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
 

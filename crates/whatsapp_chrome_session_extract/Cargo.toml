@@ -1,0 +1,27 @@
+[package]
+name = "whatsapp_chrome_session_extract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 7.J investigation binary: reuse an existing Chrome profile that has WA Web logged in, read its IndexedDB via CDP, extract the Noise session keys. Then we can decrypt frame[2] + frame[5] from reconnect.jsonl to localize the 401 at the field-by-field level."
+
+# Standalone workspace member — no octo-* deps, no wacore dep.
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros", "process", "io-util"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+base64 = "0.22"
+memchr = "2"
+
+[[bin]]
+name = "whatsapp_chrome_session_extract"
+path = "src/main.rs"

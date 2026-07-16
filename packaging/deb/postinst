@@ -1,0 +1,36 @@
+#!/bin/sh
+# postinst script for octo-whatsapp Debian package.
+set -e
+
+case "$1" in
+    configure)
+        # Create the runtime user + group (UID/GID 1000) if missing.
+        if ! getent group octo >/dev/null; then
+            addgroup --system --gid 1000 octo
+        fi
+        if ! getent passwd octo >/dev/null; then
+            adduser --system --uid 1000 --gid 1000 \
+                    --home /var/lib/octo/whatsapp \
+                    --no-create-home \
+                    --shell /usr/sbin/nologin \
+                    --gecos "Octo WhatsApp daemon user" \
+                    octo
+        fi
+        # Ensure persistent directories exist + are owned by the runtime user.
+        for d in /var/lib/octo/whatsapp /var/log/octo/whatsapp; do
+            if [ ! -d "$d" ]; then
+                mkdir -p "$d"
+            fi
+            chown -R octo:octo "$d"
+            chmod 0750 "$d"
+        done
+        # Reload systemd + (optionally) enable + start.
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1478,6 +1478,13 @@ impl CoordinatorAdmin for IrcAdapter {
 
             // ── E. Handoff ────────────────────────────────────
             can_transfer_ownership: false, // no transfer primitive
+
+            // ── F. Misc admin (Session 7.H) ────────────────────
+            can_get_invite_link: false, // IRC invites are per-channel, not server-stored + revocable
+            can_update_member_label: false, // no per-member admin title on IRC
+            can_get_profile_pictures: false, // IRC has no group avatars
+            can_set_profile_picture: false, // IRC has no group avatars
+            can_remove_profile_picture: false, // IRC has no group avatars
         }
     }
 
@@ -1848,6 +1855,11 @@ impl CoordinatorAdmin for IrcAdapter {
             admins: vec![],
             invite_url: None,
             mode_flags: GroupModeFlags::default(),
+            phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
 

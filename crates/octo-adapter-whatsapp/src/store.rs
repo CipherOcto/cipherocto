@@ -4,12 +4,21 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use prost::Message;
 use std::path::Path;
+use std::sync::Arc;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::traits::*;
 use wacore::store::Device as CoreDevice;
+use whatsapp_rust::buffa::Message as BuffaMessage;
+
+/// Diagnostic dump of the device row's crypto blobs + identity metadata.
+///
+/// Tuple alias (not a named struct) because every caller destructures
+/// positionally — `let (noise_key, identity_key, ...) = store.read_device_keys()`
+/// keeps working unchanged. The alias just gives clippy
+/// `type_complexity` a name to point at instead of an inline 8-tuple.
+pub type DeviceKeyDump = (Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32, u32);
 
 /// Helper to convert stoolap errors to StoreError
 fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
@@ -145,6 +154,58 @@ impl StoolapStore {
         Ok(())
     }
 
+    /// Phase 7.J.4: read the persisted `device` row's three crypto
+    /// blobs for diagnostic use (the `dump_noise_key` binary).
+    ///
+    /// Returns `(noise_key, identity_key, signed_pre_key)` bytes if a
+    /// row exists, `None` if the device row has not been written yet
+    /// (a fresh/empty DB). The three blobs are the
+    /// `wacore::store::Device.noise_key` / `.identity_key` /
+    /// `.signed_pre_key` `KeyPair`s — see the fork's
+    /// `wacore/src/store/device.rs` for the full schema.
+    ///
+    /// Not async because the `dump_noise_key` binary uses a sync
+    /// `try_lock()` (the daemon normally holds the lock). Safe to
+    /// call from any context where the store isn't contended.
+    pub fn read_device_keys(&self) -> anyhow::Result<Option<DeviceKeyDump>> {
+        use anyhow::Context;
+        let db = self
+            .db
+            .try_lock()
+            .map_err(|e| anyhow::anyhow!("db try_lock failed (a daemon may be running): {e}"))?;
+        let mut rows = query(
+            &db,
+            "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary, registration_id FROM device WHERE id = 1",
+            vec![],
+        )
+        .map_err(|e| anyhow::Error::msg(format!("SELECT device: {e}")))?;
+        let row = match rows.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
+                return Err(anyhow::Error::msg(format!("row decode: {e}")));
+            }
+            None => return Ok(None),
+        };
+        let noise_key: Vec<u8> = row.get(0).context("noise_key col")?;
+        let identity_key: Vec<u8> = row.get(1).context("identity_key col")?;
+        let signed_pre_key: Vec<u8> = row.get(2).context("signed_pre_key col")?;
+        let push_name: String = row.get(3).context("push_name col")?;
+        let avp: i64 = row.get::<i64>(4).context("app_version_primary col")?;
+        let avs: i64 = row.get::<i64>(5).context("app_version_secondary col")?;
+        let avt: i64 = row.get::<i64>(6).context("app_version_tertiary col")?;
+        let registration_id: i64 = row.get::<i64>(7).context("registration_id col")?;
+        Ok(Some((
+            noise_key,
+            identity_key,
+            signed_pre_key,
+            push_name,
+            avp as u32,
+            avs as u32,
+            avt as u32,
+            registration_id as u32,
+        )))
+    }
+
     fn init_schema_with(&self, db: &stoolap::Database) -> anyhow::Result<()> {
         // R9 / stoolap parser: stoolap's strict SQL parser
         // doesn't accept `PRIMARY KEY (col1, col2)` (the `KEY`
@@ -220,6 +281,7 @@ impl StoolapStore {
             "CREATE TABLE IF NOT EXISTS base_keys (address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS tc_tokens (jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
             "CREATE TABLE IF NOT EXISTS conversations (jid TEXT NOT NULL, name TEXT, is_group INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, UNIQUE (jid))",
+            "CREATE TABLE IF NOT EXISTS msg_secrets (chat TEXT NOT NULL, sender TEXT NOT NULL, msg_id TEXT NOT NULL, secret BLOB NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0, message_ts INTEGER NOT NULL DEFAULT 0, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (chat, sender, msg_id, device_id))",
         ];
         for stmt in stmts {
             exec(db, stmt, vec![])?;
@@ -571,6 +633,14 @@ impl SignalStore for StoolapStore {
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )
     }
+
+    async fn mark_prekeys_uploaded(&self, _ids: &[u32]) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed mark-as-uploaded.
+        // The sweep that calls this runs after a successful first upload,
+        // which currently never happens because pair_success is end-to-end
+        // before prekey re-uploads. Tracked for Phase 7.
+        Ok(())
+    }
 }
 
 // ── AppSyncStore ───────────────────────────────────────────────────
@@ -869,6 +939,13 @@ impl AppSyncStore for StoolapStore {
             Some(Err(e)) => Err(to_store_err(e)),
             None => Ok(None),
         }
+    }
+
+    async fn clear_mutation_macs(&self, _name: &str) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed MAC clear. The ltHash
+        // rebuild is triggered on snapshot re-sync, which the upstream default
+        // sync sequence handles; store-level impl deferred.
+        Ok(())
     }
 }
 
@@ -1213,7 +1290,8 @@ impl ProtocolStore for StoolapStore {
 
     async fn delete_expired_tc_tokens(
         &self,
-        cutoff_timestamp: i64,
+        token_cutoff: i64,
+        sender_cutoff: i64,
     ) -> wacore::store::error::Result<u32> {
         // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
         // a single DELETE that returns the rows-affected count from
@@ -1230,12 +1308,22 @@ impl ProtocolStore for StoolapStore {
         // actual number of rows deleted. R13-M1 didn't audit this
         // pattern (only DELETE+INSERT); the R14 grep audit at
         // lines 1081-1101 found it.
+        // Post-buffa migration (wacore 6e0f241): upstream trait added
+        // a second cutoff to guard sender buckets separately from
+        // received-token state (see wacore/src/store/traits.rs).
+        // sender_cutoff = 0 means "no sender state preserved".
         self.db
             .lock()
             .await
             .execute(
-                "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+                "DELETE FROM tc_tokens WHERE \
+                 token_timestamp < $1 AND device_id = $2 AND \
+                 (sender_timestamp IS NULL OR sender_timestamp < $3)",
+                vec![
+                    token_cutoff.into(),
+                    (self.device_id as i64).into(),
+                    sender_cutoff.into(),
+                ],
             )
             .map(|n| n as u32)
             .map_err(to_store_err)
@@ -1331,6 +1419,135 @@ impl ProtocolStore for StoolapStore {
     }
 }
 
+// ── MsgSecretStore ─────────────────────────────────────────────────
+
+#[async_trait]
+impl MsgSecretStore for StoolapStore {
+    async fn put_msg_secrets(
+        &self,
+        entries: Vec<wacore::store::traits::MsgSecretEntry>,
+    ) -> wacore::store::error::Result<usize> {
+        // Per wacore merge semantics:
+        //   expires_at: 0 ("never") wins; otherwise max of the two
+        //   message_ts: max (0 never clobbers a known parent ts)
+        // Stoolap's parser only accepts MySQL-style `ON DUPLICATE KEY UPDATE`
+        // (see stoolap/src/parser/statements.rs:954) and rejects the
+        // PostgreSQL/SQLite `ON CONFLICT (...) DO UPDATE SET ...` form
+        // (`expected DUPLICATE after ON, got 'CONFLICT'`). We read the
+        // existing row, merge in Rust, and replace via DELETE+INSERT inside
+        // one transaction so a partial write can't lose the prior secret.
+        let mut count = 0usize;
+        let now = chrono::Utc::now().timestamp();
+        let device_id = self.device_id as i64;
+        for entry in entries {
+            let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+            let existing: Option<(i64, i64)> = {
+                let mut rows = query_tx(
+                    &mut tx,
+                    "SELECT expires_at, message_ts FROM msg_secrets \
+                     WHERE chat = $1 AND sender = $2 AND msg_id = $3 \
+                     AND device_id = $4",
+                    vec![
+                        entry.chat.clone().into(),
+                        entry.sender.clone().into(),
+                        entry.msg_id.clone().into(),
+                        device_id.into(),
+                    ],
+                )?;
+                match rows.next() {
+                    Some(Ok(row)) => Some((
+                        row.get::<i64>(0).map_err(to_store_err)?,
+                        row.get::<i64>(1).map_err(to_store_err)?,
+                    )),
+                    _ => None,
+                }
+            };
+            let merged_expires = match existing {
+                Some((e, _)) => wacore::store::traits::merge_msg_secret_expiry(e, entry.expires_at),
+                None => entry.expires_at,
+            };
+            let merged_msg_ts = match existing {
+                Some((_, t)) => {
+                    wacore::store::traits::merge_msg_secret_message_ts(t, entry.message_ts)
+                }
+                None => entry.message_ts,
+            };
+            exec_tx(
+                &mut tx,
+                "DELETE FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    entry.chat.clone().into(),
+                    entry.sender.clone().into(),
+                    entry.msg_id.clone().into(),
+                    device_id.into(),
+                ],
+            )?;
+            exec_tx(
+                &mut tx,
+                "INSERT INTO msg_secrets \
+                 (chat, sender, msg_id, secret, expires_at, message_ts, device_id, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                vec![
+                    entry.chat.into(),
+                    entry.sender.into(),
+                    entry.msg_id.into(),
+                    stoolap::core::Value::blob(entry.secret),
+                    merged_expires.into(),
+                    merged_msg_ts.into(),
+                    device_id.into(),
+                    now.into(),
+                ],
+            )?;
+            tx.commit().map_err(to_store_err)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    async fn get_msg_secret(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> wacore::store::error::Result<Option<Vec<u8>>> {
+        let conn = self.db.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT secret FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    chat.to_string().into(),
+                    sender.to_string().into(),
+                    msg_id.to_string().into(),
+                    (self.device_id as i64).into(),
+                ],
+            )
+            .map_err(to_store_err)?;
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row.get::<Vec<u8>>(0).map_err(to_store_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    async fn delete_expired_msg_secrets(
+        &self,
+        cutoff_timestamp: i64,
+    ) -> wacore::store::error::Result<u32> {
+        // Rows with expires_at = 0 ("never") are kept.
+        self.db
+            .lock()
+            .await
+            .execute(
+                "DELETE FROM msg_secrets \
+                 WHERE expires_at > 0 AND expires_at <= $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
+    }
+}
+
 // ── DeviceStore ────────────────────────────────────────────────────
 
 #[async_trait]
@@ -1354,7 +1571,10 @@ impl DeviceStore for StoolapStore {
             b.extend_from_slice(device.signed_pre_key.public_key.public_key_bytes());
             b
         };
-        let account = device.account.as_ref().map(|a| a.encode_to_vec());
+        let account = device
+            .account
+            .as_ref()
+            .map(|a| BuffaMessage::encode_to_vec(&**a));
         let cert_chain = device
             .server_cert_chain
             .as_ref()
@@ -1469,9 +1689,11 @@ impl DeviceStore for StoolapStore {
                 }
                 let account = account_bytes
                     .map(|b| {
-                        waproto::whatsapp::AdvSignedDeviceIdentity::decode(&*b).map_err(|e| {
-                            wacore::store::error::StoreError::Serialization(Box::new(e))
-                        })
+                        waproto::whatsapp::ADVSignedDeviceIdentity::decode_from_slice(&b)
+                            .map(Arc::new)
+                            .map_err(|e| {
+                                wacore::store::error::StoreError::Serialization(Box::new(e))
+                            })
                     })
                     .transpose()?;
                 let cert_bytes: Option<Vec<u8>> = row.get(21).map_err(to_store_err)?;
@@ -1892,6 +2114,11 @@ mod tests {
         // between the SELECT and the DELETE. Pin that the new
         // single-DELETE path returns the EXACT count of rows
         // deleted (3), not a count from a separate SELECT.
+        //
+        // Post-buffa migration (wacore 6e0f241): upstream trait added a
+        // second `sender_cutoff` to guard sender buckets separately from
+        // received-token state. Pass `i64::MAX` here so the test preserves
+        // pre-migration semantics (delete solely on `token_cutoff`).
         use wacore::store::traits::ProtocolStore;
         use wacore::store::traits::TcTokenEntry;
         let store = StoolapStore::new_in_memory().unwrap();
@@ -1913,7 +2140,7 @@ mod tests {
         // Cutoff is between the old and recent timestamps.
         let cutoff = now - 3_600_000;
         let deleted = store
-            .delete_expired_tc_tokens(cutoff)
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
             .await
             .expect("delete_expired_tc_tokens should succeed");
         assert_eq!(
@@ -1925,7 +2152,7 @@ mod tests {
         // Second call should return 0 — the remaining 2 are recent
         // and the deleted 3 are gone.
         let deleted2 = store
-            .delete_expired_tc_tokens(cutoff)
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
             .await
             .expect("second delete_expired_tc_tokens should succeed");
         assert_eq!(

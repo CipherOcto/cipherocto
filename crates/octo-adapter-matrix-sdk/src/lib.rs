@@ -1368,6 +1368,13 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
             can_resolve_invite: true,
             // E. Handoff
             can_transfer_ownership: false, // no atomic transfer primitive
+
+            // F. Misc admin (Session 7.H)
+            can_get_invite_link: true, // room aliases resolve via `#alias:server`
+            can_update_member_label: true, // matrix displayname + power-level per-user title
+            can_get_profile_pictures: true, // m.room.avatar state event
+            can_set_profile_picture: true, // m.room.avatar state event
+            can_remove_profile_picture: true, // m.room.avatar state event (avatar=null)
         }
     }
 
@@ -1878,6 +1885,11 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
             admins,
             invite_url,
             mode_flags,
+            phone_for_peer: std::collections::HashMap::new(),
+            is_parent_group: false,
+            parent_group_jid: None,
+            is_default_sub_group: false,
+            is_general_chat: false,
         })
     }
 
@@ -2723,7 +2735,7 @@ mod tests {
 
     // Sanity test: the truthful capability report matches the
     // mission §"Truthful `admin_capabilities()` report" shape.
-    // 19 true, 2 false (can_destroy, can_transfer_ownership).
+    // 24 true, 2 false (can_destroy, can_transfer_ownership).
     #[test]
     fn matrix_capability_report_matches_mission_spec() {
         let r = AdminCapabilityReport {
@@ -2748,8 +2760,14 @@ mod tests {
             can_get_metadata: true,
             can_resolve_invite: true,
             can_transfer_ownership: false,
+            // Misc admin (Session 7.H)
+            can_get_invite_link: true,
+            can_update_member_label: true,
+            can_get_profile_pictures: true,
+            can_set_profile_picture: true,
+            can_remove_profile_picture: true,
         };
-        // 19 true, 2 false -- exact count.
+        // 24 true, 2 false -- exact count.
         let true_count = [
             r.can_create,
             r.can_join_by_id,
@@ -2770,11 +2788,16 @@ mod tests {
             r.can_list_own_groups,
             r.can_get_metadata,
             r.can_resolve_invite,
+            r.can_get_invite_link,
+            r.can_update_member_label,
+            r.can_get_profile_pictures,
+            r.can_set_profile_picture,
+            r.can_remove_profile_picture,
         ]
         .iter()
         .filter(|b| **b)
         .count();
-        assert_eq!(true_count, 19, "expected 19 true flags, got {true_count}");
+        assert_eq!(true_count, 24, "expected 24 true flags, got {true_count}");
         assert!(!r.can_destroy);
         assert!(!r.can_transfer_ownership);
     }

@@ -72,6 +72,7 @@ fn maybe_live_config() -> Option<WhatsAppConfig> {
         pair_code: None,
         groups: vec![],
         sender_allowlist: Default::default(),
+        passkey_authenticator: None,
     })
 }
 

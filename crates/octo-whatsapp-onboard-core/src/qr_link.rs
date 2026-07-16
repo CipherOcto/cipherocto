@@ -12,8 +12,9 @@ use crate::error::{CoreError, Result};
 use crate::output::QrLinkArgs;
 use crate::output::WhatsAppSession;
 use crate::sidecar::{write_sidecar, SidecarMode};
-use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_adapter_whatsapp::{passkey::PasskeyAuthenticator, WhatsAppConfig, WhatsAppWebAdapter};
 use octo_network::dot::adapters::PlatformAdapter;
+use std::sync::Arc;
 
 /// Run the qr-link flow: build adapter, start bot, wait for
 /// `Event::Connected`, write sidecar + session (the binary writes
@@ -22,7 +23,16 @@ use octo_network::dot::adapters::PlatformAdapter;
 /// R1-M4: takes `&QrLinkArgs` (by reference) so the binary can
 /// pass the args struct directly without `clone()`-ing the
 /// `OutputArgs` field. This matches the matrix-onboard pattern.
-pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
+///
+/// Session 12: `passkey_authenticator` is supplied by the binary
+/// (typically `CablePasskeyAuthenticator` rendering a stderr FIDO
+/// QR). It is set on `WhatsAppConfig` so wacore invokes it inline
+/// when the server sends `Event::PairPasskeyRequest` — phase 2
+/// happens in the same flow as phase 1, no separate CLI subcommand.
+pub async fn run(
+    args: &QrLinkArgs,
+    passkey_authenticator: Option<Arc<dyn PasskeyAuthenticator>>,
+) -> Result<WhatsAppSession> {
     validate_qr_link_args(args)?;
 
     let config = WhatsAppConfig {
@@ -32,6 +42,7 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         ws_url: args.ws_url.clone(),
         groups: args.groups.clone(),
         sender_allowlist: Default::default(),
+        passkey_authenticator,
     };
     config
         .validate()
@@ -63,6 +74,15 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
         let phone = resolve_phone_from_adapter(&adapter)
             .await
             .ok_or(crate::error::CoreError::SessionExpired)?;
+        tracing::info!(
+            onboard.kind = "phone_resolved",
+            onboard.mode = "qr-link",
+            onboard.path = "wait_sync",
+            onboard.self_phone = ?phone,
+            onboard.session_path = %args.session_path.display(),
+            onboard.groups.requested = ?args.groups,
+            "octo-onboard: resolved self_phone after history sync; about to write sidecar",
+        );
         let session = WhatsAppSession {
             self_phone: Some(phone),
             session_path: args.session_path.clone(),
@@ -75,6 +95,15 @@ pub async fn run(args: &QrLinkArgs) -> Result<WhatsAppSession> {
     } else {
         // Standard mode: wait for Event::Connected (or HistorySync fallback).
         let phone = crate::session::wait_for_connected(&adapter, timeout).await?;
+        tracing::info!(
+            onboard.kind = "phone_resolved",
+            onboard.mode = "qr-link",
+            onboard.path = "wait_connected",
+            onboard.self_phone = ?phone,
+            onboard.session_path = %args.session_path.display(),
+            onboard.groups.requested = ?args.groups,
+            "octo-onboard: resolved self_phone after Connected event; about to write sidecar",
+        );
         let session = WhatsAppSession {
             self_phone: Some(phone),
             session_path: args.session_path.clone(),

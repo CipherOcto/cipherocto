@@ -353,6 +353,119 @@ pub struct GroupMetadata {
     pub admins: Vec<PeerId>,
     pub invite_url: Option<String>,
     pub mode_flags: GroupModeFlags,
+    /// LID (or PN) JID → phone-number JID, populated when the
+    /// underlying platform response carried `phone_number=...` on a
+    /// per-member wire element. E.g. for a WhatsApp LID-addressed
+    /// group, every LID participant gets a mapping from the server's
+    /// `w:g2` `<participant phone_number="NN@s.whatsapp.net">` attr.
+    ///
+    /// Empty for platforms/groups that don't surface the wire
+    /// attribute. Keyed by the same form the member appears in
+    /// `members` (typically `@lid` when the group is LID-addressed).
+    pub phone_for_peer: std::collections::HashMap<PeerId, PeerId>,
+    /// `true` for community parent groups. Mutually exclusive with
+    /// `is_default_sub_group` and `is_general_chat`.
+    #[serde(default)]
+    pub is_parent_group: bool,
+    /// JID of the parent community (only set on subgroups).
+    #[serde(default)]
+    pub parent_group_jid: Option<String>,
+    /// `true` for the default announcement subgroup of a community.
+    #[serde(default)]
+    pub is_default_sub_group: bool,
+    /// `true` for the general chat subgroup of a community.
+    #[serde(default)]
+    pub is_general_chat: bool,
+}
+
+/// One subgroup belonging to a community, as exposed by the runtime
+/// (after conversion from the WA-specific `CommunitySubgroup`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommunitySubgroupSnapshot {
+    pub jid: String,
+    pub subject: String,
+    pub participant_count: Option<u32>,
+    /// Whether this is the default announcement subgroup of a community.
+    pub is_default_sub_group: bool,
+    /// Whether this is the general chat subgroup of a community.
+    pub is_general_chat: bool,
+}
+
+/// Result of linking or unlinking subgroups to/from a community.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CommunityLinkResult {
+    /// JIDs successfully linked (for a `community.link_subgroups` call)
+    /// or unlinked (for a `community.unlink_subgroups` call). The
+    /// direction is implied by the calling RPC, not by this field.
+    pub linked_or_unlinked: Vec<String>,
+    /// `(jid, code)` tuples for subgroups the server rejected.
+    /// `code` is the platform-specific WA `w:g2` error attribute
+    /// carried verbatim from the wire (open-ended code space; `0`
+    /// if unknown).
+    pub failed: Vec<(String, u32)>,
+}
+
+/// Group-metadata payload returned from `community.create`,
+/// `community.query_linked_group`, and `community.join_subgroup`.
+///
+/// A neutral string-keyed mirror of `whatsapp_rust::GroupMetadata`
+/// after platform-specific `Jid` types have been converted to
+/// `String`. Distinct from [`GroupMetadata`] (which is the
+/// `CoordinatorAdmin` neutral group type keyed by `GroupId` /
+/// `PeerId`) because these community payloads are produced by the
+/// `OctoWhatsAppAdapter` trait surface and must round-trip through
+/// trait methods that take `&str` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GroupMetadataSnapshot {
+    pub jid: String,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    /// All participant JIDs (LID or PN, whichever the group uses).
+    pub members: Vec<String>,
+    /// JIDs of admin participants only.
+    pub admins: Vec<String>,
+    /// `true` for community parent groups. Mutually exclusive with
+    /// `is_default_sub_group` and `is_general_chat`.
+    pub is_parent_group: bool,
+    /// JID of the parent community (only set on subgroups).
+    pub parent_group_jid: Option<String>,
+    /// `true` for the default announcement subgroup of a community.
+    pub is_default_sub_group: bool,
+    /// `true` for the general chat subgroup of a community.
+    pub is_general_chat: bool,
+    /// Total participant count as reported by the server.
+    pub size: Option<u32>,
+}
+
+/// Generic newsletter message snapshot returned by
+/// `newsletter.get_messages`. Field shape mirrors what
+/// `Client::newsletter().get_messages` returns, flattened to
+/// primitives so the runtime layer does not depend on wacore
+/// types. `server_id` is the WA-side cursor used for
+/// `before`-pagination in subsequent calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsletterMessageSnapshot {
+    pub message_id: String,
+    pub server_id: u64,
+    pub sender_jid: String,
+    pub ts_unix_ms: i64,
+    pub text: Option<String>,
+    pub has_media: bool,
+}
+
+/// Single participant entry returned by
+/// `community.get_linked_groups_participants`. Flat list across
+/// every linked subgroup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GroupParticipantSnapshot {
+    /// Participant JID (LID or PN, whichever the source group uses).
+    pub jid: String,
+    /// Phone-number JID when the server attached a `phone_number`
+    /// attribute to the wire participant element. `None` for groups
+    /// / participants where the attribute was absent.
+    pub phone_number: Option<String>,
+    /// `true` if the participant is an admin in their subgroup.
+    pub is_admin: bool,
 }
 
 /// Per-action capability bit-flags.
@@ -411,6 +524,23 @@ pub struct AdminCapabilityReport {
     /// `false` here and callers see the multi-step dance in
     /// `transfer_ownership`'s docs.
     pub can_transfer_ownership: bool,
+
+    // ── F. Misc admin (Session 7.H) ──────────────────────────
+    /// Can fetch the active invite link for a group. WhatsApp
+    /// exposes this as a server-stored invite code with a reset
+    /// flag; IRC's invite list is per-channel and static.
+    pub can_get_invite_link: bool,
+    /// Can set / clear the per-member label on a group (WhatsApp
+    /// "member label", Telegram "admin title"). False on IRC.
+    pub can_update_member_label: bool,
+    /// Can fetch profile pictures for one or more groups.
+    pub can_get_profile_pictures: bool,
+    /// Can set the group's profile picture (admin op on
+    /// WhatsApp; not exposed on IRC).
+    pub can_set_profile_picture: bool,
+    /// Can remove the group's profile picture (admin op on
+    /// WhatsApp; not exposed on IRC).
+    pub can_remove_profile_picture: bool,
 }
 
 /// Coordinator / admin actions on a group.
@@ -766,6 +896,84 @@ pub trait CoordinatorAdmin: Send + Sync {
         })
     }
 
+    // ── F. Misc admin (Session 7.H) ──────────────────────────
+    //
+    // Extend the existing group surface with invite-link /
+    // member-label / profile-picture operations. None of these
+    // produce an inbound event the runtime needs to broadcast —
+    // the wire-level ack is the only signal.
+
+    /// Fetch the active invite link (or code) for `group_id`.
+    /// `reset = true` rotates the existing link; `false` returns
+    /// the current one without changing it.
+    async fn get_invite_link(
+        &self,
+        group_id: &GroupId,
+        reset: bool,
+    ) -> Result<String, PlatformAdapterError> {
+        let _ = (group_id, reset);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "get_invite_link".into(),
+        })
+    }
+
+    /// Set / clear the per-member "member label" on a group
+    /// (WhatsApp's per-self label). `label = ""` clears it.
+    async fn update_member_label(
+        &self,
+        group_id: &GroupId,
+        label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        let _ = (group_id, label);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "update_member_label".into(),
+        })
+    }
+
+    /// Fetch the profile picture for one or more groups.
+    /// `picture_type` selects preview vs. full image.
+    async fn get_profile_pictures(
+        &self,
+        group_ids: &[GroupId],
+        preview: bool,
+    ) -> Result<Vec<GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let _ = (group_ids, preview);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "get_profile_pictures".into(),
+        })
+    }
+
+    /// Set a group's profile picture. `image_data_b64` is the
+    /// base64-encoded JPEG bytes (caller decides size/crop;
+    /// WhatsApp uses 640x640).
+    async fn set_profile_picture(
+        &self,
+        group_id: &GroupId,
+        image_data_b64: &str,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let _ = (group_id, image_data_b64);
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "set_profile_picture".into(),
+        })
+    }
+
+    /// Remove a group's profile picture. Returns the (now-empty)
+    /// picture id — usually `Some("0")` on WhatsApp.
+    async fn remove_profile_picture(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        let _ = group_id;
+        Err(PlatformAdapterError::Unimplemented {
+            platform: self.platform_name(),
+            action: "remove_profile_picture".into(),
+        })
+    }
+
     /// Helper used by the default-method error paths. Adapters
     /// override this to return the platform's short name
     /// (e.g. `"whatsapp"`, `"telegram"`, `"matrix"`). Default:
@@ -773,6 +981,27 @@ pub trait CoordinatorAdmin: Send + Sync {
     fn platform_name(&self) -> String {
         "unknown".into()
     }
+}
+
+/// Flat snapshot of one group's profile-picture query result.
+/// Mirrors `wacore::iq::groups::GroupProfilePicture` flattened to
+/// primitive types so the runtime doesn't need a wacore
+/// dependency just to round-trip the fields. `url` and
+/// `direct_path` are `None` when the group has no picture.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GroupProfilePictureSnapshot {
+    pub group_jid: String,
+    pub url: Option<String>,
+    pub direct_path: Option<String>,
+    pub photo_id: Option<String>,
+}
+
+/// Response from `set_group_profile_picture` /
+/// `remove_group_profile_picture`. `id` is the server-assigned
+/// picture id (WhatsApp: opaque hex; `Some("0")` for cleared).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetGroupProfilePictureResponse {
+    pub id: String,
 }
 
 // ── PlatformAdapter bridge ────────────────────────────────────────
@@ -846,6 +1075,11 @@ mod tests {
         assert!(!r.can_get_metadata);
         assert!(!r.can_resolve_invite);
         assert!(!r.can_transfer_ownership);
+        assert!(!r.can_get_invite_link);
+        assert!(!r.can_update_member_label);
+        assert!(!r.can_get_profile_pictures);
+        assert!(!r.can_set_profile_picture);
+        assert!(!r.can_remove_profile_picture);
     }
 
     #[test]

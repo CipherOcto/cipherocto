@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "octo-transport"
 version = "0.1.0"

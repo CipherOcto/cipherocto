@@ -135,7 +135,7 @@ impl QueryIngester {
                 vec![
                     Value::from(id as i64),
                     Value::from(ts_unix_ms),
-                    Value::from(ts_mono_ns as i64),
+                    Value::from(ts_mono_ns),
                     Value::from(un.kind_str),
                     Value::from(un.peer),
                     Value::from(un.sender),
@@ -150,7 +150,7 @@ impl QueryIngester {
                 vec![
                     Value::from(id as i64),
                     Value::from(ts_unix_ms),
-                    Value::from(ts_mono_ns as i64),
+                    Value::from(ts_mono_ns),
                     Value::from(dmc.jid),
                     Value::from(dmc.duration_seconds),
                 ],

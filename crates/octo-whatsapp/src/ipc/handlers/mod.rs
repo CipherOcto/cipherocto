@@ -76,9 +76,12 @@ pub mod messages_edit_encrypted;
 pub mod messages_forward;
 pub mod messages_get;
 pub mod messages_list;
+pub mod messages_list_ephemeral;
+pub mod messages_list_unavailable;
 pub mod messages_mark_as_played;
 pub mod messages_mark_read;
 pub mod messages_pin;
+pub mod messages_read_view_once;
 pub mod messages_search;
 pub mod messages_star;
 pub mod messages_unpin;
@@ -312,6 +315,9 @@ fn build_base_registry() -> HandlerRegistry {
         // Tier 7.A: pin / unpin / forward / edit-encrypted + sticker_pack
         .register(Arc::new(messages_pin::MessagesPin))
         .register(Arc::new(messages_unpin::MessagesUnpin))
+        .register(Arc::new(messages_read_view_once::MessagesReadViewOnce))
+        .register(Arc::new(messages_list_unavailable::MessagesListUnavailable))
+        .register(Arc::new(messages_list_ephemeral::MessagesListEphemeral))
         .register(Arc::new(messages_forward::MessagesForward))
         .register(Arc::new(messages_edit_encrypted::MessagesEditEncrypted))
         .register(Arc::new(media_fetch_sticker_pack::MediaFetchStickerPack))
@@ -796,6 +802,15 @@ pub const TIER7_METHODS_TAIL: &[&str] = TIER7_QUERY_METHODS;
 #[cfg(not(feature = "query"))]
 pub const TIER7_METHODS_TAIL: &[&str] = EMPTY_METHOD_LIST;
 
+/// Phase 7.K: View-Once + Disappearing Messages read RPCs. Always
+/// registered — these don't depend on the `query` cargo feature
+/// because the SQL schema migration v1→v2 ships unconditionally.
+pub const TIER7_K_VIEW_ONCE_DISAPPEARING_METHODS: &[&str] = &[
+    "messages.read_view_once",
+    "messages.list_unavailable",
+    "messages.list_ephemeral",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,6 +895,7 @@ mod tests {
             .chain(TIER7_G_COMMUNITY_METHODS.iter())
             .chain(TIER7_H_GROUP_METHODS.iter())
             .chain(TIER7_I_DAEMON_METHODS.iter())
+            .chain(TIER7_K_VIEW_ONCE_DISAPPEARING_METHODS.iter())
             .chain(TIER7_METHODS_TAIL.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();

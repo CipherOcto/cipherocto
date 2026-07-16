@@ -1430,29 +1430,30 @@ impl MsgSecretStore for StoolapStore {
         // Per wacore merge semantics:
         //   expires_at: 0 ("never") wins; otherwise max of the two
         //   message_ts: max (0 never clobbers a known parent ts)
-        // Implemented as INSERT ... ON CONFLICT DO UPDATE; we read the
-        // existing row when present, merge in Rust, and UPSERT the merged
-        // value. We also bump `updated_at` so the keepalive cleanup sweep
-        // can age rows correctly.
+        // Stoolap's parser only accepts MySQL-style `ON DUPLICATE KEY UPDATE`
+        // (see stoolap/src/parser/statements.rs:954) and rejects the
+        // PostgreSQL/SQLite `ON CONFLICT (...) DO UPDATE SET ...` form
+        // (`expected DUPLICATE after ON, got 'CONFLICT'`). We read the
+        // existing row, merge in Rust, and replace via DELETE+INSERT inside
+        // one transaction so a partial write can't lose the prior secret.
         let mut count = 0usize;
         let now = chrono::Utc::now().timestamp();
+        let device_id = self.device_id as i64;
         for entry in entries {
-            let device_id = self.device_id as i64;
+            let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
             let existing: Option<(i64, i64)> = {
-                let conn = self.db.lock().await;
-                let mut rows = conn
-                    .query(
-                        "SELECT expires_at, message_ts FROM msg_secrets \
-                         WHERE chat = $1 AND sender = $2 AND msg_id = $3 \
-                         AND device_id = $4",
-                        vec![
-                            entry.chat.clone().into(),
-                            entry.sender.clone().into(),
-                            entry.msg_id.clone().into(),
-                            device_id.into(),
-                        ],
-                    )
-                    .map_err(to_store_err)?;
+                let mut rows = query_tx(
+                    &mut tx,
+                    "SELECT expires_at, message_ts FROM msg_secrets \
+                     WHERE chat = $1 AND sender = $2 AND msg_id = $3 \
+                     AND device_id = $4",
+                    vec![
+                        entry.chat.clone().into(),
+                        entry.sender.clone().into(),
+                        entry.msg_id.clone().into(),
+                        device_id.into(),
+                    ],
+                )?;
                 match rows.next() {
                     Some(Ok(row)) => Some((
                         row.get::<i64>(0).map_err(to_store_err)?,
@@ -1471,16 +1472,22 @@ impl MsgSecretStore for StoolapStore {
                 }
                 None => entry.message_ts,
             };
-            exec(
-                &*self.db.lock().await,
+            exec_tx(
+                &mut tx,
+                "DELETE FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    entry.chat.clone().into(),
+                    entry.sender.clone().into(),
+                    entry.msg_id.clone().into(),
+                    device_id.into(),
+                ],
+            )?;
+            exec_tx(
+                &mut tx,
                 "INSERT INTO msg_secrets \
                  (chat, sender, msg_id, secret, expires_at, message_ts, device_id, updated_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-                 ON CONFLICT (chat, sender, msg_id, device_id) DO UPDATE SET \
-                 secret = excluded.secret, \
-                 expires_at = excluded.expires_at, \
-                 message_ts = excluded.message_ts, \
-                 updated_at = excluded.updated_at",
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 vec![
                     entry.chat.into(),
                     entry.sender.into(),
@@ -1492,6 +1499,7 @@ impl MsgSecretStore for StoolapStore {
                     now.into(),
                 ],
             )?;
+            tx.commit().map_err(to_store_err)?;
             count += 1;
         }
         Ok(count)

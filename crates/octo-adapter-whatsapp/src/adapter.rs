@@ -3896,6 +3896,35 @@ impl WhatsAppWebAdapter {
     }
 }
 
+/// Phase 7.K — pure helper implementing the view-once media
+/// persistence gate. When `view_once_persist` is `false` (the
+/// default), inbound view-once messages (`is_view_once == true`)
+/// have their `media_token` zeroed before persistence — the
+/// operator must call `messages.read_view_once` to fetch the CDN
+/// URL + key, at which point `consumed_at` is set and subsequent
+/// reads fail. When `view_once_persist` is `true`, the token
+/// passes through unchanged. Non-view-once messages always pass
+/// through (the gate is view-once-specific).
+///
+/// Pure function (no struct / no `self`) so the closure inside
+/// `on_event` can call it without needing `&self` access — the
+/// adapter's persisted `view_once_persist` flag is passed in
+/// directly. Mirrors `wacore::proto_helpers::MessageExt::is_view_once`
+/// but takes the boolean explicitly to avoid an extra `Message`
+/// ref when the caller already computed the flag.
+#[cfg(test)]
+pub(crate) fn strip_view_once_media_token(
+    view_once_persist: bool,
+    is_view_once: bool,
+    media_token: Option<String>,
+) -> Option<String> {
+    if !view_once_persist && is_view_once {
+        None
+    } else {
+        media_token
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5844,5 +5873,45 @@ mod tests {
         // into the candidate set. Useful for callers that compare
         // against `p.jid.to_string()` instead of `p.jid.user.as_str()`.
         assert!(msp("80836284174444@lid", None, Some("80836284174444")));
+    }
+
+    // ─── Phase 7.K — view-once media persistence gate ───────────────────
+    //
+    // `strip_view_once_media_token` is the pure contract: when the
+    // `view_once_media_persist` flag is OFF and the inbound message is
+    // marked `view_once`, the persisted `media_token` is zeroed.
+    // `messages.read_view_once` is the only way to recover it, at
+    // which point `consumed_at` is set. When the flag is ON, the
+    // token passes through unchanged.
+
+    fn svom(view_once_persist: bool, is_view_once: bool, token: Option<String>) -> Option<String> {
+        super::strip_view_once_media_token(view_once_persist, is_view_once, token)
+    }
+
+    #[test]
+    fn view_once_token_zeroed_when_persist_flag_false() {
+        let out = svom(false, true, Some("tok-abc".into()));
+        assert_eq!(
+            out, None,
+            "view-once media must be stripped when flag=false"
+        );
+    }
+
+    #[test]
+    fn view_once_token_kept_when_persist_flag_true() {
+        let out = svom(true, true, Some("tok-abc".into()));
+        assert_eq!(out.as_deref(), Some("tok-abc"));
+    }
+
+    #[test]
+    fn non_view_once_token_kept_when_persist_flag_false() {
+        let out = svom(false, false, Some("tok-abc".into()));
+        assert_eq!(out.as_deref(), Some("tok-abc"));
+    }
+
+    #[test]
+    fn view_once_token_already_none_stays_none() {
+        assert_eq!(svom(false, true, None), None);
+        assert_eq!(svom(true, true, None), None);
     }
 }

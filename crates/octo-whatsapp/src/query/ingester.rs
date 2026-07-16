@@ -107,8 +107,9 @@ impl QueryIngester {
         if let Some(msg) = message_row(ev) {
             self.insert_idempotent(
                 "INSERT INTO messages \
-                 (event_id, peer, sender, ts_unix_ms, kind, text, media_token, from_me, is_group) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (event_id, peer, sender, ts_unix_ms, kind, text, media_token, \
+                  from_me, is_group, view_once, ephemeral_expires_at_seconds, consumed_at_unix_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 vec![
                     Value::from(id as i64),
                     Value::from(msg.peer),
@@ -119,6 +120,39 @@ impl QueryIngester {
                     opt_text(msg.media_token),
                     bool_i64(msg.from_me),
                     bool_i64(msg.is_group),
+                    bool_i64(msg.view_once),
+                    msg.ephemeral_expires_at_seconds
+                        .map(Value::from)
+                        .unwrap_or(Value::null_unknown()),
+                    Value::null_unknown(), // consumed_at_unix_ms: NULL on ingest; set by messages.read_view_once.
+                ],
+            )?;
+        } else if let Some(un) = unavailable_row(ev) {
+            self.insert_idempotent(
+                "INSERT INTO unavailable_messages \
+                 (id, ts_unix_ms, ts_mono_ns, kind, peer, sender, is_unavailable) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                vec![
+                    Value::from(id as i64),
+                    Value::from(ts_unix_ms),
+                    Value::from(ts_mono_ns as i64),
+                    Value::from(un.kind_str),
+                    Value::from(un.peer),
+                    Value::from(un.sender),
+                    bool_i64(un.is_unavailable),
+                ],
+            )?;
+        } else if let Some(dmc) = disappearing_mode_change_row(ev) {
+            self.insert_idempotent(
+                "INSERT INTO disappearing_mode_changes \
+                 (id, ts_unix_ms, ts_mono_ns, jid, duration_seconds) \
+                 VALUES (?, ?, ?, ?, ?)",
+                vec![
+                    Value::from(id as i64),
+                    Value::from(ts_unix_ms),
+                    Value::from(ts_mono_ns as i64),
+                    Value::from(dmc.jid),
+                    Value::from(dmc.duration_seconds),
                 ],
             )?;
         }
@@ -161,6 +195,20 @@ struct MediaRow {
     media_token: Option<String>,
     from_me: bool,
     is_group: bool,
+    view_once: bool,
+    ephemeral_expires_at_seconds: Option<u32>,
+}
+
+struct UnavailableRow {
+    kind_str: &'static str,
+    peer: String,
+    sender: String,
+    is_unavailable: bool,
+}
+
+struct DisappearingModeChangeRow {
+    jid: String,
+    duration_seconds: u32,
 }
 
 fn message_row(ev: &InboundEvent) -> Option<MediaRow> {
@@ -173,6 +221,8 @@ fn message_row(ev: &InboundEvent) -> Option<MediaRow> {
             media_token,
             from_me,
             is_group,
+            view_once,
+            ephemeral_expires_at_seconds,
             ..
         } => Some(MediaRow {
             peer: peer.clone(),
@@ -182,6 +232,40 @@ fn message_row(ev: &InboundEvent) -> Option<MediaRow> {
             media_token: media_token.clone(),
             from_me: *from_me,
             is_group: *is_group,
+            view_once: *view_once,
+            ephemeral_expires_at_seconds: *ephemeral_expires_at_seconds,
+        }),
+        _ => None,
+    }
+}
+
+fn unavailable_row(ev: &InboundEvent) -> Option<UnavailableRow> {
+    match ev {
+        InboundEvent::Unavailable {
+            unavailable_type,
+            peer,
+            sender,
+            is_unavailable,
+            ..
+        } => Some(UnavailableRow {
+            kind_str: unavailable_kind_str(*unavailable_type),
+            peer: peer.clone(),
+            sender: sender.clone(),
+            is_unavailable: *is_unavailable,
+        }),
+        _ => None,
+    }
+}
+
+fn disappearing_mode_change_row(ev: &InboundEvent) -> Option<DisappearingModeChangeRow> {
+    match ev {
+        InboundEvent::DisappearingModeChanged {
+            jid,
+            duration_seconds,
+            ..
+        } => Some(DisappearingModeChangeRow {
+            jid: jid.clone(),
+            duration_seconds: *duration_seconds,
         }),
         _ => None,
     }
@@ -671,5 +755,93 @@ mod tests {
             ts, 1234,
             "event-internal ts (1234) is used, not recorded_at"
         );
+    }
+
+    /// Phase 7.K: a view-once Image message with `ephemeral_expires_at_seconds`
+    /// populated must persist both flags to the `messages` table.
+    #[test]
+    fn ingest_view_once_message_persists_flags() {
+        let db = Database::open_in_memory().expect("open");
+        migrate(&db).expect("migrate");
+        let ingester = QueryIngester::new(db);
+        let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "", kind: Image, media_token: "tok", view_once: true, ephemeral_expires_at_seconds: 86400, is_group: false)"#;
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1000,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(42, (1000, 0), &ev).expect("ingest");
+        let mut rows = ingester
+            .db()
+            .query(
+                "SELECT view_once, ephemeral_expires_at_seconds FROM messages WHERE event_id = 42",
+                (),
+            )
+            .expect("q");
+        let row = rows.next().expect("row").expect("ok");
+        let view_once: i64 = row.get::<i64>(0).unwrap();
+        let ephemeral: Option<i64> = row.get::<i64>(1).ok();
+        assert_eq!(view_once, 1, "view_once flag persisted");
+        assert_eq!(
+            ephemeral,
+            Some(86400),
+            "ephemeral_expires_at_seconds persisted"
+        );
+    }
+
+    /// Phase 7.K: an `InboundEvent::Unavailable` (companion view-once
+    /// fanout) lands in `unavailable_messages`.
+    #[test]
+    fn ingest_unavailable_writes_to_dedicated_table() {
+        let db = Database::open_in_memory().expect("open");
+        migrate(&db).expect("migrate");
+        let ingester = QueryIngester::new(db);
+        let raw = r#"Unavailable(id: "M9", peer: "X", sender: "Y", kind: view_once, is_unavailable: true, ts: 1700000000)"#;
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1700000000,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(7, (1700000000, 0), &ev).expect("ingest");
+        let mut rows = ingester
+            .db()
+            .query(
+                "SELECT kind, peer FROM unavailable_messages WHERE id = 7",
+                (),
+            )
+            .expect("q");
+        let row = rows.next().expect("row").expect("ok");
+        let kind: String = row.get::<String>(0).unwrap();
+        let peer: String = row.get::<String>(1).unwrap();
+        assert_eq!(kind, "view_once");
+        assert_eq!(peer, "X");
+    }
+
+    /// Phase 7.K: `InboundEvent::DisappearingModeChanged` lands in the
+    /// `disappearing_mode_changes` table.
+    #[test]
+    fn ingest_disappearing_mode_changed_writes_to_dedicated_table() {
+        let db = Database::open_in_memory().expect("open");
+        migrate(&db).expect("migrate");
+        let ingester = QueryIngester::new(db);
+        let raw = r#"DisappearingModeChanged(jid: "5511999@s.whatsapp.net", duration_seconds: 86400, ts: 1700000002)"#;
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1700000002,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(11, (1700000002, 0), &ev).expect("ingest");
+        let mut rows = ingester
+            .db()
+            .query(
+                "SELECT jid, duration_seconds FROM disappearing_mode_changes WHERE id = 11",
+                (),
+            )
+            .expect("q");
+        let row = rows.next().expect("row").expect("ok");
+        let jid: String = row.get::<String>(0).unwrap();
+        let dur: i64 = row.get::<i64>(1).unwrap();
+        assert_eq!(jid, "5511999@s.whatsapp.net");
+        assert_eq!(dur, 86400);
     }
 }

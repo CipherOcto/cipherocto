@@ -38,9 +38,9 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 142;
+pub const EXPECTED_TOOL_COUNT: usize = 145;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 136;
+pub const EXPECTED_TOOL_COUNT: usize = 139;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();
@@ -302,6 +302,28 @@ pub fn tool_descriptors() -> Vec<Value> {
             &[("media_ref_token", "string"), ("out", "string")],
             &["media_ref_token", "out"],
         ),
+    ));
+    // ─── Phase 7.K — View-Once + Disappearing (3) ─────────────────────
+    v.push(td(
+        "messages.read_view_once",
+        "Read the media body for a view-once message (one-shot). Subsequent reads return consumed. Returns {event_id, media_b64, mime, caption, consumed_at_unix_ms, status}.",
+        schema_props_required(&[("event_id", "integer")], &["event_id"]),
+    ));
+    v.push(td(
+        "messages.list_unavailable",
+        "List messages whose content is unavailable (companion view-once fanouts, bot/hosted). Filters: kind, peer, since_ts_unix_ms, until_ts_unix_ms, limit.",
+        schema_props_optional(&[
+            ("kind", "string"),
+            ("peer", "string"),
+            ("since_ts_unix_ms", "integer"),
+            ("until_ts_unix_ms", "integer"),
+            ("limit", "integer"),
+        ]),
+    ));
+    v.push(td(
+        "messages.list_ephemeral",
+        "List ephemeral (disappearing) messages currently in flight. Filters: peer, kind, limit.",
+        schema_props_optional(&[("peer", "string"), ("kind", "string"), ("limit", "integer")]),
     ));
     // ─── Chats (8) ────────────────────────────────────────────────────
     v.push(td(
@@ -1250,6 +1272,9 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "messages.edit" => "messages.edit",
         "messages.mark_read" => "messages.mark_read",
         "messages.download" => "messages.download",
+        "messages.read_view_once" => "messages.read_view_once",
+        "messages.list_unavailable" => "messages.list_unavailable",
+        "messages.list_ephemeral" => "messages.list_ephemeral",
         "chats.list" => "chats.list",
         "chats.info" => "chats.info",
         "chats.pin" => "chats.pin",
@@ -1571,6 +1596,9 @@ mod tests {
             "messages.edit",
             "messages.mark_read",
             "messages.download",
+            "messages.read_view_once",
+            "messages.list_unavailable",
+            "messages.list_ephemeral",
             "chats.list",
             "chats.info",
             "chats.pin",
@@ -1762,6 +1790,36 @@ mod tests {
             assert!(
                 names.contains(m),
                 "Session A Phase 7.H groups gap tool {m:?} not advertised"
+            );
+        }
+        assert_eq!(
+            descs.len(),
+            EXPECTED_TOOL_COUNT,
+            "EXPECTED_TOOL_COUNT drift: descriptors={} expected={}",
+            descs.len(),
+            EXPECTED_TOOL_COUNT
+        );
+    }
+
+    /// Phase 7.K — View-Once + Disappearing messages. 3 new tools:
+    /// `messages.read_view_once` (one-shot CDN fetch; marks consumed),
+    /// `messages.list_unavailable` (companion fanout audit by kind),
+    /// `messages.list_ephemeral` (active disappearing-message timers).
+    #[test]
+    fn phase7k_view_once_disappearing_tools_are_advertised() {
+        let descs = tool_descriptors();
+        let names: std::collections::BTreeSet<&str> = descs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        for m in &[
+            "messages.read_view_once",
+            "messages.list_unavailable",
+            "messages.list_ephemeral",
+        ] {
+            assert!(
+                names.contains(m),
+                "Phase 7.K view-once/disappearing tool {m:?} not advertised"
             );
         }
         assert_eq!(

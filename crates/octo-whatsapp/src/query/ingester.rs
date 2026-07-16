@@ -238,6 +238,16 @@ fn event_ts(ev: &InboundEvent) -> (i64, i64) {
             ts_unix_ms,
             ts_mono_ns,
             ..
+        }
+        | InboundEvent::Unavailable {
+            ts_unix_ms,
+            ts_mono_ns,
+            ..
+        }
+        | InboundEvent::DisappearingModeChanged {
+            ts_unix_ms,
+            ts_mono_ns,
+            ..
         } => (*ts_unix_ms, *ts_mono_ns as i64),
         // Presence carries only `last_seen` (wall-clock). Pass that
         // through; if the daemon never observed the peer, it's `None`
@@ -260,6 +270,8 @@ fn event_kind_tag(ev: &InboundEvent) -> &'static str {
         InboundEvent::Story { .. } => "story",
         InboundEvent::CommunityUpdate { .. } => "community_update",
         InboundEvent::NewsletterUpdate { .. } => "newsletter_update",
+        InboundEvent::Unavailable { .. } => "unavailable",
+        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed",
         InboundEvent::Unknown { .. } => "unknown",
     }
 }
@@ -283,6 +295,12 @@ fn event_variant(ev: &InboundEvent) -> Option<String> {
         InboundEvent::NewsletterUpdate { kind, .. } => {
             Some(newsletter_update_kind_str(*kind).to_string())
         }
+        InboundEvent::Unavailable {
+            unavailable_type, ..
+        } => Some(unavailable_kind_str(*unavailable_type).to_string()),
+        InboundEvent::DisappearingModeChanged {
+            duration_seconds, ..
+        } => Some(format!("duration_{duration_seconds}")),
         InboundEvent::Reaction { .. } | InboundEvent::Unknown { .. } => None,
     }
 }
@@ -303,6 +321,12 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         InboundEvent::Story { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
         InboundEvent::CommunityUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
         InboundEvent::NewsletterUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
+        InboundEvent::Unavailable { peer, sender, .. } => {
+            (Some(peer.clone()), Some(sender.clone()), Some(peer.clone()))
+        }
+        InboundEvent::DisappearingModeChanged { jid, .. } => {
+            (Some(jid.clone()), None, Some(jid.clone()))
+        }
         InboundEvent::Presence { jid, .. } => {
             (Some(jid.clone()), Some(jid.clone()), Some(jid.clone()))
         }
@@ -406,6 +430,15 @@ fn newsletter_update_kind_str(k: crate::events::NewsletterUpdateKind) -> &'stati
         crate::events::NewsletterUpdateKind::PictureChanged => "picture_changed",
         crate::events::NewsletterUpdateKind::NameChanged => "name_changed",
         crate::events::NewsletterUpdateKind::StateChanged => "state_changed",
+    }
+}
+
+fn unavailable_kind_str(k: crate::events::UnavailableKind) -> &'static str {
+    match k {
+        crate::events::UnavailableKind::Unknown => "unknown",
+        crate::events::UnavailableKind::ViewOnce => "view_once",
+        crate::events::UnavailableKind::Hosted => "hosted",
+        crate::events::UnavailableKind::Bot => "bot",
     }
 }
 

@@ -79,6 +79,83 @@ fn inbound_message_without_flags_round_trips_with_defaults() {
 }
 
 #[test]
+fn inbound_unavailable_view_once_kind_parses() {
+    let raw = r#"Unavailable(id: "M9", peer: "X", sender: "Y", kind: view_once, is_unavailable: true, ts: 1700000000)"#;
+    let ev = InboundEvent::parse(env(raw));
+    match ev {
+        InboundEvent::Unavailable {
+            id,
+            peer,
+            sender,
+            unavailable_type,
+            is_unavailable,
+            ts_unix_ms,
+            ..
+        } => {
+            assert_eq!(id, "M9");
+            assert_eq!(peer, "X");
+            assert_eq!(sender, "Y");
+            assert_eq!(unavailable_type, UnavailableKind::ViewOnce);
+            assert!(is_unavailable);
+            assert_eq!(ts_unix_ms, 1700000000);
+        }
+        other => panic!("expected Unavailable, got {other:?}"),
+    }
+}
+
+#[test]
+fn inbound_unavailable_hosted_and_bot_kinds_parse() {
+    for (kind_str, expected) in [
+        ("hosted", UnavailableKind::Hosted),
+        ("bot", UnavailableKind::Bot),
+        ("unknown", UnavailableKind::Unknown),
+    ] {
+        let raw = format!(
+            r#"Unavailable(id: "M10", peer: "A", sender: "B", kind: {kind_str}, is_unavailable: true, ts: 1)"#
+        );
+        match InboundEvent::parse(env(&raw)) {
+            InboundEvent::Unavailable {
+                unavailable_type, ..
+            } => {
+                assert_eq!(unavailable_type, expected);
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn inbound_disappearing_mode_changed_parses() {
+    let raw = r#"DisappearingModeChanged(jid: "5511999@s.whatsapp.net", duration_seconds: 86400, ts: 1700000002)"#;
+    match InboundEvent::parse(env(raw)) {
+        InboundEvent::DisappearingModeChanged {
+            jid,
+            duration_seconds,
+            ts_unix_ms,
+            ..
+        } => {
+            assert_eq!(jid, "5511999@s.whatsapp.net");
+            assert_eq!(duration_seconds, 86400);
+            assert_eq!(ts_unix_ms, 1700000002);
+        }
+        other => panic!("expected DisappearingModeChanged, got {other:?}"),
+    }
+}
+
+#[test]
+fn inbound_disappearing_mode_changed_zero_duration_means_disabled() {
+    let raw = r#"DisappearingModeChanged(jid: "5511999@s.whatsapp.net", duration_seconds: 0, ts: 1700000003)"#;
+    match InboundEvent::parse(env(raw)) {
+        InboundEvent::DisappearingModeChanged {
+            duration_seconds, ..
+        } => {
+            assert_eq!(duration_seconds, 0);
+        }
+        other => panic!("expected DisappearingModeChanged, got {other:?}"),
+    }
+}
+
+#[test]
 fn message_image_with_caption() {
     let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "caption here", kind: Image, media_token: "tok-abc", is_group: true)"#;
     let ev = InboundEvent::parse(env(raw));

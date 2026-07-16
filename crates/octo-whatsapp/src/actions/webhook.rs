@@ -308,6 +308,32 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "ts_unix_ms": ts_unix_ms,
             })
         }
+        InboundEvent::Unavailable {
+            id,
+            peer,
+            sender,
+            ts_unix_ms,
+            unavailable_type,
+            ..
+        } => json!({
+            "kind": "unavailable",
+            "id": id,
+            "peer": peer,
+            "sender": sender,
+            "ts_unix_ms": ts_unix_ms,
+            "unavailable_type": unavailable_type,
+        }),
+        InboundEvent::DisappearingModeChanged {
+            jid,
+            duration_seconds,
+            ts_unix_ms,
+            ..
+        } => json!({
+            "kind": "disappearing_mode_changed",
+            "jid": jid,
+            "duration_seconds": duration_seconds,
+            "ts_unix_ms": ts_unix_ms,
+        }),
     }
 }
 

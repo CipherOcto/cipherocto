@@ -160,6 +160,36 @@ pub enum InboundEvent {
         ts_unix_ms: i64,
         ts_mono_ns: u64,
     },
+    /// A message whose content is unavailable on this device — typically
+    /// because the server refused to share it (view-once to a companion,
+    /// bot/hosted fanouts, plain fanouts that PDO might recover). Mirrors
+    /// wacore's `Event::UndecryptableMessage` (`wacore/src/types/events.rs:664`).
+    Unavailable {
+        id: String,
+        peer: String,
+        sender: String,
+        /// The reason the content is missing. Mirrors
+        /// `wacore::types::events::UnavailableType` (`Unknown`, `ViewOnce`,
+        /// `Hosted`, `Bot`).
+        unavailable_type: UnavailableKind,
+        /// `true` for `<unavailable type="...">` fanouts; `false` for
+        /// plain decrypt failures that PDO might recover. Adapter
+        /// surfaces the wacore `is_unavailable` flag as-is.
+        is_unavailable: bool,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    },
+    /// A contact's per-chat default disappearing-message timer changed.
+    /// Fires on `<notification type="disappearing_mode">` from the WA
+    /// server. `duration_seconds == 0` means the timer is disabled.
+    /// Mirrors wacore's `Event::DisappearingModeChanged`
+    /// (`wacore/src/types/events.rs:601-610`).
+    DisappearingModeChanged {
+        jid: String,
+        duration_seconds: u32,
+        ts_unix_ms: i64,
+        ts_mono_ns: u64,
+    },
     Unknown {
         raw: String,
         ts_unix_ms: i64,
@@ -193,6 +223,32 @@ pub enum NewsletterUpdateKind {
     NameChanged,
     /// Channel state changed (Active <-> Suspended by admin or server).
     StateChanged,
+}
+
+/// Why the message content was unavailable. Mirrors wacore's
+/// `wacore::types::events::UnavailableType` (`wacore/src/types/events.rs:1188`),
+/// which serializes as `"unknown"`, `"view_once"`, `"hosted"`, `"bot"`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableKind {
+    Unknown,
+    ViewOnce,
+    Hosted,
+    Bot,
+}
+
+impl UnavailableKind {
+    /// Wire-format string used by the adapter-emitted Debug description
+    /// (the parser in `parse_unavailable` matches against the same
+    /// lowercase snake_case form).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::ViewOnce => "view_once",
+            Self::Hosted => "hosted",
+            Self::Bot => "bot",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -335,6 +391,8 @@ impl InboundEvent {
             | Self::Story { ts_unix_ms, .. }
             | Self::CommunityUpdate { ts_unix_ms, .. }
             | Self::NewsletterUpdate { ts_unix_ms, .. }
+            | Self::Unavailable { ts_unix_ms, .. }
+            | Self::DisappearingModeChanged { ts_unix_ms, .. }
             | Self::Unknown { ts_unix_ms, .. } => *ts_unix_ms,
             Self::Presence { last_seen, .. } => last_seen.unwrap_or(0),
         }
@@ -353,6 +411,8 @@ impl InboundEvent {
             | Self::Story { ts_mono_ns, .. }
             | Self::CommunityUpdate { ts_mono_ns, .. }
             | Self::NewsletterUpdate { ts_mono_ns, .. }
+            | Self::Unavailable { ts_mono_ns, .. }
+            | Self::DisappearingModeChanged { ts_mono_ns, .. }
             | Self::Unknown { ts_mono_ns, .. } => Some(*ts_mono_ns),
             Self::Presence { .. } => None,
         }
@@ -511,6 +571,10 @@ impl InboundEvent {
             parse_story(rest, ts_unix_ms, ts_mono_ns)
         } else if let Some(rest) = raw.strip_prefix("NewsletterUpdate(") {
             parse_newsletter_update(rest, ts_unix_ms, ts_mono_ns)
+        } else if let Some(rest) = raw.strip_prefix("Unavailable(") {
+            parse_unavailable(rest, ts_unix_ms, ts_mono_ns)
+        } else if let Some(rest) = raw.strip_prefix("DisappearingModeChanged(") {
+            parse_disappearing_mode_changed(rest, ts_unix_ms, ts_mono_ns)
         } else {
             return InboundEvent::Unknown {
                 raw: raw.to_string(),
@@ -1821,6 +1885,56 @@ fn parse_newsletter_update(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> Inbo
         jid: unquote(&field(rest, "jid").unwrap_or_default()),
         kind,
         ts_unix_ms,
+        ts_mono_ns,
+    }
+}
+
+/// Parse a `Unavailable(id: ..., peer: ..., sender: ..., kind: <kind>,
+/// is_unavailable: <bool>, ts: <ms>)` envelope. The adapter emits this
+/// shape from `Event::UndecryptableMessage` for both unrecoverable
+/// fanouts (view-once / hosted / bot) and plain decrypt failures.
+fn parse_unavailable(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
+    let id = unquote(&field(rest, "id").unwrap_or_default());
+    let peer = unquote(&field(rest, "peer").unwrap_or_default());
+    let sender = unquote(&field(rest, "sender").unwrap_or_default());
+    let ts = field(rest, "ts")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(ts_unix_ms);
+    let is_unavailable = field(rest, "is_unavailable")
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    let unavailable_type = match field(rest, "kind").as_deref() {
+        Some("view_once") => UnavailableKind::ViewOnce,
+        Some("hosted") => UnavailableKind::Hosted,
+        Some("bot") => UnavailableKind::Bot,
+        _ => UnavailableKind::Unknown,
+    };
+    InboundEvent::Unavailable {
+        id,
+        peer,
+        sender,
+        unavailable_type,
+        is_unavailable,
+        ts_unix_ms: ts,
+        ts_mono_ns,
+    }
+}
+
+/// Parse a `DisappearingModeChanged(jid: ..., duration_seconds: N, ts: <ms>)`
+/// envelope. The adapter emits this shape from `Event::DisappearingModeChanged`
+/// whenever the WA server pushes a `<notification type="disappearing_mode">`.
+fn parse_disappearing_mode_changed(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
+    let jid = unquote(&field(rest, "jid").unwrap_or_default());
+    let duration_seconds = field(rest, "duration_seconds")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let ts = field(rest, "ts")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(ts_unix_ms);
+    InboundEvent::DisappearingModeChanged {
+        jid,
+        duration_seconds,
+        ts_unix_ms: ts,
         ts_mono_ns,
     }
 }

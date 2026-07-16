@@ -361,6 +361,8 @@ fn event_kind_label(ev: &InboundEvent) -> String {
         InboundEvent::Story { .. } => "story".into(),
         InboundEvent::CommunityUpdate { .. } => "community_update".into(),
         InboundEvent::NewsletterUpdate { .. } => "newsletter_update".into(),
+        InboundEvent::Unavailable { .. } => "unavailable".into(),
+        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed".into(),
         InboundEvent::Unknown { .. } => "unknown".into(),
     }
 }

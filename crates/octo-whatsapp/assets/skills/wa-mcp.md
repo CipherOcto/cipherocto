@@ -1417,7 +1417,7 @@ enumerate.
 
 | File | What it controls |
 |---|---|
-| `crates/octo-whatsapp/src/mcp_server.rs` | the catalog + names + descriptions (`EXPECTED_TOOL_COUNT` = 142 with `query` feature, 136 without) |
+| `crates/octo-whatsapp/src/mcp_server.rs` | the catalog + names + descriptions (`EXPECTED_TOOL_COUNT` = 145 with `query` feature, 139 without) |
 | `crates/octo-whatsapp/src/cli.rs` | CLI subcommand dispatch (kebab-case) |
 | `crates/octo-whatsapp/src/ipc/handlers/*.rs` | daemon-side IPC handlers |
 | `crates/octo-whatsapp/src/lib.rs` | module re-exports |
@@ -1431,3 +1431,74 @@ If a tool name here and in `mcp_server.rs::EXPECTED_TOOL_COUNT` disagree,
 `mcp_server.rs` wins. The CLI/MCP parity-closure test
 `session_a_lifecycle_and_readonly_tools_are_advertised` (and friends) pin
 the count and names.
+
+---
+
+## 25. View-Once + Disappearing (Phase 7.K, 3)
+
+Phase 7.K surfaces two wire-level features that the existing pipeline
+was dropping or treating as plain media:
+
+- **view-once** — image/video/audio wrapped with `view_once=true` that the
+  phone will reveal once and then refuse to resend. Companion devices
+  receive `<unavailable type="view_once">` fanouts; view-once media has
+  no `messages.download` re-read path.
+- **disappearing / ephemeral** — per-message TTL via
+  `contextInfo.expiration` (a `u32` seconds counter); the message
+  self-deletes from the conversation once the timer runs out.
+
+Both directions are wired end-to-end: parser → schema v2 → ingester →
+handler → CLI → MCP.
+
+### `messages.read_view_once`
+
+One-shot media read for a view-once message. Sets the row's
+`consumed_at_unix_ms` to `now()` and zeros the persisted `media_token`
+on first read; subsequent reads return `status: "consumed"`.
+
+- **Input**: `{event_id: integer}`
+- **Returns**: `{status: "delivered"|"consumed", event_id,
+  consumed_at_unix_ms, size_bytes, media_b64 (only on first read),
+  mime, caption}`
+- **Wire**: existing `media.download` machinery, gated by
+  `messages.consumed_at_unix_ms IS NULL` + `messages.view_once = 1`.
+- **Use case**: receive view-once image from a peer, fetch it once
+  before the timer/service closes the window.
+- **Constraint**: the one-shot gate is enforced server-side via the
+  WA wire contract — first caller gets the CDN bytes, second caller
+  gets `consumed`. Concurrent calls see whichever wins the UPDATE
+  race; the loser gets `consumed`.
+
+### `messages.list_unavailable`
+
+Lists messages whose content the phone refused to share (view-once
+fanouts, bot content, hosted/forwarded bot messages). The `kind`
+column carries the wire-format discriminant (`view_once` | `hosted`
+| `bot` | `unknown`).
+
+- **Input**: `{kind?: "view_once"|"hosted"|"bot"|"unknown", peer?:
+  string, since_ts_unix_ms?: integer, until_ts_unix_ms?: integer,
+  limit?: integer (default 100, hard cap 500)}`
+- **Returns**: `{rows: [{id, ts_unix_ms, kind, peer, sender,
+  is_unavailable}], count, limit}`
+- **Wire**: `SELECT ... FROM unavailable_messages ORDER BY ts_unix_ms
+  DESC LIMIT N` with kind/peer/window filters.
+- **Use case**: audit how often companion fanouts drop content
+  (a privacy / observability question); group by `kind`.
+
+### `messages.list_ephemeral`
+
+Lists messages with an active disappearing-message timer (i.e.
+`ephemeral_expires_at_seconds IS NOT NULL`).
+
+- **Input**: `{peer?: string, kind?: string, limit?: integer
+  (default 100, hard cap 500)}`
+- **Returns**: `{rows: [{event_id, peer, sender, ts_unix_ms, kind,
+  ephemeral_expires_at_seconds}], count, limit}`
+- **Wire**: `SELECT ... FROM messages WHERE
+  ephemeral_expires_at_seconds IS NOT NULL ORDER BY ts_unix_ms DESC
+  LIMIT N` with peer/kind filters.
+- **Use case**: surface messages that will disappear in the next hour
+  / day; pair with the `daemon.search` query layer to find
+  expiring-soon text inside a peer.
+

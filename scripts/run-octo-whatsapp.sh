@@ -17,6 +17,19 @@
 #   scripts/run-octo-whatsapp.sh --restart        # stop then start
 #   scripts/run-octo-whatsapp.sh --name NAME      # multi-instance (default: default)
 #   scripts/run-octo-whatsapp.sh --features F     # cargo features (default: query)
+#   scripts/run-octo-whatsapp.sh --profile P      # debug | release (default: debug)
+#
+# Profile notes:
+#   debug:  compiled with --features query by default; includes tracing-subscriber
+#           (RUST_LOG works out of the box), binary at target/debug/octo-whatsapp
+#           (648MB, ~2x slower cold-start than release).
+#   release: compiled with cargo build --release (no default features unless
+#           --features is also passed). Binary at target/release/octo-whatsapp
+#           (53MB). MCP tools/call sql.* + daemon.search + messages.context etc.
+#           are GATED by the `query` feature — release binary without
+#           --features query returns -32601 for those tools. Use
+#           --profile=release --features=query (or set OCTO_WHATSAPP_FEATURES)
+#           when launching if you need the query surface.
 #
 # Detach mechanism:
 #   setsid    — new session + process group, decouples from terminal
@@ -46,6 +59,10 @@ set -euo pipefail
 
 NAME="${OCTO_WHATSAPP_NAME:-default}"
 FEATURES="${OCTO_WHATSAPP_FEATURES:-query}"
+# Build profile. debug = target/debug/octo-whatsapp (default, includes
+# tracing-subscriber, supports RUST_LOG). release = target/release (smaller,
+# faster, but query/MCP tools gated unless --features query is also passed).
+PROFILE="${OCTO_WHATSAPP_PROFILE:-debug}"
 DATA_DIR="${OCTO_WHATSAPP_DATA_DIR:-$HOME/.local/share/octo/whatsapp}"
 # Default socket dir: a writable runtime dir. Use /tmp/octo-wa-run (operator
 # convention) when the data dir is unwritable for sockets; fall back to the
@@ -64,7 +81,7 @@ LOG_DIR="${OCTO_WHATSAPP_LOG_DIR:-$DATA_DIR/$NAME/logs}"
 CAPTURE_LOG_DIR="${OCTO_WHATSAPP_CAPTURE_LOG_DIR:-$DATA_DIR/$NAME/capture}"
 PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
 LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
-BIN_DIR="$HOME/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/debug"
+BIN_DIR="$HOME/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/$PROFILE"
 BIN="$BIN_DIR/octo-whatsapp"
 # Boot wait: with background NDJSON replay (Phase 7.J follow-up,
 # 2026-07-15) the daemon binds its IPC socket in single-digit
@@ -85,21 +102,29 @@ for arg in "$@"; do
         --systemd) ACTION="systemd" ;;
         --name=*) NAME="${arg#*=}" ;;
         --features=*) FEATURES="${arg#*=}" ;;
+        --profile=*) PROFILE="${arg#*=}" ;;
         -h|--help)
-            sed -n '2,40p' "$0"
+            sed -n '2,53p' "$0"
             exit 0
             ;;
         *) echo "unknown arg: $arg" >&2; exit 1 ;;
     esac
 done
 
+# Validate profile. Anything outside {debug, release} almost certainly
+# means a typo — fail loud instead of falling back silently.
+case "$PROFILE" in
+    debug|release) ;;
+    *) echo "invalid --profile: $PROFILE (expected: debug | release)" >&2; exit 1 ;;
+esac
+
 # === Path discovery (canonical worktree path) ===============================
 
 REPO_ROOT="$HOME/_w/ai/cipherocto"
 for wt in "$REPO_ROOT/.worktrees"/*; do
-    [ -x "$wt/target/debug/octo-whatsapp" ] && BIN_DIR="$wt/target/debug" && BIN="$BIN_DIR/octo-whatsapp" && break
+    [ -x "$wt/target/$PROFILE/octo-whatsapp" ] && BIN_DIR="$wt/target/$PROFILE" && BIN="$BIN_DIR/octo-whatsapp" && break
 done
-[ -x "$BIN" ] || { echo "binary not found: $BIN (run: cargo build -p octo-whatsapp --features $FEATURES)" >&2; exit 1; }
+[ -x "$BIN" ] || { echo "binary not found: $BIN (run: cargo build --profile $PROFILE -p octo-whatsapp --features $FEATURES)" >&2; exit 1; }
 
 # === Helpers ===============================================================
 

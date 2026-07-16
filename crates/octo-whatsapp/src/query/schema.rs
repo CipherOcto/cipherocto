@@ -13,7 +13,14 @@ use stoolap::Database;
 /// Bumped when a non-additive schema change lands; reset to 0 for a
 /// fresh table on first install. Replays of the same `SCHEMA_VERSION`
 /// do NOT trigger a rebuild — only mismatches do.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (2026-07-15, Phase 7.K): added `messages.view_once INTEGER NOT NULL
+/// DEFAULT 0` + `messages.ephemeral_expires_at_seconds INTEGER` for
+/// view-once media + disappearing-message flags, and new
+/// `unavailable_messages` + `disappearing_mode_changes` tables for the
+/// typed `Event::UndecryptableMessage` + `Event::DisappearingModeChanged`
+/// bridges. All additive — `migrate()` is idempotent.
+pub const SCHEMA_VERSION: u32 = 2;
 
 const CREATE_EVENTS_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
@@ -92,8 +99,55 @@ CREATE TABLE IF NOT EXISTS query_meta (
 )
 "#;
 
+/// Phase 7.K: one row per inbound `Unavailable` event — the WA server
+/// fanout `<unavailable type="view_once|hosted|bot|...">`. `kind`
+/// is the wire-format string from `wacore::types::events::UnavailableType`
+/// (`unknown` / `view_once` / `hosted` / `bot`).
+const CREATE_UNAVAILABLE_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS unavailable_messages (
+    id             INTEGER PRIMARY KEY,
+    ts_unix_ms     INTEGER  NOT NULL,
+    ts_mono_ns     INTEGER  NOT NULL,
+    kind           TEXT     NOT NULL,
+    peer           TEXT     NOT NULL,
+    sender         TEXT     NOT NULL,
+    is_unavailable INTEGER  NOT NULL DEFAULT 1
+)
+"#;
+
+const CREATE_UNAVAILABLE_INDEXES: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_unavailable_kind_ts ON unavailable_messages(kind, ts_unix_ms)",
+    "CREATE INDEX IF NOT EXISTS idx_unavailable_peer_ts ON unavailable_messages(peer, ts_unix_ms)",
+];
+
+/// Phase 7.K: one row per inbound `DisappearingModeChanged` event
+/// (`<notification type="disappearing_mode">`). `duration_seconds == 0`
+/// means the timer is disabled.
+const CREATE_DISAPPEARING_MODE_CHANGES_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS disappearing_mode_changes (
+    id               INTEGER PRIMARY KEY,
+    ts_unix_ms       INTEGER  NOT NULL,
+    ts_mono_ns       INTEGER  NOT NULL,
+    jid              TEXT     NOT NULL,
+    duration_seconds INTEGER  NOT NULL
+)
+"#;
+
+const CREATE_DISAPPEARING_MODE_CHANGES_INDEXES: &[&str] =
+    &["CREATE INDEX IF NOT EXISTS idx_dmc_jid_ts ON disappearing_mode_changes(jid, ts_unix_ms)"];
+
 /// Run the full bootstrap DDL. Safe to call multiple times.
 pub fn migrate(db: &Database) -> Result<(), stoolap::Error> {
+    migrate_v1(db)?;
+    migrate_v2(db)?;
+    Ok(())
+}
+
+/// Original (v1) schema bootstrap. Kept as a private function so the
+/// public `migrate()` entrypoint always applies both v1 + v2 in order;
+/// callers that want to inspect a v1-only state can still exercise
+/// this path explicitly.
+fn migrate_v1(db: &Database) -> Result<(), stoolap::Error> {
     db.execute(CREATE_EVENTS_TABLE, ())?;
     for stmt in CREATE_EVENTS_INDEXES {
         db.execute(stmt, ())?;
@@ -109,6 +163,57 @@ pub fn migrate(db: &Database) -> Result<(), stoolap::Error> {
     )?;
     db.execute(CREATE_META_TABLE, ())?;
     Ok(())
+}
+
+/// Phase 7.K v2 migration. Additive columns on `messages` plus two new
+/// tables. Each step is gated by a column-existence probe so it's safe
+/// to run on a v1-already-applied database OR a fresh-install one.
+fn migrate_v2(db: &Database) -> Result<(), stoolap::Error> {
+    // Probe the first new column: if `SELECT view_once FROM messages`
+    // errors with `ColumnNotFound`, the column is absent and the ALTER
+    // must run. Stoolap surfaces both ColumnNotFound and the parse
+    // error on an unknown column reference, so we just look for either.
+    if !has_column(db, "messages", "view_once")? {
+        db.execute(
+            "ALTER TABLE messages ADD COLUMN view_once INTEGER NOT NULL DEFAULT 0",
+            (),
+        )?;
+    }
+    if !has_column(db, "messages", "ephemeral_expires_at_seconds")? {
+        db.execute(
+            "ALTER TABLE messages ADD COLUMN ephemeral_expires_at_seconds INTEGER",
+            (),
+        )?;
+    }
+    if !has_column(db, "messages", "consumed_at_unix_ms")? {
+        // T10: `messages.read_view_once` one-shot. NULL = unconsumed.
+        db.execute(
+            "ALTER TABLE messages ADD COLUMN consumed_at_unix_ms INTEGER",
+            (),
+        )?;
+    }
+    db.execute(CREATE_UNAVAILABLE_TABLE, ())?;
+    for stmt in CREATE_UNAVAILABLE_INDEXES {
+        db.execute(stmt, ())?;
+    }
+    db.execute(CREATE_DISAPPEARING_MODE_CHANGES_TABLE, ())?;
+    for stmt in CREATE_DISAPPEARING_MODE_CHANGES_INDEXES {
+        db.execute(stmt, ())?;
+    }
+    Ok(())
+}
+
+/// True if `SELECT <column> FROM <table> LIMIT 0` returns Ok.
+fn has_column(db: &Database, table: &str, column: &str) -> Result<bool, stoolap::Error> {
+    // Stoolap has no `PRAGMA table_info(...)` equivalent yet; the cheapest
+    // probe is to try a query that references the column. Any error
+    // (ColumnNotFound or a parse error) means the column is absent.
+    let sql = format!("SELECT {column} FROM {table} LIMIT 0");
+    match db.query(&sql, ()) {
+        Ok(_) => Ok(true),
+        Err(stoolap::Error::ColumnNotFound(_)) => Ok(false),
+        Err(_) => Ok(false),
+    }
 }
 
 #[cfg(test)]
@@ -131,11 +236,41 @@ mod tests {
             .expect("show tables")
             .map(|row| row.and_then(|r| r.get::<String>(0)).expect("name"))
             .collect();
-        for tbl in ["events", "messages", "embeddings", "query_meta"] {
+        for tbl in [
+            "events",
+            "messages",
+            "embeddings",
+            "query_meta",
+            "unavailable_messages",
+            "disappearing_mode_changes",
+        ] {
             assert!(
                 names.iter().any(|n| n == tbl),
                 "table `{tbl}` missing from {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn migrate_v2_adds_columns_and_tables() {
+        let db = Database::open_in_memory().expect("open in-memory");
+        migrate(&db).expect("migrate");
+        // Probe the new columns. The v1->v2 upgrade is additive so the
+        // columns must exist after a single migrate.
+        assert!(has_column(&db, "messages", "view_once").unwrap());
+        assert!(has_column(&db, "messages", "ephemeral_expires_at_seconds").unwrap());
+        assert!(has_column(&db, "messages", "consumed_at_unix_ms").unwrap());
+    }
+
+    #[test]
+    fn migrate_idempotent_after_v1_then_v2() {
+        // Simulate an existing v1 install (no v2 columns) by manually
+        // creating only the v1 tables, then running `migrate()` which
+        // must apply v2 + the new tables without error.
+        let db = Database::open_in_memory().expect("open in-memory");
+        migrate_v1(&db).expect("v1 only");
+        migrate(&db).expect("migrate v1+v2");
+        migrate(&db).expect("migrate again (idempotent)");
+        assert!(has_column(&db, "messages", "view_once").unwrap());
     }
 }

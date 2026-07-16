@@ -1197,6 +1197,45 @@ impl WhatsAppWebAdapter {
                                 "NewsletterUpdate(jid: {jid_str:?}, kind: MessageReceived)"
                             ))
                         }
+                        // Phase 7.K: bridge wacore's
+                        // `Event::UndecryptableMessage` into our typed
+                        // `InboundEvent::Unavailable` shape. Default
+                        // Debug output uses
+                        // `UndecryptableMessage { info: Arc<MessageInfo>, is_unavailable, unavailable_type: ViewOnce, decrypt_fail_mode: Show }`
+                        // which the parser does not recognise. Format
+                        // the structured fields explicitly so
+                        // `parse_unavailable()` matches.
+                        Event::UndecryptableMessage(un) => {
+                            let id_str = un.info.id.clone();
+                            let chat = un.info.source.chat.to_string();
+                            let sender = un.info.source.sender.to_string();
+                            let kind_label = format!("{:?}", un.unavailable_type).to_lowercase();
+                            // Use the message-internal timestamp when
+                            // present; the persister already falls back
+                            // to its own clock for `ts: 0` cases.
+                            let ts = un.info.timestamp.timestamp_millis();
+                            Some(format!(
+                                "Unavailable(id: {id_str:?}, peer: {chat:?}, sender: {sender:?}, kind: {kind_label}, is_unavailable: true, ts: {ts})"
+                            ))
+                        }
+                        // Phase 7.K: bridge wacore's
+                        // `Event::DisappearingModeChanged` into our
+                        // typed `InboundEvent::DisappearingModeChanged`
+                        // shape. Default Debug output uses
+                        // `DisappearingModeChanged { from: Jid { ... },
+                        // duration: 86400, setting_timestamp:
+                        // 2026-07-15T... }` which the parser does not
+                        // recognise. Format the structured fields
+                        // explicitly so `parse_disappearing_mode_changed()`
+                        // matches.
+                        Event::DisappearingModeChanged(dmc) => {
+                            let jid_str = dmc.from.to_string();
+                            let dur = dmc.duration;
+                            let ts = dmc.setting_timestamp.timestamp_millis();
+                            Some(format!(
+                                "DisappearingModeChanged(jid: {jid_str:?}, duration_seconds: {dur}, ts: {ts})"
+                            ))
+                        }
                         _ => None,
                     };
                     if let Some(desc) = custom_presence_desc {
@@ -1327,6 +1366,13 @@ impl WhatsAppWebAdapter {
                             // key defaults to text, but the explicit
                             // tag pins the contract for future
                             // readers).
+                            // Note: view-once + ephemeral flags are
+                            // recovered by `parse_inbound_message`
+                            // (the batch path) from the
+                            // `format!("{:?}", InboundMessage)` envelope
+                            // — see `extract_message_flags` in
+                            // `events.rs`. The text/DOT-1 path here
+                            // only carries text bodies (no media).
                             let raw = RawPlatformMessage {
                                 platform_id: format!("{}:{}", chat, uuid::Uuid::new_v4()),
                                 payload: text.into_bytes(),

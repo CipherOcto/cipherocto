@@ -1,8 +1,8 @@
 // replicate — Replicate via reqwest (native_http, LiteLLM mode)
 
 use super::{
-    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, HttpResponsesRequest, ProviderError, StreamingChunk, StreamingResponse,
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
 use futures::StreamExt;

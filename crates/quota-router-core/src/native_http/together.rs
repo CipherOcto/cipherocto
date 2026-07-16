@@ -1,8 +1,8 @@
 // together — Together AI via reqwest (native_http, LiteLLM mode)
 
-use super::{
-    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
+use crate::native_http::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -305,6 +305,7 @@ struct TogetherEmbedding {
 mod tests {
     use super::*;
     use crate::native_http::HttpProvider;
+    use crate::native_http::{HttpBatchCreateRequest, StreamingChunk};
     use crate::testing::mock_http::MockHttpServer;
 
     fn msg(role: &str, c: &str) -> crate::shared_types::Message {
@@ -344,17 +345,6 @@ mod tests {
             provider_params: None,
             timeout: None,
         }
-    }
-
-    fn ok_response() -> serde_json::Value {
-        serde_json::json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "created": 1234567890,
-            "model": "meta-llama/Llama-3-70b-chat",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi!"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-        })
     }
 
     fn ok_embeddings() -> serde_json::Value {

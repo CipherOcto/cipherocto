@@ -1082,8 +1082,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_key_with_cache_hit() {
-        use crate::storage::StoolapKeyStorage;
-
         let db = stoolap::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
 

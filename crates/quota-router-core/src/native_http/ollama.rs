@@ -1,8 +1,8 @@
 // ollama — Ollama via reqwest (native_http, LiteLLM mode)
 
-use super::{
-    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
+use crate::native_http::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -273,6 +273,7 @@ struct OllamaEmbeddingsResponse {
 mod tests {
     use super::*;
     use crate::native_http::HttpProvider;
+    use crate::native_http::{HttpBatchCreateRequest, StreamingChunk};
     use crate::testing::mock_http::MockHttpServer;
 
     fn msg(role: &str, c: &str) -> crate::shared_types::Message {
@@ -312,20 +313,6 @@ mod tests {
             provider_params: None,
             timeout: None,
         }
-    }
-
-    fn ok_response() -> serde_json::Value {
-        serde_json::json!({
-            "model": "llama3",
-            "message": {"role": "assistant", "content": "Hi from Ollama!"},
-            "done": true
-        })
-    }
-
-    fn ok_embeddings() -> serde_json::Value {
-        serde_json::json!({
-            "embedding": [0.1, 0.2, 0.3]
-        })
     }
 
     #[test]

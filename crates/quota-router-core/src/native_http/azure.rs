@@ -1,8 +1,8 @@
 // azure — Azure OpenAI via reqwest (native_http, LiteLLM mode)
 
-use super::{
-    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
+use crate::native_http::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -319,6 +319,7 @@ struct AzureEmbedding {
 mod tests {
     use super::*;
     use crate::native_http::HttpProvider;
+    use crate::native_http::{HttpBatchCreateRequest, StreamingChunk};
     use crate::testing::mock_http::MockHttpServer;
 
     fn msg(role: &str, c: &str) -> crate::shared_types::Message {

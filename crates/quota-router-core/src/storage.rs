@@ -3024,7 +3024,7 @@ mod tests {
     #[test]
     fn test_update_key_empty_updates() {
         let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
         storage.create_key(&key).unwrap();
 
         // Empty updates should be a no-op
@@ -3039,7 +3039,7 @@ mod tests {
     #[test]
     fn test_record_spend_update_existing() {
         let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
         storage.create_key(&key).unwrap();
 
         storage.record_spend(&key.key_id, 500).unwrap();
@@ -3055,7 +3055,7 @@ mod tests {
     #[test]
     fn test_reset_spend() {
         let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
         storage.create_key(&key).unwrap();
 
         storage.record_spend(&key.key_id, 500).unwrap();
@@ -3119,7 +3119,7 @@ mod tests {
     #[test]
     fn test_create_provider_key_short_key() {
         let storage = create_test_storage();
-        let id = storage.create_provider_key("test", "short", None).unwrap();
+        let _id = storage.create_provider_key("test", "short", None).unwrap();
         let keys = storage.list_provider_keys(None).unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].api_key_prefix, "short");
@@ -3392,7 +3392,7 @@ mod tests {
     #[test]
     fn test_update_key_type_and_metadata() {
         let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
         storage.create_key(&key).unwrap();
 
         storage
@@ -3421,7 +3421,7 @@ mod tests {
     #[test]
     fn test_update_key_expires_at() {
         let storage = create_test_storage();
-        let mut key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
+        let key = make_test_key(&uuid::Uuid::new_v4().to_string(), None);
         storage.create_key(&key).unwrap();
 
         storage

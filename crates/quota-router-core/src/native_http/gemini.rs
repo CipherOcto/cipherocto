@@ -1,6 +1,7 @@
 // gemini — Google Gemini via reqwest (native_http, LiteLLM mode)
 
-use super::{
+#[allow(unused_imports)]
+use crate::native_http::{
     HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
     HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
 };

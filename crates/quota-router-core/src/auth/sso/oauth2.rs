@@ -1532,8 +1532,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_oauth2_revoke_with_blacklist_with_session() {
-        use std::sync::Arc;
-
         let handler = OAuth2FlowHandler::new();
         let session = SsoSession {
             session_id: "sess-1".into(),

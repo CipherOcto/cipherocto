@@ -1,8 +1,8 @@
 // databricks — Databricks via reqwest (native_http, LiteLLM mode)
 
-use super::{
-    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, ProviderError, StreamingResponse,
+use crate::native_http::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -312,6 +312,7 @@ fn convert_response(data: DatabricksResponse, _status: u16) -> HttpCompletionRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_http::HttpBatchCreateRequest;
     use crate::native_http::HttpProvider;
 
     #[test]

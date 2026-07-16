@@ -476,6 +476,14 @@ impl WhatsAppWebAdapter {
         Arc::clone(&self.synced_notify)
     }
 
+    /// Trait-default accessor that exposes the same `Notify` to the
+    /// daemon (which can't call the inherent `synced()`). Mirror of
+    /// `subscribe_raw_events`: the daemon spawns a sync-watcher task
+    /// when this returns `Some`.
+    pub fn synced_notify(&self) -> Option<Arc<tokio::sync::Notify>> {
+        Some(Arc::clone(&self.synced_notify))
+    }
+
     /// Session 13: true iff at least one `Event::PairingQrCode` has
     /// been observed AND no further QRs have arrived in the last
     /// `idle_threshold` duration. Returns false before any QR has

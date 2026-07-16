@@ -227,6 +227,16 @@ struct DaemonInner {
     /// the daemon. `None` when no adapter is bound — typical during
     /// very early boot or hermetic tests that never bind.
     connection_watcher: SyncMutex<Option<tokio::task::JoinHandle<()>>>,
+    /// AppState-sync flag. Set true when the bound adapter's
+    /// `Event::OfflineSyncCompleted` (or 0-conversation terminal
+    /// `Event::HistorySync`) fires `synced_notify`. Reflects the
+    /// current adapter only — rebind clears it until the new
+    /// adapter reaches sync.
+    is_synced: Arc<AtomicBool>,
+    /// Sync-watcher task handle. Spawned when an adapter exposes
+    /// `synced_notify()` (only `WhatsAppWebAdapter` does). Aborted
+    /// on rebind so the old task doesn't outlive its `Notify`.
+    sync_watcher: SyncMutex<Option<tokio::task::JoinHandle<()>>>,
     /// Phase 6.1 T6.1.2: multi-account index store. Opened at
     /// startup via `MultiAccountStore::open_default()` —
     /// best-effort: if the call fails (e.g. HOME unset and
@@ -343,6 +353,14 @@ impl DaemonHandle {
         self.inner.metrics.set_connected(ready);
     }
 
+    /// AppState-sync flag setter. True once the bound adapter has
+    /// completed its initial `OfflineSyncCompleted` (or reached a
+    /// 0-conversation terminal `HistorySync`). Flipped back to
+    /// `false` by `bind_adapter` so a rebind starts from scratch.
+    pub fn set_synced(&self, synced: bool) {
+        self.inner.is_synced.store(synced, Ordering::SeqCst);
+    }
+
     /// Phase 5 Part B: set the liveness flag (HTTP `/health`).
     /// True while the process is up and the IPC listener is bound.
     pub fn set_live(&self, live: bool) {
@@ -369,6 +387,47 @@ impl DaemonHandle {
             .adapter
             .write()
             .unwrap_or_else(|p| p.into_inner()) = Some(a.clone());
+
+        // Abort any prior sync-watcher before the new adapter's
+        // `synced_notify` can race it. Aborting (vs awaiting) is
+        // safe: the loop body re-arms a fresh `Notified` on every
+        // iteration, so dropping the in-flight future at an
+        // `await` point is well-defined.
+        if let Some(old) = self.inner.sync_watcher.lock().take() {
+            old.abort();
+        }
+        // Reset the flag so the new adapter has to reach sync
+        // before `status.get` reports `synced: true`. Done
+        // synchronously before the spawn below to avoid a brief
+        // window where the old (true) value leaks across rebinds.
+        self.set_synced(false);
+
+        // Spawn the sync-watcher if the adapter exposes a
+        // `synced_notify`. `MockAdapter` returns `None` (default
+        // trait impl) — hermetic tests rely on this so the flag
+        // stays false until a test sets it manually via
+        // `set_synced`. `WhatsAppWebAdapter` returns
+        // `Some(Arc<Notify>)` whose `notify_waiters()` is fired
+        // on `Event::OfflineSyncCompleted` and the 0-conversation
+        // terminal `Event::HistorySync` (adapter.rs:1559,1570).
+        if let Some(notify) = a.synced_notify() {
+            let synced_flag = self.is_synced_flag();
+            let cancel = self.inner.cancel.clone();
+            let join = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        _ = notify.notified() => {
+                            synced_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                            // Keep looping: a reconnect can clear the
+                            // flag (via rebind) and the same Notify
+                            // may fire again — store(true) is idempotent.
+                        }
+                    }
+                }
+            });
+            *self.inner.sync_watcher.lock() = Some(join);
+        }
 
         // Spawn the connection-watcher if the adapter exposes a raw
         // event stream. `MockAdapter` returns `None` (default trait
@@ -768,6 +827,15 @@ impl DaemonHandle {
         self.inner.is_ready.clone()
     }
 
+    /// AppState-sync flag. Set by the sync-watcher task when the
+    /// bound adapter fires its `synced_notify` (i.e. `Event::
+    /// OfflineSyncCompleted` or a 0-conversation terminal
+    /// `Event::HistorySync`). Read by `daemon.status.get` and the
+    /// `health` RPC to surface initial-history-sync completion.
+    pub fn is_synced_flag(&self) -> Arc<AtomicBool> {
+        self.inner.is_synced.clone()
+    }
+
     /// Phase 8: borrow the active [`EventsRouter`] (or `None` if
     /// the daemon hasn't bound an adapter yet). Read by
     /// `status.get` to surface per-sink lagged counts.
@@ -1126,6 +1194,7 @@ impl Daemon {
         let started_at_unix_ms = unix_epoch_ms_now();
         let is_live = Arc::new(AtomicBool::new(false));
         let is_ready = Arc::new(AtomicBool::new(false));
+        let is_synced = Arc::new(AtomicBool::new(false));
         // Phase 5 Part F: build a shared `reqwest::Client` with
         // conservative defaults suitable for webhook dispatches.
         // 10s connect timeout, 30s request timeout. Constructed once
@@ -1164,9 +1233,11 @@ impl Daemon {
                 metrics,
                 is_live,
                 is_ready,
+                is_synced,
                 started_at_unix_ms: AtomicI64::new(started_at_unix_ms),
                 http_client,
                 connection_watcher: SyncMutex::new(None),
+                sync_watcher: SyncMutex::new(None),
                 accounts: parking_lot::Mutex::new(accounts),
             }),
         }

@@ -72,6 +72,12 @@ pub struct MockAdapter {
     /// membership / mode / admin RPC surface without a live WhatsApp
     /// session.
     pub coord_admin: MockCoordinatorAdmin,
+    /// Optional `synced_notify` override. When `Some`, the trait
+    /// `synced_notify()` returns a clone of the inner Arc; when
+    /// `None`, the trait falls back to the default (which is `None`).
+    /// Hermetic tests that exercise the daemon's sync-watcher path
+    /// set this via [`MockAdapter::with_synced_notify`].
+    synced_notify: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl MockAdapter {
@@ -79,6 +85,7 @@ impl MockAdapter {
         Self {
             state: Arc::new(Mutex::new(MockState::default())),
             coord_admin: MockCoordinatorAdmin::new(),
+            synced_notify: None,
         }
     }
 
@@ -121,6 +128,15 @@ impl MockAdapter {
     pub fn set_unit_err(&self, method: &'static str, err: PlatformAdapterError) {
         self.state.lock().canned_unit_err.insert(method, err);
     }
+
+    /// Override the trait `synced_notify()` to return `Some(arc)` so
+    /// hermetic tests can drive the daemon's sync-watcher task. The
+    /// returned `Arc` should be fired by the test via `notify_one()`
+    /// after `bind_adapter` to flip `daemon.is_synced_flag()`.
+    pub fn with_synced_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.synced_notify = Some(notify);
+        self
+    }
 }
 
 impl Default for MockAdapter {
@@ -131,6 +147,16 @@ impl Default for MockAdapter {
 
 #[async_trait::async_trait]
 impl OctoWhatsAppAdapter for MockAdapter {
+    // ── Lifecycle signal hooks (Phase 7.J.2+) ──────────────────────────
+    // Default trait impl returns `None` so the daemon skips the
+    // connection-watcher + sync-watcher spawn paths. Override below
+    // to return the field populated by [`MockAdapter::with_synced_notify`]
+    // so hermetic tests can drive the sync-watcher task end-to-end.
+
+    fn synced_notify(&self) -> Option<Arc<tokio::sync::Notify>> {
+        self.synced_notify.clone()
+    }
+
     // ── Group A: outbound media (file-based) — pair-result ──
 
     async fn send_text(

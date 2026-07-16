@@ -36,11 +36,13 @@ impl RpcHandler for StatusGet {
         };
         // Spec compliance F17, F20: derive `connected`, `session_valid`,
         // `synced`, `ready` from the actual atomic flags set by the
-        // connection watcher + SIGHUP reload path. `synced` defaults
-        // to `false` because the runtime delegates `synced()` to the
-        // adapter; until a `BotState::Connected` event arrives the
-        // signal stays false (per design: "synced is a soft hint by
-        // default, opt-in via `--require-sync`").
+        // connection watcher + SIGHUP reload path. `synced` is
+        // driven by the sync-watcher task spawned in `bind_adapter`,
+        // which flips the flag when the WA adapter fires its
+        // `synced_notify` (i.e. `Event::OfflineSyncCompleted` or a
+        // terminal 0-conversation `Event::HistorySync`). Rebind
+        // clears it; non-WA adapters keep it `false` (the trait
+        // default returns `None`).
         let connected = handle
             .is_ready_flag()
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -53,7 +55,9 @@ impl RpcHandler for StatusGet {
         // atomic write). Mirror the same OR-fallback that `health.rs`
         // uses so the two RPCs agree.
         let session_valid = connected || phase == "connected";
-        let synced = false;
+        let synced = handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::Relaxed);
         let ready = connected && session_valid;
         // Spec compliance F19: include all fields from the design's
         // status table. `last_event_ts` is unix-ms; the design's

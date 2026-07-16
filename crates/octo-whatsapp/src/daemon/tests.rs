@@ -109,6 +109,120 @@ async fn new_for_tests_creates_daemon_with_paths_in_tmpdir() {
     );
 }
 
+// ── AppState-sync flag (synced) tests ─────────────────────────────────
+//
+// The `synced` field of `daemon.status.get` is wired to the
+// `is_synced_flag` atomic, which is flipped by a daemon-side
+// sync-watcher task spawned in `bind_adapter` whenever the
+// adapter's `synced_notify()` returns `Some(...)`. The adapter
+// fires `notify_waiters()` on `Event::OfflineSyncCompleted`
+// (and on the 0-conversation terminal `Event::HistorySync`).
+//
+// These tests cover:
+//   1. Default: MockAdapter without `synced_notify` set → flag
+//      stays `false` (the trait default returns `None`).
+//   2. Rebind: `bind_adapter` resets the flag to `false` even if
+//      a prior adapter's watcher had flipped it to `true`.
+//   3. End-to-end: a custom `Notify` fired after `bind_adapter`
+//      causes the flag to flip to `true` within a short poll
+//      window.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_adapter_does_not_set_synced_when_synced_notify_is_none() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+    // MockAdapter without `with_synced_notify` returns `None` from
+    // the trait method — no sync-watcher task spawned, flag stays
+    // its default `false`.
+    let adapter = Arc::new(MockAdapter::new());
+    handle.bind_adapter(adapter);
+    assert!(
+        !handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "synced must stay false when adapter exposes no synced_notify"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_adapter_resets_synced_flag_so_rebind_starts_from_false() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+    let notify = Arc::new(tokio::sync::Notify::new());
+    // Adapter A exposes a Notify and fires it before bind so the
+    // sync-watcher flips the flag to true.
+    let adapter_a = Arc::new(MockAdapter::new().with_synced_notify(notify.clone()));
+    handle.bind_adapter(adapter_a);
+    // Yield so the spawned sync-watcher task registers its
+    // `notified()` future BEFORE we fire the notify — see the
+    // matching note on test 3 below.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    notify.notify_waiters();
+    // Wait up to 500ms for the watcher task to observe + flip.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while !handle
+        .is_synced_flag()
+        .load(std::sync::atomic::Ordering::SeqCst)
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "notify must flip the flag before the rebind test step"
+    );
+    // Rebind to a fresh adapter — bind_adapter must reset the flag
+    // synchronously before spawning the new sync-watcher task.
+    let adapter_b = Arc::new(MockAdapter::new());
+    handle.bind_adapter(adapter_b);
+    assert!(
+        !handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "bind_adapter must reset is_synced to false on rebind"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn synced_flag_flips_when_adapter_notifies_after_bind() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let adapter = Arc::new(MockAdapter::new().with_synced_notify(notify.clone()));
+    handle.bind_adapter(adapter);
+    assert!(
+        !handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "flag must be false immediately after bind (no notify yet)"
+    );
+    // Fire the notify. The sync-watcher loop observes it and
+    // stores `true`. Poll up to 500ms for the flip.
+    // Yield so the spawned sync-watcher task registers its
+    // `notified()` future BEFORE we fire the notify. Otherwise
+    // `notify_waiters()` can land before the task is scheduled and
+    // the notification is lost (Notify only wakes waiters
+    // registered at the time of the call).
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    notify.notify_waiters();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while !handle
+        .is_synced_flag()
+        .load(std::sync::atomic::Ordering::SeqCst)
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        handle
+            .is_synced_flag()
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "firing synced_notify must flip the daemon's is_synced_flag"
+    );
+}
+
 // ── Pairing stall timer (Phase 6.12.5) ────────────────────────────
 //
 // The production const `PAIRING_STALL_SECS = 45s` is too slow for

@@ -32,6 +32,7 @@
 //! impl forwards to its own `PlatformAdapter::capabilities` impl.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -1193,6 +1194,20 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
         None
     }
 
+    /// Returns a clonable handle to the adapter's `Notify` that
+    /// fires once the initial AppState sync has completed
+    /// (`Event::OfflineSyncCompleted` or a terminal
+    /// 0-conversation `Event::HistorySync`).
+    ///
+    /// The daemon subscribes a watcher task that flips
+    /// `is_synced_flag` to `true` on first notify; `bind_adapter`
+    /// resets the flag and aborts the prior watcher on rebind.
+    /// Adapters without an AppState lifecycle (Matrix, Telegram)
+    /// keep the default `None` and `status.synced` stays `false`.
+    fn synced_notify(&self) -> Option<Arc<tokio::sync::Notify>> {
+        None
+    }
+
     /// Returns the bot's own canonical JID (with device suffix when
     /// the linked session is paired as a companion device), or `None`
     /// if the adapter hasn't reached `Connected` yet.
@@ -2262,6 +2277,14 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
         // The trait impl here is targeted specifically at the WA
         // backend, so calling the concrete method is appropriate.
         Some(octo_adapter_whatsapp::WhatsAppWebAdapter::subscribe_raw_events(self))
+    }
+
+    /// Mirror of `subscribe_raw_events`: expose the WA adapter's
+    /// `synced_notify` to the daemon. The concrete method
+    /// (`adapter.rs:483`) is the WA-targeted source; non-WA adapters
+    /// keep the default `None` so `status.synced` stays `false`.
+    fn synced_notify(&self) -> Option<Arc<tokio::sync::Notify>> {
+        octo_adapter_whatsapp::WhatsAppWebAdapter::synced_notify(self)
     }
 
     /// Override the default `self_jid_full()` to read the bot's

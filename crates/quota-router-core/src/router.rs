@@ -2334,4 +2334,39 @@ mod tests {
         // (Documenting this branch — depends on cutoff math but should not panic.)
         let _ = metrics.rolling_avg_tpm("dep-1", 0);
     }
+
+    #[test]
+    fn test_reset_usage_and_reset_all_usage_zero_counters() {
+        let providers = test_providers();
+        let mut router = Router::new(RouterConfig::default(), providers);
+
+        // Seed non-zero RPM/TPM on every provider of gpt-3.5-turbo
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                p.current_rpm = 999;
+                p.current_tpm = 1234;
+            }
+        }
+
+        // reset_usage on first provider — only that one zeroes
+        router
+            .get_provider("gpt-3.5-turbo", 0)
+            .unwrap()
+            .reset_usage();
+        let first = router.get_provider("gpt-3.5-turbo", 0).unwrap();
+        assert_eq!(first.current_rpm, 0);
+        assert_eq!(first.current_tpm, 0);
+
+        // Second provider should still be at 999 / 1234
+        let second = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        assert_eq!(second.current_rpm, 999);
+        assert_eq!(second.current_tpm, 1234);
+
+        // reset_all_usage — every provider zeros
+        router.reset_all_usage();
+        for p in router.providers.get("gpt-3.5-turbo").unwrap().iter() {
+            assert_eq!(p.current_rpm, 0);
+            assert_eq!(p.current_tpm, 0);
+        }
+    }
 }

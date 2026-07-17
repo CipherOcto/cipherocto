@@ -627,6 +627,21 @@ async fn live_send_text_self() {
             InboundEvent::NewsletterUpdate { jid, kind, .. } => {
                 format!("NewsletterUpdate({jid}, {kind:?})")
             }
+            InboundEvent::Unavailable {
+                id,
+                peer,
+                unavailable_type,
+                ..
+            } => {
+                format!("Unavailable(peer={peer}, id={id}, kind={unavailable_type:?})")
+            }
+            InboundEvent::DisappearingModeChanged {
+                jid,
+                duration_seconds,
+                ..
+            } => {
+                format!("DisappearingModeChanged({jid}, {duration_seconds}s)")
+            }
             InboundEvent::Unknown { raw, .. } => {
                 format!("Unknown({})", raw.chars().take(2000).collect::<String>())
             }
@@ -750,6 +765,21 @@ async fn live_send_text_peer() {
                 }
                 InboundEvent::NewsletterUpdate { jid, kind, .. } => {
                     format!("NewsletterUpdate({jid}, {kind:?})")
+                }
+                InboundEvent::Unavailable {
+                    id,
+                    peer,
+                    unavailable_type,
+                    ..
+                } => {
+                    format!("Unavailable(peer={peer}, id={id}, kind={unavailable_type:?})")
+                }
+                InboundEvent::DisappearingModeChanged {
+                    jid,
+                    duration_seconds,
+                    ..
+                } => {
+                    format!("DisappearingModeChanged({jid}, {duration_seconds}s)")
                 }
                 InboundEvent::Unknown { raw, .. } => {
                     format!("Unknown({})", raw.chars().take(120).collect::<String>())

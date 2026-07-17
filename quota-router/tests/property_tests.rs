@@ -1,14 +1,14 @@
 use proptest::prelude::*;
 
-use quota_router::announce::SignedPayload;
-use quota_router::gossip::{CapacityGossipPayload, GossipCache};
-use quota_router::provider::{
+use quota_router_core::node::announce::SignedPayload;
+use quota_router_core::node::gossip::{CapacityGossipPayload, GossipCache};
+use quota_router_core::node::provider::{
     ModelPricing, ProviderCapacity, ProviderHealth, ProviderId, RouterNodeId,
 };
-use quota_router::ratelimit::RateLimiter;
-use quota_router::request::{RequestContext, RoutingPolicy};
-use quota_router::scorer::select_destinations;
-use quota_router::scorer::Destination;
+use quota_router_core::node::ratelimit::RateLimiter;
+use quota_router_core::node::request::{RequestContext, RoutingPolicy};
+use quota_router_core::node::scorer::select_destinations;
+use quota_router_core::node::scorer::Destination;
 
 fn any_provider_capacity() -> impl Strategy<Value = ProviderCapacity> {
     ("[a-z0-9-]{1,16}", 0u64..1000, 0u32..500, 0u16..10000).prop_map(
@@ -69,10 +69,13 @@ fn make_request(model: &str) -> RequestContext {
     }
 }
 
-fn make_forward_request(ttl: u8, hop_count: u8) -> quota_router::forward::ForwardRequestPayload {
-    quota_router::forward::ForwardRequestPayload {
+fn make_forward_request(
+    ttl: u8,
+    hop_count: u8,
+) -> quota_router_core::node::forward::ForwardRequestPayload {
+    quota_router_core::node::forward::ForwardRequestPayload {
         request_id: [1u8; 32],
-        network_id: quota_router::provider::NetworkId([2u8; 32]),
+        network_id: quota_router_core::node::provider::NetworkId([2u8; 32]),
         context: make_request("gpt-4o"),
         payload: b"test".to_vec(),
         ttl,

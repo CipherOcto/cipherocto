@@ -32,6 +32,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install system deps
+        # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in
+        # via octo-cable -> bluer -> dbus -> libdbus-sys (same as ci.yml).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Generate coverage
         run: |
           # octo-adapter-whatsapp is excluded from --all-features because

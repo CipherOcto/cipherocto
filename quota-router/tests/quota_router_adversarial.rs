@@ -12,17 +12,17 @@
 
 use std::sync::Arc;
 
-use quota_router::announce::{
+use quota_router_core::node::announce::{
     RouterAnnouncePayload, RouterWithdrawPayload, SignedPayload, WithdrawReason,
 };
-use quota_router::forward::{ForwardRejectReason, ForwardRequestPayload};
-use quota_router::gossip::CapacityGossipPayload;
-use quota_router::provider::{
+use quota_router_core::node::forward::{ForwardRejectReason, ForwardRequestPayload};
+use quota_router_core::node::gossip::CapacityGossipPayload;
+use quota_router_core::node::provider::{
     NetworkId, PeerConfig, PeerTrust, ProviderAuth, ProviderCapacity, ProviderConfig,
     ProviderHealth, ProviderId, RouterNodeId,
 };
-use quota_router::request::RequestContext;
-use quota_router::PeerCache;
+use quota_router_core::node::request::RequestContext;
+use quota_router_core::node::PeerCache;
 
 // ── Test 1: TTL exhaustion ───────────────────────────────────────────
 
@@ -34,7 +34,7 @@ fn ttl_exhaustion_request_with_zero_ttl_is_marked_expired() {
     let req = ForwardRequestPayload {
         request_id: [1u8; 32],
         network_id: NetworkId([2u8; 32]),
-        context: quota_router::request::RequestContext {
+        context: quota_router_core::node::request::RequestContext {
             model: "gpt-4o".into(),
             preferred_provider: None,
             model_group: None,
@@ -77,8 +77,8 @@ fn ttl_exhaustion_request_with_zero_ttl_is_marked_expired() {
 /// peers are mitigated via HMAC (Test 4) + rate limiting (Test 3).
 #[test]
 fn capacity_manipulation_does_not_panic_scorer() {
-    use quota_router::request::{RequestContext, RoutingPolicy};
-    use quota_router::scorer::{select_destinations, Destination};
+    use quota_router_core::node::request::{RequestContext, RoutingPolicy};
+    use quota_router_core::node::scorer::{select_destinations, Destination};
 
     let fake = ProviderCapacity {
         provider_id: ProviderId([1u8; 32]),
@@ -131,7 +131,7 @@ fn capacity_manipulation_does_not_panic_scorer() {
 /// rate limiting.)
 #[test]
 fn amplification_capped_by_rate_limiter() {
-    use quota_router::ratelimit::RateLimiter;
+    use quota_router_core::node::ratelimit::RateLimiter;
 
     let rl = RateLimiter::new(10, 10);
     let mut allowed = 0;
@@ -223,7 +223,7 @@ fn hmac_forgery_rejected_on_withdraw() {
 
 #[test]
 fn hmac_forgery_rejected_on_forward_request() {
-    use quota_router::request::RequestContext;
+    use quota_router_core::node::request::RequestContext;
 
     let key = [42u8; 32];
     let mut fwd = ForwardRequestPayload {
@@ -313,8 +313,8 @@ fn peer_cache_overflow_lru_eviction() {
 /// providers even if their gossip claims say otherwise.
 #[test]
 fn unhealthy_provider_excluded_by_filter() {
-    use quota_router::request::{RequestContext, RoutingPolicy};
-    use quota_router::scorer::select_destinations;
+    use quota_router_core::node::request::{RequestContext, RoutingPolicy};
+    use quota_router_core::node::scorer::select_destinations;
 
     let mut sick = ProviderCapacity {
         provider_id: ProviderId([1u8; 32]),
@@ -379,7 +379,7 @@ fn multi_hop_ttl_exhaustion_chain() {
     let req = ForwardRequestPayload {
         request_id: [10u8; 32],
         network_id: NetworkId([2u8; 32]),
-        context: quota_router::request::RequestContext {
+        context: quota_router_core::node::request::RequestContext {
             model: "gpt-4o".into(),
             preferred_provider: None,
             model_group: None,
@@ -452,8 +452,8 @@ fn gossip_poisoning_with_wrong_hmac() {
 /// 100 concurrent route calls must not deadlock or panic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_forwarding_race() {
-    use quota_router::provider::{ProviderAuth, ProviderConfig as PC};
-    use quota_router::QuotaRouterNode;
+    use quota_router_core::node::provider::{ProviderAuth, ProviderConfig as PC};
+    use quota_router_core::node::QuotaRouterNode;
 
     let node = Arc::new(
         QuotaRouterNode::builder()
@@ -473,7 +473,7 @@ async fn concurrent_forwarding_race() {
     for i in 0..100u8 {
         let node = node.clone();
         handles.push(tokio::spawn(async move {
-            let ctx = quota_router::request::RequestContext {
+            let ctx = quota_router_core::node::request::RequestContext {
                 model: "gpt-4o".into(),
                 preferred_provider: None,
                 model_group: None,
@@ -500,11 +500,11 @@ async fn concurrent_forwarding_race() {
 /// Gossip with extreme values must not cause division by zero or overflow.
 #[test]
 fn capacity_manipulation_extreme_values() {
-    use quota_router::provider::{
+    use quota_router_core::node::provider::{
         ModelPricing, ProviderCapacity, ProviderHealth, ProviderId, RouterNodeId,
     };
-    use quota_router::request::{RequestContext, RoutingPolicy};
-    use quota_router::scorer::select_destinations;
+    use quota_router_core::node::request::{RequestContext, RoutingPolicy};
+    use quota_router_core::node::scorer::select_destinations;
 
     let extreme = ProviderCapacity {
         provider_id: ProviderId([1u8; 32]),
@@ -545,8 +545,8 @@ fn capacity_manipulation_extreme_values() {
 /// Flood with 1000 gossip merges — cache stays bounded, no OOM.
 #[test]
 fn stale_gossip_eviction_under_load() {
-    use quota_router::gossip::GossipCache;
-    use quota_router::provider::RouterNodeId;
+    use quota_router_core::node::gossip::GossipCache;
+    use quota_router_core::node::provider::RouterNodeId;
 
     let cache = GossipCache::new();
     for i in 0..1000u16 {

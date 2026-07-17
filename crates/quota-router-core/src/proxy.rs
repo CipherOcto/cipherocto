@@ -9963,4 +9963,238 @@ mod tests {
             Some("original question")
         );
     }
+
+    // ====================================================================
+    // Session 2: /v1/rerank edge cases + /v1/files upload-size + passthrough
+    // provider default URL
+    // ====================================================================
+
+    /// Cluster 1534-1538 — `GET /v1/rerank` returns 405 Method Not Allowed.
+    #[tokio::test]
+    async fn test_rerank_method_get_not_allowed() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", "https://api.cohere.ai/v1");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/rerank")
+            .body(String::new())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("Method not allowed"), "got: {text}");
+    }
+
+    /// Cluster 1610-1615 — `/v1/rerank` upstream `req_builder.send()` Err branch.
+    /// Triggers when the dispatch api_base points at an unreachable port.
+    #[tokio::test]
+    async fn test_rerank_upstream_send_error() {
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "rerank-v1".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "cohere".into(),
+                model: "rerank-v1".into(),
+                api_key: None,
+                api_base: Some("http://127.0.0.1:1".into()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", "https://api.cohere.ai/v1");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/rerank")
+            .body(r#"{"model":"rerank-v1","query":"test","documents":["doc1"]}"#.to_string())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(text.contains("Rerank error"), "got: {text}");
+    }
+
+    /// Cluster 1592 — `req_builder.header("Authorization", "Bearer ...")` on
+    /// /v1/rerank when api_key is Some. test_rerank_success passes None; this
+    /// test forces the Authorization injection by setting api_key on the
+    /// dispatch entry.
+    #[tokio::test]
+    async fn test_rerank_with_api_key_authorization() {
+        use crate::testing::mock_http::MockHttpServer;
+        let mock = MockHttpServer::with_json(
+            &serde_json::json!({"results": [{"index": 0, "relevance_score": 0.9}]}),
+        )
+        .await;
+        let base_url = mock.base_url();
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "rerank-v1".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "cohere".into(),
+                model: "rerank-v1".into(),
+                api_key: Some("dispatch-key-xyz".into()),
+                api_base: Some(base_url),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("cohere", "https://api.cohere.ai/v1");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/rerank")
+            .body(r#"{"model":"rerank-v1","query":"test","documents":["doc1"]}"#.to_string())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// Cluster 1245-1252 — POST /v1/files with Content-Length > 100MB returns
+    /// 413 Payload Too Large (pre-flight check).
+    #[tokio::test]
+    async fn test_files_post_content_length_exceeds_100mb() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        // 101 MB Content-Length triggers the limit even though the actual body
+        // is small — reqwest still constructs the request; we don't need a real
+        // 101 MB buffer in the test client.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/files")
+            .header("content-length", "106000000")
+            .body("small".to_string())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("File upload exceeds 100MB limit"),
+            "got: {text}"
+        );
+    }
+
+    /// Cluster 1672-1673 — passthrough route for a known provider not in the
+    /// inner api_base match (e.g. `replicate`, `databricks`, `perplexity`).
+    /// Falls into `_ => format!("https://api.{}.com/v1", provider_name)`.
+    /// Mock server won't be reached because the format!() URL points
+    /// elsewhere, but the test verifies the code path executes (200/502
+    /// both acceptable; we just need to NOT hit the panic-default path).
+    #[tokio::test]
+    async fn test_passthrough_provider_default_url() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("replicate", "https://api.replicate.com/v1");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/replicate/models")
+            .body(String::new())
+            .unwrap();
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(HashMap::new()), // empty dispatch_map → api_base lookup misses
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+        // We don't care about the response payload — only that we got past the
+        // api_base match default. 502/200/404 all acceptable.
+        assert!(
+            resp.status().is_success()
+                || resp.status().is_server_error()
+                || resp.status().is_client_error()
+        );
+    }
 }

@@ -33,6 +33,15 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
 
+      - name: Install system deps
+        # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in by
+        # octo-cable -> bluer -> dbus -> libdbus-sys. Without these, libdbus-sys'
+        # build.rs panics with `explicit panic` (build fails before any crate
+        # actually compiles).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:

@@ -2642,4 +2642,95 @@ mod tests {
             "streaming + penalty path must select by TTFT (openai 50ms vs azure 5s)"
         );
     }
+
+    #[test]
+    fn test_rolling_avg_rpm_exact_average_single_bucket() {
+        // 6 records in same minute → single bucket rpm=6 → avg=6.0 exactly.
+        // Locks the `sum / len` formula at L886 against future drift.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        for _ in 0..6 {
+            metrics.record("d1", 10);
+        }
+        let avg = metrics
+            .rolling_avg_rpm("d1", 5)
+            .expect("avg exists after recording");
+        assert_eq!(
+            avg, 6.0,
+            "rpm avg must equal request count in single bucket"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_tpm_exact_average_single_bucket() {
+        // Tokens 100+200+300+400 in same minute → tpm=1000 → avg=1000.0 exactly.
+        // Locks the `sum / len` formula at L916.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("d1", 100);
+        metrics.record("d1", 200);
+        metrics.record("d1", 300);
+        metrics.record("d1", 400);
+        let avg = metrics
+            .rolling_avg_tpm("d1", 5)
+            .expect("avg exists after recording");
+        assert_eq!(
+            avg, 1000.0,
+            "tpm avg must equal total tokens in single bucket"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_rpm_and_tpm_tracked_independently() {
+        // rpm counts requests (1 each), tpm sums tokens (variable). Verify
+        // neither field leaks into the other — both must be reported correctly
+        // from the same BucketStats.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        for _ in 0..3 {
+            metrics.record("d1", 1000);
+        }
+        assert_eq!(
+            metrics.rolling_avg_rpm("d1", 5).unwrap(),
+            3.0,
+            "rpm must equal record() count, independent of tokens"
+        );
+        assert_eq!(
+            metrics.rolling_avg_tpm("d1", 5).unwrap(),
+            3000.0,
+            "tpm must equal sum of tokens, independent of rpm count"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_returns_none_when_minutes_filter_excludes_all_buckets() {
+        // minutes=0 → cutoff = now → bucket timestamp (slightly older now) < cutoff
+        // → filtered out → `recent` empty → None. Locks the `if recent.is_empty()`
+        // branch (L882-884 and L912-914) with an explicit assertion.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("d1", 100);
+        // Tiny sleep to guarantee Instant::now() has advanced past the record
+        // call's timestamp; without it the filter is timing-flaky on fast CPUs.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(
+            metrics.rolling_avg_rpm("d1", 0).is_none(),
+            "minutes=0 must filter out the just-created bucket (rpm path)"
+        );
+        assert!(
+            metrics.rolling_avg_tpm("d1", 0).is_none(),
+            "minutes=0 must filter out the just-created bucket (tpm path)"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_unknown_deployment_returns_none() {
+        // Never-recorded deployment → buckets.get()? early-return path
+        // (L862 / L892). Distinct from the recent.is_empty() path.
+        let metrics = ProviderMetrics::with_ttl(3600);
+        assert!(
+            metrics.rolling_avg_rpm("ghost", 5).is_none(),
+            "rpm must return None for unknown deployment (L862 `?` early-return)"
+        );
+        assert!(
+            metrics.rolling_avg_tpm("ghost", 5).is_none(),
+            "tpm must return None for unknown deployment (L892 `?` early-return)"
+        );
+    }
 }

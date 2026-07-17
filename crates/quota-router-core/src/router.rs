@@ -2733,4 +2733,116 @@ mod tests {
             "tpm must return None for unknown deployment (L892 `?` early-return)"
         );
     }
+
+    #[test]
+    fn test_usage_based_v2_routing_no_history_defaults_success_rate_to_100() {
+        // Both providers have total_count=0 → success_rate=100 → score=current_rpm*0/100=0
+        // Ties broken by first encountered (min_by_key behavior). Locks the
+        // `else { 100 }` branch at L1198-1199.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::UsageBasedV2,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let idx = router.route("gpt-3.5-turbo", false).expect("route");
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "openai",
+            "no-history tie (both score=0) must be broken by first encountered"
+        );
+    }
+
+    #[test]
+    fn test_cost_based_routing_prefers_lowest_active_requests() {
+        // openai: 0 active, azure: 5 active → openai wins. Locks the
+        // `min_by_key(|(_, p)| p.active_requests)` selector body.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::CostBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                p.active_requests = if p.provider.name == "openai" { 0 } else { 5 };
+            }
+        }
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "openai",
+            "cost_based must pick the provider with fewer active requests"
+        );
+    }
+
+    #[test]
+    fn test_cost_based_routing_ties_broken_by_first_encountered() {
+        // Both active_requests=0 (defaults) → first (openai) wins.
+        // Locks min_by_key's stable ordering behavior on ties.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::CostBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "openai",
+            "tie (0 active) must be broken by first index (openai)"
+        );
+    }
+
+    #[test]
+    fn test_weighted_routing_zero_total_weight_falls_back_to_random() {
+        // Force total_weight == 0 by overriding both provider weights to 0.
+        // Locks the `rand::rng().random_range(...)` fallback at L1225.
+        // Over 200 iterations both providers must be reachable (uniform random).
+        let providers = test_providers();
+        let mut weights = HashMap::new();
+        weights.insert("openai".to_string(), 0u32);
+        weights.insert("azure".to_string(), 0u32);
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::Weighted,
+            weights: weights.clone(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let mut openai_count = 0;
+        let mut azure_count = 0;
+        for _ in 0..200 {
+            if let Some(idx) = router.route("gpt-3.5-turbo", false) {
+                if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+                    if p.provider.name == "openai" {
+                        openai_count += 1;
+                    } else {
+                        azure_count += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            openai_count > 0 && azure_count > 0,
+            "zero-weight fallback must reach BOTH providers via uniform random \
+             (got openai={openai_count}, azure={azure_count})"
+        );
+    }
 }

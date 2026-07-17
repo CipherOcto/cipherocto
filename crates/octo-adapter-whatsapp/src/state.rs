@@ -34,9 +34,10 @@ use serde::{Deserialize, Serialize};
 
 /// The high-level state of a paired bot. See module docs for the
 /// state diagram.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum BotState {
     /// The bot has not yet been started or has shut down.
+    #[default]
     Disconnected,
     /// Showing a QR code to the operator for pairing.
     PairingQr,
@@ -50,12 +51,6 @@ pub enum BotState {
     LoggedOut,
     /// Session expired; a new pairing is required.
     SessionExpired,
-}
-
-impl Default for BotState {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 impl BotState {

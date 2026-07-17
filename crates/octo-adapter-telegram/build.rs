@@ -25,7 +25,7 @@ fn main() {
     {
         if let Ok(expected_sha) = std::env::var("TDLIB_SHA256") {
             // Find the TDLib binary in the build output directory.
-            let out_dir = std::env::var("OUT_DIR").ok();
+            let _out_dir = std::env::var("OUT_DIR").ok();
             let search_paths = vec![std::path::PathBuf::from("target")];
             let mut found = false;
             for base in &search_paths {
@@ -37,7 +37,6 @@ fn main() {
                             || path.extension().and_then(|s| s.to_str()) == Some("dylib")
                         {
                             if let Ok(data) = std::fs::read(&path) {
-                                use std::io::Write;
                                 let digest = sha256::digest(&data);
                                 if digest != expected_sha {
                                     panic!(

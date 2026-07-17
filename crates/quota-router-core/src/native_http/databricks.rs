@@ -1,6 +1,6 @@
 // databricks — Databricks via reqwest (native_http, LiteLLM mode)
 
-use super::{
+use crate::native_http::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
     ProviderError, StreamingResponse,
 };
@@ -312,6 +312,7 @@ fn convert_response(data: DatabricksResponse, _status: u16) -> HttpCompletionRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_http::HttpBatchCreateRequest;
     use crate::native_http::HttpProvider;
 
     #[test]
@@ -470,5 +471,212 @@ mod tests {
         let provider =
             DatabricksProvider::new().with_api_base("https://custom.databricks.com".to_string());
         assert_eq!(provider.api_base, "https://custom.databricks.com");
+    }
+
+    #[test]
+    fn test_supports_model() {
+        let p = DatabricksProvider::new();
+        assert!(p.supports_model("databricks/dbrx-instruct"));
+        assert!(!p.supports_model("gpt-4"));
+    }
+
+    #[test]
+    fn test_default_trait_methods() {
+        let p = DatabricksProvider::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert!(rt.block_on(p.get_response("id", None, None, None)).is_err());
+        assert!(rt
+            .block_on(p.delete_response("id", None, None, None))
+            .is_err());
+        let batch_req = HttpBatchCreateRequest {
+            input_file: "f".into(),
+            endpoint: "/v1".into(),
+            completion_window: "24h".into(),
+            metadata: None,
+            api_base: None,
+            timeout: None,
+        };
+        assert!(rt.block_on(p.batch_create(&batch_req, None)).is_err());
+        assert!(rt
+            .block_on(p.batch_retrieve("id", None, None, None))
+            .is_err());
+        assert!(rt.block_on(p.batch_cancel("id", None, None, None)).is_err());
+        assert!(rt.block_on(p.batch_list(None, None, None, None)).is_err());
+        assert!(rt
+            .block_on(p.batch_results("id", None, None, None))
+            .is_err());
+        assert!(rt.block_on(p.list_models(None, None, None)).is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = DatabricksProvider::new().with_api_base("https://dbc-xxx.databricks.com".into());
+        let req = HttpCompletionRequest {
+            model: "databricks/dbrx-instruct".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.completion(&req, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_auth_401() {
+        let s = crate::testing::mock_http::MockHttpServer::unauthorized().await;
+        let p = DatabricksProvider::new().with_api_base(s.base_url());
+        let req = HttpCompletionRequest {
+            model: "databricks/dbrx-instruct".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.completion(&req, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_rate_limit() {
+        let s = crate::testing::mock_http::MockHttpServer::rate_limited().await;
+        let p = DatabricksProvider::new().with_api_base(s.base_url());
+        let req = HttpCompletionRequest {
+            model: "databricks/dbrx-instruct".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.completion(&req, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_server_error() {
+        let s = crate::testing::mock_http::MockHttpServer::error().await;
+        let p = DatabricksProvider::new().with_api_base(s.base_url());
+        let req = HttpCompletionRequest {
+            model: "databricks/dbrx-instruct".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.completion(&req, Some("k")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_network_error() {
+        let p = DatabricksProvider::new().with_api_base("https://dbc-xxx.databricks.com".into());
+        assert!(p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                None,
+            )
+            .await
+            .is_err());
     }
 }

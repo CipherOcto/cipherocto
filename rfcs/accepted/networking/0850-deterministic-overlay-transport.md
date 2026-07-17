@@ -213,6 +213,8 @@ A broadcast domain is any shared communication surface that can carry DOT envelo
 | Lark | `0x0013` | Lark/Feishu bot API | 30000 chars | No | Images/Files (50MB) |
 | QQ | `0x0014` | QQ Official Bot API | 2000 chars | Yes | Images (10MB) |
 | QUIC | `0x0015` | QUIC streams (RFC 9000) | Unlimited | — | See §8.7 |
+| TCP | `0x0016` | Raw TCP streams | Unlimited | — | See §8.8 |
+| UDP | `0x0017` | Raw UDP datagrams | 65535 bytes | — | See §8.9 |
 
 **Canonical Domain Identifier:**
 
@@ -670,11 +672,16 @@ Each adapter MUST implement the following trait:
 ```rust
 #[async_trait]
 trait PlatformAdapter: Send + Sync {
-    /// Send a deterministic envelope to the platform.
-    async fn send_envelope(
+    /// Send a complete DOT message (envelope + payload) to the platform.
+    ///
+    /// The `envelope` carries routing metadata (envelope_id, mission_id, source_peer, etc.).
+    /// The `payload` carries the actual data being transmitted.
+    /// Adapters encode both for platform-specific transport (see §8.6).
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError>;
 
     /// Receive raw messages from the platform.
@@ -791,17 +798,17 @@ When an envelope exceeds the adapter's `max_payload_bytes`, the gateway fragment
 
 #### 8.6 Payload Encoding
 
-Envelopes are encoded for platform transport using one of four modes:
+Adapters encode DOT messages for platform transport using one of four modes. The `send_message(domain, envelope, payload)` method receives both the envelope (routing metadata) and the payload (actual data). Adapters use the payload to select the encoding mode and transmit both components.
 
 ```text
-DOT/1/{base64}       → Text mode (base64url-encoded envelope bytes)
+DOT/1/{base64}       → Text mode (base64url-encoded envelope + payload)
 DOT/2/{msg_id}       → Native upload mode (platform message ID reference)
 DOT/F/{base64_frag}  → Fragment mode (base64-encoded fragment with header)
-RAW/{binary}         → Raw binary mode (native byte transport, see §8.7)
+RAW/{binary}         → Raw binary mode (envelope + payload as native bytes, see §8.7)
 ```
 
 **Mode selection** (deterministic: same payload + same capabilities → same mode):
-- If `capabilities.supports_raw_binary` → `RAW/{binary}` (raw binary mode — QUIC, WebRTC, NativeP2P)
+- If `capabilities.supports_raw_binary` → `RAW/{binary}` (raw binary mode — QUIC, WebRTC, NativeP2P, TCP)
 - If `payload.len() <= max_text_bytes` → `DOT/1/{base64}` (text mode)
 - If `payload.len() > max_text_bytes && capabilities.supports_upload` → `DOT/2/{msg_id}` (native mode)
 - If `payload.len() > max_text_bytes && !capabilities.supports_upload` → `DOT/F/{fragment}` (fragment mode)
@@ -1049,6 +1056,79 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 - **Stream exhaustion:** Gateways MUST enforce `max_concurrent_streams` (default: 1000). Peers exceeding the limit are rejected with `STREAM_LIMIT_ERROR`. Unidirectional streams (envelope receive) and bidirectional streams (control, onion) have separate limits.
 - **Flow control attacks:** A malicious peer can open streams but never send data, consuming server resources. Gateways MUST enforce per-stream idle timeouts (default: 30s). Streams with no progress for the idle timeout are reset.
 - **Version downgrade:** Gateways MUST negotiate QUIC v1 (RFC 9000) or later. Version negotiation is handled by the QUIC handshake; gateways MUST NOT fall back to QUIC draft versions. Clients MUST abort if the server selects an unknown version.
+
+#### 8.8 TCP Transport Profile
+
+TCP provides reliable, ordered, byte-stream transport for DOT envelopes between gateways. Unlike higher-level platform adapters (Telegram, Discord), TCP is a direct peer-to-peer transport suitable for infrastructure nodes, quota router meshes, and internal service communication.
+
+##### 8.8.1 Platform Registration
+
+```rust
+PlatformType::Tcp = 0x0016
+```
+
+Domain identifiers follow the standard `BroadcastDomainId` scheme:
+
+```
+domain_id = BroadcastDomainId::new(PlatformType::Tcp, "192.168.1.10:4001")
+```
+
+For TCP, the `platform_id` is the socket address (`ip:port`) of the remote gateway.
+
+##### 8.8.2 Connection Management
+
+- **Framing:** Length-prefixed: `frame_len (u32 big-endian) || payload`. Maximum frame size: 16MB.
+- **Keepalive:** TCP keepalive probes every 30s. Idle connections timeout after 120s.
+- **Reconnection:** Exponential backoff starting at 1s, capped at 30s. Maximum 5 retry attempts before marking peer unhealthy.
+- **TLS:** Optional. When enabled, uses rustls with TLS 1.3. Gateways in the same trust domain MAY operate without TLS (e.g., localhost, private networks).
+
+##### 8.8.3 Encoding Mode
+
+TCP uses `RAW/{binary}` encoding — DOT envelopes are sent as raw bytes with length-prefix framing. No base64 encoding or platform-specific escaping is needed.
+
+##### 8.8.4 Security Considerations
+
+- **No built-in encryption:** TCP provides no encryption. Gateways MUST use TLS or OCrypt (RFC-0853) for confidentiality.
+- **No authentication:** TCP has no peer identity. Gateways MUST verify peer identity via HMAC on payloads or TLS client certificates.
+- **Replay protection:** Standard DOT replay cache applies (§11.2).
+- **Use cases:** Quota router mesh, internal service communication, development/testing, private network deployments.
+
+#### 8.9 UDP Transport Profile
+
+UDP provides lightweight, connectionless transport for DOT envelopes where low latency is prioritized over reliability. Suitable for gossip, capacity broadcasts, and time-sensitive notifications.
+
+##### 8.9.1 Platform Registration
+
+```rust
+PlatformType::Udp = 0x0017
+```
+
+Domain identifiers follow the standard `BroadcastDomainId` scheme:
+
+```
+domain_id = BroadcastDomainId::new(PlatformType::Udp, "192.168.1.10:4002")
+```
+
+##### 8.9.2 Datagram Framing
+
+- **Maximum datagram size:** 65535 bytes (theoretical UDP limit). Practical limit: 1400 bytes (MTU-safe). Envelopes exceeding this MUST be fragmented or sent via TCP.
+- **Framing:** Each datagram is a self-contained DOT envelope: `discriminator (1 byte) || payload`.
+- **No ordering guarantee:** Envelopes may arrive out of order. Consumers MUST handle reordering or use sequence numbers.
+- **No delivery guarantee:** Envelopes may be lost. Critical messages MUST use TCP or QUIC.
+
+##### 8.9.3 Use Cases
+
+- **Capacity gossip broadcast:** Quota router nodes broadcast capacity updates via UDP for low-latency propagation.
+- **Heartbeat/ping:** Lightweight peer liveness checks.
+- **Discovery announcements:** Nodes announce presence to nearby peers.
+- **Best-effort notifications:** Non-critical alerts that tolerate loss.
+
+##### 8.9.4 Security Considerations
+
+- **Spoofing:** UDP has no connection establishment. Gateways MUST verify HMAC on all received datagrams.
+- **Amplification:** A single forged datagram can cause a response to a spoofed address. Gateways MUST validate sender identity before responding.
+- **Fragmentation attacks:** Malicious fragmentation can cause resource exhaustion. Gateways MUST reject fragmented datagrams smaller than the minimum envelope size.
+- **Replay protection:** Standard DOT replay cache applies (§11.2).
 
 ### 10. Privacy and Encryption
 
@@ -1497,6 +1577,8 @@ Logical timestamps provide deterministic ordering independent of physical time.
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — core envelope, gateway model, platform adapters, phases |
 | 1.1.0 | 2026-05-30 | Added QUIC Transport Profile (§8.7): stream multiplexing, 0-RTT, connection management, two-layer handshake, `PlatformType::Quic = 0x0015`, `RAW/{binary}` encoding mode, Phase 5 implementation plan |
+| 1.2.0 | 2026-06-28 | Added TCP and UDP Transport Profiles (§8.8, §8.9): `PlatformType::Tcp = 0x0016`, `PlatformType::Udp = 0x0017`, length-prefix framing, RAW/{binary} encoding, security considerations. Rationale: QUIC sits at Layer 1 but has a PlatformType; TCP and UDP are equally valid as direct peer-to-peer transports for infrastructure nodes, quota router meshes, and internal service communication. |
+| 1.3.0 | 2026-06-28 | Fixed payload transport gap: renamed `send_envelope` → `send_message(domain, envelope, payload)` in `PlatformAdapter` trait. Added `payload: &[u8]` parameter so adapters receive the actual data alongside routing metadata. Updated §8.6 encoding mode descriptions to reference payload parameter. This fixes a design gap where `PlatformAdapterBridge` discarded payload bytes after computing `payload_hash`. |
 
 ## Related RFCs
 

@@ -27,6 +27,8 @@ pub enum PlatformType {
     Lark = 0x0013,
     QQ = 0x0014,
     Quic = 0x0015,
+    Tcp = 0x0016,
+    Udp = 0x0017,
 }
 
 impl PlatformType {
@@ -54,6 +56,67 @@ impl PlatformType {
             0x0013 => Some(Self::Lark),
             0x0014 => Some(Self::QQ),
             0x0015 => Some(Self::Quic),
+            0x0016 => Some(Self::Tcp),
+            0x0017 => Some(Self::Udp),
+            _ => None,
+        }
+    }
+
+    /// Short human-readable name for this platform type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Telegram => "telegram",
+            Self::Discord => "discord",
+            Self::Matrix => "matrix",
+            Self::Nostr => "nostr",
+            Self::Signal => "signal",
+            Self::IRC => "irc",
+            Self::Slack => "slack",
+            Self::WhatsApp => "whatsapp",
+            Self::Webhook => "webhook",
+            Self::NativeP2P => "native-p2p",
+            Self::Bluetooth => "bluetooth",
+            Self::LoRa => "lora",
+            Self::WebRTC => "webrtc",
+            Self::Bluesky => "bluesky",
+            Self::Twitter => "twitter",
+            Self::Reddit => "reddit",
+            Self::WeChat => "wechat",
+            Self::DingTalk => "dingtalk",
+            Self::Lark => "lark",
+            Self::QQ => "qq",
+            Self::Quic => "quic",
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+        }
+    }
+
+    /// Parse a platform type from a short name (case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "telegram" => Some(Self::Telegram),
+            "discord" => Some(Self::Discord),
+            "matrix" => Some(Self::Matrix),
+            "whatsapp" => Some(Self::WhatsApp),
+            "webhook" => Some(Self::Webhook),
+            "p2p" | "nativep2p" => Some(Self::NativeP2P),
+            "quic" => Some(Self::Quic),
+            "tcp" => Some(Self::Tcp),
+            "udp" => Some(Self::Udp),
+            "signal" => Some(Self::Signal),
+            "irc" => Some(Self::IRC),
+            "slack" => Some(Self::Slack),
+            "nostr" => Some(Self::Nostr),
+            "bluesky" => Some(Self::Bluesky),
+            "twitter" => Some(Self::Twitter),
+            "reddit" => Some(Self::Reddit),
+            "wechat" => Some(Self::WeChat),
+            "dingtalk" => Some(Self::DingTalk),
+            "lark" => Some(Self::Lark),
+            "qq" => Some(Self::QQ),
+            "bluetooth" => Some(Self::Bluetooth),
+            "lora" => Some(Self::LoRa),
+            "webrtc" => Some(Self::WebRTC),
             _ => None,
         }
     }
@@ -101,6 +164,8 @@ impl BroadcastDomainId {
             PlatformType::Lark => "lark",
             PlatformType::QQ => "qq",
             PlatformType::Quic => "quic",
+            PlatformType::Tcp => "tcp",
+            PlatformType::Udp => "udp",
         };
         let hash_input = format!("{}:{}", prefix, normalized);
         let hash = blake3::hash(hash_input.as_bytes());

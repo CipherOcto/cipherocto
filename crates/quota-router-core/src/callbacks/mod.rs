@@ -330,9 +330,21 @@ impl Drop for CallbackExecutor {
 mod tests {
     use super::*;
 
+    struct MockCallbackTarget;
+
+    #[async_trait::async_trait]
+    impl CallbackTarget for MockCallbackTarget {
+        async fn fire(&self, _event: &CallbackEvent) -> Result<(), CallbackError> {
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
     #[test]
     fn test_callback_type_variants() {
-        let types = vec![
+        let types = [
             CallbackType::Input,
             CallbackType::Success,
             CallbackType::Failure,
@@ -446,5 +458,92 @@ mod tests {
             queue_time_ms: 0,
         };
         assert!(timing.request_end.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_new() {
+        let executor = CallbackExecutor::new(10);
+        assert_eq!(executor.dropped_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_register() {
+        let executor = CallbackExecutor::new(10);
+        let target: Arc<dyn CallbackTarget> = Arc::new(MockCallbackTarget);
+        executor.register(CallbackType::Success, target);
+        // No panic = success
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_fire_success() {
+        let executor = CallbackExecutor::new(10);
+        let event = make_test_event(CallbackType::Success);
+        assert!(executor.fire(event).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_dropped_count() {
+        let executor = CallbackExecutor::new(1);
+        let event = make_test_event(CallbackType::Success);
+        // Fill the channel
+        let _ = executor.fire(event.clone()).await;
+        // This one should be dropped
+        let _ = executor.fire(event.clone()).await;
+        // Give time for processing
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(executor.dropped_count() >= 1);
+    }
+
+    #[test]
+    fn test_callback_type_debug() {
+        let t = CallbackType::Input;
+        let debug = format!("{:?}", t);
+        assert!(debug.contains("Input"));
+    }
+
+    #[test]
+    fn test_callback_type_serialization() {
+        let types = [
+            CallbackType::Input,
+            CallbackType::Success,
+            CallbackType::Failure,
+            CallbackType::Start,
+            CallbackType::End,
+            CallbackType::Service,
+        ];
+        for t in &types {
+            let json = serde_json::to_string(t).unwrap();
+            let deserialized: CallbackType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*t, deserialized);
+        }
+    }
+
+    fn make_test_event(callback_type: CallbackType) -> CallbackEvent {
+        CallbackEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            callback_type,
+            timestamp: Utc::now(),
+            request: CallbackRequest {
+                model: "gpt-4".into(),
+                messages: vec![],
+                temperature: None,
+                max_tokens: None,
+                stream: false,
+                provider: "openai".into(),
+                key_id: None,
+                team_id: None,
+                user_id: None,
+            },
+            response: None,
+            error: None,
+            key_metadata: None,
+            timing: CallbackTiming {
+                request_start: Utc::now(),
+                request_end: None,
+                total_ms: 0,
+                provider_latency_ms: 0,
+                queue_time_ms: 0,
+            },
+        }
     }
 }

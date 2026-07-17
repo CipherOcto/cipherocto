@@ -10,11 +10,11 @@ themselves.
 
 | ID  | Finding                                                      | R23d fix                                                    | Verified? |
 |-----|--------------------------------------------------------------|-------------------------------------------------------------|-----------|
-| N1  | `runtime_channels` never populated                           | `join_by_invite` pushes after `send_raw_line` succeeds; `list_own_groups` merges runtime with config | ✅ All 8 new tests + 41 pre-existing tests pass; runtime_channels is now reachable from `channel_for`, `send_envelope`, `list_own_groups` |
+| N1  | `runtime_channels` never populated                           | `join_by_invite` pushes after `send_raw_line` succeeds; `list_own_groups` merges runtime with config | ✅ All 8 new tests + 41 pre-existing tests pass; runtime_channels is now reachable from `channel_for`, `send_message`, `list_own_groups` |
 | N2  | `join_by_invite` no channel-name validation                  | Extracted `validate_channel_name` free fn used in both `IrcConfig::validate` and `join_by_invite` | ✅ `test_join_by_invite_rejects_join_zero`, `test_join_by_invite_rejects_malformed_channel_names`, `test_validate_channel_name_free_function` all pass |
 | N3  | `shutdown()` is a no-op; listener leaks past adapter lifetime | Added `shutdown_tx: Mutex<Option<watch::Sender<bool>>>`, `listener_handle: Mutex<Option<JoinHandle>>`; shutdown now signals stop, drops out_tx, aborts the handle | ⚠️ Mechanically correct, but **see N14**: doc-comment and test contradict each other and don't match the code |
 | N4  | `tx.send().await` blocks PING handling under backpressure    | Replaced with `tx.try_send()` + `tracing::warn!` on Full/Closed | ✅ Comment block correctly explains the trade-off (drop on overload vs disconnect); the warn gives visibility |
-| N5  | `PRIVMSG_OVERHEAD = 32` constant breaks for long channel names | Added `max_payload_for_channel(channel)` per-call helper; `send_envelope` uses it | ✅ `test_max_payload_for_channel_shrinks_with_longer_names` proves the assembled line stays ≤ 512 bytes for a 48-char channel |
+| N5  | `PRIVMSG_OVERHEAD = 32` constant breaks for long channel names | Added `max_payload_for_channel(channel)` per-call helper; `send_message` uses it | ✅ `test_max_payload_for_channel_shrinks_with_longer_names` proves the assembled line stays ≤ 512 bytes for a 48-char channel |
 | N6  | Unused `rustls-pemfile` dependency                           | Removed from `Cargo.toml`                                       | ✅ `cargo build -p octo-adapter-irc` succeeds without it |
 | N7  | `validate()` called every `ensure_connected`                 | Kept as-is (cost is negligible vs TCP connect)                 | ✅ Acknowledged; out of scope for this round |
 | N8  | `eprintln!` instead of `tracing`                             | Replaced with `tracing::warn!`/`tracing::info!` in listener paths | ✅ All listener errors now go through structured logging |
@@ -135,7 +135,7 @@ torn down (e.g., an embedded test scenario), the leak surfaces.
 ```
 
 `channel_for` is called from async methods (`leave_group`, `add_member`,
-`remove_member`, `destroy_group`, `list_own_groups`, `send_envelope`, etc.).
+`remove_member`, `destroy_group`, `list_own_groups`, `send_message`, etc.).
 The lock is held in async context. The `std::sync::Mutex` choice is fine
 because the critical section is short (no `.await` inside), but the
 rationale cited in the comment is wrong. (If `channel_for` were truly

@@ -37,7 +37,7 @@ async fn test_drop_all_failure_mode() {
 
     let envelope = MockNetwork::make_envelope([0xAA; 32], 1, [0x01; 32], 1000);
     let domain = adapter.domain_id("test");
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
 
     assert!(result.is_err());
     assert_eq!(adapter.outbound_count().await, 0);
@@ -50,7 +50,10 @@ async fn test_duplicate_failure_mode() {
 
     let envelope = MockNetwork::make_envelope([0xBB; 32], 1, [0x02; 32], 2000);
     let domain = adapter.domain_id("test");
-    adapter.send_envelope(&domain, &envelope).await.unwrap();
+    adapter
+        .send_message(&domain, &envelope, b"test")
+        .await
+        .unwrap();
 
     assert_eq!(adapter.outbound_count().await, 3);
 }

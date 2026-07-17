@@ -1,0 +1,21 @@
+[package]
+name = "quota-router-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "End-to-end integration tests for the quota router network (RFC-0870)"
+
+[dependencies]
+quota-router-core = { path = "../quota-router-core", features = ["test-helpers"] }
+octo-transport = { path = "../../octo-transport" }
+octo-network = { path = "../octo-network" }
+octo-adapter-tcp = { path = "../octo-adapter-tcp" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+async-trait = "0.1"
+bincode = "1"
+blake3 = "1.5"
+rand = "0.8"
+
+[dev-dependencies]
+hex = "0.4"
+tempfile = "3"

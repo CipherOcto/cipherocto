@@ -1,0 +1,49 @@
+[package]
+name = "octo-telegram-mtproto-onboard"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CLI binary for MTProto-backed Telegram auth onboarding (Mission 0850ab-c Phase B)."
+
+[[bin]]
+name = "octo-telegram-mtproto-onboard"
+path = "src/main.rs"
+
+[features]
+default = ["real-network"]
+real-network = ["octo-adapter-telegram-mtproto/real-network", "octo-telegram-mtproto-onboard-core/real-network"]
+
+[dependencies]
+octo-adapter-telegram-mtproto = { path = "../octo-adapter-telegram-mtproto", default-features = false }
+octo-telegram-mtproto-onboard-core = { path = "../octo-telegram-mtproto-onboard-core", default-features = false }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# R2-ARCH-23: `anyhow` was declared but never used; the
+# CLI uses `thiserror` (via the `OnboardError` enum) for
+# typed errors. The dependency is removed.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+directories = "6"
+# R26-S4: hidden TTY input for bot token, 2FA password.
+# Mirrors the TDLib onboard crate's setup. SMS codes are
+# not masked (short-lived) but are still zeroized on drop.
+rpassword = "7"
+# R26-S5: zeroize for sensitive byte buffers (bot token,
+# 2FA password, SMS code) — wiped on drop. The cipherocto
+# convention for handling secrets that need to be removed
+# from memory after use.
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+# IE-5 (R26): the test suite is the only consumer of
+# `tempfile` (the production binary writes to the
+# operator-supplied `--data-dir`, never to a tempdir).
+# Move to `[dev-dependencies]` to keep the prod dep
+# tree minimal. Previously `tempfile` appeared in both
+# `[dependencies]` and `[dev-dependencies]` (a
+# no-op duplicate, but a sign the file was
+# hand-edited rather than auto-generated).
+tempfile = "3"

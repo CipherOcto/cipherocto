@@ -42,6 +42,13 @@ pub mod secret_manager;
 pub mod storage;
 pub mod tracing;
 
+#[cfg(test)]
+pub mod testing;
+
+// Mesh network layer (QuotaRouterNode + gossip + forward + handler + scorer)
+// Always available — node mesh works in all 3 modes (litellm / any-llm / full).
+pub mod node;
+
 // native_http — reqwest → provider REST APIs (INTERNAL boundary #1 per RFC-0917)
 // Only compiled when litellm-mode or full feature is enabled
 #[cfg(any(feature = "litellm-mode", feature = "full"))]

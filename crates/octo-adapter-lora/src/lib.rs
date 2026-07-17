@@ -228,10 +228,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for LoraAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
 
@@ -310,6 +311,8 @@ impl PlatformAdapter for LoraAdapter {
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
+
+            ..Default::default()
         }
     }
 

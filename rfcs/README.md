@@ -326,7 +326,8 @@ Once accepted:
 | RFC-0858 (Networking)       | Onion Relay Routing                                         | Draft    | Privacy-preserving onion routing                                 |
 | RFC-0859 (Networking)       | Proof-Carrying Envelopes                                    | Draft    | Envelopes with attached proofs                                   |
 | RFC-0860 (Networking)       | Proof-of-Relay (PoRelay)                                    | Draft    | Cryptographic proof of relay participation                       |
-| RFC-0861 (Networking)       | CoordinatorAdmin Adapter Contract Refinements               | Draft    | Closes 11 R1 findings deferred from R20/R21: capability honesty, validation, error semantics |
+| RFC-0861 (Networking)       | CoordinatorAdmin Adapter Contract Refinements               | Accepted | Closes 11 R1 findings deferred from R20/R21: capability honesty, validation, error semantics |
+| RFC-0863 (Networking)       | General-Purpose Network Integration (`octo-transport`)       | Accepted | `NetworkSender` trait, `PlatformAdapterBridge`, `NodeTransport` — serves all 27+ use cases |
 
 ### Economics (RFC-0900-0999)
 

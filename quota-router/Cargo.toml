@@ -1,0 +1,33 @@
+[workspace]
+
+[package]
+name = "quota-router"
+version = "0.1.0"
+edition = "2021"
+description = "Distributed quota router network for CipherOcto (RFC-0870)"
+license = "Apache-2.0"
+
+[dependencies]
+octo-transport = { path = "../octo-transport" }
+octo-network = { path = "../crates/octo-network" }
+async-trait = "0.1"
+thiserror = "2.0"
+blake3 = "1.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+hex = "0.4"
+tokio = { version = "1", features = ["time", "sync"] }
+rand = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+prometheus = "0.13"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "time", "rt-multi-thread"] }
+proptest = "1"
+# The adversarial integration tests were written when the mesh layer lived
+# in this package's src/. Commit 616fe433 migrated the source to
+# crates/quota-router-core/ (canonical home). Add the migrated crate as a
+# dev-dependency so the tests can keep validating the 0870h acceptance
+# criteria against the new location.
+quota-router-core = { path = "../crates/quota-router-core" }

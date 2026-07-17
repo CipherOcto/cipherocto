@@ -250,6 +250,7 @@ mod tests {
             supports_raw_binary: false,
             rate_limit_per_second: 100,
             media_capabilities: None,
+            ..Default::default()
         }
     }
 
@@ -264,6 +265,7 @@ mod tests {
                 max_upload_bytes: 50_000_000,
                 supported_mime_types: vec![],
             }),
+            ..Default::default()
         }
     }
 
@@ -275,6 +277,7 @@ mod tests {
             supports_raw_binary: false,
             rate_limit_per_second: 100,
             media_capabilities: None,
+            ..Default::default()
         }
     }
 
@@ -286,6 +289,7 @@ mod tests {
             supports_raw_binary: true,
             rate_limit_per_second: 10_000,
             media_capabilities: None,
+            ..Default::default()
         }
     }
 

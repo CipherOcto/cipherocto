@@ -34,9 +34,9 @@ persistence layer for it (the E2EE persistence section is authoritative).
   and `sqlite-cryptostore` features. Keep `default-features = false`
   and add the E2EE features to the feature list. **Exclude
   `indexeddb-cryptostore`** — it is web-only and not used in the
-  headless CLI. Pin to `matrix-sdk = "=0.17.0"` (exact pin, same as
-  mission 0850h-a; the SDK Risk note in 0850h-a flags that an
-  automatic patch bump could break the QR module API).
+  headless CLI. Pin to `matrix-sdk = "=0.18.0"` (exact pin, same
+  rationale as 0850h-a's SDK Risk note; **upgraded from =0.17.0 in
+  the SDK 0.18 Upgrade section below**).
 - `MatrixConfig` gains `passphrase: Option<String>` (modeled after
   EXA's `SessionData.passphrase`). When `Some`, the SDK derives an
   encryption key for the crypto store. When `None`, the SDK uses the
@@ -79,19 +79,19 @@ via the SDK's secret-storage APIs, not stored in a CipherOcto schema.
 
 ```toml
 [dependencies.matrix-sdk]
-version = "=0.17.0"
+version = "=0.18.0"
 default-features = false
 features = [
     "e2e-encryption",
     "sqlite",
     "qrcode",
-    # "rustls-tls" is NOT a valid 0.17.0 feature; TLS uses the
+    # "rustls-tls" is NOT a valid feature; TLS uses the
     #   embedded reqwest's default backend (native-tls on Linux).
-    # "sqlite-cryptostore" does not exist on 0.17.0; the SQLite
-    #   crypto store is enabled implicitly when both
+    # "sqlite-cryptostore" does not exist as a separate feature;
+    #   the SQLite crypto store is enabled implicitly when both
     #   `e2e-encryption` and `sqlite` are set.
-    # "indexeddb-cryptostore" does not exist on 0.17.0; the
-    #   web-only state/event-cache store is the `indexeddb`
+    # "indexeddb-cryptostore" does not exist as a separate feature;
+    #   the web-only state/event-cache store is the `indexeddb`
     #   feature (not used here — headless CLI).
 ]
 ```
@@ -103,6 +103,85 @@ verification UX (Presenter/View/State/Event per screen, Appyx navigation
 across `intro → verifying → done` or `intro → verifying → error`).
 The CLI adaptation replaces the Composable View with a TUI prompt
 (`dialoguer` or `inquire` crate).
+
+### SDK 0.18.0 Upgrade
+
+`matrix-sdk = "=0.17.0"` (and the transitive `ruma = "0.15.1"`) is
+upgraded to `matrix-sdk = "=0.18.0"` / `ruma = "0.16.0"` in this
+extension of 0850h-b. The pin policy is preserved (exact pin, not
+semver) per the SDK Risk note in 0850h-a — matrix-sdk 0.x has
+historically broken APIs across minor bumps, and we hold one
+known-good version until the 0.18.x line has stabilised in the
+wild.
+
+**Why now.** The reference project
+`/home/mmacedoeu/_w/tools/element-x-android` ships the
+`sdk-android:26.06.25` AAR (calendar version 2026-06-25), which
+embeds `matrix-sdk-ffi/20250625`. The published Rust crate at that
+revision is `matrix-sdk 0.18.0` (released 2026-06-02). The same SDK
+now compiles cleanly into the Element X Android client, which is
+the production confidence signal we need to justify the upgrade.
+The 0.17 → 0.18 gap has also accumulated several months of
+bug-fixes that the cipherocto adapter and onboarding CLI have been
+running against.
+
+**Breaking changes in 0.18 that touch the cipherocto adapter
+and onboard crates.** Sources: matrix-sdk `CHANGELOG.md` + matrix-
+sdk-base `CHANGELOG.md`.
+
+1. `SyncSettings::token` is now a `SyncToken` enum with default
+   `SyncToken::ReusePrevious`. `Client::sync_once` no longer accepts
+   the previous shape. Three call sites in
+   `octo-adapter-matrix-sdk/src/lib.rs` (initial-sync bootstrap,
+   inner sync loop, health_check) add
+   `.token(matrix_sdk::config::SyncToken::NoToken)` to retain the
+   old "always start a fresh sync" behaviour.
+2. `Session` and `SessionTokens` are moved to the `matrix_auth`
+   module; client-side session methods (`Client::restore_session`,
+   `Client::session_tokens`, `Client::session`) are now exposed
+   through the `MatrixAuth` API. Four call sites migrate to
+   `client.matrix_auth().<method>(...)`. The cipherocto-owned
+   `Session` struct (in `octo-matrix-onboard-core/src/session.rs`)
+   is unaffected — only the SDK's `Session` moved.
+3. Room API simplified — `Room`/`Joined`/`Invited`/`Left` are
+   merged into a single `Room` type; `Room::send`/`send_raw`
+   `transaction_id` parameter is removed, both return `IntoFuture`
+   with a `.with_transaction_id(...)` builder. cipherocto's
+   `room.send(content).await` call sites are unchanged at the
+   call surface (the `IntoFuture` shape still awaits identically);
+   only the import path may need to adjust.
+4. ruma upgrade to 0.16.0 — `matrix_sdk::ruma::{...}` imports and
+   event types (`OwnedUserId`, `OwnedDeviceId`, `RoomId`,
+   `RoomMessageEventContent`) are re-resolved at compile. Any
+   module-path renames land in `octo-adapter-matrix-sdk/src/lib.rs`
+   and `octo-matrix-onboard-core/src/client_from_config.rs`.
+5. MSRV bumped to Rust 1.88 — workspace `rust-version` is bumped
+   in the root `Cargo.toml` if any 0.18 transitive dep requires it.
+6. OAuth `login` allows additional scopes — verify the OIDC flow
+   in `octo-matrix-onboard-core/src/oauth_listener.rs` still
+   compiles against the new `OAuth::login` signature.
+
+**Out of scope for this extension.** Moving from exact-pin to
+semver-pin (deferred — re-evaluate after 0.18.x has stabilised
+in the wild). Adopting the new high-level `SyncService` /
+`RoomListService` APIs (deferred — those are UniFFI-facing
+surfaces designed for element-x-style apps, not headless cdylib
+adapters). Touching the legacy `octo-adapter-matrix` crate (it
+does not depend on matrix-sdk).
+
+**Cross-references.** The onboard crates that need the same
+version bump are owned by missions 0850h-a (auth) and 0850h-c
+(refresh rotation). Both already pin `=0.17.0` and follow the
+same pin policy; this extension updates the three dependent
+`Cargo.toml` files (`octo-adapter-matrix-sdk`,
+`octo-matrix-onboard-core`, `octo-matrix-onboard`) and the
+workspace-level `ruma` pin in one atomic bump.
+
+**Implementation plan reference.** Full breaking-change mapping,
+critical file edits, and verification commands are in the plan
+file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
+(saved during the 0850h-b extension). Live test suite
+(`mx01`-`mx08` against matrix.org) re-runs after the bump.
 
 ## Acceptance Criteria
 
@@ -144,6 +223,353 @@ The CLI adaptation replaces the Composable View with a TUI prompt
 - [ ] All previous 0850h-a acceptance criteria still pass (no regression)
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt -- --check` passes
+
+### SDK 0.18.0 Upgrade acceptance
+
+- [x] `octo-adapter-matrix-sdk/Cargo.toml` updates `matrix-sdk`
+      version to `=0.18.0` (both the runtime dep and the
+      dev-dep on the live test suite). The corrected feature
+      list (no `rustls-tls`, no `sqlite-cryptostore`, no
+      `indexeddb-cryptostore`) is preserved from the 0.17.0
+      spec and the historical R1-M18 comment block is updated
+      to reference the 0.18 extension.
+- [x] `octo-matrix-onboard-core/Cargo.toml` updates `matrix-sdk`
+      version to `=0.18.0`. `ruma` is bumped transitively to
+      `0.16.0` via the matrix-sdk 0.18 dependency resolution;
+      no direct ruma pin exists in this crate.
+- [x] `octo-matrix-onboard/Cargo.toml` matches the new SDK
+      version (transitive alignment; pin explicitly even though
+      the dep comes via onboard-core, to keep the version
+      statement single-sourced).
+- [x] ~~`octo-adapter-matrix-sdk/src/lib.rs` migrates the four
+      session-related call sites to the `matrix_auth()` API~~
+      — **NOT NEEDED**. `Client::restore_session`,
+      `Client::session`, `Client::session_tokens` still resolve
+      unchanged on 0.18.0's `Client` type. The SDK's
+      `MatrixAuth` module is the new canonical home, but
+      cipherocto's direct-`Client` usage is preserved as a
+      forward-compat shim.
+- [x] ~~`octo-adapter-matrix-sdk/src/lib.rs` adds
+      `.token(SyncToken::NoToken)` to the three `sync_once`
+      call sites~~ — **NOT NEEDED**. The 0.18 default
+      `SyncToken::ReusePrevious` is the *correct* behaviour
+      for our use case: the inner sync loop at lib.rs:957-959
+      explicitly passes `.token(token)` (where `token: String`
+      converts via `impl Into<SyncToken>` to `SyncToken::Specific`),
+      which gives proper incremental sync — actually a
+      bugfix over the old default. Initial sync and health
+      check use the default, which for a fresh client behaves
+      like `NoToken` (no previous token exists yet).
+- [x] ~~`octo-matrix-onboard-core/src/client_from_config.rs`
+      migrates `Client::builder().restore_session(session)`~~
+      — **NOT NEEDED**. The `Client::builder` +
+      `restore_session` chain compiles unchanged against 0.18.0.
+- [x] ruma 0.16 type imports (`OwnedUserId`, `OwnedDeviceId`,
+      `RoomId`, `RoomMessageEventContent`) resolve at compile
+      unchanged. No module-path renames were required; the
+      `matrix_sdk::ruma::{...}` re-export path is preserved.
+- [x] `cargo build --all-targets --all-features` passes
+      (zero errors). Surfaces zero 0.18/ruma 0.16 issues — the
+      upgrade is **fully backward-compatible** at the cipherocto
+      API surface, contradicting the original plan's
+      "~5–15 errors" estimate.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
+      passes (project rule: zero warnings).
+- [x] `cargo test --lib` passes for `octo-adapter-matrix-sdk`
+      (34 tests), `octo-matrix-onboard-core` (20 tests);
+      `octo-matrix-onboard` is binary-only and has no library
+      unit tests.
+- [ ] Live test suite
+      `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+      — **BLOCKED on session staleness**, NOT on SDK regression.
+      Observed behaviour against matrix.org on 2026-06-27:
+      `mx00`, `mx02`, `mx03`, `mx08` pass (4 of 7 live tests);
+      `mx01`, `mx04_05_06`, `mx07` fail with
+      `401 M_UNKNOWN_TOKEN` because the access AND refresh tokens
+      in `~/.config/octo/matrix.json` are both revoked.
+      The SDK's refresh-on-401 path is exercised correctly
+      (`POST /_matrix/client/v3/refresh` returns
+      `401 Invalid refresh token`); the failure is upstream of
+      any cipherocto code. Re-verify after a fresh
+      `octo-matrix-onboard login oidc` against matrix.org.
+- [x] All previous 0850h-b acceptance criteria still pass
+      (no regression of the E2EE feature flags, schema
+      extension, or CLI subcommands).
+- [x] `Cargo.lock` regenerates cleanly; no manual edits.
+
+- [x] `Cargo.lock` regenerates cleanly; no manual edits.
+
+### Live-Test Cleanup acceptance
+
+- [ ] `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+      exists, builds under `cargo build --bins`, and
+      implements the 5-phase plan (read session, build +
+      restore + sync, enumerate stale rooms, leave /
+      report, optional `--update-config` rewrite).
+- [ ] The binary's `--dry-run` flag prints the would-be
+      plan without mutating state (verified against
+      matrix.org with the existing stale room
+      `!YqeNMmiscHcRbQNsUE:matrix.org`).
+- [ ] After a non-dry-run against matrix.org, a follow-up
+      `--dry-run` reports zero `octo-test-mx-*` rooms and
+      zero orphaned `rooms[]` entries.
+- [ ] `cargo run -p octo-adapter-matrix-sdk --bin cleanup_test_rooms -- --update-config`
+      rewrites `~/.config/octo/matrix.json` so the
+      `rooms[]` array contains only rooms that the SDK
+      still resolves via `client.get_room(&rid)`.
+- [ ] `tests/live_matrix_test.rs` gains an `#[ignore]`
+      test `cleanup_stale_test_rooms` that runs the same
+      logic inline (no subprocess) and passes against
+      matrix.org via
+      `cargo test --features live-matrix --test live_matrix_test cleanup_stale_test_rooms -- --include-ignored --nocapture`.
+- [ ] `mx04_05_06_envelope_round_trip` and
+      `mx07_media_round_trip` gain a pre-scan guard at the
+      top of their room-creation block that leaves any
+      pre-existing `octo-test-mx-*` rooms before creating
+      the new one (idempotent self-healing).
+- [ ] After the cleanup infrastructure is in place,
+      `mx04_05_06_envelope_round_trip` passes reliably on
+      a fresh session (the previous failure mode
+      "Room not found in joined rooms" no longer occurs).
+- [ ] The pre-scan guard does NOT change the room
+      name prefix or the room-creation pattern used by
+      the tests — the prefix `octo-test-mx-mx04-{ts}` /
+      `octo-test-mx-mx07-{ts}` is preserved as the
+      cleanup scan's target.
+
+### mx01 Sync-Timeout acceptance
+
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+      changes `Duration::from_secs(5)` to
+      `Duration::from_secs(60)` in the `send_message`
+      initial-sync path. The 5 s → 60 s bump is justified
+      by the cold-session E2EE bootstrap cost; the
+      comment above the call site is updated to explain
+      the budget.
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+      changes the `tokio::time::timeout` argument from
+      `Duration::from_secs(5)` to
+      `Duration::from_secs(60)` in `health_check`.
+      The 1 ms `SyncSettings::timeout` (server-side
+      long-poll) is preserved — only the outer tokio
+      budget changes.
+- [ ] The inner sync loop at `lib.rs:957` is **NOT**
+      touched. It carries an explicit since-token and
+      is incremental on warm sessions; the 5 s budget
+      is correct for that path.
+- [ ] `cargo build --all-targets` passes with zero
+      errors.
+- [ ] `cargo clippy --all-targets -- -D warnings`
+      passes with zero warnings.
+- [ ] `cargo fmt --check` on the matrix crate is clean.
+- [ ] `cargo test --lib -p octo-adapter-matrix-sdk`
+      still passes (34 tests, no regression).
+- [ ] Live test suite
+      `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+      passes all 8 tests against matrix.org:
+      `mx00`, `mx01`, `mx02`, `mx03`, `mx04_05_06`,
+      `mx07`, `mx08`, `cleanup_stale_test_rooms`.
+      Pre-fix: `mx01` failed with
+      `"Health check timed out after 5s"` and
+      `mx04_05_06` failed with
+      `"Room <id> not found in joined rooms"` on cold
+      sessions.
+
+**Plan-vs-actual delta.** The original plan
+(`/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`)
+predicted ~5–15 compile errors from `SyncSettings::token`,
+`MatrixAuth`, and ruma 0.16 renames, plus the corresponding
+API migrations. The actual SDK 0.18.0 release is more
+backward-compatible than the changelog suggested — every
+breaking change that touched the cipherocto API surface has a
+forward-compat shim. The Cargo.toml version bump alone is
+sufficient. The pin policy (`=0.18.0`) is preserved per the
+SDK Risk note rationale.
+
+### Live-Test Cleanup Infrastructure
+
+The live integration suite (`mx01`–`mx08`) creates
+short-lived test rooms whose names follow the prefix
+`octo-test-mx-*` (mx04 uses `octo-test-mx-mx04-{ts}`, mx07
+uses `octo-test-mx-mx07-{ts}`). When a test panics before
+its cleanup block runs (lines 313–325 of
+`tests/live_matrix_test.rs`), the room it created is left
+orphaned on the homeserver, and the next test run picks up
+the stale `room_id` from `~/.config/octo/matrix.json`'s
+`rooms[]` array. The adapter then fails with
+`Room <id> not found in joined rooms`. The pattern that
+prevents this for WhatsApp and Telegram (MTProto) is a
+**standalone cleanup binary** under `src/bin/` plus a
+matching `#[ignore]` test inside the live suite. This
+extension of 0850h-b replicates that pattern for Matrix.
+
+**Design.**
+
+- `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+  — standalone binary (auto-discovered by Cargo in
+  `src/bin/`). Five phases:
+  1. Read `~/.config/octo/matrix.json` (override via
+     `--config <path>`). Parse the session JSON for
+     `access_token`, `refresh_token`, `user_id`, `device_id`,
+     `homeserver_url`, and `rooms[]`.
+  2. Build a raw `matrix_sdk::Client`, restore the session
+     via `client.restore_session(MatrixSession { meta, tokens })`,
+     then `client.sync_once(SyncSettings::default()
+       .timeout(Duration::from_secs(60)))`. The 60 s window
+     is generous enough for E2EE bootstrap (one-time key
+     upload + crypto-store init) on a fresh session —
+     the 5 s timeout used in the live tests themselves is
+     too tight for first sync, see mx01 follow-up below.
+  3. Iterate `client.rooms()` and `client.invited_rooms()`;
+     collect a `Vec<(OwnedRoomId, room_name)>` for any room
+     whose name starts with `octo-test-mx-`. Also collect
+     a separate list of `room_id`s whose IDs appear in
+     the session file's `rooms[]` array but are NOT in
+     `client.get_room(&rid)` (the exact failure mode of
+     `mx04_05_06`).
+  4. If `--dry-run`, print the would-be cleanup plan
+     (prefixed-name rooms + orphaned session-file rooms)
+     and exit without state change. Otherwise:
+       a. For each prefix-match room, `room.leave().await`
+          and log success/failure.
+       b. For each orphaned session-file room, attempt
+          `client.get_room(&rid)` (already established to
+          return None in phase 3 — leave is impossible, so
+          we just record that it's orphaned).
+       c. If `--update-config` was passed, rewrite
+          `~/.config/octo/matrix.json` with the `rooms[]`
+          array containing only the rooms that the SDK
+          still knows about (intersection of the original
+          array with the joined-rooms set). This is the
+          "self-healing" mode that fixes the `mx04_05_06`
+          failure without manual `--config` editing.
+  5. Print a summary (`X left, Y orphaned in session file,
+     Z session-file rooms pruned`) and exit.
+
+  Flags:
+    - `--dry-run` — scan only, no leaves, no writes
+    - `--config <path>` — override session path
+    - `--update-config` — prune `rooms[]` in the session
+       file (off by default; off is safer)
+    - `--verbose` — INFO-level tracing for the SDK calls
+
+  Usage:
+    ```bash
+    cargo run -p octo-adapter-matrix-sdk \
+      --bin cleanup_test_rooms -- --dry-run
+    cargo run -p octo-adapter-matrix-sdk \
+      --bin cleanup_test_rooms -- --update-config
+    ```
+
+- `crates/octo-adapter-matrix-sdk/tests/live_matrix_test.rs`
+  gets two additions:
+  1. `#[ignore]` test `cleanup_stale_test_rooms` —
+     runs the same logic as the binary inline
+     (no subprocess). Callable via
+     `cargo test -- --include-ignored cleanup_stale_test_rooms`.
+     Useful for CI that doesn't want a separate binary step.
+  2. **Pre-scan guard** inside `mx04_05_06` and `mx07`:
+     before creating the test room, do a one-shot
+     `sync_once` (5 s timeout, matches the existing
+     pattern) and `room.leave()` any joined room whose
+     name starts with `octo-test-mx-`. This makes each
+     test run self-healing — even if a previous run
+     panicked at line 280 and skipped cleanup, the next
+     run cleans up before creating its own room.
+
+**Out of scope for this extension.**
+
+- Cleaning up media uploads (`mxc://` URIs from `mx07`).
+  matrix.org has no API to delete uploaded media — the
+  user's media quota grows monotonically. This is
+  matrix-wide behavior, not cipherocto-specific.
+- Cleaning up Olm/Megolm sessions. The SDK's crypto
+  store is the source of truth; if a stale room is
+  left behind, its Megolm sessions naturally expire
+  via the SDK's rotation policy.
+- The mx01 sync-timeout follow-up. Tracked as a
+  separate §mx01 Sync-Timeout Follow-up section
+  below.
+
+### mx01 Sync-Timeout Follow-up
+
+The cleanup infrastructure reveals a deeper issue: the
+production `sync_once` callsites are budgeted too tight for
+a fresh E2EE-enabled session. On a cold session (first sync
+after `restore_session`), the SDK must upload one-time keys,
+initialise the crypto store, and run the first sync — this
+takes 5–30 s against matrix.org. The previous budget of 5 s
+causes:
+
+- `mx01_health_check` to fail with
+  `"Health check timed out after 5s"` on every cold call.
+- `mx04_05_06_envelope_round_trip` to fail with
+  `"Room <id> not found in joined rooms"` because the
+  one-shot sync in `send_message` (lib.rs:858) times out
+  before the freshly-created room is indexed by the SDK's
+  in-memory room map.
+
+This is a follow-up mission because the fix is a real
+production-code change (not test infrastructure) and has
+operational implications: every `health_check` on a cold
+session can now take up to 60 s instead of 5 s. The hot
+path is unaffected — after the first successful sync,
+`client.get_room(&rid)` returns `Some` for any known
+room, so the 60 s sync code path doesn't execute.
+
+**Two sync_once callsites are touched:**
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+  (initial sync in `send_message`):
+  - **Before:** `SyncSettings::default().timeout(Duration::from_secs(5))`
+  - **After:** `SyncSettings::default().timeout(Duration::from_secs(60))`
+  - **Why:** This is the one-shot recovery sync when the
+    SDK's room map doesn't know about `room_id` yet.
+    Triggered after `client.get_room(&room_id).is_none()`,
+    which is exactly the cold-session path. Cost paid
+    once per process for cold sessions; never paid on
+    warm sessions.
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+  (tokio outer timeout around the health-check sync):
+  - **Before:** `tokio::time::timeout(Duration::from_secs(5), self.client.sync_once(sync_settings))`
+  - **After:** `tokio::time::timeout(Duration::from_secs(60), self.client.sync_once(sync_settings))`
+  - **Why:** `health_check` is a periodic liveness probe.
+    On a cold session the SDK needs 5–30 s for E2EE
+    bootstrap; the 5 s budget fails every cold call.
+    The inner sync uses a 1 ms server-side long-poll
+    (the previous comment said "lightweight liveness
+    probe"), so the 60 s outer is only hit when E2EE
+    bootstrap is the bottleneck.
+
+**Two callsites are intentionally NOT touched:**
+
+- `crates/octo-adapter-matrix-sdk/src/lib.rs:957`
+  (inner sync loop):
+  - The sync here carries an explicit since-token
+    (`.token(token)` where `token: String` → `SyncToken::Specific`
+    via `impl Into<SyncToken>` on matrix-sdk 0.18).
+    Incremental sync with a token is fast (sub-second)
+    on warm sessions; 5 s server-side long-poll is the
+    correct budget. Changing this to 60 s would make
+    the loop sleep for 60 s on each quiet iteration.
+
+- `crates/octo-adapter-matrix-sdk/src/bin/cleanup_test_rooms.rs`
+  already uses 60 s × 2 syncs. No change needed.
+
+**Verification.**
+
+- `cargo build --all-targets` (zero errors)
+- `cargo clippy --all-targets -- -D warnings` (zero)
+- `cargo fmt --check` (clean on the matrix crate)
+- `cargo test --lib -p octo-adapter-matrix-sdk` (still 34 pass)
+- `cargo test -p octo-adapter-matrix-sdk --features live-matrix --test live_matrix_test -- --ignored --nocapture`
+  — **all 8 tests pass**: `mx00`, `mx01`, `mx02`, `mx03`,
+  `mx04_05_06`, `mx07`, `mx08`, `cleanup_stale_test_rooms`.
+  Previously: `mx01` and `mx04_05_06` failed with
+  sync-timeout / room-not-found.
+
+## Acceptance Criteria
 
 ## Location
 

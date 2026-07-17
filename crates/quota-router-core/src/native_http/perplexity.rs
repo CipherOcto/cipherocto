@@ -1,6 +1,6 @@
 // perplexity — Perplexity via reqwest (native_http, LiteLLM mode)
 
-use super::{
+use crate::native_http::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
     ProviderError, StreamingResponse,
 };
@@ -349,6 +349,7 @@ fn convert_response(data: PerplexityResponse, _status: u16) -> HttpCompletionRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_http::HttpBatchCreateRequest;
     use crate::native_http::HttpProvider;
 
     #[test]
@@ -544,5 +545,225 @@ mod tests {
         let provider =
             PerplexityProvider::new().with_api_base("https://custom.perplexity.ai".to_string());
         assert_eq!(provider.api_base, "https://custom.perplexity.ai");
+    }
+
+    #[test]
+    fn test_supports_model() {
+        let p = PerplexityProvider::new();
+        assert!(p.supports_model("perplexity/sonar-small-online"));
+        assert!(!p.supports_model("gpt-4"));
+    }
+
+    #[test]
+    fn test_default_trait_methods() {
+        let p = PerplexityProvider::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert!(rt.block_on(p.get_response("id", None, None, None)).is_err());
+        assert!(rt
+            .block_on(p.delete_response("id", None, None, None))
+            .is_err());
+        let batch_req = HttpBatchCreateRequest {
+            input_file: "f".into(),
+            endpoint: "/v1".into(),
+            completion_window: "24h".into(),
+            metadata: None,
+            api_base: None,
+            timeout: None,
+        };
+        assert!(rt.block_on(p.batch_create(&batch_req, None)).is_err());
+        assert!(rt
+            .block_on(p.batch_retrieve("id", None, None, None))
+            .is_err());
+        assert!(rt.block_on(p.batch_cancel("id", None, None, None)).is_err());
+        assert!(rt.block_on(p.batch_list(None, None, None, None)).is_err());
+        assert!(rt
+            .block_on(p.batch_results("id", None, None, None))
+            .is_err());
+        assert!(rt.block_on(p.list_models(None, None, None)).is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = PerplexityProvider::new();
+        let req = HttpCompletionRequest {
+            model: "perplexity/sonar-small-online".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: Some("http://127.0.0.1:1".into()),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.completion(&req, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_with_provider_params() {
+        let s = crate::testing::mock_http::MockHttpServer::with_json(&serde_json::json!({
+            "id": "test-id",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "sonar-small-online",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi!"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }))
+        .await;
+        let req = HttpCompletionRequest {
+            model: "perplexity/sonar-small-online".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: Some(s.base_url()),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: Some(serde_json::json!({
+                "return_citations": true,
+                "search_domain_filter": ["example.com"],
+                "unknown_key": "ignored"
+            })),
+            timeout: None,
+        };
+        let p = PerplexityProvider::new();
+        let r = p.completion(&req, Some("k")).await.unwrap();
+        assert_eq!(r.choices.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_network_error() {
+        let p = PerplexityProvider::new();
+        let req = HttpCompletionRequest {
+            model: "perplexity/sonar-small-online".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: Some(true),
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: Some("http://127.0.0.1:1".into()),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert!(p.streaming_completion(&req, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_with_provider_params() {
+        let s = crate::testing::mock_http::MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"
+                        .to_string(),
+                )
+                .unwrap()
+        })
+        .await;
+        let req = HttpCompletionRequest {
+            model: "perplexity/sonar-small-online".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: Some(true),
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: Some(s.base_url()),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: Some(serde_json::json!({
+                "return_citations": true,
+                "search_recency_filter": "day"
+            })),
+            timeout: None,
+        };
+        let p = PerplexityProvider::new();
+        let mut r = p.streaming_completion(&req, Some("k")).await.unwrap();
+        let chunk = r.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(
+            chunk,
+            crate::native_http::StreamingChunk::RawSSE(_)
+        ));
     }
 }

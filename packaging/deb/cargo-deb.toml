@@ -1,0 +1,48 @@
+# Phase 5 Part G: cargo-deb metadata for `octo-whatsapp`.
+# Build with: `cargo install cargo-deb --locked && cargo deb --no-build -p octo-whatsapp`
+# Produces: target/debian/octo-whatsapp_<version>_<arch>.deb
+
+[package.metadata.deb]
+name = "octo-whatsapp"
+description = "WhatsApp Web runtime daemon, CLI, and MCP server (CipherOcto substrate)"
+extended-description = """\
+Octo-Whatsapp is a private-by-default runtime for WhatsApp Web sessions,
+exposing CLI and MCP-server surfaces for agent-driven use. Features:
+  - JSON-RPC over unix socket
+  - Phase 5 security: token rotation + bearer auth + grace period
+  - Phase 5 observability: Prometheus /metrics + HTTP /health + /ready
+  - Phase 5 rules + triggers + actions engine
+  - Phase 5 audit log with SHA-256 hash chain
+"""
+section = "net"
+priority = "optional"
+maintainer = "CipherOcto <ops@cipherocto.example>"
+copyright = "2026 CipherOcto"
+license-file = ["LICENSE", "5"]
+depends = "$auto, libc6, libssl3, ca-certificates"
+recommends = "systemd"
+conflicts = []
+provides = ["octo-whatsapp"]
+assets = [
+    ["target/release/octo-whatsapp", "usr/bin/", "755"],
+    ["packaging/systemd/octo-whatsapp.service", "lib/systemd/system/", "644"],
+    ["README.md", "usr/share/doc/octo-whatsapp/README", "644"],
+]
+# Persistent state directories for the daemon.
+extended-description-script = "packaging/deb/postinst"
+pre-depends = ["adduser"]
+# Systemd unit activation.
+default-features = false
+features = ["systemd"]
+systemd-units = [
+    { unit-name = "octo-whatsapp.service", unit-scope = "system", enable = false },
+]
+
+[package.metadata.deb.systemd-units.octo-whatsapp.service]
+Description = "Octo WhatsApp Runtime Daemon"
+DefaultDependencies = false
+
+[package.metadata.systemd]
+unit-name = "octo-whatsapp.service"
+unit-scope = "system"
+enable = false

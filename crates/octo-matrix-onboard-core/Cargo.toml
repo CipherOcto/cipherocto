@@ -6,12 +6,16 @@ license = "MIT OR Apache-2.0"
 description = "Library half of octo-matrix-onboard: auth flows, session capture, QR rendering, OAuth callback listener."
 
 [dependencies]
-# Pinned to match the adapter; the SDK Risk note (mission 0850h-a) flags
-# that an automatic patch bump to 0.17.x could break the QR module API.
-# `rustls-tls` is NOT a valid 0.17.0 feature; TLS is provided by the
-# embedded reqwest's default backend (native-tls on Linux). `api` does
-# not exist on 0.17.0 — login APIs are unconditionally available.
-matrix-sdk = { version = "=0.17.0", default-features = false }
+# Pinned to match the adapter; the SDK Risk note (mission 0850h-a)
+# flags that an automatic patch bump to 0.x.y could break the QR
+# module API. Upgraded from 0.17.0 → 0.18.0 in the 0850h-b SDK
+# 0.18 extension; the upgrade is backward-compatible for the
+# onboard-core API surface (Client::builder().restore_session()
+# and ruma type imports unchanged). `rustls-tls` is NOT a valid
+# 0.x feature; TLS is provided by the embedded reqwest's default
+# backend (native-tls on Linux). `api` does not exist on 0.x —
+# login APIs are unconditionally available.
+matrix-sdk = { version = "=0.18.0", default-features = false }
 # Async runtime
 tokio = { workspace = true }
 # Localhost OAuth callback listener (axum 0.7 is hyper-1 compatible)

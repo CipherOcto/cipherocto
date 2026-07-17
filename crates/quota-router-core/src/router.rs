@@ -2162,4 +2162,832 @@ mod tests {
             assert!(p.avg_latency_us() > 0);
         }
     }
+
+    #[test]
+    fn test_routing_strategy_display() {
+        use std::str::FromStr;
+        assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
+        assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
+        assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
+        assert_eq!(RoutingStrategy::LatencyBased.to_string(), "latency-based");
+        assert_eq!(RoutingStrategy::CostBased.to_string(), "cost-based");
+        assert_eq!(RoutingStrategy::UsageBased.to_string(), "usage-based");
+        assert_eq!(RoutingStrategy::UsageBasedV2.to_string(), "usage-based-v2");
+        assert_eq!(RoutingStrategy::Weighted.to_string(), "weighted");
+        // Round-trip Display -> FromStr
+        for s in [
+            RoutingStrategy::SimpleShuffle,
+            RoutingStrategy::RoundRobin,
+            RoutingStrategy::LeastBusy,
+            RoutingStrategy::LatencyBased,
+            RoutingStrategy::CostBased,
+            RoutingStrategy::UsageBased,
+            RoutingStrategy::UsageBasedV2,
+            RoutingStrategy::Weighted,
+        ] {
+            assert_eq!(RoutingStrategy::from_str(&s.to_string()).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn test_from_str_unknown_strategy_error() {
+        use std::str::FromStr;
+        let err = RoutingStrategy::from_str("nonsense-strategy").unwrap_err();
+        assert!(err.contains("Unknown routing strategy"));
+        assert!(err.contains("nonsense-strategy"));
+        // empty string
+        assert!(RoutingStrategy::from_str("").is_err());
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_prefers_low_penalty() {
+        let mut tracker = LatencyTracker::default();
+
+        // Baseline samples — azure is faster than openai
+        for _ in 0..3 {
+            tracker.record("azure", 100_000, None);
+            tracker.record("openai", 500_000, None);
+        }
+
+        // No penalties — azure wins on raw latency
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties = std::collections::HashMap::new();
+        let (name, _score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("should select a provider");
+        assert_eq!(name, "azure");
+
+        // Heavy penalty on azure — score becomes (300000 + 10_000_000) / (3+1) = 2_575_000us.
+        // Openai's 500_000us (no penalty) now wins.
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![10_000_000]);
+        let (name2, _) = tracker
+            .best_provider_with_penalties(&penalties, &avail, false)
+            .expect("should still select something");
+        assert_eq!(name2, "openai");
+
+        // No available providers matching recorded samples → None
+        let only_garbage: std::collections::HashSet<&str> = ["nonexistent"].into_iter().collect();
+        assert!(tracker
+            .best_provider_with_penalties(&empty_penalties, &only_garbage, false)
+            .is_none());
+    }
+
+    #[test]
+    fn test_latency_based_routing_no_available_providers_returns_none() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // Put BOTH providers into cooldown so none are available
+        for p in router
+            .providers
+            .get_mut("gpt-3.5-turbo")
+            .unwrap()
+            .iter_mut()
+        {
+            p.cooldown_tracker.enter_cooldown(3600);
+        }
+
+        // Should return None — no provider is available
+        assert!(router.route("gpt-3.5-turbo", false).is_none());
+    }
+
+    #[test]
+    fn test_usage_based_v2_routing_prefers_low_rpm_high_success() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::UsageBasedV2,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // azure: low RPM + high success rate → preferred
+        // openai: high RPM + low success rate → avoided
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                if p.provider.name == "azure" {
+                    p.current_rpm = 10;
+                    p.success_count = 95;
+                    p.total_count = 100; // 95% success
+                } else {
+                    p.current_rpm = 500;
+                    p.success_count = 50;
+                    p.total_count = 100; // 50% success
+                }
+            }
+        }
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(name, "azure");
+    }
+
+    #[test]
+    fn test_evict_old_buckets_for_removes_expired() {
+        // TTL=0 means any bucket older than 0s is evicted
+        let mut metrics = ProviderMetrics::with_ttl(0);
+        metrics.record("dep-1", 100);
+
+        // Sanity: bucket was recorded (current minute has at least 1 rpm)
+        assert_eq!(
+            metrics.rpm_at("dep-1", &ProviderMetrics::current_minute_key()),
+            Some(1)
+        );
+
+        // Evict — ttl=0 + Instant::now() >= created → all entries dropped
+        metrics.evict_old_buckets_for("dep-1");
+
+        // Same minute bucket should be gone after eviction
+        assert!(metrics
+            .rpm_at("dep-1", &ProviderMetrics::current_minute_key())
+            .is_none());
+
+        // Unknown deployment is a no-op (does not panic)
+        let mut m2 = ProviderMetrics::with_ttl(60);
+        m2.evict_old_buckets_for("nonexistent");
+    }
+
+    #[test]
+    fn test_rolling_avg_tpm_averages_recent_minutes() {
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("dep-1", 100);
+
+        // Average over 5 minutes — should be > 0
+        let avg = metrics
+            .rolling_avg_tpm("dep-1", 5)
+            .expect("should compute avg");
+        assert!(avg > 0.0);
+
+        // Unknown deployment → None
+        assert!(metrics.rolling_avg_tpm("nonexistent", 5).is_none());
+
+        // minutes=0 → cutoff filter excludes everything → empty recent → None
+        // (Documenting this branch — depends on cutoff math but should not panic.)
+        let _ = metrics.rolling_avg_tpm("dep-1", 0);
+    }
+
+    #[test]
+    fn test_reset_usage_and_reset_all_usage_zero_counters() {
+        let providers = test_providers();
+        let mut router = Router::new(RouterConfig::default(), providers);
+
+        // Seed non-zero RPM/TPM on every provider of gpt-3.5-turbo
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                p.current_rpm = 999;
+                p.current_tpm = 1234;
+            }
+        }
+
+        // reset_usage on first provider — only that one zeroes
+        router
+            .get_provider("gpt-3.5-turbo", 0)
+            .unwrap()
+            .reset_usage();
+        let first = router.get_provider("gpt-3.5-turbo", 0).unwrap();
+        assert_eq!(first.current_rpm, 0);
+        assert_eq!(first.current_tpm, 0);
+
+        // Second provider should still be at 999 / 1234
+        let second = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        assert_eq!(second.current_rpm, 999);
+        assert_eq!(second.current_tpm, 1234);
+
+        // reset_all_usage — every provider zeros
+        router.reset_all_usage();
+        for p in router.providers.get("gpt-3.5-turbo").unwrap().iter() {
+            assert_eq!(p.current_rpm, 0);
+            assert_eq!(p.current_tpm, 0);
+        }
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_streaming_uses_ttft_ignoring_latency_and_penalties() {
+        let mut tracker = LatencyTracker::default();
+        // openai: excellent latency (50ms) but terrible TTFT (5s)
+        // azure:  poor latency (500ms)   but great TTFT (50ms)
+        // A heavy penalty on azure must NOT flip the result for streaming.
+        for _ in 0..3 {
+            tracker.record("openai", 50_000, Some(5_000_000));
+            tracker.record("azure", 500_000, Some(50_000));
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![u64::MAX]); // would drown azure in non-streaming
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&penalties, &avail, true)
+            .expect("streaming must pick by TTFT");
+        // TTFT-only path → azure wins (50ms TTFT vs 5s TTFT)
+        assert_eq!(name, "azure");
+        // Score must be the TTFT average, NOT latency or penalty-weighted value
+        assert!(
+            (score - 50_000.0).abs() < 0.1,
+            "expected TTFT avg ~50_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_streaming_without_ttft_falls_through_to_latency() {
+        let mut tracker = LatencyTracker::default();
+        // openai low latency, no TTFT; azure high latency, no TTFT.
+        // Streaming flag is set but ttft_samples is empty for both → fall through
+        // to the non-streaming penalty-adjusted path.
+        for _ in 0..3 {
+            tracker.record("openai", 100_000, None);
+            tracker.record("azure", 500_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, true)
+            .expect("streaming w/o TTFT falls through to latency path");
+        assert_eq!(name, "openai");
+        assert!(
+            (score - 100_000.0).abs() < 0.1,
+            "expected base latency 100_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_empty_penalties_returns_base_latency() {
+        let mut tracker = LatencyTracker::default();
+        // openai 200ms, azure 800ms. No penalties → raw base_latency decides.
+        for _ in 0..4 {
+            tracker.record("openai", 200_000, None);
+            tracker.record("azure", 800_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("must select a provider");
+        assert_eq!(name, "openai");
+        // Empty penalties → base_latency used as-is (no weighting denominator change)
+        assert!(
+            (score - 200_000.0).abs() < 0.1,
+            "expected raw base_latency 200_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_weighted_average_uses_combined_denominator() {
+        let mut tracker = LatencyTracker::default();
+        // openai: 3 samples × 300_000us = 900_000us total
+        for _ in 0..3 {
+            tracker.record("openai", 300_000, None);
+        }
+        // azure: 3 samples × 100_000us + 1 penalty of 800_000us
+        // effective = (300_000 + 800_000) / (3 + 1) = 275_000us → wins over openai's 300_000
+        for _ in 0..3 {
+            tracker.record("azure", 100_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![800_000u64]);
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&penalties, &avail, false)
+            .expect("must select a provider");
+        assert_eq!(name, "azure");
+        assert!(
+            (score - 275_000.0).abs() < 0.1,
+            "expected weighted avg 275_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_skips_unavailable_keeps_others() {
+        let mut tracker = LatencyTracker::default();
+        // openai: slow (1s), no penalty
+        // azure:  fast (100ms), but marked unavailable (cooldown)
+        // Result: openai wins because azure is filtered out by available_names.
+        for _ in 0..3 {
+            tracker.record("openai", 1_000_000, None);
+            tracker.record("azure", 100_000, None);
+        }
+        // Only openai is in the available set.
+        let avail: std::collections::HashSet<&str> = ["openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("must select openai since azure is filtered");
+        assert_eq!(name, "openai");
+        assert!(
+            (score - 1_000_000.0).abs() < 0.1,
+            "expected 1_000_000us base, got {score}"
+        );
+
+        // Now exclude BOTH → None (already covered by existing test, but reconfirm here
+        // to lock the available_names filter behavior alongside the partial case).
+        let neither: std::collections::HashSet<&str> = ["other1", "other2"].into_iter().collect();
+        assert!(tracker
+            .best_provider_with_penalties(&empty_penalties, &neither, false)
+            .is_none());
+    }
+
+    #[test]
+    fn test_latency_based_with_cooldown_expires_resets_state_and_clears_penalties() {
+        // Expire an active cooldown (TTL=0 → end == now) and assert the cleanup triad:
+        //   - state moves Cooldown → Healthy
+        //   - reset_minute_window() zeros total/failed counters
+        //   - clear_penalty_latencies() empties the penalty vec
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        router.latency_tracker.record("openai", 500_000, None);
+        router.latency_tracker.record("azure", 100_000, None);
+
+        // Seed azure with cooldown + penalties + non-zero counters
+        // (azure is index 1 in test_providers)
+        let azure_idx = 1usize;
+        {
+            let p = router.get_provider("gpt-3.5-turbo", azure_idx).unwrap();
+            p.cooldown_tracker.enter_cooldown(0); // TTL=0 → immediately expired
+            p.cooldown_tracker.record_timeout_penalty(999_999);
+            assert_eq!(p.cooldown_tracker.state, DeploymentState::Cooldown);
+            assert!(!p.cooldown_tracker.get_penalty_latencies().is_empty());
+            assert!(p.cooldown_tracker.total_requests > 0);
+        }
+
+        // Route: must expire azure's cooldown, then pick azure (faster baseline)
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        // Diagnostic: capture state pre-assertion so panic message shows the cause
+        let azure_state_after = router
+            .get_provider("gpt-3.5-turbo", 1)
+            .unwrap()
+            .cooldown_tracker
+            .state;
+        assert_eq!(
+            azure_state_after,
+            DeploymentState::Healthy,
+            "precondition: cooldown expiry must flip azure state to Healthy"
+        );
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "azure",
+            "post-expiry azure must be selectable and preferred on latency"
+        );
+
+        // Post-conditions: cleanup triad executed
+        let azure = router.get_provider("gpt-3.5-turbo", azure_idx).unwrap();
+        assert_eq!(
+            azure.cooldown_tracker.state,
+            DeploymentState::Healthy,
+            "state must flip Cooldown → Healthy on expiry"
+        );
+        assert!(
+            azure.cooldown_tracker.get_penalty_latencies().is_empty(),
+            "penalty_latencies must be cleared after cooldown expiry"
+        );
+        assert_eq!(azure.cooldown_tracker.total_requests, 0);
+        assert_eq!(azure.cooldown_tracker.failed_requests, 0);
+    }
+
+    #[test]
+    fn test_latency_based_with_cooldown_uses_penalty_path_when_penalties_present() {
+        // Force entry into the `else` branch (penalty_map non-empty) of
+        // latency_based_with_cooldown_impl: provider has penalty_latencies →
+        // best_provider_with_penalties decides (NOT best_provider_among).
+        //
+        // azure: 3×100ms latency + 1×1s penalty → weighted 325ms
+        // openai: 3×500ms latency, no penalties → 500ms
+        // Penalty-adjusted azure (325ms) < openai (500ms) → azure should win.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        for _ in 0..3 {
+            router.latency_tracker.record("azure", 100_000, None);
+            router.latency_tracker.record("openai", 500_000, None);
+        }
+        // Seed penalty on azure (index 1)
+        let p = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        p.cooldown_tracker.record_timeout_penalty(1_000_000);
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "azure",
+            "penalty-weighted avg (325ms) must beat openai's raw 500ms"
+        );
+    }
+
+    #[test]
+    fn test_latency_based_with_cooldown_penalty_path_streaming_uses_ttft() {
+        // Penalty-path + streaming + TTFT data: best_provider_with_penalties must
+        // pick by TTFT (ignoring penalties per the streaming contract). Heavy penalty
+        // on azure must NOT flip the result.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // azure: low latency (50ms) BUT terrible TTFT (5s)
+        // openai: high latency (500ms) BUT great TTFT (50ms)
+        for _ in 0..3 {
+            router
+                .latency_tracker
+                .record("azure", 50_000, Some(5_000_000));
+            router
+                .latency_tracker
+                .record("openai", 500_000, Some(50_000));
+        }
+        let p = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        p.cooldown_tracker.record_timeout_penalty(u64::MAX);
+
+        let idx = router.route("gpt-3.5-turbo", true).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "openai",
+            "streaming + penalty path must select by TTFT (openai 50ms vs azure 5s)"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_rpm_exact_average_single_bucket() {
+        // 6 records in same minute → single bucket rpm=6 → avg=6.0 exactly.
+        // Locks the `sum / len` formula at L886 against future drift.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        for _ in 0..6 {
+            metrics.record("d1", 10);
+        }
+        let avg = metrics
+            .rolling_avg_rpm("d1", 5)
+            .expect("avg exists after recording");
+        assert_eq!(
+            avg, 6.0,
+            "rpm avg must equal request count in single bucket"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_tpm_exact_average_single_bucket() {
+        // Tokens 100+200+300+400 in same minute → tpm=1000 → avg=1000.0 exactly.
+        // Locks the `sum / len` formula at L916.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("d1", 100);
+        metrics.record("d1", 200);
+        metrics.record("d1", 300);
+        metrics.record("d1", 400);
+        let avg = metrics
+            .rolling_avg_tpm("d1", 5)
+            .expect("avg exists after recording");
+        assert_eq!(
+            avg, 1000.0,
+            "tpm avg must equal total tokens in single bucket"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_rpm_and_tpm_tracked_independently() {
+        // rpm counts requests (1 each), tpm sums tokens (variable). Verify
+        // neither field leaks into the other — both must be reported correctly
+        // from the same BucketStats.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        for _ in 0..3 {
+            metrics.record("d1", 1000);
+        }
+        assert_eq!(
+            metrics.rolling_avg_rpm("d1", 5).unwrap(),
+            3.0,
+            "rpm must equal record() count, independent of tokens"
+        );
+        assert_eq!(
+            metrics.rolling_avg_tpm("d1", 5).unwrap(),
+            3000.0,
+            "tpm must equal sum of tokens, independent of rpm count"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_returns_none_when_minutes_filter_excludes_all_buckets() {
+        // minutes=0 → cutoff = now → bucket timestamp (slightly older now) < cutoff
+        // → filtered out → `recent` empty → None. Locks the `if recent.is_empty()`
+        // branch (L882-884 and L912-914) with an explicit assertion.
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("d1", 100);
+        // Tiny sleep to guarantee Instant::now() has advanced past the record
+        // call's timestamp; without it the filter is timing-flaky on fast CPUs.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(
+            metrics.rolling_avg_rpm("d1", 0).is_none(),
+            "minutes=0 must filter out the just-created bucket (rpm path)"
+        );
+        assert!(
+            metrics.rolling_avg_tpm("d1", 0).is_none(),
+            "minutes=0 must filter out the just-created bucket (tpm path)"
+        );
+    }
+
+    #[test]
+    fn test_rolling_avg_unknown_deployment_returns_none() {
+        // Never-recorded deployment → buckets.get()? early-return path
+        // (L862 / L892). Distinct from the recent.is_empty() path.
+        let metrics = ProviderMetrics::with_ttl(3600);
+        assert!(
+            metrics.rolling_avg_rpm("ghost", 5).is_none(),
+            "rpm must return None for unknown deployment (L862 `?` early-return)"
+        );
+        assert!(
+            metrics.rolling_avg_tpm("ghost", 5).is_none(),
+            "tpm must return None for unknown deployment (L892 `?` early-return)"
+        );
+    }
+
+    #[test]
+    fn test_usage_based_v2_routing_no_history_defaults_success_rate_to_100() {
+        // Both providers have total_count=0 → success_rate=100 → score=current_rpm*0/100=0
+        // Ties broken by first encountered (min_by_key behavior). Locks the
+        // `else { 100 }` branch at L1198-1199.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::UsageBasedV2,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let idx = router.route("gpt-3.5-turbo", false).expect("route");
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "openai",
+            "no-history tie (both score=0) must be broken by first encountered"
+        );
+    }
+
+    #[test]
+    fn test_cost_based_routing_prefers_lowest_active_requests() {
+        // openai: 0 active, azure: 5 active → openai wins. Locks the
+        // `min_by_key(|(_, p)| p.active_requests)` selector body.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::CostBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                p.active_requests = if p.provider.name == "openai" { 0 } else { 5 };
+            }
+        }
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "openai",
+            "cost_based must pick the provider with fewer active requests"
+        );
+    }
+
+    #[test]
+    fn test_cost_based_routing_ties_broken_by_first_encountered() {
+        // Both active_requests=0 (defaults) → first (openai) wins.
+        // Locks min_by_key's stable ordering behavior on ties.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::CostBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "openai",
+            "tie (0 active) must be broken by first index (openai)"
+        );
+    }
+
+    #[test]
+    fn test_weighted_routing_zero_total_weight_falls_back_to_random() {
+        // Force total_weight == 0 by overriding both provider weights to 0.
+        // Locks the `rand::rng().random_range(...)` fallback at L1225.
+        // Over 200 iterations both providers must be reachable (uniform random).
+        let providers = test_providers();
+        let mut weights = HashMap::new();
+        weights.insert("openai".to_string(), 0u32);
+        weights.insert("azure".to_string(), 0u32);
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::Weighted,
+            weights: weights.clone(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        let mut openai_count = 0;
+        let mut azure_count = 0;
+        for _ in 0..200 {
+            if let Some(idx) = router.route("gpt-3.5-turbo", false) {
+                if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+                    if p.provider.name == "openai" {
+                        openai_count += 1;
+                    } else {
+                        azure_count += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            openai_count > 0 && azure_count > 0,
+            "zero-weight fallback must reach BOTH providers via uniform random \
+             (got openai={openai_count}, azure={azure_count})"
+        );
+    }
+
+    #[test]
+    fn test_request_ended_trims_latencies_to_window_size() {
+        // 5 records with window=3 → latencies must be trimmed to len=3,
+        // dropping the 2 oldest. Locks the drain branch at L192-194.
+        let mut p = ProviderWithState::new(test_providers()[0].clone());
+        for i in 0..5u64 {
+            p.request_ended(100_000 + i * 1_000, 10, 3);
+        }
+        assert_eq!(
+            p.latencies.len(),
+            3,
+            "window cap must trim to exactly latency_window entries"
+        );
+        // The two oldest (100_000, 101_000) must be gone; survivors are 102k, 103k, 104k
+        assert_eq!(p.latencies[0], 102_000);
+        assert_eq!(p.latencies[1], 103_000);
+        assert_eq!(p.latencies[2], 104_000);
+        // Counters still increment 5 times regardless of trim
+        assert_eq!(p.current_rpm, 5);
+        assert_eq!(p.current_tpm, 50);
+        assert_eq!(p.total_count, 5);
+    }
+
+    #[test]
+    fn test_provider_with_state_avg_latency_empty_returns_u64_max() {
+        // Empty latencies → u64::MAX sentinel (unproven providers treated as
+        // worst possible so they're never picked). Locks L215.
+        let p = ProviderWithState::new(test_providers()[0].clone());
+        assert_eq!(
+            p.avg_latency_us(),
+            u64::MAX,
+            "empty latencies must return u64::MAX sentinel"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_ttft_returns_none_when_no_samples() {
+        // Empty LatencyTracker → all_providers empty → None at L498.
+        let tracker = LatencyTracker::default();
+        assert!(
+            tracker.best_provider_with_ttft(false, 0.0).is_none(),
+            "no recorded samples → None (L498)"
+        );
+        assert!(
+            tracker.best_provider_with_ttft(true, 0.0).is_none(),
+            "streaming flag ignored when no samples"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_ttft_buffer_negative_infinity_excludes_all() {
+        // buffer = -INFINITY → valid threshold = lowest + (-inf) = -inf
+        // → no score satisfies score <= -inf → valid empty → None at L513-514.
+        let mut tracker = LatencyTracker::default();
+        tracker.record("p1", 100_000, None);
+        assert!(
+            tracker
+                .best_provider_with_ttft(false, f32::NEG_INFINITY)
+                .is_none(),
+            "buffer=-inf must exclude all providers → None"
+        );
+    }
+
+    #[test]
+    fn test_routing_strategy_display_all_variants() {
+        // Locks every Display arm at L49-58.
+        assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
+        assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
+        assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
+        assert_eq!(RoutingStrategy::LatencyBased.to_string(), "latency-based");
+        assert_eq!(RoutingStrategy::CostBased.to_string(), "cost-based");
+        assert_eq!(RoutingStrategy::UsageBased.to_string(), "usage-based");
+        assert_eq!(RoutingStrategy::UsageBasedV2.to_string(), "usage-based-v2");
+        assert_eq!(RoutingStrategy::Weighted.to_string(), "weighted");
+    }
+
+    #[test]
+    fn test_routing_strategy_from_str_unknown_returns_err() {
+        // Locks L86 (Err path with descriptive message).
+        let result: Result<RoutingStrategy, _> = "bogus-strategy".parse();
+        let err = result.expect_err("unknown strategy must error");
+        assert!(
+            err.contains("Unknown routing strategy"),
+            "error message must be descriptive, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_provider_metrics_new_default_ttl_and_default_impl() {
+        // Locks L722-728 (new body) + L941-942 (default delegation).
+        let m = ProviderMetrics::new();
+        assert_eq!(
+            m.ttl_seconds, 60,
+            "default TTL is 60s per litellm RoutingArgs.ttl"
+        );
+        assert!(m.buckets.is_empty());
+        assert!(m.bucket_timestamps.is_empty());
+
+        // Default impl delegates to new()
+        let d: ProviderMetrics = Default::default();
+        assert_eq!(d.ttl_seconds, 60);
+    }
+
+    #[test]
+    fn test_router_model_groups_and_provider_count() {
+        // Locks L996-1004 (model_groups + provider_count bodies).
+        let providers = test_providers();
+        let router = Router::new(RouterConfig::default(), providers);
+        let mut groups = router.model_groups();
+        groups.sort();
+        assert_eq!(
+            groups,
+            vec!["gpt-3.5-turbo".to_string()],
+            "model_groups must list every key in providers map"
+        );
+        assert_eq!(router.provider_count("gpt-3.5-turbo"), 2);
+        assert_eq!(
+            router.provider_count("nonexistent-model"),
+            0,
+            "unknown model_group must return 0"
+        );
+    }
+
+    #[test]
+    fn test_simple_shuffle_single_provider_always_returns_zero() {
+        // Locks L1072 (rng random_range(0..1)) — single-provider edge case
+        // where the rng range collapses to a constant.
+        let providers = vec![Provider {
+            name: "solo".to_string(),
+            endpoint: "https://x".to_string(),
+            rpm: Some(100),
+            tpm: None,
+            weight: None,
+            model_name: Some("solo-model".to_string()),
+        }];
+        let mut router = Router::new(RouterConfig::default(), providers);
+        for _ in 0..20 {
+            assert_eq!(
+                router.route("solo-model", false),
+                Some(0),
+                "single-provider SimpleShuffle must always pick index 0"
+            );
+        }
+    }
 }

@@ -1,0 +1,155 @@
+[package]
+name = "octo-adapter-telegram-mtproto"
+version = "0.4.2"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust MTProto Telegram adapter for CipherOcto DOT (RFC-0850 §8.2). grammers-based transport, no TDLib, no C/C++ toolchain. Co-exists with octo-adapter-telegram (TDLib-based); users select at config time."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Default: no real network; the only enabled code path is the in-memory
+# mock and StoolapSession store. All unit tests run with this.
+default = []
+# Real network: enables the grammers-client transport. Does NOT add a
+# libsql/rusqlite dependency — grammers-session is locked at
+# `default-features = false` (see below) so the libsql default
+# (which would collide with the project-wide cipherocto persistence
+# convention) is excluded.
+real-network = ["dep:grammers-client", "dep:grammers-tl-types"]
+# Test mock: enables `MockTelegramMtprotoClient` and the
+# `client::mock::*` exports. This feature is **only** intended for
+# test binaries of downstream crates (e.g.,
+# `octo-telegram-mtproto-onboard-core`). Production binaries and
+# integration tests that exercise a real Telegram DC must NOT
+# enable this — the project rule is "no mocks in production code
+# paths". When `test-mock` is *not* enabled, the mock is hidden
+# behind `#[cfg(test)]` inside the adapter crate and the
+# production factory in `factory.rs` is the only public way to
+# obtain an adapter.
+test-mock = []
+# Bot-API HTTP fallback transport (gap G6 in
+# docs/research/2026-06-21-telegram-pure-rust-mtproto-adapter.md §4).
+# Pulls reqwest + rustls. Independent of `real-network`: a user who
+# only wants the Bot-API HTTP path doesn't need grammers, and a user
+# who only wants MTProto doesn't need reqwest. The default build
+# includes neither.
+bot-api = ["dep:reqwest", "dep:rustls", "dep:rustls-native-certs", "dep:tracing-subscriber"]
+# Integration tests that require a real Telegram test DC.
+integration-test = []
+
+[dependencies]
+# --- Workspace ---
+async-trait = { workspace = true }
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+base64 = "0.22"
+# Memory zeroing for sensitive credentials (DD6-adjacent: auth_key BLOB
+# is copied out of the session store and held in memory by grammers;
+# `zeroize` is the cipherocto convention for handling sensitive byte
+# buffers that need to be wiped on drop).
+zeroize = { version = "1", features = ["zeroize_derive"] }
+# PlatformAdapter contract + envelope codec.
+octo-network = { path = "../octo-network" }
+# The MTProto adapter does NOT depend on the TDLib-based
+# `octo-adapter-telegram` crate — the two adapters are
+# independent peers, both consuming `octo-network` for the
+# `PlatformAdapter` trait. The `TelegramConfig` shape is
+# mirrored in `crate::config::MtprotoTelegramConfig` (with
+# additive MTProto-only fields) so a deployment can flip
+# `octo.telegram.adapter` between the two crates with no
+# config changes; see the Mission §"Configuration
+# compatibility" note for details.
+
+# --- `BoxFuture` for the `grammers_session::Session` trait impl ---
+# grammers-session uses `futures_core::future::BoxFuture` in its
+# trait signatures. We don't pull in the full `futures` crate
+# — only the `futures-core` core-types crate.
+futures-core = "0.3"
+# Cooperative cancellation for retry backoff (matches the TDLib
+# adapter's pattern).
+tokio-util = { workspace = true, features = ["rt"] }
+
+# --- Pure-Rust MTProto (grammers family) ---
+#
+# Constraint (cipherocto persistence convention, see
+# crates/octo-matrix-session-store/Cargo.toml): grammers-session
+# MUST be pinned at `default-features = false`. Its only default
+# feature is `sqlite-storage` (which pulls libsql), and the project
+# rule is that all new persistence uses CipherOcto's stoolap fork
+# on `feat/blockchain-sql`. We implement `grammers_session::Session`
+# manually on top of stoolap; the libsql feature is therefore
+# unnecessary and would conflict with the convention.
+grammers-session = { version = "0.9.0", default-features = false }
+grammers-mtproto = { version = "0.9.0" }
+# grammers-client is feature-gated on `real-network`; the mock path
+# (used by default in tests) does not pull grammers-client in.
+# When enabled, it also forces `default-features = false` so the
+# libsql transitive dep is excluded.
+grammers-client = { version = "0.9.0", default-features = false, optional = true, features = ["fs"] }
+grammers-tl-types = { version = "0.9.0", features = ["tl-mtproto"], optional = true }
+
+# --- Bot-API HTTP fallback transport (feature `bot-api`) ---
+#
+# Optional dependencies. Only pulled in when the `bot-api` feature
+# is enabled, so the default build (pure mock + MTProto) does not
+# need an HTTP client. See the `bot-api` feature in [features].
+# `default-features = false` excludes reqwest's bundled native-tls;
+# we use rustls for the cipherocto no-native-deps convention.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "form", "multipart", "query"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
+rustls-native-certs = { version = "0.8", optional = true }
+# tracing-subscriber for the `telegram_bot` example (R15-C16
+# fix: the example used to use `eprintln!` for every status
+# line, which violated the mission's tracing-only rule).
+# Optional because the example is gated on `bot-api` and we
+# don't want to pull tracing-subscriber into a default build.
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
+
+# --- Persistence (cipherocto convention) ---
+#
+# Stoolap fork on `feat/blockchain-sql` (see
+# crates/octo-matrix-session-store/Cargo.toml for the canonical
+# pattern). API surface used: `Database::open(&dsn) /
+# Database::open_in_memory()`, `db.execute(sql, params) ->
+# Result<i64>`, `db.query(sql, params) -> Result<Rows>`, where
+# `params = []` for no-arg statements and
+# `vec![stoolap::core::Value::text(...), ...]` for parameterised
+# statements.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3.10"
+# wiremock is a tiny in-process HTTP mock used by the `bot-api` test
+# suite. We pin a recent minor; its API is stable enough for our use
+# (the `MockServer::start_async()` builder + `Mock::given(matchers::*).
+# respond_with(ResponseTemplate::*)` chain).
+wiremock = "0.6"
+# tracing_subscriber for log-capture tests (TV-11 / TV-12).
+# Pinned to a recent minor; matches the rest of the workspace.
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+tracing = { workspace = true }
+
+# CLI binaries that exercise the real-network path (live DC + real auth).
+# These are gated on the `real-network` feature so the default build does
+# not require grammers/TDLib/toolchain pieces. Without `required-features`,
+# cargo would auto-discover the files under `src/bin/` and complain about
+# missing `fn main()` when the feature is disabled (since the files use
+# `#![cfg(feature = "real-network")]` to hide their entire body).
+[[bin]]
+name = "list_test_users"
+path = "src/bin/list_test_users.rs"
+required-features = ["real-network"]
+
+[[bin]]
+name = "cleanup_test_artifacts"
+path = "src/bin/cleanup_test_artifacts.rs"
+required-features = ["real-network"]

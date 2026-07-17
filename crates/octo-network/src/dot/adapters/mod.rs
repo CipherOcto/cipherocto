@@ -34,7 +34,7 @@ pub struct RawPlatformMessage {
 }
 
 /// Platform capabilities report
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CapabilityReport {
     /// Maximum payload bytes for this platform
     pub max_payload_bytes: usize,
@@ -51,10 +51,29 @@ pub struct CapabilityReport {
     pub rate_limit_per_second: u32,
     /// Media upload capabilities (None if not supported)
     pub media_capabilities: Option<MediaCapabilities>,
+    /// Whether the platform supports receiving fragmented (DOT/2)
+    /// messages. When `true`, the gateway may receive
+    /// `RawPlatformMessage` entries whose `payload` is a DOT/1
+    /// caption and whose `metadata["document_id"]` carries a
+    /// platform-specific file reference that `download_media`
+    /// can resolve.
+    pub supports_receive_fragments: bool,
+    /// Whether the platform surfaces message edits. When `true`,
+    /// `receive_messages` may yield messages whose
+    /// `metadata["edited"] == "true"` and whose `platform_id`
+    /// contains an edit marker (e.g. `"{msg_id}:edited"`).
+    pub supports_edited_messages: bool,
+    /// Maximum fragment size in bytes. When fragmentation is
+    /// supported (`supports_fragmentation == true`), this is
+    /// the largest payload the adapter will upload as a single
+    /// fragment. Distinct from `max_payload_bytes` (the inline
+    /// text limit). `None` means "no explicit fragment cap"
+    /// (the adapter uses its own internal limit).
+    pub max_fragment_size: Option<usize>,
 }
 
 /// Media upload capabilities for platforms that support native file upload.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MediaCapabilities {
     /// Maximum upload size in bytes
     pub max_upload_bytes: usize,
@@ -73,11 +92,15 @@ pub struct MediaCapabilities {
 /// - `replay_protection()` -> RFC `replay_protection.check` (S8.2, S11.2)
 #[async_trait]
 pub trait PlatformAdapter: Send + Sync {
-    /// Send a deterministic envelope to the platform (RFC-0850 S8.2).
-    async fn send_envelope(
+    /// Send a complete DOT message (envelope + payload) to the platform (RFC-0850 S8.2).
+    ///
+    /// The `envelope` carries routing metadata. The `payload` carries the actual data.
+    /// Adapters encode both for platform-specific transport (see RFC-0850 §8.6).
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError>;
 
     /// Receive raw messages from the platform (RFC-0850 S8.2: `receive_envelope`).

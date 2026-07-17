@@ -9,38 +9,63 @@ crate-type = ["cdylib", "rlib"]
 [features]
 # Default: no live network. Unit tests run with this.
 default = []
-# Live WhatsApp Web tests: enables the `tests/live_session_test.rs` suite,
-# which talks to the production WhatsApp Web servers (no `--ws-url` override).
-# Off by default because the tests require an existing authenticated session
-# (a `.session.db` produced by `octo-whatsapp-onboard qr-link` / `pair-link`),
-# take a long time, and produce real network traffic that the operator is
-# rate-limited for. Enable with:
+# Test helpers: enables `WhatsAppWebAdapter::new_unconnected_for_tests`
+# for downstream integration tests (gated by
+# `#[cfg(any(test, feature = "test-helpers"))]`). Off by default; off
+# when not running tests so the helper doesn't ship to consumers.
+test-helpers = []
+# Live WhatsApp Web tests: enables the live test suites under `tests/`
+# (`live_session_test.rs`, `live_e2e_group_setup_test.rs`,
+# `live_2_5_wiring.rs` — Phase 2.5 media + reaction wiring tests,
+# `live_admin_test.rs`), which talk to the production WhatsApp Web
+# servers (no `--ws-url` override). Off by default because the tests
+# require an existing authenticated session (a `.session.db` produced
+# by `octo-whatsapp-onboard qr-link` / `pair-link`), take a long time,
+# and produce real network traffic that the operator is rate-limited
+# for. Enable with:
 #
 #   cargo test -p octo-adapter-whatsapp \
 #     --features live-whatsapp \
-#     --test live_session_test \
+#     --test live_2_5_wiring \
 #     -- --include-ignored --nocapture --test-threads=1
 #
 # The session database is read from $OCTO_WHATSAPP_PERSIST_DIR (default
 # `$HOME/.local/share/octo/whatsapp/`, with session name `default.session.db`
 # — the on-disk layout that `octo-whatsapp-onboard` writes via
 # `default_session_base_dir` in `octo-whatsapp-onboard/src/main.rs`).
+# `live_2_5_wiring.rs` additionally requires $OCTO_WHATSAPP_E2E_TEST_PEER
+# (a JID to send media to).
 #
-# Note: this feature only gates the test file (via `#[cfg(feature =
-# "live-whatsapp")]`). The `tracing-subscriber` dev-dep is always present
-# so the workspace `cargo check` doesn't need a feature switch to find it,
-# but it's only used in the live-session test, so the default `cargo test`
-# build cost is unaffected.
-live-whatsapp = []
+# Implies `test-helpers` so the hermetic `inherent_smoke.rs` integration
+# tests continue to compile alongside the live suites when building
+# `cargo check --features live-whatsapp --tests`.
+live-whatsapp = ["test-helpers"]
+# Phase 7.J.2: turn on wacore's `tracing` feature so the adapter
+# emits `tracing::*!` spans for transport-level events. Without this,
+# wacore never calls into the `tracing` crate (the feature is
+# off-by-default in the upstream fork), so even with a
+# `tracing_subscriber` installed at the daemon level, the LoggedOut /
+# connect-handshake path is invisible. Pair with the
+# `octo-whatsapp/tracing-stdout` feature which pulls this in.
+#
+# Note: we tried `whatsapp-rust/tracing` too (which would also enable
+# traces in `pair.rs`, `retry.rs`, `keepalive.rs` — the connection
+# lifecycle), but its `#[tracing::instrument]` annotations on big
+# async fns overflow rustc's recursion limit in this workspace. Keep
+# just the `wacore/tracing` half — it still unlocks appstate_sync,
+# voip, and send-paths (any code path wacore itself emits spans for).
+tracing = ["wacore/tracing"]
 
 [dependencies]
-# WhatsApp Web protocol (oxidezap/whatsapp-rust)
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
+# WhatsApp Web protocol (oxidezap/whatsapp-rust fork at mmacedoeu/whatsapp-rust).
+# b637129 = S6.7 IK ClientHello extended-fields patch (Phase 7.J).
+# parent: e32b51a. tip of patch/connect-failure-tracing.
+whatsapp-rust = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
+wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false, features = ["tracing"] }
+wacore-binary = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+waproto = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+whatsapp-rust-tokio-transport = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129" }
 qrcode = "0.14"
 serde-big-array = "0.5"
 bytes = "1"
@@ -53,6 +78,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 blake3 = "1"
 base64 = "0.22"
+thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
 parking_lot = "0.12"
 shellexpand = "3"
@@ -65,6 +91,34 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }
+# caBLE transport (HandshakeV2 + base10 + QR-only relay client).
+# The previous in-crate `mod base10` was lifted into this crate when
+# the HandshakeV2 codec landed; we re-export through
+# `octo_cable::base10` so anything outside the adapter that needed
+# `crate::base10` should switch to the new path.
+octo-cable = { path = "../octo-cable" }
+# Phase 7.J.3 local enrichment: derive noise-identity fingerprint in the
+# adapter's `Event::LoggedOut` handler. SHA-256 (matches upstream patch in
+# mmacedoeu/whatsapp-rust@551e574, ancestor of current tip b637129) + hex
+# for 16-hex-char truncation.
+sha2 = "0.11"
+hex = "0.4"
+# p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
+# Same source as octo-cable so we don't pull in a second copy.
+p256 = { version = "0.13", features = ["ecdh"] }
+# ciborium for the post-handshake GetInfoResponse CBOR (responder path).
+ciborium = "0.2"
+# Phase 7.J.4: whatsapp_xx_session_probe opens TLS to e.web.whatsapp.com:5222
+# using rustls (TLS fingerprint checked at the post-handshake layer, not at
+# connect; a single TCP+TLS round-trip is enough to validate the wire shape).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
+webpki-roots = "0.26"
+# X25519 for the ephemeral static pub we put in frame[0]. Wacore pins
+# x25519-dalek 2.0.1 in the lockfile (see Cargo.lock); pin the same major.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
@@ -78,3 +132,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Ed25519 signing for the live E2E test (matches `octo-network`'s choice
 # at `crates/octo-network/Cargo.toml`). Only used by the live E2E test.
 ed25519-dalek = "2.1"
+# rustls CryptoProvider for the (#[ignore]d) live caBLE test in
+# `passkey::cable::tests::get_assertion_drives_cable_live`. The dep is
+# unconditional because `[dev-dependencies]` cannot be optional; the
+# cost is purely compile time.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
+# Same source as octo-cable so we don't pull in a second copy.
+p256 = { version = "0.13", features = ["ecdh"] }
+# ciborium for the post-handshake GetInfoResponse CBOR (responder path).
+ciborium = "0.2"

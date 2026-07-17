@@ -3,8 +3,8 @@
 **Date:** 2026-06-18
 **Status:** Research
 **Related:** [`docs/research/group-coordination-transport-adapters.md`](group-coordination-transport-adapters.md) — the prior doc maps
-*group primitives* (does the platform have a group at all?). This doc maps
-*group admin actions* (what can a creator/admin *do* with the group, and how
+_group primitives_ (does the platform have a group at all?). This doc maps
+_group admin actions_ (what can a creator/admin _do_ with the group, and how
 should the DOT trait model it?).
 **Scope:** 20 platform adapters in `crates/octo-adapter-*` and the
 `PlatformAdapter` trait in `crates/octo-network/src/dot/adapters/mod.rs`.
@@ -22,28 +22,28 @@ uniformly.
 ## Executive Summary
 
 The `PlatformAdapter` trait today models only **envelope transport**:
-`send_envelope`, `receive_messages`, `canonicalize`. Group *lifecycle*
-(create, leave, delete), group *membership* (add, remove, promote, ban),
-group *mode* (lock, announce, ephemeral, approve-required), group
-*discovery* (list, lookup by invite), and group *handoff* (transfer
+`send_message`, `receive_messages`, `canonicalize`. Group _lifecycle_
+(create, leave, delete), group _membership_ (add, remove, promote, ban),
+group _mode_ (lock, announce, ephemeral, approve-required), group
+_discovery_ (list, lookup by invite), and group _handoff_ (transfer
 ownership, demote-self) are all absent from the trait and from every
-adapter except WhatsApp (R19). They live in the *platform's own SDK*
+adapter except WhatsApp (R19). They live in the _platform's own SDK_
 and are platform-shaped: a WhatsApp `GroupParticipant` is not a
 Telegram `ChatMember` is not a Matrix `RoomMember` is not a Discord
 `Member` is not a Nostr `Event`.
 
-But the **use cases** (the *why*) generalize cleanly. There are five
+But the **use cases** (the _why_) generalize cleanly. There are five
 distinct categories of coordinator action, and every Tier-1 platform
 (those with native group support) has a way to express each one, even
 if the names differ:
 
-| Category | Common shape | Example (Telegram TDLib) | Example (Matrix) | Example (WhatsApp) |
-|---|---|---|---|---|
-| **A. Lifecycle** | `create / join / leave / delete` | `createNewSupergroupChat` / `deleteChatHistory` | `create_room` / `leave_room` | `create_group` (R19) / `leave` |
-| **B. Membership** | `add / remove / promote / demote / ban` | `addChatMember` / `banChatMember` / `setChatMemberStatus` | `invite_user` / `kick` / `ban` | `add_members` (R19) / `promote_participants` / `remove_participants` |
-| **C. Mode** | `set_topic / set_description / lock / announce / ephemeral / approve_required` | `setChatTitle` / `setChatPermissions` / `setChatMessageAutoDeleteTime` | `set_room_name` / `set_room_topic` / `redact_event` | `set_subject` / `set_description` / `set_locked` / `set_announce` / `set_ephemeral` |
-| **D. Discovery** | `list_my_groups / get_group / resolve_invite` | `getChats` / `searchPublicChat` / `checkChatInviteLink` | `joined_rooms` / `get_room_state` / `preview_by_invite` | `get_participating` / `get_metadata` / `get_invite_info` |
-| **E. Handoff** | `transfer / demote_self / approve_handoff` | `transferChatOwnership` (built-in!) | `set_user_power_level` then leave | `promote_participants` + `demote_participants` + `leave` |
+| Category          | Common shape                                                                   | Example (Telegram TDLib)                                               | Example (Matrix)                                        | Example (WhatsApp)                                                                  |
+| ----------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **A. Lifecycle**  | `create / join / leave / delete`                                               | `createNewSupergroupChat` / `deleteChatHistory`                        | `create_room` / `leave_room`                            | `create_group` (R19) / `leave`                                                      |
+| **B. Membership** | `add / remove / promote / demote / ban`                                        | `addChatMember` / `banChatMember` / `setChatMemberStatus`              | `invite_user` / `kick` / `ban`                          | `add_members` (R19) / `promote_participants` / `remove_participants`                |
+| **C. Mode**       | `set_topic / set_description / lock / announce / ephemeral / approve_required` | `setChatTitle` / `setChatPermissions` / `setChatMessageAutoDeleteTime` | `set_room_name` / `set_room_topic` / `redact_event`     | `set_subject` / `set_description` / `set_locked` / `set_announce` / `set_ephemeral` |
+| **D. Discovery**  | `list_my_groups / get_group / resolve_invite`                                  | `getChats` / `searchPublicChat` / `checkChatInviteLink`                | `joined_rooms` / `get_room_state` / `preview_by_invite` | `get_participating` / `get_metadata` / `get_invite_info`                            |
+| **E. Handoff**    | `transfer / demote_self / approve_handoff`                                     | `transferChatOwnership` (built-in!)                                    | `set_user_power_level` then leave                       | `promote_participants` + `demote_participants` + `leave`                            |
 
 The **honest finding**: the abstraction works for A, B, D, E across
 all Tier-1 platforms, but C is messy (each platform has a different
@@ -92,13 +92,13 @@ detection step before invoking.
 
 ### A. Lifecycle (create, join, leave, destroy)
 
-| Use case | WhatsApp | Telegram | Matrix | Discord | Slack | Signal | IRC | Nostr | Webhook |
-|---|---|---|---|---|---|---|---|---|---|
-| Create new group | ✅ `create_group` | ✅ `createNewSupergroupChat` | ✅ `create_room` | ❌ webhook-only | ❌ webhook-only | ⚠️ via signal-cli (new-group) | ⚠️ via raw `/JOIN` + `/TOPIC` | ❌ no group | ❌ N/A |
-| Join existing (by ID) | ❌ (member must be added) | ❌ (member must be added) | ✅ `join_room` | ❌ | ❌ | ❌ | ✅ `JOIN` | ❌ | ❌ |
-| Join via invite code | ❌ (link is for humans) | ✅ `addChatMember` by invite hash | ✅ `join_room_by_id_or_alias` | ❌ | ❌ | ❌ | ✅ (raw `JOIN #chan`) | ❌ | ❌ |
-| Leave | ✅ `leave` (R19) | ✅ `leaveChat` | ✅ `leave_room` | ❌ | ❌ | ✅ | ✅ `PART` | ❌ | ❌ |
-| Destroy (group is gone) | ⚠️ no native protocol op; "leave + revoke invite" is the closest | ⚠️ `deleteChatHistory` deletes messages but not the group itself | ⚠️ `leave_room` + tombstone event; rooms persist | ❌ | ❌ | ❌ | ⚠️ no protocol op; group dies when last member leaves | ❌ | ❌ |
+| Use case                | WhatsApp                                                         | Telegram                                                         | Matrix                                           | Discord         | Slack           | Signal                        | IRC                                                   | Nostr       | Webhook |
+| ----------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------ | --------------- | --------------- | ----------------------------- | ----------------------------------------------------- | ----------- | ------- |
+| Create new group        | ✅ `create_group`                                                | ✅ `createNewSupergroupChat`                                     | ✅ `create_room`                                 | ❌ webhook-only | ❌ webhook-only | ⚠️ via signal-cli (new-group) | ⚠️ via raw `/JOIN` + `/TOPIC`                         | ❌ no group | ❌ N/A  |
+| Join existing (by ID)   | ❌ (member must be added)                                        | ❌ (member must be added)                                        | ✅ `join_room`                                   | ❌              | ❌              | ❌                            | ✅ `JOIN`                                             | ❌          | ❌      |
+| Join via invite code    | ❌ (link is for humans)                                          | ✅ `addChatMember` by invite hash                                | ✅ `join_room_by_id_or_alias`                    | ❌              | ❌              | ❌                            | ✅ (raw `JOIN #chan`)                                 | ❌          | ❌      |
+| Leave                   | ✅ `leave` (R19)                                                 | ✅ `leaveChat`                                                   | ✅ `leave_room`                                  | ❌              | ❌              | ✅                            | ✅ `PART`                                             | ❌          | ❌      |
+| Destroy (group is gone) | ⚠️ no native protocol op; "leave + revoke invite" is the closest | ⚠️ `deleteChatHistory` deletes messages but not the group itself | ⚠️ `leave_room` + tombstone event; rooms persist | ❌              | ❌              | ❌                            | ⚠️ no protocol op; group dies when last member leaves | ❌          | ❌      |
 
 **Insight on "destroy":** WhatsApp, Telegram, Matrix, IRC, and
 Signal all lack a "group is gone for good" operation. You can leave
@@ -111,15 +111,15 @@ retain a tombstone".
 
 ### B. Membership (add, remove, promote, demote, ban)
 
-| Use case | WhatsApp | Telegram | Matrix | Discord | Slack | Signal | IRC |
-|---|---|---|---|---|---|---|---|
-| Add member | ✅ `add_members` (R19) | ✅ `addChatMember` | ✅ `invite_user` (3rd party) | ❌ (webhook) | ❌ | ❌ | ❌ |
-| Remove member (kick) | ⚠️ `remove_participants` (not yet wired) | ✅ `setChatMemberStatus(Left)` | ✅ `kick` | ❌ | ❌ | ❌ | ✅ `KICK` |
-| Ban (can't rejoin) | ❌ no native ban | ✅ `banChatMember` | ✅ `ban` | ❌ | ❌ | ❌ | ✅ `KICK` + ban-list |
-| Promote to admin | ⚠️ `promote_participants` (not yet wired) | ✅ `setChatMemberStatus(Administrator)` | ✅ `set_user_power_level` | ❌ | ❌ | ⚠️ only owner can add | ❌ |
-| Demote from admin | ⚠️ `demote_participants` (not yet wired) | ✅ same as above | ✅ same as above | ❌ | ❌ | ❌ | ❌ |
-| Approve pending join request | ❌ | ✅ `processChatJoinRequest` | ✅ accept invite event | ❌ | ❌ | ⚠️ via signal-cli | ⚠️ INVITE-list only |
-| Get current members | ✅ `get_metadata` (R19) | ✅ `getChatMembers` | ✅ `joined_members` | ❌ | ❌ | ⚠️ | ✅ `NAMES` / `WHO` |
+| Use case                     | WhatsApp                                  | Telegram                                | Matrix                       | Discord      | Slack | Signal                | IRC                  |
+| ---------------------------- | ----------------------------------------- | --------------------------------------- | ---------------------------- | ------------ | ----- | --------------------- | -------------------- |
+| Add member                   | ✅ `add_members` (R19)                    | ✅ `addChatMember`                      | ✅ `invite_user` (3rd party) | ❌ (webhook) | ❌    | ❌                    | ❌                   |
+| Remove member (kick)         | ⚠️ `remove_participants` (not yet wired)  | ✅ `setChatMemberStatus(Left)`          | ✅ `kick`                    | ❌           | ❌    | ❌                    | ✅ `KICK`            |
+| Ban (can't rejoin)           | ❌ no native ban                          | ✅ `banChatMember`                      | ✅ `ban`                     | ❌           | ❌    | ❌                    | ✅ `KICK` + ban-list |
+| Promote to admin             | ⚠️ `promote_participants` (not yet wired) | ✅ `setChatMemberStatus(Administrator)` | ✅ `set_user_power_level`    | ❌           | ❌    | ⚠️ only owner can add | ❌                   |
+| Demote from admin            | ⚠️ `demote_participants` (not yet wired)  | ✅ same as above                        | ✅ same as above             | ❌           | ❌    | ❌                    | ❌                   |
+| Approve pending join request | ❌                                        | ✅ `processChatJoinRequest`             | ✅ accept invite event       | ❌           | ❌    | ⚠️ via signal-cli     | ⚠️ INVITE-list only  |
+| Get current members          | ✅ `get_metadata` (R19)                   | ✅ `getChatMembers`                     | ✅ `joined_members`          | ❌           | ❌    | ⚠️                    | ✅ `NAMES` / `WHO`   |
 
 **Insight on "ban":** WhatsApp has no ban — once removed, the user
 can rejoin if they have the invite. Matrix's ban is enforced by
@@ -132,14 +132,14 @@ ban" pattern).
 
 ### C. Mode (lock, announce, ephemeral, approve-required, description)
 
-| Mode flag | WhatsApp | Telegram | Matrix | Discord | Slack | Signal | IRC |
-|---|---|---|---|---|---|---|---|
-| `set_subject` (rename) | ✅ | ✅ `setChatTitle` | ✅ `set_room_name` | ❌ (webhook) | ❌ | ❌ | ✅ `TOPIC` |
-| `set_description` | ✅ | ⚠️ only at create | ✅ `set_room_topic` | ❌ | ❌ | ❌ | ⚠️ `TOPIC` doubles |
-| `set_locked` (only admins can add) | ✅ | ⚠️ via `setChatPermissions` | ✅ power levels | ❌ | ❌ | ❌ | ✅ `MODE +l` |
-| `set_announce` (only admins can post) | ✅ | ⚠️ via `setChatPermissions` | ✅ power levels | ❌ | ❌ | ❌ | ✅ `MODE +m` (moderated) |
-| `set_ephemeral` (disappearing messages) | ✅ | ✅ `setChatMessageAutoDeleteTime` | ✅ state event | ❌ | ❌ | ⚠️ | ❌ |
-| `set_membership_approval` (require approval to join) | ✅ | ⚠️ via invite link flag | ✅ state event | ❌ | ❌ | ❌ | ❌ |
+| Mode flag                                            | WhatsApp | Telegram                          | Matrix              | Discord      | Slack | Signal | IRC                      |
+| ---------------------------------------------------- | -------- | --------------------------------- | ------------------- | ------------ | ----- | ------ | ------------------------ |
+| `set_subject` (rename)                               | ✅       | ✅ `setChatTitle`                 | ✅ `set_room_name`  | ❌ (webhook) | ❌    | ❌     | ✅ `TOPIC`               |
+| `set_description`                                    | ✅       | ⚠️ only at create                 | ✅ `set_room_topic` | ❌           | ❌    | ❌     | ⚠️ `TOPIC` doubles       |
+| `set_locked` (only admins can add)                   | ✅       | ⚠️ via `setChatPermissions`       | ✅ power levels     | ❌           | ❌    | ❌     | ✅ `MODE +l`             |
+| `set_announce` (only admins can post)                | ✅       | ⚠️ via `setChatPermissions`       | ✅ power levels     | ❌           | ❌    | ❌     | ✅ `MODE +m` (moderated) |
+| `set_ephemeral` (disappearing messages)              | ✅       | ✅ `setChatMessageAutoDeleteTime` | ✅ state event      | ❌           | ❌    | ⚠️     | ❌                       |
+| `set_membership_approval` (require approval to join) | ✅       | ⚠️ via invite link flag           | ✅ state event      | ❌           | ❌    | ❌     | ❌                       |
 
 **Insight on "modes":** this is the messiest category. Each platform
 has a different set of toggles, and some (Telegram) require composing
@@ -153,13 +153,13 @@ doesn't support it".
 
 ### D. Discovery (list, lookup, resolve invite)
 
-| Use case | WhatsApp | Telegram | Matrix | IRC |
-|---|---|---|---|---|
-| List groups I'm in | ✅ `get_participating` | ✅ `getChats` | ✅ `joined_rooms` | ❌ (no protocol op; usually `LIST` raw) |
-| Get metadata for a group | ✅ `get_metadata` (R19) | ✅ `getChat` | ✅ `get_room_state` | ⚠️ `TOPIC` (limited) |
-| Resolve invite code/URL → group_id | ✅ `get_invite_info` (chat.whatsapp.com code) | ✅ `checkChatInviteLink` | ✅ `preview_by_invite` | ❌ |
+| Use case                           | WhatsApp                                      | Telegram                 | Matrix                 | IRC                                     |
+| ---------------------------------- | --------------------------------------------- | ------------------------ | ---------------------- | --------------------------------------- |
+| List groups I'm in                 | ✅ `get_participating`                        | ✅ `getChats`            | ✅ `joined_rooms`      | ❌ (no protocol op; usually `LIST` raw) |
+| Get metadata for a group           | ✅ `get_metadata` (R19)                       | ✅ `getChat`             | ✅ `get_room_state`    | ⚠️ `TOPIC` (limited)                    |
+| Resolve invite code/URL → group_id | ✅ `get_invite_info` (chat.whatsapp.com code) | ✅ `checkChatInviteLink` | ✅ `preview_by_invite` | ❌                                      |
 
-**Insight:** discovery is the *prerequisite* for the sidecar-persisted
+**Insight:** discovery is the _prerequisite_ for the sidecar-persisted
 `created_groups` pattern from the R19 follow-up discussion: at
 startup, an adapter can call `get_participating`, intersect with
 its persisted `created_groups` list, and `leave_group` any orphans
@@ -168,11 +168,11 @@ primitives for this; the missing piece is wiring them up.
 
 ### E. Handoff (transfer ownership, atomic handoff)
 
-| Use case | WhatsApp | Telegram | Matrix |
-|---|---|---|---|
+| Use case                      | WhatsApp                          | Telegram                   | Matrix                               |
+| ----------------------------- | --------------------------------- | -------------------------- | ------------------------------------ |
 | Transfer ownership (built-in) | ❌ (use promote + demote + leave) | ✅ `transferChatOwnership` | ⚠️ set power_level to 100 then leave |
-| Atomic promote-and-demote | ⚠️ two-step (no transaction) | ✅ via status set | ✅ via two state events |
-| Quorum-gated handoff | ❌ | ❌ | ⚠️ custom logic on top |
+| Atomic promote-and-demote     | ⚠️ two-step (no transaction)      | ✅ via status set          | ✅ via two state events              |
+| Quorum-gated handoff          | ❌                                | ❌                         | ⚠️ custom logic on top               |
 
 **Insight:** Telegram's `transferChatOwnership` is the only
 first-class "give this group to someone else" primitive in the
@@ -187,31 +187,31 @@ Slack, Signal, IRC).
 
 ## 3. Per-platform capability matrix (the "what can the local adapter actually do today?" table)
 
-This is the critical nuance: even when a *platform* supports an
-admin action, the *adapter* might not be able to use it (because
+This is the critical nuance: even when a _platform_ supports an
+admin action, the _adapter_ might not be able to use it (because
 the adapter is webhook-only, or because the upstream library
 doesn't expose it, or because the feature is gated behind a flag).
 
-| Adapter | Mode | Real admin surface today | What it could plausibly grow into |
-|---|---|---|---|
-| `octo-adapter-whatsapp` | Bot (whatsapp-rust) | ✅ R19: create_group, add_members, get_invite_link, leave_group, group_metadata | + remove_members, promote/demote, get_participating, set_subject/description, set_announce/locked, set_ephemeral, get_invite_info, set_membership_approval |
-| `octo-adapter-telegram` | TDLib (user mode) | ⚠️ read-only `ChatResolver` (resolve by name/username/invite) | + createNewSupergroupChat, addChatMember, banChatMember, setChatMemberStatus, transferChatOwnership, setChatTitle, setChatPermissions, setChatMessageAutoDeleteTime, createChatInviteLink, getChats, getChat |
-| `octo-adapter-matrix` (HTTP) | App service token | ❌ nothing | + create_room, join_room, leave_room, kick, ban, invite_user, set_room_name, set_room_topic, joined_rooms, get_room_state |
-| `octo-adapter-matrix-sdk` | matrix-sdk Rust crate | ❌ nothing (the SDK exposes the calls; the adapter just doesn't use them) | Same as matrix HTTP, but already wired through SDK — the upgrade is small |
-| `octo-adapter-discord` | Webhook only | ❌ | ❌ (webhook URLs can't create/manage channels; a "Discord bot mode" adapter would unlock this) |
-| `octo-adapter-slack` | Webhook only | ❌ | ❌ (same as Discord) |
-| `octo-adapter-irc` | Raw TCP | ⚠️ via raw `JOIN`, `PART`, `TOPIC`, `MODE`, `KICK`, `WHO` (not yet abstracted) | + adapter-level wrappers for the most common (leave, topic, kick, mode) |
-| `octo-adapter-signal` | signal-cli daemon | ⚠️ receive only (the adapter reads via signal-cli) | + send (for admin actions), group create via signal-cli |
-| `octo-adapter-nostr` | NIP-01 (synthetic) | ❌ no group concept | N/A — but the adapter could expose "create a long-lived kind:40 group metadata event" as a synthetic group |
-| `octo-adapter-bluesky` | AT Protocol | ❌ no group concept | N/A |
-| `octo-adapter-twitter` | X API | ❌ no group concept | N/A (DMs are 1:1 only) |
-| `octo-adapter-bluetooth` | BLE GATT | ❌ 1:1 transport | N/A |
-| `octo-adapter-lora` | LoRa radio | ❌ 1:1 transport | N/A |
-| `octo-adapter-quic` | QUIC stream | ❌ 1:1 transport | N/A |
-| `octo-adapter-webrtc` | WebRTC data channel | ❌ 1:1 transport | N/A |
-| `octo-adapter-webhook` | HTTP POST | ❌ 1:1 transport (1 URL) | N/A |
-| `octo-adapter-p2p` (gossipsub) | libp2p | ⚠️ topics are implicit (subscribe publishes a topic; no admin) | ⚠️ gossipsub has no admin — but the adapter could expose "create namespace", "set peer allowlist per topic" |
-| `octo-adapter-wechat` / `dingtalk` / `lark` / `qq` / `reddit` | Webhook stubs | ❌ | TBD — depends on the platform's bot API |
+| Adapter                                                       | Mode                  | Real admin surface today                                                                                                                                                                                                                                                                                                                                                                                                        | What it could plausibly grow into                                                                                                                                                                                                  |
+| ------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-adapter-whatsapp`                                       | Bot (whatsapp-rust)   | ✅ R19: create_group, add_members, get_invite_link, leave_group, group_metadata                                                                                                                                                                                                                                                                                                                                                 | + remove_members, promote/demote, get_participating, set_subject/description, set_announce/locked, set_ephemeral, get_invite_info, set_membership_approval                                                                         |
+| `octo-adapter-telegram`                                       | TDLib (user mode)     | ⚠️ read-only `ChatResolver` (resolve by name/username/invite)                                                                                                                                                                                                                                                                                                                                                                   | + createNewSupergroupChat, addChatMember, banChatMember, setChatMemberStatus, transferChatOwnership, setChatTitle, setChatPermissions, setChatMessageAutoDeleteTime, createChatInviteLink, getChats, getChat                       |
+| `octo-adapter-matrix` (HTTP)                                  | App service token     | ❌ nothing                                                                                                                                                                                                                                                                                                                                                                                                                      | + create_room, join_room, leave_room, kick, ban, invite_user, set_room_name, set_room_topic, joined_rooms, get_room_state                                                                                                          |
+| `octo-adapter-matrix-sdk`                                     | matrix-sdk Rust crate | ✅ mission 0850h-d: create_group, add_member, remove_member, ban_member, promote_to_admin, demote_from_admin, approve_join_request, rename_group, set_group_description, set_locked, set_announce, set_ephemeral, set_require_approval, list_own_groups, get_group_metadata, resolve_invite, join_by_invite, join_by_id (18 of 24; can_destroy=false, can_transfer_ownership=false; see `AdminCapabilityReport` for full flags) | Covered via `CoordinatorAdmin` trait (RFC-0861). Remaining 6 methods (leave_group, destroy_group, list_own_groups_with_invites, transfer_ownership, leave_group_with_invites — deferred to mission 0850h-e for live test coverage) |
+| `octo-adapter-discord`                                        | Webhook only          | ❌                                                                                                                                                                                                                                                                                                                                                                                                                              | ❌ (webhook URLs can't create/manage channels; a "Discord bot mode" adapter would unlock this)                                                                                                                                     |
+| `octo-adapter-slack`                                          | Webhook only          | ❌                                                                                                                                                                                                                                                                                                                                                                                                                              | ❌ (same as Discord)                                                                                                                                                                                                               |
+| `octo-adapter-irc`                                            | Raw TCP               | ✅ mission 0861: create_group, leave_group, add_member (INVITE), remove_member (KICK), ban_member, promote_to_admin, demote_from_admin, rename_group, set_group_description, set_locked, set_announce, set_ephemeral, set_require_approval, list_own_groups, get_group_metadata, join_by_id, health_check (TLS-aware); can_destroy=false, can_transfer_ownership=false                                                          | Covered via `CoordinatorAdmin` trait (RFC-0861). Remaining: resolve_invite, join_by_invite, approve_join_request, list_own_groups_with_invites                                                                                     |
+| `octo-adapter-signal`                                         | signal-cli daemon     | ⚠️ receive only (the adapter reads via signal-cli)                                                                                                                                                                                                                                                                                                                                                                              | + send (for admin actions), group create via signal-cli                                                                                                                                                                            |
+| `octo-adapter-nostr`                                          | NIP-01 (synthetic)    | ❌ no group concept                                                                                                                                                                                                                                                                                                                                                                                                             | N/A — but the adapter could expose "create a long-lived kind:40 group metadata event" as a synthetic group                                                                                                                         |
+| `octo-adapter-bluesky`                                        | AT Protocol           | ❌ no group concept                                                                                                                                                                                                                                                                                                                                                                                                             | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-twitter`                                        | X API                 | ❌ no group concept                                                                                                                                                                                                                                                                                                                                                                                                             | N/A (DMs are 1:1 only)                                                                                                                                                                                                             |
+| `octo-adapter-bluetooth`                                      | BLE GATT              | ❌ 1:1 transport                                                                                                                                                                                                                                                                                                                                                                                                                | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-lora`                                           | LoRa radio            | ❌ 1:1 transport                                                                                                                                                                                                                                                                                                                                                                                                                | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-quic`                                           | QUIC stream           | ❌ 1:1 transport                                                                                                                                                                                                                                                                                                                                                                                                                | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-webrtc`                                         | WebRTC data channel   | ❌ 1:1 transport                                                                                                                                                                                                                                                                                                                                                                                                                | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-webhook`                                        | HTTP POST             | ❌ 1:1 transport (1 URL)                                                                                                                                                                                                                                                                                                                                                                                                        | N/A                                                                                                                                                                                                                                |
+| `octo-adapter-p2p` (gossipsub)                                | libp2p                | ⚠️ topics are implicit (subscribe publishes a topic; no admin)                                                                                                                                                                                                                                                                                                                                                                  | ⚠️ gossipsub has no admin — but the adapter could expose "create namespace", "set peer allowlist per topic"                                                                                                                        |
+| `octo-adapter-wechat` / `dingtalk` / `lark` / `qq` / `reddit` | Webhook stubs         | ❌                                                                                                                                                                                                                                                                                                                                                                                                                              | TBD — depends on the platform's bot API                                                                                                                                                                                            |
 
 **Key takeaway:** of 20 adapters, **2** (WhatsApp R19, partially
 IRC) currently expose any group admin action. **6** could plausibly
@@ -498,7 +498,7 @@ Three reasons (recapping §1):
 ### Why not a single `dyn PlatformAdmin`?
 
 We need both. A `CoordinatorAdmin` can exist on an adapter that is
-*not* an envelope transport (e.g. a "test admin shim" that creates
+_not_ an envelope transport (e.g. a "test admin shim" that creates
 groups but never carries envelopes). Conversely, an adapter can be
 an envelope transport with no admin powers (most of the 20 today).
 Two separate traits, each with their own capability report, models
@@ -518,8 +518,8 @@ If we add this trait now:
 - **WhatsApp R19 methods stay on `WhatsAppWebAdapter`.** We add
   a `impl CoordinatorAdmin for WhatsAppWebAdapter` block that
   delegates to the existing R19 methods. No rename, no deprecation,
-  no migration. (The R19 methods can stay as the *adapter-specific*
-  API; the trait methods become the *uniform* API. Both work.)
+  no migration. (The R19 methods can stay as the _adapter-specific_
+  API; the trait methods become the _uniform_ API. Both work.)
 - **Other adapters opt in incrementally.** Telegram, matrix-sdk,
   and IRC are the natural next adopters; the trait gives them a
   target to aim at without forcing immediate work.
@@ -539,9 +539,9 @@ If we add this trait now:
    — these are the natural next batch from the prior conversation.
 3. **Implement for IRC** by exposing the raw protocol ops
    (`JOIN`, `PART`, `TOPIC`, `MODE`, `KICK`) as adapter methods
-   and wrapping them in the trait. ~120 LOC. *This is the
+   and wrapping them in the trait. ~120 LOC. _This is the
    missing-in-action adapter for many "coordinator bot in a
-   public IRC channel" use cases.*
+   public IRC channel" use cases._
 4. **Implement for matrix-sdk** (the SDK already exposes
    `create_room`, `join_room`, `leave_room`, `kick`, `ban`,
    `set_room_name`, etc. — the upgrade is small).
@@ -561,22 +561,22 @@ If we add this trait now:
 
 ## 7. Summary table
 
-| Adapter | Admin surface today | After migration step 6 |
-|---|---|---|
-| whatsapp | ✅ R19 (5 methods) | ✅ full set (~20 methods) |
-| telegram | ⚠️ ChatResolver (read-only) | ✅ full set via TDLib |
-| matrix | ❌ | ✅ full set via matrix-sdk |
-| matrix-sdk | ❌ | ✅ full set via SDK |
-| irc | ⚠️ raw protocol ops | ✅ full set via raw protocol |
-| signal | ❌ | ⚠️ partial (depends on signal-cli) |
-| discord | ❌ (webhook) | ❌ (would need bot-mode adapter) |
-| slack | ❌ (webhook) | ❌ (same) |
-| bluesky | ❌ | ❌ (no group concept) |
-| twitter | ❌ | ❌ (no group concept) |
-| wechat / dingtalk / lark / qq / reddit | ❌ (stubs) | TBD per platform |
-| bluetooth / lora / quic / webrtc / webhook | ❌ (1:1) | ❌ (no group concept) |
-| p2p (gossipsub) | ❌ | ⚠️ partial (synthetic namespaces) |
-| nativep2p | ❌ | ⚠️ partial |
+| Adapter                                    | Admin surface today         | After migration step 6             |
+| ------------------------------------------ | --------------------------- | ---------------------------------- |
+| whatsapp                                   | ✅ R19 (5 methods)          | ✅ full set (~20 methods)          |
+| telegram                                   | ⚠️ ChatResolver (read-only) | ✅ full set via TDLib              |
+| matrix                                     | ❌                          | ✅ full set via matrix-sdk         |
+| matrix-sdk                                 | ❌                          | ✅ full set via SDK                |
+| irc                                        | ⚠️ raw protocol ops         | ✅ full set via raw protocol       |
+| signal                                     | ❌                          | ⚠️ partial (depends on signal-cli) |
+| discord                                    | ❌ (webhook)                | ❌ (would need bot-mode adapter)   |
+| slack                                      | ❌ (webhook)                | ❌ (same)                          |
+| bluesky                                    | ❌                          | ❌ (no group concept)              |
+| twitter                                    | ❌                          | ❌ (no group concept)              |
+| wechat / dingtalk / lark / qq / reddit     | ❌ (stubs)                  | TBD per platform                   |
+| bluetooth / lora / quic / webrtc / webhook | ❌ (1:1)                    | ❌ (no group concept)              |
+| p2p (gossipsub)                            | ❌                          | ⚠️ partial (synthetic namespaces)  |
+| nativep2p                                  | ❌                          | ⚠️ partial                         |
 
 **Net assessment:** the abstraction works for **5 of 20** adapters
 (WhatsApp, Telegram, matrix, matrix-sdk, IRC) immediately, **2 of 20**
@@ -584,8 +584,8 @@ If we add this trait now:
 fine — the trait is a `default = Unimplemented` opt-in, and the
 13 adapters that don't implement it are honest about it via
 `admin_capabilities()` returning all-`false`. The trait makes the
-coordinator surface uniform across the platforms that *can* support
-it, and explicit about the platforms that *can't*.
+coordinator surface uniform across the platforms that _can_ support
+it, and explicit about the platforms that _can't_.
 
 ---
 
@@ -596,7 +596,7 @@ it, and explicit about the platforms that *can't*.
 - R19 commit: `f86c580` "live WhatsApp E2E test for coordinator group
   setup + runtime_groups fix" — the 5 WhatsApp admin methods that
   motivate this doc.
-- R18 commits: per-platform `domain_id` / `send_envelope` fixes
+- R18 commits: per-platform `domain_id` / `send_message` fixes
   (the per-adapter concerns this doc doesn't repeat).
 - E2E test plan: `docs/e2e/2026-06-16-e2e-test-plan.md` — the
   scenario-1 cold-start flow this doc extends.
@@ -629,8 +629,8 @@ it, and explicit about the platforms that *can't*.
 
 ## 7. Implementation status (appended 2026-06-18+)
 
-The research above was the *plan*. This section tracks the
-*execution* — what's been built, what's pending. Updated as each
+The research above was the _plan_. This section tracks the
+_execution_ — what's been built, what's pending. Updated as each
 R-series lands.
 
 ### Done

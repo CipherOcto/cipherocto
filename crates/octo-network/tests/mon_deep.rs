@@ -13,8 +13,8 @@ use octo_network::mon::governance::{
     ProposalState,
 };
 use octo_network::mon::lifecycle::{
-    is_valid_transition, min_participants_for_state_transition, tolerance_threshold, MissionState,
-    TransitionTrigger, DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_MISSED_HEARTBEATS,
+    min_participants_for_state_transition, tolerance_threshold, MissionState, TransitionTrigger,
+    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_MISSED_HEARTBEATS,
 };
 use octo_network::mon::mission_id::MissionId;
 

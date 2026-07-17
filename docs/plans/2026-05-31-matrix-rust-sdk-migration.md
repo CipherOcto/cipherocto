@@ -11,21 +11,22 @@
 
 ### In-House Adapter (`crates/octo-adapter-matrix/`)
 
-| Aspect | Current |
-|--------|---------|
-| Files | 2 (`Cargo.toml`, `src/lib.rs`) |
-| HTTP client | `reqwest 0.12` (raw) |
-| Sync | Manual `GET /_matrix/client/v3/sync` with `next_batch` token |
-| Send | Manual `PUT /rooms/{roomId}/send/m.room.message/{txnId}` |
-| Media | Manual `POST /_matrix/media/v3/upload` |
-| Auth | Manual `Bearer` header on every request |
-| Retry | String-matching on error messages ("429", "M_LIMIT_EXCEEDED") |
-| Tests | 10 unit tests (pure logic, no HTTP mocks) |
-| Plugin ABI | 4 exported C functions (`cdylib`) |
-| Lines | ~600 |
+| Aspect       | Current                                                                    |
+| ------------ | -------------------------------------------------------------------------- |
+| Files        | 2 (`Cargo.toml`, `src/lib.rs`)                                             |
+| HTTP client  | `reqwest 0.12` (raw)                                                       |
+| Sync         | Manual `GET /_matrix/client/v3/sync` with `next_batch` token               |
+| Send         | Manual `PUT /rooms/{roomId}/send/m.room.message/{txnId}`                   |
+| Media        | Manual `POST /_matrix/media/v3/upload`                                     |
+| Auth         | Manual `Bearer` header on every request                                    |
+| Retry        | String-matching on error messages ("429", "M_LIMIT_EXCEEDED")              |
+| Tests        | 10 unit tests (pure logic, no HTTP mocks)                                  |
+| Plugin ABI   | 4 exported C functions (`cdylib`)                                          |
+| Lines        | ~600                                                                       |
 | Dependencies | 8 (reqwest, tokio, serde, blake3, base64, uuid, async-trait, octo-network) |
 
 **What it implements well:**
+
 - DOT/1/ envelope encoding/decoding
 - BLAKE3 domain hashing with normalization
 - Plugin ABI compliance (version 1)
@@ -33,6 +34,7 @@
 - Media upload fallback for >65KB payloads
 
 **What it lacks:**
+
 - No connection pooling configuration
 - No structured error types (all errors → `String`)
 - No mock HTTP tests
@@ -49,29 +51,29 @@
 
 ### Relevant Crate Structure
 
-| Crate | Purpose | Needed? |
-|-------|---------|---------|
-| `matrix-sdk` | Main client (Client, Room, Media, sync) | **YES** |
-| `matrix-sdk-base` | State store abstractions | Maybe (transitive) |
-| `matrix-sdk-common` | Shared types | Maybe (transitive) |
-| `matrix-sdk-crypto` | E2EE (Olm/Megolm) | No (unless E2EE needed) |
-| `matrix-sdk-sqlite` | SQLite persistence | Optional |
-| `matrix-sdk-ffi` | UniFFI bindings (Kotlin/Swift) | No |
+| Crate               | Purpose                                 | Needed?                 |
+| ------------------- | --------------------------------------- | ----------------------- |
+| `matrix-sdk`        | Main client (Client, Room, Media, sync) | **YES**                 |
+| `matrix-sdk-base`   | State store abstractions                | Maybe (transitive)      |
+| `matrix-sdk-common` | Shared types                            | Maybe (transitive)      |
+| `matrix-sdk-crypto` | E2EE (Olm/Megolm)                       | No (unless E2EE needed) |
+| `matrix-sdk-sqlite` | SQLite persistence                      | Optional                |
+| `matrix-sdk-ffi`    | UniFFI bindings (Kotlin/Swift)          | No                      |
 
 ### Key APIs Mapped to PlatformAdapter
 
-| PlatformAdapter Method | matrix-rust-sdk Equivalent | Complexity |
-|------------------------|---------------------------|------------|
-| `send_envelope()` | `room.send(RoomMessageEventContent::text_plain(...))` or `room.send_raw(event_type, json)` | Low |
-| `receive_messages()` | `client.sync_once(SyncSettings::default().token(since))` → iterate `SyncResponse.rooms.join` | Low |
-| `canonicalize()` | Parse event content body, strip `DOT/1/` prefix, base64 decode | Low (same as current) |
-| `capabilities()` | Static values (unchanged) | Trivial |
-| `domain_id()` | Static (unchanged) | Trivial |
-| `health_check()` | `client.sync_once(SyncSettings::default().timeout(Duration::ZERO))` or `client.whoami()` | Low |
-| `shutdown()` | Drop client / stop sync stream | Low |
-| `upload_media()` | `client.media().upload(content_type, data, None)` | Low |
-| `download_media()` | `client.media().get_media_content(request, false)` | Low |
-| `self_handle()` | `client.user_id()` (cached after login) | Trivial |
+| PlatformAdapter Method | matrix-rust-sdk Equivalent                                                                   | Complexity            |
+| ---------------------- | -------------------------------------------------------------------------------------------- | --------------------- |
+| `send_message()`       | `room.send(RoomMessageEventContent::text_plain(...))` or `room.send_raw(event_type, json)`   | Low                   |
+| `receive_messages()`   | `client.sync_once(SyncSettings::default().token(since))` → iterate `SyncResponse.rooms.join` | Low                   |
+| `canonicalize()`       | Parse event content body, strip `DOT/1/` prefix, base64 decode                               | Low (same as current) |
+| `capabilities()`       | Static values (unchanged)                                                                    | Trivial               |
+| `domain_id()`          | Static (unchanged)                                                                           | Trivial               |
+| `health_check()`       | `client.sync_once(SyncSettings::default().timeout(Duration::ZERO))` or `client.whoami()`     | Low                   |
+| `shutdown()`           | Drop client / stop sync stream                                                               | Low                   |
+| `upload_media()`       | `client.media().upload(content_type, data, None)`                                            | Low                   |
+| `download_media()`     | `client.media().get_media_content(request, false)`                                           | Low                   |
+| `self_handle()`        | `client.user_id()` (cached after login)                                                      | Trivial               |
 
 ### Sync Comparison
 
@@ -111,19 +113,19 @@ SDK:
 
 ### What Changes
 
-| Component | Effort | Notes |
-|-----------|--------|-------|
-| `Cargo.toml` | Low | Replace `reqwest` with `matrix-sdk = { version = "0.17.0", default-features = false }` |
-| `MatrixConfig` | Low | Keep struct, but feed into `ClientBuilder` instead of manual headers |
-| `MatrixAdapter` struct | Medium | Replace `reqwest::Client` with `matrix_sdk::Client`, add sync state |
-| `send_envelope()` | Low | `room.send()` replaces manual PUT |
-| `receive_messages()` | Medium | `sync_once()` replaces manual GET + JSON parsing; need to extract room from response |
-| `canonicalize()` | None | Unchanged (DOT/1/ logic is protocol-level) |
-| `health_check()` | Low | SDK handles `/versions` automatically |
-| `upload_media()` | Low | `client.media().upload()` replaces manual POST |
-| `download_media()` | Low | `client.media().get_media_content()` replaces manual GET |
-| Plugin ABI (`cdylib`) | **High** | See below |
-| Tests | Medium | Need to rewrite against SDK types |
+| Component              | Effort   | Notes                                                                                  |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------- |
+| `Cargo.toml`           | Low      | Replace `reqwest` with `matrix-sdk = { version = "0.17.0", default-features = false }` |
+| `MatrixConfig`         | Low      | Keep struct, but feed into `ClientBuilder` instead of manual headers                   |
+| `MatrixAdapter` struct | Medium   | Replace `reqwest::Client` with `matrix_sdk::Client`, add sync state                    |
+| `send_message()`       | Low      | `room.send()` replaces manual PUT                                                      |
+| `receive_messages()`   | Medium   | `sync_once()` replaces manual GET + JSON parsing; need to extract room from response   |
+| `canonicalize()`       | None     | Unchanged (DOT/1/ logic is protocol-level)                                             |
+| `health_check()`       | Low      | SDK handles `/versions` automatically                                                  |
+| `upload_media()`       | Low      | `client.media().upload()` replaces manual POST                                         |
+| `download_media()`     | Low      | `client.media().get_media_content()` replaces manual GET                               |
+| Plugin ABI (`cdylib`)  | **High** | See below                                                                              |
+| Tests                  | Medium   | Need to rewrite against SDK types                                                      |
 
 ### Critical Blocker: cdylib Plugin ABI
 
@@ -152,23 +154,23 @@ The current adapter exports 4 C functions for dynamic loading:
 
 ## 4. Feature Matrix: Current vs SDK
 
-| Feature | Current | With SDK | Delta |
-|---------|---------|----------|-------|
-| Send messages | Manual HTTP | SDK `room.send()` | Better error handling, auto-retry |
-| Receive messages | Manual sync | SDK `sync_once()` | Structured response types |
-| Media upload | Manual POST | SDK `media.upload()` | Authenticated endpoints, caching |
-| Media download | Manual GET | SDK `media.get_media_content()` | Auth media fallback |
-| Connection pooling | None (default reqwest) | Built-in (hyper) | Improved |
-| Auth management | Manual Bearer header | SDK handles token lifecycle | Token refresh, SSO support |
-| Error handling | String matching | Typed errors (`HttpError`, `RumaApiError`) | Structured |
-| Retry logic | String-matched backoff | SDK built-in + our backoff layer | More robust |
-| E2EE | Not supported | Optional feature flag | Future capability |
-| State persistence | None | Optional SQLite/IndexedDB | Future capability |
-| Event handlers | None | `add_event_handler()` pattern | Future capability |
-| Sliding Sync | Not supported | Optional | Future capability |
-| Test mocking | None | SDK has `matrix-sdk-test` | Better test infra |
-| Binary size | ~2MB (reqwest) | ~8-15MB (SDK + deps) | Larger |
-| Compile time | Fast | Slower (ruma codegen) | Notable |
+| Feature            | Current                | With SDK                                   | Delta                             |
+| ------------------ | ---------------------- | ------------------------------------------ | --------------------------------- |
+| Send messages      | Manual HTTP            | SDK `room.send()`                          | Better error handling, auto-retry |
+| Receive messages   | Manual sync            | SDK `sync_once()`                          | Structured response types         |
+| Media upload       | Manual POST            | SDK `media.upload()`                       | Authenticated endpoints, caching  |
+| Media download     | Manual GET             | SDK `media.get_media_content()`            | Auth media fallback               |
+| Connection pooling | None (default reqwest) | Built-in (hyper)                           | Improved                          |
+| Auth management    | Manual Bearer header   | SDK handles token lifecycle                | Token refresh, SSO support        |
+| Error handling     | String matching        | Typed errors (`HttpError`, `RumaApiError`) | Structured                        |
+| Retry logic        | String-matched backoff | SDK built-in + our backoff layer           | More robust                       |
+| E2EE               | Not supported          | Optional feature flag                      | Future capability                 |
+| State persistence  | None                   | Optional SQLite/IndexedDB                  | Future capability                 |
+| Event handlers     | None                   | `add_event_handler()` pattern              | Future capability                 |
+| Sliding Sync       | Not supported          | Optional                                   | Future capability                 |
+| Test mocking       | None                   | SDK has `matrix-sdk-test`                  | Better test infra                 |
+| Binary size        | ~2MB (reqwest)         | ~8-15MB (SDK + deps)                       | Larger                            |
+| Compile time       | Fast                   | Slower (ruma codegen)                      | Notable                           |
 
 ---
 
@@ -191,12 +193,12 @@ blake3, base64, uuid, async-trait, octo-network
 
 ### Binary Size Impact
 
-| Config | Estimated Size |
-|--------|---------------|
-| Current (reqwest) | ~1.5-2 MB |
-| SDK minimal (`default-features = false`) | ~5-8 MB |
-| SDK with sqlite | ~8-12 MB |
-| SDK with e2ee | ~12-18 MB |
+| Config                                   | Estimated Size |
+| ---------------------------------------- | -------------- |
+| Current (reqwest)                        | ~1.5-2 MB      |
+| SDK minimal (`default-features = false`) | ~5-8 MB        |
+| SDK with sqlite                          | ~8-12 MB       |
+| SDK with e2ee                            | ~12-18 MB      |
 
 For a `cdylib` plugin, size matters. The minimal config is acceptable.
 
@@ -204,14 +206,14 @@ For a `cdylib` plugin, size matters. The minimal config is acceptable.
 
 ## 6. Risk Assessment
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| cdylib + tokio runtime conflicts | **HIGH** | Embed runtime (matrix-sdk-ffi pattern) |
-| SDK upgrade breaking changes | MEDIUM | Pin to 0.17.0, test before upgrading |
-| Binary size bloat | MEDIUM | Use `default-features = false` |
-| Compile time increase | LOW | Acceptable for correctness gains |
-| Loss of DOT/1/ control | LOW | Keep encoding logic in-house, only replace HTTP |
-| SDK bugs / upstream issues | LOW | Mature project (Element uses it in production) |
+| Risk                             | Severity | Mitigation                                      |
+| -------------------------------- | -------- | ----------------------------------------------- |
+| cdylib + tokio runtime conflicts | **HIGH** | Embed runtime (matrix-sdk-ffi pattern)          |
+| SDK upgrade breaking changes     | MEDIUM   | Pin to 0.17.0, test before upgrading            |
+| Binary size bloat                | MEDIUM   | Use `default-features = false`                  |
+| Compile time increase            | LOW      | Acceptable for correctness gains                |
+| Loss of DOT/1/ control           | LOW      | Keep encoding logic in-house, only replace HTTP |
+| SDK bugs / upstream issues       | LOW      | Mature project (Element uses it in production)  |
 
 ---
 
@@ -222,7 +224,7 @@ For a `cdylib` plugin, size matters. The minimal config is acceptable.
 1. Create `crates/octo-adapter-matrix-sdk/` (new crate, keep old for reference)
 2. Add `matrix-sdk = { version = "0.17.0", default-features = false }` to Cargo.toml
 3. Implement `MatrixAdapter` with embedded tokio runtime
-4. Implement `send_envelope()` and `receive_messages()` using SDK
+4. Implement `send_message()` and `receive_messages()` using SDK
 5. Keep DOT/1/ encoding logic, BLAKE3 domain hashing, plugin ABI unchanged
 6. Verify cdylib compiles and loads
 
@@ -281,6 +283,7 @@ For a `cdylib` plugin, size matters. The minimal config is acceptable.
 **Migrate to matrix-rust-sdk** using Phase 1-4 plan.
 
 **Rationale:**
+
 1. Matrix is "the most aligned platform for CipherOcto" (per mission doc) — invest in the integration
 2. The SDK handles auth, retry, error handling, and media correctly — reduces maintenance burden
 3. E2EE and persistence are natural future requirements for a privacy-focused protocol
@@ -293,7 +296,7 @@ For a `cdylib` plugin, size matters. The minimal config is acceptable.
 
 ## Appendix A: Code Mapping
 
-### Current `send_envelope()` (~40 lines)
+### Current `send_message()` (~40 lines)
 
 ```rust
 // Manual HTTP PUT with Bearer header

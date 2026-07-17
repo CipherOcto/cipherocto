@@ -1,0 +1,8 @@
+# Node A configuration for Layer 4 docker tests
+node_id = "0101010101010101010101010101010101010101010101010101010101010101"
+network_id = "0101010101010101010101010101010101010101010101010101010101010101"
+
+[[providers]]
+name = "mock-a"
+endpoint = "http://localhost"
+models = ["gpt-4o"]

@@ -137,13 +137,120 @@ impl MultiAccountStore {
 
     /// Open the default index at `~/.local/share/octo/whatsapp/index.json`.
     /// Falls back to the system data dir if HOME is unset.
+    ///
+    /// Self-heal: if the index file does not exist or is empty, scan
+    /// the base directory for legacy (pre-onboard-core) accounts —
+    /// directories named `<id>/session.db/` or `<id>.session.db/`
+    /// paired with a `<id>.meta.json` (or `<id>.session.db.meta.json`)
+    /// sibling — and import them into the index. Idempotent: once
+    /// the index has any entry the discovery step is skipped.
     pub fn open_default() -> Result<Self> {
         let base = default_index_base_dir();
         fs::create_dir_all(&base).map_err(|e| CoreError::InvalidSessionPath {
             path: base.clone(),
             reason: format!("create base: {e}"),
         })?;
-        Self::open(base.join("index.json"))
+        let mut store = Self::open(base.join("index.json"))?;
+        if store.index.accounts.is_empty() {
+            // Self-heal once: pull legacy accounts into the index.
+            let discovered = Self::discover_from_disk(&base);
+            if !discovered.is_empty() {
+                for entry in discovered {
+                    store.index.accounts.insert(entry.account_id.clone(), entry);
+                }
+                store.save()?;
+            }
+        }
+        Ok(store)
+    }
+
+    /// Scan `base_dir` for legacy (pre-onboard-core) accounts and
+    /// synthesise an `AccountEntry` for each. Used as a one-shot
+    /// self-heal fallback from `open_default` when no index file
+    /// exists. Never mutates the store or filesystem on its own —
+    /// the caller decides whether to persist.
+    ///
+    /// Two on-disk layouts are recognised:
+    ///
+    /// * **Pattern A** — legacy flat shape: `<base>/<id>.session.db/`
+    ///   (dir) paired with `<base>/<id>.session.db.meta.json`.
+    ///   Example: `bak_main_phone.session.db/`,
+    ///   `logout.session.db/`.
+    ///
+    /// * **Pattern B** — legacy per-account-directory shape:
+    ///   `<base>/<id>/session.db/` (dir) paired with
+    ///   `<base>/<id>.meta.json`. This is the canonical case for
+    ///   the live `default` account.
+    ///
+    /// Entries whose meta.json is broken (`*.session.db.broken-*`
+    /// remnants), whose `account_id` fails `validate_account_id`,
+    /// or whose session directory is missing are silently skipped
+    /// — discovery is best-effort.
+    pub fn discover_from_disk(base_dir: &Path) -> Vec<AccountEntry> {
+        let mut entries: Vec<AccountEntry> = Vec::new();
+        let read_dir = match fs::read_dir(base_dir) {
+            Ok(rd) => rd,
+            Err(_) => return entries,
+        };
+        for dir_entry in read_dir.flatten() {
+            let path = dir_entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            // Two accepted meta.json naming shapes:
+            //   `<id>.meta.json`           (Pattern B)
+            //   `<id>.session.db.meta.json` (Pattern A)
+            let id: &str = if let Some(stripped) = name.strip_suffix(".meta.json") {
+                if let Some(prefix) = stripped.strip_suffix(".session.db") {
+                    prefix
+                } else {
+                    stripped
+                }
+            } else {
+                continue;
+            };
+            if id.is_empty() || validate_account_id(id).is_err() {
+                continue;
+            }
+            // Locate the session directory for this account.
+            let session_pattern_a = base_dir.join(format!("{id}.session.db"));
+            let session_pattern_b = base_dir.join(id).join("session.db");
+            let session_path = if session_pattern_a.is_dir() {
+                session_pattern_a
+            } else if session_pattern_b.is_dir() {
+                session_pattern_b
+            } else {
+                continue;
+            };
+            // Parse linked_at from the meta.json. The legacy file uses
+            // ISO 8601; we accept RFC 3339 / UTC-suffixed forms.
+            let bytes = match fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            #[derive(Deserialize)]
+            struct MetaFile {
+                #[serde(default)]
+                linked_at: String,
+            }
+            let linked_at = serde_json::from_slice::<MetaFile>(&bytes)
+                .ok()
+                .and_then(|m| parse_iso8601_to_unix(&m.linked_at))
+                .unwrap_or(0);
+            entries.push(AccountEntry {
+                account_id: id.to_string(),
+                session_path,
+                config_path: path,
+                linked_at,
+                last_used_at: 0,
+            });
+        }
+        entries.sort_by(|a, b| a.account_id.cmp(&b.account_id));
+        entries
     }
 
     /// List all accounts in the index, sorted by `account_id`.
@@ -522,6 +629,57 @@ fn default_index_base_dir() -> PathBuf {
     base
 }
 
+/// Minimal RFC 3339 / ISO 8601-UTC parser. Accepts shapes like
+/// `2026-07-09T11:41:47Z` and `2026-07-09T11:41:47.123Z`. Returns
+/// `None` on any deviation — discovery is best-effort and the
+/// caller falls back to `0` for the `linked_at` field.
+fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
+    // Indices:        0123456789012345678
+    // Required shape: YYYY-MM-DDTHH:MM:SS[.fff]Z
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 {
+        return None;
+    }
+    if bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || (bytes[10] != b'T' && bytes[10] != b' ')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let parse_int = |a: usize, b: usize| -> Option<i64> {
+        std::str::from_utf8(&bytes[a..b]).ok()?.parse::<i64>().ok()
+    };
+    let y = parse_int(0, 4)?;
+    let mo = parse_int(5, 7)?;
+    let d = parse_int(8, 10)?;
+    let h = parse_int(11, 13)?;
+    let mi = parse_int(14, 16)?;
+    let sec = parse_int(17, 19)?;
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Days from 1970-01-01 to YYYY-01-01 (proleptic Gregorian).
+    let years_from_epoch = y - 1970;
+    let leap_years =
+        (y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400 - (1969 / 4 - 1969 / 100 + 1969 / 400);
+    let mut day_of_year: i64 = 0;
+    let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..mo {
+        day_of_year += month_days[(m - 1) as usize];
+    }
+    if mo > 2 && is_leap_year(y) {
+        day_of_year += 1;
+    }
+    let days = years_from_epoch * 365 + leap_years + (d - 1) + day_of_year;
+    Some(days * 86_400 + h * 3600 + mi * 60 + sec)
+}
+
+fn is_leap_year(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+}
+
 fn dirs_data_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -625,6 +783,14 @@ fn sha256_hex(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Process-wide mutex serialising tests that mutate
+    /// `XDG_DATA_HOME` / `HOME`. `MultiAccountStore::open_default`
+    /// reads those env vars at call time, so concurrent tests in
+    /// the same process can observe each other's overrides and
+    /// read the wrong base dir. Hold this guard for the entire
+    /// duration of any `open_default` test.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn tempdir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -858,5 +1024,279 @@ mod tests {
         // Path-traversal account_ids must be rejected by export.
         assert!(store.export("../evil", &dir.join("out.tar.gz")).is_err());
         assert!(store.export("..", &dir.join("out.tar.gz")).is_err());
+    }
+
+    // ── discover_from_disk + open_default self-heal (2026-07-13) ────
+    //
+    // Background: prior to the `onboard-core` multi-account index,
+    // accounts lived on disk as `<id>.meta.json` + `<id>.session.db/`
+    // siblings. The index file (`index.json`) didn't exist until an
+    // explicit `import()` call was made. Operators who linked an
+    // account via the pre-onboard-core `qr-link` flow and never ran
+    // `import` saw an empty `daemon.accounts.list` even though their
+    // account was clearly on disk and active.
+    //
+    // The fix: `open_default` self-heals by scanning the base dir
+    // for legacy accounts when the index is empty and importing
+    // them once. `discover_from_disk` does the actual scan.
+    //
+    // The tests below pin the discovery contract on both supported
+    // on-disk shapes (flat `<id>.session.db/` and per-account-dir
+    // `<id>/session.db/`), reject broken-session remnants, and
+    // verify the open_default self-heal is idempotent.
+
+    /// Helper: create a Pattern-A legacy account (flat `<id>.session.db/`
+    /// + `<id>.session.db.meta.json`).
+    fn make_legacy_pattern_a(base: &Path, id: &str, linked_at: &str) {
+        let session = base.join(format!("{id}.session.db"));
+        fs::create_dir_all(&session).unwrap();
+        let meta = base.join(format!("{id}.session.db.meta.json"));
+        fs::write(
+            &meta,
+            format!(
+                r#"{{"self_phone":"123","linked_at":"{linked_at}","mode":"qr-link","groups":[]}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Helper: create a Pattern-B legacy account (per-account-dir
+    /// `<id>/session.db/` + `<id>.meta.json`).
+    fn make_legacy_pattern_b(base: &Path, id: &str, linked_at: &str) {
+        let account_dir = base.join(id);
+        fs::create_dir_all(account_dir.join("session.db")).unwrap();
+        let meta = base.join(format!("{id}.meta.json"));
+        fs::write(
+            &meta,
+            format!(
+                r#"{{"self_phone":"123","linked_at":"{linked_at}","mode":"qr-link","groups":[]}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn discover_from_disk_pattern_a() {
+        let base = tempdir();
+        make_legacy_pattern_a(&base, "bak_main_phone", "2026-06-26T20:10:20Z");
+        let found = MultiAccountStore::discover_from_disk(&base);
+        assert_eq!(found.len(), 1);
+        let e = &found[0];
+        assert_eq!(e.account_id, "bak_main_phone");
+        assert_eq!(e.session_path, base.join("bak_main_phone.session.db"));
+        assert_eq!(
+            e.config_path,
+            base.join("bak_main_phone.session.db.meta.json")
+        );
+        assert_eq!(
+            e.linked_at,
+            parse_iso8601_to_unix("2026-06-26T20:10:20Z").unwrap()
+        );
+    }
+
+    #[test]
+    fn discover_from_disk_pattern_b() {
+        let base = tempdir();
+        make_legacy_pattern_b(&base, "default", "2026-07-09T11:41:47Z");
+        let found = MultiAccountStore::discover_from_disk(&base);
+        assert_eq!(found.len(), 1);
+        let e = &found[0];
+        assert_eq!(e.account_id, "default");
+        assert_eq!(e.session_path, base.join("default").join("session.db"));
+        assert_eq!(e.config_path, base.join("default.meta.json"));
+        assert_eq!(
+            e.linked_at,
+            parse_iso8601_to_unix("2026-07-09T11:41:47Z").unwrap()
+        );
+    }
+
+    #[test]
+    fn discover_from_disk_handles_multiple_sorted_by_id() {
+        let base = tempdir();
+        make_legacy_pattern_a(&base, "zebra", "2026-01-01T00:00:00Z");
+        make_legacy_pattern_b(&base, "alpha", "2026-02-02T00:00:00Z");
+        make_legacy_pattern_a(&base, "middle", "2026-03-03T00:00:00Z");
+        let found = MultiAccountStore::discover_from_disk(&base);
+        let ids: Vec<&str> = found.iter().map(|e| e.account_id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "middle", "zebra"]);
+    }
+
+    #[test]
+    fn discover_from_disk_skips_meta_without_session() {
+        // Orphan meta.json with no matching session dir on either
+        // pattern must be skipped — otherwise `accounts.list` would
+        // claim an account exists when its session is gone.
+        let base = tempdir();
+        fs::write(
+            base.join("orphan.meta.json"),
+            br#"{"self_phone":"x","linked_at":"2026-01-01T00:00:00Z","mode":"qr-link","groups":[]}"#,
+        )
+        .unwrap();
+        let found = MultiAccountStore::discover_from_disk(&base);
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn discover_from_disk_skips_broken_renames() {
+        // `*.session.db.broken-*` are the renamed remnants of failed
+        // session opens (see persistence-failure handler). They must
+        // NOT be discovered — they're known-bad.
+        let base = tempdir();
+        fs::create_dir_all(base.join("dead.session.db.broken-12345")).unwrap();
+        fs::write(
+            base.join("dead.session.db.meta.json"),
+            br#"{"linked_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        // Also a real legacy account alongside — should still be found.
+        make_legacy_pattern_b(&base, "live", "2026-02-02T00:00:00Z");
+        let found = MultiAccountStore::discover_from_disk(&base);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].account_id, "live");
+    }
+
+    #[test]
+    fn discover_from_disk_missing_base_dir_returns_empty() {
+        let ghost = std::env::temp_dir().join(format!(
+            "octo-multiaccount-nonexistent-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(MultiAccountStore::discover_from_disk(&ghost).is_empty());
+    }
+
+    #[test]
+    fn parse_iso8601_to_unix_known_timestamp() {
+        // 2026-07-09T11:41:47Z. Verified externally:
+        //   datetime(2026,7,9,11,41,47,tz=UTC).timestamp() == 1783597307
+        let secs = parse_iso8601_to_unix("2026-07-09T11:41:47Z").unwrap();
+        assert_eq!(secs, 1_783_597_307);
+    }
+
+    #[test]
+    fn parse_iso8601_to_unix_rejects_malformed() {
+        assert!(parse_iso8601_to_unix("").is_none());
+        assert!(parse_iso8601_to_unix("not-a-date").is_none());
+        assert!(parse_iso8601_to_unix("2026-13-01T00:00:00Z").is_none()); // bad month
+        assert!(parse_iso8601_to_unix("2026-01-32T00:00:00Z").is_none()); // bad day
+        assert!(parse_iso8601_to_unix("2026-01-01").is_none()); // missing time
+        assert!(parse_iso8601_to_unix("2026-01-01T00:00:00").is_none()); // missing Z
+    }
+
+    #[test]
+    fn open_default_self_heals_legacy_accounts() {
+        // Simulate the user's state: no `index.json`, but legacy
+        // accounts on disk. `open_default` should auto-import them.
+        //
+        // We can't override the base dir for `open_default` (it uses
+        // XDG_DATA_HOME / HOME directly), so we shadow the env vars.
+        // Hold ENV_LOCK for the whole test to avoid races with
+        // sibling tests that mutate the same env vars.
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let base = tempdir();
+        let prior_xdg = std::env::var_os("XDG_DATA_HOME");
+        let prior_home = std::env::var_os("HOME");
+        // SAFETY: env-mutation is test-local and serial under cargo's
+        // default test runner (each #[test] gets its own thread but
+        // `std::env::set_var` is process-global; the next test that
+        // touches HOME/XDG_DATA_HOME will reset). We do restore at
+        // the end to avoid leaking the override to sibling tests.
+        std::env::set_var("XDG_DATA_HOME", &base);
+        std::env::set_var("HOME", &base);
+
+        // `open_default` resolves to `<XDG_DATA_HOME>/octo/whatsapp/`,
+        // not `<XDG_DATA_HOME>/` directly — see `default_index_base_dir`.
+        let wa_dir = base.join("octo").join("whatsapp");
+        fs::create_dir_all(&wa_dir).unwrap();
+
+        // Lay down two legacy accounts at the resolved base.
+        make_legacy_pattern_b(&wa_dir, "default", "2026-07-09T11:41:47Z");
+        make_legacy_pattern_a(&wa_dir, "bak_main_phone", "2026-06-26T20:10:20Z");
+
+        // Run the production boot path.
+        let store = MultiAccountStore::open_default().unwrap();
+
+        // Discovery must have populated the in-memory index.
+        let entries = store.list();
+        assert_eq!(entries.len(), 2, "expected 2 auto-imported accounts");
+        let ids: Vec<&str> = entries.iter().map(|e| e.account_id.as_str()).collect();
+        assert_eq!(ids, vec!["bak_main_phone", "default"]);
+
+        // And persisted the new index file so the next boot is cheap.
+        let index_path = wa_dir.join("index.json");
+        assert!(
+            index_path.exists(),
+            "open_default must persist after self-heal"
+        );
+        // File must parse as a valid IndexFile (would fail on broken JSON).
+        let bytes = fs::read(&index_path).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("self-healed index.json must be valid JSON");
+        assert!(
+            parsed.get("accounts").is_some(),
+            "index must have 'accounts' key"
+        );
+
+        // Restore env to avoid leaking into sibling tests.
+        if let Some(v) = prior_xdg {
+            std::env::set_var("XDG_DATA_HOME", v);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+        if let Some(v) = prior_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn open_default_idempotent_when_already_populated() {
+        // When `index.json` already has an entry, discovery must NOT
+        // run (no extra entries, no scan overhead, no surprise
+        // re-import of files the user might have removed).
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let base = tempdir();
+        let prior_xdg = std::env::var_os("XDG_DATA_HOME");
+        let prior_home = std::env::var_os("HOME");
+        std::env::set_var("XDG_DATA_HOME", &base);
+        std::env::set_var("HOME", &base);
+
+        // `open_default` resolves to `<XDG_DATA_HOME>/octo/whatsapp/`,
+        // not `<XDG_DATA_HOME>/` directly — see `default_index_base_dir`.
+        let wa_dir = base.join("octo").join("whatsapp");
+        fs::create_dir_all(&wa_dir).unwrap();
+
+        // First boot: discover 2 legacy accounts.
+        make_legacy_pattern_b(&wa_dir, "default", "2026-07-09T11:41:47Z");
+        make_legacy_pattern_a(&wa_dir, "bak_main_phone", "2026-06-26T20:10:20Z");
+        let store1 = MultiAccountStore::open_default().unwrap();
+        assert_eq!(store1.list().len(), 2);
+
+        // Drop one legacy account on disk after boot — it should
+        // still appear in subsequent boots because the index has it.
+        fs::remove_dir_all(wa_dir.join("bak_main_phone.session.db")).unwrap();
+        fs::remove_file(wa_dir.join("bak_main_phone.session.db.meta.json")).unwrap();
+
+        // Second boot: index already populated → no re-discovery.
+        let store2 = MultiAccountStore::open_default().unwrap();
+        assert_eq!(
+            store2.list().len(),
+            2,
+            "index entries persist; discovery is skipped on populated index"
+        );
+
+        if let Some(v) = prior_xdg {
+            std::env::set_var("XDG_DATA_HOME", v);
+        } else {
+            std::env::remove_var("XDG_DATA_HOME");
+        }
+        if let Some(v) = prior_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 }

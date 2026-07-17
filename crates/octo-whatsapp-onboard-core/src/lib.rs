@@ -29,7 +29,7 @@ pub use sidecar::SidecarMode;
 // `POLL_INTERVAL_MS` and `POST_CONNECT_GRACE_MS` constants from
 // `session`).
 pub use session::{
-    wait_for_connected, wait_for_health, POLL_INTERVAL_MS, POST_CONNECT_GRACE_MS,
+    wait_for_connected, wait_for_health, wait_for_synced, POLL_INTERVAL_MS, POST_CONNECT_GRACE_MS,
     SESSION_LIST_HEALTH_TIMEOUT_SECS, WHOAMI_TIMEOUT_SECS,
 };
 

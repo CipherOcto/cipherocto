@@ -1668,6 +1668,7 @@ deployments:
     // litellm-mode api_base forwarding test (RFC-0929 Mission 0929-b)
     // ========================================================================
 
+    #[cfg(any(feature = "litellm-mode", feature = "full"))]
     #[test]
     fn test_litellm_mode_api_base_forwarded() {
         // Verify that api_base from DispatchInfo can be forwarded via HttpCompletionRequest

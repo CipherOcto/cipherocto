@@ -36,7 +36,10 @@ async fn test_envelope_send_through_mock_adapter() {
     let envelope = MockNetwork::make_envelope([0xBB; 32], 1, [0x02; 32], 2000);
 
     let domain = adapter.domain_id("test");
-    let receipt = adapter.send_envelope(&domain, &envelope).await.unwrap();
+    let receipt = adapter
+        .send_message(&domain, &envelope, b"test")
+        .await
+        .unwrap();
     assert!(!receipt.platform_message_id.is_empty());
     assert_eq!(adapter.outbound_count().await, 1);
 
@@ -53,8 +56,14 @@ async fn test_multi_adapter_deterministic() {
 
     let domain1 = adapter1.domain_id("test");
     let domain2 = adapter2.domain_id("test");
-    adapter1.send_envelope(&domain1, &envelope).await.unwrap();
-    adapter2.send_envelope(&domain2, &envelope).await.unwrap();
+    adapter1
+        .send_message(&domain1, &envelope, b"")
+        .await
+        .unwrap();
+    adapter2
+        .send_message(&domain2, &envelope, b"")
+        .await
+        .unwrap();
 
     let bytes1 = adapter1.outbound_messages().await;
     let bytes2 = adapter2.outbound_messages().await;

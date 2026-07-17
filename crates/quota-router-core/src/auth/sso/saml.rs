@@ -66,6 +66,7 @@ fn default_clock_skew() -> i64 {
 // ============================================================================
 
 /// SAML assertion parser with XML signature validation
+#[derive(Debug)]
 pub struct SamlAssertionParserImpl {
     /// IdP certificate (DER-encoded) for signature validation
     idp_certificate: Vec<u8>,
@@ -266,6 +267,20 @@ impl SamlAssertionParserImpl {
                                 }
                             }
                         }
+                        "SubjectConfirmationData"
+                        | "saml2:SubjectConfirmationData"
+                        | "saml:SubjectConfirmationData" => {
+                            if in_subject {
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                                    if key == "Recipient" {
+                                        recipient = Some(val);
+                                    }
+                                }
+                            }
+                        }
                         "AttributeValue" | "saml2:AttributeValue" | "saml:AttributeValue" => {
                             for attr in e.attributes().flatten() {
                                 let val = attr.unescape_value().unwrap_or_default().to_string();
@@ -425,6 +440,7 @@ impl SamlAssertionParserImpl {
 // ============================================================================
 
 /// Components of an XML digital signature
+#[derive(Debug)]
 struct XmlSignatureComponents {
     /// The canonicalized SignedInfo element
     signed_info_xml: Vec<u8>,
@@ -766,7 +782,7 @@ pub fn parse_idp_metadata(xml: &str) -> Result<IdpMetadata, SsoError> {
                 let text = unescape(&String::from_utf8_lossy(e.as_ref()))
                     .unwrap_or_default()
                     .to_string();
-                if !text.is_empty() && certificate.is_none() {
+                if !text.trim().is_empty() && certificate.is_none() {
                     // Assume this is a certificate value
                     // In production, track context more carefully
                     certificate = Some(text.as_bytes().to_vec());
@@ -1065,5 +1081,644 @@ mod tests {
 
         let result = parser.validate_signature("<Assertion/>");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_saml_parser_impl_new() {
+        let parser = SamlAssertionParserImpl::new(
+            vec![1, 2, 3],
+            "sp-entity".to_string(),
+            "https://acs.example.com".to_string(),
+            60,
+        );
+        assert_eq!(parser.idp_certificate, vec![1, 2, 3]);
+        assert_eq!(parser.sp_entity_id, "sp-entity");
+        assert_eq!(parser.acs_url, "https://acs.example.com");
+        assert_eq!(parser.clock_skew_seconds, 60);
+    }
+
+    #[test]
+    fn test_saml_parser_from_provider() {
+        let provider = IdentityProvider {
+            id: "idp-1".into(),
+            name: "My IdP".into(),
+            provider_type: super::super::ProviderType::GenericSaml,
+            config: super::super::ProviderConfig {
+                client_id: None,
+                client_secret: None,
+                issuer: None,
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: Some(vec![10, 20, 30]),
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        let parser =
+            SamlAssertionParserImpl::from_provider(&provider, "https://acs.example.com").unwrap();
+        assert_eq!(parser.idp_certificate, vec![10, 20, 30]);
+        assert_eq!(parser.sp_entity_id, "idp-1");
+        assert_eq!(parser.acs_url, "https://acs.example.com");
+    }
+
+    #[test]
+    fn test_saml_parser_from_provider_no_cert() {
+        let provider = IdentityProvider {
+            id: "idp-1".into(),
+            name: "My IdP".into(),
+            provider_type: super::super::ProviderType::GenericSaml,
+            config: super::super::ProviderConfig {
+                client_id: None,
+                client_secret: None,
+                issuer: None,
+                scopes: None,
+                idp_metadata_url: None,
+                sp_entity_id: None,
+                acs_url: None,
+                idp_certificate: None,
+                scim_url: None,
+                scim_token: None,
+            },
+            enabled: true,
+            auto_provision: false,
+            default_team: None,
+        };
+
+        let result = SamlAssertionParserImpl::from_provider(&provider, "https://acs.example.com");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing IdP certificate")),
+            other => panic!("Expected ProviderError, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_missing_name_id() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        let xml = format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <Audience>https://example.com/saml</Audience>
+            </Conditions>
+            <Subject>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>"#,
+            past, future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing NameID")),
+            other => panic!("Expected ProviderError (Missing NameID), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_missing_not_before() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        let xml = format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotOnOrAfter="{}">
+                <Audience>https://example.com/saml</Audience>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>"#,
+            future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing NotBefore")),
+            other => panic!(
+                "Expected ProviderError (Missing NotBefore), got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_missing_not_on_or_after() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        let xml = format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="{}">
+                <Audience>https://example.com/saml</Audience>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>"#,
+            past
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing NotOnOrAfter")),
+            other => {
+                panic!(
+                    "Expected ProviderError (Missing NotOnOrAfter), got: {:?}",
+                    other
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_missing_audience() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        let xml = format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="{}" NotOnOrAfter="{}">
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>"#,
+            past, future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing Audience")),
+            other => panic!(
+                "Expected ProviderError (Missing Audience), got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_recipient_mismatch() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        let xml = format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <Audience>https://example.com/saml</Audience>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://wrong-acs.example.com"/>
+            </Subject>
+        </Assertion>"#,
+            past, future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Recipient mismatch")),
+            other => panic!(
+                "Expected ProviderError (Recipient mismatch), got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_generate_sp_metadata_content() {
+        let metadata = generate_sp_metadata(
+            "https://myapp.com/saml",
+            "https://myapp.com/auth/saml/acs",
+            "https://myapp.com",
+        )
+        .unwrap();
+
+        assert!(metadata.contains("EntityDescriptor"));
+        assert!(metadata.contains("SPSSODescriptor"));
+        assert!(metadata.contains("AuthnRequestsSigned=\"true\""));
+        assert!(metadata.contains("WantAssertionsSigned=\"true\""));
+        assert!(metadata.contains("protocolSupportEnumeration"));
+        assert!(metadata.contains("SingleLogoutService"));
+        assert!(metadata.contains("AssertionConsumerService"));
+        assert!(metadata.contains("HTTP-POST"));
+        assert!(metadata.contains("HTTP-Redirect"));
+        assert!(metadata.contains("https://myapp.com/auth/sso/saml/slo"));
+        assert!(metadata.contains("https://myapp.com/auth/saml/acs"));
+    }
+
+    #[test]
+    fn test_generate_authn_request_content() {
+        let (id, xml) = generate_authn_request(
+            "https://sp.example.com/saml",
+            "https://sp.example.com/acs",
+            "https://idp.example.com/sso",
+        )
+        .unwrap();
+
+        assert!(id.starts_with('_'));
+        assert!(id.len() > 1);
+        assert!(xml.contains("AuthnRequest"));
+        assert!(xml.contains("Version=\"2.0\""));
+        assert!(xml.contains("IssueInstant"));
+        assert!(xml.contains("AssertionConsumerServiceURL=\"https://sp.example.com/acs\""));
+        assert!(xml.contains("ProtocolBinding"));
+        assert!(xml.contains("HTTP-POST"));
+        assert!(xml.contains("Issuer"));
+        assert!(xml.contains("https://sp.example.com/saml"));
+        assert!(xml.contains("NameIDPolicy"));
+        assert!(xml.contains("urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified"));
+        assert!(xml.contains("AllowCreate=\"true\""));
+    }
+
+    #[test]
+    fn test_parse_idp_metadata_minimal() {
+        let xml = r#"
+        <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                          entityID="https://idp.example.com">
+            <IDPSSODescriptor>
+            </IDPSSODescriptor>
+        </EntityDescriptor>
+        "#;
+        let metadata = parse_idp_metadata(xml).unwrap();
+        assert_eq!(metadata.entity_id, "https://idp.example.com");
+        assert!(metadata.sso_url.is_none());
+        assert!(metadata.slo_url.is_none());
+        assert!(metadata.certificate.is_none());
+    }
+
+    #[test]
+    fn test_parse_idp_metadata_with_slo_only() {
+        let xml = r#"
+        <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                          entityID="https://idp.example.com">
+            <IDPSSODescriptor>
+                <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                                     Location="https://idp.example.com/slo"/>
+            </IDPSSODescriptor>
+        </EntityDescriptor>
+        "#;
+        let metadata = parse_idp_metadata(xml).unwrap();
+        assert_eq!(
+            metadata.slo_url,
+            Some("https://idp.example.com/slo".to_string())
+        );
+        assert!(metadata.sso_url.is_none());
+    }
+
+    #[test]
+    fn test_parse_idp_metadata_with_post_binding() {
+        let xml = r#"
+        <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                          entityID="https://idp.example.com">
+            <IDPSSODescriptor>
+                <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                                     Location="https://idp.example.com/sso/post"/>
+            </IDPSSODescriptor>
+        </EntityDescriptor>
+        "#;
+        let metadata = parse_idp_metadata(xml).unwrap();
+        assert_eq!(
+            metadata.sso_url,
+            Some("https://idp.example.com/sso/post".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_idp_metadata_missing_entity_id() {
+        let xml = r#"
+        <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+            <IDPSSODescriptor/>
+        </EntityDescriptor>
+        "#;
+        let result = parse_idp_metadata(xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::ProviderError(msg) => assert!(msg.contains("Missing entityID")),
+            other => panic!(
+                "Expected ProviderError (Missing entityID), got: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_parse_idp_metadata_invalid_xml() {
+        let result = parse_idp_metadata("not valid xml <<>>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_saml_datetime_invalid() {
+        let result = parse_saml_datetime("not-a-date");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_saml_datetime_valid_formats() {
+        let dt = parse_saml_datetime("2026-01-01T00:00:00Z").unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 1);
+
+        let dt2 = parse_saml_datetime("2026-12-31T23:59:59Z").unwrap();
+        assert_eq!(dt2.year(), 2026);
+        assert_eq!(dt2.month(), 12);
+        assert_eq!(dt2.day(), 31);
+    }
+
+    #[test]
+    fn test_verify_xml_signature_empty_cert() {
+        let result = verify_xml_signature(b"signed-info", b"sig-value", b"");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => assert!(msg.contains("empty")),
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_xml_signature_empty_sig_value() {
+        let result = verify_xml_signature(b"signed-info", b"", b"cert-data");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => assert!(msg.contains("empty")),
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_xml_signature_success() {
+        let result = verify_xml_signature(b"signed-info", b"sig-data", b"cert-data");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_uuid_simple() {
+        let id1 = uuid_simple();
+        let id2 = uuid_simple();
+        assert!(!id1.is_empty());
+        assert!(!id2.is_empty());
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_saml_config_default_clock_skew() {
+        let config: SamlConfig = serde_json::from_str(
+            r#"{"sp_entity_id":"sp","acs_url":"acs","base_url":"https://example.com"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.clock_skew_seconds, 30);
+    }
+
+    #[test]
+    fn test_saml_config_custom_clock_skew() {
+        let config: SamlConfig = serde_json::from_str(
+            r#"{"sp_entity_id":"sp","acs_url":"acs","base_url":"https://example.com","clock_skew_seconds":60}"#,
+        )
+        .unwrap();
+        assert_eq!(config.clock_skew_seconds, 60);
+    }
+
+    #[test]
+    fn test_parse_xml_signature_no_signature() {
+        let result = parse_xml_signature("<Assertion/>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_xml_signature_invalid_xml() {
+        let result = parse_xml_signature("<<not xml>>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_saml_map_attributes_empty() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let assertion = SamlAssertion {
+            name_id: "user@example.com".to_string(),
+            session_index: None,
+            attributes: HashMap::new(),
+            not_before: Utc::now() - ChronoDuration::hours(1),
+            not_on_or_after: Utc::now() + ChronoDuration::hours(1),
+        };
+
+        let user = parser.map_attributes(&assertion);
+        assert_eq!(user.sub, "user@example.com");
+        assert!(user.email.is_none());
+        assert!(user.name.is_none());
+        assert!(user.groups.is_empty());
+        assert!(user.roles.is_empty());
+    }
+
+    #[test]
+    fn test_saml_parse_saml2_namespaced() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Test with saml2: namespace prefixes
+        let xml = format!(
+            r#"<saml2p:Assertion xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+            <saml2:Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <saml2:Audience>https://example.com/saml</saml2:Audience>
+            </saml2:Conditions>
+            <saml2:Subject>
+                <saml2:NameID>user@example.com</saml2:NameID>
+                <saml2:SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </saml2:Subject>
+        </saml2p:Assertion>"#,
+            past, future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err()); // Will fail on signature validation, not on parse
+                                  // The parse succeeds but signature validation fails — that's expected
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(_) => {} // expected
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_parse_samlp_namespaced() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Test with saml: namespace prefixes
+        let xml = format!(
+            r#"<samlp:Assertion xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+            <saml:Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <saml:Audience>https://example.com/saml</saml:Audience>
+            </saml:Conditions>
+            <saml:Subject>
+                <saml:NameID>user@example.com</saml:NameID>
+                <saml:SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </saml:Subject>
+        </samlp:Assertion>"#,
+            past, future
+        );
+
+        let result = parser.parse(&xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(_) => {} // expected
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_generate_sp_metadata_unicode() {
+        let metadata = generate_sp_metadata(
+            "https://café.example.com/saml",
+            "https://café.example.com/acs",
+            "https://café.example.com",
+        )
+        .unwrap();
+        assert!(metadata.contains("https://café.example.com/saml"));
+    }
+
+    #[test]
+    fn test_generate_authn_request_unique_ids() {
+        let (id1, _) = generate_authn_request("sp", "acs", "idp").unwrap();
+        let (id2, _) = generate_authn_request("sp", "acs", "idp").unwrap();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_parse_xml_signature_with_signature_value() {
+        let xml = r#"
+        <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+                <ds:SignedInfo>
+                    <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+                    <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+                    <ds:Reference>
+                        <ds:DigestValue>abc123</ds:DigestValue>
+                    </ds:Reference>
+                </ds:SignedInfo>
+                <ds:SignatureValue>YmFzZTY0</ds:SignatureValue>
+            </ds:Signature>
+        </Assertion>
+        "#;
+
+        let result = parse_xml_signature(xml);
+        assert!(result.is_ok());
+        let components = result.unwrap();
+        assert!(!components.signed_info_xml.is_empty());
+        assert!(!components.signature_value.is_empty());
+    }
+
+    #[test]
+    fn test_parse_xml_signature_empty_signature_value() {
+        let xml = r#"
+        <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+                <ds:SignedInfo>
+                    <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+                </ds:SignedInfo>
+            </ds:Signature>
+        </Assertion>
+        "#;
+
+        let result = parse_xml_signature(xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => {
+                assert!(msg.contains("SignatureValue not found"));
+            }
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
     }
 }

@@ -33,6 +33,15 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
 
+      - name: Install system deps
+        # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in by
+        # octo-cable -> bluer -> dbus -> libdbus-sys. Without these, libdbus-sys'
+        # build.rs panics with `explicit panic` (build fails before any crate
+        # actually compiles).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -52,20 +61,56 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Build Rust
+        # Use `cargo check` (not `build`) — emits rmeta only, skips the link
+        # step. The full workspace includes whatsapp_session_introspect and
+        # similar heavy bins that link reqwest + hyper + rustls + aws-lc-rs,
+        # which overflows the hosted runner's link-time RAM (SIGBUS in
+        # collect2). `cargo test` still produces test binaries, but those
+        # are smaller than standalone bins.
         run: |
-          if [ -f Cargo.toml ]; then cargo build --verbose; fi
+          if [ -f Cargo.toml ]; then cargo check --verbose; fi
 
       - name: Run Rust tests (default features)
         run: |
           if [ -f Cargo.toml ]; then cargo test --verbose; fi
 
-      - name: Check real-tdlib feature compiles
-        run: |
-          if [ -f Cargo.toml ]; then cargo check -p octo-adapter-telegram --features real-tdlib --no-default-features; fi
+      # NOTE: Tests behind --features query (Phase 8 query-layer +
+      # Phase 7.K view_once/ephemeral) are skipped under default
+      # features — they are gated on #[cfg(feature = "query")] so
+      # the test functions don't exist unless the feature is on.
+      # Running them on CI requires the full workspace build with
+      # tantivy + candle + ... deps, which exceeds the hosted
+      # runner's compile-time/link-time RAM budget. Run locally:
+      #   cargo test -p octo-whatsapp --features query --lib
+      # to exercise these on a developer machine.
 
-      - name: Clippy real-tdlib
+      - name: Check telegram-cli builds with real-tdlib
+        # The Telegram CLI (octo-telegram-onboard) is excluded from the main
+        # workspace (see root Cargo.toml) to prevent TDLib's libc++ runtime
+        # from leaking into every workspace test binary. We verify it still
+        # compiles via the octo-cli-meta meta-crate's telegram-cli feature.
         run: |
-          if [ -f Cargo.toml ]; then cargo clippy -p octo-adapter-telegram --all-targets --features real-tdlib -- -D warnings; fi
+          if [ -f Cargo.toml ]; then cargo check -p octo-cli-meta --features telegram-cli; fi
+
+      - name: Clippy telegram-cli
+        run: |
+          if [ -f Cargo.toml ]; then cargo clippy -p octo-cli-meta --features telegram-cli --all-targets -- -D warnings; fi
+
+      - name: Check whatsapp-cli builds via meta-crate
+        # The WhatsApp CLI (octo-whatsapp) is excluded from the main workspace
+        # by default and pulled in via the octo-cli-meta meta-crate's
+        # whatsapp-cli feature. Pure-Rust, no TDLib pollution risk, but still
+        # gated so unrelated downstream work doesn't break the workspace build.
+        run: |
+          if [ -f Cargo.toml ]; then cargo check -p octo-cli-meta --features whatsapp-cli; fi
+
+      - name: Clippy whatsapp-cli
+        run: |
+          if [ -f Cargo.toml ]; then cargo clippy -p octo-cli-meta --features whatsapp-cli --all-targets -- -D warnings; fi
+
+      - name: Run whatsapp-cli tests
+        run: |
+          if [ -f Cargo.toml ]; then cargo test -p octo-cli-meta --features whatsapp-cli; fi
 
       - name: Run JS tests
         run: |

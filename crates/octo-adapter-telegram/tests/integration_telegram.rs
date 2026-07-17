@@ -27,7 +27,6 @@
 
 use octo_adapter_telegram::mock::MockTelegramClient;
 use octo_adapter_telegram::{TelegramAdapter, TelegramConfig};
-use octo_network::dot::adapters::PlatformAdapter;
 use octo_network::dot::envelope::DeterministicEnvelope;
 
 fn make_small_envelope() -> DeterministicEnvelope {
@@ -55,7 +54,7 @@ async fn test_small_envelope_round_trip() {
     // to send a small envelope via the test DC, then re-fetch and decode.
     let _adapter = TelegramAdapter::new(TelegramConfig::default(), MockTelegramClient::new());
     let _env = make_small_envelope();
-    // Real assertion: adapter.send_envelope + receive_messages + canonicalize
+    // Real assertion: adapter.send_message + receive_messages + canonicalize
     // round-trip the envelope bytes. See mission 0850ab §4.2.
 }
 

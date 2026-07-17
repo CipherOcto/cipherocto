@@ -268,10 +268,15 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 #[async_trait]
 impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     #[tracing::instrument(skip(self, envelope_obj), fields(chat_id))]
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,
+        // RFC-0850 v1.3.0: payload is now part of the trait signature.
+        // Telegram adapter forwards the envelope via sendMessage/sendDocument
+        // and does not separately serialise the payload bytes onto the wire;
+        // payload handling is tracked as a follow-up.
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let chat_id = self.chat_id_for_domain(domain).ok_or_else(|| {
             // H2: the precondition for send_envelope is that the caller has
@@ -494,6 +499,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                     "audio/*".into(),
                 ],
             }),
+            ..Default::default()
         }
     }
 

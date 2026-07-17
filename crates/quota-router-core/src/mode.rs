@@ -111,4 +111,37 @@ mod tests {
         assert_eq!(ProviderMode::parse("LITELLM"), Some(ProviderMode::LiteLLM));
         assert_eq!(ProviderMode::parse("invalid"), None);
     }
+
+    #[test]
+    fn test_mode_as_str() {
+        assert_eq!(ProviderMode::LiteLLM.as_str(), "litellm");
+        assert_eq!(ProviderMode::AnyLlm.as_str(), "any-llm");
+    }
+
+    #[test]
+    fn test_mode_parse_variants() {
+        assert_eq!(
+            ProviderMode::parse("litellm-mode"),
+            Some(ProviderMode::LiteLLM)
+        );
+        assert_eq!(
+            ProviderMode::parse("litellm_mode"),
+            Some(ProviderMode::LiteLLM)
+        );
+        assert_eq!(
+            ProviderMode::parse("any-llm-mode"),
+            Some(ProviderMode::AnyLlm)
+        );
+        assert_eq!(ProviderMode::parse("any_llm"), Some(ProviderMode::AnyLlm));
+        assert_eq!(
+            ProviderMode::parse("any_llm_mode"),
+            Some(ProviderMode::AnyLlm)
+        );
+    }
+
+    #[test]
+    fn test_has_modes() {
+        // At least one mode should be available
+        assert!(has_litellm_mode() || has_any_llm_mode());
+    }
 }

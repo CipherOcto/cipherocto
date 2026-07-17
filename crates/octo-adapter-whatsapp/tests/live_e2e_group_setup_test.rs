@@ -15,10 +15,10 @@
 //!    We then call `get_invite_link` to mint a `chat.whatsapp.com` URL
 //!    for the operator to share with humans / other nodes.
 //! 4. The bot registers the new group at runtime via
-//!    `register_group_at_runtime` so the `PlatformAdapter::send_envelope`
+//!    `register_group_at_runtime` so the `PlatformAdapter::send_message`
 //!    domain→JID lookup and the inbound `accept_message` filter accept it,
 //!    then publishes a `DeterministicEnvelope` to the new group via the
-//!    public `PlatformAdapter::send_envelope` path.
+//!    public `PlatformAdapter::send_message` path.
 //! 5. The server returns a `platform_message_id` (the real, server-issued
 //!    message token) confirming the envelope was accepted. We then
 //!    construct a `RawPlatformMessage` from the exact wire bytes the
@@ -28,9 +28,9 @@
 //! 6. The bot re-queries `group_metadata` for the new group to confirm the
 //!    connection is still live and the bot is still an admin participant
 //!    after the test is "done sending".
-//! 7. Cleanup: the bot calls `leave_group` (RAII guard) so the test
-//!    doesn't leave ephemeral groups behind on the operator's WhatsApp
-//!    account even on a failed assertion.
+//! 7. Cleanup: the bot calls `cleanup_test_group` (remove members +
+//!    destroy_group / leave_group fallback) so the test doesn't leave
+//!    ephemeral groups behind on the operator's WhatsApp account.
 //!
 //! **Why no self-echo check:** WhatsApp multi-device does **not** deliver
 //! a sender's own message back to the sending device via `Event::Message`
@@ -83,9 +83,9 @@
 #![cfg(feature = "live-whatsapp")]
 
 use octo_adapter_whatsapp::{WhatsAppConfig, WhatsAppWebAdapter};
+use octo_network::dot::adapters::coordinator_admin::GroupId;
 use octo_network::dot::adapters::{PlatformAdapter, RawPlatformMessage};
 use octo_network::dot::envelope::{DeterministicEnvelope, MessageType};
-use octo_network::dot::CoordinatorAdmin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -131,10 +131,11 @@ fn live_config() -> WhatsAppConfig {
         // groups starts empty: the new group's JID is not known until
         // `create_group` returns. The E2E test calls
         // `register_group_at_runtime(&group_jid)` immediately after
-        // creation so the public `PlatformAdapter::send_envelope` path
+        // creation so the public `PlatformAdapter::send_message` path
         // can route the envelope via domain→JID lookup.
         groups: vec![],
         sender_allowlist: BTreeMap::new(),
+        passkey_authenticator: None,
     }
 }
 
@@ -160,9 +161,7 @@ fn test_members() -> Vec<String> {
 /// handler resolves the phone asynchronously after the device snapshot
 /// is loaded — the Notify fires before `self_phone` is set).
 ///
-/// Returns an `Arc<WhatsAppWebAdapter>` so the test's RAII cleanup guard
-/// can hold a `'static` reference to the same adapter for the
-/// `leave_group` background task.
+/// Returns an `Arc<WhatsAppWebAdapter>` for shared use across the test.
 async fn live_adapter() -> Arc<WhatsAppWebAdapter> {
     let config = live_config();
     if let Err(e) = config.validate() {
@@ -285,18 +284,29 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     tracing::info!(subject = %subject, bot_phone = %bot_phone, "creating broadcast group");
 
     let members_to_invite = test_members();
-    let member_refs: Vec<&str> = members_to_invite.iter().map(|s| s.as_str()).collect();
+    let member_specs: Vec<octo_network::dot::adapters::coordinator_admin::GroupMemberSpec> =
+        members_to_invite
+            .iter()
+            .map(
+                |phone| octo_network::dot::adapters::coordinator_admin::GroupMemberSpec {
+                    handle: phone.clone(),
+                    display_name: None,
+                    is_admin: false,
+                },
+            )
+            .collect();
 
     let created = adapter
-        .create_group(&subject, &member_refs)
+        .as_coordinator_admin()
+        .unwrap()
+        .create_group(&subject, &member_specs)
         .await
         .unwrap_or_else(|e| panic!("create_group failed: {e}"));
 
-    let group_jid = created.group_jid.clone();
+    let group_jid = created.id.as_str().to_string();
     tracing::info!(
         group_jid = %group_jid,
         subject = %subject,
-        participants = created.metadata.participants.len(),
         "group created"
     );
 
@@ -313,13 +323,15 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     //      the creator's user-part is a non-empty digit string (LID
     //      match — LID JIDs are opaque identifiers, so we can't
     //      compare them to the phone number directly).
+    // Fetch metadata to verify participants.
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id = octo_network::dot::adapters::coordinator_admin::GroupId::new(group_jid.clone());
+    let meta = admin
+        .get_group_metadata(&group_id)
+        .await
+        .expect("get_group_metadata");
     let bot_digits: String = bot_phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    let participant_jids: Vec<String> = created
-        .metadata
-        .participants
-        .iter()
-        .map(|p| p.jid.to_string())
-        .collect();
+    let participant_jids: Vec<String> = meta.members.iter().map(|p| p.0.clone()).collect();
     let creator_in_list = !participant_jids.is_empty()
         && participant_jids.iter().any(|p_str| {
             // PN match: participant JID contains the bot's phone digits.
@@ -341,26 +353,31 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
          group's participant list; got {participant_jids:?}"
     );
 
-    // RAII guard: leave the group on scope exit (success or panic).
-    let _cleanup = GroupCleanup {
-        adapter: Arc::clone(&adapter),
-        group_jid: group_jid.clone(),
-    };
-
     // Register the freshly-created group at runtime so the inbound
-    // `accept_message` filter and `send_envelope`'s domain→JID lookup
+    // `accept_message` filter and `send_message`'s domain→JID lookup
     // accept the group. Without this, the inbound event would be
     // filtered as "unconfigured group" and we would never observe
     // self-delivery.
-    adapter.register_group_at_runtime(&group_jid);
+    //
+    // R13-L3 fix: `register_group_at_runtime` now returns
+    // `Result<(), String>` (validates the JID shape — RFC-0861 §2
+    // M16). The `create_group` response gives us a server-issued
+    // JID which is guaranteed to be well-formed, so the `.expect`
+    // is appropriate. If this fires it means either `create_group`
+    // returned a malformed JID (server bug) or our validation
+    // logic drifted from the server's JID format (test bug).
+    adapter
+        .register_group_at_runtime(&group_jid)
+        .expect("create_group returned a JID that failed R13-L3 validation");
 
     // ── Step 2: invite the configured phone numbers ────────────────
     // `create_group` already added the initial participants. The
     // `add_members` API call below exercises the "invite post-creation"
     // path explicitly. If the env var is empty this is a no-op.
     if !members_to_invite.is_empty() {
+        let member_phone_refs: Vec<&str> = members_to_invite.iter().map(|s| s.as_str()).collect();
         let responses = adapter
-            .add_members(&group_jid, &member_refs)
+            .add_members(&group_jid, &member_phone_refs)
             .await
             .unwrap_or_else(|e| panic!("add_members failed: {e}"));
         tracing::info!(
@@ -382,7 +399,7 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     );
 
     // ── Step 4: send a DOT envelope to the new group ──────────────
-    // Use the public `PlatformAdapter::send_envelope` path now that
+    // Use the public `PlatformAdapter::send_message` path now that
     // `register_group_at_runtime` has wired the new group into the
     // domain→JID lookup. This exercises the same wire path production
     // uses (no test-only bypass).
@@ -393,14 +410,14 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     tracing::info!(
         group_jid = %group_jid,
         envelope_id = %hex_encode(&envelope.envelope_id),
-        "sending DOT envelope to group via PlatformAdapter::send_envelope"
+        "sending DOT envelope to group via PlatformAdapter::send_message"
     );
 
     let domain = adapter.domain_id(&group_jid);
     let receipt = adapter
-        .send_envelope(&domain, &envelope)
+        .send_message(&domain, &envelope, b"test")
         .await
-        .expect("send_envelope must succeed via the registered group");
+        .expect("send_message must succeed via the registered group");
     tracing::info!(
         platform_message_id = %receipt.platform_message_id,
         "envelope accepted by WhatsApp"
@@ -484,41 +501,50 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
         platform_message_id = %receipt.platform_message_id,
         "live_e2e_coordinator_creates_group_sends_envelope_receives_self: PASSED"
     );
-    // _cleanup runs here on drop, calling `leave_group`.
+    cleanup_test_group(&adapter, &group_jid).await;
+    tracing::info!("live_e2e: cleanup done");
 }
 
-/// RAII guard: calls `leave_group` when the test scope exits, so a
-/// failed assertion still cleans up the group instead of leaving an
-/// orphaned test group on the operator's WhatsApp account.
-///
-/// Holds an `Arc<WhatsAppWebAdapter>` (the same one the test uses) so the
-/// spawned `leave_group` task can borrow it for `'static`.
-struct GroupCleanup {
-    adapter: Arc<WhatsAppWebAdapter>,
-    group_jid: String,
-}
+/// Canonical cleanup: remove members, destroy/leave group.
+/// Mirrors `cleanup_test_group` in live_admin_test.rs.
+async fn cleanup_test_group(adapter: &WhatsAppWebAdapter, group_jid: &str) {
+    let admin = adapter.as_coordinator_admin().unwrap();
+    let group_id = GroupId::new(group_jid.to_string());
 
-impl Drop for GroupCleanup {
-    fn drop(&mut self) {
-        let adapter = Arc::clone(&self.adapter);
-        let group_jid = self.group_jid.clone();
-        // Best-effort: spawn the leave on the current runtime and
-        // ignore errors (group may already be gone or the runtime
-        // may be shutting down).
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                match adapter.leave_group(&group_jid).await {
-                    Ok(()) => tracing::info!(
-                        group_jid = %group_jid,
-                        "group left during cleanup"
-                    ),
-                    Err(e) => tracing::warn!(
-                        group_jid = %group_jid,
-                        error = %e,
-                        "leave_group cleanup failed (group may already be gone)"
-                    ),
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Remove all non-bot members before leaving.
+    if let Ok(meta) = admin.get_group_metadata(&group_id).await {
+        let self_phone = adapter.self_handle().unwrap_or_default();
+        for participant in &meta.members {
+            let pid = &participant.0;
+            if pid.contains(&self_phone) || pid == "80836284174444@lid" {
+                continue;
+            }
+            if let Err(e) = admin.remove_member(&group_id, participant).await {
+                tracing::warn!(
+                    error = %e,
+                    member = %pid,
+                    group_jid = %group_jid,
+                    "cleanup: remove_member failed (best-effort)"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    match admin.destroy_group(&group_id).await {
+        Ok(()) => {
+            tracing::info!(group_jid = %group_jid, "cleanup: destroyed group");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, group_jid = %group_jid, "cleanup: destroy failed, falling back to leave");
+            match admin.leave_group(&group_id).await {
+                Ok(()) => tracing::info!(group_jid = %group_jid, "cleanup: left group"),
+                Err(e2) => {
+                    tracing::warn!(error = %e2, group_jid = %group_jid, "cleanup: leave also failed")
                 }
-            });
+            }
         }
     }
 }

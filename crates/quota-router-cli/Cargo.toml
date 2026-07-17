@@ -14,6 +14,11 @@ license.workspace = true
 # Core library
 quota-router-core = { path = "../quota-router-core" }
 
+# Transport + adapter for mesh daemon
+octo-transport = { path = "../../octo-transport" }
+octo-adapter-tcp = { path = "../octo-adapter-tcp" }
+octo-network = { path = "../octo-network" }
+
 # Database
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
@@ -36,10 +41,12 @@ reqwest.workspace = true
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml = "0.8"
 
 # Utilities
 uuid.workspace = true
 parking_lot.workspace = true
+hex = "0.4"
 
 # Logging
 tracing.workspace = true

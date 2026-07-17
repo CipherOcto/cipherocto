@@ -179,7 +179,7 @@ impl TrustGraph {
             in_deg.insert(&n.peer_id, 0);
         }
         for e in &self.edges {
-            *in_deg.entry(&e.to.as_str()).or_insert(0) += 1;
+            *in_deg.entry(e.to.as_str()).or_insert(0) += 1;
         }
         let mut v: Vec<(String, usize)> = in_deg
             .into_iter()

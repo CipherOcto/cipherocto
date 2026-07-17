@@ -29,6 +29,10 @@ Specifies the envelope types, state machine extensions, and ceremony flows for a
 - RFC-0851p-a (Networking): Network Bootstrap Protocol — node must be bootstrapped before participating in a CGROUP
 - RFC-0126 (Numeric): DCS — canonical serialization
 
+**Optional:**
+
+- RFC-0851p-b (Networking): DotDomain Bootstrap Mode — DC-created groups become bootstrap targets; this RFC's CGROUP ceremony produces groups that DotDomain bootstrap can discover
+
 **Refines / Extends:** RFC-0850p-c §1 (GroupState) and §3 (envelope types) and RFC-0855p-c §5a (DC envelope types).
 
 ## Design Goals

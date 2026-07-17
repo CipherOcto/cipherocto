@@ -101,4 +101,76 @@ mod tests {
         let endpoint = default_endpoint("unknown");
         assert_eq!(endpoint, None);
     }
+
+    #[test]
+    fn test_provider_new() {
+        let p = Provider::new("openai", "https://api.openai.com/v1");
+        assert_eq!(p.name, "openai");
+        assert_eq!(p.endpoint, "https://api.openai.com/v1");
+        assert!(p.rpm.is_none());
+        assert!(p.tpm.is_none());
+        assert!(p.weight.is_none());
+    }
+
+    #[test]
+    fn test_get_routing_weight_explicit() {
+        let p = Provider {
+            name: "test".into(),
+            endpoint: "".into(),
+            rpm: Some(100),
+            tpm: Some(10000),
+            weight: Some(50),
+            model_name: None,
+        };
+        assert_eq!(p.get_routing_weight(), 50);
+    }
+
+    #[test]
+    fn test_get_routing_weight_rpm() {
+        let p = Provider {
+            name: "test".into(),
+            endpoint: "".into(),
+            rpm: Some(200),
+            tpm: Some(10000),
+            weight: None,
+            model_name: None,
+        };
+        assert_eq!(p.get_routing_weight(), 200);
+    }
+
+    #[test]
+    fn test_get_routing_weight_tpm() {
+        let p = Provider {
+            name: "test".into(),
+            endpoint: "".into(),
+            rpm: None,
+            tpm: Some(50000),
+            weight: None,
+            model_name: None,
+        };
+        assert_eq!(p.get_routing_weight(), 50);
+    }
+
+    #[test]
+    fn test_get_routing_weight_default() {
+        let p = Provider::new("test", "https://example.com");
+        assert_eq!(p.get_routing_weight(), 1);
+    }
+
+    #[test]
+    fn test_default_endpoint_google() {
+        let endpoint = default_endpoint("google");
+        assert_eq!(
+            endpoint,
+            Some("https://generativelanguage.googleapis.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_provider_get_api_key_with_prefix() {
+        std::env::set_var("TESTPROV_API_KEY", "key-abc");
+        let p = Provider::new("testprov", "https://example.com");
+        assert_eq!(p.get_api_key(), Some("key-abc".to_string()));
+        std::env::remove_var("TESTPROV_API_KEY");
+    }
 }

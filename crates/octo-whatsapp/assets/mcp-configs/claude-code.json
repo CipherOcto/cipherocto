@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "octo-whatsapp": {
+      "command": "octo-whatsapp",
+      "args": ["mcp"],
+      "env": {
+        "OCTO_WHATSAPP_PERSIST_DIR": "${HOME}/.local/share/octo/whatsapp"
+      }
+    }
+  }
+}

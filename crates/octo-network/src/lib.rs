@@ -44,3 +44,6 @@ pub mod mon;
 pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.
 pub mod porelay;
+
+/// Data sync transport bridge — RFC-0862 carrier integration.
+pub mod sync;

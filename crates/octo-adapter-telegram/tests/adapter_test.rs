@@ -251,7 +251,7 @@ async fn test_upload_media_to_domain_routes_correctly() {
 
 /// M6: `send_with_retry` must retry on `TelegramError::Transient` (5xx /
 /// "connection failed" / "connection closed" from TDLib). The retry loop
-/// is private, so we exercise it through `send_envelope` — the only public
+/// is private, so we exercise it through `send_message` — the only public
 /// caller of `send_with_retry`. The mock is configured to fail twice with
 /// `Transient` and then succeed. With a tiny backoff config (zero initial
 /// backoff, zero max backoff, zero jitter) and `max_retries=3` the loop
@@ -294,10 +294,10 @@ async fn test_send_with_retry_retries_on_transient() {
         flags: 0,
         signature: [6u8; 64],
     };
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(
         result.is_ok(),
-        "send_envelope should succeed after 2 transient failures: {:?}",
+        "send_message should succeed after 2 transient failures: {:?}",
         result.err()
     );
     // 1 initial call + 2 failed-injection calls = 3 total. The third call
@@ -357,10 +357,10 @@ async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
         flags: 0,
         signature: [6u8; 64],
     };
-    let result = adapter.send_envelope(&domain, &envelope).await;
+    let result = adapter.send_message(&domain, &envelope, b"test").await;
     assert!(
         result.is_err(),
-        "send_envelope should surface Unreachable when max_retries is exhausted"
+        "send_message should surface Unreachable when max_retries is exhausted"
     );
     // 1 initial + 2 retries (max_retries=2) = 3 total calls.
     assert_eq!(

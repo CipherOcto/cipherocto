@@ -1,0 +1,27 @@
+[package]
+name = "octo-cli-meta"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Meta-crate for CLI tools. Enable features to opt-in to specific CLIs. Prevents heavy CLIs (e.g., Telegram) from leaking transitive deps into the main workspace's CI build."
+publish = false
+
+[features]
+# Each CLI lives behind a feature flag. CI never enables any of these, so
+# the heavy CLI deps (e.g., TDLib) never enter the workspace build graph.
+#
+# To build a specific CLI from the repo root:
+#   cargo build -p octo-cli-meta --features telegram-cli
+#
+# Add a new CLI by adding a new feature + optional dep below.
+default = []
+telegram-cli = ["dep:octo-telegram-onboard", "dep:octo-telegram-onboard-core"]
+whatsapp-cli = ["dep:octo-whatsapp"]
+
+[dependencies]
+# All CLI crates are optional. They are excluded from the main workspace
+# (see root Cargo.toml exclude list), so this meta-crate is the ONLY way
+# to pull them in from a `cargo build` at the repo root.
+octo-telegram-onboard = { path = "../octo-telegram-onboard", optional = true }
+octo-telegram-onboard-core = { path = "../octo-telegram-onboard-core", optional = true }
+octo-whatsapp = { path = "../octo-whatsapp", optional = true }

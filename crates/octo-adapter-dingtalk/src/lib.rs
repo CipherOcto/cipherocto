@@ -165,10 +165,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for DingTalkAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
         let encoded = Self::encode_envelope(&wire_bytes);
@@ -232,6 +233,8 @@ impl PlatformAdapter for DingTalkAdapter {
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None, // Robot webhook only supports text/markdown
+
+            ..Default::default()
         }
     }
 

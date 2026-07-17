@@ -25,6 +25,12 @@ async fn main() -> Result<()> {
             admin_port,
         } => cmd::proxy(proxy_port, admin_port).await?,
         Commands::Route { provider, prompt } => cmd::route(&provider, &prompt).await?,
+        Commands::Serve {
+            listen_addr,
+            network_config,
+            mock_provider,
+            peers,
+        } => cmd::serve(listen_addr, &network_config, mock_provider, &peers).await?,
     }
 
     Ok(())

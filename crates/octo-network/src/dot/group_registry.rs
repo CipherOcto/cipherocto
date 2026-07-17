@@ -59,6 +59,11 @@ pub struct UnboundQuarantineEntry {
     pub unbind_authority: UnbindAuthority,
 }
 
+/// Key into the reverse index: `(mission_id, domain_id, platform)`.
+type DomainIndexKey = ([u8; 32], [u8; 32], String);
+/// Value into the reverse index: `(platform, group_jid)`.
+type DomainIndexValue = (String, String);
+
 /// The transport group binding registry.
 #[derive(Debug, Clone, Default)]
 pub struct GroupRegistry {
@@ -66,7 +71,7 @@ pub struct GroupRegistry {
     bindings: BTreeMap<(String, String), GroupBinding>,
     /// Reverse index: `(mission_id, domain_id, platform) -> (platform, group_jid)`.
     /// Used to enforce the multi-platform rule.
-    domain_index: BTreeMap<([u8; 32], [u8; 32], String), (String, String)>,
+    domain_index: BTreeMap<DomainIndexKey, DomainIndexValue>,
     /// Quarantined bindings awaiting REJOIN (RFC-0850p-e §"unbound_quarantine").
     unbound_quarantine: BTreeMap<UnboundQuarantineKey, UnboundQuarantineEntry>,
     /// Rejoin attempt counter per kicked-node id (RFC-0850p-e §"REJOIN flow").

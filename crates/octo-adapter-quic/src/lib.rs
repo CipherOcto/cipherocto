@@ -50,7 +50,9 @@ use octo_network::gdp::types::DiscoveryScope;
 
 const FRAME_TYPE_ENVELOPE: u16 = 0x0001;
 const FRAME_TYPE_FRAGMENT: u16 = 0x0002;
+#[allow(dead_code)] // Reserved for future onion-routing feature.
 const FRAME_TYPE_ONION: u16 = 0x0003;
+#[allow(dead_code)] // Reserved for future capability-negotiation feature.
 const FRAME_TYPE_CAPABILITIES: u16 = 0x0004;
 const FRAME_TYPE_PING: u16 = 0x0005;
 const FRAME_TYPE_PONG: u16 = 0x0006;
@@ -161,8 +163,10 @@ struct PeerState {
     /// Peer's SocketAddr (resolved from GDP or config)
     addr: SocketAddr,
     /// Liveness tracking: consecutive missed pongs
+    #[allow(dead_code)] // Tracked for future liveness-based eviction.
     missed_pongs: u32,
     /// Last successful pong nonce
+    #[allow(dead_code)] // Tracked for future nonce-replay defense.
     last_pong_nonce: u64,
     /// GDP registration (if peer is registered)
     registration: Option<PeerRegistration>,
@@ -619,10 +623,11 @@ fn quic_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for QuicAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Raw binary transport per RFC-0850 §8.7.3
         let wire_bytes = envelope.to_wire_bytes();
@@ -718,6 +723,7 @@ impl PlatformAdapter for QuicAdapter {
             supports_raw_binary: true, // QUIC carries Vec<u8> natively
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
+            ..Default::default()
         }
     }
 

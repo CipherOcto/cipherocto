@@ -21,6 +21,11 @@ impl ReplicateProvider {
             api_base: "https://api.replicate.com/v1".to_string(),
         }
     }
+
+    pub fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = api_base;
+        self
+    }
 }
 
 impl Default for ReplicateProvider {

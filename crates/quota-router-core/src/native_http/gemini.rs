@@ -1,8 +1,9 @@
 // gemini — Google Gemini via reqwest (native_http, LiteLLM mode)
 
-use super::{
-    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError, StreamingChunk, StreamingResponse,
+#[allow(unused_imports)]
+use crate::native_http::{
+    HttpBatchCreateRequest, HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest,
+    HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -439,4 +440,442 @@ struct GeminiEmbeddingValues {
 struct GeminiStreamChunk {
     #[serde(default)]
     candidates: Vec<GeminiCandidate>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_http::HttpProvider;
+    use crate::testing::mock_http::MockHttpServer;
+
+    fn msg(role: &str, c: &str) -> crate::shared_types::Message {
+        crate::shared_types::Message {
+            role: role.into(),
+            content: Some(c.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    fn req(model: &str) -> HttpCompletionRequest {
+        HttpCompletionRequest {
+            model: model.into(),
+            messages: vec![msg("user", "hi")],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        }
+    }
+
+    fn ok_response() -> serde_json::Value {
+        serde_json::json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hello from Gemini!"}]},
+                "finish_reason": "STOP"
+            }],
+            "usage_metadata": {
+                "prompt_token_count": 10,
+                "candidates_token_count": 5,
+                "total_token_count": 15
+            }
+        })
+    }
+
+    #[test]
+    fn test_name() {
+        assert_eq!(GeminiProvider::new().name(), "gemini");
+    }
+
+    #[test]
+    fn test_supported_models() {
+        let p = GeminiProvider::new();
+        let models = p.supported_models();
+        assert!(models.contains(&"gemini-2.5-flash"));
+        assert!(models.contains(&"gemini-2.5-pro"));
+        assert!(models.contains(&"gemini-1.5-pro"));
+        assert!(models.contains(&"gemini-1.5-flash"));
+        assert!(models.contains(&"gemini-1.5-flash-8b"));
+    }
+
+    #[test]
+    fn test_supports_streaming() {
+        assert!(GeminiProvider::new().supports_streaming());
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(GeminiProvider::default().name(), "gemini");
+    }
+
+    #[test]
+    fn test_routing_weight() {
+        assert_eq!(GeminiProvider::new().routing_weight(), 6);
+    }
+
+    #[test]
+    fn test_with_api_base() {
+        let p = GeminiProvider::new().with_api_base("https://custom.gemini.com".into());
+        assert_eq!(p.name(), "gemini");
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = GeminiProvider::new().with_api_base("http://127.0.0.1:1".into());
+        let err = p
+            .completion(&req("gemini-2.5-flash"), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn completion_success() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
+        assert_eq!(r.choices.len(), 1);
+        assert_eq!(
+            r.choices[0].message.content,
+            Some("Hello from Gemini!".into())
+        );
+        assert_eq!(r.usage.prompt_tokens, 10);
+        assert_eq!(r.usage.completion_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn completion_auth_401() {
+        let s = MockHttpServer::unauthorized().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(matches!(
+            p.completion(&req("gemini-2.5-flash"), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_auth_403() {
+        let s = MockHttpServer::forbidden().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(matches!(
+            p.completion(&req("gemini-2.5-flash"), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(matches!(
+            p.completion(&req("gemini-2.5-flash"), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::RateLimit(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(matches!(
+            p.completion(&req("gemini-2.5-flash"), Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_bad_json() {
+        let s = MockHttpServer::with_response(reqwest::StatusCode::OK, "not-json").await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(matches!(
+            p.completion(&req("gemini-2.5-flash"), None)
+                .await
+                .unwrap_err(),
+            ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_no_finish_reason() {
+        let resp = serde_json::json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "Hi"}]}
+            }],
+            "usage_metadata": {
+                "prompt_token_count": 10,
+                "candidates_token_count": 1,
+                "total_token_count": 11
+            }
+        });
+        let s = MockHttpServer::with_json(&resp).await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
+        assert_eq!(r.choices[0].finish_reason, "stop");
+    }
+
+    #[tokio::test]
+    async fn completion_empty_candidates() {
+        let resp = serde_json::json!({
+            "candidates": [],
+            "usage_metadata": {"total_token_count": 0}
+        });
+        let s = MockHttpServer::with_json(&resp).await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let r = p
+            .completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
+        assert_eq!(r.choices[0].message.content, Some("".into()));
+    }
+
+    #[tokio::test]
+    async fn completion_no_api_key() {
+        let s = MockHttpServer::with_json(&ok_response()).await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let r = p.completion(&req("gemini-2.5-flash"), None).await.unwrap();
+        assert_eq!(r.choices.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn embedding_success() {
+        let resp = serde_json::json!({
+            "embedding": {"values": [0.1, 0.2, 0.3]}
+        });
+        let s = MockHttpServer::with_json(&resp).await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let r = p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "hello".into(),
+                    model: "text-embedding".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                Some("k"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.data.len(), 1);
+        assert_eq!(r.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[tokio::test]
+    async fn embedding_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                Some("k"),
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                None,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_server_error() {
+        let s = MockHttpServer::error().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                None,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_network_error() {
+        let p = GeminiProvider::new().with_api_base("http://127.0.0.1:1".into());
+        assert!(p
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: None,
+                    timeout: None,
+                },
+                None,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_network_error() {
+        let p = GeminiProvider::new().with_api_base("http://127.0.0.1:1".into());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), None)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        assert!(p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_success() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body("[\n{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]},\"finish_reason\":\"STOP\"}]}\n]\n".to_string())
+                .unwrap()
+        })
+        .await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let mut r = p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
+        let chunk = r.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+    }
+
+    #[tokio::test]
+    async fn streaming_skip_brackets() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body("[\n]\n".to_string())
+                .unwrap()
+        })
+        .await;
+        let p = GeminiProvider::new().with_api_base(s.base_url());
+        let mut r = p
+            .streaming_completion(&req("gemini-2.5-flash"), Some("k"))
+            .await
+            .unwrap();
+        let chunk = r.receiver.recv().await;
+        assert!(chunk.is_none());
+    }
+
+    #[test]
+    fn test_supports_model() {
+        let p = GeminiProvider::new();
+        assert!(p.supports_model("gemini-2.5-flash"));
+        assert!(!p.supports_model("gpt-4o"));
+    }
+
+    #[tokio::test]
+    async fn get_response_unsupported() {
+        let p = GeminiProvider::new();
+        assert!(p.get_response("id", None, None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_response_unsupported() {
+        let p = GeminiProvider::new();
+        assert!(p.delete_response("id", None, None, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_create_unsupported() {
+        let p = GeminiProvider::new();
+        let req = HttpBatchCreateRequest {
+            input_file: "f".into(),
+            endpoint: "/v1".into(),
+            completion_window: "24h".into(),
+            metadata: None,
+            api_base: None,
+            timeout: None,
+        };
+        assert!(p.batch_create(&req, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_models_unsupported() {
+        let p = GeminiProvider::new();
+        assert!(p.list_models(None, None, None).await.is_err());
+    }
 }

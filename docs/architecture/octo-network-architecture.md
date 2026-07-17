@@ -135,18 +135,18 @@ graph TD
 
 ### 2.2 Module Summary
 
-| Module | RFC | Lines | Files | Purpose |
-|--------|-----|-------|-------|---------|
-| **DOT** | 0850 | 5,175 | 24 | Core transport: envelopes, fragmentation, adapters, gateway |
-| **DGP** | 0852 | 1,662 | 11 | Deterministic gossip: flood, incremental, directed, anti-entropy |
-| **OCrypt** | 0853 | 1,717 | 10 | Encryption: session handshake, onion layers, mission keys |
-| **GDP** | 0851 | 1,426 | 10 | Gateway discovery: advertisements, heartbeat, anti-sybil |
-| **PoRelay** | 0860 | 1,508 | 12 | Proof-of-relay: bandwidth, uptime, availability, scoring |
-| **DPS** | 0854 | 1,497 | 7 | Proof substrate: STARK/PLONK backends, recursive aggregation |
-| **MON** | 0855 | 1,365 | 12 | Mission networks: lifecycle, membership, topology, governance |
-| **DRS** | 0856 | 1,162 | 7 | Route selection: trust scoring, multi-path, domain routing |
-| **DOM** | 0857 | 1,051 | 9 | Overlay mempool: intents, admission, ordering, eviction |
-| **ORR** | 0858 | 1,048 | 5 | Onion relay: layered encryption, cover traffic, route rotation |
+| Module      | RFC  | Lines | Files | Purpose                                                          |
+| ----------- | ---- | ----- | ----- | ---------------------------------------------------------------- |
+| **DOT**     | 0850 | 5,175 | 24    | Core transport: envelopes, fragmentation, adapters, gateway      |
+| **DGP**     | 0852 | 1,662 | 11    | Deterministic gossip: flood, incremental, directed, anti-entropy |
+| **OCrypt**  | 0853 | 1,717 | 10    | Encryption: session handshake, onion layers, mission keys        |
+| **GDP**     | 0851 | 1,426 | 10    | Gateway discovery: advertisements, heartbeat, anti-sybil         |
+| **PoRelay** | 0860 | 1,508 | 12    | Proof-of-relay: bandwidth, uptime, availability, scoring         |
+| **DPS**     | 0854 | 1,497 | 7     | Proof substrate: STARK/PLONK backends, recursive aggregation     |
+| **MON**     | 0855 | 1,365 | 12    | Mission networks: lifecycle, membership, topology, governance    |
+| **DRS**     | 0856 | 1,162 | 7     | Route selection: trust scoring, multi-path, domain routing       |
+| **DOM**     | 0857 | 1,051 | 9     | Overlay mempool: intents, admission, ordering, eviction          |
+| **ORR**     | 0858 | 1,048 | 5     | Onion relay: layered encryption, cover traffic, route rotation   |
 
 ---
 
@@ -156,23 +156,23 @@ graph TD
 
 ### 3.1 Core Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `envelope.rs` | DeterministicEnvelope | Canonical envelope format with BLAKE3 hashing |
-| `fragment.rs` | EnvelopeFragment | Self-describing fragments for platform size limits |
-| `gateway.rs` | DotGateway | Gateway federation and multi-homing |
-| `domain.rs` | BroadcastDomainId | Platform-agnostic domain identification |
-| `route.rs` | RouteComputation | Deterministic route selection |
-| `sequence.rs` | OverlaySequence | Logical timestamp model |
-| `replay.rs` | ReplayProtection | Envelope replay detection |
-| `config.rs` | DotConfig | DOT configuration |
+| Component     | File                  | Purpose                                            |
+| ------------- | --------------------- | -------------------------------------------------- |
+| `envelope.rs` | DeterministicEnvelope | Canonical envelope format with BLAKE3 hashing      |
+| `fragment.rs` | EnvelopeFragment      | Self-describing fragments for platform size limits |
+| `gateway.rs`  | DotGateway            | Gateway federation and multi-homing                |
+| `domain.rs`   | BroadcastDomainId     | Platform-agnostic domain identification            |
+| `route.rs`    | RouteComputation      | Deterministic route selection                      |
+| `sequence.rs` | OverlaySequence       | Logical timestamp model                            |
+| `replay.rs`   | ReplayProtection      | Envelope replay detection                          |
+| `config.rs`   | DotConfig             | DOT configuration                                  |
 
 ### 3.2 Adapter Architecture
 
 ```mermaid
 graph LR
     subgraph Trait["PlatformAdapter trait"]
-        T1[send_envelope]
+        T1[send_message]
         T2[receive_messages]
         T3[canonicalize]
         T4[capabilities]
@@ -232,11 +232,11 @@ pub struct DeterministicEnvelope {
 
 ### 3.4 Wire Formats
 
-| Format | Description |
-|--------|-------------|
+| Format           | Description                            |
+| ---------------- | -------------------------------------- |
 | `DOT/1/{base64}` | Base64url-encoded envelope (text mode) |
-| `DOT/2/{msg_id}` | Native upload reference (media mode) |
-| `DOT/F/{base64}` | Fragment with header (fragment mode) |
+| `DOT/2/{msg_id}` | Native upload reference (media mode)   |
+| `DOT/F/{base64}` | Fragment with header (fragment mode)   |
 
 ### 3.5 Platform Adapter Registry
 
@@ -265,24 +265,24 @@ pub struct RegistryEntry {
 
 ### 4.1 Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `advertisement.rs` | GatewayAdvertisement | Gateway capability announcements |
-| `discovery.rs` | DiscoveryEngine | Multi-scope discovery (Local, Regional, Mission, Global, Private) |
-| `heartbeat.rs` | HeartbeatMonitor | Liveness monitoring |
-| `anti_sybil.rs` | AntiSybilGuard | Stake-gated discovery scopes |
-| `identity.rs` | GatewayIdentity | Gateway cryptographic identity |
-| `cache.rs` | DiscoveryCache | Deterministic cache with TTL eviction |
+| Component          | File                 | Purpose                                                           |
+| ------------------ | -------------------- | ----------------------------------------------------------------- |
+| `advertisement.rs` | GatewayAdvertisement | Gateway capability announcements                                  |
+| `discovery.rs`     | DiscoveryEngine      | Multi-scope discovery (Local, Regional, Mission, Global, Private) |
+| `heartbeat.rs`     | HeartbeatMonitor     | Liveness monitoring                                               |
+| `anti_sybil.rs`    | AntiSybilGuard       | Stake-gated discovery scopes                                      |
+| `identity.rs`      | GatewayIdentity      | Gateway cryptographic identity                                    |
+| `cache.rs`         | DiscoveryCache       | Deterministic cache with TTL eviction                             |
 
 ### 4.2 Discovery Scopes
 
-| Scope | Value | TTL | Min Stake |
-|-------|-------|-----|-----------|
-| Local | 0x0001 | 30s | 0 |
-| Regional | 0x0002 | 60s | 500 |
-| Mission | 0x0003 | 5 hops | 1000 |
-| Global | 0x0004 | 300s | 1000 |
-| Private | 0x0005 | 60s | Invite-only |
+| Scope    | Value  | TTL    | Min Stake   |
+| -------- | ------ | ------ | ----------- |
+| Local    | 0x0001 | 30s    | 0           |
+| Regional | 0x0002 | 60s    | 500         |
+| Mission  | 0x0003 | 5 hops | 1000        |
+| Global   | 0x0004 | 300s   | 1000        |
+| Private  | 0x0005 | 60s    | Invite-only |
 
 ---
 
@@ -292,12 +292,12 @@ pub struct RegistryEntry {
 
 ### 5.1 Propagation Modes
 
-| Mode | Use Case | Description |
-|------|----------|-------------|
-| **Flood** | Bootstrap | Full propagation to all peers |
-| **Incremental** | Normal operation | Delta-only propagation |
-| **Anti-entropy** | State healing | Periodic full state sync |
-| **Directed** | Mission overlays | Targeted propagation within mission scope |
+| Mode             | Use Case         | Description                               |
+| ---------------- | ---------------- | ----------------------------------------- |
+| **Flood**        | Bootstrap        | Full propagation to all peers             |
+| **Incremental**  | Normal operation | Delta-only propagation                    |
+| **Anti-entropy** | State healing    | Periodic full state sync                  |
+| **Directed**     | Mission overlays | Targeted propagation within mission scope |
 
 ### 5.2 Key Types
 
@@ -326,14 +326,14 @@ pub struct GossipDomainId {
 
 ### 6.1 Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `session.rs` | SessionHandshake | X25519 + HKDF-BLAKE3 key exchange |
-| `envelope.rs` | EncryptedEnvelope | Envelope encryption with AAD |
-| `mission.rs` | MissionKeyHierarchy | Mission-scoped key derivation |
-| `onion.rs` | OnionLayer | Per-hop encryption for relay routing |
-| `identity.rs` | SovereignIdentity | Sovereign identity extension |
-| `attestation.rs` | GatewayAttestation | Gateway attestation and key rotation |
+| Component        | File                | Purpose                              |
+| ---------------- | ------------------- | ------------------------------------ |
+| `session.rs`     | SessionHandshake    | X25519 + HKDF-BLAKE3 key exchange    |
+| `envelope.rs`    | EncryptedEnvelope   | Envelope encryption with AAD         |
+| `mission.rs`     | MissionKeyHierarchy | Mission-scoped key derivation        |
+| `onion.rs`       | OnionLayer          | Per-hop encryption for relay routing |
+| `identity.rs`    | SovereignIdentity   | Sovereign identity extension         |
+| `attestation.rs` | GatewayAttestation  | Gateway attestation and key rotation |
 
 ### 6.2 Mission Key Hierarchy
 
@@ -354,11 +354,11 @@ pub struct MissionKeyHierarchy {
 
 ### 7.1 Proof Backends
 
-| Backend | Status | Description |
-|---------|--------|-------------|
-| STARK | Spec'd | Scalable transparent arguments |
-| PLONK | Spec'd | Permutations over Lagrange-bases for Oecumenical Noninteractive arguments |
-| Recursive | Spec'd | Recursive proof aggregation |
+| Backend   | Status | Description                                                               |
+| --------- | ------ | ------------------------------------------------------------------------- |
+| STARK     | Spec'd | Scalable transparent arguments                                            |
+| PLONK     | Spec'd | Permutations over Lagrange-bases for Oecumenical Noninteractive arguments |
+| Recursive | Spec'd | Recursive proof aggregation                                               |
 
 ### 7.2 Proof Types
 
@@ -412,13 +412,13 @@ pub enum MissionType {
 
 ### 8.3 Membership Roles
 
-| Role | Value | Description |
-|------|-------|-------------|
-| Coordinator | 0x01 | Mission orchestrator |
-| Executor | 0x02 | Task executor |
-| Validator | 0x03 | Result validator |
-| Observer | 0x04 | Read-only participant |
-| Relay | 0x05 | Message relay |
+| Role        | Value | Description           |
+| ----------- | ----- | --------------------- |
+| Coordinator | 0x01  | Mission orchestrator  |
+| Executor    | 0x02  | Task executor         |
+| Validator   | 0x03  | Result validator      |
+| Observer    | 0x04  | Read-only participant |
+| Relay       | 0x05  | Message relay         |
 
 ---
 
@@ -450,13 +450,13 @@ Routes are scored using weighted trust components. The scoring function is deter
 
 ### 10.1 Intent Types
 
-| Type | Value | Class | Description |
-|------|-------|-------|-------------|
-| StateUpdate | 0x0001 | Standard | State update intent |
-| MissionCommand | 0x0002 | MissionCritical | Mission command |
-| ConsensusVote | 0x0003 | Consensus | Consensus vote |
-| DataRequest | 0x0004 | Standard | Data request |
-| ProofSubmission | 0x0005 | MissionCritical | Proof submission |
+| Type            | Value  | Class           | Description         |
+| --------------- | ------ | --------------- | ------------------- |
+| StateUpdate     | 0x0001 | Standard        | State update intent |
+| MissionCommand  | 0x0002 | MissionCritical | Mission command     |
+| ConsensusVote   | 0x0003 | Consensus       | Consensus vote      |
+| DataRequest     | 0x0004 | Standard        | Data request        |
+| ProofSubmission | 0x0005 | MissionCritical | Proof submission    |
 
 ### 10.2 Admission Pipeline
 
@@ -533,13 +533,13 @@ pub struct MissionProofPolicy {
 
 ### 13.1 Relay Metrics
 
-| Metric | Component | Description |
-|--------|-----------|-------------|
-| Bandwidth | `bandwidth.rs` | Data throughput measurement |
-| Uptime | `uptime.rs` | Availability tracking |
-| Availability | `availability.rs` | Response rate |
-| Latency | `score.rs` | Response time |
-| Forwarding | `forwarding.rs` | Message forwarding rate |
+| Metric       | Component         | Description                 |
+| ------------ | ----------------- | --------------------------- |
+| Bandwidth    | `bandwidth.rs`    | Data throughput measurement |
+| Uptime       | `uptime.rs`       | Availability tracking       |
+| Availability | `availability.rs` | Response rate               |
+| Latency      | `score.rs`        | Response time               |
+| Forwarding   | `forwarding.rs`   | Message forwarding rate     |
 
 ### 13.2 Trust Registry
 
@@ -560,22 +560,23 @@ pub struct RelayTrustEntry {
 
 ### 14.1 Dependency Matrix
 
-| Module | DOT | GDP | DGP | OCrypt | DPS | MON | DRS | DOM | ORR | PoRelay |
-|--------|-----|-----|-----|--------|-----|-----|-----|-----|-----|---------|
-| DOT | — | ✓ | ✓ | ✓ | ✓ | | | | | |
-| GDP | | — | ✓ | | | | | | | |
-| DGP | | | — | | | | | | | |
-| OCrypt | | | | — | | | | | | |
-| DPS | | | | | — | | | | | |
-| MON | ✓ | ✓ | ✓ | ✓ | | — | | | | |
-| DRS | ✓ | ✓ | | | | | — | | | |
-| DOM | ✓ | | ✓ | | | | | — | | |
-| ORR | ✓ | | | ✓ | | | ✓ | | — | |
-| PoRelay | ✓ | ✓ | ✓ | | ✓ | | | | | — |
+| Module  | DOT | GDP | DGP | OCrypt | DPS | MON | DRS | DOM | ORR | PoRelay |
+| ------- | --- | --- | --- | ------ | --- | --- | --- | --- | --- | ------- |
+| DOT     | —   | ✓   | ✓   | ✓      | ✓   |     |     |     |     |         |
+| GDP     |     | —   | ✓   |        |     |     |     |     |     |         |
+| DGP     |     |     | —   |        |     |     |     |     |     |         |
+| OCrypt  |     |     |     | —      |     |     |     |     |     |         |
+| DPS     |     |     |     |        | —   |     |     |     |     |         |
+| MON     | ✓   | ✓   | ✓   | ✓      |     | —   |     |     |     |         |
+| DRS     | ✓   | ✓   |     |        |     |     | —   |     |     |         |
+| DOM     | ✓   |     | ✓   |        |     |     |     | —   |     |         |
+| ORR     | ✓   |     |     | ✓      |     |     | ✓   |     | —   |         |
+| PoRelay | ✓   | ✓   | ✓   |        | ✓   |     |     |     |     | —       |
 
 ### 14.2 Shared Types
 
 All modules share these core types from `octo-core`:
+
 - `[u8; 32]` — BLAKE3-256 hashes
 - `[u8; 64]` — Ed25519 signatures
 - `u64` — Logical timestamps (NOT wall-clock)
@@ -587,28 +588,28 @@ All modules share these core types from `octo-core`:
 
 ### 15.1 Platform Types (20 total)
 
-| ID | Platform | Max Payload | Fragment | Media |
-|----|----------|-------------|----------|-------|
-| 0x0001 | Telegram | 4096B | Yes | Yes |
-| 0x0002 | Discord | 2000B | Yes | Yes |
-| 0x0003 | Matrix | 65536B | Yes | Yes |
-| 0x0004 | Nostr | 65536B | No | No |
-| 0x0005 | Signal | 65536B | No | No |
-| 0x0006 | IRC | 512B | Yes | No |
-| 0x0007 | Slack | 40000B | Yes | No |
-| 0x0008 | WhatsApp | 65536B | No | No |
-| 0x0009 | Webhook | Unlimited | No | No |
-| 0x000A | NativeP2P | Unlimited | Yes | No |
-| 0x000B | Bluetooth | 512B | No | No |
-| 0x000C | LoRa | 256B | Yes | No |
-| 0x000D | WebRTC | 65536B | No | No |
-| 0x000E | Bluesky | 300 graphemes | Yes | Yes |
-| 0x000F | Twitter | 280 chars | Yes | Yes |
-| 0x0010 | Reddit | 10000 chars | No | Yes |
-| 0x0011 | WeChat | 2048 chars | Yes | Yes |
-| 0x0012 | DingTalk | 20000 chars | No | No |
-| 0x0013 | Lark | 30000 chars | No | Yes |
-| 0x0014 | QQ | 2000 chars | Yes | Yes |
+| ID     | Platform  | Max Payload   | Fragment | Media |
+| ------ | --------- | ------------- | -------- | ----- |
+| 0x0001 | Telegram  | 4096B         | Yes      | Yes   |
+| 0x0002 | Discord   | 2000B         | Yes      | Yes   |
+| 0x0003 | Matrix    | 65536B        | Yes      | Yes   |
+| 0x0004 | Nostr     | 65536B        | No       | No    |
+| 0x0005 | Signal    | 65536B        | No       | No    |
+| 0x0006 | IRC       | 512B          | Yes      | No    |
+| 0x0007 | Slack     | 40000B        | Yes      | No    |
+| 0x0008 | WhatsApp  | 65536B        | No       | No    |
+| 0x0009 | Webhook   | Unlimited     | No       | No    |
+| 0x000A | NativeP2P | Unlimited     | Yes      | No    |
+| 0x000B | Bluetooth | 512B          | No       | No    |
+| 0x000C | LoRa      | 256B          | Yes      | No    |
+| 0x000D | WebRTC    | 65536B        | No       | No    |
+| 0x000E | Bluesky   | 300 graphemes | Yes      | Yes   |
+| 0x000F | Twitter   | 280 chars     | Yes      | Yes   |
+| 0x0010 | Reddit    | 10000 chars   | No       | Yes   |
+| 0x0011 | WeChat    | 2048 chars    | Yes      | Yes   |
+| 0x0012 | DingTalk  | 20000 chars   | No       | No    |
+| 0x0013 | Lark      | 30000 chars   | No       | Yes   |
+| 0x0014 | QQ        | 2000 chars    | Yes      | Yes   |
 
 ---
 
@@ -616,49 +617,49 @@ All modules share these core types from `octo-core`:
 
 ### 16.1 Adapter Crates
 
-| Crate | Platform | Lines | Tests | Status |
-|-------|----------|-------|-------|--------|
-| `octo-adapter-telegram` | Telegram | 619 | 9 | Implemented |
-| `octo-adapter-discord` | Discord | 472 | 9 | Implemented |
-| `octo-adapter-matrix` | Matrix | 617 | 11 | Implemented |
-| `octo-adapter-whatsapp` | WhatsApp | 1,746 | 13 | Implemented |
-| `octo-adapter-bluesky` | Bluesky | 453 | 11 | Implemented |
-| `octo-adapter-twitter` | Twitter | 387 | 10 | Implemented |
-| `octo-adapter-reddit` | Reddit | 443 | 10 | Implemented |
-| `octo-adapter-wechat` | WeChat | 365 | 8 | Implemented |
-| `octo-adapter-dingtalk` | DingTalk | 401 | 11 | Implemented |
-| `octo-adapter-lark` | Lark | 385 | 9 | Implemented |
-| `octo-adapter-qq` | QQ | 366 | 9 | Implemented |
-| `octo-adapter-nostr` | Nostr | 634 | 13 | Implemented |
-| `octo-adapter-signal` | Signal | 423 | 8 | Implemented |
-| `octo-adapter-irc` | IRC | 728 | 24 | Implemented |
-| `octo-adapter-slack` | Slack | 265 | 13 | Implemented |
-| `octo-adapter-webhook` | Webhook | 473 | 14 | Implemented |
-| `octo-adapter-bluetooth` | Bluetooth | 433 | 11 | Implemented |
-| `octo-adapter-lora` | LoRa | 531 | 16 | Implemented |
-| `octo-adapter-webrtc` | WebRTC | 320 | 7 | Implemented |
+| Crate                    | Platform  | Lines | Tests | Status      |
+| ------------------------ | --------- | ----- | ----- | ----------- |
+| `octo-adapter-telegram`  | Telegram  | 619   | 9     | Implemented |
+| `octo-adapter-discord`   | Discord   | 472   | 9     | Implemented |
+| `octo-adapter-matrix`    | Matrix    | 617   | 11    | Implemented |
+| `octo-adapter-whatsapp`  | WhatsApp  | 1,746 | 13    | Implemented |
+| `octo-adapter-bluesky`   | Bluesky   | 453   | 11    | Implemented |
+| `octo-adapter-twitter`   | Twitter   | 387   | 10    | Implemented |
+| `octo-adapter-reddit`    | Reddit    | 443   | 10    | Implemented |
+| `octo-adapter-wechat`    | WeChat    | 365   | 8     | Implemented |
+| `octo-adapter-dingtalk`  | DingTalk  | 401   | 11    | Implemented |
+| `octo-adapter-lark`      | Lark      | 385   | 9     | Implemented |
+| `octo-adapter-qq`        | QQ        | 366   | 9     | Implemented |
+| `octo-adapter-nostr`     | Nostr     | 634   | 13    | Implemented |
+| `octo-adapter-signal`    | Signal    | 423   | 8     | Implemented |
+| `octo-adapter-irc`       | IRC       | 728   | 24    | Implemented |
+| `octo-adapter-slack`     | Slack     | 265   | 13    | Implemented |
+| `octo-adapter-webhook`   | Webhook   | 473   | 14    | Implemented |
+| `octo-adapter-bluetooth` | Bluetooth | 433   | 11    | Implemented |
+| `octo-adapter-lora`      | LoRa      | 531   | 16    | Implemented |
+| `octo-adapter-webrtc`    | WebRTC    | 320   | 7     | Implemented |
 
 ### 16.2 Media Capability vs Implementation
 
-| Platform | Capability | upload_media | download_media | API |
-|----------|-----------|--------------|----------------|-----|
-| Telegram | ✅ Yes | ✅ Done | ✅ Done | Bot API sendDocument/getFile |
-| Discord | ✅ Yes | ✅ Done | ✅ Done | Webhook multipart + attachment URLs |
-| Matrix | ✅ Yes | ✅ Done | ✅ Done | Matrix Media API |
-| Bluesky | ✅ Yes | ✅ Done | ✅ Done | AT Protocol blob upload/sync.getBlob |
-| Twitter | ✅ Yes | ✅ Done | ✅ Done | media/upload.json + pbs.twimg.com |
-| Lark | ✅ Yes | ✅ Done | ✅ Done | Lark image upload/download API |
-| Reddit | ✅ Yes | ✅ Done | ✅ Done | Reddit media/asset API |
-| WeChat | ✅ Yes | ✅ Done | ✅ Done | Official Account media API |
-| QQ | ✅ Yes | ✅ Done | ✅ Done | QQ Bot file upload |
-| WhatsApp | ❌ No | Default | Default | Text only |
-| Signal | ❌ No | Default | Default | Text only |
-| IRC | ❌ No | Default | Default | Text only |
-| Slack | ❌ No | Default | Default | Text only |
-| Webhook | ❌ No | Default | Default | Stateless |
-| Bluetooth | ❌ No | Default | Default | BLE only |
-| LoRa | ❌ No | Default | Default | Radio only |
-| WebRTC | ❌ No | Default | Default | DataChannel only |
+| Platform  | Capability | upload_media | download_media | API                                  |
+| --------- | ---------- | ------------ | -------------- | ------------------------------------ |
+| Telegram  | ✅ Yes     | ✅ Done      | ✅ Done        | Bot API sendDocument/getFile         |
+| Discord   | ✅ Yes     | ✅ Done      | ✅ Done        | Webhook multipart + attachment URLs  |
+| Matrix    | ✅ Yes     | ✅ Done      | ✅ Done        | Matrix Media API                     |
+| Bluesky   | ✅ Yes     | ✅ Done      | ✅ Done        | AT Protocol blob upload/sync.getBlob |
+| Twitter   | ✅ Yes     | ✅ Done      | ✅ Done        | media/upload.json + pbs.twimg.com    |
+| Lark      | ✅ Yes     | ✅ Done      | ✅ Done        | Lark image upload/download API       |
+| Reddit    | ✅ Yes     | ✅ Done      | ✅ Done        | Reddit media/asset API               |
+| WeChat    | ✅ Yes     | ✅ Done      | ✅ Done        | Official Account media API           |
+| QQ        | ✅ Yes     | ✅ Done      | ✅ Done        | QQ Bot file upload                   |
+| WhatsApp  | ❌ No      | Default      | Default        | Text only                            |
+| Signal    | ❌ No      | Default      | Default        | Text only                            |
+| IRC       | ❌ No      | Default      | Default        | Text only                            |
+| Slack     | ❌ No      | Default      | Default        | Text only                            |
+| Webhook   | ❌ No      | Default      | Default        | Stateless                            |
+| Bluetooth | ❌ No      | Default      | Default        | BLE only                             |
+| LoRa      | ❌ No      | Default      | Default        | Radio only                           |
+| WebRTC    | ❌ No      | Default      | Default        | DataChannel only                     |
 
 ---
 
@@ -666,25 +667,25 @@ All modules share these core types from `octo-core`:
 
 ### 17.1 Test Layers
 
-| Layer | Description | Coverage |
-|-------|-------------|----------|
-| Unit tests | Per-module tests | 582+ tests |
+| Layer             | Description        | Coverage                                  |
+| ----------------- | ------------------ | ----------------------------------------- |
+| Unit tests        | Per-module tests   | 582+ tests                                |
 | Integration tests | Cross-module tests | Envelope roundtrip, fragmentation, gossip |
-| Platform tests | Per-adapter tests | Config, encode/decode, capabilities |
+| Platform tests    | Per-adapter tests  | Config, encode/decode, capabilities       |
 
 ### 17.2 Test Count by Module
 
-| Module | Tests |
-|--------|-------|
-| DOT (core) | 200+ |
-| DGP | 50+ |
-| GDP | 40+ |
-| OCrypt | 60+ |
-| DPS | 30+ |
-| MON | 40+ |
-| DRS | 30+ |
-| DOM | 20+ |
-| ORR | 25+ |
-| PoRelay | 30+ |
-| Adapters | 206 |
-| **Total** | **788** |
+| Module     | Tests   |
+| ---------- | ------- |
+| DOT (core) | 200+    |
+| DGP        | 50+     |
+| GDP        | 40+     |
+| OCrypt     | 60+     |
+| DPS        | 30+     |
+| MON        | 40+     |
+| DRS        | 30+     |
+| DOM        | 20+     |
+| ORR        | 25+     |
+| PoRelay    | 30+     |
+| Adapters   | 206     |
+| **Total**  | **788** |

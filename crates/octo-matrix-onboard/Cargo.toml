@@ -12,15 +12,17 @@ path = "src/main.rs"
 [dependencies]
 # Library half — auth flows, session capture, QR rendering, listener
 octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core" }
-# Matrix SDK (must match the core lib's pin).
-# `rustls-tls` is NOT a valid 0.17.0 feature (TLS is provided by the
-# embedded reqwest's default backend). `api` is not a feature — login
-# APIs are always available.
+# Matrix SDK (must match the core lib's pin). Upgraded from
+# 0.17.0 → 0.18.0 in the 0850h-b SDK 0.18 extension; backward-
+# compatible for the CLI's API surface (no client source changes
+# needed). `rustls-tls` is NOT a valid 0.x feature (TLS is
+# provided by the embedded reqwest's default backend). `api` is
+# not a feature — login APIs are always available.
 #   - `e2e-encryption` + `qrcode` for the QR login mode
 #     (LoginWithGeneratedQrCode is gated behind e2e-encryption).
 #   - No `sqlite`/`indexeddb` — we don't need a state store for a
 #     one-shot login CLI; the default in-memory store is fine.
-matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "qrcode"] }
+matrix-sdk = { version = "=0.18.0", default-features = false, features = ["e2e-encryption", "qrcode"] }
 # CLI
 clap = { workspace = true }
 # Async runtime
@@ -64,6 +66,8 @@ octo-matrix-session-store = { path = "../octo-matrix-session-store" }
 # promoted to a runtime dep because `write_atomic` is called
 # in the production write path, not just tests.
 tempfile = "3.8"
+# Open URLs in the default browser (xdg-open / open / start)
+open = "5"
 
 [dev-dependencies]
 # Tests use the same `tempfile` crate (TempDir helpers); already

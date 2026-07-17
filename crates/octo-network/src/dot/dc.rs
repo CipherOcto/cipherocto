@@ -158,6 +158,7 @@ impl DcOrchestrator {
     /// adapter is expected to handle the platform-side call and emit
     /// either a `CreateGroupDoneEnvelope` (with the `group_jid`) or
     /// `CreateGroupFailEnvelope` (with the reason).
+    #[allow(clippy::too_many_arguments)] // Arguments map 1:1 to envelope fields.
     pub fn build_create_group(
         &mut self,
         domain_id: [u8; 32],
@@ -276,6 +277,7 @@ impl DcOrchestrator {
 
     /// Build an `UnbindAllEnvelope` requesting all members to leave the
     /// group.
+    #[allow(clippy::too_many_arguments)] // Arguments map 1:1 to envelope fields.
     pub fn build_unbind_all(
         &mut self,
         domain_id: [u8; 32],

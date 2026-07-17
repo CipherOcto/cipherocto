@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use octo_network::dot::adapters::{CapabilityReport, MediaCapabilities};
+use octo_network::dot::adapters::CapabilityReport;
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::{
     DeterministicEnvelope, MessageType, ObfuscatedEnvelope, PrivacyConfig, SealedEnvelope,
@@ -16,13 +16,12 @@ use octo_network::dot::gateway::{
     FederationPeer, FederationState, GatewayCapacity, GatewayClass, GatewayIdentity,
 };
 use octo_network::dot::route::{
-    compute_gateway_sequence_hash, compute_route_score, handle_partition, select_best_route,
-    GatewayRoute, PartitionEvent, RouteCommitment, RouteWeights,
+    compute_gateway_sequence_hash, handle_partition, select_best_route, GatewayRoute,
+    PartitionEvent, RouteCommitment, RouteWeights,
 };
 use octo_network::dot::transport::{
-    b64url_decode, b64url_encode, decode_fragment_ref, decode_native_ref, decode_text_ref,
-    detect_mode, encode_fragment_ref, encode_native_ref, encode_text_ref, select_mode,
-    select_mode_with_max_text, TransportMode,
+    b64url_decode, b64url_encode, decode_text_ref, detect_mode, encode_text_ref, select_mode,
+    TransportMode,
 };
 
 fn make_envelope(id_byte: u8) -> DeterministicEnvelope {
@@ -75,12 +74,16 @@ fn test_platform_type_all_variants() {
         (0x0013, PlatformType::Lark),
         (0x0014, PlatformType::QQ),
         (0x0015, PlatformType::Quic),
+        (0x0013, PlatformType::Lark),
+        (0x0014, PlatformType::QQ),
+        (0x0015, PlatformType::Quic),
+        (0x0016, PlatformType::Tcp),
+        (0x0017, PlatformType::Udp),
     ];
     for (val, expected) in cases {
         assert_eq!(PlatformType::from_u16(val), Some(expected), "0x{:04x}", val);
     }
     assert!(PlatformType::from_u16(0x0000).is_none());
-    assert!(PlatformType::from_u16(0x0016).is_none());
 }
 
 // ── BroadcastDomainId comprehensive ──
@@ -579,6 +582,7 @@ fn test_payload_too_large_error_display() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
     let err = select_mode(5000, &caps).unwrap_err();
     let msg = format!("{}", err);
@@ -596,6 +600,7 @@ fn test_payload_too_large_is_error() {
         supports_raw_binary: false,
         rate_limit_per_second: 10,
         media_capabilities: None,
+        ..Default::default()
     };
     let err = select_mode(5000, &caps).unwrap_err();
     let _: &dyn std::error::Error = &err;

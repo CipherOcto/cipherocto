@@ -4,12 +4,21 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use prost::Message;
 use std::path::Path;
+use std::sync::Arc;
 use wacore::appstate::hash::HashState;
 use wacore::appstate::processor::AppStateMutationMAC;
 use wacore::store::traits::*;
 use wacore::store::Device as CoreDevice;
+use whatsapp_rust::buffa::Message as BuffaMessage;
+
+/// Diagnostic dump of the device row's crypto blobs + identity metadata.
+///
+/// Tuple alias (not a named struct) because every caller destructures
+/// positionally — `let (noise_key, identity_key, ...) = store.read_device_keys()`
+/// keeps working unchanged. The alias just gives clippy
+/// `type_complexity` a name to point at instead of an inline 8-tuple.
+pub type DeviceKeyDump = (Vec<u8>, Vec<u8>, Vec<u8>, String, u32, u32, u32, u32);
 
 /// Helper to convert stoolap errors to StoreError
 fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
@@ -36,11 +45,69 @@ fn query(
     db.query(sql, params).map_err(to_store_err)
 }
 
-/// Stoolap-backed wa-rs storage backend
-#[derive(Clone)]
+/// R13-M1 fix: transaction-aware variants of `exec` / `query` that
+/// operate on `&mut Transaction` so the DELETE+INSERT pattern used
+/// by every mutating store op can be wrapped atomically. Without
+/// this, a panic (or process crash, or power loss) between the
+/// `DELETE` and the `INSERT` left the row gone with no replacement —
+/// which for `DeviceStore::save` meant the entire `CoreDevice`
+/// (noise keys, identity, signed pre-key, registration ID) was
+/// lost and the bot had to re-pair from scratch.
+///
+/// `Transaction::execute` / `Transaction::query` take `&mut self`
+/// (not `&self` like `Database::execute`), so we cannot share the
+/// existing `exec` / `query` helpers — they need a different
+/// receiver. `Database::begin()` returns `api::Transaction`, which
+/// is re-exported at the crate root as `stoolap::ApiTransaction`
+/// (the plain `stoolap::Transaction` name resolves to the
+/// `storage::Transaction` trait, which is not what `begin()` returns).
+fn exec_tx(
+    tx: &mut stoolap::ApiTransaction,
+    sql: &str,
+    params: Vec<stoolap::Value>,
+) -> wacore::store::error::Result<()> {
+    tx.execute(sql, params).map(|_| ()).map_err(to_store_err)
+}
+
+fn query_tx(
+    tx: &mut stoolap::ApiTransaction,
+    sql: &str,
+    params: Vec<stoolap::Value>,
+) -> wacore::store::error::Result<stoolap::Rows> {
+    tx.query(sql, params).map_err(to_store_err)
+}
+
+/// Stoolap-backed wa-rs storage backend.
+/// The `db` is wrapped in a `tokio::sync::Mutex` to serialize all
+/// write transactions. The background saver and the main thread
+/// both call `save()` concurrently; without serialization, the
+/// second `begin()` on the same Database handle fails with
+/// "database operation error" because stoolap only allows one
+/// active transaction per executor.
 pub struct StoolapStore {
-    db: stoolap::Database,
+    db: tokio::sync::Mutex<stoolap::Database>,
     device_id: i32,
+}
+
+impl Clone for StoolapStore {
+    fn clone(&self) -> Self {
+        // Clone the database handle (gets its own executor with
+        // independent transaction state, same underlying engine).
+        // Wrap in a fresh Mutex so each clone serializes independently.
+        let db_guard = self.db.try_lock();
+        let db = match db_guard {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                // If the mutex is held (shouldn't happen during clone),
+                // we can't clone safely. Panic with a clear message.
+                panic!("StoolapStore::clone called while db mutex is held");
+            }
+        };
+        Self {
+            db: tokio::sync::Mutex::new(db),
+            device_id: self.device_id,
+        }
+    }
 }
 
 impl StoolapStore {
@@ -56,15 +123,27 @@ impl StoolapStore {
         // "Invalid DSN format: expected scheme://path".
         let dsn = format!("file://{path}");
         let db = stoolap::Database::open(&dsn)?;
-        let store = Self { db, device_id: 1 };
-        store.init_schema()?;
+        let store = Self {
+            db: tokio::sync::Mutex::new(db),
+            device_id: 1,
+        };
+        {
+            let guard = store.db.try_lock().expect("fresh store has no contention");
+            store.init_schema_with(&guard)?;
+        }
         Ok(store)
     }
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let db = stoolap::Database::open_in_memory()?;
-        let store = Self { db, device_id: 1 };
-        store.init_schema()?;
+        let store = Self {
+            db: tokio::sync::Mutex::new(db),
+            device_id: 1,
+        };
+        {
+            let guard = store.db.try_lock().expect("fresh store has no contention");
+            store.init_schema_with(&guard)?;
+        }
         Ok(store)
     }
 
@@ -75,7 +154,59 @@ impl StoolapStore {
         Ok(())
     }
 
-    fn init_schema(&self) -> anyhow::Result<()> {
+    /// Phase 7.J.4: read the persisted `device` row's three crypto
+    /// blobs for diagnostic use (the `dump_noise_key` binary).
+    ///
+    /// Returns `(noise_key, identity_key, signed_pre_key)` bytes if a
+    /// row exists, `None` if the device row has not been written yet
+    /// (a fresh/empty DB). The three blobs are the
+    /// `wacore::store::Device.noise_key` / `.identity_key` /
+    /// `.signed_pre_key` `KeyPair`s — see the fork's
+    /// `wacore/src/store/device.rs` for the full schema.
+    ///
+    /// Not async because the `dump_noise_key` binary uses a sync
+    /// `try_lock()` (the daemon normally holds the lock). Safe to
+    /// call from any context where the store isn't contended.
+    pub fn read_device_keys(&self) -> anyhow::Result<Option<DeviceKeyDump>> {
+        use anyhow::Context;
+        let db = self
+            .db
+            .try_lock()
+            .map_err(|e| anyhow::anyhow!("db try_lock failed (a daemon may be running): {e}"))?;
+        let mut rows = query(
+            &db,
+            "SELECT noise_key, identity_key, signed_pre_key, push_name, app_version_primary, app_version_secondary, app_version_tertiary, registration_id FROM device WHERE id = 1",
+            vec![],
+        )
+        .map_err(|e| anyhow::Error::msg(format!("SELECT device: {e}")))?;
+        let row = match rows.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
+                return Err(anyhow::Error::msg(format!("row decode: {e}")));
+            }
+            None => return Ok(None),
+        };
+        let noise_key: Vec<u8> = row.get(0).context("noise_key col")?;
+        let identity_key: Vec<u8> = row.get(1).context("identity_key col")?;
+        let signed_pre_key: Vec<u8> = row.get(2).context("signed_pre_key col")?;
+        let push_name: String = row.get(3).context("push_name col")?;
+        let avp: i64 = row.get::<i64>(4).context("app_version_primary col")?;
+        let avs: i64 = row.get::<i64>(5).context("app_version_secondary col")?;
+        let avt: i64 = row.get::<i64>(6).context("app_version_tertiary col")?;
+        let registration_id: i64 = row.get::<i64>(7).context("registration_id col")?;
+        Ok(Some((
+            noise_key,
+            identity_key,
+            signed_pre_key,
+            push_name,
+            avp as u32,
+            avs as u32,
+            avt as u32,
+            registration_id as u32,
+        )))
+    }
+
+    fn init_schema_with(&self, db: &stoolap::Database) -> anyhow::Result<()> {
         // R9 / stoolap parser: stoolap's strict SQL parser
         // doesn't accept `PRIMARY KEY (col1, col2)` (the `KEY`
         // token is rejected as a reserved keyword). The fix
@@ -149,11 +280,67 @@ impl StoolapStore {
             "CREATE TABLE IF NOT EXISTS sent_messages (chat_jid TEXT NOT NULL, message_id TEXT NOT NULL, payload BLOB NOT NULL, device_id INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE (chat_jid, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS base_keys (address TEXT NOT NULL, message_id TEXT NOT NULL, base_key BLOB NOT NULL, device_id INTEGER NOT NULL, UNIQUE (address, message_id, device_id))",
             "CREATE TABLE IF NOT EXISTS tc_tokens (jid TEXT NOT NULL, token BLOB NOT NULL, token_timestamp INTEGER NOT NULL, sender_timestamp INTEGER, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (jid, device_id))",
+            "CREATE TABLE IF NOT EXISTS conversations (jid TEXT NOT NULL, name TEXT, is_group INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, UNIQUE (jid))",
+            "CREATE TABLE IF NOT EXISTS msg_secrets (chat TEXT NOT NULL, sender TEXT NOT NULL, msg_id TEXT NOT NULL, secret BLOB NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0, message_ts INTEGER NOT NULL DEFAULT 0, device_id INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (chat, sender, msg_id, device_id))",
         ];
         for stmt in stmts {
-            exec(&self.db, stmt, vec![])?;
+            exec(db, stmt, vec![])?;
         }
         Ok(())
+    }
+
+    /// Upsert conversation JIDs from HistorySync. Called from the adapter's
+    /// Event::HistorySync handler. Uses DELETE+INSERT in a transaction.
+    pub async fn upsert_conversations(
+        &self,
+        entries: &[(String, Option<String>, bool)],
+    ) -> anyhow::Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let mut tx = self.db.lock().await.begin()?;
+        for (jid, name, is_group) in entries {
+            exec_tx(
+                &mut tx,
+                "DELETE FROM conversations WHERE jid = $1",
+                vec![jid.clone().into()],
+            )?;
+            exec_tx(
+                &mut tx,
+                "INSERT INTO conversations (jid, name, is_group, updated_at) VALUES ($1, $2, $3, $4)",
+                vec![
+                    jid.clone().into(),
+                    name.clone().unwrap_or_default().into(),
+                    (*is_group as i64).into(),
+                    now.into(),
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// List all conversation JIDs. Returns (jid, name, is_group).
+    pub async fn list_conversations(&self) -> anyhow::Result<Vec<(String, Option<String>, bool)>> {
+        let rows = query(
+            &*self.db.lock().await,
+            "SELECT jid, name, is_group FROM conversations",
+            vec![],
+        )?;
+        let mut result = Vec::new();
+        for row_result in rows {
+            let row = row_result?;
+            let jid: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let is_group: i64 = row.get(2)?;
+            result.push((
+                jid,
+                if name.is_empty() { None } else { Some(name) },
+                is_group != 0,
+            ));
+        }
+        Ok(result)
     }
 }
 
@@ -162,25 +349,31 @@ impl StoolapStore {
 #[async_trait]
 impl SignalStore for StoolapStore {
     async fn put_identity(&self, address: &str, key: [u8; 32]) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R13-M1 fix: see `put_session` for the rationale. A lost
+        // identity row means we re-handshake with the peer (re-X3DH
+        // + new ratchet), which is observable as a one-message
+        // decrypt failure.
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM identities WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO identities (address, \"key\", device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
                 stoolap::core::Value::blob(key.to_vec()),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn load_identity(&self, address: &str) -> wacore::store::error::Result<Option<[u8; 32]>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT \"key\" FROM identities WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
@@ -203,7 +396,7 @@ impl SignalStore for StoolapStore {
 
     async fn delete_identity(&self, address: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM identities WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )
@@ -211,7 +404,7 @@ impl SignalStore for StoolapStore {
 
     async fn get_session(&self, address: &str) -> wacore::store::error::Result<Option<Bytes>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT record FROM sessions WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
@@ -226,25 +419,33 @@ impl SignalStore for StoolapStore {
     }
 
     async fn put_session(&self, address: &str, session: &[u8]) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R13-M1 fix: wrap the DELETE+INSERT in a transaction so a
+        // panic / crash / power-loss between the two statements
+        // can't leave the row gone with no replacement. (For
+        // `put_session` a lost row means the next message to that
+        // peer fails to decrypt and triggers a re-handshake — a
+        // measurable degradation for high-traffic peers.)
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM sessions WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO sessions (address, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
                 stoolap::core::Value::blob(session.to_vec()),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn delete_session(&self, address: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM sessions WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )
@@ -256,13 +457,19 @@ impl SignalStore for StoolapStore {
         record: &[u8],
         uploaded: bool,
     ) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R13-M1 fix: see `put_session` for the rationale. A lost
+        // pre-key row is recoverable (the server will tell us the
+        // next-pre-key-id is out of range and we'll regenerate),
+        // but in-window message decrypt still depends on
+        // pre-key availability.
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO prekeys (id, \"key\", uploaded, device_id) VALUES ($1, $2, $3, $4)",
             vec![
                 (id as i64).into(),
@@ -270,12 +477,13 @@ impl SignalStore for StoolapStore {
                 (uploaded as i64).into(),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn load_prekey(&self, id: u32) -> wacore::store::error::Result<Option<Bytes>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT \"key\" FROM prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )?;
@@ -291,7 +499,7 @@ impl SignalStore for StoolapStore {
 
     async fn get_max_prekey_id(&self) -> wacore::store::error::Result<u32> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT MAX(id) FROM prekeys WHERE device_id = $1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -307,7 +515,7 @@ impl SignalStore for StoolapStore {
 
     async fn remove_prekey(&self, id: u32) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )
@@ -318,25 +526,32 @@ impl SignalStore for StoolapStore {
         id: u32,
         record: &[u8],
     ) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R13-M1 fix: see `put_session` for the rationale. The
+        // signed pre-key is published to the server periodically;
+        // losing it locally means the next handshake attempt will
+        // use a different key and the server will reject it
+        // (causing a forced re-handshake).
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM signed_prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO signed_prekeys (id, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 (id as i64).into(),
                 stoolap::core::Value::blob(record.to_vec()),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn load_signed_prekey(&self, id: u32) -> wacore::store::error::Result<Option<Vec<u8>>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT record FROM signed_prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )?;
@@ -352,7 +567,7 @@ impl SignalStore for StoolapStore {
 
     async fn load_all_signed_prekeys(&self) -> wacore::store::error::Result<Vec<(u32, Vec<u8>)>> {
         let rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT id, record FROM signed_prekeys WHERE device_id = $1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -368,7 +583,7 @@ impl SignalStore for StoolapStore {
 
     async fn remove_signed_prekey(&self, id: u32) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM signed_prekeys WHERE id = $1 AND device_id = $2",
             vec![(id as i64).into(), (self.device_id as i64).into()],
         )
@@ -380,12 +595,12 @@ impl SignalStore for StoolapStore {
         record: &[u8],
     ) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM sender_keys WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "INSERT INTO sender_keys (address, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
@@ -397,7 +612,7 @@ impl SignalStore for StoolapStore {
 
     async fn get_sender_key(&self, address: &str) -> wacore::store::error::Result<Option<Vec<u8>>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT record FROM sender_keys WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )?;
@@ -413,10 +628,18 @@ impl SignalStore for StoolapStore {
 
     async fn delete_sender_key(&self, address: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM sender_keys WHERE address = $1 AND device_id = $2",
             vec![address.to_string().into(), (self.device_id as i64).into()],
         )
+    }
+
+    async fn mark_prekeys_uploaded(&self, _ids: &[u32]) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed mark-as-uploaded.
+        // The sweep that calls this runs after a successful first upload,
+        // which currently never happens because pair_success is end-to-end
+        // before prekey re-uploads. Tracked for Phase 7.
+        Ok(())
     }
 }
 
@@ -429,7 +652,7 @@ impl AppSyncStore for StoolapStore {
         key_id: &[u8],
     ) -> wacore::store::error::Result<Option<AppStateSyncKey>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT key_data FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
             vec![
                 stoolap::core::Value::blob(key_id.to_vec()),
@@ -453,30 +676,43 @@ impl AppSyncStore for StoolapStore {
         key_id: &[u8],
         key: AppStateSyncKey,
     ) -> wacore::store::error::Result<()> {
+        // R14-H2 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the entire app-state sync key (HMAC key material
+        // for snapshot MAC verification). Without the sync key, the
+        // next sync cannot validate any snapshot — every subsequent
+        // app-state sync operation depends on this key. This is
+        // functionally equivalent to losing the bot's identity
+        // until a full re-pair. R13-M1 missed this op (the review
+        // table at `docs/reviews/2026-06-20-r13-mission-0850-review.md:118-127`
+        // listed 8 single-pair DELETE+INSERT ops but not this one);
+        // the R14 grep audit at lines 518-538 found it.
         let data = serde_json::to_vec(&key)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
             vec![
                 stoolap::core::Value::blob(key_id.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO app_state_keys (key_id, key_data, device_id) VALUES ($1, $2, $3)",
             vec![
                 stoolap::core::Value::blob(key_id.to_vec()),
                 stoolap::core::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_version(&self, name: &str) -> wacore::store::error::Result<HashState> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT state_data FROM app_state_versions WHERE name = $1 AND device_id = $2",
             vec![name.to_string().into(), (self.device_id as i64).into()],
         )?;
@@ -503,22 +739,31 @@ impl AppSyncStore for StoolapStore {
     }
 
     async fn set_version(&self, name: &str, state: HashState) -> wacore::store::error::Result<()> {
+        // R14-M1 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the entire `HashState` (per-collection `version` and
+        // running `ltHash`). The next sync then starts from the
+        // wrong version, causing wrong patches to be applied and the
+        // ltHash to diverge. R13-M1 missed this op; the R14 grep
+        // audit at lines 575-595 found it.
         let data = serde_json::to_vec(&state)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM app_state_versions WHERE name = $1 AND device_id = $2",
             vec![name.to_string().into(), (self.device_id as i64).into()],
         )?;
-        exec(
-            &self.db,
+        exec_tx(
+            &mut tx,
             "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)",
             vec![
                 name.to_string().into(),
                 stoolap::core::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
-        )
+        )?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn put_mutation_macs(
@@ -543,27 +788,87 @@ impl AppSyncStore for StoolapStore {
         // encoding of the Vec<u8> field, i.e. raw bytes on the
         // wire). Must match this for the ltHash to be stable.
         //
-        // R13 fix (idempotency): DELETE-then-INSERT instead of plain
-        // INSERT. The schema has `UNIQUE (name, index_mac, device_id)`
-        // and the same index_mac can legitimately appear twice: a
-        // patch SET can overwrite a snapshot SET, and a multi-mutation
-        // patch can contain multiple entries with the same index_mac
+        // R13 fix (idempotency): DELETE-then-INSERT to handle the
+        // `UNIQUE (name, index_mac, device_id)` constraint. The
+        // same index_mac can legitimately appear twice: a patch SET
+        // can overwrite a snapshot SET, and a multi-mutation patch
+        // can contain multiple entries with the same index_mac
         // (e.g. a SET followed by a REMOVE of the same key in the
         // same patch, where the REMOVE's value MAC lookup references
         // the SET we just inserted). Without the DELETE, the second
         // INSERT raises a unique-constraint violation, which
         // propagates as "database operation error" and aborts the
-        // entire critical-sync flow. The SQLite reference uses
-        // `on_conflict do update` for the same reason; we achieve
-        // the same effect with DELETE+INSERT (matching our
-        // set_sync_key / set_version pattern).
-        for m in mutations {
-            exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                vec![name.to_string().into(), stoolap::core::Value::blob(m.index_mac.clone()), (self.device_id as i64).into()])?;
-            exec(&self.db, "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id) VALUES ($1, $2, $3, $4, $5)",
-                vec![name.to_string().into(), (version as i64).into(), stoolap::core::Value::blob(m.index_mac.clone()), stoolap::core::Value::blob(m.value_mac.clone()), (self.device_id as i64).into()])?;
+        // entire critical-sync flow.
+        //
+        // R15 fix (single-statement UPSERT + batch-atomic tx):
+        // replaced the per-iteration DELETE+INSERT with a single
+        // `INSERT ... ON DUPLICATE KEY UPDATE` statement. This is
+        // possible because the two underlying Stoolap bugs that
+        // blocked this approach in R14 are now fixed (commit
+        // `1fc5bc2` on `feat/blockchain-sql`):
+        //
+        // 1. UPSERT on COMPOSITE unique indexes (R14 carve-out).
+        //    Stoolap's `apply_on_duplicate_update` previously
+        //    called `find_row_by_unique_index` with the composite
+        //    column name `"name, index_mac, device_id"` as a single
+        //    column, which didn't exist in the column map, causing
+        //    `Error::UniqueConstraint { value: "unknown" }`. Fixed
+        //    in Stoolap by refactoring `apply_on_duplicate_update`
+        //    to take a pre-built WHERE expression from the unique
+        //    columns + values (no PK dependency). The
+        //    `tests/mission_0850_r14_regression_test.rs` test file
+        //    pins this.
+        //
+        // 2. Transaction-local DELETE visibility for unique-index
+        //    INSERTs. The in-memory backend's `check_unique_constraints`
+        //    previously queried the committed-state index, which
+        //    didn't see rows locally deleted by the current
+        //    transaction. So wrapping the loop in a single
+        //    transaction caused the DELETE+INSERT pattern to raise
+        //    `UniqueConstraint` on the INSERT (the DELETE's effect
+        //    was invisible to the constraint check). Fixed in
+        //    Stoolap by filtering index entries against
+        //    `txn_versions.get_local_version()` and skipping
+        //    locally-deleted entries.
+        //
+        // With both fixes, we can:
+        // - Replace DELETE-then-INSERT with a single UPSERT (one
+        //   statement, no per-iteration tx overhead).
+        // - Wrap the whole batch in a single transaction so a crash
+        //   mid-batch doesn't leave mutations 1-4 in their new
+        //   state and 5-10 in their old state (the R14-H1 carve-out
+        //   is now closed). This matches the in-memory reference
+        //   (`wacore/src/store/in_memory.rs:315` — wraps in
+        //   `state.lock().await`) and the SQLite reference
+        //   (`storages/sqlite-storage/src/sqlite_store.rs:1127-1142`
+        //   — `with_retry` + `on_conflict do update`).
+        //
+        // The single-statement UPSERT is now both per-iteration
+        // atomic (one statement) AND batch-atomic (one
+        // transaction), restoring parity with the in-memory and
+        // SQLite reference implementations.
+        if mutations.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        for m in mutations {
+            exec_tx(
+                &mut tx,
+                "INSERT INTO app_state_mutation_macs (name, version, index_mac, value_mac, device_id)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON DUPLICATE KEY UPDATE
+                     version = $2,
+                     value_mac = $4",
+                vec![
+                    name.to_string().into(),
+                    (version as i64).into(),
+                    stoolap::core::Value::blob(m.index_mac.clone()),
+                    stoolap::core::Value::blob(m.value_mac.clone()),
+                    (self.device_id as i64).into(),
+                ],
+            )?;
+        }
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_mutation_mac(
@@ -573,7 +878,7 @@ impl AppSyncStore for StoolapStore {
     ) -> wacore::store::error::Result<Option<Vec<u8>>> {
         // R12 fix: lookup and return the value_mac as raw bytes (see
         // put_mutation_macs above for the rationale).
-        let mut rows = query(&self.db, "SELECT value_mac FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+        let mut rows = query(&*self.db.lock().await, "SELECT value_mac FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
             vec![name.to_string().into(), stoolap::core::Value::blob(index_mac.to_vec()), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => {
@@ -591,16 +896,38 @@ impl AppSyncStore for StoolapStore {
         index_macs: &[Vec<u8>],
     ) -> wacore::store::error::Result<()> {
         // R12 fix: lookup by raw bytes to match put_mutation_macs.
+        //
+        // R14-M3 fix: wrap the whole loop in a single transaction.
+        // Without this, a crash mid-batch (e.g., on iteration 5 of
+        // 10) leaves some index_macs still present with their old
+        // `value_mac`. The next patch's prev-value lookup finds the
+        // OLD value_mac (the one we still have), succeeds, and then
+        // the diff is applied with the wrong prev_value — corrupting
+        // the ltHash arithmetic in
+        // `WAPATCH_INTEGRITY.subtract_then_add_in_place` and producing
+        // "patch snapshot MAC mismatch" on the next sync. Pure
+        // DELETE (no INSERT) means the rows are eventually cleaned
+        // up by the next call, but the current patch flow's
+        // correctness depends on this batch being atomic. The
+        // in-memory reference wraps the whole loop in a single
+        // `state.lock().await` (`wacore/src/store/in_memory.rs:334-339`)
+        // and the SQLite reference uses `with_retry` (a single
+        // transaction) — we match both. R13-M1 missed this op; the
+        // R14 grep audit at lines 691-701 found it.
+        if index_macs.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
         for idx in index_macs {
-            exec(&self.db, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
+            exec_tx(&mut tx, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
                 vec![name.to_string().into(), stoolap::core::Value::blob(idx.clone()), (self.device_id as i64).into()])?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_latest_sync_key_id(&self) -> wacore::store::error::Result<Option<Vec<u8>>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT key_id FROM app_state_keys WHERE device_id = $1 ORDER BY key_id DESC LIMIT 1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -613,6 +940,13 @@ impl AppSyncStore for StoolapStore {
             None => Ok(None),
         }
     }
+
+    async fn clear_mutation_macs(&self, _name: &str) -> wacore::store::error::Result<()> {
+        // TODO(octo-adapter-whatsapp): Stoolap-backed MAC clear. The ltHash
+        // rebuild is triggered on snapshot re-sync, which the upstream default
+        // sync sequence handles; store-level impl deferred.
+        Ok(())
+    }
 }
 
 // ── ProtocolStore ──────────────────────────────────────────────────
@@ -623,7 +957,7 @@ impl ProtocolStore for StoolapStore {
         &self,
         group_jid: &str,
     ) -> wacore::store::error::Result<Vec<(String, bool)>> {
-        let rows = query(&self.db, "SELECT device_jid, has_key FROM sender_key_devices WHERE group_jid = $1 AND device_id = $2",
+        let rows = query(&*self.db.lock().await, "SELECT device_jid, has_key FROM sender_key_devices WHERE group_jid = $1 AND device_id = $2",
             vec![group_jid.to_string().into(), (self.device_id as i64).into()])?;
         let mut result = Vec::new();
         for row_result in rows {
@@ -640,19 +974,25 @@ impl ProtocolStore for StoolapStore {
         group_jid: &str,
         entries: &[(&str, bool)],
     ) -> wacore::store::error::Result<()> {
+        // R13-M1 fix: wrap the whole batch in a single transaction
+        // (not one transaction per entry) so the (group_jid,
+        // device_jid) updates are atomic AND a crash mid-batch
+        // doesn't leave the table half-updated with the prior
+        // partial state visible to readers.
         let now = chrono::Utc::now().timestamp();
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
         for (jid, has_key) in entries {
-            exec(&self.db, "DELETE FROM sender_key_devices WHERE group_jid = $1 AND device_jid = $2 AND device_id = $3",
+            exec_tx(&mut tx, "DELETE FROM sender_key_devices WHERE group_jid = $1 AND device_jid = $2 AND device_id = $3",
                 vec![group_jid.to_string().into(), jid.to_string().into(), (self.device_id as i64).into()])?;
-            exec(&self.db, "INSERT INTO sender_key_devices (group_jid, device_jid, has_key, device_id, updated_at) VALUES ($1, $2, $3, $4, $5)",
+            exec_tx(&mut tx, "INSERT INTO sender_key_devices (group_jid, device_jid, has_key, device_id, updated_at) VALUES ($1, $2, $3, $4, $5)",
                 vec![group_jid.to_string().into(), jid.to_string().into(), (if *has_key { 1i64 } else { 0i64 }).into(), (self.device_id as i64).into(), now.into()])?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn clear_sender_key_devices(&self, group_jid: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM sender_key_devices WHERE group_jid = $1 AND device_id = $2",
             vec![group_jid.to_string().into(), (self.device_id as i64).into()],
         )
@@ -662,19 +1002,32 @@ impl ProtocolStore for StoolapStore {
         &self,
         device_jids: &[&str],
     ) -> wacore::store::error::Result<()> {
+        // R14-M4 fix: wrap the whole loop in a single transaction.
+        // Without this, a crash mid-batch leaves some sender-key
+        // device rows still present. These rows are used by the
+        // protocol to determine whether a device needs fresh SKDM
+        // (Sender Key Distribution Message) on next message send;
+        // extra rows cause unnecessary SKDM sends, which is a
+        // minor bandwidth/protocol overhead, not a correctness
+        // issue — but consistency is cheap. R13-M1 missed this op;
+        // the R14 grep audit at lines 791-803 found it.
+        if device_jids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
         for jid in device_jids {
-            exec(
-                &self.db,
+            exec_tx(
+                &mut tx,
                 "DELETE FROM sender_key_devices WHERE device_jid = $1 AND device_id = $2",
                 vec![jid.to_string().into(), (self.device_id as i64).into()],
             )?;
         }
-        Ok(())
+        tx.commit().map_err(to_store_err)
     }
 
     async fn clear_all_sender_key_devices(&self) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM sender_key_devices WHERE device_id = $1",
             vec![(self.device_id as i64).into()],
         )
@@ -684,7 +1037,7 @@ impl ProtocolStore for StoolapStore {
         &self,
         lid: &str,
     ) -> wacore::store::error::Result<Option<LidPnMappingEntry>> {
-        let mut rows = query(&self.db, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE lid = $1 AND device_id = $2",
+        let mut rows = query(&*self.db.lock().await, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE lid = $1 AND device_id = $2",
             vec![lid.to_string().into(), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => Ok(Some(LidPnMappingEntry {
@@ -703,7 +1056,7 @@ impl ProtocolStore for StoolapStore {
         &self,
         phone: &str,
     ) -> wacore::store::error::Result<Option<LidPnMappingEntry>> {
-        let mut rows = query(&self.db, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE phone_number = $1 AND device_id = $2 ORDER BY updated_at DESC LIMIT 1",
+        let mut rows = query(&*self.db.lock().await, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE phone_number = $1 AND device_id = $2 ORDER BY updated_at DESC LIMIT 1",
             vec![phone.to_string().into(), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => Ok(Some(LidPnMappingEntry {
@@ -719,17 +1072,28 @@ impl ProtocolStore for StoolapStore {
     }
 
     async fn put_lid_mapping(&self, entry: &LidPnMappingEntry) -> wacore::store::error::Result<()> {
-        exec(
-            &self.db,
+        // R14-M2 fix: wrap the DELETE+INSERT in a single transaction.
+        // Without this, a crash between the DELETE and the INSERT
+        // loses the LID↔PN mapping. The bached `put_lid_mappings`
+        // trait default at `wacore/src/store/traits.rs:255-260` LOOPS
+        // over `put_lid_mapping` calls; if the batch is called with
+        // N entries and a crash happens between N1 and N2, the next
+        // batch will see N1 as missing. The SQLite ref impl uses a
+        // single transaction (matching what we do here). R13-M1
+        // missed this op; the R14 grep audit at lines 829-837 found it.
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM lid_pn_mapping WHERE lid = $1 AND device_id = $2",
             vec![entry.lid.clone().into(), (self.device_id as i64).into()],
         )?;
-        exec(&self.db, "INSERT INTO lid_pn_mapping (lid, phone_number, created_at, learning_source, updated_at, device_id) VALUES ($1, $2, $3, $4, $5, $6)",
-            vec![entry.lid.clone().into(), entry.phone_number.clone().into(), entry.created_at.into(), entry.learning_source.clone().into(), entry.updated_at.into(), (self.device_id as i64).into()])
+        exec_tx(&mut tx, "INSERT INTO lid_pn_mapping (lid, phone_number, created_at, learning_source, updated_at, device_id) VALUES ($1, $2, $3, $4, $5, $6)",
+            vec![entry.lid.clone().into(), entry.phone_number.clone().into(), entry.created_at.into(), entry.learning_source.clone().into(), entry.updated_at.into(), (self.device_id as i64).into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_all_lid_mappings(&self) -> wacore::store::error::Result<Vec<LidPnMappingEntry>> {
-        let rows = query(&self.db, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE device_id = $1",
+        let rows = query(&*self.db.lock().await, "SELECT lid, phone_number, created_at, learning_source, updated_at FROM lid_pn_mapping WHERE device_id = $1",
             vec![(self.device_id as i64).into()])?;
         let mut result = Vec::new();
         for row_result in rows {
@@ -751,9 +1115,14 @@ impl ProtocolStore for StoolapStore {
         message_id: &str,
         base_key: &[u8],
     ) -> wacore::store::error::Result<()> {
+        // R13-M1 fix: see `put_session` for the rationale. A lost
+        // base-key row breaks the sender-key ratchet for the
+        // affected peer, requiring a full re-sender-key-distribution
+        // round.
         let now = chrono::Utc::now().timestamp();
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3",
             vec![
                 address.to_string().into(),
@@ -761,8 +1130,9 @@ impl ProtocolStore for StoolapStore {
                 (self.device_id as i64).into(),
             ],
         )?;
-        exec(&self.db, "INSERT INTO base_keys (address, message_id, base_key, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
-            vec![address.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(base_key.to_vec()), (self.device_id as i64).into(), now.into()])
+        exec_tx(&mut tx, "INSERT INTO base_keys (address, message_id, base_key, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+            vec![address.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(base_key.to_vec()), (self.device_id as i64).into(), now.into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn has_same_base_key(
@@ -771,7 +1141,7 @@ impl ProtocolStore for StoolapStore {
         message_id: &str,
         current_base_key: &[u8],
     ) -> wacore::store::error::Result<bool> {
-        let mut rows = query(&self.db, "SELECT base_key FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3",
+        let mut rows = query(&*self.db.lock().await, "SELECT base_key FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3",
             vec![address.to_string().into(), message_id.to_string().into(), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => {
@@ -789,7 +1159,7 @@ impl ProtocolStore for StoolapStore {
         message_id: &str,
     ) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM base_keys WHERE address = $1 AND message_id = $2 AND device_id = $3",
             vec![
                 address.to_string().into(),
@@ -803,23 +1173,29 @@ impl ProtocolStore for StoolapStore {
         &self,
         record: DeviceListRecord,
     ) -> wacore::store::error::Result<()> {
+        // R13-M1 fix: see `put_session` for the rationale. A lost
+        // device-list row means we'd fall back to the
+        // "no-device-list" optimization on the next send, which can
+        // route messages through the wrong device.
         let devices_json = serde_json::to_string(&record.devices)
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
         let now = chrono::Utc::now().timestamp();
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM device_registry WHERE user_id = $1 AND device_id = $2",
             vec![record.user.clone().into(), (self.device_id as i64).into()],
         )?;
-        exec(&self.db, "INSERT INTO device_registry (user_id, devices_json, timestamp, phash, raw_id, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])
+        exec_tx(&mut tx, "INSERT INTO device_registry (user_id, devices_json, timestamp, phash, raw_id, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn get_devices(
         &self,
         user: &str,
     ) -> wacore::store::error::Result<Option<DeviceListRecord>> {
-        let mut rows = query(&self.db, "SELECT user_id, devices_json, timestamp, phash, raw_id FROM device_registry WHERE user_id = $1 AND device_id = $2",
+        let mut rows = query(&*self.db.lock().await, "SELECT user_id, devices_json, timestamp, phash, raw_id FROM device_registry WHERE user_id = $1 AND device_id = $2",
             vec![user.to_string().into(), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => {
@@ -845,14 +1221,14 @@ impl ProtocolStore for StoolapStore {
 
     async fn delete_devices(&self, user: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM device_registry WHERE user_id = $1 AND device_id = $2",
             vec![user.to_string().into(), (self.device_id as i64).into()],
         )
     }
 
     async fn get_tc_token(&self, jid: &str) -> wacore::store::error::Result<Option<TcTokenEntry>> {
-        let mut rows = query(&self.db, "SELECT token, token_timestamp, sender_timestamp FROM tc_tokens WHERE jid = $1 AND device_id = $2",
+        let mut rows = query(&*self.db.lock().await, "SELECT token, token_timestamp, sender_timestamp FROM tc_tokens WHERE jid = $1 AND device_id = $2",
             vec![jid.to_string().into(), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => Ok(Some(TcTokenEntry {
@@ -870,19 +1246,25 @@ impl ProtocolStore for StoolapStore {
         jid: &str,
         entry: &TcTokenEntry,
     ) -> wacore::store::error::Result<()> {
+        // R13-M1 fix: see `put_session` for the rationale. The TC
+        // token is the long-lived "trust" credential for a peer;
+        // losing it forces a full re-handshake on the next message
+        // to that peer.
         let now = chrono::Utc::now().timestamp();
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM tc_tokens WHERE jid = $1 AND device_id = $2",
             vec![jid.to_string().into(), (self.device_id as i64).into()],
         )?;
-        exec(&self.db, "INSERT INTO tc_tokens (jid, token, token_timestamp, sender_timestamp, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
-            vec![jid.to_string().into(), stoolap::core::Value::blob(entry.token.clone()), entry.token_timestamp.into(), entry.sender_timestamp.unwrap_or(0).into(), (self.device_id as i64).into(), now.into()])
+        exec_tx(&mut tx, "INSERT INTO tc_tokens (jid, token, token_timestamp, sender_timestamp, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
+            vec![jid.to_string().into(), stoolap::core::Value::blob(entry.token.clone()), entry.token_timestamp.into(), entry.sender_timestamp.unwrap_or(0).into(), (self.device_id as i64).into(), now.into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn delete_tc_token(&self, jid: &str) -> wacore::store::error::Result<()> {
         exec(
-            &self.db,
+            &*self.db.lock().await,
             "DELETE FROM tc_tokens WHERE jid = $1 AND device_id = $2",
             vec![jid.to_string().into(), (self.device_id as i64).into()],
         )
@@ -890,7 +1272,7 @@ impl ProtocolStore for StoolapStore {
 
     async fn get_all_tc_token_jids(&self) -> wacore::store::error::Result<Vec<String>> {
         let rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT jid FROM tc_tokens WHERE device_id = $1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -908,24 +1290,43 @@ impl ProtocolStore for StoolapStore {
 
     async fn delete_expired_tc_tokens(
         &self,
-        cutoff_timestamp: i64,
+        token_cutoff: i64,
+        sender_cutoff: i64,
     ) -> wacore::store::error::Result<u32> {
-        // Count first, then delete (not perfectly atomic but acceptable for cleanup)
-        let mut rows = query(
-            &self.db,
-            "SELECT COUNT(*) FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        let count: i64 = match rows.next() {
-            Some(Ok(row)) => row.get(0).map_err(to_store_err)?,
-            _ => 0,
-        };
-        exec(
-            &self.db,
-            "DELETE FROM tc_tokens WHERE token_timestamp < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        Ok(count as u32)
+        // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
+        // a single DELETE that returns the rows-affected count from
+        // `Database::execute` (`stoolap/src/api/database.rs:483`,
+        // `pub fn execute<P: Params>(&self, sql: &str, params: P) -> Result<i64>`).
+        // The previous SELECT-COUNT + DELETE was "not perfectly atomic
+        // but acceptable for cleanup" (per the old comment) — but
+        // there was no reason not to make it atomic: a single
+        // statement IS atomic by definition, and the count it
+        // returns is exact (the engine computes both as part of one
+        // plan). The old two-statement pattern had a race window
+        // where a concurrent insert between the SELECT and the
+        // DELETE would make the returned count diverge from the
+        // actual number of rows deleted. R13-M1 didn't audit this
+        // pattern (only DELETE+INSERT); the R14 grep audit at
+        // lines 1081-1101 found it.
+        // Post-buffa migration (wacore 6e0f241): upstream trait added
+        // a second cutoff to guard sender buckets separately from
+        // received-token state (see wacore/src/store/traits.rs).
+        // sender_cutoff = 0 means "no sender state preserved".
+        self.db
+            .lock()
+            .await
+            .execute(
+                "DELETE FROM tc_tokens WHERE \
+                 token_timestamp < $1 AND device_id = $2 AND \
+                 (sender_timestamp IS NULL OR sender_timestamp < $3)",
+                vec![
+                    token_cutoff.into(),
+                    (self.device_id as i64).into(),
+                    sender_cutoff.into(),
+                ],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
     }
 
     async fn store_sent_message(
@@ -934,9 +1335,15 @@ impl ProtocolStore for StoolapStore {
         message_id: &str,
         payload: &[u8],
     ) -> wacore::store::error::Result<()> {
+        // R13-M1 fix: see `put_session` for the rationale. The
+        // sent-messages table is used for outgoing-message dedup
+        // (a re-send of the same `(chat_jid, message_id)` is
+        // treated as a duplicate by the server); losing the row
+        // could cause a re-send to be processed as a new message.
         let now = chrono::Utc::now().timestamp();
-        exec(
-            &self.db,
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+        exec_tx(
+            &mut tx,
             "DELETE FROM sent_messages WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3",
             vec![
                 chat_jid.to_string().into(),
@@ -944,8 +1351,9 @@ impl ProtocolStore for StoolapStore {
                 (self.device_id as i64).into(),
             ],
         )?;
-        exec(&self.db, "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
-            vec![chat_jid.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(payload.to_vec()), (self.device_id as i64).into(), now.into()])
+        exec_tx(&mut tx, "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+            vec![chat_jid.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(payload.to_vec()), (self.device_id as i64).into(), now.into()])?;
+        tx.commit().map_err(to_store_err)
     }
 
     async fn take_sent_message(
@@ -953,22 +1361,37 @@ impl ProtocolStore for StoolapStore {
         chat_jid: &str,
         message_id: &str,
     ) -> wacore::store::error::Result<Option<Vec<u8>>> {
+        // R13-M1 + R13-L1 fix: wrap the SELECT+DELETE in a single
+        // transaction so the consume operation is atomic. Without
+        // the transaction, a concurrent `take_sent_message` for the
+        // same `(chat_jid, message_id)` could see the row twice
+        // (R13-L1), AND a panic / crash between the SELECT and the
+        // DELETE could leave the row in place to be consumed again
+        // (R13-M1 consequence). On a single-threaded Stoolap
+        // backend the L1 race is impossible today, but the
+        // transaction makes the invariant hold on any future
+        // multi-threaded backend (Postgres, MySQL, etc.) and
+        // additionally makes the consume atomic with respect to
+        // crashes.
         let params = vec![
             chat_jid.to_string().into(),
             message_id.to_string().into(),
             (self.device_id as i64).into(),
         ];
+        let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
         // SELECT first to get the payload
-        let mut rows = query(&self.db, "SELECT payload FROM sent_messages WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3", params.clone())?;
+        let mut rows = query_tx(&mut tx, "SELECT payload FROM sent_messages WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3", params.clone())?;
         let payload = match rows.next() {
             Some(Ok(row)) => Some(row.get::<Vec<u8>>(0).map_err(to_store_err)?),
             Some(Err(e)) => return Err(to_store_err(e)),
             None => None,
         };
-        // Delete if found (consume)
+        // Delete if found (consume) — same transaction so the
+        // SELECT and DELETE are atomic.
         if payload.is_some() {
-            exec(&self.db, "DELETE FROM sent_messages WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3", params)?;
+            exec_tx(&mut tx, "DELETE FROM sent_messages WHERE chat_jid = $1 AND message_id = $2 AND device_id = $3", params)?;
         }
+        tx.commit().map_err(to_store_err)?;
         Ok(payload)
     }
 
@@ -976,21 +1399,152 @@ impl ProtocolStore for StoolapStore {
         &self,
         cutoff_timestamp: i64,
     ) -> wacore::store::error::Result<u32> {
-        let mut rows = query(
-            &self.db,
-            "SELECT COUNT(*) FROM sent_messages WHERE created_at < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        let count: i64 = match rows.next() {
-            Some(Ok(row)) => row.get(0).map_err(to_store_err)?,
-            _ => 0,
-        };
-        exec(
-            &self.db,
-            "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
-            vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
-        )?;
-        Ok(count as u32)
+        // R14-M5 fix: same as `delete_expired_tc_tokens` — replace
+        // SELECT COUNT + DELETE with a single DELETE that returns
+        // the rows-affected count from `Database::execute`. The
+        // two-statement pattern had a race window where a concurrent
+        // insert would make the returned count diverge from the
+        // actual number of rows deleted. Single statement is atomic
+        // by definition. R13-M1 didn't audit this pattern; the R14
+        // grep audit at lines 1175-1193 found it.
+        self.db
+            .lock()
+            .await
+            .execute(
+                "DELETE FROM sent_messages WHERE created_at < $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
+    }
+}
+
+// ── MsgSecretStore ─────────────────────────────────────────────────
+
+#[async_trait]
+impl MsgSecretStore for StoolapStore {
+    async fn put_msg_secrets(
+        &self,
+        entries: Vec<wacore::store::traits::MsgSecretEntry>,
+    ) -> wacore::store::error::Result<usize> {
+        // Per wacore merge semantics:
+        //   expires_at: 0 ("never") wins; otherwise max of the two
+        //   message_ts: max (0 never clobbers a known parent ts)
+        // Stoolap's parser only accepts MySQL-style `ON DUPLICATE KEY UPDATE`
+        // (see stoolap/src/parser/statements.rs:954) and rejects the
+        // PostgreSQL/SQLite `ON CONFLICT (...) DO UPDATE SET ...` form
+        // (`expected DUPLICATE after ON, got 'CONFLICT'`). We read the
+        // existing row, merge in Rust, and replace via DELETE+INSERT inside
+        // one transaction so a partial write can't lose the prior secret.
+        let mut count = 0usize;
+        let now = chrono::Utc::now().timestamp();
+        let device_id = self.device_id as i64;
+        for entry in entries {
+            let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
+            let existing: Option<(i64, i64)> = {
+                let mut rows = query_tx(
+                    &mut tx,
+                    "SELECT expires_at, message_ts FROM msg_secrets \
+                     WHERE chat = $1 AND sender = $2 AND msg_id = $3 \
+                     AND device_id = $4",
+                    vec![
+                        entry.chat.clone().into(),
+                        entry.sender.clone().into(),
+                        entry.msg_id.clone().into(),
+                        device_id.into(),
+                    ],
+                )?;
+                match rows.next() {
+                    Some(Ok(row)) => Some((
+                        row.get::<i64>(0).map_err(to_store_err)?,
+                        row.get::<i64>(1).map_err(to_store_err)?,
+                    )),
+                    _ => None,
+                }
+            };
+            let merged_expires = match existing {
+                Some((e, _)) => wacore::store::traits::merge_msg_secret_expiry(e, entry.expires_at),
+                None => entry.expires_at,
+            };
+            let merged_msg_ts = match existing {
+                Some((_, t)) => {
+                    wacore::store::traits::merge_msg_secret_message_ts(t, entry.message_ts)
+                }
+                None => entry.message_ts,
+            };
+            exec_tx(
+                &mut tx,
+                "DELETE FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    entry.chat.clone().into(),
+                    entry.sender.clone().into(),
+                    entry.msg_id.clone().into(),
+                    device_id.into(),
+                ],
+            )?;
+            exec_tx(
+                &mut tx,
+                "INSERT INTO msg_secrets \
+                 (chat, sender, msg_id, secret, expires_at, message_ts, device_id, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                vec![
+                    entry.chat.into(),
+                    entry.sender.into(),
+                    entry.msg_id.into(),
+                    stoolap::core::Value::blob(entry.secret),
+                    merged_expires.into(),
+                    merged_msg_ts.into(),
+                    device_id.into(),
+                    now.into(),
+                ],
+            )?;
+            tx.commit().map_err(to_store_err)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    async fn get_msg_secret(
+        &self,
+        chat: &str,
+        sender: &str,
+        msg_id: &str,
+    ) -> wacore::store::error::Result<Option<Vec<u8>>> {
+        let conn = self.db.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT secret FROM msg_secrets \
+                 WHERE chat = $1 AND sender = $2 AND msg_id = $3 AND device_id = $4",
+                vec![
+                    chat.to_string().into(),
+                    sender.to_string().into(),
+                    msg_id.to_string().into(),
+                    (self.device_id as i64).into(),
+                ],
+            )
+            .map_err(to_store_err)?;
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row.get::<Vec<u8>>(0).map_err(to_store_err)?)),
+            _ => Ok(None),
+        }
+    }
+
+    async fn delete_expired_msg_secrets(
+        &self,
+        cutoff_timestamp: i64,
+    ) -> wacore::store::error::Result<u32> {
+        // Rows with expires_at = 0 ("never") are kept.
+        self.db
+            .lock()
+            .await
+            .execute(
+                "DELETE FROM msg_secrets \
+                 WHERE expires_at > 0 AND expires_at <= $1 AND device_id = $2",
+                vec![cutoff_timestamp.into(), (self.device_id as i64).into()],
+            )
+            .map(|n| n as u32)
+            .map_err(to_store_err)
     }
 }
 
@@ -1017,7 +1571,10 @@ impl DeviceStore for StoolapStore {
             b.extend_from_slice(device.signed_pre_key.public_key.public_key_bytes());
             b
         };
-        let account = device.account.as_ref().map(|a| a.encode_to_vec());
+        let account = device
+            .account
+            .as_ref()
+            .map(|a| BuffaMessage::encode_to_vec(&**a));
         let cert_chain = device
             .server_cert_chain
             .as_ref()
@@ -1025,12 +1582,30 @@ impl DeviceStore for StoolapStore {
             .transpose()
             .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
 
-        exec(
-            &self.db,
+        // R13-M1 fix: wrap the DELETE+INSERT in a transaction. This
+        // is the most consequential call in the file: a crash
+        // between the DELETE and the INSERT means the entire
+        // `CoreDevice` (noise keys, identity, signed pre-key,
+        // registration ID) is lost and the bot has to re-pair from
+        // scratch — a complete session-loss event, not a temporary
+        // outage. The transaction makes the operation atomic
+        // w.r.t. crashes and panics.
+        let mut tx = match self.db.lock().await.begin() {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::error!(error = %e, "StoolapStore::save begin() failed");
+                return Err(to_store_err(e));
+            }
+        };
+        if let Err(e) = exec_tx(
+            &mut tx,
             "DELETE FROM device WHERE id = $1",
             vec![(self.device_id as i64).into()],
-        )?;
-        exec(&self.db, "INSERT INTO device (id, lid, pn, registration_id, noise_key, identity_key, signed_pre_key, signed_pre_key_id, signed_pre_key_signature, adv_secret_key, account, push_name, app_version_primary, app_version_secondary, app_version_tertiary, app_version_last_fetched_ms, edge_routing_info, props_hash, next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)",
+        ) {
+            tracing::error!(error = %e, "StoolapStore::save DELETE failed");
+            return Err(e);
+        }
+        if let Err(e) = exec_tx(&mut tx, "INSERT INTO device (id, lid, pn, registration_id, noise_key, identity_key, signed_pre_key, signed_pre_key_id, signed_pre_key_signature, adv_secret_key, account, push_name, app_version_primary, app_version_secondary, app_version_tertiary, app_version_last_fetched_ms, edge_routing_info, props_hash, next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)",
             vec![
                 (self.device_id as i64).into(),
                 device.lid.as_ref().map(|j| j.to_string()).unwrap_or_default().into(),
@@ -1049,12 +1624,29 @@ impl DeviceStore for StoolapStore {
                 device.nct_salt.clone().map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 cert_chain.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
-            ])
+            ]) {
+            // Log the FULL error chain, not just the wrapper.
+            let mut detail = format!("{e}");
+            let mut source = std::error::Error::source(&e as &dyn std::error::Error);
+            while let Some(s) = source {
+                detail.push_str(&format!(" -> {s}"));
+                source = s.source();
+            }
+            tracing::error!(error = %detail, "StoolapStore::save INSERT failed with detail");
+            return Err(e);
+        }
+        match tx.commit() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                tracing::error!(error = %e, "StoolapStore::save commit failed");
+                Err(to_store_err(e))
+            }
+        }
     }
 
     async fn load(&self) -> wacore::store::error::Result<Option<CoreDevice>> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT * FROM device WHERE id = $1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -1097,9 +1689,11 @@ impl DeviceStore for StoolapStore {
                 }
                 let account = account_bytes
                     .map(|b| {
-                        waproto::whatsapp::AdvSignedDeviceIdentity::decode(&*b).map_err(|e| {
-                            wacore::store::error::StoreError::Serialization(Box::new(e))
-                        })
+                        waproto::whatsapp::ADVSignedDeviceIdentity::decode_from_slice(&b)
+                            .map(Arc::new)
+                            .map_err(|e| {
+                                wacore::store::error::StoreError::Serialization(Box::new(e))
+                            })
                     })
                     .transpose()?;
                 let cert_bytes: Option<Vec<u8>> = row.get(21).map_err(to_store_err)?;
@@ -1136,15 +1730,24 @@ impl DeviceStore for StoolapStore {
                     app_version_primary: row.get::<i64>(12).map_err(to_store_err)? as u32,
                     app_version_secondary: row.get::<i64>(13).map_err(to_store_err)? as u32,
                     app_version_tertiary: row.get::<i64>(14).map_err(to_store_err)? as u32,
-                    app_version_last_fetched_ms: row.get::<i64>(15).map_err(to_store_err)? as i64,
-                    edge_routing_info: {
-                        let v: String = row.get(16).map_err(to_store_err)?;
-                        if v.is_empty() {
-                            None
-                        } else {
-                            Some(v.into_bytes())
-                        }
-                    },
+                    app_version_last_fetched_ms: row.get::<i64>(15).map_err(to_store_err)?,
+                    // R13-H1 fix: `edge_routing_info` is declared as
+                    // `BLOB` in the schema (line 137) and saved as
+                    // `stoolap::core::Value::blob(...)` (line 1046), but
+                    // was being read back as `String`. Stoolap's
+                    // `FromValue for String` impl returns `String::new()`
+                    // for `Value::Blob`, so every non-empty BLOB silently
+                    // mapped to `None` and the actual bytes were
+                    // discarded on every load. The field is set by
+                    // wacore's IB handshake handler
+                    // (`wacore/src/handlers/ib.rs:128`) and used by the
+                    // noise layer for edge-routed handshakes, so this
+                    // bug caused every restart to fall back to the
+                    // slower default `WA_CONN_HEADER` path. The fix
+                    // reads the column directly as `Option<Vec<u8>>`
+                    // (the same pattern as `account` at line 1089 and
+                    // `server_cert_chain` at line 1105).
+                    edge_routing_info: row.get(16).map_err(to_store_err)?,
                     props_hash: {
                         let v: String = row.get(17).map_err(to_store_err)?;
                         if v.is_empty() {
@@ -1168,7 +1771,7 @@ impl DeviceStore for StoolapStore {
 
     async fn exists(&self) -> wacore::store::error::Result<bool> {
         let mut rows = query(
-            &self.db,
+            &*self.db.lock().await,
             "SELECT COUNT(*) FROM device WHERE id = $1",
             vec![(self.device_id as i64).into()],
         )?;
@@ -1344,7 +1947,16 @@ mod tests {
         // index_mac is a real case). The UNIQUE(name, index_mac,
         // device_id) constraint would reject a plain INSERT, aborting
         // the whole critical-sync with a "database operation error".
-        // The fix is DELETE-then-INSERT; pin it.
+        //
+        // R15 update: the fix is now a single-statement UPSERT
+        // (`INSERT ... ON DUPLICATE KEY UPDATE`) instead of
+        // DELETE-then-INSERT. This requires two underlying Stoolap
+        // bugs to be fixed (composite-unique UPSERT support and
+        // tx-local delete visibility), both of which landed in
+        // stoolap commit `1fc5bc2`. The functional behavior is the
+        // same — overwriting an existing row is allowed and updates
+        // the value_mac — but it's now one statement and one tx
+        // instead of two statements per iteration.
         let store = StoolapStore::new_in_memory().unwrap();
         let index_mac: Vec<u8> = (0u8..32).collect();
         let first = wacore::appstate::processor::AppStateMutationMAC {
@@ -1362,9 +1974,7 @@ mod tests {
         store
             .put_mutation_macs("critical_block", 2, &[second])
             .await
-            .expect(
-                "second put_mutation_macs with same index_mac must succeed (DELETE-then-INSERT)",
-            );
+            .expect("second put_mutation_macs with same index_mac must succeed (UPSERT)");
         let got = store
             .get_mutation_mac("critical_block", &index_mac)
             .await
@@ -1374,6 +1984,233 @@ mod tests {
             got,
             vec![0x22; 32],
             "second put must overwrite the first value_mac"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_roundtrip_preserves_edge_routing_info() {
+        // R13-H1 fix: `device.edge_routing_info` is a `BLOB` column
+        // and was being read as `String`. Stoolap's
+        // `FromValue for String` impl returns `String::new()` for
+        // `Value::Blob`, so every non-empty BLOB silently mapped
+        // to `None` on load. The field is set by wacore's IB
+        // handshake handler (`wacore/src/handlers/ib.rs:128`) and
+        // consumed by the noise layer to build edge-routed
+        // handshakes; losing it on every restart caused the next
+        // connection to fall back to the slower default
+        // `WA_CONN_HEADER` path. The fix reads the column
+        // directly as `Option<Vec<u8>>` (same pattern as
+        // `account` / `server_cert_chain`).
+        //
+        // No previous round caught this bug because no test
+        // roundtripped a non-default `CoreDevice` — and
+        // `edge_routing_info`'s default value (`None`) is
+        // exactly what the buggy `if v.is_empty() { None }`
+        // branch would return, so the bug was masked by the
+        // absence of a test, not by the type system.
+        let store = StoolapStore::new_in_memory().unwrap();
+        let mut device = wacore::store::Device::default();
+        // Pick bytes that exercise all 256 values, including
+        // ones that string-conversion would mangle.
+        let original: Vec<u8> = (0u8..=255).collect();
+        device.edge_routing_info = Some(original.clone());
+        store.save(&device).await.expect("save should succeed");
+        let loaded = store
+            .load()
+            .await
+            .expect("load should succeed")
+            .expect("device row should exist after save");
+        assert_eq!(
+            loaded.edge_routing_info,
+            Some(original),
+            "edge_routing_info BLOB must roundtrip exactly (set by wacore IB handshake, \
+             consumed by the noise layer for edge-routed handshakes; losing it falls \
+             back to the slower default WA_CONN_HEADER path on every restart)"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_mutation_macs_batch_inserts_all_and_overwrites() {
+        // R14-H1 audit test: the DELETE+INSERT loop in
+        // `put_mutation_macs` was per-iteration atomic (R13 fix) but
+        // NOT batch-atomic. This test pins the per-iteration
+        // atomicity for a 10-entry batch: every entry must be
+        // present after the call returns (no partial-batch loss),
+        // and a second call with the same index_macs but different
+        // value_macs must overwrite (not duplicate) every entry.
+        // The batch-atomicity guarantee was CARVED OUT in R14 (see
+        // the function's R14-H1 doc-comment at that revision).
+        //
+        // R15 update: the carve-out is now CLOSED. `put_mutation_macs`
+        // is now a single-statement UPSERT (`INSERT ... ON DUPLICATE
+        // KEY UPDATE`) wrapped in a single transaction. Both
+        // per-iteration atomicity AND batch-atomicity are guaranteed.
+        // This test still pins per-iteration atomicity (10 entries
+        // must all be present after a single call), so it remains
+        // useful as a regression test for the R13 idempotency fix.
+        use wacore::store::traits::AppSyncStore;
+        let store = StoolapStore::new_in_memory().unwrap();
+        let batch: Vec<wacore::appstate::processor::AppStateMutationMAC> = (0u8..10)
+            .map(|i| wacore::appstate::processor::AppStateMutationMAC {
+                index_mac: vec![i; 32],
+                value_mac: vec![i ^ 0xAA; 32],
+            })
+            .collect();
+        store
+            .put_mutation_macs("critical_block", 1, &batch)
+            .await
+            .expect("put_mutation_macs (10 entries) should succeed");
+
+        // Verify all 10 entries are present with the right value_macs.
+        for (i, m) in batch.iter().enumerate() {
+            let got = store
+                .get_mutation_mac("critical_block", &m.index_mac)
+                .await
+                .expect("get_mutation_mac should succeed")
+                .unwrap_or_else(|| panic!("mutation {i} should be present after batch insert"));
+            assert_eq!(
+                got, m.value_mac,
+                "mutation {i}: value_mac must roundtrip exactly after batch insert"
+            );
+        }
+
+        // Second call with a different version — same set of
+        // index_macs, different value_macs. Pin that the
+        // DELETE-then-INSERT runs for every entry (so the row is
+        // updated, not duplicated).
+        let batch2: Vec<wacore::appstate::processor::AppStateMutationMAC> = (0u8..10)
+            .map(|i| wacore::appstate::processor::AppStateMutationMAC {
+                index_mac: vec![i; 32],
+                value_mac: vec![i ^ 0x55; 32],
+            })
+            .collect();
+        store
+            .put_mutation_macs("critical_block", 2, &batch2)
+            .await
+            .expect("put_mutation_macs (10 entries, overwrite) should succeed");
+        for (i, m) in batch2.iter().enumerate() {
+            let got = store
+                .get_mutation_mac("critical_block", &m.index_mac)
+                .await
+                .expect("get_mutation_mac should succeed")
+                .unwrap_or_else(|| panic!("mutation {i} should be present after batch overwrite"));
+            assert_eq!(
+                got, m.value_mac,
+                "mutation {i}: value_mac must be the new one after batch overwrite"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_expired_tc_tokens_returns_actual_count() {
+        // R14-M5 fix: `delete_expired_tc_tokens` and
+        // `delete_expired_sent_messages` now use a single DELETE
+        // statement and return the rows-affected count from
+        // `Database::execute` (which is `i64` — see
+        // `stoolap/src/api/database.rs:483`). The previous
+        // SELECT-COUNT + DELETE returned the COUNT(*) from a
+        // separate SELECT, which could diverge from the actual
+        // number of rows deleted if a concurrent insert happened
+        // between the SELECT and the DELETE. Pin that the new
+        // single-DELETE path returns the EXACT count of rows
+        // deleted (3), not a count from a separate SELECT.
+        //
+        // Post-buffa migration (wacore 6e0f241): upstream trait added a
+        // second `sender_cutoff` to guard sender buckets separately from
+        // received-token state. Pass `i64::MAX` here so the test preserves
+        // pre-migration semantics (delete solely on `token_cutoff`).
+        use wacore::store::traits::ProtocolStore;
+        use wacore::store::traits::TcTokenEntry;
+        let store = StoolapStore::new_in_memory().unwrap();
+        // Insert 5 tc_tokens; 3 with old timestamp, 2 with recent.
+        let now: i64 = 1_700_000_000_000;
+        for i in 0..5 {
+            let jid = format!("user{i}@s.whatsapp.net");
+            let ts = if i < 3 { now - 86_400_000 } else { now };
+            let entry = TcTokenEntry {
+                token: vec![0xAB; 32],
+                token_timestamp: ts,
+                sender_timestamp: Some(ts),
+            };
+            store
+                .put_tc_token(&jid, &entry)
+                .await
+                .expect("put_tc_token should succeed");
+        }
+        // Cutoff is between the old and recent timestamps.
+        let cutoff = now - 3_600_000;
+        let deleted = store
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
+            .await
+            .expect("delete_expired_tc_tokens should succeed");
+        assert_eq!(
+            deleted, 3,
+            "delete_expired_tc_tokens must return the exact rows-affected count \
+             (3 tokens with timestamp < cutoff), not a separate COUNT(*) that \
+             could diverge from the DELETE under concurrent inserts"
+        );
+        // Second call should return 0 — the remaining 2 are recent
+        // and the deleted 3 are gone.
+        let deleted2 = store
+            .delete_expired_tc_tokens(cutoff, i64::MAX)
+            .await
+            .expect("second delete_expired_tc_tokens should succeed");
+        assert_eq!(
+            deleted2, 0,
+            "second call with same cutoff must return 0 (no expired rows left)"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_expired_sent_messages_returns_actual_count() {
+        // R14-M5 fix: same as `delete_expired_tc_tokens_returns_actual_count`
+        // for the sent_messages table. Pin the single-DELETE path
+        // returns the EXACT count, not a separate COUNT(*).
+        //
+        // The trait `store_sent_message` auto-sets `created_at` to
+        // `chrono::Utc::now().timestamp()` so we can't pin a custom
+        // timestamp through the trait API. Workaround: insert
+        // directly via SQL with a custom `created_at` so we can
+        // set up a known distribution of "old" vs "new" rows.
+        use wacore::store::traits::ProtocolStore;
+        let store = StoolapStore::new_in_memory().unwrap();
+        let now: i64 = 1_700_000_000_000;
+        for i in 0..4 {
+            let chat = format!("chat{i}@s.whatsapp.net");
+            let msg_id = format!("msg{i}");
+            // 2 old (i < 2), 2 recent.
+            let created_at = if i < 2 { now - 86_400_000 } else { now };
+            exec(
+                &store.db.try_lock().unwrap(),
+                "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+                vec![
+                    chat.to_string().into(),
+                    msg_id.to_string().into(),
+                    stoolap::core::Value::blob(vec![0xAB; 32]),
+                    (store.device_id as i64).into(),
+                    created_at.into(),
+                ],
+            )
+            .expect("direct INSERT should succeed");
+        }
+        let cutoff = now - 3_600_000;
+        let deleted = store
+            .delete_expired_sent_messages(cutoff)
+            .await
+            .expect("delete_expired_sent_messages should succeed");
+        assert_eq!(
+            deleted, 2,
+            "delete_expired_sent_messages must return the exact rows-affected count \
+             (2 messages with created_at < cutoff), not a separate COUNT(*) that \
+             could diverge from the DELETE under concurrent inserts"
+        );
+        let deleted2 = store
+            .delete_expired_sent_messages(cutoff)
+            .await
+            .expect("second delete_expired_sent_messages should succeed");
+        assert_eq!(
+            deleted2, 0,
+            "second call with same cutoff must return 0 (no expired messages left)"
         );
     }
 }

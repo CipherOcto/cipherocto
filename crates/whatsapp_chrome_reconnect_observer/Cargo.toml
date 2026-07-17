@@ -1,0 +1,30 @@
+[package]
+name = "whatsapp_chrome_reconnect_observer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 7.J investigation binary (incognito + reconnect drill). Spawns real headless Chrome in incognito mode, navigates to web.whatsapp.com, captures WS lifecycle + Noise XX HandshakeInit + AppState sync attributes during initial login AND during a close+reopen reconnect drill. Output: NDJSON log + stdout summary. Pure observation — does NOT share state with our session.db."
+
+# Stays out of every other crate's dep tree — own workspace member.
+# No `octo-*` deps; no `wacore` dep.
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros", "process", "io-util"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+base64 = "0.22"
+sha2 = "0.11"
+hex = "0.4"
+
+[[bin]]
+name = "whatsapp_chrome_reconnect_observer"
+path = "src/main.rs"

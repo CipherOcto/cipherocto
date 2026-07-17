@@ -53,3 +53,39 @@ cocoindex_main.py
 # Python lockfile
 uv.lock
 .env
+*.tmp
+
+# Cargo build artifacts (any crate)
+**/target/
+**/Cargo.lock
+
+# Telegram MTProto adapter: config files containing bot tokens,
+# api_hash, phone numbers, 2FA passwords, or session auth_keys.
+# Recommended pattern: uncomment to enforce.
+# crates/octo-adapter-telegram-mtproto/telegram*.json
+# crates/octo-adapter-telegram-mtproto/sessions.db*
+# **/telegram*.json
+# **/sessions.db*
+
+# AI coding-tool local config (per-tool drop-in dirs; never committed)
+/.agents/
+/.clinerules/
+/.continue/
+/.cursor/
+/.mimocode/
+/.opencode/
+/.playwright-mcp/
+/.roo/
+/.windsurf/
+/.github/copilot-instructions.md
+/skills-lock.json
+
+# Local scratch / debug logs (investigation one-offs, kept out of repo)
+/hook-log-1.md
+/inspect-waweb-step1.md
+/passkey-hooks-1.md
+/os
+/tarpaulin-report.json
+
+# Local debug screenshots (WA Web reconnect drills)
+/wa-*.png

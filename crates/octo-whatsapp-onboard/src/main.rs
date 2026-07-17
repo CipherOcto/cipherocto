@@ -15,7 +15,6 @@ use cli::{
     SessionRemoveArgs, SessionVerifyArgs, WhoamiArgs,
 };
 use error::OnboardError;
-use octo_network::dot::adapters::PlatformAdapter;
 use octo_whatsapp_onboard_core::{
     wait_for_connected, CoreError, PairLinkArgs as CorePairLinkArgs, QrLinkArgs as CoreQrLinkArgs,
     SessionInfo, WhatsAppConfig, WHOAMI_TIMEOUT_SECS,
@@ -64,9 +63,20 @@ async fn run_qr_link(args: QrLinkArgs) -> std::result::Result<(), OnboardError> 
     // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
     // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
     check_ws_url_allowed(args.ws_url.as_ref())?;
+    // --reset: snapshot existing session before pairing so the
+    // server sees a fresh device identity (recover from
+    // Event::LoggedOut on the same phone number).
+    if args.reset {
+        reset_session(&args.session_path)?;
+    }
+    // rustls 0.23+ requires an explicit crypto provider before any
+    // TLS to cable.ua5v.com (the caBLE relay). Safe to install
+    // multiple times; the second call is a no-op.
+    install_rustls_provider();
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_qr(&args);
-    let session = octo_whatsapp_onboard_core::qr_link::run(&core_args).await?;
+    let authenticator = build_passkey_authenticator();
+    let session = octo_whatsapp_onboard_core::qr_link::run(&core_args, Some(authenticator)).await?;
     run_link(&args.output, session).await
 }
 
@@ -74,69 +84,21 @@ async fn run_pair_link(args: PairLinkArgs) -> std::result::Result<(), OnboardErr
     // Mission 0850p-a-ws-url-release-guard: refuse --ws-url in
     // release builds without OCTO_WHATSAPP_ALLOW_WS_URL=1.
     check_ws_url_allowed(args.ws_url.as_ref())?;
-    // Mission 0850p-a-ci-mode-pair-link: --ci bypasses
-    // Event::Connected wait and validates the pre-paired session
-    // DB. No phone interaction needed.
-    if args.ci {
-        return run_pair_link_ci(&args);
+    // --reset: snapshot existing session before pairing so the
+    // server sees a fresh device identity (recover from
+    // Event::LoggedOut on the same phone number).
+    if args.reset {
+        reset_session(&args.session_path)?;
     }
+    // rustls 0.23+ requires an explicit crypto provider before any
+    // TLS to cable.ua5v.com. Safe to call repeatedly.
+    install_rustls_provider();
     // R1-M4: pass args by reference; no clone of OutputArgs needed.
     let core_args = to_core_pair(&args);
-    let session = octo_whatsapp_onboard_core::pair_link::run(&core_args).await?;
+    let authenticator = build_passkey_authenticator();
+    let session =
+        octo_whatsapp_onboard_core::pair_link::run(&core_args, Some(authenticator)).await?;
     run_link(&args.output, session).await
-}
-
-/// Mission 0850p-a-ci-mode-pair-link: CI mode. Loads the
-/// pre-paired session DB at `--session-path`, validates it via
-/// the adapter's `has_valid_session()`, and writes the sidecar
-/// (so downstream `whoami` works). No phone interaction.
-fn run_pair_link_ci(args: &PairLinkArgs) -> std::result::Result<(), OnboardError> {
-    use octo_whatsapp_onboard_core::sidecar::{write_sidecar, SidecarMode};
-    use octo_whatsapp_onboard_core::WhatsAppSession;
-
-    // Validate parent dir + symlink check (same as interactive flow).
-    octo_whatsapp_onboard_core::validate_session_args(&args.session_path)
-        .map_err(|e| OnboardError::BadConfig(format!("session_path invalid: {e}")))?;
-
-    // Build the adapter and check has_valid_session(). This opens
-    // the session DB; if the DB is empty or the Signal keys are
-    // missing, the check returns false.
-    let cfg = WhatsAppConfig {
-        session_path: format!("{}", args.session_path.display()),
-        pair_phone: Some(args.phone.clone()),
-        pair_code: args.pair_code.clone(),
-        ws_url: args.ws_url.clone(),
-        groups: args.groups.clone(),
-        sender_allowlist: Default::default(),
-    };
-    let adapter = octo_whatsapp_onboard_core::WhatsAppWebAdapter::new(cfg);
-    if !adapter.has_valid_session() {
-        return Err(OnboardError::BadConfig(format!(
-            "session DB at {:?} is empty or invalid; cannot use --ci mode without a pre-paired session",
-            args.session_path
-        )));
-    }
-
-    // Build the sidecar so subsequent `whoami` works. The adapter
-    // exposes `self_handle` via the `PlatformAdapter` trait
-    // (imported at the top of this file; mission
-    // 0850p-a-has-valid-session).
-    let phone = adapter.self_handle().unwrap_or_default();
-    let session = WhatsAppSession {
-        self_phone: Some(phone),
-        session_path: args.session_path.clone(),
-        groups: args.groups.clone(),
-        pair_phone: Some(args.phone.clone()),
-    };
-    write_sidecar(&args.session_path, &session, SidecarMode::PairLink)
-        .map_err(|e| OnboardError::BadConfig(format!("write_sidecar: {e}")))?;
-
-    output::write(&args.output, &session)?;
-    println!(
-        "CI mode: pre-paired session at {} accepted",
-        args.session_path.display()
-    );
-    Ok(())
 }
 
 async fn run_link(
@@ -150,6 +112,46 @@ async fn run_link(
         session.session_path.display()
     );
     Ok(())
+}
+
+/// Install rustls's ring crypto provider. Required for TLS to
+/// `cable.ua5v.com` (the caBLE v2 relay). Idempotent — the second
+/// `install_default()` returns `Err` but we ignore it because the
+/// provider is already installed.
+fn install_rustls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+/// Build the caBLE responder passkey authenticator wired into the
+/// stderr-QR renderer. The authenticator is handed to
+/// `octo-whatsapp-onboard-core` which sets it on the
+/// `WhatsAppConfig`; wacore invokes it when the server sends an
+/// `Event::PairPasskeyRequest` during the link flow. The QR only
+/// renders at that moment — operators see one QR at a time:
+///   1. primary WA QR (rendered by the adapter) → phone scans
+///   2. IF server demands passkey → FIDO QR (rendered here)
+fn build_passkey_authenticator(
+) -> std::sync::Arc<dyn octo_adapter_whatsapp::passkey::PasskeyAuthenticator> {
+    let qr_display: octo_adapter_whatsapp::passkey::cable::QrDisplayFn = std::sync::Arc::new(
+        |fido_uri: &str| match qrcode::QrCode::new(fido_uri.as_bytes()) {
+            Ok(qr) => {
+                let rendered = qr
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .quiet_zone(true)
+                    .build();
+                eprintln!(
+                    "\nWA server requested passkey step (phase 2). \
+                     Scan this FIDO QR with the phone's Google Lens:\n\n{rendered}\n"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "\nFailed to render FIDO QR ({e}). Raw FIDO:/<digits> URI:\n{fido_uri}\n"
+                );
+            }
+        },
+    );
+    std::sync::Arc::new(octo_adapter_whatsapp::passkey::CablePasskeyAuthenticator::new(qr_display))
 }
 
 async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
@@ -173,11 +175,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
                 "no sidecar; session is not paired".into(),
             ));
         }
-        if let Ok((phone, _)) = read_sidecar(&sidecar) {
-            if let Some(p) = phone {
-                println!("+{p}");
-                return Ok(());
-            }
+        if let Ok((Some(p), _)) = read_sidecar(&sidecar) {
+            println!("+{p}");
+            return Ok(());
         }
         return Err(OnboardError::SessionExpired(
             "sidecar unreadable; session may be invalid".into(),
@@ -187,11 +187,9 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
     let session_path = std::path::PathBuf::from(&cfg.session_path);
     let sidecar = session_path.with_extension("db.meta.json");
     if sidecar.exists() {
-        if let Ok((phone, _)) = read_sidecar(&sidecar) {
-            if let Some(p) = phone {
-                println!("+{p}");
-                return Ok(());
-            }
+        if let Ok((Some(p), _)) = read_sidecar(&sidecar) {
+            println!("+{p}");
+            return Ok(());
         }
     }
     let adapter = build_adapter(&session_path, &[])?;
@@ -211,6 +209,13 @@ async fn run_whoami(args: WhoamiArgs) -> std::result::Result<(), OnboardError> {
     }
 }
 
+/// Session 10 (now folded into qr-link / pair-link) — FIDO / caBLE
+/// passkey step is no longer a separate CLI subcommand. The QR-link
+/// and pair-link flows auto-wire a `CablePasskeyAuthenticator`
+/// (`build_passkey_authenticator`) into the `WhatsAppConfig` so
+/// wacore's `Event::PairPasskeyRequest` triggers the QR + tunnel
+/// inline. Operator runs ONE command; phase 1 + phase 2 happen in
+/// the same run.
 async fn run_session_list(args: SessionListArgs) -> std::result::Result<(), OnboardError> {
     // R4-L1: no clone needed; args is by-value and args.base_dir
     // is the only consumer of `args`.
@@ -290,6 +295,7 @@ fn to_core_qr(args: &QrLinkArgs) -> CoreQrLinkArgs {
         groups: args.groups.clone(),
         ws_url,
         timeout_secs: args.timeout,
+        wait_sync: args.wait_sync,
     }
 }
 
@@ -361,6 +367,70 @@ fn default_session_base_dir() -> std::path::PathBuf {
     base
 }
 
+/// Snapshot the existing session directory + its `meta.json` sidecar
+/// to `<path>.broken-<unix-timestamp>` siblings, leaving the original
+/// slot free for a fresh pair. Recovery flow for `Event::LoggedOut`:
+/// the server rejects retries from a device whose DB still represents
+/// the logged-out identity, so a new device pair must be initiated
+/// with a clean DB. Old snapshots are preserved for forensics.
+///
+/// Atomic on the same filesystem (`fs::rename` is a single syscall);
+/// falls back to copy+delete on cross-FS moves.
+///
+/// No-op if `session_path` is absent. The meta sidecar at
+/// `<path>.meta.json` is also snapshotted if present.
+fn reset_session(session_path: &std::path::Path) -> std::result::Result<(), OnboardError> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    reset_session_at(session_path, ts)
+}
+
+/// Inner helper for `reset_session` (and the tests): takes the
+/// timestamp explicitly so tests can pin a deterministic suffix.
+/// Renames the session dir + meta sidecar to `.broken-<ts>`
+/// siblings. No-op if the session dir is absent.
+fn reset_session_at(
+    session_path: &std::path::Path,
+    ts: u64,
+) -> std::result::Result<(), OnboardError> {
+    if session_path.exists() {
+        let mut snapshot = session_path.as_os_str().to_owned();
+        snapshot.push(format!(".broken-{ts}"));
+        let snapshot_path = std::path::PathBuf::from(snapshot);
+        std::fs::rename(session_path, &snapshot_path).map_err(|e| {
+            OnboardError::BadConfig(format!(
+                "reset: snapshot session {:?} -> {:?}: {}",
+                session_path, snapshot_path, e
+            ))
+        })?;
+        tracing::warn!(
+            from = %session_path.display(),
+            to = %snapshot_path.display(),
+            "snapshotted existing session before reset"
+        );
+    }
+
+    // Meta sidecar is a sibling: `<session_path>.meta.json`.
+    let mut meta = session_path.as_os_str().to_owned();
+    meta.push(".meta.json");
+    let meta_path = std::path::PathBuf::from(meta);
+    if meta_path.exists() {
+        let mut snapshot = meta_path.as_os_str().to_owned();
+        snapshot.push(format!(".broken-{ts}"));
+        let snapshot_path = std::path::PathBuf::from(snapshot);
+        std::fs::rename(&meta_path, &snapshot_path).map_err(|e| {
+            OnboardError::BadConfig(format!(
+                "reset: snapshot meta {:?} -> {:?}: {}",
+                meta_path, snapshot_path, e
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
 fn load_config(path: &std::path::Path) -> std::result::Result<WhatsAppConfig, OnboardError> {
     let bytes =
         std::fs::read(path).map_err(|e| OnboardError::BadConfig(format!("read {path:?}: {e}")))?;
@@ -402,6 +472,7 @@ fn build_adapter(
         ws_url: None,
         groups: groups.to_vec(),
         sender_allowlist: Default::default(),
+        passkey_authenticator: None,
     };
     // Validate field shape (R1-H1 + R2-L2). For link flows, the
     // binary has already validated inputs via clap; this is
@@ -451,7 +522,7 @@ async fn list_sessions(
     for path in db_paths {
         let sidecar = path.with_extension("db.meta.json");
         let (self_phone, last_linked_at) = if sidecar.exists() {
-            read_sidecar(&sidecar).unwrap_or_else(|_| (None, None))
+            read_sidecar(&sidecar).unwrap_or((None, None))
         } else {
             (None, None)
         };
@@ -483,4 +554,101 @@ fn read_sidecar(
         .get("linked_at")
         .and_then(|x| x.as_str().map(String::from));
     Ok((phone, linked))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a tmpdir with a session directory + meta sidecar, both
+    /// containing known content. Returns the path to the session dir
+    /// (`<tmpdir>/default.session.db`).
+    fn fixture_with_session() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        std::fs::create_dir_all(&session).expect("mkdir session");
+        std::fs::write(session.join("db.lock"), b"lock-bytes").expect("write lock");
+        std::fs::write(
+            dir.path().join("default.session.db.meta.json"),
+            b"{\"x\":1}",
+        )
+        .expect("write meta");
+        (dir, session)
+    }
+
+    /// `--reset` must rename the existing session dir + meta to
+    /// `.broken-<ts>` siblings, preserving the bytes. Used to
+    /// recover from `Event::LoggedOut` on the same phone.
+    #[test]
+    fn reset_session_snapshots_dir_and_meta() {
+        let (dir, session) = fixture_with_session();
+        let ts = 1_700_000_000_u64;
+        let stamped = |base: &str| format!("{base}.broken-{ts}");
+
+        reset_session_at(&session, ts).expect("reset ok");
+
+        // Original paths are gone.
+        assert!(!session.exists(), "session dir must be renamed away");
+        assert!(
+            !dir.path().join("default.session.db.meta.json").exists(),
+            "meta sidecar must be renamed away"
+        );
+
+        // Snapshots exist with `.broken-<ts>` suffix.
+        let snap_session = dir.path().join(stamped("default.session.db"));
+        let snap_meta = dir.path().join(stamped("default.session.db.meta.json"));
+        assert!(snap_session.is_dir(), "session snapshot must be a dir");
+        assert!(snap_meta.is_file(), "meta snapshot must be a file");
+
+        // Bytes preserved.
+        assert_eq!(
+            std::fs::read(snap_session.join("db.lock")).unwrap(),
+            b"lock-bytes".to_vec()
+        );
+        assert_eq!(std::fs::read(&snap_meta).unwrap(), b"{\"x\":1}".to_vec());
+    }
+
+    /// `reset_session` is a no-op when the session dir is absent
+    /// (operator might run `--reset` on a fresh machine; no error).
+    #[test]
+    fn reset_session_noop_when_session_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        assert!(!session.exists());
+        reset_session_at(&session, 1_700_000_000).expect("reset noop ok");
+        assert!(!session.exists());
+    }
+
+    /// Meta sidecar absence is OK — session dir is snapshotted
+    /// independently. Common case: no meta file ever written.
+    #[test]
+    fn reset_session_snapshots_dir_when_meta_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let session = dir.path().join("default.session.db");
+        std::fs::create_dir_all(&session).expect("mkdir session");
+        std::fs::write(session.join("db.lock"), b"x").expect("write");
+
+        reset_session_at(&session, 1_700_000_000).expect("reset ok");
+
+        assert!(!session.exists());
+        assert!(dir
+            .path()
+            .join("default.session.db.broken-1700000000")
+            .is_dir());
+        assert!(!dir
+            .path()
+            .join("default.session.db.meta.json.broken-1700000000")
+            .exists());
+    }
+
+    /// Cross-check: `fs::rename` over a parent dir (the session
+    /// dir) is what we depend on for atomicity. Make sure the test
+    /// fixture mirrors the production shape: session_path is a
+    /// directory, not a file.
+    #[test]
+    fn session_path_is_a_directory_in_production_shape() {
+        let (dir, session) = fixture_with_session();
+        assert!(session.is_dir());
+        assert!(dir.path().join("default.session.db.meta.json").is_file());
+    }
 }

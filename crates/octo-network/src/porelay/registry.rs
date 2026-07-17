@@ -83,6 +83,28 @@ impl TrustRegistry {
     pub fn is_empty(&self) -> bool {
         self.scores.is_empty()
     }
+
+    /// Feed relay trust scores from this registry into a `SyncSessionManager`.
+    ///
+    /// For each gateway in the registry that is also a known sync peer,
+    /// converts the composite `RelayScore` to a trust factor (0–10000)
+    /// and calls `session.update_relay_score()`. This is the "last mile"
+    /// wiring that connects PoRelay scoring to sync peer selection.
+    ///
+    /// Returns the number of peers whose scores were updated.
+    pub fn feed_sync_session(&self, session: &octo_sync::session::SyncSessionManager) -> usize {
+        let mut updated = 0;
+        for (gw_id, relay_score) in &self.scores {
+            let trust_factor = super::score::relay_score_to_trust_factor(relay_score);
+            let peer_id = octo_sync::identity::SyncPeerId(*gw_id);
+            // Only update if the peer is known to the session
+            if session.peer_state(peer_id).is_some() {
+                session.update_relay_score(peer_id, trust_factor);
+                updated += 1;
+            }
+        }
+        updated
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +170,72 @@ mod tests {
         assert!(reg.is_empty());
         reg.update_score(make_score(1, 500));
         assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn test_feed_sync_session_updates_known_peers() {
+        use octo_sync::config::{SyncConfig, SyncRole};
+        use octo_sync::session::SyncSessionManager;
+        use octo_sync::test_util::MockAdapter;
+        use std::sync::Arc;
+
+        let mut mission_id = [0u8; 32];
+        mission_id[0] = 0xAB;
+        let node_id = [0x01u8; 32];
+
+        let config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x02; 32]);
+        let adapter: Arc<dyn octo_sync::adapter::DatabaseSyncAdapter> =
+            Arc::new(MockAdapter::new(mission_id, node_id));
+        let session = SyncSessionManager::new(adapter, config, &[0x42u8; 32]).unwrap();
+
+        // Subscribe two peers
+        let peer_a = octo_sync::identity::SyncPeerId([0x10u8; 32]);
+        let peer_b = octo_sync::identity::SyncPeerId([0x20u8; 32]);
+        let peer_c = octo_sync::identity::SyncPeerId([0x30u8; 32]);
+        session.subscribe_peer(peer_a).unwrap();
+        session.subscribe_peer(peer_b).unwrap();
+        // peer_c NOT subscribed
+
+        // Registry has scores for all three
+        let mut reg = TrustRegistry::new(100);
+        reg.update_score(make_score(0x10, 800_000));
+        reg.update_score(make_score(0x20, 200_000));
+        reg.update_score(make_score(0x30, 500_000));
+
+        let updated = reg.feed_sync_session(&session);
+        // Only peer_a and peer_b should be updated (peer_c not subscribed)
+        assert_eq!(updated, 2);
+
+        // Verify trust factors were set
+        let trust_a = session.peer_relay_score(peer_a).unwrap();
+        let trust_b = session.peer_relay_score(peer_b).unwrap();
+        assert!(trust_a > 0, "peer_a trust should be non-zero");
+        assert!(trust_b > 0, "peer_b trust should be non-zero");
+        assert!(
+            trust_a > trust_b,
+            "peer_a has higher composite → higher trust"
+        );
+
+        // peer_c not subscribed, so no relay score
+        assert!(session.peer_relay_score(peer_c).is_none());
+    }
+
+    #[test]
+    fn test_feed_sync_session_empty_registry() {
+        use octo_sync::config::{SyncConfig, SyncRole};
+        use octo_sync::session::SyncSessionManager;
+        use octo_sync::test_util::MockAdapter;
+        use std::sync::Arc;
+
+        let mut mission_id = [0u8; 32];
+        mission_id[0] = 0xCD;
+        let config = SyncConfig::new(mission_id, SyncRole::Replicator, vec![0x03; 32]);
+        let adapter: Arc<dyn octo_sync::adapter::DatabaseSyncAdapter> =
+            Arc::new(MockAdapter::new(mission_id, [0x11; 32]));
+        let session = SyncSessionManager::new(adapter, config, &[0x42u8; 32]).unwrap();
+
+        let reg = TrustRegistry::new(100);
+        let updated = reg.feed_sync_session(&session);
+        assert_eq!(updated, 0);
     }
 }

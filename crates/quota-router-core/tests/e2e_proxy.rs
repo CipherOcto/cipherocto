@@ -459,7 +459,7 @@ async fn test_multiple_sequential_requests() {
 
         let result = chat_completion(&client, &base_url, TEST_MODEL, messages, false)
             .await
-            .expect(&format!("request {} should succeed", i));
+            .unwrap_or_else(|_| panic!("request {} should succeed", i));
 
         assert_eq!(result["_status"], 200, "Request {} should return 200", i);
     }
@@ -595,7 +595,7 @@ async fn test_chat_completion_n_choices() {
         let resp: Value = result.json().await.unwrap();
         let choices = resp["choices"].as_array().unwrap();
         assert!(
-            choices.len() >= 1,
+            !choices.is_empty(),
             "Should return at least 1 choice, got: {}",
             choices.len()
         );

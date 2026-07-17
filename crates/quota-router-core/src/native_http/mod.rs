@@ -444,6 +444,14 @@ pub struct StreamingResponse {
     pub content_type: &'static str,
 }
 
+impl std::fmt::Debug for StreamingResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingResponse")
+            .field("content_type", &self.content_type)
+            .finish()
+    }
+}
+
 /// A streaming chunk — either raw SSE bytes or structured chunk
 pub enum StreamingChunk {
     /// Raw SSE bytes to forward directly (for OpenAI passthrough)
@@ -673,4 +681,350 @@ pub async fn stream_openai_compatible(
         receiver: rx,
         content_type: "text/event-stream",
     })
+}
+
+#[cfg(test)]
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+mod tests {
+    use super::*;
+    use crate::native_http::openai::OpenAIProvider;
+
+    // =====================================================================
+    // ProviderError tests
+    // =====================================================================
+
+    #[test]
+    fn test_provider_error_display() {
+        assert_eq!(
+            ProviderError::Network("timeout".into()).to_string(),
+            "Network error: timeout"
+        );
+        assert_eq!(
+            ProviderError::InvalidResponse("bad json".into()).to_string(),
+            "Invalid response: bad json"
+        );
+        assert_eq!(
+            ProviderError::AuthError("unauthorized".into()).to_string(),
+            "Auth error: unauthorized"
+        );
+        assert_eq!(
+            ProviderError::RateLimit("too many".into()).to_string(),
+            "Rate limit: too many"
+        );
+        assert_eq!(
+            ProviderError::UnsupportedModel("gpt-5".into()).to_string(),
+            "Unsupported model: gpt-5"
+        );
+    }
+
+    #[test]
+    fn test_provider_error_is_error() {
+        let err = ProviderError::Network("test".into());
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // =====================================================================
+    // HttpCompletionRequest tests
+    // =====================================================================
+
+    #[test]
+    fn test_http_completion_request_model() {
+        let req = HttpCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        assert_eq!(req.model(), "gpt-4o");
+    }
+
+    // =====================================================================
+    // HttpProviderFactory tests
+    // =====================================================================
+
+    #[test]
+    fn test_provider_factory_register_and_create() {
+        HttpProviderFactory::register("test_provider", || Box::new(OpenAIProvider::new()));
+        let provider = HttpProviderFactory::create("test_provider");
+        assert!(provider.is_some());
+        assert_eq!(provider.unwrap().name(), "openai");
+    }
+
+    #[test]
+    fn test_provider_factory_create_nonexistent() {
+        let provider = HttpProviderFactory::create("nonexistent_provider_xyz");
+        assert!(provider.is_none());
+    }
+
+    #[test]
+    fn test_provider_factory_list_providers() {
+        HttpProviderFactory::register("test_list_1", || Box::new(OpenAIProvider::new()));
+        HttpProviderFactory::register("test_list_2", || Box::new(OpenAIProvider::new()));
+        let providers = HttpProviderFactory::list_providers();
+        assert!(providers.contains(&"test_list_1"));
+        assert!(providers.contains(&"test_list_2"));
+    }
+
+    #[test]
+    fn test_provider_factory_create_with_api_base() {
+        HttpProviderFactory::register("test_api_base", || Box::new(OpenAIProvider::new()));
+        let provider =
+            HttpProviderFactory::create_with_api_base("test_api_base", Some("http://custom"));
+        assert!(provider.is_some());
+    }
+
+    // =====================================================================
+    // build_openai_compatible_body tests
+    // =====================================================================
+
+    #[test]
+    fn test_build_openai_compatible_body_minimal() {
+        let req = HttpCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hello".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        let body = build_openai_compatible_body(&req, "gpt-4o");
+        assert_eq!(body["model"], "gpt-4o");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert!(body.get("stream").is_none());
+        assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
+    fn test_build_openai_compatible_body_all_fields() {
+        let req = HttpCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: Some(true),
+            temperature: Some(0.7),
+            max_tokens: Some(1024),
+            top_p: Some(0.9),
+            stop: Some(vec!["END".into()]),
+            n: Some(2),
+            presence_penalty: Some(0.5),
+            frequency_penalty: Some(0.3),
+            user: Some("u-123".into()),
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: Some(42),
+            logprobs: Some(true),
+            top_logprobs: Some(5),
+            parallel_tool_calls: Some(false),
+            prompt_id: Some("my-prompt".into()),
+            prompt_variables: Some([("name".into(), "Alice".into())].into_iter().collect()),
+            provider_params: None,
+            timeout: None,
+        };
+        let body = build_openai_compatible_body(&req, "gpt-4o");
+        assert_eq!(body["stream"], true);
+        assert!((body["temperature"].as_f64().unwrap() - 0.7).abs() < 0.01);
+        assert_eq!(body["max_tokens"], 1024);
+        assert!((body["top_p"].as_f64().unwrap() - 0.9).abs() < 0.01);
+        assert_eq!(body["stop"], serde_json::json!(["END"]));
+        assert_eq!(body["n"], 2);
+        assert!((body["presence_penalty"].as_f64().unwrap() - 0.5).abs() < 0.01);
+        assert!((body["frequency_penalty"].as_f64().unwrap() - 0.3).abs() < 0.01);
+        assert_eq!(body["user"], "u-123");
+        assert_eq!(body["seed"], 42);
+        assert_eq!(body["logprobs"], true);
+        assert_eq!(body["top_logprobs"], 5);
+        assert_eq!(body["parallel_tool_calls"], false);
+        assert_eq!(body["prompt_id"], "my-prompt");
+    }
+
+    #[test]
+    fn test_build_openai_compatible_body_model_override() {
+        let req = HttpCompletionRequest {
+            model: "gpt-4o".into(),
+            messages: vec![crate::shared_types::Message {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        let body = build_openai_compatible_body(&req, "gpt-3.5-turbo");
+        assert_eq!(body["model"], "gpt-3.5-turbo");
+    }
+
+    // =====================================================================
+    // init_providers tests
+    // =====================================================================
+
+    #[test]
+    fn test_init_providers_registers_all() {
+        init_providers();
+        let providers = HttpProviderFactory::list_providers();
+        assert!(providers.contains(&"openai"));
+        assert!(providers.contains(&"anthropic"));
+        assert!(providers.contains(&"mistral"));
+        assert!(providers.contains(&"gemini"));
+        assert!(providers.contains(&"azure"));
+        assert!(providers.contains(&"bedrock"));
+        assert!(providers.contains(&"ollama"));
+        assert!(providers.contains(&"groq"));
+        assert!(providers.contains(&"together"));
+        assert!(providers.contains(&"replicate"));
+        assert!(providers.contains(&"databricks"));
+        assert!(providers.contains(&"perplexity"));
+    }
+
+    // =====================================================================
+    // OpenAI provider tests
+    // =====================================================================
+
+    #[test]
+    fn test_openai_provider_new() {
+        let provider = openai::OpenAIProvider::new();
+        assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_openai_provider_supported_models() {
+        let provider = openai::OpenAIProvider::new();
+        let models = provider.supported_models();
+        assert!(models.contains(&"gpt-4"));
+        assert!(models.contains(&"gpt-4o"));
+        assert!(models.contains(&"gpt-3.5-turbo"));
+    }
+
+    #[test]
+    fn test_openai_provider_supports_streaming() {
+        let provider = openai::OpenAIProvider::new();
+        assert!(provider.supports_streaming());
+    }
+
+    #[test]
+    fn test_openai_provider_with_api_base() {
+        let provider =
+            openai::OpenAIProvider::new().with_api_base("https://custom.api.com/v1".into());
+        assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_openai_provider_default() {
+        let provider = openai::OpenAIProvider::default();
+        assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_openai_provider_supports_model() {
+        let provider = openai::OpenAIProvider::new();
+        assert!(provider.supports_model("gpt-4o"));
+        assert!(!provider.supports_model("claude-3-opus"));
+    }
+
+    #[test]
+    fn test_openai_provider_routing_weight() {
+        let provider = openai::OpenAIProvider::new();
+        assert_eq!(provider.routing_weight(), 10);
+    }
+
+    #[test]
+    fn test_openai_provider_default_trait_methods() {
+        let provider = openai::OpenAIProvider::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // OpenAI implements these methods, so they should succeed or fail gracefully
+        let result = rt.block_on(provider.get_response("resp_123", None, None, None));
+        // get_response makes an HTTP call - will fail with network error since no real API
+        assert!(result.is_err());
+
+        let result = rt.block_on(provider.delete_response("resp_123", None, None, None));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_openai_provider_embedding_unsupported() {
+        let provider = openai::OpenAIProvider::new();
+        let req = HttpEmbeddingRequest {
+            input: "test".into(),
+            model: "text-embedding-ada-002".into(),
+            api_base: None,
+            timeout: None,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(provider.embedding(&req, None));
+        assert!(result.is_err());
+    }
 }

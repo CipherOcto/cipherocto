@@ -437,4 +437,78 @@ mod tests {
         assert_eq!(bump_version("1.0.0"), "1.1.0");
         assert_eq!(bump_version("2.3.5"), "2.4.5");
     }
+
+    #[test]
+    fn test_prompt_template_serialization() {
+        let prompt = make_test_prompt("p1");
+        let json = serde_json::to_string(&prompt).unwrap();
+        let deserialized: PromptTemplate = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "p1");
+        assert_eq!(deserialized.name, "Test p1");
+    }
+
+    #[test]
+    fn test_prompt_filter_defaults() {
+        let filter = PromptFilter::default();
+        assert!(filter.team_id.is_none());
+        assert!(filter.name.is_none());
+        assert!(filter.tags.is_none());
+        assert!(filter.model.is_none());
+        assert!(filter.limit.is_none());
+        assert!(filter.offset.is_none());
+    }
+
+    #[test]
+    fn test_prompt_version_serialization() {
+        let version = PromptVersion {
+            prompt_id: "p1".into(),
+            version: "1.0.0".into(),
+            template: "Hello".into(),
+            changelog: "Initial".into(),
+            active: true,
+            created_at: Utc::now(),
+            created_by: "test".into(),
+        };
+        let json = serde_json::to_string(&version).unwrap();
+        let deserialized: PromptVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.prompt_id, "p1");
+        assert!(deserialized.active);
+    }
+
+    #[test]
+    fn test_registry_list() {
+        let mut registry = PromptRegistry::new();
+        registry.create(make_test_prompt("p1")).unwrap();
+        registry.create(make_test_prompt("p2")).unwrap();
+        let filter = PromptFilter::default();
+        let list = registry.list(&filter);
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn test_registry_delete() {
+        let mut registry = PromptRegistry::new();
+        registry.create(make_test_prompt("p1")).unwrap();
+        registry.delete("p1").unwrap();
+        assert!(registry.get("p1").is_err());
+    }
+
+    #[test]
+    fn test_registry_get_not_found() {
+        let registry = PromptRegistry::new();
+        assert!(registry.get("nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_prompt_error_display() {
+        let errors = vec![
+            PromptError::PromptNotFound("test".into()),
+            PromptError::TemplateRenderError("test".into()),
+            PromptError::VariableMissing("test".into()),
+        ];
+        for err in errors {
+            let msg = format!("{}", err);
+            assert!(!msg.is_empty());
+        }
+    }
 }

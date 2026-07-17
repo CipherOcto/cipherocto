@@ -63,10 +63,13 @@ mod tests {
     struct MockProofSystem;
 
     #[derive(Clone)]
+    #[allow(dead_code)]
     struct MockProof([u8; 32]);
     #[derive(Clone)]
+    #[allow(dead_code)]
     struct MockVk([u8; 32]);
     #[derive(Clone)]
+    #[allow(dead_code)]
     struct MockPublicInputs(Vec<u8>);
     #[derive(Clone)]
     struct MockWitness(Vec<u8>);

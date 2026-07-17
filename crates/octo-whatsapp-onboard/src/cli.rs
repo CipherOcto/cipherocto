@@ -62,8 +62,8 @@ pub struct OutputArgs {
     /// Write JSON to stdout instead of a file.
     #[arg(long)]
     pub stdout: bool,
-    /// Overwrite existing output file. Only meaningful with `--out`.
-    #[arg(long, requires = "out")]
+    /// Overwrite existing output file.
+    #[arg(long)]
     pub force: bool,
 }
 
@@ -86,10 +86,25 @@ fn parse_groups(s: &str) -> std::result::Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Default session path: $OCTO_WHATSAPP_SESSION_PATH or
+/// ~/.local/share/octo/whatsapp/default.session.db
+fn default_session_path() -> PathBuf {
+    if let Ok(p) = std::env::var("OCTO_WHATSAPP_SESSION_PATH") {
+        return PathBuf::from(p);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("octo")
+        .join("whatsapp")
+        .join("default.session.db")
+}
+
 #[derive(Args, Debug)]
 pub struct QrLinkArgs {
     /// Path to stoolap session database (default: ~/.local/share/octo/whatsapp/default.session.db).
-    #[arg(long)]
+    #[arg(long, default_value_os_t = default_session_path())]
     pub session_path: PathBuf,
     /// Initial group IDs to monitor (comma-separated, accepts digits-only
     /// or full JID like `120363012345678901@g.us`).
@@ -110,12 +125,25 @@ pub struct QrLinkArgs {
     /// Timeout in seconds (default: 300, how long to wait for Event::Connected).
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    /// Wait for the initial history sync (OfflineSyncCompleted) before
+    /// exiting. The server expects the client to be fully synchronized
+    /// before performing operations like creating groups.
+    #[arg(long)]
+    pub wait_sync: bool,
+    /// Snapshot the existing session DB (and meta sidecar) to
+    /// `<path>.broken-<unix-timestamp>` siblings, then proceed with a
+    /// fresh pair. Use to recover from `Event::LoggedOut` on the same
+    /// phone number — the server rejects retries from a device whose
+    /// DB still represents the logged-out identity. A no-op if no
+    /// existing session is present.
+    #[arg(long)]
+    pub reset: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 
 #[derive(Args, Debug)]
 pub struct PairLinkArgs {
-    #[arg(long)]
+    #[arg(long, default_value_os_t = default_session_path())]
     pub session_path: PathBuf,
     /// Phone number in E.164 (e.g., +15551234567). Or $OCTO_WHATSAPP_PHONE.
     #[arg(long)]
@@ -134,12 +162,12 @@ pub struct PairLinkArgs {
     pub output: OutputArgs,
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
-    /// Mission 0850p-a-ci-mode-pair-link: bypass `Event::Connected`
-    /// wait; load a pre-paired session DB from `--session-path` and
-    /// exit 0 if the session is valid. For CI/CD deployments where
-    /// the phone is not available.
+    /// Snapshot the existing session DB (and meta sidecar) to
+    /// `<path>.broken-<unix-timestamp>` siblings, then proceed with a
+    /// fresh pair. Use to recover from `Event::LoggedOut` on the same
+    /// phone number. A no-op if no existing session is present.
     #[arg(long)]
-    pub ci: bool,
+    pub reset: bool,
     // R1-M3: per-subcommand --verbose removed; use the global -v/--verbose.
 }
 

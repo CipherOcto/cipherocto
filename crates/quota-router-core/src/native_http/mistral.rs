@@ -1,6 +1,6 @@
 // mistral — Mistral via reqwest (native_http, LiteLLM mode)
 
-use super::{
+use crate::native_http::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
     ProviderError, StreamingResponse,
 };
@@ -297,4 +297,244 @@ struct MistralEmbedding {
     object: String,
     embedding: Vec<f32>,
     index: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_http::HttpProvider;
+    use crate::native_http::{HttpBatchCreateRequest, StreamingChunk};
+    use crate::testing::mock_http::MockHttpServer;
+
+    fn msg(role: &str, c: &str) -> crate::shared_types::Message {
+        crate::shared_types::Message {
+            role: role.into(),
+            content: Some(c.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    fn req(model: &str) -> HttpCompletionRequest {
+        HttpCompletionRequest {
+            model: model.into(),
+            messages: vec![msg("user", "hi")],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn test_name() {
+        assert_eq!(MistralProvider::new().name(), "mistral");
+    }
+
+    #[test]
+    fn test_supported_models() {
+        let p = MistralProvider::new();
+        let models = p.supported_models();
+        assert!(models.contains(&"mistral-large-latest"));
+        assert!(models.contains(&"mistral-nemo"));
+    }
+
+    #[test]
+    fn test_supports_streaming() {
+        assert!(MistralProvider::new().supports_streaming());
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(MistralProvider::default().name(), "mistral");
+    }
+
+    #[test]
+    fn test_routing_weight() {
+        assert_eq!(MistralProvider::new().routing_weight(), 6);
+    }
+
+    #[test]
+    fn test_supports_model() {
+        let p = MistralProvider::new();
+        assert!(p.supports_model("mistral-large-latest"));
+        assert!(!p.supports_model("gpt-4"));
+    }
+
+    #[tokio::test]
+    async fn completion_network_error() {
+        let p = MistralProvider::new();
+        let mut r = req("m");
+        r.api_base = Some("http://127.0.0.1:1".into());
+        assert!(p.completion(&r, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn completion_auth_401() {
+        let s = MockHttpServer::unauthorized().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(matches!(
+            MistralProvider::new()
+                .completion(&r, Some("k"))
+                .await
+                .unwrap_err(),
+            ProviderError::AuthError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn completion_bad_json() {
+        let s = MockHttpServer::with_response(reqwest::StatusCode::OK, "not-json").await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(MistralProvider::new().completion(&r, None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        assert!(MistralProvider::new()
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: Some(s.base_url()),
+                    timeout: None,
+                },
+                Some("k"),
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        assert!(MistralProvider::new()
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: Some(s.base_url()),
+                    timeout: None,
+                },
+                Some("k"),
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn embedding_server_error() {
+        let s = MockHttpServer::error().await;
+        assert!(MistralProvider::new()
+            .embedding(
+                &HttpEmbeddingRequest {
+                    input: "t".into(),
+                    model: "m".into(),
+                    api_base: Some(s.base_url()),
+                    timeout: None,
+                },
+                Some("k"),
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_auth_error() {
+        let s = MockHttpServer::unauthorized().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(MistralProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_rate_limit() {
+        let s = MockHttpServer::rate_limited().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(MistralProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_server_error() {
+        let s = MockHttpServer::error().await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        assert!(MistralProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn streaming_completion_success() {
+        let s = MockHttpServer::start(|_| {
+            hyper::Response::builder()
+                .status(200)
+                .header("content-type", "text/event-stream")
+                .body(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"
+                        .to_string(),
+                )
+                .unwrap()
+        })
+        .await;
+        let mut r = req("m");
+        r.api_base = Some(s.base_url());
+        let mut resp = MistralProvider::new()
+            .streaming_completion(&r, Some("k"))
+            .await
+            .unwrap();
+        let chunk = resp.receiver.recv().await.unwrap().unwrap();
+        assert!(matches!(chunk, StreamingChunk::RawSSE(_)));
+    }
+
+    #[tokio::test]
+    async fn default_trait_methods() {
+        let p = MistralProvider::new();
+        assert!(p.get_response("id", None, None, None).await.is_err());
+        assert!(p.delete_response("id", None, None, None).await.is_err());
+        let batch_req = HttpBatchCreateRequest {
+            input_file: "f".into(),
+            endpoint: "/v1".into(),
+            completion_window: "24h".into(),
+            metadata: None,
+            api_base: None,
+            timeout: None,
+        };
+        assert!(p.batch_create(&batch_req, None).await.is_err());
+        assert!(p.batch_retrieve("id", None, None, None).await.is_err());
+        assert!(p.batch_cancel("id", None, None, None).await.is_err());
+        assert!(p.batch_list(None, None, None, None).await.is_err());
+        assert!(p.batch_results("id", None, None, None).await.is_err());
+        assert!(p.list_models(None, None, None).await.is_err());
+    }
 }

@@ -1,0 +1,62 @@
+[workspace]
+
+[package]
+name = "octo-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Wire-protocol primitives, DatabaseSyncAdapter trait, and Stoolap sync types for the CipherOcto Stoolap Data Sync Protocol (RFC-0862 v1.1.0)"
+license = "Apache-2.0"
+repository = "https://github.com/CipherOcto/cipherocto"
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+
+# Concurrency
+parking_lot = "0.12"
+
+# Hash + crypto (matches cipherocto network deps per crates/octo-network/Cargo.toml)
+blake3 = "1.5"
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2"
+
+# CSPRNG for AEAD nonces (matches cipherocto convention)
+rand = "0.8"
+
+# Compression (for SyncSegment LZ4 wrapping per RFC-0862 §4.3.4)
+lz4_flex = "0.12"
+
+# CRC32 for WAL entry validation (mission 0862m)
+crc32fast = "1.4"
+
+# Async traits (used by Carrier)
+async-trait = "0.1"
+
+# Concurrent fan-out for MultiCarrierSync::broadcast
+futures = "0.3"
+
+[dev-dependencies]
+# Property-based testing (RFC-0862 §Test Vectors)
+proptest = "1.4"
+# Async test runtime
+tokio = { version = "1", features = ["macros", "rt"] }
+# Enable the `test-util` feature for integration tests so they can use the
+# MockAdapter. This is a self-referential dev-dependency on the same crate.
+octo-sync = { path = ".", features = ["test-util"] }
+
+[features]
+# When enabled, the MockAdapter is exposed as `octo_sync::test_util::MockAdapter`
+# to downstream crates (e.g., the cipherocto sync engine tests). The MockAdapter
+# is always available in this crate's own `cargo test` (gated on `#[cfg(test)]`).
+test-util = []
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+overflow-checks = false
+panic = "abort"
+# RUSTFLAGS="-C target-feature=-fma" required for DFP determinism (RFC-0104)
+
+[profile.bench]
+codegen-units = 1
+lto = "thin"

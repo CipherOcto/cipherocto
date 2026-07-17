@@ -260,10 +260,11 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 
 #[async_trait]
 impl PlatformAdapter for MatrixAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
         let encoded = Self::encode_envelope(&wire_bytes);
@@ -413,6 +414,8 @@ impl PlatformAdapter for MatrixAdapter {
                     "application/octet-stream".into(),
                 ],
             }),
+
+            ..Default::default()
         }
     }
 
@@ -605,6 +608,7 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_encode_decode_envelope() {
@@ -688,5 +692,102 @@ mod tests {
         let encoded = MatrixAdapter::encode_envelope(&data);
         let decoded = MatrixAdapter::decode_envelope(&encoded).unwrap();
         assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_trait_capabilities() {
+        let adapter = make_test_adapter();
+        let caps = PlatformAdapter::capabilities(&adapter);
+        assert_eq!(caps.max_payload_bytes, 65536);
+        assert!(caps.supports_fragmentation);
+        assert!(!caps.supports_raw_binary);
+        assert!(caps.media_capabilities.is_some());
+        let media = caps.media_capabilities.unwrap();
+        assert_eq!(media.max_upload_bytes, 50 * 1024 * 1024);
+        assert!(media
+            .supported_mime_types
+            .contains(&"image/jpeg".to_string()));
+    }
+
+    #[test]
+    fn test_trait_platform_type() {
+        let adapter = make_test_adapter();
+        assert_eq!(
+            PlatformAdapter::platform_type(&adapter),
+            PlatformType::Matrix
+        );
+    }
+
+    #[test]
+    fn test_trait_domain_id() {
+        let adapter = make_test_adapter();
+        let domain = PlatformAdapter::domain_id(&adapter, "!abc:example.com");
+        assert_eq!(domain.platform_type, PlatformType::Matrix as u16);
+    }
+
+    #[test]
+    fn test_trait_self_handle_none_initially() {
+        let adapter = make_test_adapter();
+        assert!(adapter.self_handle().is_none());
+    }
+
+    #[test]
+    fn test_canonicalize_empty_payload() {
+        let adapter = make_test_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![],
+            metadata: BTreeMap::new(),
+        };
+        assert!(adapter.canonicalize(&raw).is_err());
+    }
+
+    #[test]
+    fn test_canonicalize_valid_envelope() {
+        let adapter = make_test_adapter();
+        let envelope = DeterministicEnvelope::default();
+        let wire = envelope.to_wire_bytes();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: wire,
+            metadata: BTreeMap::new(),
+        };
+        let parsed = adapter.canonicalize(&raw).unwrap();
+        assert_eq!(parsed.envelope_id, envelope.envelope_id);
+    }
+
+    #[test]
+    fn test_config_debug_redacts_token() {
+        let config = MatrixConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            access_token: "syt_verysecrettoken123".into(),
+            rooms: vec!["!abc:example.com".into()],
+        };
+        let debug = format!("{:?}", config);
+        // Token should be redacted (not fully visible)
+        assert!(!debug.contains("verysecrettoken123"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn test_config_invalid_json() {
+        let result = MatrixAdapter::from_config_bytes(b"not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_missing_field() {
+        let json = r#"{"homeserver_url": "https://example.com"}"#;
+        let result = MatrixAdapter::from_config_bytes(json.as_bytes());
+        assert!(result.is_err());
+    }
+
+    fn make_test_adapter() -> MatrixAdapter {
+        let config = MatrixConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            access_token: "syt_test".into(),
+            rooms: vec!["!abc:example.com".into()],
+        };
+        MatrixAdapter::new(config)
     }
 }

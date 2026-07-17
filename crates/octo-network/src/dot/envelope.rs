@@ -24,6 +24,14 @@ pub enum MessageType {
     Discovery = 0x000B,
 }
 
+/// Canonical wire length of a serialized `DeterministicEnvelope`
+/// (signing bytes + 64-byte signature).
+///
+/// Single-frame Raw-mode wire formats (e.g., `TcpAdapter`) place the
+/// envelope at the start of a length-prefixed frame and the mesh
+/// payload after this many bytes.
+pub const ENVELOPE_WIRE_LEN: usize = 282;
+
 /// Deterministic Envelope for DOT
 ///
 /// All messages transported through DOT MUST use this canonical envelope.
@@ -57,6 +65,33 @@ pub struct DeterministicEnvelope {
     pub flags: u64,
     /// Ed25519 signature over canonical envelope bytes
     pub signature: [u8; 64],
+}
+
+impl Default for DeterministicEnvelope {
+    /// Returns a zeroed envelope.
+    ///
+    /// Useful for test fixtures and for places where a placeholder
+    /// envelope is needed before the canonical fields are filled in.
+    /// The returned envelope is NOT valid for transport — every
+    /// field is zero (including the signature), so it will fail
+    /// any signature or structural validation.
+    fn default() -> Self {
+        Self {
+            version: 0,
+            network_id: 0,
+            message_type: 0,
+            envelope_id: [0u8; 32],
+            mission_id: [0u8; 32],
+            source_peer: [0u8; 32],
+            origin_gateway: [0u8; 32],
+            logical_timestamp: 0,
+            ttl_hops: 0,
+            payload_hash: [0u8; 32],
+            route_trace_root: [0u8; 32],
+            flags: 0,
+            signature: [0u8; 64],
+        }
+    }
 }
 
 impl DeterministicEnvelope {

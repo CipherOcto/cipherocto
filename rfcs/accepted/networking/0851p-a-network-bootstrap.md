@@ -724,6 +724,7 @@ Per the **deferred vs unspecified rule**, every future-work item MUST have a spe
 | F4 | Trust UX (web-of-trust visualization) | MEDIUM | Post-launch | Mission: a `dot-trust graph` CLI command that renders the web-of-trust graph (signed_by relationships) as ASCII art or DOT format for operator inspection. | `missions/open/0851p-a-trust-ux.md` |
 | F5 | Mode D = NIP-05 / Nostr pubkey bootstrap | LOW | Future | Mission: a new `bootstrap_mode = Nostr` config; the bootstrap adapter resolves a NIP-05 identifier to a Nostr pubkey, fetches the user's contact list, and treats each contact as a potential bootstrap peer (verifying the contact's `DOT capability` claim). | `missions/open/0851p-a-nostr-mode-d.md` |
 | F6 | Bootstrap node slashing (offending nodes lose entry) | MEDIUM | Post-launch | Mission: extend slash reason codes with `0x000D` = `bootstrap_node_misbehavior` (defined in RFC-0855p-b §B "Slash Offense Codes" range allocation); slashed nodes are removed from the seed list. | `missions/open/0851p-a-bootstrap-slashing.md` |
+| F7 | DotDomain bootstrap mode (Mode D) | HIGH | Pre-launch | Specified in RFC-0851p-b. Bootstraps a node by joining a DC-managed broadcast domain. The DotDomain mode is the keystone that connects social adapters to peer discovery. | RFC-0851p-b missions |
 
 ## Rationale
 
@@ -749,20 +750,69 @@ The 60s timeout is the user-experience budget: longer timeouts cause users to gi
 | Bootstrap node censoring legit peer | MEDIUM | F6 slashing (0x000D.03); multi-seed consensus |
 | Replay of old seed list | LOW | `signed_at_epoch` check (F3) |
 | DoS on seed list service | LOW | Multi-seed fallback; service is replicated |
+## Orchestrator Contract
+
+The `BootstrapOrchestrator` (in `octo-transport/src/bootstrap.rs`) implements the client-side bootstrap protocol. Its contract is:
+
+### Input
+
+- `SeedListEnvelope` — signed seed list containing bootstrap node entries
+- `BootstrapConfig` — timeout, min_responses, intersection_threshold, max_retries, node identity
+
+### Output
+
+- `Ok(u32)` — number of peers acquired and merged into the discovery cache
+- `Err(BootstrapError)` — one of: `SeedListStale`, `NoResponses`, `AuthorityError`, `SeedListStale`, `AllTransportsFailed`
+
+### Lifecycle
+
+1. **Filter slashed seeds** — remove any peer_id in the `SlashedSeedBlacklist`
+2. **Health check** — verify seed list is not fully stale (`SeedHealth::check`)
+3. **Authority verification** — verify the seed list authority is valid for the current epoch
+4. **Send requests** — connect to each seed via direct TCP (length-prefixed JSON frames: `[4-byte len][json]`)
+5. **Collect responses** — wait for `min_responses` BOOTSTRAP_RESP messages or timeout
+6. **Validate intersection** — compute peer-list intersection across responses; require ≥80% agreement
+7. **Populate discovery** — merge validated peers into the `TransportDiscovery` cache
+
+### Wire Format
+
+```
+Request:  [4-byte big-endian length][BootstrapRequest JSON]
+Response: [4-byte big-endian length][BootstrapResponse JSON]
+```
+
+The `BootstrapRequest` includes `requester_id`, `requester_pubkey`, `nonce`, `epoch`, `capability_filter`, `max_peers`. The `BootstrapResponse` includes `requester_id` (echo), `request_nonce` (echo), `epoch`, `responder_id`, `peer_entries`.
+
+### Retry Policy
+
+Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped at 60s). After `max_retries` attempts, transitions to `Failed`.
+
+### Integration with QuotaRouterNode
+
+`QuotaRouterNode::build_with_bootstrap()` uses the orchestrator via `discover_peers()`:
+1. Creates an orchestrator from the seed list
+2. Calls `discover_peers()` which runs validation + TCP collection
+3. If responses are received, uses peer entries from the responses
+4. If no responses (bootstrap nodes unreachable), falls back to parsing seed list entries directly
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 0.1.0 | 2026-06-16 | Initial draft |
 | 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt — 6 items (F1-F6) with spec column + mission paths in `missions/open/0851p-a-f{1,2,3,4,5,6}-*.md`. |
+| 0.1.2 | 2026-06-30 | Added §Orchestrator Contract — codifies `BootstrapOrchestrator` input/output/lifecycle/wire-format/retry-policy/integration. Replaces the stub `send_bootstrap_requests` with direct TCP response collection. `discover_peers()` public API for callers that don't need `TransportDiscovery`. |
 
 ## Related RFCs
 
 - RFC-0851 (Networking): Gateway Discovery Protocol — extends with BootstrapNode, Done → DiscoveryLifecycle::Bootstrap
+- RFC-0851p-b (Networking): DotDomain Bootstrap Mode — Mode D specification (patch to this RFC)
 - RFC-0850 (Networking): Deterministic Overlay Transport — uses DeterministicEnvelope
 - RFC-0843 (Networking): OCTO-Network Protocol — Kademlia base (Mode B)
 - RFC-0860 (Networking): Proof of Relay — trust scores for Sybil defense
 - RFC-0855 (Networking): Mission Overlay Networks — SeedListAuthority is governed by RFC-0855 §11.1 "Governance Flexibility" (Dao governance model) and §11.2 "Governance Policies"
+- RFC-0850p-c (Networking): Transport Group Binding — GroupRegistry used by DotDomain bootstrap
+- RFC-0855p-c (Networking): DomainCoordinator Role — DC attestation used by DotDomain bootstrap
 - RFC-0126 (Numeric): Deterministic Serialization — canonical envelope encoding
 - RFC-0000-template v1.3 — Roles, Lifecycle, Implicit Assumptions, Adversary Analysis sections
 

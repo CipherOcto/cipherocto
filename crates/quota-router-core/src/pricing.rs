@@ -231,7 +231,7 @@ impl PricingRegistry {
         }
 
         entries.push(table);
-        entries.sort_by(|a, b| b.version.cmp(&a.version));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.version));
         self.by_hash.insert(hash, Arc::new(entries[0].clone()));
         Ok(hash)
     }

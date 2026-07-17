@@ -679,6 +679,7 @@ mod tests {
 
     /// Mock secret reader that always returns an error
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct FailingSecretReader;
 
     #[async_trait]

@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "octo-transport"
+version = "0.1.0"
+edition = "2021"
+description = "General-purpose transport integration layer for CipherOcto Network"
+
+[dependencies]
+octo-network = { path = "../crates/octo-network" }
+async-trait = "0.1"
+thiserror = "2.0"
+blake3 = "1.5"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+tokio = { version = "1", features = ["time", "sync", "net", "io-util", "rt"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "time"] }

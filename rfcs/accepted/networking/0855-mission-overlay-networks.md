@@ -1,6 +1,6 @@
 ---
 title: "RFC-0855: Mission Overlay Networks (MON)"
-status: Draft
+status: Accepted
 version: 1.0.0
 created: 2026-05-25
 updated: 2026-05-25

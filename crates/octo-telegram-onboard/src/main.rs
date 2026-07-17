@@ -1,12 +1,14 @@
 //! `octo-telegram-onboard` — CLI binary for Telegram onboarding.
 //!
 //! Mission 0850ab-a. See RFC-0850ab-a for the full specification.
-
-mod cli;
-mod logging;
+//
+// The actual modules (`cli`, `logging`) live in the library half of this
+// crate (`src/lib.rs`), so they can be reused by the `octo-cli-meta`
+// meta-crate. This file is purely the binary entry point.
 
 use clap::Parser;
 use cli::{Cli, Command, SessionAction};
+use octo_telegram_onboard::{cli, logging};
 use octo_telegram_onboard_core::auth::{
     classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_qr_auth,
     drive_user_auth, set_tdlib_parameters, try_acquire_receive_lock, validate_api_id, Credentials,

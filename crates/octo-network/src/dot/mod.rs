@@ -173,8 +173,27 @@ impl DotGateway {
         cache.check_and_insert(envelope.envelope_id, current_epoch)?;
 
         // 4. Forward to all adapters (Class C — transport-dependent)
-        // Note: In production, this would iterate over connected domains
-        // and forward to the appropriate adapter(s).
+        //
+        // Limitation: This iterates ALL adapters regardless of domain match.
+        // Each adapter receives the envelope with a domain derived from the
+        // adapter's own platform type. In production, a domain registry would
+        // route envelopes only to adapters that handle the matching domain.
+        //
+        // Current behavior: try every adapter, log failures, continue.
+        // This is safe (fail-open with logging) but inefficient. A future
+        // domain-registry layer (RFC-0863 Phase 2) will fix the routing.
+        for adapter in &self.adapters {
+            let domain = BroadcastDomainId::new(
+                adapter.platform_type(),
+                &format!("{:02x?}", &envelope.source_peer[..8]),
+            );
+            match adapter.send_message(&domain, envelope, b"test").await {
+                Ok(_receipt) => {}
+                Err(_e) => {
+                    // Adapter failed — continue to next adapter.
+                }
+            }
+        }
 
         Ok(ProcessingResult::Forwarded)
     }

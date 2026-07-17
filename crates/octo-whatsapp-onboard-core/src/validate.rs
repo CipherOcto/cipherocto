@@ -123,6 +123,25 @@ pub fn check_session_path_safe(session_path: &Path) -> Result<(), CoreError> {
     }
 }
 
+// Helper for symlink tests; cargo tempfile is not a dependency so we
+// use the std-only target dir.
+#[cfg(test)]
+fn tempdir_in_target() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let pid = std::process::id();
+    let dir = std::env::temp_dir().join(format!(
+        "octo-symlink-check-{pid}-{n}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,23 +217,4 @@ mod tests {
         let session_path = tmp.join("not-yet-created.db");
         assert!(check_session_path_safe(&session_path).is_ok());
     }
-}
-
-// Helper for symlink tests; cargo tempfile is not a dependency so we
-// use the std-only target dir.
-#[cfg(test)]
-fn tempdir_in_target() -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let pid = std::process::id();
-    let dir = std::env::temp_dir().join(format!(
-        "octo-symlink-check-{pid}-{n}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
 }

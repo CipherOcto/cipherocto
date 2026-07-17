@@ -98,4 +98,56 @@ mod tests {
         balance.deduct(10);
         assert_eq!(balance.amount, 0); // Should saturate, not underflow
     }
+
+    #[test]
+    fn test_balance_error_display() {
+        let err = BalanceError::Insufficient(50, 100);
+        assert_eq!(
+            format!("{}", err),
+            "Insufficient balance: have 50, need 100"
+        );
+    }
+
+    #[test]
+    fn test_balance_check_exact() {
+        let balance = Balance::new(100);
+        assert!(balance.check(100).is_ok());
+    }
+
+    #[test]
+    fn test_balance_deduct_zero() {
+        let mut balance = Balance::new(100);
+        balance.deduct(0);
+        assert_eq!(balance.amount, 100);
+    }
+
+    #[test]
+    fn test_balance_add_zero() {
+        let mut balance = Balance::new(100);
+        balance.add(0);
+        assert_eq!(balance.amount, 100);
+    }
+
+    #[test]
+    fn test_get_octo_w_balance() {
+        let storage = create_test_storage();
+        let key_id = [1u8; 16];
+        let result = get_octo_w_balance(&storage, &key_id);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // default balance is 0
+    }
+
+    #[test]
+    fn test_deduct_octo_w_insufficient() {
+        let storage = create_test_storage();
+        let key_id = [1u8; 16];
+        let result = deduct_octo_w(&storage, &key_id, 100);
+        assert!(result.is_err());
+    }
+
+    fn create_test_storage() -> crate::storage::StoolapKeyStorage {
+        let db = stoolap::Database::open_in_memory().unwrap();
+        crate::schema::init_database(&db).unwrap();
+        crate::storage::StoolapKeyStorage::new(db)
+    }
 }

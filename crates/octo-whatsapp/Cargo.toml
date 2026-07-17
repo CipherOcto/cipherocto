@@ -1,0 +1,191 @@
+[package]
+name = "octo-whatsapp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Long-lived daemon for the WhatsApp adapter: owns the WebSocket, exposes JSON-RPC over unix socket, MCP over stdio, and a structured CLI."
+publish = false
+
+[[bin]]
+name = "octo-whatsapp"
+path = "src/main.rs"
+
+[lib]
+name = "octo_whatsapp"
+path = "src/lib.rs"
+
+[dependencies]
+# Internal - adapter is the only thing we depend on for protocol; onboard-core
+# is for delegation; network is for trait types only (we use them through the
+# adapter); runtime is for the supervisor primitive if it exists.
+octo-adapter-whatsapp      = { path = "../octo-adapter-whatsapp" }
+octo-whatsapp-onboard-core = { path = "../octo-whatsapp-onboard-core" }
+octo-network               = { path = "../octo-network" }
+
+# Async + serialization
+# Explicit pin because this crate is excluded from the workspace; workspace.dependencies does not apply.
+tokio       = { version = "1.35", features = ["full"] }
+tokio-util  = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+arc-swap    = "1"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+toml        = "0.8"
+
+# DOT envelope encoding (RFC-0850 §8.6) and BLAKE3-256 domain hashing
+base64 = "0.22"
+blake3 = "1"
+
+# CLI
+clap        = { version = "4.5", features = ["derive", "wrap_help"] }
+clap_complete = "4.5"
+
+# Observability
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender   = "0.2"
+
+# Unix socket + SO_PEERCRED (Linux-only; we test on Linux only)
+nix = { version = "0.29", features = ["fs", "socket", "uio", "feature", "process", "signal"] }
+
+# Error mapping
+thiserror = "1"
+anyhow    = "1"
+
+# Phase 4: rules engine, action dispatchers, audit hash chain
+regex       = "1"
+hex         = "0.4"
+sha2        = "0.10"
+subtle      = "2"
+uuid        = { version = "1.6", features = ["v4", "serde"] }
+
+# Mutex used by the `MockAdapter` (compiled only under `test-helpers`)
+# to track call counts and per-method canned responses.
+parking_lot = { workspace = true }
+
+# Token-rotation grace file persistence (Phase 5 Part A). Available
+# in dev-dependencies too, but the lib needs it for `persist_grace` /
+# `load_grace` even in non-test builds.
+tempfile = "3"
+
+# Phase 5 Part C: optional `dirs` resolves `~` in `[rules] storage_path`
+# (default `~/.local/share/octo/whatsapp/rules.toml`). Optional so
+# hermetic builds without a HOME still work.
+dirs = "5"
+
+# Phase 5 Part B: observability — Prometheus registry + axum HTTP
+# health/ready/metrics server + HMAC label hashing.
+prometheus = { version = "0.13", default-features = false }
+axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+hmac       = "0.12"
+# Phase 5 Part F: shared reqwest::Client for the webhook action dispatcher.
+# Default features off, rustls-tls only — keeps hermetic builds linkable
+# without OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Query layer (Phase 0 of `2026-07-11-whatsapp-query-layer-design.md`).
+# All optional, gated by `query` feature so default builds stay slim.
+# - stoolap: embedded SQL DB (file mode); fork at feat/blockchain-sql
+# - tantivy: FTS sidecar index (BM25 with simple() tokenizer)
+# - candle-*: local embedding model (all-MiniLM-L6-v2 Q4, 384d)
+stoolap             = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
+tantivy             = { version = "0.24", optional = true }
+candle-core         = { version = "0.9", optional = true }
+candle-nn           = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
+tokenizers          = { version = "0.22", optional = true }
+hf-hub              = { version = "0.4", optional = true }
+# Minimal single-thread executor for the embedder worker (no tokio
+# runtime dependency for one task).
+futures-executor    = { version = "0.3", optional = true }
+
+# Phase 5 Part B: optional OTLP tracing. Off by default; enable with
+# `--features otlp`. The library compiles cleanly with the feature
+# DISABLED — `observability/tracing.rs` is a no-op stub when `otlp`
+# is absent.
+opentelemetry         = { version = "0.27", optional = true }
+opentelemetry-otlp    = { version = "0.27", optional = true, features = ["grpc-tonic"] }
+opentelemetry_sdk     = { version = "0.27", optional = true, features = ["rt-tokio"] }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
+[features]
+default       = []
+# Test helpers: enables the `MockAdapter` in `crate::test_mock_adapter`
+# so hermetic tests can drive the IPC server without a live WhatsApp
+# session. Off by default so the stub doesn't ship to consumers.
+# Enable with:
+#
+#   cargo check -p octo-whatsapp --features test-helpers
+#
+# Note (Phase 6.12.4): `DaemonHandle::bind_adapter` is no
+# longer gated on this feature — production startup paths use it too
+# to bind the live `WhatsAppWebAdapter` and spawn the connection-watcher.
+# Only the `MockAdapter` stub remains test-only.
+#
+# See `docs/plans/2026-07-05-whatsapp-runtime-cli-mcp-phase2.md` Phase A.
+test-helpers = []
+live-whatsapp = ["octo-adapter-whatsapp/live-whatsapp"]
+
+# Phase 5 Part B: enable OTLP tracing exporter build.
+# Off in default `cargo build` per plan §A8. Wire the actual
+# `init_otlp()` call into `daemon::run` when the feature is enabled
+# (currently a no-op stub per YAGNI R1 finding F11 — the function
+# exists but is not invoked from production).
+
+# Phase 7.J.2: lightweight stderr tracing for transport-level diagnostics.
+# Without a global subscriber installed, every `tracing::*!` call in the
+# daemon (and in wacore, octo_cable, etc.) silently goes nowhere — the
+# log file is always empty. This feature installs a `tracing_subscriber::fmt`
+# layer writing to stderr with `EnvFilter::from_default_env()`, so any
+# `RUST_LOG=octo_cable=trace,wacore=trace,info` style filter works.
+# Cheap (~0 cost when off), unblocks every "why is the daemon X?" debug.
+#
+# Enable with:
+#   cargo build -p octo-whatsapp --features tracing-stdout
+#   RUST_LOG=trace ./target/debug/octo-whatsapp daemon
+# `tracing-subscriber` is already a required dep, so the feature is
+# itself empty — the `cfg(feature = "tracing-stdout")` gates in the
+# source decide whether `init_tracing_stdout()` is wired.
+# Also pulls in `octo-adapter-whatsapp/tracing` so wacore emits its
+# own `tracing::*!` spans (otherwise wacore is silent — the upstream
+# `tracing` feature is off-by-default).
+tracing-stdout = ["octo-adapter-whatsapp/tracing"]
+
+otlp = [
+  "dep:opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
+  "dep:tracing-opentelemetry",
+]
+
+# Phase 5 R1 review: `landlock` and `seccomp` features removed.
+# The half-wired stubs (logging the intended allowlist + returning
+# `Ok`) conveyed a false sense of security without enforcing
+# anything (YAGNI F3 + Security F9). The base sandbox
+# (`PR_SET_NO_NEW_PRIVS` + process_group + kill_on_drop + timeout
+# + env allowlist + kill -PGID) is ALWAYS applied, regardless of
+# Cargo features — see `actions/runner/shell_linux.rs`. Full
+# Landlock `Ruleset::restrict_self` plumbing is deferred until the
+# landlock 0.5+ builder API is stable (documented in
+# `memory/whatsapp-phase5-handoff.md` "Known gaps deferred
+# beyond Phase 5").
+
+# Query layer (Phase 0+ of `docs/plans/2026-07-11-whatsapp-query-layer-design.md`).
+# Off by default in v1 to keep default builds slim; flip to default once
+# Phases 0-4 land (commit 20 in the plan).
+query = [
+  "dep:stoolap",
+  "dep:tantivy",
+  "dep:candle-core",
+  "dep:candle-nn",
+  "dep:candle-transformers",
+  "dep:tokenizers",
+  "dep:hf-hub",
+  "dep:futures-executor",
+]
+
+[dev-dependencies]
+tempfile   = "3"
+assert_cmd = "2"
+predicates = "3"
+tokio      = { version = "1.35", features = ["full", "test-util"] }

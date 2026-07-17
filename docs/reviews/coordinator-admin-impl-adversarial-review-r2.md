@@ -32,9 +32,9 @@ Outside R23b but still in R1 scope (NOT fixed by R23b):
 | ID | Status | Notes |
 |---|---|---|
 | **C1** IRC `connect_tls` is a no-op | ✅ FIXED | Real `tokio_rustls::client::TlsStream` handshake via `tls_client_config()` (line 486-500, 574-584). |
-| **C2** IRC `send_envelope` does not write to wire | ✅ FIXED | Now enqueues PRIVMSG lines through `send_raw_line` (line 822-832). |
-| **C3** IRC `send_envelope` doesn't `ensure_connected` | ✅ FIXED | First line of `send_envelope` calls `ensure_connected` (line 779). |
-| **C4** IRC capability / `list_own_groups` / `join_by_invite` inconsistent | ⚠️ HALF-FIXED (REGRESSION) | `runtime_channels` field exists, `channel_for` consults it, `send_envelope` consults it — **but `join_by_invite` never populates it and `list_own_groups` never merges it**. See **N1** below. |
+| **C2** IRC `send_message` does not write to wire | ✅ FIXED | Now enqueues PRIVMSG lines through `send_raw_line` (line 822-832). |
+| **C3** IRC `send_message` doesn't `ensure_connected` | ✅ FIXED | First line of `send_message` calls `ensure_connected` (line 779). |
+| **C4** IRC capability / `list_own_groups` / `join_by_invite` inconsistent | ⚠️ HALF-FIXED (REGRESSION) | `runtime_channels` field exists, `channel_for` consults it, `send_message` consults it — **but `join_by_invite` never populates it and `list_own_groups` never merges it**. See **N1** below. |
 
 ### HIGH
 
@@ -99,7 +99,7 @@ Outside R23b but still in R1 scope (NOT fixed by R23b):
 The R23b diff added a `runtime_channels: StdMutex<Vec<String>>` field
 with the doc-comment "Channels the bot has joined at runtime (via
 `join_by_invite`). Merged with `config.channels` by `list_own_groups`
-and `channel_for`..." — and `channel_for` / `send_envelope` both
+and `channel_for`..." — and `channel_for` / `send_message` both
 consult the field. **But `join_by_invite` never pushes to it.**
 
 ```bash
@@ -120,7 +120,7 @@ So the C4 fix is **non-functional**:
 3. `channel_for(GroupId("server:#foo"))` falls through to the runtime
    lookup, finds nothing, returns 404 with the message "...nor the
    runtime-joined set" (which is empty).
-4. `send_envelope(domain(server:#foo))` does the same lookup, fails with
+4. `send_message(domain(server:#foo))` does the same lookup, fails with
    `Unreachable("No channel for domain ...")`.
 5. `add_member(server:#foo, ...)` / `remove_member(...)` / all other
    admin actions on `#foo` 404.
@@ -132,7 +132,7 @@ tests admin on a *configured* channel, not a joined-at-runtime one.
 **Impact:** The capability `can_list_own_groups: true` is **still a lie**
 for any channel the bot joined outside the static config. The docstring
 on `runtime_channels` is **also a lie**. Worse, the runtime path in
-`channel_for` and `send_envelope` makes the failure mode look like
+`channel_for` and `send_message` makes the failure mode look like
 "No channel for domain" rather than "we forgot to track joins", which
 will confuse every operator who tries to use `join_by_invite`.
 
@@ -342,7 +342,7 @@ chars) produces `PRIVMSG #a-very-long-channel-name :<480 bytes>\r\n`
 = 10+24+1+480+2 = **517 bytes > 512 IRC line limit**. The server
 truncates or rejects silently.
 
-The `send_envelope` loop (line 822-832) and the `send_raw_line` path
+The `send_message` loop (line 822-832) and the `send_raw_line` path
 (line 830) both produce `PRIVMSG <channel> :<payload>` lines without
 checking the actual channel name length.
 
@@ -355,7 +355,7 @@ fn max_payload_for_channel(channel: &str) -> usize {
 }
 ```
 
-Use this in `send_envelope` when computing `chunks` and also validate
+Use this in `send_message` when computing `chunks` and also validate
 that `channel.len() + PRIVMSG_OVERHEAD_BASE + <min fragment size>`
 fits. Document the channel-name-length limit in `IrcConfig::validate`.
 

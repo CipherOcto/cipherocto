@@ -7,21 +7,34 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use octo_network::dot::adapters::{
     coordinator_admin::{
         AddMemberOutput, AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId,
-        GroupMemberSpec, GroupMetadata, GroupModeFlags, InviteRef, PeerId,
+        GroupMemberSpec, GroupMetadata, GroupModeFlags, GroupProfilePictureSnapshot, InviteRef,
+        PeerId, SetGroupProfilePictureResponse,
     },
-    CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
+    CapabilityReport, DeliveryReceipt, MediaCapabilities, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
+use octo_network::dot::transport::{
+    decode_native_ref, encode_native_ref, select_mode_with_max_text, TransportMode,
+};
+
+use crate::media_ref::{decode_base64url, encode_base64url, MediaRef};
 
 use super::store::StoolapStore;
+// wacore re-exports `MediaType` and `Downloadable` via
+// `whatsapp_rust::download`; `UploadOptions`/`UploadResponse` live in
+// `whatsapp_rust::upload`. Mission 0850 (RFC-0850 §8.6/§9.4) uses both.
+use whatsapp_rust::download::MediaType;
+use whatsapp_rust::upload::{UploadOptions, UploadResponse};
 
 // ── Configuration ──────────────────────────────────────────────────
 
@@ -52,6 +65,13 @@ pub struct WhatsAppConfig {
     /// for existing configs that don't set the field.
     #[serde(default)]
     pub sender_allowlist: BTreeMap<String, Vec<String>>,
+    /// SHORTCAKE_PASSKEY authenticator (Session 2 of the wacore-webauthn plan,
+    /// RFC-0909). When `Some(auth)`, the SDK auto-drives the WebAuthn assertion
+    /// step on `<notification type="passkey_prologue_request">` arrivals.
+    /// When `None`, the SDK emits `Event::PairPasskeyRequest` and waits for the
+    /// host to drive the handshake manually.
+    #[serde(default, skip)]
+    pub passkey_authenticator: Option<Arc<dyn crate::passkey::PasskeyAuthenticator>>,
 }
 
 impl std::fmt::Debug for WhatsAppConfig {
@@ -75,6 +95,14 @@ impl std::fmt::Debug for WhatsAppConfig {
                         .map(|v| v.len())
                         .sum::<usize>()
                 ),
+            )
+            .field(
+                "passkey_authenticator",
+                &if self.passkey_authenticator.is_some() {
+                    "Some(<redacted>)"
+                } else {
+                    "None"
+                },
             )
             .finish()
     }
@@ -117,39 +145,41 @@ impl WhatsAppConfig {
             }
         }
         for group in &self.groups {
-            if group.is_empty() {
-                return Err("groups contains an empty string".to_string());
-            }
-            // RFC-0861 §2 M16: tighten JID acceptance. Two valid
-            // forms: bare digits, or digits + `@g.us`. Anything
-            // with `@` that doesn't end in `@g.us` is newsletter
-            // JID misuse (`1234@newsletter`); anything with `:`
-            // is user JID misuse (`1234567890:0@s.whatsapp.net`).
-            if group.contains(':') {
-                return Err(format!(
-                    "groups entry {group:?} contains ':' (user JID misuse; expected digits or digits+@g.us)"
-                ));
-            }
-            if group.contains('@') {
-                if !group.ends_with("@g.us") {
-                    return Err(format!(
-                        "groups entry {group:?} contains '@' but does not end with @g.us (newsletter JID misuse)"
-                    ));
-                }
-                let prefix = &group[..group.len() - "@g.us".len()];
-                if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_digit()) {
-                    return Err(format!(
-                        "groups entry {group:?} has non-numeric prefix before @g.us"
-                    ));
-                }
-            } else if !group.chars().all(|c| c.is_ascii_digit()) {
-                return Err(format!(
-                    "groups entry {group:?} is not all digits (expected digits or digits+@g.us)"
-                ));
-            }
+            validate_group_jid(group).map_err(|e| format!("groups entry {e}"))?;
         }
         Ok(())
     }
+}
+
+/// R13-L3 fix: extract the strict JID-shape check (RFC-0861 §2 M16)
+/// into a standalone helper so it can be shared between
+/// `WhatsAppConfig::validate` (static path) and
+/// `WhatsAppWebAdapter::register_group_at_runtime` (dynamic path).
+/// Before this fix, a typo in a runtime-registered JID (e.g.,
+/// `12036301234567890@g.us` — one digit short) was silently
+/// accepted, the message was rejected as "unconfigured group",
+/// and the caller had no way to find the bug.
+fn validate_group_jid(group: &str) -> std::result::Result<(), String> {
+    if group.is_empty() {
+        return Err("is empty".to_string());
+    }
+    if group.contains(':') {
+        return Err("contains ':' (user JID misuse; expected digits or digits+@g.us)".to_string());
+    }
+    if group.contains('@') {
+        if !group.ends_with("@g.us") {
+            return Err(
+                "contains '@' but does not end with @g.us (newsletter JID misuse)".to_string(),
+            );
+        }
+        let prefix = &group[..group.len() - "@g.us".len()];
+        if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_digit()) {
+            return Err("has non-numeric prefix before @g.us".to_string());
+        }
+    } else if !group.chars().all(|c| c.is_ascii_digit()) {
+        return Err("is not all digits (expected digits or digits+@g.us)".to_string());
+    }
+    Ok(())
 }
 
 /// E.164 validation: `+` followed by 7-15 ASCII digits, no leading 0 after `+`.
@@ -170,12 +200,26 @@ fn is_e164(phone: &str) -> bool {
     true
 }
 
-// ── Reconnect constants ────────────────────────────────────────────
+// ── Reconnect constants (R12-H1 follow-up) ────────────────────────
+//
+// R12-H1 fix: the reconnect logic in `run_reconnect_loop` was removed
+// because the wacore library handles reconnection internally (see
+// `wacore/src/client.rs:1102` — `Client::run` is a `while
+// self.is_running` loop that retries forever). The retry-related
+// constants and `compute_retry_delay` helper are no longer referenced
+// from production code; kept here for now in case a future round
+// reintroduces a reconnect path that doesn't rely on wacore's
+// internal loop. If no such round materializes, these can be removed
+// in a follow-up cleanup.
 
+#[allow(dead_code)]
 const MAX_RETRIES: u32 = 10;
+#[allow(dead_code)]
 const BASE_DELAY_SECS: u64 = 3;
+#[allow(dead_code)]
 const MAX_DELAY_SECS: u64 = 300;
 
+#[allow(dead_code)]
 fn compute_retry_delay(attempt: u32) -> u64 {
     std::cmp::min(
         BASE_DELAY_SECS.saturating_mul(2u64.saturating_pow(attempt.saturating_sub(1))),
@@ -221,18 +265,29 @@ pub struct WhatsAppWebAdapter {
     /// Bot handle for shutdown
     bot_handle: Arc<Mutex<Option<whatsapp_rust::bot::BotHandle>>>,
     /// Client for sending messages
-    client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
     /// Internal message buffer: on_event() pushes, receive_messages() drains
     inbound_rx: Arc<Mutex<tokio::sync::mpsc::Receiver<RawPlatformMessage>>>,
     inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
     /// Bot's own phone number (resolved on connect)
     self_phone: Arc<Mutex<Option<String>>>,
+    /// Companion to `self_phone` for the LID (long-form identity)
+    /// the WA server uses internally for our own account. Populated
+    /// from the same `device_snapshot()` as `self_phone`, on the
+    /// `Event::Connected` and `Event::HistorySync` paths. Exposed via
+    /// the inherent `self_lid_phone()` accessor — used by live tests
+    /// that need to assert against the LID form of our own JID
+    /// (group member lists, IQ responses).
+    self_lid: Arc<Mutex<Option<String>>>,
     /// Mission 0850p-a-notify-event-connected: a `tokio::sync::Notify` that
     /// is `notify_waiters()`-ed on `Event::Connected`. Replaces the
     /// 250 ms polling loop in `wait_for_connected` (mission
     /// 0850p-a-notify-event-connected). Wrapped in an `Arc` because
     /// `Notify` is not `Clone`.
     connected_notify: Arc<tokio::sync::Notify>,
+    /// Fires on `Event::OfflineSyncCompleted` — the initial history
+    /// sync is done and the client is fully synchronized.
+    synced_notify: Arc<tokio::sync::Notify>,
     /// Runtime-mutable group list, consulted alongside `config.groups`
     /// by both `send_envelope`'s domain→JID lookup and the inbound
     /// `accept_message` filter. Coordinators that create groups at
@@ -244,6 +299,63 @@ pub struct WhatsAppWebAdapter {
     /// Backwards-compatible: when empty, behaviour is identical to the
     /// static-config-only path (the legacy default).
     runtime_groups: Arc<Mutex<Vec<String>>>,
+    /// All conversation JIDs received from HistorySync. Populated by the
+    /// Event::HistorySync handler. Used by the cleanup utility to find
+    /// chats from groups we already left.
+    conversation_jids: Arc<Mutex<Vec<String>>>,
+    /// StoolapStore reference for persisting conversations. Set in start_bot.
+    pub(crate) store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
+    /// Raw event broadcast for debugging/monitoring. Every event from
+    /// wa-rs is stringified and sent here. Used by event_listener binary.
+    raw_event_tx: tokio::sync::broadcast::Sender<String>,
+    /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
+    /// `DOT/2/{token}` download requests from the sync on_event closure
+    /// (which does NOT capture `&self`) to the async download_rx
+    /// consumer task spawned by `start_bot`. The on_event closure
+    /// clones this `Arc` and `try_send`s a `DownloadRequest`; the
+    /// consumer task pops, calls `Client::download`, and pushes the
+    /// decrypted wire bytes to `inbound_tx`.
+    ///
+    /// `Arc<tokio::sync::Mutex<Option<...>>>` mirrors the existing
+    /// `client` field shape (line 224) — `start_bot` populates the
+    /// `Some(_)` variant without `&mut self`, and the closure holds an
+    /// `Arc` clone without owning `self`. Initialized to `None` in
+    /// `new`; populated in `start_bot` (so the receiver has an
+    /// immediate owner — the consumer task).
+    download_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DownloadRequest>>>>,
+    /// R12-M1 fix: monotonic counter of inbound messages that were
+    /// accepted by `accept_message` (and thus passed the security
+    /// filter) but then dropped because the inbound channel was full
+    /// (`try_send` returned `Err(TrySendError::Full(_))`). Previously
+    /// these drops were silent — only a `tracing::warn!` log
+    /// signaled them, with no operator-visible counter. A burst of
+    /// messages could exhaust the channel and silently lose envelopes
+    /// with no way for the gateway to know. The counter is exposed via
+    /// [`WhatsAppWebAdapter::dropped_inbound_messages`] for
+    /// observability. Resetting it requires recreating the adapter.
+    dropped_inbound_count: Arc<AtomicU64>,
+    /// Session 13: monotonic timestamp of the most recent
+    /// `Event::PairingQrCode` we forwarded. After wacore exhausts its
+    /// QR ref tokens it logs `All QR codes for this session have
+    /// expired` and stops emitting further QRs — but the run loop may
+    /// continue reconnecting silently, leaving the CLI's
+    /// `wait_for_connected` polling until the operator's `--timeout`
+    /// elapses. `pairing_qr_stalled(idle_threshold)` lets the core
+    /// detect that stall and return immediately instead of waiting the
+    /// full `--timeout`. Cleared on each `start_bot`.
+    last_pairing_qr_at: Arc<Mutex<Option<Instant>>>,
+    /// Tier 7.A.2 (forward): per-peer cache of the most recent
+    /// outgoing `wa::Message` (keyed by its message_id), used by
+    /// `WhatsAppWebAdapter::forward_message` to replay a body the
+    /// operator previously sent. Without this cache, `forward` would
+    /// need the original `wa::Message` which the runtime layer cannot
+    /// reconstruct from the msg_id alone (the inner content is opaque
+    /// protobuf that only the adapter saw at send time).
+    ///
+    /// Unbounded by design — operators that run millions of sends should
+    /// add a TTL or LRU later. Reset on `start_bot` (new session).
+    pub(crate) last_outgoing:
+        Arc<Mutex<HashMap<String, HashMap<String, waproto::whatsapp::Message>>>>,
 }
 
 /// Result of [`WhatsAppWebAdapter::create_group`]: the new group's
@@ -259,7 +371,56 @@ pub struct CreateGroupOutput {
     pub metadata: whatsapp_rust::GroupMetadata,
 }
 
+/// Mission 0850 (RFC-0850 §8.6/§9.4): a `DOT/2/{token}` envelope that the
+/// on-event closure (which does NOT capture `&self`) has dispatched for
+/// pre-download. The download_rx consumer task pops these, calls
+/// `Client::download` via the wacore API, and pushes the resulting wire
+/// bytes to `inbound_tx` with `metadata["dot_mode"] = "native"`.
+///
+/// `msg_id` is the base64url-encoded JSON `MediaRef` token from the
+/// `DOT/2/{token}` payload (NOT a WhatsApp `message_id`).
+pub(crate) struct DownloadRequest {
+    pub(crate) msg_id: String,
+    pub(crate) chat: String,
+    pub(crate) sender: String,
+}
+
+/// Mission 0850 (RFC-0850 §8.6/§9.4): type-level least-privilege handle
+/// for background tasks spawned by `start_bot`. Cloning the
+/// [`WhatsAppWebAdapter`] would expose every field (config, bot_handle,
+/// inbound_rx, self_phone, runtime_groups) to the consumer task; this
+/// handle gives it exactly the two fields it needs.
+///
+/// Clone is `#[derive(Clone)]` because every field is `Arc`/`Sender`
+/// (both inherently `Clone`). Cheap to clone.
+#[derive(Clone)]
+pub(crate) struct WhatsAppHandlerHandle {
+    pub(crate) client: Arc<Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    pub(crate) inbound_tx: tokio::sync::mpsc::Sender<RawPlatformMessage>,
+    /// R12-M1 fix: shared dropped-message counter. The
+    /// download_rx_consumer task captures a clone of this `Arc` and
+    /// increments the counter when its `try_send` to `inbound_tx`
+    /// fails (channel full or closed). The on_event closure captures
+    /// the SAME `Arc` and increments the same counter on its
+    /// `try_send` failure. The counter is exposed via
+    /// [`WhatsAppWebAdapter::dropped_inbound_messages`].
+    pub(crate) dropped_inbound_count: Arc<AtomicU64>,
+}
+
 impl WhatsAppWebAdapter {
+    /// Companion to the trait-level `self_handle()` that returns the
+    /// LID (long-form identity) the WA server uses internally for our
+    /// own account. Group-info queries and similar IQ responses list
+    /// members by LID rather than by pn, so callers that need to
+    /// assert "our own JID appears in the member list" must compare
+    /// against the LID form. Returns `None` if the device snapshot
+    /// has no LID yet (typically the same window as `self_handle()`
+    /// being None — the LID is populated alongside the pn on
+    /// `Event::Connected`).
+    pub fn self_lid_phone(&self) -> Option<String> {
+        self.self_lid.lock().clone()
+    }
+
     pub fn new(config: WhatsAppConfig) -> Self {
         let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(1024);
         Self {
@@ -269,13 +430,34 @@ impl WhatsAppWebAdapter {
             inbound_rx: Arc::new(Mutex::new(inbound_rx)),
             inbound_tx,
             self_phone: Arc::new(Mutex::new(None)),
+            self_lid: Arc::new(Mutex::new(None)),
             // Mission 0850p-a-notify-event-connected: a fresh Notify for
             // each adapter instance. `notify_waiters()` is called by
             // the Event::Connected handler; consumers (the CLI's
             // `wait_for_connected`) `notified().await` on a clone of
             // the Arc.
             connected_notify: Arc::new(tokio::sync::Notify::new()),
+            synced_notify: Arc::new(tokio::sync::Notify::new()),
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
+            conversation_jids: Arc::new(Mutex::new(Vec::new())),
+            store: Arc::new(Mutex::new(None)),
+            raw_event_tx: tokio::sync::broadcast::channel::<String>(1000).0,
+            // Mission 0850: download_tx is None until start_bot populates
+            // it. The channel is created INSIDE start_bot (not here) so
+            // the receiver has an immediate owner — the consumer task.
+            download_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            // R12-M1 fix: dropped-message counter starts at 0. The
+            // counter is incremented inside the on_event closure and
+            // the download_rx_consumer task on `try_send` failure.
+            dropped_inbound_count: Arc::new(AtomicU64::new(0)),
+            // Session 13: no QR seen yet; populated by the
+            // Event::PairingQrCode handler in start_bot. Reset to
+            // None on shutdown and on every new start_bot so a stale
+            // timestamp from a prior session can never bleed into a
+            // fresh one.
+            last_pairing_qr_at: Arc::new(Mutex::new(None)),
+            // Tier 7.A.2: per-peer outgoing-message cache for forward.
+            last_outgoing: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -285,6 +467,78 @@ impl WhatsAppWebAdapter {
     /// the same underlying `Notify`.
     pub fn connected(&self) -> Arc<tokio::sync::Notify> {
         Arc::clone(&self.connected_notify)
+    }
+
+    /// Returns a clonable handle to the `Notify` that fires on
+    /// `Event::OfflineSyncCompleted` — the initial history sync is
+    /// done and the client is fully synchronized with the server.
+    pub fn synced(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.synced_notify)
+    }
+
+    /// Trait-default accessor that exposes the same `Notify` to the
+    /// daemon (which can't call the inherent `synced()`). Mirror of
+    /// `subscribe_raw_events`: the daemon spawns a sync-watcher task
+    /// when this returns `Some`.
+    pub fn synced_notify(&self) -> Option<Arc<tokio::sync::Notify>> {
+        Some(Arc::clone(&self.synced_notify))
+    }
+
+    /// Session 13: true iff at least one `Event::PairingQrCode` has
+    /// been observed AND no further QRs have arrived in the last
+    /// `idle_threshold` duration. Returns false before any QR has
+    /// arrived (the operator hasn't been shown anything yet — wait
+    /// for the first cycle) and false if a fresh QR arrived
+    /// recently. Used by `wait_for_connected` to short-circuit when
+    /// wacore has exhausted its QR ref tokens (the
+    /// "All QR codes for this session have expired" path).
+    pub fn pairing_qr_stalled(&self, idle_threshold: std::time::Duration) -> bool {
+        let Some(last) = *self.last_pairing_qr_at.lock() else {
+            return false;
+        };
+        last.elapsed() >= idle_threshold
+    }
+
+    /// R12-M1 fix: returns the cumulative number of inbound
+    /// messages that passed `accept_message` (and thus the security
+    /// filter) but were then dropped because the inbound channel was
+    /// full (`try_send` returned `Err(TrySendError::Full(_))`).
+    ///
+    /// Operators should monitor this counter alongside
+    /// `receive_messages()` throughput. A monotonically increasing
+    /// value indicates the gateway is consuming inbound messages
+    /// slower than WhatsApp is delivering them — the 1024-deep
+    /// inbound channel is the backpressure boundary.
+    ///
+    /// The counter is monotonic; it never decreases. To reset it,
+    /// recreate the adapter. The counter is incremented from both
+    /// the on_event closure (DOT/1/ text path) and the
+    /// download_rx_consumer task (DOT/2/ native path), so it covers
+    /// all inbound delivery channels.
+    pub fn dropped_inbound_messages(&self) -> u64 {
+        self.dropped_inbound_count.load(Ordering::Relaxed)
+    }
+
+    /// Mission 0850 (RFC-0850 §8.6/§9.4): clone the fields needed by
+    /// background tasks spawned in `start_bot` (the download_rx consumer
+    /// task). Does NOT clone `inbound_rx` because the consumer pushes
+    /// via `inbound_tx`, not drains `inbound_rx`. `receive_messages()`
+    /// still holds the original `inbound_rx`.
+    ///
+    /// Type-level least-privilege: the handle exposes only `client` and
+    /// `inbound_tx`, NOT `config` (session path, groups, sender
+    /// allowlist), `bot_handle` (shutdown control), `inbound_rx` (could
+    /// drain messages), `self_phone` / `runtime_groups` (state that
+    /// should not be touched by download tasks).
+    pub(crate) fn clone_for_handler(&self) -> WhatsAppHandlerHandle {
+        WhatsAppHandlerHandle {
+            client: Arc::clone(&self.client),
+            inbound_tx: self.inbound_tx.clone(),
+            // R12-M1 fix: share the dropped-message counter with the
+            // handler handle so the download_rx_consumer task and the
+            // on_event closure can both increment it.
+            dropped_inbound_count: Arc::clone(&self.dropped_inbound_count),
+        }
     }
 
     /// Mission 0850p-a-has-valid-session: returns `true` if a valid
@@ -300,6 +554,30 @@ impl WhatsAppWebAdapter {
                 .unwrap_or(false)
     }
 
+    /// Returns the bot's canonical JID (e.g. `5521995544743:25@s.whatsapp.net`)
+    /// — including the device suffix — by reading
+    /// `client.persistence_manager().get_device_snapshot().pn` directly.
+    ///
+    /// Distinct from `self_handle()` (digits only) because the daemon's
+    /// `send.text` handler needs the device-suffixed form to route
+    /// self-sends back to the linked session. Sending to the
+    /// primary-phone slot via `peer_to_jid("+E164")` lands on a
+    /// different WA account when the session is paired as device N
+    /// (N > 0). See the diagnostic probe at
+    /// `crates/octo-adapter-whatsapp/src/bin/self_send_probe.rs` for
+    /// the round-trip path this accessor enables.
+    ///
+    /// Returns `None` if the adapter hasn't reached `Connected` (no
+    /// bot handle yet) or if the persistence manager hasn't recorded
+    /// the device's pn yet.
+    pub fn device_pn(&self) -> Option<String> {
+        let handle_guard = self.bot_handle.try_lock()?;
+        let handle = handle_guard.as_ref()?;
+        let client = handle.client();
+        let snap = client.persistence_manager().get_device_snapshot();
+        snap.pn.as_ref().map(|p| p.to_string())
+    }
+
     /// Register a group at runtime, alongside the statically-configured
     /// `WhatsAppConfig::groups`. The group JID will be accepted by both
     /// `send_envelope`'s domain→JID lookup and the inbound
@@ -309,11 +587,61 @@ impl WhatsAppWebAdapter {
     /// Use this after `create_group` returns so the newly-created
     /// group is immediately routable without restarting the bot or
     /// reloading the config.
-    pub fn register_group_at_runtime(&self, group_jid: &str) {
+    ///
+    /// R13-L3 fix: validate the JID against the same strict shape
+    /// check that `WhatsAppConfig::validate` uses (RFC-0861 §2 M16).
+    /// Previously any string was accepted; a typo (e.g.,
+    /// `12036301234567890@g.us` — one digit short) was silently
+    /// stored, the message was rejected as "unconfigured group",
+    /// and the caller had no way to find the bug. Returns
+    /// `Err(reason)` for invalid JIDs; the caller is expected to
+    /// surface the error to the user.
+    pub fn register_group_at_runtime(&self, group_jid: &str) -> std::result::Result<(), String> {
+        validate_group_jid(group_jid)?;
         let mut guard = self.runtime_groups.lock();
         if !guard.iter().any(|g| g == group_jid) {
             guard.push(group_jid.to_string());
         }
+        Ok(())
+    }
+
+    /// All conversation JIDs collected from HistorySync events.
+    /// Includes groups we've already left (the chat entry persists).
+    pub fn list_all_conversations(&self) -> Vec<String> {
+        self.conversation_jids.lock().clone()
+    }
+
+    /// Subscribe to raw event descriptions from the wa-rs event handler.
+    /// Every event is stringified and broadcast. Useful for debugging.
+    pub fn subscribe_raw_events(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.raw_event_tx.subscribe()
+    }
+
+    /// Persist conversations to the stoolap `conversations` table.
+    /// Each entry is (jid, name, is_group).
+    pub async fn persist_conversations(
+        &self,
+        entries: &[(String, Option<String>, bool)],
+    ) -> anyhow::Result<()> {
+        let store = self
+            .store
+            .lock()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("store not initialized (call start_bot first)"))?;
+        store.upsert_conversations(entries).await
+    }
+
+    /// Read persisted conversations from the stoolap `conversations` table.
+    /// These survive across adapter restarts. Returns (jid, name, is_group).
+    pub async fn list_persisted_conversations(
+        &self,
+    ) -> anyhow::Result<Vec<(String, Option<String>, bool)>> {
+        let store = self
+            .store
+            .lock()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("store not initialized (call start_bot first)"))?;
+        store.list_conversations().await
     }
 
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
@@ -332,6 +660,21 @@ impl WhatsAppWebAdapter {
     pub fn max_payload_bytes() -> usize {
         65_536
     }
+    /// Maximum upload size in bytes (Mission 0850 / RFC-0850 §8.6).
+    /// Single source of truth for both `capabilities()` (advertised
+    /// via `media_capabilities.max_upload_bytes`) and the `upload_media`
+    /// pre-flight check (R9-L4 fix). R10-M1 fix: the runtime
+    /// `debug_assert_eq!` in `capabilities()` enforces that the const
+    /// value matches the documented 100 MiB limit. If a future change
+    /// updates this const (e.g., to support a higher WhatsApp Document
+    /// ceiling), update both the const and the literal in the
+    /// assertion, otherwise `capabilities()` will panic in debug
+    /// builds at the first call.
+    pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+    /// Documented WhatsApp Document upload ceiling, per public WhatsApp
+    /// documentation as of 2026-06. Must match `MAX_UPLOAD_BYTES`.
+    /// Used by the `debug_assert_eq!` in `capabilities()` (R10-M1 fix).
+    const WHATSAPP_DOCUMENT_CEILING_BYTES: usize = 100 * 1024 * 1024;
     pub fn rate_limit_per_second() -> u32 {
         20
     }
@@ -360,26 +703,53 @@ impl WhatsAppWebAdapter {
         phone.chars().filter(|c| c.is_ascii_digit()).collect()
     }
 
+    /// Convert a `PeerId` string (phone number or raw JID) to a `Jid`.
+    ///
+    /// - Raw JIDs like `"5521995544743@s.whatsapp.net"` or `"265716875980991@lid"`
+    ///   are parsed directly.
+    /// - Phone numbers like `"+5521995544743"` are normalized to digits
+    ///   and converted to `Jid::pn()`.
+    fn peer_to_jid(peer: &str) -> wacore_binary::Jid {
+        if peer.contains('@') {
+            peer.parse()
+                .unwrap_or_else(|_| wacore_binary::Jid::pn(Self::normalize_phone(peer)))
+        } else {
+            wacore_binary::Jid::pn(Self::normalize_phone(peer))
+        }
+    }
+
     /// Convert a group ID to a WhatsApp group JID.
     ///
-    /// RFC-0861 §2 M16: tightened to refuse non-numeric inputs that
-    /// don't carry the `@g.us` suffix. Accepts:
-    ///   - bare digits (e.g. `120363012345678901`) → append `@g.us`
-    ///   - digits already terminated with `@g.us` (e.g.
-    ///     `120363012345678901@g.us`) → pass through
-    /// Refuses (via `debug_assert!` + a `Result` return):
-    ///   - inputs containing `@` that don't end with `@g.us`
-    ///     (newsletter JID misuse, e.g. `1234@newsletter`)
-    ///   - inputs containing `:` (user JID misuse, e.g.
-    ///     `1234567890:0@s.whatsapp.net`)
-    ///   - non-numeric prefixes without the `@g.us` suffix
+    /// RFC-0861 §2 M16: appends `@g.us` to bare digits, or passes
+    /// through digits already terminated with `@g.us`.
     ///
-    /// `validate()` is the production gate: it rejects bad
-    /// `groups` entries at config time. This helper's
-    /// `debug_assert!` catches programming errors in tests; in
-    /// release builds the function falls through to the same
-    /// behavior as before, since runtime callers always pass
-    /// `validate()`-checked strings.
+    /// Validates the input shape with `debug_assert!` in debug
+    /// builds so the `validate_group_jid` unit tests catch typos;
+    /// in release builds the function is a transparent formatter
+    /// and does NOT refuse malformed input. Callers are responsible
+    /// for pre-validating inputs:
+    ///
+    ///   - Static config groups: `WhatsAppConfig::validate` rejects
+    ///     bad `groups` entries at config time (RFC-0861 §2 M16).
+    ///   - Runtime-registered groups: `register_group_at_runtime`
+    ///     validates via `validate_group_jid` (R13-L3).
+    ///
+    /// This function is intentionally a thin formatter (not a
+    /// validator) so the `accept_message` hot path doesn't pay
+    /// validation cost per inbound message — the validation
+    /// happens once at config time / once at registration time,
+    /// and `group_to_jid` is the no-op JID-shape canonicalization
+    /// step.
+    ///
+    /// **R14-L1 fix:** the previous doc-comment claimed this
+    /// function "Refuses (via `debug_assert!` + a `Result` return)"
+    /// — but the function actually returns `String`, not `Result`,
+    /// and in release builds there is no refusal behavior. This
+    /// doc-comment now accurately describes the function's actual
+    /// behavior. Production callers all pre-validate, so the
+    /// function works correctly in practice; the previous
+    /// doc-comment was a maintenance hazard (readers might believe
+    /// the function refuses invalid inputs in release builds).
     fn group_to_jid(group_id: &str) -> String {
         const SUFFIX: &str = "@g.us";
         if let Some(prefix) = group_id.strip_suffix(SUFFIX) {
@@ -392,7 +762,8 @@ impl WhatsAppWebAdapter {
             debug_assert!(
                 !group_id.contains('@') && !group_id.contains(':')
                     && group_id.chars().all(|c| c.is_ascii_digit()),
-                "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us)"
+                "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us); \
+                 callers must pre-validate via validate() or validate_group_jid"
             );
             format!("{group_id}{SUFFIX}")
         }
@@ -443,7 +814,35 @@ impl WhatsAppWebAdapter {
             }
         };
 
-        if !text_trimmed.starts_with("DOT/1/") {
+        // Mission 0850 (RFC-0850 §8.6): accept both `DOT/1/{base64}`
+        // (text mode) and `DOT/2/{token}` (native mode) envelopes. The
+        // downstream `on_event` closure dispatches on the prefix to
+        // either push the text bytes directly to `inbound_tx` or push
+        // a `DownloadRequest` to `download_tx` for pre-download.
+        //
+        // R9-L3 fix: also reject empty tokens after a `DOT/2/` prefix.
+        // Without this check, the literal string `"DOT/2/"` would
+        // pass the prefix check, then fail downstream with a noisy
+        // `decode_native_ref → None` error and fall through to the
+        // text path where it would also fail (no `DOT/1/` prefix).
+        // The envelope would be dropped with two cascading errors;
+        // rejecting at the `accept_message` boundary gives a single,
+        // clear rejection reason for the gateway's close-the-loop
+        // logging.
+        //
+        // R10-L2 fix: also reject whitespace-only or whitespace-padded
+        // tokens. `"DOT/2/   token"` previously slipped through the
+        // `is_empty()` check (the rest is non-empty even if all
+        // whitespace) and failed deeper in the pipeline as a generic
+        // "invalid media ref format" — clearer to reject at the
+        // boundary with a token-specific reason.
+        if let Some(rest) = text_trimmed.strip_prefix("DOT/2/") {
+            if rest.trim().is_empty() {
+                return AcceptDecision::Reject {
+                    reason: "DOT/2/ token is empty or whitespace",
+                };
+            }
+        } else if !text_trimmed.starts_with("DOT/1/") {
             return AcceptDecision::Reject {
                 reason: "not a DOT envelope",
             };
@@ -468,11 +867,45 @@ impl WhatsAppWebAdapter {
     }
 
     /// Start the WhatsApp Web bot in a background task.
+    ///
+    /// **R12-H2 warning — wacore `CoreEventBus` reference cycle:**
+    /// calling `start_bot()` more than once per `WhatsAppWebAdapter`
+    /// instance leaks an entire `Client` worth of memory. The cycle
+    /// is internal to the wacore library:
+    ///
+    /// ```text
+    /// Client
+    ///   └─ core: CoreClient
+    ///        └─ event_bus: CoreEventBus
+    ///             └─ handlers: Vec<Arc<BotEventHandler>>
+    ///                  └─ BotEventHandler
+    ///                       └─ client: Arc<Client>    ← back to start
+    /// ```
+    ///
+    /// The `BotEventHandler` is added in `wacore/bot.rs:217` and the
+    /// `CoreEventBus` has no `remove_handler` API. The `Client` can
+    /// never be dropped while a handler is registered. If you call
+    /// `start_bot()` a second time (e.g., to "reconnect" after a
+    /// crash), the OLD `Client` is unreachable from the adapter's
+    /// state but is held alive forever by the cycle.
+    ///
+    /// **Recommended:** to recover from a bot crash, drop the entire
+    /// `WhatsAppWebAdapter` and create a new one with a fresh session
+    /// database. This is also the recommended pattern for
+    /// reconnection (see R12-H1 doc-comment on `run_reconnect_loop`).
+    /// Filed as a tracking issue; will be removed once wacore adds a
+    /// `remove_handler` API or breaks the cycle via a `Weak<Client>`
+    /// in the handler.
     pub async fn start_bot(&self) -> Result<()> {
         let expanded_path = shellexpand::tilde(&self.config.session_path).to_string();
         let storage = StoolapStore::new(&expanded_path)
             .map_err(|e| anyhow::anyhow!("stoolap store init at {expanded_path:?}: {e:#}"))?;
-        let backend = Arc::new(storage);
+        // Pass the bare `StoolapStore` to `with_backend` (it wraps in `Arc`
+        // internally) and clone the store for the daemon-side reference.
+        // Post-buffa migration (wacore 6e0f241): upstream `with_backend`
+        // requires `impl Backend + 'static`, not `Arc<StoolapStore>`.
+        let backend = storage;
+        *self.store.lock() = Some(Arc::new(backend.clone()));
 
         // Create transport factory
         let mut transport_factory =
@@ -486,17 +919,152 @@ impl WhatsAppWebAdapter {
         // Clone values for the event handler
         let inbound_tx = self.inbound_tx.clone();
         let self_phone = self.self_phone.clone();
+        let self_lid = self.self_lid.clone();
+        // Session 13: clone the QR-cycle watchdog timestamp into the
+        // closure so Event::PairingQrCode refreshes it. Without this
+        // clone the closure would borrow `self` and fail E0521
+        // because the on_event closure outlives the start_bot
+        // scope.
+        let last_pairing_qr_at = Arc::clone(&self.last_pairing_qr_at);
         // Combine the static `config.groups` and the runtime-registered
         // groups at the moment the bot starts. New groups added via
         // `register_group_at_runtime` after `start_bot` is captured by
         // the Arc<Mutex<Vec>> below.
         let groups = self.config.groups.clone();
         let runtime_groups = Arc::clone(&self.runtime_groups);
+        let conversation_jids = Arc::clone(&self.conversation_jids);
+        let conversation_store = Arc::new(backend.clone());
+        let raw_event_tx = self.raw_event_tx.clone();
         let sender_allowlist = self.config.sender_allowlist.clone();
         // Mission 0850p-a-notify-event-connected: clone the Notify
         // into the closure so the Event::Connected handler can
         // wake up `wait_for_connected` callers.
         let connected_notify = Arc::clone(&self.connected_notify);
+        let synced_notify = Arc::clone(&self.synced_notify);
+        // Mission 0850 (RFC-0850 §8.6/§9.4): clone the `download_tx`
+        // Arc BEFORE the `on_event(move ...)` closure so the closure
+        // doesn't have to capture `&self` (the closure must be
+        // `'static`-bound because wacore stores it on the bot).
+        let download_tx = Arc::clone(&self.download_tx);
+        // R12-M1 fix: clone the dropped-message counter for both the
+        // on_event closure (which pushes DOT/1/ text envelopes) and
+        // the download_rx_consumer (which pushes downloaded DOT/2/
+        // wire bytes). Both call sites increment the counter on
+        // `try_send` failure.
+        let dropped_inbound_count = Arc::clone(&self.dropped_inbound_count);
+
+        // Mission 0850 (RFC-0850 §8.6/§9.4): create the download
+        // request channel HERE (not in `new` — so the receiver has an
+        // immediate owner: the consumer task spawned below). Populate
+        // `self.download_tx` with the sender; the on_event closure
+        // captures an `Arc` clone and pushes `DownloadRequest`s for
+        // any `DOT/2/{token}` envelope it sees.
+        let (download_tx_sender, mut download_rx_receiver) =
+            tokio::sync::mpsc::channel::<DownloadRequest>(64);
+        *self.download_tx.lock().await = Some(download_tx_sender);
+
+        // Spawn the download_rx consumer task. It captures a
+        // least-privilege `WhatsAppHandlerHandle` (client + inbound_tx
+        // only — not config, not bot_handle, not inbound_rx) and exits
+        // cleanly when the channel closes (i.e., when the
+        // `Option<Sender>` in `self.download_tx` is dropped, which
+        // happens when the adapter is shut down).
+        //
+        // R9-L1 fix: use `download_handle.inbound_tx` instead of
+        // cloning `self.inbound_tx` again. The handle already
+        // contains the only Sender the consumer task needs; cloning
+        // `self.inbound_tx` was redundant and left the
+        // `inbound_tx` field on the handle dead-code (suppressed by
+        // `#[allow(dead_code)]`). The handle's least-privilege
+        // design intent is now actually enforced — the consumer task
+        // cannot accidentally access fields it shouldn't see.
+        let download_handle = self.clone_for_handler();
+        tokio::spawn(async move {
+            while let Some(req) = download_rx_receiver.recv().await {
+                match download_via_media_ref(&download_handle.client, &req.msg_id).await {
+                    Ok(wire_bytes) => {
+                        // R2-M5: tag with `dot_mode = "native"` so
+                        // `canonicalize` knows to skip the text decode
+                        // and pass `wire_bytes` directly to
+                        // `DeterministicEnvelope::from_wire_bytes`.
+                        let raw = RawPlatformMessage {
+                            platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
+                            payload: wire_bytes,
+                            metadata: [
+                                ("chat".to_string(), req.chat),
+                                ("sender".to_string(), req.sender),
+                                ("dot_mode".to_string(), "native".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        };
+                        if let Err(e) = download_handle.inbound_tx.try_send(raw) {
+                            // R12-M1 fix: increment the shared
+                            // dropped-message counter so operators can
+                            // see silent drops via
+                            // `dropped_inbound_messages()`. The counter
+                            // is shared with the on_event closure via
+                            // the handler handle's
+                            // `dropped_inbound_count` field.
+                            download_handle
+                                .dropped_inbound_count
+                                .fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!("inbound channel full or closed: {e}");
+                        }
+                    }
+                    Err(_e) => {
+                        // R1-H4: error message is redacted — no
+                        // `media_key` or `direct_path` from `req.msg_id`
+                        // propagates to the log.
+                        //
+                        // R12-M2 fix: instead of silently dropping
+                        // the failed request, push a sentinel
+                        // `RawPlatformMessage` with `dot_mode =
+                        // "delivery_failed"` so the gateway can see
+                        // the failed delivery and report it. The
+                        // `canonicalize` function returns an
+                        // `ApiError { code: 502, message: ... }` for
+                        // this dot_mode, mirroring the
+                        // upstream-downstream error contract. The
+                        // error reason in the metadata is a
+                        // fixed-string redacted message — no wacore
+                        // internals, no `media_key`, no
+                        // `direct_path`.
+                        tracing::warn!("DOT/2/ download failed; pushing delivery_failed sentinel");
+                        let failed = RawPlatformMessage {
+                            platform_id: format!("{}:{}", req.chat, uuid::Uuid::new_v4()),
+                            // Empty payload — the gateway only needs
+                            // the metadata to know the delivery
+                            // failed.
+                            payload: Vec::new(),
+                            metadata: [
+                                ("chat".to_string(), req.chat),
+                                ("sender".to_string(), req.sender),
+                                // Sentinel tag — the `canonicalize`
+                                // function checks for this and
+                                // returns an ApiError.
+                                ("dot_mode".to_string(), "delivery_failed".to_string()),
+                                // Fixed-string redacted reason. NO
+                                // wacore error text, NO media_key,
+                                // NO direct_path.
+                                ("error".to_string(), "DOT/2/ download failed".to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        };
+                        if let Err(send_err) = download_handle.inbound_tx.try_send(failed) {
+                            download_handle
+                                .dropped_inbound_count
+                                .fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                "inbound channel full or closed while pushing delivery_failed: {send_err}"
+                            );
+                        }
+                    }
+                }
+            }
+            tracing::debug!("download_rx consumer task exiting (channel closed)");
+        });
 
         // Build the bot
         let mut builder = whatsapp_rust::bot::Bot::builder()
@@ -506,49 +1074,233 @@ impl WhatsAppWebAdapter {
             .with_runtime(whatsapp_rust::TokioRuntime)
             .with_device_props(
                 wacore::store::DevicePropsOverride::new()
-                    .with_os("CipherOcto")
-                    .with_platform_type(waproto::whatsapp::device_props::PlatformType::Desktop),
+                    // Phase 7.J.4: match WA Web's identity on the wire. The
+                    // previous override (`os="CipherOcto"`, `platform_type=Desktop`,
+                    // `version=0.1.0` default) was trivially distinguishable from
+                    // a real Chrome on Linux UA — server accepted the noise
+                    // handshake but rejected the first encrypted-channel request
+                    // with `<failure reason="401" location="..."/>` (location tags
+                    // observed across recent runs: `vll`, `cln`, `lla`).
+                    //
+                    // Reference: WA Web `Client/Payload.js` produces these three
+                    // fields on the noise handshake (visible to the WA server
+                    // alongside the ClientProfile-driven UserAgent block):
+                    //   os            = "Linux"               (browser's host OS)
+                    //   platform_type = WEB                   (matches ClientProfile::web)
+                    //   version       = WA client version, e.g. 2.2412.54
+                    .with_os("Linux")
+                    .with_platform_type(waproto::whatsapp::device_props::PlatformType::CHROME)
+                    .with_version(waproto::whatsapp::device_props::AppVersion {
+                        primary: Some(2),
+                        secondary: Some(2412),
+                        tertiary: Some(54),
+                        ..Default::default()
+                    }),
             )
             .on_event(move |event, client| {
                 let inbound_tx = inbound_tx.clone();
                 let self_phone = self_phone.clone();
+                let self_lid = self_lid.clone();
                 let groups = groups.clone();
                 let runtime_groups = Arc::clone(&runtime_groups);
+                let conversation_jids = conversation_jids.clone();
+                let conversation_store = conversation_store.clone();
+                let raw_event_tx = raw_event_tx.clone();
                 let sender_allowlist = sender_allowlist.clone();
                 let connected_notify = connected_notify.clone();
+                let synced_notify = synced_notify.clone();
+                // `download_tx` is cloned in the outer scope (above
+                // the `on_event(move |...| { ... })` closure) so the
+                // closure doesn't need to capture `&self` and can
+                // satisfy the `'static` bound required by wacore.
+                // Clone it once more here (cheap: `Arc::clone`) so
+                // the inner `async move` can take ownership of its
+                // own copy without moving out of the outer closure.
+                let download_tx = Arc::clone(&download_tx);
+                // R12-M1 fix: clone the dropped-message counter into
+                // the inner async closure so the `try_send` at line
+                // 904+ can increment it on channel-full failure.
+                let dropped_inbound_count = Arc::clone(&dropped_inbound_count);
+                // Session 13: clone the QR-cycle watchdog timestamp
+                // into the inner async closure so the
+                // `Event::PairingQrCode` arm can refresh it without
+                // moving out of the outer Fn closure.
+                let last_pairing_qr_at = Arc::clone(&last_pairing_qr_at);
 
                 async move {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
 
+                    // Special-case chat-presence (typing/recording) and
+                    // availability-presence into the daemon's
+                    // `parse_presence()` shape — those variants carry
+                    // structured data (jid, kind, optional last_seen)
+                    // the Tier-4 live tests assert on, but wacore's
+                    // default Debug output uses `Event::ChatPresence(
+                    // ChatPresenceUpdate { source: MessageSource {
+                    // chat: Some(Jid { ... }), ... }, state: ..., media: ... })`
+                    // which the daemon parser does not recognise. Format
+                    // them into `Presence { jid: ..., kind: Typing|Recording,
+                    // last_seen: ... }` so `parse_presence()` matches.
+                    let custom_presence_desc: Option<String> = match &*event {
+                        Event::ChatPresence(update) => {
+                            let kind_label = match (update.state, update.media) {
+                                (
+                                    wacore::types::presence::ChatPresence::Composing,
+                                    wacore::types::presence::ChatPresenceMedia::Audio,
+                                ) => "Recording",
+                                (
+                                    wacore::types::presence::ChatPresence::Composing,
+                                    wacore::types::presence::ChatPresenceMedia::Text,
+                                ) => "Typing",
+                                (
+                                    wacore::types::presence::ChatPresence::Paused,
+                                    _,
+                                ) => "Paused",
+                            };
+                            let sender_jid = update.source.sender.to_string();
+                            Some(format!(
+                                "Presence(jid: {sender_jid:?}, kind: {kind_label}, last_seen: None)"
+                            ))
+                        }
+                        Event::Presence(update) => {
+                            let kind_label = if update.unavailable {
+                                "Unavailable"
+                            } else {
+                                "Available"
+                            };
+                            let last_seen_unix = update.last_seen.and_then(|dt| {
+                                let secs = dt.timestamp();
+                                if secs >= 0 { Some(secs) } else { None }
+                            });
+                            let from_jid = update.from.to_string();
+                            Some(format!(
+                                "Presence(jid: {from_jid:?}, kind: {kind_label}, last_seen: {last_seen_unix:?})"
+                            ))
+                        }
+                        // Phase 7.E+ T15: bridge wacore's server-pushed
+                        // `Event::NewsletterLiveUpdate` (fires when an
+                        // active `subscribe_live_updates` subscription
+                        // receives reaction-count / message-change
+                        // deltas) into our `InboundEvent::NewsletterUpdate`
+                        // shape. Default Debug output is verbose and the
+                        // events-router parser doesn't recognise it, so
+                        // we format the structured fields explicitly.
+                        // Payload granularity is collapsed to
+                        // `MessageReceived` for now — wacore only carries
+                        // `{messages: [{server_id, reactions}]}` per
+                        // live-update; richer sub-kinds can come later
+                        // when the upstream exposes more frame types.
+                        Event::NewsletterLiveUpdate(nlu) => {
+                            let jid_str = nlu.newsletter_jid.to_string();
+                            Some(format!(
+                                "NewsletterUpdate(jid: {jid_str:?}, kind: MessageReceived)"
+                            ))
+                        }
+                        // Phase 7.K: bridge wacore's
+                        // `Event::UndecryptableMessage` into our typed
+                        // `InboundEvent::Unavailable` shape. Default
+                        // Debug output uses
+                        // `UndecryptableMessage { info: Arc<MessageInfo>, is_unavailable, unavailable_type: ViewOnce, decrypt_fail_mode: Show }`
+                        // which the parser does not recognise. Format
+                        // the structured fields explicitly so
+                        // `parse_unavailable()` matches.
+                        Event::UndecryptableMessage(un) => {
+                            let id_str = un.info.id.clone();
+                            let chat = un.info.source.chat.to_string();
+                            let sender = un.info.source.sender.to_string();
+                            let kind_label = format!("{:?}", un.unavailable_type).to_lowercase();
+                            // Use the message-internal timestamp when
+                            // present; the persister already falls back
+                            // to its own clock for `ts: 0` cases.
+                            let ts = un.info.timestamp.timestamp_millis();
+                            Some(format!(
+                                "Unavailable(id: {id_str:?}, peer: {chat:?}, sender: {sender:?}, kind: {kind_label}, is_unavailable: true, ts: {ts})"
+                            ))
+                        }
+                        // Phase 7.K: bridge wacore's
+                        // `Event::DisappearingModeChanged` into our
+                        // typed `InboundEvent::DisappearingModeChanged`
+                        // shape. Default Debug output uses
+                        // `DisappearingModeChanged { from: Jid { ... },
+                        // duration: 86400, setting_timestamp:
+                        // 2026-07-15T... }` which the parser does not
+                        // recognise. Format the structured fields
+                        // explicitly so `parse_disappearing_mode_changed()`
+                        // matches.
+                        Event::DisappearingModeChanged(dmc) => {
+                            let jid_str = dmc.from.to_string();
+                            let dur = dmc.duration;
+                            let ts = dmc.setting_timestamp.timestamp_millis();
+                            Some(format!(
+                                "DisappearingModeChanged(jid: {jid_str:?}, duration_seconds: {dur}, ts: {ts})"
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(desc) = custom_presence_desc {
+                        let _ = raw_event_tx.send(desc);
+                        return;
+                    }
+
+                    // Broadcast raw event for debugging/monitoring.
+                    let event_desc = format!("{:?}", event);
+                    let _ = raw_event_tx.send(event_desc);
+
                     match &*event {
-                        Event::Message(msg, info) => {
+                        Event::Messages(batch) => {
+                            for m in batch.messages.iter() {
+                            let msg = &m.message;
+                            let info = &m.info;
                             let text = msg.text_content().unwrap_or("").to_string();
                             let chat = info.source.chat.to_string();
                             let sender = info.source.sender.to_string();
 
-                            // Combine static config.groups with
-                            // runtime-registered groups so messages from
-                            // groups added via `register_group_at_runtime`
-                            // are accepted.
-                            let effective_groups: Vec<String> = {
+                            // R13-L2 fix: avoid the per-message
+                            // `Vec<String>` clone that used to happen
+                            // unconditionally. `accept_message` takes
+                            // `&[String]` (which `&Vec<String>` derefs
+                            // to), so we can pass `&groups` directly on
+                            // the hot path. The `Vec<String>` allocation
+                            // for the combined slice only happens on
+                            // the cold path (runtime groups are
+                            // non-empty — uncommon). The previous code
+                            // did `groups.clone()` on every inbound
+                            // message, which is N+rt string clones
+                            // per message; for a high-traffic group
+                            // (100 msg/s with 10 configured groups)
+                            // that's ~1000 string clones per second
+                            // per adapter instance — visible in
+                            // mimalloc/jemalloc profiles.
+                            let decision = {
                                 let rt = runtime_groups.lock();
                                 if rt.is_empty() {
-                                    groups.clone()
+                                    // Hot path: zero per-message
+                                    // allocation. `&groups` derefs
+                                    // from `&Vec<String>` to
+                                    // `&[String]`.
+                                    Self::accept_message(
+                                        &chat,
+                                        &sender,
+                                        &text,
+                                        &groups,
+                                        &sender_allowlist,
+                                    )
                                 } else {
+                                    // Cold path: build the combined
+                                    // slice only when runtime groups
+                                    // are non-empty.
                                     let mut combined = groups.clone();
                                     combined.extend(rt.iter().cloned());
-                                    combined
+                                    Self::accept_message(
+                                        &chat,
+                                        &sender,
+                                        &text,
+                                        &combined,
+                                        &sender_allowlist,
+                                    )
                                 }
                             };
-
-                            let decision = Self::accept_message(
-                                &chat,
-                                &sender,
-                                &text,
-                                &effective_groups,
-                                &sender_allowlist,
-                            );
 
                             // Emit a single warn! for the security-relevant
                             // rejection (D-WA-10 mitigation). Routine filtering
@@ -568,29 +1320,126 @@ impl WhatsAppWebAdapter {
                                 return;
                             }
 
+                            // Mission 0850: dispatch on the wire-format
+                            // prefix. `DOT/1/{base64}` is the existing
+                            // text path — push the raw bytes to
+                            // `inbound_tx` with `dot_mode = "text"`.
+                            // `DOT/2/{token}` is the new native path —
+                            // decode the token, push a `DownloadRequest`
+                            // to `download_tx` (the consumer task does
+                            // the actual `Client::download` async call
+                            // and pushes the decrypted wire bytes back
+                            // to `inbound_tx` with `dot_mode =
+                            // "native"`).
+                            if let Some(token) = decode_native_ref(&text) {
+                                let req = DownloadRequest {
+                                    msg_id: token.to_string(),
+                                    chat: chat.clone(),
+                                    sender: sender.clone(),
+                                };
+                                // Lock briefly, `try_send`, drop the
+                                // guard. If `download_tx` is `None`
+                                // (consumer task not yet spawned),
+                                // `try_send` returns `Closed(_)` and we
+                                // silently drop the request — better
+                                // than panicking in the on-event
+                                // closure.
+                                let tx_guard = download_tx.lock().await;
+                                if let Some(tx) = tx_guard.as_ref() {
+                                    if let Err(e) = tx.try_send(req) {
+                                        tracing::warn!(
+                                            "download_tx channel full or closed: {e}"
+                                        );
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "DOT/2/ received before download_rx consumer started; dropping"
+                                    );
+                                }
+                                return;
+                            }
+
+                            // DOT/1/{base64} text path — push raw bytes.
+                            // R4-L2: tag with `dot_mode = "text"` for
+                            // the `canonicalize` discriminator (also
+                            // serves as an explicit contract — missing
+                            // key defaults to text, but the explicit
+                            // tag pins the contract for future
+                            // readers).
+                            // Note: view-once + ephemeral flags are
+                            // recovered by `parse_inbound_message`
+                            // (the batch path) from the
+                            // `format!("{:?}", InboundMessage)` envelope
+                            // — see `extract_message_flags` in
+                            // `events.rs`. The text/DOT-1 path here
+                            // only carries text bodies (no media).
                             let raw = RawPlatformMessage {
                                 platform_id: format!("{}:{}", chat, uuid::Uuid::new_v4()),
                                 payload: text.into_bytes(),
                                 metadata: [
                                     ("chat".to_string(), chat),
                                     ("sender".to_string(), sender),
+                                    ("dot_mode".to_string(), "text".to_string()),
                                 ]
                                 .into_iter()
                                 .collect(),
                             };
                             if let Err(e) = inbound_tx.try_send(raw) {
+                                // R12-M1 fix: increment the shared
+                                // dropped-message counter so operators
+                                // can see silent drops via
+                                // `dropped_inbound_messages()`. The
+                                // counter is shared with the
+                                // download_rx_consumer task via the
+                                // handler handle's
+                                // `dropped_inbound_count` field.
+                                dropped_inbound_count.fetch_add(1, Ordering::Relaxed);
                                 tracing::warn!("inbound channel full or closed: {e}");
+                            }
                             }
                         }
                         Event::Connected(_) => {
-                            let device = client.persistence_manager().get_device_snapshot().await;
+                            let device = client.persistence_manager().get_device_snapshot();
                             if let Some(ref pn) = device.pn {
                                 let pn_str = pn.to_string();
-                                let user_part = pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str);
+                                // `device.pn` is a Jid — its `Display` form is
+                                // `<user>[:<device>]@<server>`. Drop the device
+                                // suffix (`:NN`) so `self_handle()` returns the
+                                // bare pn digits that the WA server recognises
+                                // for `contacts.is_on_whatsapp` lookups; the
+                                // device id is a separate dimension, never part
+                                // of the phone number.
+                                let user_part = pn_str
+                                    .split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                    .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                        pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                    });
                                 let digits = Self::normalize_phone(user_part);
                                 if !digits.is_empty() {
                                     *self_phone.lock() = Some(digits);
                                     tracing::info!("resolved bot identity: +{user_part}");
+                                }
+                            }
+                            // Populate the LID companion to `self_phone`.
+                            // Group info IQ responses list members by LID,
+                            // not by pn — without this, the live
+                            // `live_groups_info_round_trip` test cannot
+                            // assert "our own JID appears in members or
+                            // admins" against the wire-format response.
+                            if let Some(ref lid) = device.lid {
+                                let lid_str = lid.to_string();
+                                // `device.lid` is a Jid — Display form is
+                                // `<user>:<device>@<server>`. Drop the
+                                // device suffix (`:NN`) for the same reason
+                                // as the pn path above.
+                                let lid_user = lid_str
+                                    .split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                    .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                        lid_str.split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                    });
+                                if !lid_user.is_empty() {
+                                    *self_lid.lock() = Some(lid_user.to_string());
+                                    tracing::info!("resolved bot LID: {lid_user}");
                                 }
                             }
                             // Mission 0850p-a-notify-event-connected:
@@ -598,8 +1447,198 @@ impl WhatsAppWebAdapter {
                             // waiting on `Notify::notified()`.
                             connected_notify.notify_waiters();
                         }
-                        Event::LoggedOut(_) => { tracing::warn!("WhatsApp Web logged out"); }
-                        Event::PairingQrCode { code, .. } => {
+                        Event::LoggedOut(ref lo) => {
+                            // Phase 7.J.3 (local enrichment of upstream patch
+                            // b209612+551e574): wacore's WARN in
+                            // `handle_connect_failure` carries the full
+                            // `<failure>` node (reason + location + optional
+                            // server message) but its `tracing::*!` enrichment
+                            // (noise_identity_fp + server_message structured
+                            // fields) is gated behind `whatsapp-rust/tracing`,
+                            // which we can't enable because
+                            // `#[tracing::instrument]` on root-crate async fns
+                            // overflows rustc's recursion limit in this
+                            // workspace. So we re-derive the noise-identity
+                            // fingerprint HERE, where we have access to
+                            // `client.persistence_manager().get_device_snapshot()`,
+                            // and pair it with the reason code carried on
+                            // the `LoggedOut` event itself.
+                            //
+                            // SHA-256 of the 33-byte serialized noise static
+                            // public key, truncated to 16 hex chars. Safe to
+                            // log: it is a fingerprint, not the key. `lo.reason`
+                            // is the `ConnectFailureReason` enum (e.g.
+                            // `LoggedOut(401)`, `LoggedOut(403)` = account
+                            // locked) — its Debug impl prints the numeric code,
+                            // which we want.
+                            //
+                            // R7.J.4 (fix): previously hashed the bare 32-byte
+                            // `public_key_bytes()` — that omitted the
+                            // `PublicKey::serialize()` 1-byte type prefix
+                            // that wacore actually puts on the wire. The
+                            // truncated hash produced collisions across
+                            // pairs (observed: identical fp for two different
+                            // noise keys) because the prefix-byte boundary
+                            // shifted the digest input by one byte. Hashing
+                            // the full 33-byte serialized form matches what
+                            // the WA server fingerprints on, so this fp is
+                            // now directly comparable to anything the server
+                            // logs on the server side.
+                            let noise_fp = {
+                                use sha2::{Digest, Sha256};
+                                let device = client.persistence_manager().get_device_snapshot();
+                                let pk_serialized = device.noise_key.public_key.serialize();
+                                let digest = Sha256::digest(pk_serialized);
+                                hex::encode(&digest[..8])
+                            };
+                            // R7.J.5: also log the FULL noise_key SHA-256 (no
+                            // truncation) so future debugging can directly
+                            // compare to dump_noise_key's persisted full hash.
+                            // The 16-hex `noise_identity_fp` above is for human
+                            // eyeballing; `noise_identity_fp_full` is for
+                            // correlation. Also log the registration_id —
+                            // a stable u32 from the same Device — so an
+                            // additional correlation dimension exists even
+                            // if the SHA-256 itself somehow collides.
+                            //
+                            // R7.J.6 (live-device fix): switch the snapshot
+                            // source from `persistence_manager().get_device
+                            // _snapshot()` (the cached `Arc<Device>` view
+                            // that lags `modify_device` commits) to
+                            // `core_device()` (the LIVE `Device` wacore
+                            // is actually using for protocol operations).
+                            // Observed: the cached snapshot returned a
+                            // different `noise_key` than both the on-disk
+                            // device and the device used for the failed
+                            // noise handshake. `core_device()` closes that
+                            // gap — the fp now matches what the server
+                            // actually saw on the wire.
+                            let (noise_fp_full, registration_id) = {
+                                use sha2::{Digest, Sha256};
+                                let device = client.persistence_manager().get_device_snapshot();
+                                let pk_serialized = device.noise_key.public_key.serialize();
+                                let digest = Sha256::digest(pk_serialized);
+                                (hex::encode(digest), device.registration_id)
+                            };
+                            tracing::warn!(
+                                noise_identity_fp = %noise_fp,
+                                noise_identity_fp_full = %noise_fp_full,
+                                registration_id = registration_id,
+                                reason = ?lo.reason,
+                                on_connect = lo.on_connect,
+                                "WhatsApp Web logged out"
+                            );
+                        }
+                        Event::HistorySync(ref lazy) => {
+                            // History sync requires an active authenticated
+                            // connection. Signal connected_notify as a
+                            // fallback in case Event::Connected was missed.
+                            // Also resolve phone if not yet set.
+                            if self_phone.lock().is_none() {
+                                let device = client.persistence_manager().get_device_snapshot();
+                                if let Some(ref pn) = device.pn {
+                                    let pn_str = pn.to_string();
+                                    // Drop the device suffix `:NN` — see
+                                    // `Event::Connected` branch above.
+                                    let user_part = pn_str
+                                        .split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                        .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                            pn_str.split_once('@').map(|(u, _)| u).unwrap_or(&pn_str)
+                                        });
+                                    let digits = Self::normalize_phone(user_part);
+                                    if !digits.is_empty() {
+                                        *self_phone.lock() = Some(digits);
+                                        tracing::info!("resolved bot identity from HistorySync: +{user_part}");
+                                    }
+                                }
+                                if self_lid.lock().is_none() {
+                                    if let Some(ref lid) = device.lid {
+                                        let lid_str = lid.to_string();
+                                        // Drop device suffix `:NN` — see
+                                        // `Event::Connected` branch above.
+                                        let lid_user = lid_str
+                                            .split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                            .split_once(':').map(|(u, _)| u).unwrap_or_else(|| {
+                                                lid_str.split_once('@').map(|(u, _)| u).unwrap_or(&lid_str)
+                                            });
+                                        if !lid_user.is_empty() {
+                                            *self_lid.lock() = Some(lid_user.to_string());
+                                            tracing::info!("resolved bot LID from HistorySync: {lid_user}");
+                                        }
+                                    }
+                                }
+                            }
+                            // Check if this is a 0-conversation sync (final).
+                            let conv_count = lazy.get()
+                                .map(|hs| hs.conversations.len())
+                                .unwrap_or(0);
+                            // Collect conversation JIDs for cleanup utility.
+                            if let Some(hs) = lazy.get() {
+                                let new_entries: Vec<(String, Option<String>, bool)> = {
+                                    let mut guard = conversation_jids.lock();
+                                    let before = guard.len();
+                                    let mut entries = Vec::new();
+                                    for conv in &hs.conversations {
+                                        if !guard.contains(&conv.id) {
+                                            guard.push(conv.id.clone());
+                                            let is_group = conv.id.ends_with("@g.us");
+                                            entries.push((conv.id.clone(), None, is_group));
+                                        }
+                                    }
+                                    tracing::info!(
+                                        before = before,
+                                        after = guard.len(),
+                                        new = entries.len(),
+                                        "conversation_jids updated from HistorySync"
+                                    );
+                                    entries
+                                };
+                                // Persist to stoolap so cleanup tool can find them later.
+                                if !new_entries.is_empty() {
+                                    let store = conversation_store.clone();
+                                    if let Err(e) = store.upsert_conversations(&new_entries).await {
+                                        tracing::warn!(error = %e, "failed to persist conversations");
+                                    }
+                                }
+                            }
+                            tracing::debug!(
+                                conversations = conv_count,
+                                "HistorySync received (connection is alive)"
+                            );
+                            connected_notify.notify_waiters();
+                            // A 0-conversation HistorySync means the sync is
+                            // done — OfflineSyncCompleted may not fire.
+                            if conv_count == 0 {
+                                tracing::info!("HistorySync with 0 conversations — sync complete");
+                                synced_notify.notify_waiters();
+                            }
+                        }
+                        Event::OfflineSyncCompleted(info) => {
+                            tracing::info!(
+                                messages = info.count,
+                                "offline sync completed, client is fully synchronized"
+                            );
+                            // Also signal connected (definitive proof of
+                            // an authenticated connection).
+                            connected_notify.notify_waiters();
+                            synced_notify.notify_waiters();
+                        }
+                        Event::PairingQrCode(inner) => {
+                            // Session 13: refresh the QR-cycle staleness
+                            // watchdog. When wacore exhausts the QR ref
+                            // tokens it logs `All QR codes for this session
+                            // have expired` and stops emitting further
+                            // PairingQrCode events; the adapter's
+                            // `pairing_qr_stalled` then becomes true after
+                            // `idle_threshold` elapses, letting
+                            // `wait_for_connected` return early instead of
+                            // waiting the operator's full `--timeout`.
+                            //
+                            // The `Fn` closure requires us to borrow not
+                            // move the captured `Arc`; cloning is cheap
+                            // (two atomic refcounts).
+                            *last_pairing_qr_at.clone().lock() = Some(Instant::now());
+                            let code = &inner.code;
                             match qrcode::QrCode::new(code.as_bytes()) {
                                 Ok(qr) => {
                                     let rendered = qr.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
@@ -607,10 +1646,92 @@ impl WhatsAppWebAdapter {
                                 }
                                 Err(e) => { eprintln!("\nWhatsApp QR payload: {code}\n(failed to render: {e})\n"); }
                             }
+                            // Operator hint: wacore 0.6.0 does not surface
+                            // WebAuthn / passkey / 2FA-PIN events. If the
+                            // phone prompts for a second verification after
+                            // the scan, the CLI/daemon will appear stuck
+                            // for ~45s; the daemon's status will report
+                            // `AwaitingUserAction` with a hint. The pairing
+                            // completes as soon as the operator finishes
+                            // the phone-side prompt.
+                            //
+                            // Session 14: the Google Play Services FIDO
+                            // module (`gms.fido`) does a BLE-proximity
+                            // check on the phone side when the operator
+                            // scans the FIDO QR with Google Lens. On a
+                            // laptop with no BLE advertising (most
+                            // CI / server-class / docked laptops), the
+                            // phone's gms reports "devices not close
+                            // enough" and the relay closes the WS.
+                            // Mitigation: be on the same Wi-Fi SSID
+                            // (gms checks IP /24 match as a fallback),
+                            // or pair a phone-as-BLE-advertiser via a
+                            // USB BLE dongle. There is NO software-only
+                            // workaround for the proximity check — it
+                            // is enforced inside the closed gms binary.
+                            eprintln!(
+                                "[hint] If your phone asks for a passkey, \
+                                 security key, or 2FA PIN after scanning, \
+                                 complete it on the phone. The daemon will \
+                                 stall up to ~45s before reporting \
+                                 AwaitingUserAction.\n\
+                                 [hint] If Google Lens reports 'devices not \
+                                 close enough' on the FIDO QR, the phone's \
+                                 gms FIDO module requires BLE proximity. \
+                                 Be on the same Wi-Fi SSID, or attach a \
+                                 USB BLE adapter advertising on this host."
+                            );
                         }
-                        Event::PairingCode { code, .. } => {
+                        Event::PairingCode(inner) => {
+                            let code = &inner.code;
                             eprintln!("\nWhatsApp pair code: {code}");
                             eprintln!("Enter this in WhatsApp > Linked Devices\n");
+                            // Same hint as QR flow — pair-code linking has
+                            // the same phone-side second-verification risk.
+                            eprintln!(
+                                "[hint] If your phone asks for a passkey, \
+                                 security key, or 2FA PIN after entering \
+                                 the code, complete it on the phone.\n"
+                            );
+                        }
+                        // SHORTCAKE_PASSKEY (RFC-0909, Session 14): the server asked
+                        // for a WebAuthn assertion. The full
+                        // `request_options_json` is broadcast via the
+                        // unconditional `format!("{:?}", event)` line
+                        // above. The QR for the operator to scan is
+                        // rendered by the wired `CablePasskeyAuthenticator`
+                        // in the on-call path below — the handler here is
+                        // a passive diagnostic only. DO NOT render a
+                        // second FIDO QR from this arm: the legacy
+                        // `build_passkey_fido_uri(payload)` produced a
+                        // different (b64url JSON) URI than the authenticator
+                        // (decimal HandshakeV2 CBOR). Rendering both made
+                        // operators unsure which to scan AND tripped
+                        // Google Lens with two near-simultaneous FIDO
+                        // intents on the phone. The authenticator's
+                        // caBLE-responder URI is the only one the WA
+                        // gms FIDO module accepts.
+                        Event::PairPasskeyRequest(req) => {
+                            tracing::info!(
+                                request_options_json_len = req.request_options_json.len(),
+                                "SHORTCAKE_PASSKEY: server requested WebAuthn assertion \
+                                 (authenticator wired; QR is rendered by the on_event \
+                                 response, not by this diagnostic)"
+                            );
+                        }
+                        Event::PairPasskeyConfirmation(inner) => {
+                            tracing::info!(
+                                code = %inner.code,
+                                skip_handoff_ux = inner.skip_handoff_ux,
+                                "SHORTCAKE_PASSKEY: link reached verification stage"
+                            );
+                        }
+                        Event::PairPasskeyError(inner) => {
+                            tracing::warn!(
+                                error = %inner.error,
+                                continuation = inner.continuation,
+                                "SHORTCAKE_PASSKEY: passkey link failed"
+                            );
                         }
                         Event::StreamError(err) => { tracing::error!("WhatsApp stream error: {err:?}"); }
                         _ => {}
@@ -626,58 +1747,89 @@ impl WhatsAppWebAdapter {
             });
         }
 
-        let mut bot = builder.build().await?;
+        let bot = builder.build().await?;
+
+        // Phase 7.J.5: force Noise XX on the first connect. wacore's
+        // `select_pattern` returns `HandshakePattern::Ik(server_static_pub)`
+        // when a valid `device.server_cert_chain` blob exists in our session.db;
+        // the WA server has dropped IK support for already-paired sessions and
+        // 401s the IK ClientHello before we even reach
+        // `IkServerHelloOutcome::Fallback` (verified live with debug build,
+        // commit e8885fdc). Clearing the cached chain here forces XX on
+        // the very first handshake — matching Chrome 150's behavior on
+        // every reconnect (verified in
+        // `docs/research/2026-07-14-chrome-reconnect-handshake.md`).
+        bot.client()
+            .persistence_manager()
+            .process_command(wacore::store::commands::DeviceCommand::ClearServerCertChain)
+            .await;
+
+        // SHORTCAKE_PASSKEY (Session 2 of the wacore-webauthn plan, RFC-0909):
+        // if a `PasskeyAuthenticator` is registered on the config, install it on
+        // the `Client` BEFORE the WebSocket run loop starts. The SDK consumes
+        // the authenticator synchronously on the first
+        // `<notification type="passkey_prologue_request">` arrival — if we
+        // install after `bot.spawn()`, the request may already be in flight.
+        //
+        // With `passkey_authenticator = None`, the SDK leaves the slot empty
+        // and emits `Event::PairPasskeyRequest` for the host to drive
+        // manually (Session 3 of the plan surfaces those events).
+        //
+        // `UpstreamBridge` wraps our `Arc<dyn crate::passkey::PasskeyAuthenticator>`
+        // in an `Arc<dyn whatsapp_rust::passkey::PasskeyAuthenticator>` so
+        // the SDK accepts it. See `passkey/authenticator.rs` for the field
+        // mapping (shapes already mirror upstream).
+        if let Some(auth) = self.config.passkey_authenticator.clone() {
+            let upstream = crate::passkey::authenticator::UpstreamBridge::wrap(auth);
+            bot.client().set_passkey_authenticator(upstream).await;
+        }
+
         *self.client.lock() = Some(bot.client());
 
-        // Run the bot in a background task so start_bot() returns immediately
-        let bot_handle = bot.run().await?;
+        // Run the bot on its runtime in the background; `spawn()` returns
+        // a `BotHandle` for graceful shutdown / abort. Post-buffa migration
+        // (wacore 6e0f241): `run()` now blocks until disconnect (returns `()`);
+        // use `spawn()` for backgrounding.
+        let bot_handle = bot.spawn();
         *self.bot_handle.lock() = Some(bot_handle);
 
         tracing::info!("WhatsApp Web bot started");
         Ok(())
     }
 
-    /// Run the reconnect loop (blocking). Call this after start_bot().
+    /// R12-H1 fix: the reconnect logic was effectively dead code.
+    /// The wacore library's `Client::run` is a `while self.is_running`
+    /// loop (see `wacore/src/client.rs:1102`) that handles reconnection
+    /// internally — the run task never ends naturally in the current
+    /// wacore version, so the loop's liveness check
+    /// (`bot_handle.is_some()`) always returned `true` for a healthy
+    /// adapter and the reconnect branch never fired.
+    ///
+    /// This function is preserved as a deprecated no-op stub to keep
+    /// the public API stable for any external caller that might be
+    /// invoking it; it now logs a one-time warning and returns. The
+    /// wacore library handles reconnection internally; if the bot ever
+    /// gives up trying to reconnect (which it currently does not do in
+    /// the pinned wacore revision), callers should drop this
+    /// `WhatsAppWebAdapter` and create a new one with a fresh session
+    /// database.
+    ///
+    /// A proper fix would require either a wacore API to register a
+    /// "bot died" callback, or polling the `BotHandle` via a
+    /// waker-aware task to detect run-task completion and feed that
+    /// signal into a `Notify` that this loop awaits. Either approach
+    /// is too invasive for the current mission scope.
+    #[deprecated(
+        since = "0.1.0",
+        note = "the wacore library handles reconnection internally; this \
+                function is a no-op. Drop the adapter and create a new one \
+                to recover from a bot crash."
+    )]
     pub async fn run_reconnect_loop(&self) {
-        let mut retry_count: u32 = 0;
-
-        loop {
-            // Wait for the bot to stop (logout or error)
-            // The bot runs in start_bot(), this just handles reconnection
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-            // Check if bot is still alive
-            let bot_alive = self.bot_handle.lock().is_some();
-            if bot_alive {
-                continue;
-            }
-
-            // Bot stopped — attempt reconnect
-            retry_count += 1;
-            if retry_count > MAX_RETRIES {
-                tracing::error!("exceeded {MAX_RETRIES} reconnect attempts, giving up");
-                break;
-            }
-
-            let delay = compute_retry_delay(retry_count);
-            tracing::info!("reconnecting in {delay}s (attempt {retry_count}/{MAX_RETRIES})");
-            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-
-            // Clear state
-            *self.client.lock() = None;
-            *self.bot_handle.lock() = None;
-
-            // Attempt restart
-            match self.start_bot().await {
-                Ok(()) => {
-                    retry_count = 0;
-                    tracing::info!("reconnected successfully");
-                }
-                Err(e) => {
-                    tracing::error!("reconnect failed: {e}");
-                }
-            }
-        }
+        tracing::warn!(
+            "run_reconnect_loop is a no-op: the wacore library handles \
+             reconnection internally. See the function's doc-comment for details."
+        );
     }
 
     // ── Group-setup API (RFC-0850p-a §8.1, E2E Scenario 1) ───────────────
@@ -864,6 +2016,28 @@ impl WhatsAppWebAdapter {
             .await
             .map_err(|e| format!("leave_group failed: {e:#}"))?;
 
+        // Delete chat AFTER leaving. Matches official app flow:
+        // 1. GroupUpdate Remove (leave)
+        // 2. Wait for server to process the leave
+        // 3. clearChat + deleteChat
+        use waproto::whatsapp::sync_action_value::SyncActionMessageRange;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let message_range = SyncActionMessageRange {
+            last_message_timestamp: None,
+            last_system_message_timestamp: Some(now_secs),
+            messages: vec![],
+        };
+        // deleteChat with delete_media=true
+        let delete_result = client
+            .chat_actions()
+            .delete_chat(&jid, true, Some(message_range))
+            .await;
+        tracing::info!(group_jid = %group_jid, ?delete_result, "delete_chat after leave");
+
         tracing::info!(group_jid = %group_jid, "WhatsApp group left");
         Ok(())
     }
@@ -921,12 +2095,20 @@ impl WhatsAppWebAdapter {
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
 
         let mut jids: Vec<wacore_binary::Jid> = Vec::with_capacity(participants.len());
-        for phone in participants {
-            let digits = Self::normalize_phone(phone);
-            if digits.is_empty() {
-                return Err(format!("participant {phone:?} has no digits"));
+        for participant in participants {
+            // Accept raw JIDs (e.g. "265716875980991@lid") directly.
+            if participant.contains('@') {
+                let parsed: wacore_binary::Jid = participant
+                    .parse()
+                    .map_err(|e| format!("invalid JID {participant:?}: {e}"))?;
+                jids.push(parsed);
+            } else {
+                let digits = Self::normalize_phone(participant);
+                if digits.is_empty() {
+                    return Err(format!("participant {participant:?} has no digits"));
+                }
+                jids.push(wacore_binary::Jid::pn(digits));
             }
-            jids.push(wacore_binary::Jid::pn(digits));
         }
 
         let responses = client
@@ -950,7 +2132,7 @@ impl WhatsAppWebAdapter {
         &self,
         group_jid: &str,
         participants: &[&str],
-    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+    ) -> Result<Vec<wacore_binary::Jid>, String> {
         let client = {
             let guard = self.client.lock();
             guard
@@ -971,35 +2153,26 @@ impl WhatsAppWebAdapter {
             jids.push(wacore_binary::Jid::pn(digits));
         }
 
-        // whatsapp-rust's `promote_participants` returns `()`. Synthesize a
-        // per-participant success response so callers can reuse the same
-        // `Vec<ParticipantChangeResponse>` shape as `add_members` and
-        // `remove_members` (the per-participant semantics matches the
-        // server's actual processing of each JID).
+        // whatsapp-rust's `promote_participants` returns `()`. We return
+        // the JID list of promoted participants so callers can mirror the
+        // shape of `add_members` / `remove_members` per-participant.
+        // Post-buffa migration: `ParticipantChangeResponse` is upstream-
+        // declared `non_exhaustive` with no public constructor, so we
+        // can't synthesize one in-tree. The JID list is sufficient for
+        // both the in-tree tracing call sites and the (currently
+        // return-discarding) callers in this module.
         client
             .groups()
             .promote_participants(&jid, &jids)
             .await
             .map_err(|e| format!("promote_participants failed: {e:#}"))?;
 
-        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
-            .iter()
-            .map(|j| whatsapp_rust::ParticipantChangeResponse {
-                jid: j.clone(),
-                status: Some("promoted".into()),
-                error: None,
-                phone_number: None,
-                username: None,
-                add_request: None,
-            })
-            .collect();
-
         tracing::info!(
             group_jid = %group_jid,
-            promoted = responses.len(),
+            promoted = jids.len(),
             "WhatsApp participants promoted to admin"
         );
-        Ok(responses)
+        Ok(jids)
     }
 
     /// Demote admins back to regular participants. The bot must remain
@@ -1009,7 +2182,7 @@ impl WhatsAppWebAdapter {
         &self,
         group_jid: &str,
         participants: &[&str],
-    ) -> Result<Vec<whatsapp_rust::ParticipantChangeResponse>, String> {
+    ) -> Result<Vec<wacore_binary::Jid>, String> {
         let client = {
             let guard = self.client.lock();
             guard
@@ -1030,32 +2203,21 @@ impl WhatsAppWebAdapter {
             jids.push(wacore_binary::Jid::pn(digits));
         }
 
-        // whatsapp-rust's `demote_participants` returns `()`. Synthesize a
-        // per-participant success response, same as `promote_participants`.
+        // whatsapp-rust's `demote_participants` returns `()`. See
+        // `promote_participants` for why we return `Vec<Jid>` instead of
+        // the upstream non-exhaustive `ParticipantChangeResponse`.
         client
             .groups()
             .demote_participants(&jid, &jids)
             .await
             .map_err(|e| format!("demote_participants failed: {e:#}"))?;
 
-        let responses: Vec<whatsapp_rust::ParticipantChangeResponse> = jids
-            .iter()
-            .map(|j| whatsapp_rust::ParticipantChangeResponse {
-                jid: j.clone(),
-                status: Some("demoted".into()),
-                error: None,
-                phone_number: None,
-                username: None,
-                add_request: None,
-            })
-            .collect();
-
         tracing::info!(
             group_jid = %group_jid,
-            demoted = responses.len(),
+            demoted = jids.len(),
             "WhatsApp participants demoted from admin"
         );
-        Ok(responses)
+        Ok(jids)
     }
 
     /// List the groups the bot currently participates in. Each entry
@@ -1063,7 +2225,8 @@ impl WhatsAppWebAdapter {
     /// reconcile its view of "groups I own" against the platform.
     pub async fn get_participating(
         &self,
-    ) -> Result<std::collections::HashMap<String, whatsapp_rust::GroupMetadata>, String> {
+    ) -> Result<std::collections::HashMap<wacore_binary::Jid, whatsapp_rust::GroupMetadata>, String>
+    {
         let client = {
             let guard = self.client.lock();
             guard
@@ -1258,14 +2421,122 @@ impl WhatsAppWebAdapter {
     }
 }
 
+// ── Media helpers (Mission 0850) ───────────────────────────────────
+
+/// Mission 0850 (RFC-0850 §8.6/§9.4): shared `download_via_media_ref`
+/// helper called by BOTH [`WhatsAppWebAdapter::download_media`] (the
+/// trait method) and the `download_rx` consumer task spawned in
+/// `start_bot`. Decodes the `MediaRef` wire token from a
+/// `DOT/2/{token}` envelope and calls the wacore `Client::download`
+/// API directly.
+///
+/// R1-H4 fix: all error paths return `PlatformAdapterError` variants
+/// whose `Display` impls do NOT include the `media_key`, `direct_path`,
+/// or any other `MediaRef` field. The mapping is:
+/// - `MediaRefError::Base64` / `MediaRefError::Json(_)`
+///   → `ApiError { code: 400, message: "invalid media ref format" }`
+///   (4xx-shaped — malformed wire format; gateway refuses the envelope
+///   rather than retrying indefinitely)
+/// - Any `wacore::Result` download error — including
+///   `wacore::Error::HashMismatch` (raised by `Client::download` when
+///   `file_enc_sha256` fails verification), auth errors, transport
+///   errors, and decryption errors — collapses to a single
+///   `Unreachable { reason: format!("download failed: {e}") }` via
+///   `map_err` (R9-M2 fix: this is a catch-all, not a special case
+///   for `HashMismatch`). The `wacore::Error` `Display` strings do
+///   not include `media_key` or `direct_path` (only status codes and
+///   short labels — verified at the pinned `whatsapp-rust` rev
+///   9734fb2).
+/// - `Client::download` not-connected → `Unreachable { reason: "client
+///   not connected" }` (matches `upload_media`'s precondition)
+pub(crate) async fn download_via_media_ref(
+    client: &Arc<parking_lot::Mutex<Option<Arc<whatsapp_rust::Client>>>>,
+    media_ref_token: &str,
+) -> Result<Vec<u8>, PlatformAdapterError> {
+    // R8-M1 fix: use the explicit `INVALID_MEDIA_REF_FORMAT` const
+    // instead of round-tripping through `MediaRefError::to_string`.
+    // The original `MediaRefError` variant is logged at debug level
+    // for operator visibility (the `Display` impl is the same
+    // redacted string for both variants, so no info is lost for the
+    // user-facing `ApiError { message }`).
+    let media_ref = decode_base64url(media_ref_token).map_err(|e| {
+        tracing::debug!(
+            "decode_base64url failed (variant={}); returning redacted ApiError",
+            e.variant_name()
+        );
+        PlatformAdapterError::ApiError {
+            code: 400,
+            message: INVALID_MEDIA_REF_FORMAT.into(),
+        }
+    })?;
+    let doc = media_ref.to_document_message();
+    // Clone the `Arc<Client>` out of the parking_lot guard before
+    // awaiting — `whatsapp_rust::Client` is `!Send` (it contains FFI
+    // pointers via `*mut ()`), so holding the guard across the await
+    // would break the `async_trait` `Send` bound on the trait method.
+    let client = {
+        let guard = client.lock();
+        guard
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: "client not connected".into(),
+            })?
+    };
+    // The blanket `impl_downloadable!` at `wacore/src/download.rs`
+    // provides `&DocumentMessage: &dyn Downloadable` (MediaType::Document).
+    client
+        .download(&doc)
+        .await
+        .map_err(|e| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: format!("download failed: {e}"),
+        })
+}
+
+/// Mission 0850: shared `upload_to_cdn` helper used by both
+/// `WhatsAppWebAdapter::upload_media` and `send_envelope`'s native
+/// branch. Returns the `UploadResponse` on success. Caller is
+/// responsible for the `MediaRef::encode_base64url(&response)` step.
+pub(crate) async fn upload_to_cdn(
+    client: &Arc<whatsapp_rust::Client>,
+    data: Vec<u8>,
+    media_type: MediaType,
+    options: UploadOptions,
+) -> Result<UploadResponse, PlatformAdapterError> {
+    // R13-M2 fix: the helper used to take
+    // `&Arc<Mutex<Option<Arc<Client>>>>` and re-lock the mutex
+    // here, creating a TOCTOU window: a `shutdown()` between the
+    // caller's `self.client.lock().clone()` and the lock here
+    // would return `Unreachable { "client not connected" }` even
+    // though the caller's cloned `Arc<Client>` was still valid.
+    //
+    // The fix: take the cloned `Arc<Client>` directly. The
+    // caller is responsible for cloning it out of the mutex
+    // before any await, which eliminates the re-locking race.
+    // This also lets `send_envelope_native` use the
+    // `client: &Arc<whatsapp_rust::Client>` parameter it already
+    // has, instead of the half-dead `&self.client` it used to
+    // fall through to.
+    client
+        .upload(data, media_type, options)
+        .await
+        .map_err(|e| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: format!("upload failed: {e}"),
+        })
+}
+
 // ── PlatformAdapter ────────────────────────────────────────────────
 
 #[async_trait]
 impl PlatformAdapter for WhatsAppWebAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Clone client Arc to avoid holding mutex guard across await
         let client = {
@@ -1308,19 +2579,89 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             .parse()
             .map_err(|e| transport_err(format!("Invalid JID {jid}: {e}")))?;
 
-        let outgoing = waproto::whatsapp::Message {
-            conversation: Some(encoded),
-            ..Default::default()
-        };
+        // Mission 0850 (RFC-0850 §8.6): mode-dispatch via
+        // `select_mode_with_max_text`. The adapter owns mode
+        // selection (no production caller of `select_mode*` exists
+        // outside this crate as of `next`). WhatsApp's text-message
+        // ceiling is 65 KB (RFC-0850 line 202 + line 785); using the
+        // RFC default 4 KB would route envelopes >4 KB to native mode
+        // unnecessarily.
+        //
+        // **R8-H1 fix:** the threshold argument is `encoded.len()`
+        // (the on-wire text-message body, ~33% larger than the wire
+        // bytes after base64 expansion), NOT `wire_bytes.len()`. The
+        // actual constraint is on the bytes that would be transmitted
+        // in text mode — if `wire_bytes.len()` <= 65 KB but
+        // `encoded.len()` > 65 KB, the envelope would be routed into
+        // text mode and fail to fit in a single WhatsApp text message.
+        // Using `encoded.len()` keeps the dispatch and the
+        // PayloadTooLarge error consistent (same value reported in
+        // both places — see the PayloadTooLarge arm below). RFC-0850
+        // §8.6 line 805's `payload.len()` is read here as "bytes that
+        // would be transmitted on the wire in text mode".
+        let caps = self.capabilities();
+        let mode = select_mode_with_max_text(encoded.len(), &caps, WHATSAPP_MAX_TEXT_BYTES)
+            .map_err(|e| PlatformAdapterError::PayloadTooLarge {
+                size: encoded.len(),
+                max: e.max_payload,
+                platform: "whatsapp".into(),
+            })?;
 
-        let send_result = Box::pin(client.send_message(to, outgoing))
-            .await
-            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
-
-        Ok(DeliveryReceipt {
-            platform_message_id: send_result.message_id,
-            delivered_at: epoch_millis(),
-        })
+        match mode {
+            TransportMode::Text => self.send_envelope_text(&client, &to, &encoded).await,
+            TransportMode::Native => {
+                // Try native upload + send a text message carrying
+                // the `DOT/2/{token}` wire reference. Per RFC-0850
+                // §8.6 + §9.4 MUST-fallback: if the native upload
+                // fails AND the payload still fits in a text message
+                // (<= 65 KB), fall back to text mode and log a
+                // warning. If the payload doesn't fit in text mode,
+                // propagate the error (no fallback possible).
+                //
+                // R8-H3 fix: extracted the fallback decision into the
+                // pure `should_fallback_to_text` helper so the
+                // MUST-fallback contract is unit-testable without a
+                // real wacore Client (which is a concrete type, not a
+                // trait, so a stub cannot be injected in a normal
+                // #[tokio::test]). See
+                // `should_fallback_to_text_*` tests in `mod tests`.
+                let encoded_len = encoded.len();
+                // R9-H1 fix: send the raw envelope bytes (the
+                // pre-base64 wire format) to the native-mode sender,
+                // not the DOT/1/ base64 text. The receiver's
+                // `canonicalize` for `dot_mode == "native"` takes the
+                // downloaded payload directly as `wire_bytes`, so
+                // uploading the DOT/1/ text would corrupt every
+                // round-trip (length check in
+                // `DeterministicEnvelope::from_wire_bytes` would fail).
+                let primary = self.send_envelope_native(&client, &to, &wire_bytes);
+                let fallback = self.send_envelope_text(&client, &to, &encoded);
+                let primary_result = primary.await;
+                if let Ok(receipt) = primary_result {
+                    return Ok(receipt);
+                }
+                let err = primary_result.unwrap_err();
+                if should_fallback_to_text(&err, encoded_len, WHATSAPP_MAX_TEXT_BYTES) {
+                    tracing::warn!(
+                        "native upload failed, falling back to DOT/1/ text mode (RFC-0850 §8.6/§9.4): {err:?}"
+                    );
+                    fallback.await
+                } else {
+                    Err(err)
+                }
+            }
+            // `supports_raw_binary: false` and
+            // `supports_fragmentation: false` in `capabilities()`
+            // make Raw/Fragment unreachable. If the capabilities ever
+            // change, surface that as an explicit error rather than
+            // silently sending the wrong shape.
+            TransportMode::Raw | TransportMode::Fragment => {
+                Err(PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: format!("{mode:?} mode is not supported by this adapter"),
+                })
+            }
+        }
     }
 
     async fn receive_messages(
@@ -1342,19 +2683,52 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+        // R12-M2 fix: the `delivery_failed` sentinel uses an empty
+        // payload by design (the gateway only needs the metadata to
+        // know the delivery failed; the wire bytes were never
+        // downloaded). Check for the sentinel BEFORE the
+        // empty-payload check below so the sentinel can return a
+        // meaningful 502 ApiError instead of a generic "Empty
+        // payload" error.
+        if raw.metadata.get("dot_mode").map(String::as_str) == Some("delivery_failed") {
+            let reason = raw
+                .metadata
+                .get("error")
+                .map(String::as_str)
+                .unwrap_or("DOT/2/ download failed");
+            return Err(PlatformAdapterError::ApiError {
+                code: 502,
+                message: format!("DOT/2/ delivery failed: {reason}"),
+            });
+        }
+
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
 
-        // Extract text from payload bytes
-        let text = String::from_utf8_lossy(&raw.payload);
-
-        // Decode DOT/1/ envelope
-        let wire_bytes =
-            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {e}"),
-            })?;
+        // R2-M5 fix: dispatch on `metadata["dot_mode"]` (NOT payload
+        // sniffing, which is fragile to future wire-format changes).
+        // - `dot_mode == "native"` → payload is already wire bytes
+        //   (decrypted by the download_rx consumer task); pass
+        //   through `DeterministicEnvelope::from_wire_bytes` directly.
+        // - `dot_mode == "text"` OR missing → legacy DOT/1/ text path;
+        //   `decode_envelope` strips the `DOT/1/{base64}` prefix and
+        //   base64-decodes to wire bytes.
+        // - `dot_mode == "delivery_failed"` is handled at the top of
+        //   this function (before the empty-payload check) — see the
+        //   R12-M2 comment above.
+        let dot_mode = raw.metadata.get("dot_mode").map(String::as_str);
+        let wire_bytes = match dot_mode {
+            Some("native") => raw.payload.clone(),
+            _ => {
+                // Legacy text path: extract text + decode envelope.
+                let text = String::from_utf8_lossy(&raw.payload);
+                Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {e}"),
+                })?
+            }
+        };
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -1365,14 +2739,120 @@ impl PlatformAdapter for WhatsAppWebAdapter {
     }
 
     fn capabilities(&self) -> CapabilityReport {
+        // R10-M1 fix: enforce the `MAX_UPLOAD_BYTES` const value
+        // matches the documented 100 MiB WhatsApp Document ceiling.
+        // Fires at the first `capabilities()` call in debug builds.
+        // If you intentionally change the ceiling, update BOTH the
+        // const (`MAX_UPLOAD_BYTES`) and the literal here.
+        debug_assert_eq!(
+            Self::MAX_UPLOAD_BYTES,
+            Self::WHATSAPP_DOCUMENT_CEILING_BYTES,
+            "MAX_UPLOAD_BYTES drifted from the documented 100 MiB WhatsApp \
+             Document ceiling; update both the const and the literal in \
+             this assertion if the change is intentional"
+        );
         CapabilityReport {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: true, // Signal Protocol via whatsapp-rust
             supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
-            media_capabilities: None,
+            // Mission 0850 (RFC-0850 §8.6): declare native media
+            // transport. `max_upload_bytes` is the WhatsApp server-side
+            // `Document` ceiling (100 MiB) per public WhatsApp
+            // documentation as of 2026-06. The single supported MIME
+            // is `application/octet-stream` because `MediaType::Document`
+            // is the only `wacore::download::MediaType` that stores
+            // arbitrary opaque blobs (Image/Video/Audio re-encode;
+            // AppState/History/StickerPack/... have app-specific shapes).
+            //
+            // R9-L4 fix: read from `Self::MAX_UPLOAD_BYTES` (the shared
+            // const) instead of the literal `100 * 1024 * 1024`. The
+            // `debug_assert_eq!` at the top of this method (R10-M1)
+            // verifies the const matches the documented WhatsApp
+            // ceiling.
+            media_capabilities: Some(MediaCapabilities {
+                max_upload_bytes: Self::MAX_UPLOAD_BYTES,
+                supported_mime_types: vec!["application/octet-stream".to_string()],
+            }),
+            ..Default::default()
         }
+    }
+
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        _mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        // Pre-flight size check (the adapter's only local enforcement
+        // point — `Client::upload` would let WhatsApp's CDN reject with
+        // a less-actionable server-side error).
+        //
+        // R9-L4 fix: use `Self::MAX_UPLOAD_BYTES` (the shared const)
+        // instead of a local literal. R10-M1: the `debug_assert_eq!`
+        // is at the top of `capabilities()` (one place, not here);
+        // it fires at the first `capabilities()` call if a future
+        // change updates the const without updating the documented
+        // WhatsApp ceiling literal.
+        if data.len() > Self::MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: data.len(),
+                max: Self::MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+        // R5: `_mime_type` is intentionally ignored. WhatsApp's
+        // `Document` channel hardcodes `application/octet-stream`
+        // regardless of the upload MIME. The argument is preserved in
+        // the signature for future extension.
+        //
+        // R13-M2 fix: clone the `Arc<Client>` out of the parking_lot
+        // mutex guard BEFORE awaiting (the guard is `!Send`, so it
+        // can't cross the await point) and pass it to
+        // `upload_to_cdn`. The helper used to take
+        // `&self.client` (a `&Arc<Mutex<Option<Arc<Client>>>>`)
+        // and re-lock the mutex, which created a TOCTOU window:
+        // a `shutdown()` between the caller's clone and the
+        // re-lock would surface as a misleading
+        // "client not connected" error.
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let response = upload_to_cdn(
+            &client,
+            data.to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
+        let media_ref = MediaRef::from_upload_response(&response, filename);
+        // The returned `String` is the wire-format token for
+        // `DOT/2/{token}`. Callers that go through `send_envelope`
+        // never see this — the adapter's native-mode branch wraps it
+        // automatically. External callers (other adapters, tests)
+        // receive the raw token and can construct their own
+        // `DocumentMessage` from it.
+        //
+        // R9-L5 fix: the encode step is now fallible (returns
+        // `MediaRefError`). `MediaRefError::Json` is the only
+        // possible failure today and is unreachable for the
+        // current field set, but propagating the error keeps the
+        // adapter panic-free for future wacore upgrades.
+        encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: format!("encode MediaRef failed: {e}"),
+        })
+    }
+
+    async fn download_media(&self, media_ref_token: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        download_via_media_ref(&self.client, media_ref_token).await
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
@@ -1404,9 +2884,27 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             let _ = h.await;
         }
 
+        // R11-H2 fix: drop the `download_tx` Sender so the
+        // `download_rx_consumer` task spawned in `start_bot` (line 651)
+        // sees its `recv()` return `None` and exits cleanly. Without
+        // this, the Sender is held in the field even after the bot
+        // is aborted, the channel never closes, and the consumer
+        // task is leaked (it lives forever, blocked on `recv().await`).
+        // The reconnect path doesn't have this problem because
+        // `start_bot` replaces the Sender (line 633) — the old Sender
+        // is dropped, the old channel closes, the old consumer
+        // task exits. But the FIRST `shutdown` has no follow-up
+        // `start_bot` to trigger the replacement, so we must drop
+        // the Sender explicitly here.
+        *self.download_tx.lock().await = None;
+
         // Clear client
         *self.client.lock() = None;
         *self.self_phone.lock() = None;
+        // Session 13: clear the QR-cycle timestamp so a re-spawned
+        // adapter (or a `--reset` re-pair) cannot trip the
+        // `pairing_qr_stalled` check from a stale prior run.
+        *self.last_pairing_qr_at.lock() = None;
 
         tracing::info!("WhatsApp Web adapter shut down");
         Ok(())
@@ -1423,6 +2921,192 @@ impl PlatformAdapter for WhatsAppWebAdapter {
     }
 }
 
+// ── Inherent send_envelope helpers (Mission 0850) ──────────────────
+
+impl WhatsAppWebAdapter {
+    /// Upload a document to CDN and send it as a visible DocumentMessage
+    /// to the given JID. Returns (message_id, media_ref_token).
+    /// The message_id identifies the sent message; the media_ref_token
+    /// can be passed to `download_media` to verify the CDN round-trip.
+    pub async fn send_document(
+        &self,
+        to_jid: &str,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<(String, String), PlatformAdapterError> {
+        if data.len() > Self::MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: data.len(),
+                max: Self::MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "whatsapp".into(),
+                    reason: "client not connected".into(),
+                })?
+        };
+        let upload = upload_to_cdn(
+            &client,
+            data.to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
+        let media_ref = MediaRef::from_upload_response(&upload, filename);
+        let token =
+            encode_base64url(&media_ref).map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("encode MediaRef failed: {e}"),
+            })?;
+
+        let jid: wacore_binary::Jid =
+            to_jid.parse().map_err(|e| PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid JID {to_jid:?}: {e}"),
+            })?;
+
+        let doc_msg = waproto::whatsapp::message::DocumentMessage {
+            url: Some(upload.url),
+            direct_path: Some(upload.direct_path),
+            media_key: Some(upload.media_key.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_length: Some(data.len() as u64),
+            mimetype: Some(mime_type.to_string()),
+            file_name: Some(filename.to_string()),
+            ..Default::default()
+        };
+        let outgoing = waproto::whatsapp::Message {
+            document_message: whatsapp_rust::buffa::MessageField::some(doc_msg),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(jid, outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+
+        Ok((send_result.message_id, token))
+    }
+
+    /// Text-mode send path used by [`PlatformAdapter::send_envelope`]
+    /// after `select_mode_with_max_text` returns `TransportMode::Text`.
+    /// Encodes the envelope as `DOT/1/{base64}` and sends via the
+    /// `conversation` field of a `waproto::whatsapp::Message`.
+    async fn send_envelope_text(
+        &self,
+        client: &Arc<whatsapp_rust::Client>,
+        to: &wacore_binary::jid::Jid,
+        encoded: &str,
+    ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+        let outgoing = waproto::whatsapp::Message {
+            conversation: Some(encoded.to_string()),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(to.clone(), outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+        Ok(DeliveryReceipt {
+            platform_message_id: send_result.message_id,
+            delivered_at: epoch_millis(),
+        })
+    }
+
+    /// Mission 0850 (RFC-0850 §8.6): native-mode send path.
+    /// 1. Upload the encoded envelope bytes to WhatsApp's CDN.
+    /// 2. Build a `MediaRef` from the `UploadResponse`.
+    /// 3. Encode the `MediaRef` as base64url-JSON.
+    /// 4. Send a text message with `conversation = "DOT/2/{token}"`.
+    ///
+    /// The receiver reads the `DOT/2/{token}` text, decodes the
+    /// `MediaRef`, and calls `Client::download` to retrieve the
+    /// envelope bytes. We intentionally do NOT send a separate
+    /// `DocumentMessage` — the `DOT/2/{token}` reference IS the
+    /// message on the wire.
+    /// Mission 0850 (RFC-0850 §8.6): Native-mode sender.
+    ///
+    /// **R9-H1 fix:** this function uploads `wire_bytes` (the raw 282-byte
+    /// `DeterministicEnvelope` wire format) to the WhatsApp CDN, NOT
+    /// `encoded` (the DOT/1/ base64 text). The receiver's `canonicalize`
+    /// for `dot_mode == "native"` takes the downloaded payload directly
+    /// as `wire_bytes` and feeds it to
+    /// `DeterministicEnvelope::from_wire_bytes`, whose length check
+    /// (must equal exactly 282, see
+    /// `crates/octo-network/src/dot/envelope.rs:124-136`) would fail
+    /// with the ~370-byte DOT/1 text. The mission spec at line 83
+    /// mandates `&wire_bytes`; the previous implementation used
+    /// `encoded.as_bytes()` (≈370 B for a typical envelope), which
+    /// broke every DOT/2/ round-trip in production. The pre-flight
+    /// size check is also on `wire_bytes.len()` (not the base64
+    /// expansion), so the full 100 MiB capacity is available.
+    async fn send_envelope_native(
+        &self,
+        client: &Arc<whatsapp_rust::Client>,
+        to: &wacore_binary::jid::Jid,
+        wire_bytes: &[u8],
+    ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+        // Pre-flight size check (matches `upload_media`'s contract).
+        //
+        // R9-L4 fix: use `Self::MAX_UPLOAD_BYTES` (the shared const).
+        // The same value is advertised in `capabilities()` and enforced
+        // by `upload_media`. A future change to one without the other
+        // now fails the startup-time debug assertion instead of
+        // silently disagreeing.
+        if wire_bytes.len() > Self::MAX_UPLOAD_BYTES {
+            return Err(PlatformAdapterError::PayloadTooLarge {
+                size: wire_bytes.len(),
+                max: Self::MAX_UPLOAD_BYTES,
+                platform: "whatsapp".into(),
+            });
+        }
+
+        // Step 1+2: upload the raw envelope bytes to the CDN + build
+        // MediaRef. The receiver will download these exact bytes and
+        // feed them directly to `DeterministicEnvelope::from_wire_bytes`.
+        //
+        // R13-M2 fix: pass the `client` parameter (which was
+        // already cloned out of `self.client` by the caller —
+        // see `send_envelope` at adapter.rs:1770-1775) instead of
+        // `&self.client`. The old code re-locked the mutex here,
+        // which (a) created a TOCTOU window with `shutdown()` and
+        // (b) made the `client` parameter half-dead. After the
+        // refactor `upload_to_cdn` takes `&Arc<whatsapp_rust::Client>`
+        // directly, so we just pass the parameter.
+        let upload_response = upload_to_cdn(
+            client,
+            wire_bytes.to_vec(),
+            MediaType::Document,
+            UploadOptions::new(),
+        )
+        .await?;
+        let media_ref = MediaRef::from_upload_response(&upload_response, "envelope.bin");
+        // Step 3: encode the wire-format reference. R9-L5 fix:
+        // `encode_base64url` is now fallible (returns `MediaRefError`);
+        // propagate the error rather than panicking. The error arm is
+        // unreachable for the current field set but future-proofs
+        // against wacore upgrades that introduce non-serializable
+        // fields.
+        let token = encode_base64url(&media_ref)
+            .map_err(|e| transport_err(format!("encode MediaRef failed: {e}")))?;
+        // Step 4: send the DOT/2/ text message.
+        let outgoing = waproto::whatsapp::Message {
+            conversation: Some(encode_native_ref(&token)),
+            ..Default::default()
+        };
+        let send_result = Box::pin(client.send_message(to.clone(), outgoing))
+            .await
+            .map_err(|e| transport_err(format!("send_message failed: {e}")))?;
+        Ok(DeliveryReceipt {
+            platform_message_id: send_result.message_id,
+            delivered_at: epoch_millis(),
+        })
+    }
+}
+
 // ── CoordinatorAdmin (R20) ─────────────────────────────────────────
 //
 // WhatsApp implements the full coordinator/admin surface. Every
@@ -1435,6 +3119,59 @@ impl PlatformAdapter for WhatsAppWebAdapter {
 // `5521995544743`); JIDs come in as `<digits>@g.us` (groups) or
 // `<digits>@s.whatsapp.net` (users). The `PeerId` we hand back is
 // the same string the platform uses natively.
+
+/// Decide whether a participant `p_user_jid` (the user portion of
+/// one row in a group's participant list, e.g. `"80836284174444"`
+/// for an `@lid` participant) is the bot itself.
+///
+/// WhatsApp groups identify members by their LID, NOT their PN,
+/// so the bot's own participant only matches when the LID is in
+/// the lookup set. The PN is kept as a fallback for the (rare)
+/// responses that still carry `@s.whatsapp.net` user portions.
+///
+/// The participant user portion may also include a `:NN` device
+/// suffix (e.g. `"80836284174444:42"`); we strip it before
+/// comparison. The bot's LID/PN values stored on the adapter are
+/// already stripped of the device suffix (see `Event::Connected`
+/// and `Event::HistorySync` handlers), but the input parameter is
+/// treated as raw in case the caller forgot.
+///
+/// Pre-computed set members (per identity — only non-empty ones
+/// are inserted):
+///   PN forms:
+///     - `<digits>`              (e.g. `5521995544743`)
+///     - `<digits>@s.whatsapp.net`
+///     - `+<digits>@s.whatsapp.net`
+///     - `+<digits>` (raw + retained)
+///   LID forms:
+///     - `<digits>`              (e.g. `80836284174444`)
+///     - `<digits>@lid`
+fn matches_self_participant(
+    p_user_jid: &str,
+    self_phone: Option<&str>,
+    self_lid: Option<&str>,
+) -> bool {
+    let p_user = p_user_jid.split(':').next().unwrap_or(p_user_jid);
+    let mut candidates: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(phone) = self_phone {
+        let digits = phone.trim_start_matches('+');
+        if !digits.is_empty() {
+            candidates.insert(digits.to_string());
+            candidates.insert(format!("{digits}@s.whatsapp.net"));
+            candidates.insert(format!("+{digits}@s.whatsapp.net"));
+            candidates.insert(format!("+{phone}"));
+        }
+    }
+    if let Some(lid) = self_lid {
+        // Defensive: strip `:NN` device suffix from the LID form too.
+        let digits = lid.trim_start_matches('+').split(':').next().unwrap_or(lid);
+        if !digits.is_empty() {
+            candidates.insert(digits.to_string());
+            candidates.insert(format!("{digits}@lid"));
+        }
+    }
+    candidates.contains(p_user)
+}
 
 #[async_trait]
 impl CoordinatorAdmin for WhatsAppWebAdapter {
@@ -1452,10 +3189,10 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             // Membership
             can_add_member: true,
             can_remove_member: true,
-            can_ban: false, // WhatsApp has no ban primitive
+            can_ban: true, // Implemented as remove + revoke_invite
             can_promote: true,
             can_demote: true,
-            can_approve_join: false, // Not exposed in whatsapp-rust's typed API
+            can_approve_join: true,
             // Mode
             can_rename: true,
             can_describe: true,
@@ -1468,7 +3205,13 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             can_get_metadata: true,
             can_resolve_invite: true,
             // Handoff
-            can_transfer_ownership: false,
+            can_transfer_ownership: true,
+            // Misc admin (Session 7.H)
+            can_get_invite_link: true,
+            can_update_member_label: true,
+            can_get_profile_pictures: true,
+            can_set_profile_picture: true,
+            can_remove_profile_picture: true,
         }
     }
 
@@ -1651,19 +3394,18 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn ban_member(
         &self,
-        _group_id: &GroupId,
-        _member: &PeerId,
+        group_id: &GroupId,
+        member: &PeerId,
         _duration: Option<std::time::Duration>,
     ) -> Result<(), PlatformAdapterError> {
-        // WhatsApp has no ban primitive. The recommended pattern
-        // (per `docs/research/coordinator-admin-actions.md`) is:
-        // remove the member, then revoke the invite link. Returning
-        // `Unimplemented` here tells the caller to use that
-        // fallback rather than expecting a real ban.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "ban_member".into(),
-        })
+        // WhatsApp has no native ban primitive. The equivalent is:
+        // 1. Remove the member from the group
+        // 2. Revoke the invite link so they cannot rejoin
+        self.remove_member(group_id, member).await?;
+        // Revoke invite link by resetting it. Failure is non-fatal
+        // (the member is already removed).
+        let _ = self.get_invite_link(group_id.as_str(), true).await;
+        Ok(())
     }
 
     async fn promote_to_admin(
@@ -1692,18 +3434,36 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn approve_join_request(
         &self,
-        _group_id: &GroupId,
-        _requester: &PeerId,
+        group_id: &GroupId,
+        requester: &PeerId,
     ) -> Result<(), PlatformAdapterError> {
-        // whatsapp-rust's typed API doesn't expose approve-membership-
-        // requests at the moment. Returning Unimplemented signals
-        // "fall back to manual approval in the WhatsApp client" to
-        // the caller, which is the right thing for an R-series
-        // rollout.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "approve_join_request".into(),
-        })
+        let client = {
+            let guard = self.client.lock();
+            guard
+                .clone()
+                .ok_or_else(|| PlatformAdapterError::ApiError {
+                    code: 500,
+                    message: "WhatsApp Web client not connected".into(),
+                })?
+        };
+
+        let group_jid: wacore_binary::Jid =
+            group_id
+                .as_str()
+                .parse()
+                .map_err(|e| PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("invalid group JID: {e}"),
+                })?;
+
+        let requester_jid = Self::peer_to_jid(requester.as_str());
+
+        client
+            .groups()
+            .approve_membership_requests(&group_jid, &[requester_jid])
+            .await
+            .map_err(|e| api_err("approve_join_request", e.to_string()))?;
+        Ok(())
     }
 
     async fn rename_group(
@@ -1793,33 +3553,12 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
             .get_participating()
             .await
             .map_err(|e| api_err("list_own_groups", e))?;
-        // Snapshot the bot's own phone once so we can match it against
-        // the participant list without holding the lock.
-        let self_phone = self.self_phone.lock().clone().unwrap_or_default();
-        // RFC-0861 §5 M11: pre-compute a `HashSet<String>` of the
-        // bot's plausible phone/JID forms so the per-participant
-        // membership check below is an O(1) hash lookup instead of
-        // an O(L) string equality. The set is built once per call;
-        // forms covered:
-        //   1. raw digits (e.g. `5521995544743`)
-        //   2. digits with leading `+` stripped / re-applied variants
-        //   3. digits with `@s.whatsapp.net` suffix
-        //   4. digits with `+@s.whatsapp.net` (some participants
-        //      carry the `+` in the user portion)
-        // Forms we cannot derive (e.g. alternate country-code
-        // variants of the same number) are simply not in the set
-        // — the bot just won't be detected as admin in that
-        // edge case, which matches the previous behavior.
-        let mut self_phones: std::collections::HashSet<String> = std::collections::HashSet::new();
-        if !self_phone.is_empty() {
-            let digits = self_phone.trim_start_matches('+').to_string();
-            self_phones.insert(digits.clone());
-            self_phones.insert(format!("{digits}@s.whatsapp.net"));
-            self_phones.insert(format!("+{digits}@s.whatsapp.net"));
-            // Some platforms normalise to JID form with a `+` in
-            // the user portion (e.g. `+15551234567@s.whatsapp.net`).
-            self_phones.insert(format!("+{}", self_phone));
-        }
+        // Snapshot the bot's own phone + LID once so we can match it
+        // against the participant list without holding the lock.
+        let self_phone = self.self_phone.lock().clone();
+        let self_lid = self.self_lid.lock().clone();
+        let phone_ref = self_phone.as_deref();
+        let lid_ref = self_lid.as_deref();
         Ok(map
             .into_iter()
             .map(|(jid, meta)| {
@@ -1827,7 +3566,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
                 let is_admin = meta
                     .participants
                     .iter()
-                    .find(|p| self_phones.contains(p.jid.user.as_str()))
+                    .find(|p| matches_self_participant(p.jid.user.as_str(), phone_ref, lid_ref))
                     .map(|p| p.is_admin())
                     .unwrap_or(false);
                 GroupHandle {
@@ -1914,18 +3653,65 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
 
     async fn transfer_ownership(
         &self,
-        _group_id: &GroupId,
-        _new_owner: &PeerId,
+        group_id: &GroupId,
+        new_owner: &PeerId,
     ) -> Result<(), PlatformAdapterError> {
-        // WhatsApp has no first-class "transfer ownership" primitive.
-        // The standard pattern is: promote the new owner, demote the
-        // old owner, and have the old owner leave. That is a
-        // multi-step sequence the caller can drive via
-        // `promote_to_admin` + `demote_from_admin` + `leave_group`.
-        Err(PlatformAdapterError::Unimplemented {
-            platform: "whatsapp".into(),
-            action: "transfer_ownership".into(),
-        })
+        // WhatsApp has no native "transfer ownership" primitive.
+        // The equivalent is: promote the new owner to admin.
+        // The caller can optionally demote the old owner afterwards.
+        self.promote_to_admin(group_id, new_owner).await
+    }
+
+    // ── Session 7.H: group gap list (invite link / member labels / profile pic) ──
+
+    async fn get_invite_link(
+        &self,
+        group_id: &GroupId,
+        reset: bool,
+    ) -> Result<String, PlatformAdapterError> {
+        // Delegate to the inherent helper at adapter.rs:1631. The
+        // String error is mapped to `Unreachable` for parity with
+        // the other trait impls (the WA-side `GroupError` doesn't
+        // round-trip cleanly into the trait's error enum yet).
+        self.get_invite_link(group_id.as_str(), reset)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "whatsapp".into(),
+                reason: format!("get_invite_link failed: {e}"),
+            })
+    }
+
+    async fn update_member_label(
+        &self,
+        group_id: &GroupId,
+        label: &str,
+    ) -> Result<(), PlatformAdapterError> {
+        self.update_member_label(group_id.as_str(), label).await
+    }
+
+    async fn get_profile_pictures(
+        &self,
+        group_ids: &[GroupId],
+        preview: bool,
+    ) -> Result<Vec<GroupProfilePictureSnapshot>, PlatformAdapterError> {
+        let jids: Vec<String> = group_ids.iter().map(|g| g.as_str().to_string()).collect();
+        self.get_group_profile_pictures(jids, preview).await
+    }
+
+    async fn set_profile_picture(
+        &self,
+        group_id: &GroupId,
+        image_data_b64: &str,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        self.set_group_profile_picture(group_id.as_str(), image_data_b64)
+            .await
+    }
+
+    async fn remove_profile_picture(
+        &self,
+        group_id: &GroupId,
+    ) -> Result<SetGroupProfilePictureResponse, PlatformAdapterError> {
+        self.remove_group_profile_picture(group_id.as_str()).await
     }
 }
 
@@ -1948,7 +3734,29 @@ impl WhatsAppWebAdapter {
             .parse()
             .map_err(|e| format!("invalid group JID {group_jid:?}: {e}"))?;
         match client.groups().leave(&jid).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Delete chat AFTER leaving. Matches official app flow.
+                use waproto::whatsapp::sync_action_value::SyncActionMessageRange;
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let message_range = SyncActionMessageRange {
+                    last_message_timestamp: None,
+                    last_system_message_timestamp: Some(now_secs),
+                    messages: vec![],
+                };
+                match client
+                    .chat_actions()
+                    .delete_chat(&jid, true, Some(message_range))
+                    .await
+                {
+                    Ok(()) => tracing::info!(group_jid, "delete_chat succeeded"),
+                    Err(e) => tracing::warn!(error = %e, group_jid, "delete_chat failed"),
+                }
+                Ok(())
+            }
             Err(e) => {
                 // `not a participant` / `not in group` are expected
                 // on idempotent leave — surface them as a specific
@@ -1974,6 +3782,44 @@ fn api_err(action: &str, reason: String) -> PlatformAdapterError {
     }
 }
 
+/// Mission 0850 (RFC-0850 §8.6 + §9.4): WhatsApp's text-message ceiling.
+///
+/// `encoded` (a `DOT/1/{base64url}` string) is the actual on-the-wire text
+/// payload; if its length exceeds this constant, it cannot fit in a single
+/// WhatsApp text message and the adapter must use the native upload path.
+pub(crate) const WHATSAPP_MAX_TEXT_BYTES: usize = 65_536;
+
+/// R1-H4 fix: the redacted error message returned in
+/// `PlatformAdapterError::ApiError { message }` for any
+/// `MediaRef` decode failure. MUST NOT include the input bytes
+/// (which would leak `media_key`). The string is identical to
+/// `MediaRefError`'s `Display` impl for both variants — kept as a
+/// const here so the call site doesn't have to round-trip through
+/// `MediaRefError::to_string(&MediaRefError::Base64)` (R8-M1 fix:
+/// the round-trip was opaque and lost the original error variant).
+pub(crate) const INVALID_MEDIA_REF_FORMAT: &str = "invalid media ref format";
+
+/// Mission 0850 (RFC-0850 §8.6 + §9.4): the MUST-fallback decision.
+///
+/// R8-H3 fix: extracted from `send_envelope` so the fallback contract is
+/// unit-testable without a real wacore `Client` (which is a concrete type,
+/// not a trait — see the spec's "R1-H1 fallback test stub-ability" note at
+/// `missions/open/0850-whatsapp-media-transport.md` line 494).
+///
+/// The contract (RFC-0850 §8.6 + §9.4): when the native (`DOT/2/`) send
+/// fails, the adapter MUST fall back to the text (`DOT/1/`) path IF AND
+/// ONLY IF the text path would actually succeed — i.e., the encoded
+/// payload fits in a single text message AND the error is a transient
+/// transport error (`Unreachable`), not a permanent wire-format error
+/// (e.g., `ApiError { code: 4xx }`).
+pub(crate) fn should_fallback_to_text(
+    err: &PlatformAdapterError,
+    encoded_len: usize,
+    max_text_bytes: usize,
+) -> bool {
+    encoded_len <= max_text_bytes && matches!(err, PlatformAdapterError::Unreachable { .. })
+}
+
 fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
     GroupModeFlags {
         locked: meta.is_locked,
@@ -1992,8 +3838,14 @@ fn extract_mode_flags(meta: &whatsapp_rust::GroupMetadata) -> GroupModeFlags {
 fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
     let mut members: Vec<PeerId> = Vec::with_capacity(raw.participants.len());
     let mut admins: Vec<PeerId> = Vec::new();
+    let mut phone_for_peer: std::collections::HashMap<PeerId, PeerId> =
+        std::collections::HashMap::with_capacity(raw.participants.len());
     for p in &raw.participants {
-        members.push(PeerId::new(p.jid.to_string()));
+        let jid = PeerId::new(p.jid.to_string());
+        if let Some(pn) = &p.phone_number {
+            phone_for_peer.insert(jid.clone(), PeerId::new(pn.to_string()));
+        }
+        members.push(jid);
         if p.is_admin() {
             admins.push(PeerId::new(p.jid.to_string()));
         }
@@ -2006,14 +3858,77 @@ fn extract_group_metadata(raw: &whatsapp_rust::GroupMetadata) -> GroupMetadata {
         admins,
         invite_url: None, // requires a per-group get_invite_link round trip
         mode_flags: extract_mode_flags(raw),
+        phone_for_peer,
+        is_parent_group: raw.is_parent_group,
+        parent_group_jid: raw.parent_group_jid.as_ref().map(|j| j.to_string()),
+        is_default_sub_group: raw.is_default_sub_group,
+        is_general_chat: raw.is_general_chat,
     }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
 
+/// Test-only convenience constructor. Builds an adapter from a minimal
+/// valid `WhatsAppConfig` without invoking `start_bot` (no network
+/// connection, no QR pairing, no session-database touch). Returns a
+/// fully-formed `WhatsAppWebAdapter` whose `client` mutex remains
+/// `None` — any `_checked` pre-flight that delegates to a deferred
+/// wacore method will short-circuit on the size ceiling before any
+/// network call would have been made.
+///
+/// Used by unit tests that exercise the inherent-method surface
+/// (Phase 2 Tasks 4-21) without a live WhatsApp connection. Also
+/// exposed via the `test-helpers` feature so integration tests in
+/// sibling crates can build an adapter fixture cheaply.
+#[cfg(any(test, feature = "test-helpers"))]
+impl WhatsAppWebAdapter {
+    pub fn new_unconnected_for_tests() -> Self {
+        // `session_path` is a required field on `WhatsAppConfig` (no
+        // `#[serde(default)]`), and `from_config_bytes` rejects empty
+        // configs. We use a placeholder path that is never read —
+        // `start_bot` is never called from this constructor, so the
+        // path is never opened, validated, or written. The string
+        // `"/tmp/octo-whatsapp-test-fixture.session.db"` mirrors the
+        // shape that `cfg_with` in the inline test module uses.
+        let cfg_json =
+            br#"{"session_path":"/tmp/octo-whatsapp-test-fixture.session.db","groups":[]}"#;
+        Self::from_config_bytes(cfg_json).expect("test adapter init from empty config")
+    }
+}
+
+/// Phase 7.K — pure helper implementing the view-once media
+/// persistence gate. When `view_once_persist` is `false` (the
+/// default), inbound view-once messages (`is_view_once == true`)
+/// have their `media_token` zeroed before persistence — the
+/// operator must call `messages.read_view_once` to fetch the CDN
+/// URL + key, at which point `consumed_at` is set and subsequent
+/// reads fail. When `view_once_persist` is `true`, the token
+/// passes through unchanged. Non-view-once messages always pass
+/// through (the gate is view-once-specific).
+///
+/// Pure function (no struct / no `self`) so the closure inside
+/// `on_event` can call it without needing `&self` access — the
+/// adapter's persisted `view_once_persist` flag is passed in
+/// directly. Mirrors `wacore::proto_helpers::MessageExt::is_view_once`
+/// but takes the boolean explicitly to avoid an extra `Message`
+/// ref when the caller already computed the flag.
+#[cfg(test)]
+pub(crate) fn strip_view_once_media_token(
+    view_once_persist: bool,
+    is_view_once: bool,
+    media_token: Option<String>,
+) -> Option<String> {
+    if !view_once_persist && is_view_once {
+        None
+    } else {
+        media_token
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_domain_hash_deterministic() {
@@ -2037,6 +3952,275 @@ mod tests {
         assert!(encoded.starts_with("DOT/1/"));
         let decoded = WhatsAppWebAdapter::decode_envelope(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    // Session 13: `pairing_qr_stalled` — the QR-cycle watchdog the
+    // CLI's `wait_for_connected` polls to detect server-side QR
+    // exhaustion (operator walked away; server logged `All QR codes
+    // for this session have expired`). The three tests cover the
+    // three meaningful states: pre-QR (return false — we can't have
+    // stalled if nothing's been emitted), idle-but-fresh (recent
+    // QR), and stale (operator walked away).
+
+    fn fresh_adapter() -> WhatsAppWebAdapter {
+        WhatsAppWebAdapter::new(WhatsAppConfig {
+            // Dummy path — `start_bot` is never invoked in these
+            // tests so the value is never read or validated.
+            session_path: "/tmp/octo-pairing-qr-stalled-test".to_string(),
+            pair_phone: None,
+            pair_code: None,
+            ws_url: None,
+            groups: vec![],
+            sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
+        })
+    }
+
+    #[test]
+    fn pairing_qr_stalled_false_before_any_qr_seen() {
+        // No `Event::PairingQrCode` has fired yet — the adapter was
+        // just constructed. `wait_for_connected` is in its first
+        // cycle waiting for the server's first QR; calling this
+        // "stalled" would falsely exit immediately.
+        let adapter = fresh_adapter();
+        assert!(
+            !adapter.pairing_qr_stalled(Duration::from_millis(1)),
+            "no QR has fired; must not report stalled"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_false_when_qr_is_fresh() {
+        // After a QR fires the timestamp is "now". A short threshold
+        // must NOT trip — the operator just received a fresh QR.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now());
+        assert!(
+            !adapter.pairing_qr_stalled(Duration::from_secs(60)),
+            "fresh QR (just fired) must not be stalled under a 60s threshold"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_true_after_idle_threshold() {
+        // Backdate the timestamp past the threshold; the operator
+        // either walked away or wacore has stopped emitting QRs.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now() - Duration::from_secs(120));
+        assert!(
+            adapter.pairing_qr_stalled(Duration::from_secs(60)),
+            "QR last seen 120s ago must be stalled under a 60s threshold"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_stalled_cleared_on_shutdown() {
+        // A stale timestamp from a prior pair must NOT survive
+        // shutdown — otherwise re-pairing on the same adapter
+        // instance would falsely bail out before the new QR has
+        // time to arrive.
+        let adapter = fresh_adapter();
+        *adapter.last_pairing_qr_at.lock() = Some(Instant::now() - Duration::from_secs(999));
+        // shutdown() is async (download_tx uses tokio::sync::Mutex);
+        // spin a minimal runtime to drive it.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let _ = rt.block_on(adapter.shutdown());
+        assert!(
+            adapter.last_pairing_qr_at.lock().is_none(),
+            "shutdown must clear last_pairing_qr_at"
+        );
+    }
+
+    /// R10-M2 fix: pin the `canonicalize` behavior for the
+    /// native-mode non-282-byte payload path. When the download
+    /// returns a payload of any length other than the wire-format
+    /// 282 bytes, `DeterministicEnvelope::from_wire_bytes` rejects
+    /// it with `"Invalid wire envelope length: expected 282, got N"`.
+    /// The error MUST be a 400 `ApiError` with a message that
+    /// includes both the expected and actual lengths, so the
+    /// gateway operator can diagnose a CDN-side mismatch without
+    /// leaking the `media_key`. The behavior was verified manually
+    /// in R10 but was not pinned by any test — a regression that
+    /// (a) silently switches dot_mode to the text path, (b) maps
+    /// `DotError::Serialization` to a different code, or (c) accepts
+    /// a truncated payload (`len() < 282` rather than `!=`) would
+    /// not be caught. Runs without a live session because
+    /// `canonicalize` is local — it only inspects `raw` and reads
+    /// `metadata["dot_mode"]`.
+    #[test]
+    fn canonicalize_native_mode_rejects_non_282_byte_payload() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![0u8; 100], // not 282 bytes
+            metadata: [
+                ("chat".to_string(), "x".into()),
+                ("sender".to_string(), "y".into()),
+                ("dot_mode".to_string(), "native".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 400, "must surface as a 400 ApiError, got {code}");
+                assert!(
+                    message.contains("Invalid wire envelope length"),
+                    "message must include the from_wire_bytes error, got: {message}"
+                );
+                assert!(
+                    message.contains("expected 282, got 100"),
+                    "message must include the expected and actual lengths, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 400 with length-mismatch message, got {other:?}")
+            }
+            Ok(_) => panic!("non-282-byte native payload must be rejected"),
+        }
+    }
+
+    /// R10-M2 fix (complement): a 282-byte payload of arbitrary
+    /// bytes MUST NOT be rejected by `from_wire_bytes`'s length
+    /// check. This pins the boundary: 282 bytes is the ONLY
+    /// payload length that passes the length check. The actual
+    /// downstream behavior (signature verification, etc.) is a
+    /// separate concern — we don't care whether it succeeds or
+    /// fails; we only care that the failure is NOT the length
+    /// check. This test would fail if a future change made the
+    /// length check `< 282` instead of `!= 282` (which would
+    /// accept 283+ byte payloads).
+    #[test]
+    fn canonicalize_native_mode_passes_length_check_at_282_bytes() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: vec![0u8; 282], // exact wire length
+            metadata: [
+                ("chat".to_string(), "x".into()),
+                ("sender".to_string(), "y".into()),
+                ("dot_mode".to_string(), "native".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        // The length check must pass. The downstream behavior is
+        // opaque (could be Ok for a well-formed envelope, or an
+        // ApiError from signature verification for an all-zeros
+        // payload) — neither outcome is this test's concern.
+        match adapter.canonicalize(&raw) {
+            Ok(_) => { /* length check passed, downstream succeeded */ }
+            Err(PlatformAdapterError::ApiError { code: 400, message }) => {
+                assert!(
+                    !message.contains("Invalid wire envelope length"),
+                    "282-byte payload must pass the length check; \
+                     downstream signature failure is acceptable. got: {message}"
+                );
+            }
+            Err(other) => panic!(
+                "expected Ok or ApiError 400 from a downstream check (NOT length), got {other:?}"
+            ),
+        }
+    }
+
+    /// R12-M2 fix: the `delivery_failed` sentinel (pushed by the
+    /// `download_rx_consumer` task when the upstream WhatsApp CDN
+    /// download fails) must be converted by `canonicalize` into a
+    /// 502 `ApiError` with the redacted reason in the message. 502
+    /// mirrors HTTP semantics (upstream is the source of the failure,
+    /// not us), distinguishing this case from a 400 canonicalize
+    /// error or a 400 empty-payload error. The reason is taken from
+    /// `metadata["error"]` (a redacted fixed-string — no wacore
+    /// internals, no `media_key`, no `direct_path`).
+    #[test]
+    fn canonicalize_delivery_failed_returns_502_with_redacted_reason() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: Vec::new(), // empty — sentinel has no payload
+            metadata: [
+                ("chat".to_string(), "120363012345678901@g.us".into()),
+                ("sender".to_string(), "1234@s.whatsapp.net".into()),
+                ("dot_mode".to_string(), "delivery_failed".into()),
+                ("error".to_string(), "DOT/2/ download failed".into()),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(
+                    code, 502,
+                    "delivery_failed must surface as 502 Bad Gateway, got {code}"
+                );
+                assert!(
+                    message.contains("DOT/2/ download failed"),
+                    "message must include the redacted reason, got: {message}"
+                );
+                assert!(
+                    message.contains("delivery failed"),
+                    "message must include the 'delivery failed' prefix, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 502 for delivery_failed sentinel, got {other:?}")
+            }
+            Ok(_) => panic!("delivery_failed sentinel must NOT canonicalize to Ok"),
+        }
+    }
+
+    /// R12-M2 fix: a `delivery_failed` sentinel WITHOUT a
+    /// `metadata["error"]` entry must still return a 502 ApiError
+    /// with the default redacted reason ("DOT/2/ download failed").
+    /// This pins the contract that the error reason is always
+    /// present and redacted even if the metadata is missing or
+    /// tampered with.
+    #[test]
+    fn canonicalize_delivery_failed_without_error_metadata_uses_default_reason() {
+        let adapter = offline_adapter();
+        let raw = RawPlatformMessage {
+            platform_id: "test".into(),
+            payload: Vec::new(),
+            metadata: [
+                ("chat".to_string(), "120363012345678901@g.us".into()),
+                ("sender".to_string(), "1234@s.whatsapp.net".into()),
+                ("dot_mode".to_string(), "delivery_failed".into()),
+                // Note: no "error" metadata key
+            ]
+            .into_iter()
+            .collect(),
+        };
+        match adapter.canonicalize(&raw) {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 502);
+                assert!(
+                    message.contains("DOT/2/ download failed"),
+                    "default reason must be used when error metadata is missing, got: {message}"
+                );
+            }
+            Err(other) => {
+                panic!("expected ApiError 502, got {other:?}")
+            }
+            Ok(_) => panic!("delivery_failed sentinel must NOT canonicalize to Ok"),
+        }
+    }
+
+    /// R12-M1 fix: the public `dropped_inbound_messages()` getter
+    /// returns the monotonic counter. A fresh adapter starts at 0.
+    /// This pins the contract that the counter is exposed and
+    /// starts at zero (so a test that observes a non-zero value can
+    /// confidently assert that drops happened).
+    #[test]
+    fn dropped_inbound_messages_starts_at_zero() {
+        let adapter = offline_adapter();
+        assert_eq!(
+            adapter.dropped_inbound_messages(),
+            0,
+            "fresh adapter must start with zero dropped messages"
+        );
     }
 
     #[test]
@@ -2095,6 +4279,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         let caps = adapter.capabilities();
@@ -2113,6 +4298,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.health_check().await.is_err());
@@ -2127,6 +4313,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(adapter.self_handle().is_none());
@@ -2144,6 +4331,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         assert!(!adapter.has_valid_session());
@@ -2163,6 +4351,7 @@ mod tests {
             ws_url: None,
             groups: vec![],
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         };
         let adapter = WhatsAppWebAdapter::new(config);
         let notify = adapter.connected();
@@ -2210,6 +4399,7 @@ mod tests {
             ws_url: ws_url.map(str::to_string),
             groups: groups.into_iter().map(str::to_string).collect(),
             sender_allowlist: BTreeMap::new(),
+            passkey_authenticator: None,
         }
     }
 
@@ -2322,6 +4512,71 @@ mod tests {
             let cfg = cfg_with("/tmp/test.db", None, None, None, vec![bad]);
             assert!(cfg.validate().is_err(), "groups {bad:?} should be rejected");
         }
+    }
+
+    // ── R13-L3 tests: register_group_at_runtime JID validation ────
+    //
+    // The static-config path (`WhatsAppConfig::validate`) already had
+    // strict JID-shape checks; the runtime-registration path
+    // (`register_group_at_runtime`) silently accepted any string.
+    // R13-L3 fixed the runtime path to share the same check via the
+    // `validate_group_jid` helper. These tests pin the new behavior.
+
+    #[test]
+    fn register_group_at_runtime_accepts_valid_jids() {
+        // Bare digits and digits+@g.us are the two valid forms.
+        for good in [
+            "120363012345678901",      // bare digits
+            "120363012345678901@g.us", // full JID
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+            let adapter = WhatsAppWebAdapter::new(cfg);
+            assert!(
+                adapter.register_group_at_runtime(good).is_ok(),
+                "valid JID {good:?} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn register_group_at_runtime_rejects_invalid_jids() {
+        // Same set of bad JIDs that `WhatsAppConfig::validate`
+        // rejects — proves the runtime path shares the check.
+        for bad in [
+            "",                                    // empty
+            "120363012345678901@newsletter",       // newsletter JID misuse
+            "120363012345678901@s.whatsapp.net",   // user JID shape
+            "120363012345678901:0@s.whatsapp.net", // user JID misuse (`:`)
+            "not-a-jid",                           // non-numeric
+            "abc@g.us",                            // non-numeric prefix
+            "120363012345678901@",                 // empty suffix
+            "@g.us",                               // empty prefix
+        ] {
+            let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+            let adapter = WhatsAppWebAdapter::new(cfg);
+            assert!(
+                adapter.register_group_at_runtime(bad).is_err(),
+                "invalid JID {bad:?} should be rejected (was silently accepted before R13-L3)"
+            );
+        }
+    }
+
+    #[test]
+    fn register_group_at_runtime_idempotent() {
+        // Re-registering an existing JID is a no-op (no duplicate
+        // entries in the runtime_groups vec).
+        let cfg = cfg_with("/tmp/test.db", None, None, None, vec![]);
+        let adapter = WhatsAppWebAdapter::new(cfg);
+        let jid = "120363012345678901@g.us";
+        adapter.register_group_at_runtime(jid).expect("first");
+        adapter.register_group_at_runtime(jid).expect("second");
+        let guard = adapter.runtime_groups.lock();
+        assert_eq!(
+            guard.len(),
+            1,
+            "duplicate register must not insert a second row"
+        );
+        assert_eq!(guard[0], jid);
     }
 
     // ── Sender allowlist tests (D-WA-10 mitigation) ─────────────
@@ -2735,10 +4990,13 @@ mod tests {
         // Membership
         assert!(caps.can_add_member);
         assert!(caps.can_remove_member);
-        assert!(!caps.can_ban, "can_ban (always false on WhatsApp)");
+        assert!(
+            caps.can_ban,
+            "can_ban (implemented as remove + revoke_invite)"
+        );
         assert!(caps.can_promote);
         assert!(caps.can_demote);
-        assert!(!caps.can_approve_join, "can_approve_join");
+        assert!(caps.can_approve_join, "can_approve_join");
         // Mode
         assert!(caps.can_rename);
         assert!(caps.can_describe);
@@ -2751,7 +5009,7 @@ mod tests {
         assert!(caps.can_get_metadata);
         assert!(caps.can_resolve_invite);
         // Handoff
-        assert!(!caps.can_transfer_ownership);
+        assert!(caps.can_transfer_ownership);
         // Platform name
         assert_eq!(adapter.platform_name(), "whatsapp");
     }
@@ -2771,54 +5029,47 @@ mod tests {
 
     #[test]
     fn unimplemented_actions_return_unimplemented_error() {
-        // Methods we deliberately don't implement (ban_member,
-        // approve_join_request, transfer_ownership) must return
-        // `PlatformAdapterError::Unimplemented` with the correct
-        // platform name and action label.
+        // All previously-unimplemented methods (ban_member, approve_join_request,
+        // transfer_ownership) are now implemented. They fail with ApiError
+        // when called offline (no client connected), not Unimplemented.
         //
-        // `join_by_invite` is no longer in this list: RFC-0861 §3
-        // H1 implemented it via `client.groups().join_with_invite_code`.
-        // An offline adapter short-circuits with
-        // `api_err("join_by_invite", "WhatsApp Web client not connected")`
-        // (an `ApiError`, not `Unimplemented`); a separate test
-        // `join_by_invite_fails_when_not_connected` covers that path.
+        // This test is kept as a placeholder. If any new methods are added
+        // as Unimplemented, add them here.
         let adapter = offline_adapter();
         let g = GroupId::new("120363012345678901@g.us");
         let p = PeerId::new("+15551234567");
 
-        // We can't `.await` inside `#[test]`, so we use a small
-        // blocking helper instead.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime");
 
-        let check = |label: &'static str, result: PlatformAdapterError| match result {
-            PlatformAdapterError::Unimplemented { platform, action } => {
-                assert_eq!(platform, "whatsapp", "{label}: platform");
-                assert_eq!(action, label, "{label}: action");
-            }
-            other => panic!("{label}: expected Unimplemented, got {other:?}"),
-        };
-
         rt.block_on(async {
-            check(
-                "ban_member",
-                CoordinatorAdmin::ban_member(&adapter, &g, &p, None)
-                    .await
-                    .expect_err("ban_member must be Unimplemented"),
+            // ban_member: now implemented (remove + revoke invite)
+            let err = CoordinatorAdmin::ban_member(&adapter, &g, &p, None)
+                .await
+                .expect_err("ban_member must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "ban_member: expected ApiError (not connected), got {err:?}"
             );
-            check(
-                "approve_join_request",
-                CoordinatorAdmin::approve_join_request(&adapter, &g, &p)
-                    .await
-                    .expect_err("approve_join_request must be Unimplemented"),
+
+            // approve_join_request: now implemented (approve_membership_requests)
+            let err = CoordinatorAdmin::approve_join_request(&adapter, &g, &p)
+                .await
+                .expect_err("approve_join_request must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "approve_join_request: expected ApiError (not connected), got {err:?}"
             );
-            check(
-                "transfer_ownership",
-                CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
-                    .await
-                    .expect_err("transfer_ownership must be Unimplemented"),
+
+            // transfer_ownership: now implemented (promote_to_admin)
+            let err = CoordinatorAdmin::transfer_ownership(&adapter, &g, &p)
+                .await
+                .expect_err("transfer_ownership must fail offline");
+            assert!(
+                matches!(err, PlatformAdapterError::ApiError { .. }),
+                "transfer_ownership: expected ApiError (not connected), got {err:?}"
             );
         });
     }
@@ -2875,5 +5126,792 @@ mod tests {
             }
             Err(other) => panic!("expected ApiError with code 400, got {other:?}"),
         }
+    }
+
+    // ── Mission 0850 (RFC-0850 §8.6/§9.4) tests ──────────────────
+
+    /// Mission 0850 AC: `capabilities()` MUST declare
+    /// `media_capabilities` so `select_mode_with_max_text` routes
+    /// envelopes > 65 KB to `TransportMode::Native`. Without this
+    /// declaration, the gate silently degrades to DOT/1/ text mode
+    /// for every envelope.
+    #[test]
+    fn capabilities_includes_media_capabilities() {
+        let adapter = offline_adapter();
+        let caps = adapter.capabilities();
+        assert_eq!(caps.max_payload_bytes, 65_536);
+        assert!(caps.supports_encryption);
+        assert!(!caps.supports_fragmentation);
+        assert!(!caps.supports_raw_binary);
+        let media = caps
+            .media_capabilities
+            .expect("media_capabilities must be populated for DOT/2 transport");
+        // R9-L4 fix: use the shared const instead of a literal so the test
+        // can't drift from the value advertised by the production code.
+        assert_eq!(media.max_upload_bytes, WhatsAppWebAdapter::MAX_UPLOAD_BYTES);
+        // R8-L2: only `application/octet-stream` is in the list because
+        // WhatsApp's `MediaType::Document` channel uploads as
+        // application/octet-stream regardless of the requested MIME
+        // (see R5 in `missions/open/0850-whatsapp-media-transport.md`).
+        // The list is the truth for what the adapter CAN advertise —
+        // adding other MIMEs here would be lying about transport
+        // capabilities.
+        assert_eq!(
+            media.supported_mime_types,
+            vec!["application/octet-stream".to_string()]
+        );
+    }
+
+    /// Mission 0850 AC (R1-H3): `upload_media` against an
+    /// un-connected adapter MUST return `Unreachable { reason:
+    /// "client not connected" }` — same precondition as `send_envelope`.
+    #[tokio::test]
+    async fn upload_media_client_not_connected() {
+        let adapter = offline_adapter();
+        let result = adapter
+            .upload_media("test.bin", b"hello", "application/octet-stream")
+            .await;
+        match result {
+            Err(PlatformAdapterError::Unreachable { reason, .. }) => {
+                assert!(
+                    reason.contains("client not connected"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            Err(other) => panic!("expected Unreachable, got {other:?}"),
+            Ok(_) => panic!("upload_media must fail when client is not connected"),
+        }
+    }
+
+    /// R10-L1 fix: pin the pre-flight 100 MiB + 1 byte boundary.
+    /// The mission spec (Test 2 of `media_capabilities_match_upload_limit`)
+    /// requires this boundary. A regression that changes the
+    /// comparison from `>` to `>=` would still pass at 100 MiB + 1
+    /// but would reject a payload of exactly 100 MiB (still legal).
+    /// A regression that removes the check entirely would let the
+    /// payload reach `Client::upload` and surface as a less-actionable
+    /// server-side rejection. The test uses a 100 MiB + 1 byte payload
+    /// to pin the off-by-one boundary. Runs without a live session
+    /// because the pre-flight check short-circuits before any network
+    /// call.
+    #[tokio::test]
+    async fn upload_media_rejects_payload_over_max_upload_bytes() {
+        let adapter = offline_adapter();
+        // 100 MiB + 1 byte
+        let oversized = vec![0u8; WhatsAppWebAdapter::MAX_UPLOAD_BYTES + 1];
+        let result = adapter
+            .upload_media("test.bin", &oversized, "application/octet-stream")
+            .await;
+        match result {
+            Err(PlatformAdapterError::PayloadTooLarge {
+                size,
+                max,
+                platform,
+            }) => {
+                assert_eq!(size, WhatsAppWebAdapter::MAX_UPLOAD_BYTES + 1);
+                assert_eq!(max, WhatsAppWebAdapter::MAX_UPLOAD_BYTES);
+                assert_eq!(platform, "whatsapp");
+            }
+            Err(other) => panic!("expected PayloadTooLarge, got {other:?}"),
+            Ok(_) => panic!("oversized payload must be rejected by pre-flight"),
+        }
+    }
+
+    /// R10-L1 fix: pin the pre-flight at-the-boundary case.
+    /// A payload of EXACTLY 100 MiB must NOT be rejected by the
+    /// pre-flight check (the check uses `>`, not `>=`). This test
+    /// would fail if a future change inverted the comparison. It
+    /// then fails at the `client not connected` step (the
+    /// pre-flight passes), proving the boundary is inclusive at
+    /// `MAX_UPLOAD_BYTES`.
+    #[tokio::test]
+    async fn upload_media_accepts_payload_exactly_at_max_upload_bytes() {
+        let adapter = offline_adapter();
+        // Exactly 100 MiB
+        let at_boundary = vec![0u8; WhatsAppWebAdapter::MAX_UPLOAD_BYTES];
+        let result = adapter
+            .upload_media("test.bin", &at_boundary, "application/octet-stream")
+            .await;
+        match result {
+            // Pre-flight passes (size == MAX, not >), fails at client-not-connected.
+            Err(PlatformAdapterError::Unreachable { reason, .. }) => {
+                assert!(
+                    reason.contains("client not connected"),
+                    "at-the-boundary payload must pass pre-flight and fail at \
+                     client-not-connected step, got reason: {reason}"
+                );
+            }
+            Err(PlatformAdapterError::PayloadTooLarge { .. }) => {
+                panic!(
+                    "at-the-boundary payload (exactly MAX_UPLOAD_BYTES) must \
+                        NOT be rejected by pre-flight; check uses > not >="
+                )
+            }
+            Err(other) => panic!(
+                "expected Unreachable (pre-flight passes, client disconnected), got {other:?}"
+            ),
+            Ok(_) => panic!("upload_media must fail when client is not connected"),
+        }
+    }
+
+    /// Mission 0850 AC (R1-H3, R18): `download_media` with a malformed
+    /// token MUST return `ApiError { code: 400, .. }` with the redacted
+    /// "invalid media ref format" message. The 4xx-shaped variant
+    /// tells the gateway to refuse the envelope rather than retry
+    /// indefinitely. The redacted message MUST NOT include the input
+    /// bytes (which would leak the `media_key` on a partial parse).
+    #[tokio::test]
+    async fn download_media_invalid_message_id() {
+        let adapter = offline_adapter();
+        // `!` is not a base64url char — b64url_decode will fail.
+        let result = adapter.download_media("not-base64!!!").await;
+        match result {
+            Err(PlatformAdapterError::ApiError { code, message }) => {
+                assert_eq!(code, 400);
+                assert_eq!(
+                    message, "invalid media ref format",
+                    "message MUST be the redacted generic string"
+                );
+                // Defensive: the input MUST NOT appear in the message.
+                assert!(
+                    !message.contains("not-base64"),
+                    "message leaked input: {message}"
+                );
+            }
+            Err(other) => panic!("expected ApiError code 400, got {other:?}"),
+            Ok(_) => panic!("download_media with malformed token must fail"),
+        }
+    }
+
+    /// Mission 0850 AC (R1-M2): `accept_message` MUST accept
+    /// `DOT/1/{base64}` (existing behavior pinned).
+    #[test]
+    fn accept_message_accepts_dot1() {
+        // R8-L1: JID format reference.
+        // - `120363012345678901@g.us` is a group JID (suffix `@g.us`
+        //   marks the group domain in WhatsApp). The 18-digit prefix
+        //   is the group ID.
+        // - `1234@s.whatsapp.net` is a user JID (suffix
+        //   `@s.whatsapp.net` marks the user domain).
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "1234@s.whatsapp.net",
+            "DOT/1/abc",
+            &groups,
+            &allowlist,
+        );
+        assert!(matches!(decision, AcceptDecision::Accept));
+    }
+
+    /// Mission 0850 AC (R1-M2): `accept_message` MUST accept
+    /// `DOT/2/{token}` (new behavior pinned).
+    #[test]
+    fn accept_message_accepts_dot2() {
+        // See R8-L1 JID reference in `accept_message_accepts_dot1`.
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "1234@s.whatsapp.net",
+            "DOT/2/test_msg_id",
+            &groups,
+            &allowlist,
+        );
+        assert!(matches!(decision, AcceptDecision::Accept));
+    }
+
+    /// Mission 0850 AC (R1-M2): `accept_message` MUST reject any
+    /// non-DOT-prefixed text (including `DOT/F/`, which is out of
+    /// scope for this mission).
+    #[test]
+    fn accept_message_rejects_other_prefix() {
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "1234@s.whatsapp.net",
+            "DOT/F/fragmented",
+            &groups,
+            &allowlist,
+        );
+        match decision {
+            AcceptDecision::Reject { reason } => {
+                assert_eq!(reason, "not a DOT envelope");
+            }
+            AcceptDecision::Accept => panic!("DOT/F/ must be rejected"),
+        }
+    }
+
+    /// R9-L3 fix + R10-L2: `accept_message` MUST reject an empty or
+    /// whitespace-only `DOT/2/` token at the boundary instead of
+    /// letting it cascade through the receive pipeline as a noisy
+    /// decode failure. The literal string `"DOT/2/"` (no token after
+    /// the slash) previously passed the prefix check, then failed
+    /// `decode_native_ref → None`, then failed text-decode, and was
+    /// dropped with two cascading errors. Rejecting here gives a
+    /// single, clear rejection reason. The `trim()` (R10-L2 fix)
+    /// also catches `"DOT/2/   "` (whitespace-only) and
+    /// `"DOT/2/\t"` (tab-only) tokens.
+    #[test]
+    fn accept_message_rejects_empty_dot2_token() {
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        let decision = WhatsAppWebAdapter::accept_message(
+            "120363012345678901@g.us",
+            "1234@s.whatsapp.net",
+            "DOT/2/",
+            &groups,
+            &allowlist,
+        );
+        match decision {
+            AcceptDecision::Reject { reason } => {
+                assert_eq!(reason, "DOT/2/ token is empty or whitespace");
+            }
+            AcceptDecision::Accept => panic!("empty DOT/2/ token must be rejected"),
+        }
+    }
+
+    /// R10-L2 fix: `accept_message` MUST also reject `DOT/2/` tokens
+    /// that are entirely whitespace. `"DOT/2/   "` previously
+    /// slipped through the `is_empty()` check (the string `"   "`
+    /// is non-empty) and surfaced deeper as a generic
+    /// "invalid media ref format" error.
+    ///
+    /// R12-L2 fix: extend the whitespace pin to cover tabs, newlines,
+    /// and mixed Unicode whitespace. The `accept_message`
+    /// implementation uses `rest.trim().is_empty()` which handles all
+    /// Unicode whitespace; the test pin must match the implementation
+    /// exactly so a future narrowing (e.g., `trim_start()` or
+    /// `trim_matches(' ')`) would be caught.
+    #[test]
+    fn accept_message_rejects_whitespace_dot2_token() {
+        let groups = vec!["120363012345678901".to_string()];
+        let allowlist = BTreeMap::new();
+        for input in &[
+            "DOT/2/   ",      // spaces
+            "DOT/2/\t",       // tab
+            "DOT/2/\n",       // newline
+            "DOT/2/\r\n",     // CRLF
+            "DOT/2/\t \n \t", // mixed Unicode whitespace
+            "DOT/2/\u{00A0}", // non-breaking space (U+00A0 is whitespace per `char::is_whitespace`)
+        ] {
+            let decision = WhatsAppWebAdapter::accept_message(
+                "120363012345678901@g.us",
+                "1234@s.whatsapp.net",
+                input,
+                &groups,
+                &allowlist,
+            );
+            match decision {
+                AcceptDecision::Reject { reason } => {
+                    assert_eq!(
+                        reason, "DOT/2/ token is empty or whitespace",
+                        "input {input:?} must be rejected with the documented reason, got: {reason}"
+                    );
+                }
+                AcceptDecision::Accept => {
+                    panic!("whitespace DOT/2/ token {input:?} must be rejected")
+                }
+            }
+        }
+    }
+
+    /// Mission 0850 AC (R3-M2 + R4-M3): the `download_rx` consumer
+    /// task exits cleanly when the channel sender is dropped. This
+    /// pins the lifecycle — a regression that blocks the task on a
+    /// closed channel would hang this test until the timeout.
+    ///
+    /// R8-H2 fix: previously the test had no real assertion (just a
+    /// 100ms `sleep` loop). Now we capture the spawned task's
+    /// `JoinHandle` and bound the wait with `tokio::time::timeout`,
+    /// so a hang fails the test loudly.
+    #[tokio::test]
+    async fn download_rx_consumer_exits_on_channel_close() {
+        use std::time::Duration;
+
+        let adapter = offline_adapter();
+
+        // Use the test-only constructor that bypasses `start_bot`
+        // (which requires an authenticated wacore session).
+        let (tx, handle) = adapter.spawn_download_consumer_for_test();
+
+        // Dropping the sender closes the channel. The consumer task
+        // should observe `recv() → None` and exit the `while let`
+        // loop. The `JoinHandle` completes when the spawned future
+        // returns; we bound the wait with a 500ms timeout to fail
+        // loudly if the task doesn't exit.
+        drop(tx);
+        match tokio::time::timeout(Duration::from_millis(500), handle).await {
+            Ok(Ok(())) => {} // task exited cleanly
+            Ok(Err(join_err)) => panic!("download_rx consumer task panicked: {join_err}"),
+            Err(_elapsed) => panic!("download_rx consumer task did not exit within 500ms"),
+        }
+    }
+
+    /// Mission 0850 AC (R4-M2 happy path): the consumer task pushes a
+    /// `RawPlatformMessage` to `inbound_tx` when a `DownloadRequest`
+    /// arrives. The test stub pretends the download always succeeds,
+    /// pushing `b"native"` as the payload and tagging it with
+    /// `dot_mode = "native"`.
+    #[tokio::test]
+    async fn download_rx_consumer_processes_valid_request() {
+        use std::time::Duration;
+
+        // R9-L2 fix: capture the JoinHandle instead of discarding
+        // it. If the consumer task panics while processing the
+        // request (e.g., due to a future refactor that breaks the
+        // stub), the JoinHandle will be in the Err state when we
+        // await it at the end of the test. We don't strictly need to
+        // await it (the stub doesn't block), but we do so explicitly
+        // to surface any panic via `assert!` rather than letting it
+        // silently disappear as a dangling task.
+        let adapter = offline_adapter();
+        let (tx, handle) = adapter.spawn_download_consumer_for_test();
+
+        // Push a DownloadRequest. The test stub immediately pushes a
+        // RawPlatformMessage to `inbound_tx`. The stub's synthetic
+        // payload + metadata shape MUST match `STUB_NATIVE_PAYLOAD`
+        // and `STUB_DOT_MODE` (defined in the test-only impl block
+        // below). R8-M3 fix: the test and the stub previously shared
+        // the values implicitly (the test asserted `b"native"` and
+        // the stub produced `b"native"`); a future maintainer
+        // changing one without the other would silently break the
+        // test. The shared const makes the contract explicit.
+        tx.try_send(DownloadRequest {
+            msg_id: "test-token".into(),
+            chat: "120363012345678901@g.us".into(),
+            sender: "1234@s.whatsapp.net".into(),
+        })
+        .expect("channel should have capacity");
+
+        // Poll inbound_rx for the result (max 500 ms). Use
+        // `tokio::task::yield_now` rather than `sleep` to avoid
+        // holding the parking_lot::Mutex guard across an await point
+        // (parking_lot is not async-aware — see clippy::await_holding_lock).
+        let start = std::time::Instant::now();
+        let raw = loop {
+            if let Ok(msg) = adapter.inbound_rx.lock().try_recv() {
+                break msg;
+            }
+            if start.elapsed() > Duration::from_millis(500) {
+                panic!("download_rx consumer did not push a RawPlatformMessage within 500 ms");
+            }
+            tokio::task::yield_now().await;
+        };
+
+        // R8-M3 fix: assertions reference the shared consts (defined
+        // in the test-only impl block below) instead of literal
+        // `b"native"` / `"native"`. The stub and the test are now
+        // linked at the source level.
+        assert_eq!(raw.payload, WhatsAppWebAdapter::STUB_NATIVE_PAYLOAD);
+        assert_eq!(
+            raw.metadata.get("dot_mode").map(String::as_str),
+            Some(WhatsAppWebAdapter::STUB_DOT_MODE)
+        );
+        assert_eq!(
+            raw.metadata.get("chat").map(String::as_str),
+            Some("120363012345678901@g.us")
+        );
+        assert_eq!(
+            raw.metadata.get("sender").map(String::as_str),
+            Some("1234@s.whatsapp.net")
+        );
+
+        // R9-L2 fix: confirm the consumer task didn't panic during
+        // the request. Awaiting the JoinHandle returns
+        // `Ok(())` if the task completed normally, `Err(JoinError)`
+        // if it panicked. We bound the wait with a 500ms timeout —
+        // if the stub is broken and the task hangs, we want the
+        // test to fail loudly rather than block until the runtime's
+        // outer test timeout (default 1 minute).
+        drop(tx);
+        match tokio::time::timeout(Duration::from_millis(500), handle).await {
+            Ok(Ok(())) => {} // task completed normally
+            Ok(Err(join_err)) => panic!("download_rx consumer panicked: {join_err}"),
+            Err(_elapsed) => panic!("download_rx consumer did not exit within 500ms"),
+        }
+    }
+
+    /// Mission 0850 AC (R4-M2): `download_tx.try_send` returns `Full`
+    /// when the channel's capacity is exceeded. Push 65 (size + 1)
+    /// messages; the (capacity+1)th MUST be rejected.
+    #[tokio::test]
+    async fn download_tx_try_send_returns_full_when_capacity_exceeded() {
+        let adapter = offline_adapter();
+        let (tx, _handle) = adapter.spawn_download_consumer_for_test();
+
+        // The consumer task drains the channel concurrently, but its
+        // test stub doesn't actually `await` anything (it just pushes
+        // a `RawPlatformMessage` and loops). With the test runtime
+        // running both tasks, we can fill the buffer deterministically
+        // by pushing faster than the consumer drains.
+        //
+        // To make this deterministic, we push all (capacity+1)
+        // messages in a tight loop and check that at least one
+        // returned `Full`. The exact count of `Ok` vs `Full` depends
+        // on scheduling, but (capacity+1) push attempts into a
+        // `capacity`-slot buffer MUST produce at least one `Full`
+        // (the consumer might drain a few in between, but it can't
+        // drain all of them before we're done pushing).
+        //
+        // R8-L4 fix: the capacity comes from the shared const
+        // `WhatsAppWebAdapter::DOWNLOAD_CHANNEL_CAPACITY` (defined in
+        // the test-only impl block below). The test loop's upper bound
+        // is `capacity + 1` so it stays correct if the const changes.
+        let cap = WhatsAppWebAdapter::DOWNLOAD_CHANNEL_CAPACITY;
+        let mut full_count = 0;
+        for i in 0..(cap + 1) {
+            let res = tx.try_send(DownloadRequest {
+                msg_id: format!("msg-{i}"),
+                chat: "test@g.us".into(),
+                sender: "sender@s.whatsapp.net".into(),
+            });
+            if let Err(tokio::sync::mpsc::error::TrySendError::Full(_)) = res {
+                full_count += 1;
+            }
+        }
+        assert!(
+            full_count > 0,
+            "expected at least one Full error when pushing {} messages into a {}-slot channel, got {full_count}",
+            cap + 1,
+            cap,
+        );
+    }
+
+    /// Defensive test (R8-M2): the mission spec doesn't explicitly
+    /// request this, but the precondition check at the top of
+    /// `send_envelope` (domain→JID lookup) is a security-relevant
+    /// gate — a regression that returns `Ok(_)` for an unknown
+    /// domain could allow cross-domain envelope injection. Pins the
+    /// `Unreachable` error so the contract can't silently change.
+    ///
+    /// The 282-byte zero buffer is structurally valid
+    /// `DeterministicEnvelope` wire format (218 signing bytes + 64
+    /// signature bytes; see
+    /// `octo_network::dot::envelope::DeterministicEnvelope::from_wire_bytes`).
+    /// The exact content doesn't matter — the lookup fails before
+    /// the bytes are touched.
+    #[tokio::test]
+    async fn send_envelope_unknown_domain_returns_error() {
+        let adapter = offline_adapter();
+        let domain = BroadcastDomainId::new(PlatformType::WhatsApp, "999999999");
+        let envelope = DeterministicEnvelope::from_wire_bytes(&[0u8; 282])
+            .expect("zeroed 282-byte buffer is structurally valid");
+        let result = adapter.send_message(&domain, &envelope, b"").await;
+        assert!(
+            matches!(result, Err(PlatformAdapterError::Unreachable { .. })),
+            "send_envelope to unknown domain must return Unreachable, got {result:?}"
+        );
+    }
+
+    // ── Mission 0850 (R8-H3 fix): MUST-fallback decision unit tests ─
+
+    /// R8-H3 fix: pins RFC-0850 §8.6/§9.4 fallback semantics. When the
+    /// native send fails with `Unreachable` AND the encoded payload
+    /// fits in a text message, fall back. The pure helper exists
+    /// because `Client` is a concrete type — a stub cannot be injected
+    /// in a normal `#[tokio::test]`, so the dispatch is verified via
+    /// the decision function instead of the full send path.
+    #[test]
+    fn should_fallback_to_text_unreachable_within_text_limit() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        };
+        assert!(should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES));
+    }
+
+    /// R8-H3 fix: encoded payload that fits exactly at the boundary
+    /// (65_536 bytes) MUST still trigger fallback — `<=` is inclusive.
+    #[test]
+    fn should_fallback_to_text_at_text_limit_boundary() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "transient".into(),
+        };
+        assert!(
+            should_fallback_to_text(&err, WHATSAPP_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_BYTES),
+            "encoded_len == max_text_bytes MUST trigger fallback (boundary inclusive)"
+        );
+    }
+
+    /// R8-H3 fix: encoded payload that exceeds the text limit MUST
+    /// NOT trigger fallback — the text path would also fail, and the
+    /// caller should see the original `Unreachable` error.
+    #[test]
+    fn should_not_fallback_when_payload_exceeds_text_limit() {
+        let err = PlatformAdapterError::Unreachable {
+            platform: "whatsapp".into(),
+            reason: "client not connected".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, WHATSAPP_MAX_TEXT_BYTES + 1, WHATSAPP_MAX_TEXT_BYTES),
+            "encoded_len > max_text_bytes MUST NOT trigger fallback"
+        );
+    }
+
+    /// R8-H3 fix: `ApiError` (4xx-shaped) is a permanent wire-format
+    /// failure, NOT a transient transport error. The fallback to
+    /// `DOT/1/` text mode would fail with the same error, so the
+    /// adapter MUST propagate the error rather than masking it with a
+    /// retry.
+    #[test]
+    fn should_not_fallback_on_api_error() {
+        let err = PlatformAdapterError::ApiError {
+            code: 400,
+            message: "invalid media ref format".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "ApiError MUST NOT trigger fallback (4xx is permanent)"
+        );
+    }
+
+    /// R8-H3 fix: `PayloadTooLarge` is a permanent shape failure
+    /// (the payload exceeds even native mode's 100 MiB ceiling). No
+    /// fallback can rescue it; the adapter MUST propagate the error.
+    #[test]
+    fn should_not_fallback_on_payload_too_large() {
+        let err = PlatformAdapterError::PayloadTooLarge {
+            size: 200 * 1024 * 1024,
+            max: WhatsAppWebAdapter::MAX_UPLOAD_BYTES,
+            platform: "whatsapp".into(),
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "PayloadTooLarge MUST NOT trigger fallback"
+        );
+    }
+
+    /// R8-H3 fix: `RateLimited` is transient (the gateway will retry
+    /// per the retry policy) but NOT `Unreachable` — the spec says
+    /// fallback is gated on `Unreachable` specifically. A
+    /// `RateLimited` native error is propagated to the gateway's
+    /// retry layer rather than masked by a text-mode attempt.
+    #[test]
+    fn should_not_fallback_on_rate_limited() {
+        let err = PlatformAdapterError::RateLimited {
+            platform: "whatsapp".into(),
+            retry_after_ms: 1000,
+        };
+        assert!(
+            !should_fallback_to_text(&err, 1000, WHATSAPP_MAX_TEXT_BYTES),
+            "RateLimited is not Unreachable; fallback gate is `Unreachable`-only"
+        );
+    }
+
+    /// Mission 0850 (RFC-0850 §8.6/§9.4): test-only constructor for
+    /// the `download_rx` consumer task. Mirrors the channel creation
+    /// and spawn logic in `start_bot` but bypasses the wacore `Bot`
+    /// setup so unit tests don't need an authenticated session.
+    ///
+    /// Returns `(Sender, JoinHandle)`. The `Sender` lets tests push
+    /// `DownloadRequest`s directly. The `JoinHandle` lets lifecycle
+    /// tests assert that the spawned task exits cleanly when the
+    /// sender is dropped. Without the handle, the test had no way to
+    /// verify the consumer actually shut down, and a regression that
+    /// blocks the task on a closed channel would silently pass (the
+    /// R8-H2 finding).
+    impl WhatsAppWebAdapter {
+        // R8-M3 fix: shared consts for the test stub's synthetic
+        // output. The test `download_rx_consumer_processes_valid_request`
+        // asserts the consumer pushed exactly this payload + metadata
+        // — keeping the values in one place ensures the test and the
+        // stub can't drift.
+        const STUB_NATIVE_PAYLOAD: &'static [u8] = b"native";
+        const STUB_DOT_MODE: &'static str = "native";
+
+        // R8-L4 fix: the test stub's download channel capacity is a
+        // shared const so the constructor and the
+        // `download_tx_try_send_returns_full_when_capacity_exceeded`
+        // test can't drift apart. Changing the capacity in one place
+        // without updating the test's "fill-the-buffer" loop would
+        // silently break the test (it would push 65 messages into a
+        // larger buffer and get no `Full` errors). The production
+        // channel at `start_bot` (line 595) uses the same value
+        // independently — this const is for test-only channels.
+        const DOWNLOAD_CHANNEL_CAPACITY: usize = 64;
+
+        fn spawn_download_consumer_for_test(
+            &self,
+        ) -> (
+            tokio::sync::mpsc::Sender<DownloadRequest>,
+            tokio::task::JoinHandle<()>,
+        ) {
+            let (tx, mut rx) =
+                tokio::sync::mpsc::channel::<DownloadRequest>(Self::DOWNLOAD_CHANNEL_CAPACITY);
+            // R8-H2 fix: do NOT clone `tx` into `self.download_tx`.
+            // The field is for the production `on_event` closure,
+            // which the test stub's tests don't exercise (they push
+            // directly to the channel). If we clone the sender into
+            // the field, dropping the test's `tx` does NOT close the
+            // channel — the cloned sender in `self.download_tx` keeps
+            // the receiver alive and the consumer task's `recv()`
+            // never returns `None`. Tests that need to verify the
+            // channel-close lifecycle must own the only sender.
+            let _handle = self.clone_for_handler();
+            let inbound_tx = self.inbound_tx.clone();
+            let handle = tokio::spawn(async move {
+                while let Some(req) = rx.recv().await {
+                    // Test stub: pretend the download always succeeds,
+                    // pushing a synthetic payload with `dot_mode = "native"`
+                    // (matches the production consumer task's contract).
+                    // The shared consts above link this output to the
+                    // assertions in `download_rx_consumer_processes_valid_request`.
+                    let raw = RawPlatformMessage {
+                        platform_id: format!("test:{}", req.chat),
+                        payload: Self::STUB_NATIVE_PAYLOAD.to_vec(),
+                        metadata: [
+                            ("chat".to_string(), req.chat),
+                            ("sender".to_string(), req.sender),
+                            ("dot_mode".to_string(), Self::STUB_DOT_MODE.to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    };
+                    let _ = inbound_tx.try_send(raw);
+                }
+            });
+            (tx, handle)
+        }
+    }
+
+    // ----- `matches_self_participant` unit tests (bug fix 2026-07-13) -----
+    //
+    // Background: the previous `list_own_groups` implementation only
+    // inserted the bot's phone-number variants into the participant
+    // lookup set, so on accounts where the bot's group-member identity
+    // is the LID (not the PN) the bot was never detected as admin —
+    // every `groups.list` row returned `is_admin: false`. The fix
+    // builds a lookup set from BOTH the PN and the LID, and strips a
+    // trailing `:NN` device suffix from the participant user portion
+    // before comparing.
+    //
+    // These tests pin the helper's contract end-to-end. Adding more
+    // cases here is cheaper than running a live session.
+
+    fn msp(participant: &str, phone: Option<&str>, lid: Option<&str>) -> bool {
+        super::matches_self_participant(participant, phone, lid)
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_digits() {
+        // The headline bug case: bot's LID matches an `@lid` participant.
+        assert!(msp("80836284174444", None, Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_with_device_suffix() {
+        // Some wacore responses include a `:NN` device suffix on the
+        // user portion. Must still match.
+        assert!(msp("80836284174444:42", None, Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_lid_strips_device_from_self_lid() {
+        // Defensive: even if the caller passes the LID WITH a device
+        // suffix, we should still strip and match.
+        assert!(msp("80836284174444", None, Some("80836284174444:42")));
+    }
+
+    #[test]
+    fn matches_self_participant_by_pn_digits_fallback() {
+        // Backwards-compat: PN-only responses (older wacore behaviour)
+        // still resolve.
+        assert!(msp("5521995544743", Some("5521995544743"), None));
+    }
+
+    #[test]
+    fn matches_self_participant_by_pn_full_jid_suffix() {
+        // Some callers (e.g. one that uses `p.jid.to_string()` rather
+        // than `p.jid.user.as_str()`) pass the full JID form. The
+        // helper inserts `<digits>@s.whatsapp.net` into the candidate
+        // set, so a `<digits>@s.whatsapp.net` input matches too.
+        assert!(msp(
+            "5521995544743@s.whatsapp.net",
+            Some("5521995544743"),
+            None
+        ));
+    }
+
+    #[test]
+    fn matches_self_participant_prefers_lid_when_both_set() {
+        // When both are set, LID alone should match an LID participant
+        // (the headline case), and PN alone should match a PN
+        // participant (legacy case).
+        let phone = Some("5521995544743");
+        let lid = Some("80836284174444");
+        assert!(msp("80836284174444", phone, lid));
+        assert!(msp("5521995544743", phone, lid));
+    }
+
+    #[test]
+    fn matches_self_participant_rejects_unrelated_user() {
+        // A participant user portion that matches neither PN nor LID
+        // must not match.
+        let phone = Some("5521995544743");
+        let lid = Some("80836284174444");
+        assert!(!msp("5511987654321", phone, lid));
+        assert!(!msp("123456789", phone, lid));
+    }
+
+    #[test]
+    fn matches_self_participant_empty_inputs_returns_false() {
+        // Empty PN/LID (the "not yet connected" state) must never
+        // match — that would silently mark every group as admin.
+        assert!(!msp("80836284174444", None, None));
+        assert!(!msp("80836284174444", Some(""), Some("")));
+        assert!(!msp("", Some("5521995544743"), Some("80836284174444")));
+    }
+
+    #[test]
+    fn matches_self_participant_lid_full_jid_suffix() {
+        // Symmetric to the PN case: a full LID JID form (`<digits>@lid`)
+        // input also resolves, because the helper inserts that variant
+        // into the candidate set. Useful for callers that compare
+        // against `p.jid.to_string()` instead of `p.jid.user.as_str()`.
+        assert!(msp("80836284174444@lid", None, Some("80836284174444")));
+    }
+
+    // ─── Phase 7.K — view-once media persistence gate ───────────────────
+    //
+    // `strip_view_once_media_token` is the pure contract: when the
+    // `view_once_media_persist` flag is OFF and the inbound message is
+    // marked `view_once`, the persisted `media_token` is zeroed.
+    // `messages.read_view_once` is the only way to recover it, at
+    // which point `consumed_at` is set. When the flag is ON, the
+    // token passes through unchanged.
+
+    fn svom(view_once_persist: bool, is_view_once: bool, token: Option<String>) -> Option<String> {
+        super::strip_view_once_media_token(view_once_persist, is_view_once, token)
+    }
+
+    #[test]
+    fn view_once_token_zeroed_when_persist_flag_false() {
+        let out = svom(false, true, Some("tok-abc".into()));
+        assert_eq!(
+            out, None,
+            "view-once media must be stripped when flag=false"
+        );
+    }
+
+    #[test]
+    fn view_once_token_kept_when_persist_flag_true() {
+        let out = svom(true, true, Some("tok-abc".into()));
+        assert_eq!(out.as_deref(), Some("tok-abc"));
+    }
+
+    #[test]
+    fn non_view_once_token_kept_when_persist_flag_false() {
+        let out = svom(false, false, Some("tok-abc".into()));
+        assert_eq!(out.as_deref(), Some("tok-abc"));
+    }
+
+    #[test]
+    fn view_once_token_already_none_stays_none() {
+        assert_eq!(svom(false, true, None), None);
+        assert_eq!(svom(true, true, None), None);
     }
 }

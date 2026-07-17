@@ -23,3 +23,11 @@ dirs = "5"
 futures = "0.3"
 tempfile = "3"
 thiserror = "1"
+# rustls 0.23+ crypto provider — installed at the start of
+# `qr-link` / `pair-link` so TLS to `cable.ua5v.com` (caBLE relay)
+# works without a compile-time feature flag.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# qrcode for the inline FIDO QR (phase 2 passkey step inside
+# qr-link / pair-link). Same crate used by `octo-adapter-whatsapp`
+# for the primary companion bootstrap QR.
+qrcode = "0.14"

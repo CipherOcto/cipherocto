@@ -182,10 +182,11 @@ fn epoch_millis() -> u64 {
 
 #[async_trait]
 impl PlatformAdapter for WeChatAdapter {
-    async fn send_envelope(
+    async fn send_message(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
+        _payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let encoded = Self::encode_envelope(&envelope.to_wire_bytes());
         let openid = self
@@ -240,6 +241,8 @@ impl PlatformAdapter for WeChatAdapter {
                 max_upload_bytes: 10_485_760,
                 supported_mime_types: vec!["image/jpeg".into(), "image/png".into()],
             }),
+
+            ..Default::default()
         }
     }
 

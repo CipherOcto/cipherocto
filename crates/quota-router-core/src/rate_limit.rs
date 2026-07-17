@@ -300,4 +300,63 @@ mod tests {
         // Check should still allow
         assert!(manager.check("gpt-3.5-turbo", "openai").is_allowed());
     }
+
+    #[test]
+    fn test_rate_limiter_manager_no_limiter() {
+        let manager = RateLimiterManager::new(RateLimitConfig::default());
+        // No limiter for this group → allowed
+        assert!(manager.check("unknown-group", "openai").is_allowed());
+    }
+
+    #[test]
+    fn test_rate_limiter_reset() {
+        let mut limiter = test_rate_limiter();
+        // Record enough to block
+        for _ in 0..10 {
+            limiter.record("provider1", 100);
+        }
+        assert!(limiter.check("provider1").is_blocked());
+        limiter.reset("provider1");
+        assert!(limiter.check("provider1").is_allowed());
+    }
+
+    #[test]
+    fn test_rate_limiter_usage() {
+        let mut limiter = test_rate_limiter();
+        limiter.record("provider1", 100);
+        let usage = limiter.usage("provider1").unwrap();
+        assert_eq!(usage.current_rpm, 1);
+        assert_eq!(usage.current_tpm, 100);
+        assert!(limiter.usage("unknown").is_none());
+    }
+
+    #[test]
+    fn test_rate_limit_result_methods() {
+        assert!(RateLimitResult::Allowed.is_allowed());
+        assert!(!RateLimitResult::Allowed.is_blocked());
+        assert!(!RateLimitResult::Blocked {
+            reason: "test".into(),
+            retry_after: None
+        }
+        .is_allowed());
+        assert!(RateLimitResult::Blocked {
+            reason: "test".into(),
+            retry_after: None
+        }
+        .is_blocked());
+    }
+
+    #[test]
+    fn test_rate_limit_config_default() {
+        let config = RateLimitConfig::default();
+        assert!(config.rpm.is_none());
+        assert!(config.tpm.is_none());
+        assert_eq!(config.mode, RateLimitMode::Soft);
+    }
+
+    #[test]
+    fn test_rate_limiter_config_accessor() {
+        let limiter = test_rate_limiter();
+        assert_eq!(limiter.config().rpm, Some(10));
+    }
 }

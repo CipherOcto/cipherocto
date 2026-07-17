@@ -112,6 +112,15 @@ impl From<CoreError> for OnboardError {
             CoreError::InvalidBundle { path, reason } => {
                 OnboardError::BadConfig(format!("invalid bundle {path:?}: {reason}"))
             }
+            // Session 13: QR-cycle exhaustion. Surface as Cancelled
+            // (the operator didn't do anything — same exit-code
+            // family as a generic timeout) so automation scripts
+            // that watch exit codes treat it like any other "the
+            // link didn't happen" outcome.
+            CoreError::QrPairingStalled { idle_secs } => OnboardError::Cancelled(format!(
+                "QR codes expired after {idle_secs}s without a phone scan \
+                 (server exhausted its ref tokens; re-run with `--reset`)"
+            )),
         }
     }
 }

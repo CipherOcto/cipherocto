@@ -2188,4 +2188,14 @@ mod tests {
             assert_eq!(RoutingStrategy::from_str(&s.to_string()).unwrap(), s);
         }
     }
+
+    #[test]
+    fn test_from_str_unknown_strategy_error() {
+        use std::str::FromStr;
+        let err = RoutingStrategy::from_str("nonsense-strategy").unwrap_err();
+        assert!(err.contains("Unknown routing strategy"));
+        assert!(err.contains("nonsense-strategy"));
+        // empty string
+        assert!(RoutingStrategy::from_str("").is_err());
+    }
 }

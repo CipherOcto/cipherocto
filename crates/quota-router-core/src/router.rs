@@ -2500,4 +2500,146 @@ mod tests {
             .best_provider_with_penalties(&empty_penalties, &neither, false)
             .is_none());
     }
+
+    #[test]
+    fn test_latency_based_with_cooldown_expires_resets_state_and_clears_penalties() {
+        // Expire an active cooldown (TTL=0 → end == now) and assert the cleanup triad:
+        //   - state moves Cooldown → Healthy
+        //   - reset_minute_window() zeros total/failed counters
+        //   - clear_penalty_latencies() empties the penalty vec
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        router.latency_tracker.record("openai", 500_000, None);
+        router.latency_tracker.record("azure", 100_000, None);
+
+        // Seed azure with cooldown + penalties + non-zero counters
+        // (azure is index 1 in test_providers)
+        let azure_idx = 1usize;
+        {
+            let p = router.get_provider("gpt-3.5-turbo", azure_idx).unwrap();
+            p.cooldown_tracker.enter_cooldown(0); // TTL=0 → immediately expired
+            p.cooldown_tracker.record_timeout_penalty(999_999);
+            assert_eq!(p.cooldown_tracker.state, DeploymentState::Cooldown);
+            assert!(!p.cooldown_tracker.get_penalty_latencies().is_empty());
+            assert!(p.cooldown_tracker.total_requests > 0);
+        }
+
+        // Route: must expire azure's cooldown, then pick azure (faster baseline)
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        // Diagnostic: capture state pre-assertion so panic message shows the cause
+        let azure_state_after = router
+            .get_provider("gpt-3.5-turbo", 1)
+            .unwrap()
+            .cooldown_tracker
+            .state;
+        assert_eq!(
+            azure_state_after,
+            DeploymentState::Healthy,
+            "precondition: cooldown expiry must flip azure state to Healthy"
+        );
+        assert_eq!(
+            router
+                .get_provider("gpt-3.5-turbo", idx)
+                .unwrap()
+                .provider
+                .name,
+            "azure",
+            "post-expiry azure must be selectable and preferred on latency"
+        );
+
+        // Post-conditions: cleanup triad executed
+        let azure = router.get_provider("gpt-3.5-turbo", azure_idx).unwrap();
+        assert_eq!(
+            azure.cooldown_tracker.state,
+            DeploymentState::Healthy,
+            "state must flip Cooldown → Healthy on expiry"
+        );
+        assert!(
+            azure.cooldown_tracker.get_penalty_latencies().is_empty(),
+            "penalty_latencies must be cleared after cooldown expiry"
+        );
+        assert_eq!(azure.cooldown_tracker.total_requests, 0);
+        assert_eq!(azure.cooldown_tracker.failed_requests, 0);
+    }
+
+    #[test]
+    fn test_latency_based_with_cooldown_uses_penalty_path_when_penalties_present() {
+        // Force entry into the `else` branch (penalty_map non-empty) of
+        // latency_based_with_cooldown_impl: provider has penalty_latencies →
+        // best_provider_with_penalties decides (NOT best_provider_among).
+        //
+        // azure: 3×100ms latency + 1×1s penalty → weighted 325ms
+        // openai: 3×500ms latency, no penalties → 500ms
+        // Penalty-adjusted azure (325ms) < openai (500ms) → azure should win.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        for _ in 0..3 {
+            router.latency_tracker.record("azure", 100_000, None);
+            router.latency_tracker.record("openai", 500_000, None);
+        }
+        // Seed penalty on azure (index 1)
+        let p = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        p.cooldown_tracker.record_timeout_penalty(1_000_000);
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "azure",
+            "penalty-weighted avg (325ms) must beat openai's raw 500ms"
+        );
+    }
+
+    #[test]
+    fn test_latency_based_with_cooldown_penalty_path_streaming_uses_ttft() {
+        // Penalty-path + streaming + TTFT data: best_provider_with_penalties must
+        // pick by TTFT (ignoring penalties per the streaming contract). Heavy penalty
+        // on azure must NOT flip the result.
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_config: LatencyConfig::default(),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // azure: low latency (50ms) BUT terrible TTFT (5s)
+        // openai: high latency (500ms) BUT great TTFT (50ms)
+        for _ in 0..3 {
+            router
+                .latency_tracker
+                .record("azure", 50_000, Some(5_000_000));
+            router
+                .latency_tracker
+                .record("openai", 500_000, Some(50_000));
+        }
+        let p = router.get_provider("gpt-3.5-turbo", 1).unwrap();
+        p.cooldown_tracker.record_timeout_penalty(u64::MAX);
+
+        let idx = router.route("gpt-3.5-turbo", true).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(
+            name, "openai",
+            "streaming + penalty path must select by TTFT (openai 50ms vs azure 5s)"
+        );
+    }
 }

@@ -2162,4 +2162,30 @@ mod tests {
             assert!(p.avg_latency_us() > 0);
         }
     }
+
+    #[test]
+    fn test_routing_strategy_display() {
+        use std::str::FromStr;
+        assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
+        assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
+        assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
+        assert_eq!(RoutingStrategy::LatencyBased.to_string(), "latency-based");
+        assert_eq!(RoutingStrategy::CostBased.to_string(), "cost-based");
+        assert_eq!(RoutingStrategy::UsageBased.to_string(), "usage-based");
+        assert_eq!(RoutingStrategy::UsageBasedV2.to_string(), "usage-based-v2");
+        assert_eq!(RoutingStrategy::Weighted.to_string(), "weighted");
+        // Round-trip Display -> FromStr
+        for s in [
+            RoutingStrategy::SimpleShuffle,
+            RoutingStrategy::RoundRobin,
+            RoutingStrategy::LeastBusy,
+            RoutingStrategy::LatencyBased,
+            RoutingStrategy::CostBased,
+            RoutingStrategy::UsageBased,
+            RoutingStrategy::UsageBasedV2,
+            RoutingStrategy::Weighted,
+        ] {
+            assert_eq!(RoutingStrategy::from_str(&s.to_string()).unwrap(), s);
+        }
+    }
 }

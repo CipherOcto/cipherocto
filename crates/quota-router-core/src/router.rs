@@ -2369,4 +2369,135 @@ mod tests {
             assert_eq!(p.current_tpm, 0);
         }
     }
+
+    #[test]
+    fn test_best_provider_with_penalties_streaming_uses_ttft_ignoring_latency_and_penalties() {
+        let mut tracker = LatencyTracker::default();
+        // openai: excellent latency (50ms) but terrible TTFT (5s)
+        // azure:  poor latency (500ms)   but great TTFT (50ms)
+        // A heavy penalty on azure must NOT flip the result for streaming.
+        for _ in 0..3 {
+            tracker.record("openai", 50_000, Some(5_000_000));
+            tracker.record("azure", 500_000, Some(50_000));
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![u64::MAX]); // would drown azure in non-streaming
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&penalties, &avail, true)
+            .expect("streaming must pick by TTFT");
+        // TTFT-only path → azure wins (50ms TTFT vs 5s TTFT)
+        assert_eq!(name, "azure");
+        // Score must be the TTFT average, NOT latency or penalty-weighted value
+        assert!(
+            (score - 50_000.0).abs() < 0.1,
+            "expected TTFT avg ~50_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_streaming_without_ttft_falls_through_to_latency() {
+        let mut tracker = LatencyTracker::default();
+        // openai low latency, no TTFT; azure high latency, no TTFT.
+        // Streaming flag is set but ttft_samples is empty for both → fall through
+        // to the non-streaming penalty-adjusted path.
+        for _ in 0..3 {
+            tracker.record("openai", 100_000, None);
+            tracker.record("azure", 500_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, true)
+            .expect("streaming w/o TTFT falls through to latency path");
+        assert_eq!(name, "openai");
+        assert!(
+            (score - 100_000.0).abs() < 0.1,
+            "expected base latency 100_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_empty_penalties_returns_base_latency() {
+        let mut tracker = LatencyTracker::default();
+        // openai 200ms, azure 800ms. No penalties → raw base_latency decides.
+        for _ in 0..4 {
+            tracker.record("openai", 200_000, None);
+            tracker.record("azure", 800_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("must select a provider");
+        assert_eq!(name, "openai");
+        // Empty penalties → base_latency used as-is (no weighting denominator change)
+        assert!(
+            (score - 200_000.0).abs() < 0.1,
+            "expected raw base_latency 200_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_weighted_average_uses_combined_denominator() {
+        let mut tracker = LatencyTracker::default();
+        // openai: 3 samples × 300_000us = 900_000us total
+        for _ in 0..3 {
+            tracker.record("openai", 300_000, None);
+        }
+        // azure: 3 samples × 100_000us + 1 penalty of 800_000us
+        // effective = (300_000 + 800_000) / (3 + 1) = 275_000us → wins over openai's 300_000
+        for _ in 0..3 {
+            tracker.record("azure", 100_000, None);
+        }
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![800_000u64]);
+
+        let (name, score) = tracker
+            .best_provider_with_penalties(&penalties, &avail, false)
+            .expect("must select a provider");
+        assert_eq!(name, "azure");
+        assert!(
+            (score - 275_000.0).abs() < 0.1,
+            "expected weighted avg 275_000us, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_penalties_skips_unavailable_keeps_others() {
+        let mut tracker = LatencyTracker::default();
+        // openai: slow (1s), no penalty
+        // azure:  fast (100ms), but marked unavailable (cooldown)
+        // Result: openai wins because azure is filtered out by available_names.
+        for _ in 0..3 {
+            tracker.record("openai", 1_000_000, None);
+            tracker.record("azure", 100_000, None);
+        }
+        // Only openai is in the available set.
+        let avail: std::collections::HashSet<&str> = ["openai"].into_iter().collect();
+        let empty_penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        let (name, score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("must select openai since azure is filtered");
+        assert_eq!(name, "openai");
+        assert!(
+            (score - 1_000_000.0).abs() < 0.1,
+            "expected 1_000_000us base, got {score}"
+        );
+
+        // Now exclude BOTH → None (already covered by existing test, but reconfirm here
+        // to lock the available_names filter behavior alongside the partial case).
+        let neither: std::collections::HashSet<&str> = ["other1", "other2"].into_iter().collect();
+        assert!(tracker
+            .best_provider_with_penalties(&empty_penalties, &neither, false)
+            .is_none());
+    }
 }

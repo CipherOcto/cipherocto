@@ -74,6 +74,14 @@ jobs:
         run: |
           if [ -f Cargo.toml ]; then cargo test --verbose; fi
 
+      - name: Run Rust tests (--features query)
+        # Phase 8 query-layer RPCs (daemon.search, messages.context,
+        # events.find, sql.*) and Phase 7.K view_once/ephemeral read
+        # handlers are gated behind `query`. Without this step the
+        # query-gated tests are dead code on CI.
+        run: |
+          if [ -f Cargo.toml ]; then cargo test --verbose --features query; fi
+
       - name: Check telegram-cli builds with real-tdlib
         # The Telegram CLI (octo-telegram-onboard) is excluded from the main
         # workspace (see root Cargo.toml) to prevent TDLib's libc++ runtime

@@ -2002,6 +2002,7 @@ mod tests {
     // then call `handle_tools_call` against that socket and assert
     // the shape of the final MCP tool result.
 
+    #[cfg(feature = "query")]
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_tools_call_propagates_rpc_error_via_is_error() {
         use std::io::{BufRead, BufReader, Write};

@@ -866,6 +866,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "query")]
     fn registry_size_matches_phase1_phase2() {
         let reg = build_registry();
         // `messages.list` is in both PHASE1_METHODS and

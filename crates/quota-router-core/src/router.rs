@@ -2845,4 +2845,67 @@ mod tests {
              (got openai={openai_count}, azure={azure_count})"
         );
     }
+
+    #[test]
+    fn test_request_ended_trims_latencies_to_window_size() {
+        // 5 records with window=3 → latencies must be trimmed to len=3,
+        // dropping the 2 oldest. Locks the drain branch at L192-194.
+        let mut p = ProviderWithState::new(test_providers()[0].clone());
+        for i in 0..5u64 {
+            p.request_ended(100_000 + i * 1_000, 10, 3);
+        }
+        assert_eq!(
+            p.latencies.len(),
+            3,
+            "window cap must trim to exactly latency_window entries"
+        );
+        // The two oldest (100_000, 101_000) must be gone; survivors are 102k, 103k, 104k
+        assert_eq!(p.latencies[0], 102_000);
+        assert_eq!(p.latencies[1], 103_000);
+        assert_eq!(p.latencies[2], 104_000);
+        // Counters still increment 5 times regardless of trim
+        assert_eq!(p.current_rpm, 5);
+        assert_eq!(p.current_tpm, 50);
+        assert_eq!(p.total_count, 5);
+    }
+
+    #[test]
+    fn test_provider_with_state_avg_latency_empty_returns_u64_max() {
+        // Empty latencies → u64::MAX sentinel (unproven providers treated as
+        // worst possible so they're never picked). Locks L215.
+        let p = ProviderWithState::new(test_providers()[0].clone());
+        assert_eq!(
+            p.avg_latency_us(),
+            u64::MAX,
+            "empty latencies must return u64::MAX sentinel"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_ttft_returns_none_when_no_samples() {
+        // Empty LatencyTracker → all_providers empty → None at L498.
+        let tracker = LatencyTracker::default();
+        assert!(
+            tracker.best_provider_with_ttft(false, 0.0).is_none(),
+            "no recorded samples → None (L498)"
+        );
+        assert!(
+            tracker.best_provider_with_ttft(true, 0.0).is_none(),
+            "streaming flag ignored when no samples"
+        );
+    }
+
+    #[test]
+    fn test_best_provider_with_ttft_buffer_negative_infinity_excludes_all() {
+        // buffer = -INFINITY → valid threshold = lowest + (-inf) = -inf
+        // → no score satisfies score <= -inf → valid empty → None at L513-514.
+        let mut tracker = LatencyTracker::default();
+        tracker.record("p1", 100_000, None);
+        assert!(
+            tracker
+                .best_provider_with_ttft(false, f32::NEG_INFINITY)
+                .is_none(),
+            "buffer=-inf must exclude all providers → None"
+        );
+    }
 }

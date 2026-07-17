@@ -52,7 +52,8 @@ impl super::HttpProvider for OllamaProvider {
         request: &HttpCompletionRequest,
         _api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
-        let url = format!("{}/api/chat", self.api_base);
+        let api_base = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/api/chat", api_base);
 
         let messages: Vec<_> = request
             .messages
@@ -150,7 +151,8 @@ impl super::HttpProvider for OllamaProvider {
         request: &HttpEmbeddingRequest,
         _api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
-        let url = format!("{}/api/embeddings", self.api_base);
+        let api_base = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/api/embeddings", api_base);
 
         let body = serde_json::json!({
             "model": request.model,

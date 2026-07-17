@@ -2290,4 +2290,48 @@ mod tests {
             .name;
         assert_eq!(name, "azure");
     }
+
+    #[test]
+    fn test_evict_old_buckets_for_removes_expired() {
+        // TTL=0 means any bucket older than 0s is evicted
+        let mut metrics = ProviderMetrics::with_ttl(0);
+        metrics.record("dep-1", 100);
+
+        // Sanity: bucket was recorded (current minute has at least 1 rpm)
+        assert_eq!(
+            metrics.rpm_at("dep-1", &ProviderMetrics::current_minute_key()),
+            Some(1)
+        );
+
+        // Evict — ttl=0 + Instant::now() >= created → all entries dropped
+        metrics.evict_old_buckets_for("dep-1");
+
+        // Same minute bucket should be gone after eviction
+        assert!(metrics
+            .rpm_at("dep-1", &ProviderMetrics::current_minute_key())
+            .is_none());
+
+        // Unknown deployment is a no-op (does not panic)
+        let mut m2 = ProviderMetrics::with_ttl(60);
+        m2.evict_old_buckets_for("nonexistent");
+    }
+
+    #[test]
+    fn test_rolling_avg_tpm_averages_recent_minutes() {
+        let mut metrics = ProviderMetrics::with_ttl(3600);
+        metrics.record("dep-1", 100);
+
+        // Average over 5 minutes — should be > 0
+        let avg = metrics
+            .rolling_avg_tpm("dep-1", 5)
+            .expect("should compute avg");
+        assert!(avg > 0.0);
+
+        // Unknown deployment → None
+        assert!(metrics.rolling_avg_tpm("nonexistent", 5).is_none());
+
+        // minutes=0 → cutoff filter excludes everything → empty recent → None
+        // (Documenting this branch — depends on cutoff math but should not panic.)
+        let _ = metrics.rolling_avg_tpm("dep-1", 0);
+    }
 }

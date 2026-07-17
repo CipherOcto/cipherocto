@@ -61,8 +61,14 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Build Rust
+        # Use `cargo check` (not `build`) — emits rmeta only, skips the link
+        # step. The full workspace includes whatsapp_session_introspect and
+        # similar heavy bins that link reqwest + hyper + rustls + aws-lc-rs,
+        # which overflows the hosted runner's link-time RAM (SIGBUS in
+        # collect2). `cargo test` still produces test binaries, but those
+        # are smaller than standalone bins.
         run: |
-          if [ -f Cargo.toml ]; then cargo build --verbose; fi
+          if [ -f Cargo.toml ]; then cargo check --verbose; fi
 
       - name: Run Rust tests (default features)
         run: |

@@ -63,6 +63,7 @@ jobs:
             --exclude octo-telegram-onboard \
             --exclude octo-telegram-onboard-core \
             --exclude octo-adapter-whatsapp \
+            --exclude octo-whatsapp \
             --exclude quota-router-core \
             --lcov --output-path lcov.info
 

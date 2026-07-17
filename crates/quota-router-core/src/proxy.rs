@@ -10197,4 +10197,84 @@ mod tests {
                 || resp.status().is_client_error()
         );
     }
+
+    // ====================================================================
+    // Session 3: per-user RPM on /v1/chat/completions (1803-1817)
+    // ====================================================================
+
+    /// Cluster 1803-1817 — When `user` field is present in the chat completion
+    /// body AND `rate_limiter` is configured AND `request_user` is Some, the
+    /// per-user RPM bucket is checked. Exhaust the bucket then send the
+    /// request → expect 429 with `Retry-After` + `X-RateLimit-Limit` headers
+    /// and a body mentioning the offending user.
+    #[tokio::test]
+    async fn test_per_user_rpm_rate_limit_exceeded() {
+        use crate::key_rate_limiter::RateLimiterStore;
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+        let rl = Arc::new(RateLimiterStore::new());
+
+        // Exhaust the per-user RPM bucket: limit=1000, consume 1000 times.
+        // Then the next check inside handle_request will fail.
+        for _ in 0..1001 {
+            let _ = rl.check_rpm_only("alice", 1000);
+        }
+
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .method("POST")
+            .body(
+                r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"user":"alice"}"#
+                    .to_string(),
+            )
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            Some(rl),
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()
+                .get("retry-after")
+                .map(|v| v.to_str().unwrap()),
+            Some("60")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-ratelimit-limit")
+                .map(|v| v.to_str().unwrap()),
+            Some("1000")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-ratelimit-remaining")
+                .map(|v| v.to_str().unwrap()),
+            Some("0")
+        );
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("Rate limit exceeded for user 'alice'"),
+            "got: {text}"
+        );
+    }
 }

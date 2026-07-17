@@ -9718,4 +9718,249 @@ mod tests {
         let resp = result.unwrap().unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
+
+    // ====================================================================
+    // Session 1: resolve_api_key (ANY_LLM_KEY path) + parse_request_body
+    // (function_call branch) + resolve_prompt (registry/template paths)
+    // ====================================================================
+
+    /// Cluster 542-547 — `resolve_api_key` Priority 2: ANY_LLM_KEY env var.
+    /// Fires when no config_key is supplied AND `{PROVIDER}_API_KEY` env is unset
+    /// AND `ANY_LLM_KEY` is set + non-empty.
+    #[test]
+    fn test_resolve_api_key_any_llm_env_fallback() {
+        std::env::remove_var("TESTPROV_ANY_API_KEY");
+        std::env::set_var("ANY_LLM_KEY", "universal-key");
+        let provider = Provider::new("testprov_any", "https://example.com");
+        // No config key, no provider-specific env → ANY_LLM_KEY wins.
+        let key = resolve_api_key(&provider, None);
+        assert_eq!(key, Some("universal-key".to_string()));
+        std::env::remove_var("ANY_LLM_KEY");
+    }
+
+    /// Cluster 542-547 — ANY_LLM_KEY beats provider-specific env var when both
+    /// are present and no config_key supplied. (Priority 2 > Priority 3.)
+    #[test]
+    fn test_resolve_api_key_any_llm_beats_provider_env() {
+        std::env::set_var("TESTPROV_ANY2_API_KEY", "prov-key");
+        std::env::set_var("ANY_LLM_KEY", "universal-key");
+        let provider = Provider::new("testprov_any2", "https://example.com");
+        let key = resolve_api_key(&provider, None);
+        assert_eq!(key, Some("universal-key".to_string()));
+        std::env::remove_var("TESTPROV_ANY2_API_KEY");
+        std::env::remove_var("ANY_LLM_KEY");
+    }
+
+    /// Cluster 542-547 — empty ANY_LLM_KEY falls through to provider env var.
+    #[test]
+    fn test_resolve_api_key_any_llm_empty_falls_through() {
+        std::env::set_var("TESTPROV_ANY3_API_KEY", "prov-key");
+        std::env::set_var("ANY_LLM_KEY", "");
+        let provider = Provider::new("testprov_any3", "https://example.com");
+        let key = resolve_api_key(&provider, None);
+        assert_eq!(key, Some("prov-key".to_string()));
+        std::env::remove_var("TESTPROV_ANY3_API_KEY");
+        std::env::remove_var("ANY_LLM_KEY");
+    }
+
+    /// Cluster 369 — `parse_request_body` populates `function_call` when the
+    /// message carries a `function_call` object.
+    #[test]
+    fn test_parse_request_body_function_call_populated() {
+        let body = r#"{
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "assistant",
+                "content": null,
+                "function_call": {"name": "lookup_weather", "arguments": "{\"city\":\"SP\"}"}
+            }]
+        }"#;
+        let req = parse_request_body(body).expect("body parses");
+        assert_eq!(req.messages.len(), 1);
+        let fc = req.messages[0]
+            .function_call
+            .as_ref()
+            .expect("function_call populated");
+        assert_eq!(fc.name, "lookup_weather");
+        assert_eq!(fc.arguments, "{\"city\":\"SP\"}");
+    }
+
+    /// Cluster 369 — malformed `function_call` shape silently drops the field
+    /// (existing pattern: `serde_json::from_value(...).ok()`).
+    #[test]
+    fn test_parse_request_body_function_call_malformed_drops() {
+        let body = r#"{
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "assistant",
+                "content": "x",
+                "function_call": "not-an-object"
+            }]
+        }"#;
+        let req = parse_request_body(body).expect("body parses");
+        assert!(req.messages[0].function_call.is_none());
+    }
+
+    /// Cluster 2226-2272 — `resolve_prompt` returns Err when prompt_id is set
+    /// but no registry is provided. (Priority order: prompt_id None → Ok
+    /// no-op; prompt_id Some + registry None → Err.)
+    #[test]
+    fn test_resolve_prompt_registry_missing_returns_err() {
+        let mut req = NativeHttpRequest {
+            model: "gpt-4o".into(),
+            messages: vec![SharedMessage {
+                role: "user".into(),
+                content: Some("hi".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: Some("greet".into()),
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        let result = resolve_prompt(&mut req, None);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Prompt registry not available"),
+            "expected registry-missing error"
+        );
+        // Messages unchanged on this branch.
+        assert_eq!(req.messages.len(), 1);
+    }
+
+    /// Cluster 2226-2272 — `resolve_prompt` returns Err when registry is
+    /// present but `prompt_id` is unknown. Exercises the `registry.resolve`
+    /// failure path.
+    #[test]
+    fn test_resolve_prompt_unknown_id_returns_err() {
+        let mut req = NativeHttpRequest {
+            model: "gpt-4o".into(),
+            messages: vec![],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: Some("does-not-exist".into()),
+            prompt_variables: None,
+            provider_params: None,
+            timeout: None,
+        };
+        let mut registry = crate::prompts::PromptRegistry::new();
+        let result = resolve_prompt(&mut req, Some(&mut registry));
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.starts_with("Prompt resolution failed"),
+            "expected prompt-resolution error, got: {msg}"
+        );
+    }
+
+    /// Cluster 2226-2272 — `resolve_prompt` happy path: prompt_id resolves to
+    /// a template, variables/defaults are rendered, system message is
+    /// prepended at index 0. Exercises lines 2247-2272 (variables, render,
+    /// system_msg construction, messages.insert(0, ...), Ok(())).
+    #[test]
+    fn test_resolve_prompt_happy_path_prepends_system_message() {
+        let mut registry = crate::prompts::PromptRegistry::new();
+        let prompt = crate::prompts::PromptTemplate {
+            id: "greet".into(),
+            name: "greeting".into(),
+            version: "1".into(),
+            team_id: None,
+            template: "Hello {{name}}!".into(),
+            defaults: [("name".to_string(), "World".to_string())]
+                .iter()
+                .cloned()
+                .collect(),
+            model: None,
+            tags: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            created_by: "test".into(),
+        };
+        registry.create(prompt).expect("create");
+
+        let mut req = NativeHttpRequest {
+            model: "gpt-4o".into(),
+            messages: vec![SharedMessage {
+                role: "user".into(),
+                content: Some("original question".into()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+                function_call: None,
+            }],
+            stream: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            stop: None,
+            n: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            api_base: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
+            prompt_id: Some("greet".into()),
+            prompt_variables: Some(
+                [("name".to_string(), "Alice".to_string())]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            ),
+            provider_params: None,
+            timeout: None,
+        };
+        let result = resolve_prompt(&mut req, Some(&mut registry));
+        assert!(result.is_ok(), "expected Ok(()), got: {:?}", result);
+        assert_eq!(req.messages.len(), 2, "system message prepended");
+        assert_eq!(req.messages[0].role, "system");
+        assert_eq!(req.messages[0].content.as_deref(), Some("Hello Alice!"));
+        assert_eq!(req.messages[1].role, "user");
+        assert_eq!(
+            req.messages[1].content.as_deref(),
+            Some("original question")
+        );
+    }
 }

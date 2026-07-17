@@ -9119,4 +9119,603 @@ mod tests {
             text
         );
     }
+
+    // =====================================================================
+    // ProxyServer::run smoke — bind on port 0, GET /health, assert 200
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_proxy_server_run_smoke() {
+        use crate::testing::mock_http::MockHttpServer;
+        // MockHttpServer gives us an open port we know is free; copy its addr
+        // for ProxyServer::new to bind to. We don't actually need MockHttpServer
+        // serving — we just need its allocated port.
+        let port_picker = MockHttpServer::with_json(&serde_json::json!({})).await;
+        let port = port_picker.addr.port();
+        drop(port_picker); // free the port for our proxy
+
+        let balance = Balance::new(1000);
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+        let mut server = ProxyServer::new(balance, provider, port, HashMap::new());
+
+        // Run the server in the background; the accept loop blocks forever,
+        // so we wrap in a spawned task and abort it once we've verified GET /health.
+        let run_handle = tokio::spawn(async move { server.run().await });
+        // Give the listener a moment to bind.
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Send a raw HTTP GET /health and parse the status line.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf);
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "Expected 200 OK from /health, got: {}",
+            response.lines().next().unwrap_or("")
+        );
+
+        run_handle.abort();
+    }
+
+    // =====================================================================
+    // Health-blocked fallback cluster
+    // =====================================================================
+
+    /// Build a fallback executor that marks `gpt-4o` unhealthy on construction.
+    fn make_unhealthy_executor(allowed_fails: u32) -> Arc<FallbackExecutor> {
+        let config = crate::fallback::FallbackConfig {
+            fallbacks: vec![],
+            context_window_fallbacks: std::collections::HashMap::new(),
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 1, // keep test fast
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 10,
+            allowed_fails,
+        };
+        Arc::new(FallbackExecutor::new(config))
+    }
+
+    #[tokio::test]
+    async fn test_health_blocked_fallback_success() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        // Primary mock: would 503 if it were reached (it's not — health gate trips first).
+        let primary_mock = MockHttpServer::error().await;
+        let primary_base = primary_mock.base_url();
+
+        // Fallback mock: returns a valid OpenAI-compatible completion response.
+        let fallback_mock = MockHttpServer::with_json(&serde_json::json!({
+            "id": "chatcmpl-fallback",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "fallback ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .await;
+        let fallback_base = fallback_mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-primary".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(primary_base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        dispatch_map.insert(
+            "gpt-4o-mini".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-fallback".into(),
+                provider: "openai".into(),
+                model: "gpt-4o-mini".into(),
+                api_key: None,
+                api_base: Some(fallback_base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        // We need an executor that BOTH has fallbacks wired AND marks the model unhealthy.
+        let combined_config = crate::fallback::FallbackConfig {
+            fallbacks: vec![crate::fallback::FallbackEntry {
+                model: "gpt-4o".into(),
+                fallback_models: vec!["gpt-4o-mini".into()],
+            }],
+            context_window_fallbacks: std::collections::HashMap::new(),
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 1,
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 10,
+            allowed_fails: 3,
+        };
+        let combined_exec = Arc::new(FallbackExecutor::new(combined_config));
+        for _ in 0..3 {
+            combined_exec.record_failure("gpt-4o");
+        }
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            Some(combined_exec),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Fallback succeeded: status reflects the fallback mock's 200 OK.
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_health_blocked_no_fallback_models() {
+        // No fallbacks configured; gpt-4o marked unhealthy → 503 with descriptive body.
+        let exec = make_unhealthy_executor(3);
+        for _ in 0..3 {
+            exec.record_failure("gpt-4o");
+        }
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-1".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            Some(exec),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.contains("Model unhealthy") && text.contains("no fallback models"),
+            "Expected 'no fallback models' message, got: {}",
+            text
+        );
+    }
+
+    // =====================================================================
+    // Context-window fallback variant cluster
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_context_window_with_fallback_success() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        let fallback_mock = MockHttpServer::with_json(&serde_json::json!({
+            "id": "chatcmpl-fb",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .await;
+        let fallback_base = fallback_mock.base_url();
+
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("max_input_tokens".to_string(), "10".to_string());
+        metadata.insert("max_output_tokens".to_string(), "10".to_string());
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-primary".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: Some(metadata),
+                max_retries: None,
+            },
+        );
+        dispatch_map.insert(
+            "gpt-4o-mini".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-fb".into(),
+                provider: "openai".into(),
+                model: "gpt-4o-mini".into(),
+                api_key: None,
+                api_base: Some(fallback_base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let mut cw_fallbacks = std::collections::HashMap::new();
+        cw_fallbacks.insert("gpt-4o".to_string(), vec!["gpt-4o-mini".to_string()]);
+        let config = crate::fallback::FallbackConfig {
+            fallbacks: vec![],
+            context_window_fallbacks: cw_fallbacks,
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 1,
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 10,
+            allowed_fails: 5,
+        };
+        let exec = Arc::new(FallbackExecutor::new(config));
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+
+        // Long message → exceeds the 10-token window → triggers fallback path.
+        let long_content = "word ".repeat(50);
+        let body = format!(
+            r#"{{"model":"gpt-4o","messages":[{{"role":"user","content":"{}"}}]}}"#,
+            long_content
+        );
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body)
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            Some(exec),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // =====================================================================
+    // Post-dispatch fallback cluster
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_post_dispatch_5xx_triggers_fallback() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        let primary_mock = MockHttpServer::error().await; // 503
+        let primary_base = primary_mock.base_url();
+
+        let fallback_mock = MockHttpServer::with_json(&serde_json::json!({
+            "id": "chatcmpl-pf",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o-mini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .await;
+        let fallback_base = fallback_mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-p".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: None,
+                api_base: Some(primary_base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        dispatch_map.insert(
+            "gpt-4o-mini".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-f".into(),
+                provider: "openai".into(),
+                model: "gpt-4o-mini".into(),
+                api_key: None,
+                api_base: Some(fallback_base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let config = crate::fallback::FallbackConfig {
+            fallbacks: vec![crate::fallback::FallbackEntry {
+                model: "gpt-4o".into(),
+                fallback_models: vec!["gpt-4o-mini".into()],
+            }],
+            context_window_fallbacks: std::collections::HashMap::new(),
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 1,
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 10,
+            allowed_fails: 5,
+        };
+        let exec = Arc::new(FallbackExecutor::new(config));
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            Some(exec.clone()),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // Fallback succeeded — response came from the gpt-4o-mini mock (200).
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Primary failure must have been recorded.
+        let health = exec.get_model_health("gpt-4o").unwrap();
+        assert_eq!(health.consecutive_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn test_post_dispatch_success_records() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        // Mock an OpenAI-compatible chat completion response.
+        let mock = MockHttpServer::with_json(&serde_json::json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hello"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .await;
+        let base = mock.base_url();
+
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "gpt-4o".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-p".into(),
+                provider: "openai".into(),
+                model: "gpt-4o".into(),
+                api_key: Some("k".into()),
+                api_base: Some(base),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        let config = crate::fallback::FallbackConfig {
+            fallbacks: vec![],
+            context_window_fallbacks: std::collections::HashMap::new(),
+            content_policy_fallbacks: std::collections::HashMap::new(),
+            max_retries: 3,
+            retry_delay_ms: 1,
+            backoff_multiplier: 2.0,
+            max_backoff_ms: 10,
+            allowed_fails: 5,
+        };
+        let exec = Arc::new(FallbackExecutor::new(config));
+        // Pre-record one failure → success should reset the counter.
+        exec.record_failure("gpt-4o");
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "http://127.0.0.1:1");
+
+        let body = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = Request::builder()
+            .uri("/v1/chat/completions")
+            .body(body.to_string())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            Arc::new(dispatch_map),
+            None,
+            None,
+            None,
+            None,
+            Some(exec.clone()),
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Success path must have called record_success → counter reset to 0.
+        let health = exec.get_model_health("gpt-4o").unwrap();
+        assert_eq!(health.consecutive_failures, 0);
+    }
+
+    // =====================================================================
+    // try_fallback_models: empty api_key skipped, env fallback used
+    // =====================================================================
+
+    #[tokio::test]
+    async fn test_fallback_empty_api_key_skipped_uses_env() {
+        crate::init_native_http_providers();
+        use crate::testing::mock_http::MockHttpServer;
+        // Mock returns a valid OpenAI completion response so OpenAI::completion parses it.
+        // try_fallback_models reaches it.
+        let mock = MockHttpServer::with_json(&serde_json::json!({
+            "id": "chatcmpl-emp",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "fallback-model",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        }))
+        .await;
+        let base = mock.base_url();
+
+        // Register a fallback model in dispatch_map with api_key=Some("")
+        // — try_fallback_models must skip it and fall through to env var.
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "fallback-model".to_string(),
+            crate::config::DispatchInfo {
+                deployment_id: "dep-fb".into(),
+                provider: "openai".into(),
+                model: "fallback-model".into(),
+                api_key: Some("".into()), // empty — must be skipped
+                api_base: Some(base.clone()),
+                rpm: 1000,
+                tpm: 100000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+
+        // Provide env var so the empty-key skip has a real fallback path.
+        std::env::set_var("OPENAI_API_KEY", "env-test-key");
+        let fallback_models = vec!["fallback-model".to_string()];
+        let provider = Provider::new("openai", "");
+        let body_str = r#"{"model":"fallback-model","messages":[{"role":"user","content":"hi"}]}"#;
+
+        let result = try_fallback_models(
+            &fallback_models,
+            &dispatch_map,
+            &provider,
+            body_str,
+            1, // max_retries
+            1, // retry_delay_ms
+        )
+        .await;
+
+        std::env::remove_var("OPENAI_API_KEY");
+
+        // Empty api_key should be skipped → env var used → request reaches the mock → success.
+        assert!(result.is_some(), "expected fallback to succeed via env var");
+        let resp = result.unwrap().unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
 }

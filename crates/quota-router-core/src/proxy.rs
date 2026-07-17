@@ -11130,4 +11130,54 @@ mod tests {
             "expected retry delay to honor ≥100ms, observed {elapsed:?}"
         );
     }
+
+    #[test]
+    fn test_resolve_api_key_uses_any_llm_key_fallback() {
+        // Provider-specific env var absent, ANY_LLM_KEY set → priority 2 fallback
+        std::env::remove_var("ANYLLMPROV4_API_KEY");
+        std::env::set_var("ANY_LLM_KEY", "universal-key");
+        let provider = Provider::new("anyllmprov4", "https://example.com");
+
+        let resolved = resolve_api_key(&provider, None);
+        assert_eq!(resolved, Some("universal-key".to_string()));
+
+        std::env::remove_var("ANY_LLM_KEY");
+    }
+
+    #[test]
+    fn test_classify_http_error_mapping() {
+        use crate::fallback::RouterError;
+        assert!(matches!(
+            classify_http_error(StatusCode::TOO_MANY_REQUESTS),
+            RouterError::RateLimit
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::SERVICE_UNAVAILABLE),
+            RouterError::ProviderUnavailable
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::UNAUTHORIZED),
+            RouterError::AuthError
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::FORBIDDEN),
+            RouterError::AuthError
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::REQUEST_TIMEOUT),
+            RouterError::Timeout
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::GATEWAY_TIMEOUT),
+            RouterError::Timeout
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::INTERNAL_SERVER_ERROR),
+            RouterError::Unknown
+        ));
+        assert!(matches!(
+            classify_http_error(StatusCode::BAD_REQUEST),
+            RouterError::Unknown
+        ));
+    }
 }

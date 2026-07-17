@@ -2198,4 +2198,39 @@ mod tests {
         // empty string
         assert!(RoutingStrategy::from_str("").is_err());
     }
+
+    #[test]
+    fn test_best_provider_with_penalties_prefers_low_penalty() {
+        let mut tracker = LatencyTracker::default();
+
+        // Baseline samples — azure is faster than openai
+        for _ in 0..3 {
+            tracker.record("azure", 100_000, None);
+            tracker.record("openai", 500_000, None);
+        }
+
+        // No penalties — azure wins on raw latency
+        let avail: std::collections::HashSet<&str> = ["azure", "openai"].into_iter().collect();
+        let empty_penalties = std::collections::HashMap::new();
+        let (name, _score) = tracker
+            .best_provider_with_penalties(&empty_penalties, &avail, false)
+            .expect("should select a provider");
+        assert_eq!(name, "azure");
+
+        // Heavy penalty on azure — score becomes (300000 + 10_000_000) / (3+1) = 2_575_000us.
+        // Openai's 500_000us (no penalty) now wins.
+        let mut penalties: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        penalties.insert("azure".to_string(), vec![10_000_000]);
+        let (name2, _) = tracker
+            .best_provider_with_penalties(&penalties, &avail, false)
+            .expect("should still select something");
+        assert_eq!(name2, "openai");
+
+        // No available providers matching recorded samples → None
+        let only_garbage: std::collections::HashSet<&str> = ["nonexistent"].into_iter().collect();
+        assert!(tracker
+            .best_provider_with_penalties(&empty_penalties, &only_garbage, false)
+            .is_none());
+    }
 }

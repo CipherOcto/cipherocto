@@ -4,14 +4,14 @@ on:
   push:
     branches: [main, next, feat/**]
     paths:
-      - 'quota-router/**'
-      - 'octo-transport/**'
-      - '.github/workflows/quota-router.yml'
+      - "quota-router/**"
+      - "octo-transport/**"
+      - ".github/workflows/quota-router.yml"
   pull_request:
     branches: [main, next]
     paths:
-      - 'quota-router/**'
-      - 'octo-transport/**'
+      - "quota-router/**"
+      - "octo-transport/**"
   merge_group:
 
 env:
@@ -32,6 +32,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: quota-router
+
+      # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in by
+      # octo-cable -> bluer -> dbus -> libdbus-sys. Without these, libdbus-sys'
+      # build.rs panics with "you may need to install dbus-1-dev". Same fix as
+      # ci.yml + coverage.yml. Required so cargo build octo-transport succeeds.
+      - name: Install system deps
+        run: sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Build octo-transport (dependency)
         working-directory: octo-transport
@@ -63,6 +70,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: quota-router
+
+      - name: Install system deps
+        run: sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Clippy
         working-directory: quota-router

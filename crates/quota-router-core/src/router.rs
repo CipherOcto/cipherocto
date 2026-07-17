@@ -2233,4 +2233,61 @@ mod tests {
             .best_provider_with_penalties(&empty_penalties, &only_garbage, false)
             .is_none());
     }
+
+    #[test]
+    fn test_latency_based_routing_no_available_providers_returns_none() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // Put BOTH providers into cooldown so none are available
+        for p in router
+            .providers
+            .get_mut("gpt-3.5-turbo")
+            .unwrap()
+            .iter_mut()
+        {
+            p.cooldown_tracker.enter_cooldown(3600);
+        }
+
+        // Should return None — no provider is available
+        assert!(router.route("gpt-3.5-turbo", false).is_none());
+    }
+
+    #[test]
+    fn test_usage_based_v2_routing_prefers_low_rpm_high_success() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::UsageBasedV2,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // azure: low RPM + high success rate → preferred
+        // openai: high RPM + low success rate → avoided
+        if let Some(list) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in list.iter_mut() {
+                if p.provider.name == "azure" {
+                    p.current_rpm = 10;
+                    p.success_count = 95;
+                    p.total_count = 100; // 95% success
+                } else {
+                    p.current_rpm = 500;
+                    p.success_count = 50;
+                    p.total_count = 100; // 50% success
+                }
+            }
+        }
+
+        let idx = router.route("gpt-3.5-turbo", false).unwrap();
+        let name = &router
+            .get_provider("gpt-3.5-turbo", idx)
+            .unwrap()
+            .provider
+            .name;
+        assert_eq!(name, "azure");
+    }
 }

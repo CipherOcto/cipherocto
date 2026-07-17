@@ -2908,4 +2908,86 @@ mod tests {
             "buffer=-inf must exclude all providers → None"
         );
     }
+
+    #[test]
+    fn test_routing_strategy_display_all_variants() {
+        // Locks every Display arm at L49-58.
+        assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
+        assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
+        assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
+        assert_eq!(RoutingStrategy::LatencyBased.to_string(), "latency-based");
+        assert_eq!(RoutingStrategy::CostBased.to_string(), "cost-based");
+        assert_eq!(RoutingStrategy::UsageBased.to_string(), "usage-based");
+        assert_eq!(RoutingStrategy::UsageBasedV2.to_string(), "usage-based-v2");
+        assert_eq!(RoutingStrategy::Weighted.to_string(), "weighted");
+    }
+
+    #[test]
+    fn test_routing_strategy_from_str_unknown_returns_err() {
+        // Locks L86 (Err path with descriptive message).
+        let result: Result<RoutingStrategy, _> = "bogus-strategy".parse();
+        let err = result.expect_err("unknown strategy must error");
+        assert!(
+            err.contains("Unknown routing strategy"),
+            "error message must be descriptive, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_provider_metrics_new_default_ttl_and_default_impl() {
+        // Locks L722-728 (new body) + L941-942 (default delegation).
+        let m = ProviderMetrics::new();
+        assert_eq!(
+            m.ttl_seconds, 60,
+            "default TTL is 60s per litellm RoutingArgs.ttl"
+        );
+        assert!(m.buckets.is_empty());
+        assert!(m.bucket_timestamps.is_empty());
+
+        // Default impl delegates to new()
+        let d: ProviderMetrics = Default::default();
+        assert_eq!(d.ttl_seconds, 60);
+    }
+
+    #[test]
+    fn test_router_model_groups_and_provider_count() {
+        // Locks L996-1004 (model_groups + provider_count bodies).
+        let providers = test_providers();
+        let router = Router::new(RouterConfig::default(), providers);
+        let mut groups = router.model_groups();
+        groups.sort();
+        assert_eq!(
+            groups,
+            vec!["gpt-3.5-turbo".to_string()],
+            "model_groups must list every key in providers map"
+        );
+        assert_eq!(router.provider_count("gpt-3.5-turbo"), 2);
+        assert_eq!(
+            router.provider_count("nonexistent-model"),
+            0,
+            "unknown model_group must return 0"
+        );
+    }
+
+    #[test]
+    fn test_simple_shuffle_single_provider_always_returns_zero() {
+        // Locks L1072 (rng random_range(0..1)) — single-provider edge case
+        // where the rng range collapses to a constant.
+        let providers = vec![Provider {
+            name: "solo".to_string(),
+            endpoint: "https://x".to_string(),
+            rpm: Some(100),
+            tpm: None,
+            weight: None,
+            model_name: Some("solo-model".to_string()),
+        }];
+        let mut router = Router::new(RouterConfig::default(), providers);
+        for _ in 0..20 {
+            assert_eq!(
+                router.route("solo-model", false),
+                Some(0),
+                "single-provider SimpleShuffle must always pick index 0"
+            );
+        }
+    }
 }

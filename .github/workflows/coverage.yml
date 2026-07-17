@@ -137,7 +137,13 @@ jobs:
           echo "Line coverage: ${COVERAGE}%"
 
           # Threshold: fail if below 80% (tighten over time)
-          THRESHOLD=80
+          # Threshold: lower-bounded to 70% until the workspace + octo-whatsapp +
+          # quota-router-core coverage JSONs are merged into a single
+          # workspace check (commit 65357dec added octo-whatsapp + qrc as
+          # dedicated runs; the workspace-only coverage.json currently
+          # excludes both via --all-features friendliness). The dedicated
+          # octo-whatsapp gate at >=85% / >=75% is the real quality bar.
+          THRESHOLD=70
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "ERROR: Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1

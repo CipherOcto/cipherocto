@@ -18,4 +18,4 @@ octo-network = { path = "../octo-network" }
 # QUIC transport (RFC 9000, RFC-0850 §8.7)
 quinn = "0.11"
 rustls = "0.23"
-rcgen = "0.13"
+rcgen = "0.14"

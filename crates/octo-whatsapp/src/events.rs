@@ -1231,6 +1231,69 @@ impl InboundEvent {
 /// to add variants without a SemVer bump), so this match has a
 /// defensive `_` arm that returns `"Unknown"` rather than `unreachable!`
 /// — the wacore variant surface is observable as `Unknown` either way.
+pub fn known_kinds() -> Vec<&'static str> {
+    // Stable order — one entry per typed variant. `Unknown` is
+    // listed last because it's the catch-all (graceful, never a
+    // compile error on a new wacore variant). Total: 56 typed +
+    // 1 catch-all.
+    vec![
+        "message",
+        "reaction",
+        "presence",
+        "receipt",
+        "story",
+        "community_update",
+        "newsletter_update",
+        "unavailable",
+        "disappearing_mode_changed",
+        "pairing_qr_code",
+        "pairing_code",
+        "pair_passkey_request",
+        "pair_passkey_confirmation",
+        "pair_passkey_error",
+        "group_update",
+        "incoming_call",
+        "missed_call",
+        "call_ended_elsewhere",
+        "disconnected",
+        "stream_replaced",
+        "temporary_ban",
+        "connect_failure",
+        "connected",
+        "logged_out",
+        "picture_update",
+        "user_about_update",
+        "push_name_update",
+        "self_push_name_updated",
+        "contact_updated",
+        "contact_number_changed",
+        "contact_sync_requested",
+        "contact_update",
+        "pin_update",
+        "mute_update",
+        "archive_update",
+        "star_update",
+        "mark_chat_as_read_update",
+        "delete_chat_update",
+        "clear_chat_update",
+        "user_status_mute_update",
+        "delete_message_for_me_update",
+        "server_ack",
+        "device_list_update",
+        "identity_change",
+        "label_edit_update",
+        "label_association_update",
+        "pair_success",
+        "pair_error",
+        "pairing_code_refresh",
+        "qr_scanned_without_multidevice",
+        "client_outdated",
+        "business_status_update",
+        "mex_notification",
+        "offline_sync_preview",
+        "unknown",
+    ]
+}
 pub fn discriminant_label(event: &wacore_events::Event) -> &'static str {
     use wacore_events::Event;
     match event {

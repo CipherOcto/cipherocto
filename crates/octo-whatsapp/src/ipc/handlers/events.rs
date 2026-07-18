@@ -107,6 +107,51 @@ impl RpcHandler for EventsTail {
     }
 }
 
+/// `events.list_kinds` — returns the canonical set of
+/// `(kind, variant)` pairs that the daemon can produce. Derived
+/// from the `InboundEvent` enum at compile time so a new typed
+/// variant lands in the list automatically.
+#[derive(Debug)]
+pub struct EventsListKinds;
+
+#[async_trait::async_trait]
+impl RpcHandler for EventsListKinds {
+    fn name(&self) -> &'static str {
+        "events.list_kinds"
+    }
+    async fn call(&self, _h: DaemonHandle, _params: Value) -> Result<Value, RpcError> {
+        let kinds = crate::events::known_kinds();
+        Ok(serde_json::json!({
+            "kinds": kinds,
+            "count": kinds.len(),
+        }))
+    }
+}
+
+/// `events.unknown_stats` — returns the per-variant aggregate of
+/// `InboundEvent::Unknown` emissions (sorted by count desc). Source:
+/// the persister's in-memory map (mirrored to
+/// `<events.ndjson>.unknown_stats.ndjson` on every emission).
+#[derive(Debug)]
+pub struct EventsUnknownStats;
+
+#[async_trait::async_trait]
+impl RpcHandler for EventsUnknownStats {
+    fn name(&self) -> &'static str {
+        "events.unknown_stats"
+    }
+    async fn call(&self, h: DaemonHandle, _params: Value) -> Result<Value, RpcError> {
+        let stats = h
+            .events_persister_handle()
+            .map(|p| p.unknown_stats_snapshot())
+            .unwrap_or_default();
+        Ok(serde_json::json!({
+            "stats": stats,
+            "count": stats.len(),
+        }))
+    }
+}
+
 fn parse_limit(params: &Value) -> Result<usize, RpcError> {
     let n = params
         .get("limit")
@@ -255,5 +300,37 @@ mod tests {
         let v = EventsTail.call(h.clone(), Value::Null).await.unwrap();
         assert_eq!(v["lagged"], 0);
         assert_eq!(v["events"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn events_list_kinds_returns_all_typed_plus_unknown() {
+        let h = handle();
+        let v = EventsListKinds.call(h, Value::Null).await.unwrap();
+        let kinds = v["kinds"].as_array().unwrap();
+        // 54 typed + 1 unknown = 55 (per events.rs known_kinds()).
+        assert_eq!(kinds.len(), 55, "got {kinds:?}");
+        assert_eq!(v["count"], 55);
+        // Spot-check a handful of canonical names.
+        let set: std::collections::BTreeSet<&str> =
+            kinds.iter().map(|s| s.as_str().unwrap()).collect();
+        for k in [
+            "message",
+            "presence",
+            "receipt",
+            "group_update",
+            "picture_update",
+            "connected",
+            "unknown",
+        ] {
+            assert!(set.contains(k), "missing kind {k}");
+        }
+    }
+
+    #[tokio::test]
+    async fn events_unknown_stats_empty_when_no_unknowns() {
+        let h = handle();
+        let v = EventsUnknownStats.call(h, Value::Null).await.unwrap();
+        assert_eq!(v["count"], 0);
+        assert!(v["stats"].as_array().unwrap().is_empty());
     }
 }

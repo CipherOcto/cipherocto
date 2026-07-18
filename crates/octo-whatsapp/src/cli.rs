@@ -1033,6 +1033,14 @@ pub enum EventsAction {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Print all known (kind, variant) pairs the daemon can produce.
+    ListKinds,
+    /// Tabulate per-variant Unknown-event counts (operator triage).
+    UnknownStats {
+        /// Cap the table to this many rows.
+        #[arg(long, default_value_t = 32)]
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -2180,9 +2188,56 @@ pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
             }),
         ),
         EventsAction::Tail { limit } => ("events.tail", serde_json::json!({ "limit": limit })),
+        EventsAction::ListKinds => ("events.list_kinds", serde_json::Value::Null),
+        EventsAction::UnknownStats { .. } => ("events.unknown_stats", serde_json::Value::Null),
     };
     let result = client.call(method, params)?;
+    if let EventsAction::UnknownStats { limit } = &cmd.action {
+        // Pretty-print the per-variant table when --json is off.
+        if !cli.json {
+            print_unknown_stats_table(&result, *limit);
+            return Ok(());
+        }
+    }
     print_result(cli.json, &result)
+}
+
+fn print_unknown_stats_table(result: &serde_json::Value, limit: usize) {
+    let stats = result.get("stats").and_then(|v| v.as_array());
+    let Some(stats) = stats else {
+        eprintln!("events.unknown_stats: missing `stats` array");
+        return;
+    };
+    if stats.is_empty() {
+        println!("(no unknown events recorded)");
+        return;
+    }
+    println!(
+        "{:<28} {:>8}  {:>14}  {:>14}  sample",
+        "wacore_variant", "count", "first_seen_ms", "last_seen_ms"
+    );
+    println!("{}", "-".repeat(96));
+    for row in stats.iter().take(limit) {
+        let v = row
+            .get("wacore_variant")
+            .and_then(|x| x.as_str())
+            .unwrap_or("?");
+        let c = row.get("count").and_then(|x| x.as_u64()).unwrap_or(0);
+        let f = row
+            .get("first_seen_ms")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let l = row
+            .get("last_seen_ms")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let s = row
+            .get("last_sample")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let sample_one_line: String = s.chars().take(40).collect();
+        println!("{v:<28} {c:>8}  {f:>14}  {l:>14}  {sample_one_line}");
+    }
 }
 
 /// Phase 3: `clients list` discovery.
@@ -3197,6 +3252,30 @@ mod tests {
             Command::Events(cmd) => match cmd.action {
                 EventsAction::Tail { limit } => assert_eq!(limit, 50),
                 _ => panic!("expected EventsAction::Tail"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_events_list_kinds() {
+        let lk = Cli::try_parse_from(["octo-whatsapp", "events", "list-kinds"]).unwrap();
+        match lk.command {
+            Command::Events(cmd) => {
+                assert!(matches!(cmd.action, EventsAction::ListKinds));
+            }
+            _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_events_unknown_stats() {
+        let us = Cli::try_parse_from(["octo-whatsapp", "events", "unknown-stats", "--limit", "10"])
+            .unwrap();
+        match us.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::UnknownStats { limit } => assert_eq!(limit, 10),
+                _ => panic!("expected EventsAction::UnknownStats"),
             },
             _ => panic!("expected Command::Events"),
         }

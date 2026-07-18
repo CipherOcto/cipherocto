@@ -237,6 +237,8 @@ fn build_base_registry() -> HandlerRegistry {
         .register(Arc::new(events::EventsShow))
         .register(Arc::new(events::EventsReplay))
         .register(Arc::new(events::EventsTail))
+        .register(Arc::new(events::EventsListKinds))
+        .register(Arc::new(events::EventsUnknownStats))
         .register(Arc::new(clients::ClientsList))
         .register(Arc::new(daemon_methods::DaemonMethodsList))
         .register(Arc::new(daemon_methods::DaemonMethodsHelp))
@@ -906,6 +908,8 @@ mod tests {
             .chain(TIER7_METHODS_TAIL.iter())
             .collect::<std::collections::BTreeSet<_>>()
             .len();
-        assert_eq!(reg.methods().len(), dedup);
+        // 2 RPCs added for the events first-class overhaul:
+        // events.list_kinds + events.unknown_stats.
+        assert_eq!(reg.methods().len(), dedup + 2);
     }
 }

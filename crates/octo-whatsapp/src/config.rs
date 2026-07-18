@@ -61,6 +61,13 @@ pub struct EventsConfig {
     pub flush_interval_ms: u64,
     #[serde(default)]
     pub persistence_path: Option<std::path::PathBuf>,
+    /// Phase 4 (events first-class overhaul): when a single
+    /// wacore variant crosses this many Unknown emissions since
+    /// daemon start, log a structured WARN to alert operators to
+    /// prioritise adding a typed arm for that variant. `None`
+    /// disables alerting. Default `None`.
+    #[serde(default)]
+    pub unknown_event_alert_threshold: Option<u64>,
 }
 
 /// Phase 0+ of `docs/plans/2026-07-11-whatsapp-query-layer-design.md`:
@@ -188,6 +195,7 @@ impl Default for EventsConfig {
             persistence_enabled: default_events_persistence_enabled(),
             flush_interval_ms: default_events_flush_interval_ms(),
             persistence_path: None,
+            unknown_event_alert_threshold: None,
         }
     }
 }

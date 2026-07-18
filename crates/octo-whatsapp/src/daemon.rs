@@ -1127,6 +1127,16 @@ impl Daemon {
         // before the first `set_phase(Connected)`.
         metrics.set_bot_state("booting");
         metrics.set_connected(false);
+        // Phase 4 (events first-class overhaul): install the
+        // `unknown_event_total{wacore_variant}` counter so the
+        // persister's `track_unknown` increments it on every
+        // InboundEvent::Unknown emission. Also install the
+        // operator-facing alert threshold (default: None = no
+        // alerting).
+        crate::events_persister::install_unknown_event_counter(metrics.unknown_event_total.clone());
+        crate::events_persister::install_unknown_event_alert_threshold(
+            config.events.unknown_event_alert_threshold,
+        );
         let audit_log = AuditLog::new(
             config.security.audit_max_rows,
             config.security.audit_anchor_every,

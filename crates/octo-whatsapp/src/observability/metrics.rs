@@ -117,6 +117,12 @@ pub struct Metrics {
     /// `octo_wa_query_search_latency_seconds{method}` — RPC-level
     /// query timing.
     pub query_search_latency_seconds: HistogramVec,
+    /// Phase 4 task 41 (events first-class overhaul):
+    /// `unknown_event_total{wacore_variant}` — per-wacore-variant
+    /// counter for `InboundEvent::Unknown` emissions. Operators
+    /// alert on non-zero values to surface new wacore variants
+    /// the daemon hasn't projected into a typed arm yet.
+    pub unknown_event_total: CounterVec,
     /// Private label-hash secret (used by helper accessors).
     label_secret: Vec<u8>,
 }
@@ -268,6 +274,15 @@ impl Metrics {
             &["method"],
         )?;
         registry.register(Box::new(query_search_latency_seconds.clone()))?;
+        let unknown_event_total = CounterVec::new(
+            Opts::new(
+                "unknown_event_total",
+                "Per-wacore-variant counter for InboundEvent::Unknown emissions. \
+                 Drives first-class observability of un-projected wacore variants.",
+            ),
+            &["wacore_variant"],
+        )?;
+        registry.register(Box::new(unknown_event_total.clone()))?;
 
         // Pre-initialize the gauge families with their one-hot zero
         // series so Prometheus doesn't show "no data" until the first
@@ -298,6 +313,7 @@ impl Metrics {
             query_queue_depth,
             query_embed_dropped_total,
             query_search_latency_seconds,
+            unknown_event_total,
             label_secret: label_secret.to_vec(),
         }))
     }

@@ -52,8 +52,12 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
-# For HMAC (AWS SigV4 signing)
-hmac = "0.12"
+# HMAC-SHA256 (used by webhook signing + AWS SigV4) is provided by the
+# `hmac-sha256` 1.x crate, which has a self-contained no-deps impl and
+# does not depend on the `hmac` crate. Routing through it avoids pulling
+# a second `digest` major version into the dep tree, which would break
+# under the ecosystem split between `digest 0.10` (sha2 0.10) and
+# `digest 0.11` (hmac 0.13). See PR #57 for context.
 
 # For bincode serialization (mesh envelope wire format)
 bincode = "1"

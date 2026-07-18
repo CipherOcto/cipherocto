@@ -4,19 +4,13 @@
 
 use super::{CallbackError, CallbackEvent, CallbackTarget};
 use async_trait::async_trait;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use hmac_sha256::HMAC;
 use std::time::Duration;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Sign a webhook payload with HMAC-SHA256.
 fn sign_payload(payload: &[u8], secret: &str) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
-    mac.update(payload);
-    let result = mac.finalize();
-    format!("sha256={}", hex::encode(result.into_bytes()))
+    let result = HMAC::mac(payload, secret.as_bytes());
+    format!("sha256={}", hex::encode(result))
 }
 
 /// Webhook callback target — delivers events via HTTP POST.

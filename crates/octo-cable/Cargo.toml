@@ -35,7 +35,7 @@ hmac = "0.12"
 subtle = "2"
 hkdf = "0.12"
 sha2 = "0.10"
-rand = "0.8"
+rand = "0.10"
 
 # Session 15: BLE service-data advertiser for caBLE v2 phase 2.
 # The caBLE v2 protocol carries the encrypted Eid (containing our

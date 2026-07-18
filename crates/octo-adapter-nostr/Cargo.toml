@@ -16,6 +16,6 @@ blake3 = "1.5"
 ed25519-dalek = { version = "2.1", features = ["serde"] }
 sha2 = "0.10"
 base64 = "0.22"
-rand = "0.8"
+rand = "0.10"
 async-trait = "0.1"
 octo-network = { path = "../octo-network" }

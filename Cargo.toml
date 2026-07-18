@@ -95,7 +95,7 @@ directories = "6"
 # Async mutex
 parking_lot = "0.12"
 # Random number generation
-rand = "0.9"
+rand = "0.10"
 # Gzip compression (mission 0850p-a-session-export)
 flate2 = "1"
 # Bitflags (mission 0855p-c-sub-admins SubAdminAuthority)

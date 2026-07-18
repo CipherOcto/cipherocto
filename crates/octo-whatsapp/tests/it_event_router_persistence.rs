@@ -128,10 +128,11 @@ async fn router_handles_unknown_raw_input_as_unknown_variant() {
     assert_eq!(buffer.len(), 2);
     for ev in buffer.list_recent(10) {
         match ev {
-            InboundEvent::Unknown { raw, .. } => {
+            InboundEvent::Unknown { wacore_event, .. } => {
+                let payload = wacore_event.as_str().unwrap_or_default();
                 assert!(
-                    raw.contains("not a wacore Event variant")
-                        || raw.contains("Another unmapped payload")
+                    payload.contains("not a wacore Event variant")
+                        || payload.contains("Another unmapped payload")
                 );
             }
             other => panic!("expected Unknown variant, got {other:?}"),
@@ -143,40 +144,28 @@ async fn router_handles_unknown_raw_input_as_unknown_variant() {
 }
 
 #[tokio::test]
-async fn router_unknown_with_skew_timestamp_carries_untrusted_flag() {
-    // Future-timestamped Unknown events should be flagged untrusted.
-    let buffer = EventsBuffer::new(100);
-    let cancel = CancellationToken::new();
-    let router = EventsRouter::new(buffer.clone(), cancel.clone());
-
-    let (tx, _rx) = broadcast::channel::<String>(16);
-    let rx = tx.subscribe();
-
-    let router2 = router.clone();
-    let handle = tokio::spawn(async move { router2.run(rx).await });
-
-    // Far-future timestamp (year 2100).
+async fn parse_with_now_propagates_far_future_ts_into_unknown() {
+    // Future-timestamped Unknown events carry the envelope's ts
+    // straight through into the `Unknown { ts_unix_ms, .. }` field.
+    // Direct unit test of `parse_with_now` — the router's broadcast
+    // channel only carries Strings, so timestamp injection at the
+    // router boundary would require a parallel typed path.
     let env = EventEnvelope {
         raw: "garbage payload".to_string(),
         ts_unix_ms: 4_102_444_800_000, // 2100-01-01
         ts_mono_ns: 999,
     };
-    let raw = format!(
-        "{:?}",
-        octo_whatsapp::events::InboundEvent::parse_with_now(env, 0)
-    );
-    // We can't easily inject a custom envelope via the broadcast,
-    // so we feed a fake Debug string instead — the router's parser
-    // doesn't currently know about the envelope, but the Unknown
-    // variant it produces should still be present.
-    tx.send(raw).unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // The router uses parse_or_unknown(raw, 0, 0) — so ts is 0
-    // regardless of the input. We just assert that the buffer
-    // received at least one Unknown entry.
-    assert_eq!(buffer.len(), 1);
-
-    cancel.cancel();
-    let _ = handle.await;
+    let events = InboundEvent::parse_with_now(env, 0);
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        InboundEvent::Unknown {
+            ts_unix_ms,
+            ts_mono_ns,
+            ..
+        } => {
+            assert_eq!(*ts_unix_ms, 4_102_444_800_000);
+            assert_eq!(*ts_mono_ns, 999);
+        }
+        other => panic!("expected Unknown variant, got {other:?}"),
+    }
 }

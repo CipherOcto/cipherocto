@@ -24,12 +24,7 @@ use octo_whatsapp::events_persister::{
 use tokio_util::sync::CancellationToken;
 
 fn dummy_event(tag: &str) -> InboundEvent {
-    InboundEvent::Unknown {
-        raw: tag.to_string(),
-        ts_unix_ms: 0,
-        ts_mono_ns: 0,
-        untrusted: false,
-    }
+    InboundEvent::synthetic_unknown("test", tag)
 }
 
 fn new_token() -> CancellationToken {

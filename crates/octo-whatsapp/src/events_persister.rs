@@ -62,6 +62,146 @@ use crate::events_buffer::EventsBuffer;
 /// recent id and writes that. See `persist_one`.
 pub type PersistedEventPayload = InboundEvent;
 
+/// Resolve the sidecar file path (one sibling of the events NDJSON).
+/// Returns `<events.ndjson path>.unknown_stats.ndjson`. Public so
+/// tests + future tooling can find it without duplicating the
+/// convention.
+pub fn unknown_stats_path(events_path: &Path) -> PathBuf {
+    let mut p = events_path.as_os_str().to_owned();
+    p.push(".unknown_stats.ndjson");
+    PathBuf::from(p)
+}
+
+/// Synchronous byte-level parse for the unknown_stats sidecar.
+/// Used by `spawn()` to hydrate the in-memory map before returning
+/// (so the first RPC after boot sees the historical context).
+/// Same per-line robustness as [`load_unknown_stats`].
+fn parse_unknown_stats_bytes(bytes: &[u8]) -> std::collections::BTreeMap<String, UnknownStats> {
+    let mut map = std::collections::BTreeMap::new();
+    for (i, line) in bytes.split(|b| *b == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_slice::<UnknownStats>(line) {
+            Ok(s) => {
+                map.insert(s.wacore_variant.clone(), s);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    line_index = i,
+                    error = %e,
+                    "events_persister: skipping malformed unknown_stats line on spawn"
+                );
+            }
+        }
+    }
+    map
+}
+
+/// Load persisted unknown-stats sidecar. Returns an empty map if the
+/// file doesn't exist; logs + skips malformed lines (they're
+/// auxiliary stats, not the canonical event log, so we silently
+/// recover). Atomic-rename persistence means a torn write would
+/// leave a stale `.tmp`; we read the canonical path only.
+pub async fn load_unknown_stats(
+    path: &Path,
+) -> Result<std::collections::BTreeMap<String, UnknownStats>, PersistError> {
+    let mut map = std::collections::BTreeMap::new();
+    if !path.exists() {
+        return Ok(map);
+    }
+    let bytes = match tokio::fs::read(path).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(PersistError::Io(e)),
+    };
+    for (i, line) in bytes.split(|b| *b == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_slice::<UnknownStats>(line) {
+            Ok(s) => {
+                map.insert(s.wacore_variant.clone(), s);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    line_index = i,
+                    error = %e,
+                    "events_persister: skipping malformed unknown_stats line"
+                );
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Persist the in-memory unknown-stats map to disk via
+/// write-temp-then-rename so a crash mid-write leaves the previous
+/// file intact. The map is small (≤ tens of variants); we rewrite
+/// the whole file on every Unknown emission.
+pub async fn save_unknown_stats(
+    path: &Path,
+    map: &std::collections::BTreeMap<String, UnknownStats>,
+) -> Result<(), PersistError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+    let tmp = path.with_extension("ndjson.tmp");
+    let mut buf = Vec::with_capacity(64 * map.len());
+    for s in map.values() {
+        serde_json::to_writer(&mut buf, s)?;
+        buf.push(b'\n');
+    }
+    // write+fsync tmp, then rename atomically over the canonical path
+    tokio::fs::write(&tmp, &buf).await?;
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
+}
+
+/// Cap for `UnknownStats::last_sample` — keeps the sidecar small
+/// even when a wacore event carries a multi-KB payload. Operators
+/// only need a hint of the shape when triaging unknown emissions.
+pub const UNKNOWN_SAMPLE_CAP: usize = 2048;
+
+/// Truncate `s` to [`UNKNOWN_SAMPLE_CAP`] bytes, appending a marker
+/// when truncated. JSON-safe (works on byte boundary — single-byte
+/// UTF-8 truncations remain valid JSON when source is ASCII; for
+/// multi-byte the result still parses but may contain a broken
+/// codepoint, which is fine for triage purposes).
+pub fn truncate_sample(mut s: String) -> String {
+    if s.len() > UNKNOWN_SAMPLE_CAP {
+        s.truncate(UNKNOWN_SAMPLE_CAP);
+        s.push_str("...[truncated]");
+    }
+    s
+}
+
+/// Per-variant aggregate for `InboundEvent::Unknown` emissions. The
+/// persister maintains a `BTreeMap<String, UnknownStats>` keyed by
+/// the wacore discriminant label and persists it to
+/// `unknown_stats.ndjson` next to the events NDJSON. Drives
+/// `events.unknown_stats` (operator triage: which wacore events lack
+/// typed handlers) and `unknown_event_total{wacore_variant}` Prometheus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnknownStats {
+    /// Wacore `Event` discriminant label (e.g. `"GroupUpdate"`,
+    /// `"PictureUpdate"`, `"FutureVariant"`). Stable across restarts.
+    pub wacore_variant: String,
+    /// Total emissions since the sidecar was created.
+    pub count: u64,
+    /// First wall-clock observation (Unix ms).
+    pub first_seen_ms: i64,
+    /// Most recent observation (Unix ms).
+    pub last_seen_ms: i64,
+    /// Capped sample of the most recent emission's raw payload
+    /// (≤ 2 KiB). Operators inspect this when deciding whether
+    /// to project the variant into a typed `InboundEvent` arm.
+    #[serde(default)]
+    pub last_sample: String,
+}
+
 /// What gets written to disk and read back on reload. The schema is
 /// **append-only stable**: adding optional fields is fine, removing
 /// fields is a breaking change.
@@ -130,6 +270,12 @@ pub struct EventsPersisterHandle {
     cancel: CancellationToken,
     dropped: Arc<DropCounter>,
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+    /// Per-variant aggregate of `InboundEvent::Unknown` emissions.
+    /// Drives `events.unknown_stats` (operator triage) and the
+    /// `unknown_event_total{wacore_variant}` Prometheus counter.
+    /// Lives in-process; persisted to `unknown_stats.ndjson` on
+    /// every Unknown emission (cheap — small file).
+    unknown_stats: Arc<parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>>,
 }
 
 impl std::fmt::Debug for EventsPersisterHandle {
@@ -156,6 +302,7 @@ impl Clone for EventsPersisterHandle {
             cancel: self.cancel.clone(),
             dropped: self.dropped.clone(),
             last_load_stats: self.last_load_stats.clone(),
+            unknown_stats: self.unknown_stats.clone(),
         }
     }
 }
@@ -180,6 +327,11 @@ pub struct PersisterIngress {
     cancel: CancellationToken,
     dropped: Arc<DropCounter>,
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+    /// Per-variant aggregate of `InboundEvent::Unknown` emissions.
+    /// Shared with the actor (same `Arc`); the actor updates it on
+    /// every Unknown emission and `unknown_stats_snapshot` reads
+    /// it back.
+    unknown_stats: Arc<parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>>,
 }
 
 impl std::fmt::Debug for PersisterIngress {
@@ -252,6 +404,21 @@ impl PersisterIngress {
     pub fn cancellation_token(&self) -> CancellationToken {
         self.cancel.clone()
     }
+
+    /// Read a snapshot of the per-variant aggregate for unknown
+    /// events, sorted by count descending. Stable read-only access —
+    /// the actor owns the canonical map and updates it on every
+    /// Unknown emission.
+    pub fn unknown_stats_snapshot(&self) -> Vec<UnknownStats> {
+        let map = self.unknown_stats.lock();
+        let mut v: Vec<UnknownStats> = map.values().cloned().collect();
+        v.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.wacore_variant.cmp(&b.wacore_variant))
+        });
+        v
+    }
 }
 
 /// Spawn the actor. `path = None` disables disk I/O entirely
@@ -294,12 +461,40 @@ impl EventsPersisterHandle {
         let (flush_tx, flush_rx) = mpsc::channel::<oneshot::Sender<()>>(16);
         let dropped = Arc::new(DropCounter::default());
         let last_load_stats = Arc::new(parking_lot::Mutex::new(None));
+        // Synchronously hydrate the unknown_stats sidecar so the
+        // first RPC `events.unknown_stats` after boot reflects
+        // historical context. File is small (≤ tens of variants ×
+        // ~250 bytes per line ≈ a few KB at most).
+        let unknown_stats = Arc::new(parking_lot::Mutex::new(match &path {
+            Some(p) => {
+                let sidecar = unknown_stats_path(p);
+                // Use blocking std::fs because `spawn` is sync;
+                // the file is tiny (< 10 KB typical, < 100 KB
+                // pathological).
+                match std::fs::read(&sidecar) {
+                    Ok(bytes) => parse_unknown_stats_bytes(&bytes),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        std::collections::BTreeMap::new()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %sidecar.display(),
+                            "events_persister: failed to read unknown_stats sidecar; starting empty"
+                        );
+                        std::collections::BTreeMap::new()
+                    }
+                }
+            }
+            None => std::collections::BTreeMap::new(),
+        }));
 
         let task_cancel = cancel.clone();
         let task_buffer = buffer.clone();
         let task_path = path;
         let task_dropped = dropped.clone();
         let task_load_stats = last_load_stats.clone();
+        let task_unknown_stats = unknown_stats.clone();
 
         let join = tokio::spawn(async move {
             if let Err(e) = run_actor(
@@ -310,6 +505,7 @@ impl EventsPersisterHandle {
                     cancel: task_cancel,
                     _dropped: task_dropped,
                     last_load_stats: task_load_stats,
+                    unknown_stats: task_unknown_stats,
                 },
                 rx,
                 flush_rx,
@@ -327,6 +523,7 @@ impl EventsPersisterHandle {
             cancel,
             dropped,
             last_load_stats,
+            unknown_stats,
         })
     }
 
@@ -378,6 +575,20 @@ impl EventsPersisterHandle {
         self.last_load_stats.lock().clone()
     }
 
+    /// Snapshot the per-variant aggregate for unknown events,
+    /// sorted by count desc. Same shape as
+    /// [`PersisterIngress::unknown_stats_snapshot`].
+    pub fn unknown_stats_snapshot(&self) -> Vec<UnknownStats> {
+        let map = self.unknown_stats.lock();
+        let mut v: Vec<UnknownStats> = map.values().cloned().collect();
+        v.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.wacore_variant.cmp(&b.wacore_variant))
+        });
+        v
+    }
+
     /// Block (async poll every ~5ms, no busy-loop) until the
     /// cold-start reload completes. Returns the stats on success;
     /// `None` if the actor task exited before completing the
@@ -426,6 +637,7 @@ impl EventsPersisterHandle {
             cancel: self.cancel.clone(),
             dropped: self.dropped.clone(),
             last_load_stats: self.last_load_stats.clone(),
+            unknown_stats: self.unknown_stats.clone(),
         }
     }
 
@@ -564,6 +776,12 @@ struct ActorState {
     /// after. Same `Arc` the public handle exposes via
     /// `last_load_stats()`.
     last_load_stats: Arc<parking_lot::Mutex<Option<LoadStats>>>,
+    /// Per-variant aggregate of `InboundEvent::Unknown` emissions.
+    /// Updated on every Unknown emission; persisted to
+    /// `unknown_stats.ndjson` next to the events NDJSON. Shared
+    /// with the public handle for read access via
+    /// `unknown_stats_snapshot()`.
+    unknown_stats: Arc<parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>>,
 }
 
 /// The actor loop. Extracted so test paths can exercise it directly.
@@ -586,6 +804,10 @@ async fn run_actor(
     let flush_interval = state.flush_interval;
     let cancel = state.cancel;
     let last_load_stats = state.last_load_stats;
+    let unknown_stats = state.unknown_stats;
+    // Sidecar path: `<events.ndjson>.unknown_stats.ndjson`. Only
+    // Some when NDJSON persistence is enabled.
+    let unknown_path = path.as_deref().map(unknown_stats_path);
 
     // === Cold-start reload (moved from spawn() into the actor) ==
     // Performs the NDJSON hydrate against `buffer` before opening
@@ -647,6 +869,7 @@ async fn run_actor(
                     if let Some(f) = file.as_mut() {
                         let _ = write_event(f, id, &ev).await;
                     }
+                    track_unknown(&ev, &unknown_stats, unknown_path.as_deref()).await;
                 }
                 // Drain any pending flush requests so callers don't
                 // hang on flush_sync.
@@ -673,6 +896,7 @@ async fn run_actor(
                             "events_persister: write failed; event kept in memory");
                     }
                 }
+                track_unknown(&ev, &unknown_stats, unknown_path.as_deref()).await;
                 // Drain any additional events that arrived in the
                 // same scheduling slice — avoids 1-event-per-loop
                 // iter overhead during bursts.
@@ -687,6 +911,7 @@ async fn run_actor(
                                 "events_persister: write failed; event kept in memory");
                         }
                     }
+                    track_unknown(&ev, &unknown_stats, unknown_path.as_deref()).await;
                 }
             }
             Some(ack) = flush_rx.recv() => {
@@ -703,6 +928,7 @@ async fn run_actor(
                                 "events_persister: write failed; event kept in memory");
                         }
                     }
+                    track_unknown(&ev, &unknown_stats, unknown_path.as_deref()).await;
                 }
                 if let Some(f) = file.as_mut() {
                     let _ = f.sync_all().await;
@@ -722,6 +948,74 @@ async fn run_actor(
                 return Ok(());
             }
         }
+    }
+}
+
+/// Update the in-memory unknown_stats aggregate for one Unknown
+/// emission + persist to disk. Cheap: file is small (< 10 KB
+/// typical). Called from the actor's event-receiving arms.
+async fn record_unknown(
+    unknown_stats: &parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>,
+    unknown_path: Option<&Path>,
+    label: &str,
+    payload: &serde_json::Value,
+    ts_unix_ms: i64,
+) {
+    let sample = truncate_sample(payload.to_string());
+    {
+        let mut map = unknown_stats.lock();
+        let entry = map
+            .entry(label.to_string())
+            .or_insert_with(|| UnknownStats {
+                wacore_variant: label.to_string(),
+                count: 0,
+                first_seen_ms: ts_unix_ms,
+                last_seen_ms: ts_unix_ms,
+                last_sample: String::new(),
+            });
+        entry.count = entry.count.saturating_add(1);
+        entry.last_seen_ms = ts_unix_ms;
+        if entry.last_sample != sample {
+            entry.last_sample = sample;
+        }
+    }
+    // Drop the lock before async I/O so we don't hold the parking_lot
+    // guard across await points (parking_lot guards aren't Send).
+    if let Some(p) = unknown_path {
+        let snapshot = unknown_stats.lock().clone();
+        if let Err(e) = save_unknown_stats(p, &snapshot).await {
+            tracing::warn!(
+                error = %e,
+                path = %p.display(),
+                "events_persister: failed to persist unknown_stats sidecar"
+            );
+        }
+    }
+}
+
+/// Pattern-match on `InboundEvent::Unknown` and forward to
+/// `record_unknown`. No-op for all other variants. Called from
+/// each of the actor's event-receiving arms.
+async fn track_unknown(
+    ev: &InboundEvent,
+    unknown_stats: &parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>,
+    unknown_path: Option<&Path>,
+) {
+    if let InboundEvent::Unknown {
+        wacore_event,
+        variant_label,
+        ts_unix_ms,
+        ..
+    } = ev
+    {
+        record_unknown(
+            unknown_stats,
+            unknown_path,
+            variant_label,
+            wacore_event,
+            *ts_unix_ms,
+        )
+        .await;
     }
 }
 
@@ -951,5 +1245,190 @@ mod tests {
         // bytes plus the partial write boundaries vary).
         let after_len = std::fs::metadata(&p).unwrap().len();
         assert!(after_len <= before_len);
+    }
+
+    /// Sidecar helper: `unknown_stats_path` derives a sibling file
+    /// under the same directory as the events NDJSON.
+    #[test]
+    fn unknown_stats_path_sits_next_to_events_ndjson() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join("events.ndjson");
+        let sidecar = unknown_stats_path(&events);
+        assert!(sidecar.starts_with(dir.path()));
+        assert!(sidecar.to_string_lossy().contains("unknown_stats"));
+    }
+
+    /// `truncate_sample` caps a payload to UNKNOWN_SAMPLE_CAP bytes
+    /// and appends the truncation marker.
+    #[test]
+    fn truncate_sample_caps_long_payloads() {
+        let big = "x".repeat(UNKNOWN_SAMPLE_CAP + 100);
+        let t = truncate_sample(big);
+        // Truncated body + marker fits within (cap + marker).
+        assert!(t.starts_with(&"x".repeat(UNKNOWN_SAMPLE_CAP)));
+        assert!(t.ends_with("...[truncated]"));
+    }
+
+    /// `truncate_sample` leaves short payloads untouched.
+    #[test]
+    fn truncate_sample_passes_through_short_payloads() {
+        let s = "short".to_string();
+        let t = truncate_sample(s.clone());
+        assert_eq!(t, s);
+    }
+
+    /// `parse_unknown_stats_bytes` returns an empty map for empty input.
+    #[test]
+    fn parse_unknown_stats_bytes_empty() {
+        let m = parse_unknown_stats_bytes(b"");
+        assert!(m.is_empty());
+    }
+
+    /// `parse_unknown_stats_bytes` skips malformed lines and keeps good ones.
+    #[test]
+    fn parse_unknown_stats_bytes_skips_garbage() {
+        let good = serde_json::to_string(&UnknownStats {
+            wacore_variant: "FooBar".into(),
+            count: 3,
+            first_seen_ms: 1,
+            last_seen_ms: 2,
+            last_sample: "abc".into(),
+        })
+        .unwrap();
+        let bytes = format!("{good}\n{{not json\n{good}\n").into_bytes();
+        let m = parse_unknown_stats_bytes(&bytes);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m["FooBar"].count, 3);
+    }
+
+    /// `save_unknown_stats` then `load_unknown_stats` round-trips the
+    /// per-variant aggregate.
+    #[tokio::test]
+    async fn unknown_stats_round_trip_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("events.ndjson.unknown_stats.ndjson");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "Notification".into(),
+            UnknownStats {
+                wacore_variant: "Notification".into(),
+                count: 5,
+                first_seen_ms: 100,
+                last_seen_ms: 200,
+                last_sample: "raw xml".into(),
+            },
+        );
+        map.insert(
+            "PictureUpdate".into(),
+            UnknownStats {
+                wacore_variant: "PictureUpdate".into(),
+                count: 2,
+                first_seen_ms: 50,
+                last_seen_ms: 75,
+                last_sample: "{}".into(),
+            },
+        );
+        save_unknown_stats(&p, &map).await.expect("save");
+        let loaded = load_unknown_stats(&p).await.expect("load");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["Notification"].count, 5);
+        assert_eq!(loaded["PictureUpdate"].count, 2);
+    }
+
+    /// `load_unknown_stats` returns an empty map for a missing file
+    /// (cold-start path on first run).
+    #[tokio::test]
+    async fn unknown_stats_load_missing_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("never-existed.unknown_stats.ndjson");
+        let m = load_unknown_stats(&p).await.expect("load missing");
+        assert!(m.is_empty());
+    }
+
+    /// Persister + sidecar integration: pushing 3 Unknown events
+    /// with variant label "PictureUpdate" results in `unknown_stats`
+    /// map entry `count = 3` + sidecar file on disk with that count.
+    #[tokio::test]
+    async fn persister_records_unknown_stats_per_emission() {
+        let dir = tempfile::tempdir().unwrap();
+        let events_path = default_persistence_path(dir.path());
+        let b = EventsBuffer::new(100);
+        let cancel = CancellationToken::new();
+        let h = EventsPersisterHandle::spawn(
+            b.clone(),
+            Some(events_path.clone()),
+            Duration::from_millis(50),
+            cancel.clone(),
+        )
+        .expect("spawn");
+        for i in 0..3 {
+            let ev = InboundEvent::Unknown {
+                wacore_event: serde_json::json!({"seq": i}),
+                variant_label: "PictureUpdate".into(),
+                ts_unix_ms: 1000 + i,
+                ts_mono_ns: i as u64,
+            };
+            h.push(ev).expect("push");
+        }
+        h.flush_sync(Duration::from_secs(2)).await.expect("flush");
+
+        // Snapshot reads from the actor's shared map.
+        let snap = h.unknown_stats_snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].wacore_variant, "PictureUpdate");
+        assert_eq!(snap[0].count, 3);
+        assert_eq!(snap[0].last_seen_ms, 1002);
+
+        // Sidecar file exists and reloads to the same shape.
+        let sidecar = unknown_stats_path(&events_path);
+        let loaded = load_unknown_stats(&sidecar).await.expect("load sidecar");
+        assert_eq!(loaded["PictureUpdate"].count, 3);
+
+        cancel.cancel();
+        h.join().await.expect("join");
+    }
+
+    /// Mixed-variant persistence: two distinct labels get their own
+    /// entries; the snapshot sorts by count desc.
+    #[tokio::test]
+    async fn persister_unknown_stats_sorted_by_count_desc() {
+        let dir = tempfile::tempdir().unwrap();
+        let events_path = default_persistence_path(dir.path());
+        let b = EventsBuffer::new(100);
+        let cancel = CancellationToken::new();
+        let h = EventsPersisterHandle::spawn(
+            b.clone(),
+            Some(events_path.clone()),
+            Duration::from_millis(50),
+            cancel.clone(),
+        )
+        .expect("spawn");
+        // 5 PictureUpdate + 3 GroupUpdate
+        for _ in 0..5 {
+            h.push(InboundEvent::synthetic_unknown(
+                "PictureUpdate",
+                serde_json::json!({}).to_string(),
+            ))
+            .expect("push");
+        }
+        for _ in 0..3 {
+            h.push(InboundEvent::synthetic_unknown(
+                "GroupUpdate",
+                serde_json::json!({}).to_string(),
+            ))
+            .expect("push");
+        }
+        h.flush_sync(Duration::from_secs(2)).await.expect("flush");
+
+        let snap = h.unknown_stats_snapshot();
+        assert_eq!(snap.len(), 2);
+        // Sorted by count desc.
+        assert_eq!(snap[0].wacore_variant, "PictureUpdate");
+        assert_eq!(snap[0].count, 5);
+        assert_eq!(snap[1].wacore_variant, "GroupUpdate");
+        assert_eq!(snap[1].count, 3);
+
+        cancel.cancel();
+        h.join().await.expect("join");
     }
 }

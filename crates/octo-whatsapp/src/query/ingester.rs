@@ -444,14 +444,10 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         InboundEvent::LabelAssociationUpdate { chat_jid, .. } => {
             (Some(chat_jid.clone()), None, Some(chat_jid.clone()))
         }
-        InboundEvent::ServerAck { peer, .. } => match peer {
-            Some(p) => (Some(p.clone()), None, Some(p.clone())),
-            None => (None, None, None),
-        },
-        InboundEvent::IdentityChange { jid, .. } => match jid {
-            Some(j) => (Some(j.clone()), None, Some(j.clone())),
-            None => (None, None, None),
-        },
+        InboundEvent::ServerAck { peer: Some(p), .. } => (Some(p.clone()), None, Some(p.clone())),
+        InboundEvent::ServerAck { peer: None, .. } => (None, None, None),
+        InboundEvent::IdentityChange { jid: Some(j), .. } => (Some(j.clone()), None, Some(j.clone())),
+        InboundEvent::IdentityChange { jid: None, .. } => (None, None, None),
         _ => (None, None, None),
     }
 }
@@ -608,7 +604,11 @@ mod tests {
         let db = Database::open_in_memory().expect("open");
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
-        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: r#"Receipt(msg_id: "M", peer: "p", type: Delivered)"#.into(),
+            ts_unix_ms: 2000,
+            ts_mono_ns: 0,
+        });
         ingester.ingest(42, (2000, 0), &ev).expect("ingest receipt");
         assert_eq!(row_count(ingester.db(), "events"), 1);
         assert_eq!(row_count(ingester.db(), "messages"), 0);
@@ -646,29 +646,26 @@ mod tests {
         let ingester = QueryIngester::new(db);
         // Receipt(Delivered) — parser reads `type` field (CamelCase
         // values: Delivered/Read/Played/Sender).
-        ingester
-            .ingest(
-                1,
-                (1, 0),
-                &InboundEvent::synthetic_unknown("test", "synthetic"),
-            )
-            .unwrap();
+        let ev1 = InboundEvent::parse(EventEnvelope {
+            raw: r#"Receipt(msg_id: "M1", peer: "p", type: Delivered)"#.into(),
+            ts_unix_ms: 1,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(1, (1, 0), &ev1).unwrap();
         // Receipt(Read)
-        ingester
-            .ingest(
-                2,
-                (2, 0),
-                &InboundEvent::synthetic_unknown("test", "synthetic"),
-            )
-            .unwrap();
-        // GroupChange(subject)
-        ingester
-            .ingest(
-                3,
-                (3, 0),
-                &InboundEvent::synthetic_unknown("test", "synthetic"),
-            )
-            .unwrap();
+        let ev2 = InboundEvent::parse(EventEnvelope {
+            raw: r#"Receipt(msg_id: "M2", peer: "p", type: Read)"#.into(),
+            ts_unix_ms: 2,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(2, (2, 0), &ev2).unwrap();
+        // Receipt(Played) — third receipt variant for per-kind extraction
+        let ev3 = InboundEvent::parse(EventEnvelope {
+            raw: r#"Receipt(msg_id: "M3", peer: "p", type: Played)"#.into(),
+            ts_unix_ms: 3,
+            ts_mono_ns: 0,
+        });
+        ingester.ingest(3, (3, 0), &ev3).unwrap();
         assert_eq!(
             row_count_where(ingester.db(), "events", "variant = 'delivered'"),
             1
@@ -678,7 +675,7 @@ mod tests {
             1
         );
         assert_eq!(
-            row_count_where(ingester.db(), "events", "variant = 'subject'"),
+            row_count_where(ingester.db(), "events", "variant = 'played'"),
             1
         );
     }
@@ -695,7 +692,11 @@ mod tests {
         let db = Database::open_in_memory().expect("open");
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
-        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: r#"Receipt(msg_id: "M", peer: "p", type: Delivered)"#.into(),
+            ts_unix_ms: 0, // receipt has no wall-clock; ingester falls back
+            ts_mono_ns: 0,
+        });
         let recorded_at: (i64, u64) = (1_783_887_512_357, 999);
         ingester
             .ingest(7, recorded_at, &ev)
@@ -751,7 +752,11 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "", kind: Image, media_token: "tok", view_once: true, ephemeral_expires_at_seconds: 86400, is_group: false)"#;
-        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1000,
+            ts_mono_ns: 0,
+        });
         ingester.ingest(42, (1000, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()
@@ -779,7 +784,11 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"Unavailable(id: "M9", peer: "X", sender: "Y", kind: view_once, is_unavailable: true, ts: 1700000000)"#;
-        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1700000000,
+            ts_mono_ns: 0,
+        });
         ingester.ingest(7, (1700000000, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()
@@ -803,7 +812,11 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"DisappearingModeChanged(jid: "5511999@s.whatsapp.net", duration_seconds: 86400, ts: 1700000002)"#;
-        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
+        let ev = InboundEvent::parse(EventEnvelope {
+            raw: raw.into(),
+            ts_unix_ms: 1700000002,
+            ts_mono_ns: 0,
+        });
         ingester.ingest(11, (1700000002, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()

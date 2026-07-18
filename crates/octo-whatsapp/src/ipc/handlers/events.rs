@@ -178,12 +178,8 @@ mod tests {
     async fn events_list_respects_limit() {
         let h = handle();
         for i in 0..5 {
-            h.events_buffer().push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
+            h.events_buffer()
+                .push(InboundEvent::synthetic_unknown("test", format!("m{i}")));
         }
         let v = EventsList
             .call(h.clone(), json!({ "limit": 3 }))
@@ -214,7 +210,7 @@ mod tests {
         let h = handle();
         let id = h
             .events_buffer()
-            .push(InboundEvent::synthetic_unknown("test", "m1".into()));
+            .push(InboundEvent::synthetic_unknown("test", "m1"));
         let v = EventsShow
             .call(h.clone(), json!({ "id": id }))
             .await
@@ -241,12 +237,8 @@ mod tests {
     async fn events_replay_since_id_zero_returns_all() {
         let h = handle();
         for i in 0..3 {
-            h.events_buffer().push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
+            h.events_buffer()
+                .push(InboundEvent::synthetic_unknown("test", format!("m{i}")));
         }
         let v = EventsReplay
             .call(h.clone(), json!({ "since_id": 0, "limit": 10 }))
@@ -259,7 +251,7 @@ mod tests {
     async fn events_tail_returns_recent_with_lagged_zero() {
         let h = handle();
         h.events_buffer()
-            .push(InboundEvent::synthetic_unknown("test", "t1".into()));
+            .push(InboundEvent::synthetic_unknown("test", "t1"));
         let v = EventsTail.call(h.clone(), Value::Null).await.unwrap();
         assert_eq!(v["lagged"], 0);
         assert_eq!(v["events"].as_array().unwrap().len(), 1);

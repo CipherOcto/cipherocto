@@ -21,9 +21,9 @@
 //!   Consumers that need typed access to a specific wacore struct can
 //!   re-deserialise via `wacore`'s `serde_json::from_value` if/when
 //!   `Deserialize` is added upstream.
-//! - **`Unknown` is graceful.** Carries the full wacore event payload
-//!   + a discriminant label so callers can route, metric, and inspect
-//!   without parsing Debug output.
+//! - **`Unknown` is graceful.** Carries the full wacore event
+//!   payload + a discriminant label so callers can route, metric,
+//!   and inspect without parsing Debug output.
 
 use std::sync::Arc;
 
@@ -57,6 +57,30 @@ pub fn parse(env: EventEnvelope) -> InboundEvent {
     parse_inner(&env.raw, env.ts_unix_ms, env.ts_mono_ns)
 }
 
+/// Method-style shim for [`parse`]. Used at every test site that
+/// constructs an `EventEnvelope` and feeds it through the parser.
+/// Will be deleted once the adapter match arm rewrite (T05-T10)
+/// lands and the Debug-string bridge is removed.
+impl InboundEvent {
+    /// Wrap the free function [`parse`] so callers can use
+    /// `InboundEvent::parse(env)`. Inherent method takes priority
+    /// over any trait-derived `parse` (clap/winnow Parser).
+    pub fn parse(env: EventEnvelope) -> InboundEvent {
+        parse_free(env)
+    }
+
+    /// Wrap the free function [`parse_many`].
+    pub fn parse_with_now(env: EventEnvelope, now_unix_ms: i64) -> Vec<InboundEvent> {
+        parse_many(env, Some(now_unix_ms))
+    }
+}
+
+// Free-function alias so the inherent `InboundEvent::parse` can
+// delegate without recursive recursion. Kept private to the module.
+fn parse_free(env: EventEnvelope) -> InboundEvent {
+    parse(env)
+}
+
 /// Parse an envelope into one or more [`InboundEvent`]s. A
 /// `Messages(MessageBatch { … })` envelope fans out to one event per
 /// inner message so group conversations land as searchable rows
@@ -78,7 +102,7 @@ pub fn parse_many(env: EventEnvelope, _now_unix_ms: Option<i64>) -> Vec<InboundE
             ts_mono_ns: env.ts_mono_ns,
         }]
     } else {
-        vec![parse(env)]
+        vec![InboundEvent::parse(env)]
     }
 }
 
@@ -90,6 +114,20 @@ fn parse_inner(raw: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
     // DisappearingModeChanged → DisappearingModeChanged) so the
     // 5-prefix string match below handles those.
     let raw_owned = raw.to_string();
+    // Extract the leading variant discriminant (e.g. "GroupUpdate",
+    // "PictureUpdate", "PairSuccess", or a future wacore variant).
+    // Falls back to "debug_fallback" when the envelope is not a
+    // recognised `Variant(...)` shape (malformed input, raw node
+    // passthroughs, etc.). Drives the per-variant aggregate in
+    // `unknown_stats` so operators can see exactly which wacore
+    // events lack typed handlers.
+    let variant_label = raw_owned
+        .split_once('(')
+        .map(|(name, _)| name.trim().to_string())
+        .unwrap_or_else(|| "debug_fallback".to_string());
+    if let Some(rest) = raw.strip_prefix("Message(") {
+        return parse_message(rest, ts_unix_ms, ts_mono_ns);
+    }
     if let Some(rest) = raw.strip_prefix("Presence(") {
         return parse_presence(rest);
     }
@@ -107,7 +145,7 @@ fn parse_inner(raw: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
     }
     InboundEvent::Unknown {
         wacore_event: serde_json::Value::String(raw_owned),
-        variant_label: "debug_fallback".into(),
+        variant_label,
         ts_unix_ms,
         ts_mono_ns,
     }
@@ -234,6 +272,55 @@ fn parse_disappearing_mode_changed(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64)
     }
 }
 
+/// Parse a `Message(...)` Debug envelope into a typed `Message` event.
+/// Carries the full Message fields including `view_once`, `media_token`,
+/// `is_group`, `ephemeral_expires_at_seconds`. Keeps the existing
+/// behaviour for keys we can parse; anything else falls into sensible
+/// defaults so a partial Debug dump produces a valid event.
+fn parse_message(rest: &str, ts_unix_ms: i64, ts_mono_ns: u64) -> InboundEvent {
+    let id = unquote(&field(rest, "id").unwrap_or_default());
+    let peer = unquote(&field(rest, "peer").unwrap_or_default());
+    let sender = unquote(&field(rest, "sender").unwrap_or_default());
+    let text = unquote(&field(rest, "text").unwrap_or_default());
+    let kind = match field(rest, "kind").as_deref() {
+        Some("Text") => MessageKind::Text,
+        Some("Image") => MessageKind::Image,
+        Some("Video") => MessageKind::Video,
+        Some("Audio") => MessageKind::Audio,
+        Some("Voice") => MessageKind::Voice,
+        Some("Sticker") => MessageKind::Sticker,
+        Some("Document") => MessageKind::Document,
+        Some("Contact") => MessageKind::Contact,
+        Some("Location") => MessageKind::Location,
+        Some("Poll") => MessageKind::Poll,
+        Some("Reaction") => MessageKind::Reaction,
+        _ => MessageKind::Text,
+    };
+    let media_token = field(rest, "media_token").map(|v| unquote(&v));
+    let is_group = field(rest, "is_group").as_deref() == Some("true");
+    let view_once = field(rest, "view_once").as_deref() == Some("true");
+    let from_me = field(rest, "from_me").as_deref() == Some("true");
+    let ephemeral_expires_at_seconds =
+        field(rest, "ephemeral_expires_at_seconds").and_then(|v| v.parse::<u32>().ok());
+    InboundEvent::Message {
+        id,
+        peer,
+        sender,
+        ts_unix_ms,
+        ts_mono_ns,
+        kind,
+        text,
+        media_token,
+        reply_to: None,
+        mentions: Vec::new(),
+        mentions_truncated: false,
+        from_me,
+        is_group,
+        view_once,
+        ephemeral_expires_at_seconds,
+    }
+}
+
 pub const MAX_INLINE_MENTIONS: usize = 8;
 pub const MAX_INLINE_TEXT_BYTES: usize = 65_536;
 pub const SKEW_TOLERANCE_MS: i64 = 60_000;
@@ -241,6 +328,7 @@ pub const SKEW_TOLERANCE_MS: i64 = 60_000;
 /// Truncate a Debug-formatted sample to a bounded size. Used by the
 /// `UnknownStats` sidecar so a runaway payload cannot blow up the
 /// persistence file. 2 KiB + trailing ellipsis.
+#[allow(dead_code)]
 pub(crate) const UNKNOWN_SAMPLE_CAP: usize = 2048;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,7 +341,7 @@ pub struct EventEnvelope {
 /// First-class typed inbound event. One variant per wacore `Event`
 /// variant wacore itself implements, plus `Unknown` for the catch-all
 /// (graceful — never a compile error on a new wacore variant).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum InboundEvent {
     // ─── Existing projected variants (kept; rich downstream shape) ──────
@@ -1123,10 +1211,12 @@ impl InboundEvent {
     /// Construct a synthetic `InboundEvent::Unknown` from textual
     /// payload. Used by tests + a handful of internal sites that
     /// never see a real wacore event but want to push something onto
-    /// the events ring for downstream consumers.
-    pub fn synthetic_unknown(label: impl Into<String>, text: String) -> Self {
+    /// the events ring for downstream consumers. `text` is anything
+    /// string-like (`String`, `&str`, `Cow<str>`) — the function
+    /// converts to `String` internally.
+    pub fn synthetic_unknown(label: impl Into<String>, text: impl Into<String>) -> Self {
         Self::Unknown {
-            wacore_event: serde_json::Value::String(text),
+            wacore_event: serde_json::Value::String(text.into()),
             variant_label: label.into(),
             ts_unix_ms: 0,
             ts_mono_ns: 0,

@@ -87,5 +87,8 @@ uv.lock
 /os
 /tarpaulin-report.json
 
+# cargo-llvm-cov Cobertura-format output (CI artifact only)
+/cobertura.xml
+
 # Local debug screenshots (WA Web reconnect drills)
 /wa-*.png

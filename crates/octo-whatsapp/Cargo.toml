@@ -77,7 +77,7 @@ dirs = "5"
 # health/ready/metrics server + HMAC label hashing.
 prometheus = { version = "0.14", default-features = false }
 axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
-hmac       = "0.12"
+hmac       = "0.13"
 # Phase 5 Part F: shared reqwest::Client for the webhook action dispatcher.
 # Default features off, rustls-tls only — keeps hermetic builds linkable
 # without OpenSSL.

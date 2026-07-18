@@ -14,7 +14,7 @@ tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "sy
 axum = "0.7"
 blake3 = "1.5"
 async-trait = "0.1"
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 subtle = "2.6"
 octo-network = { path = "../octo-network" }

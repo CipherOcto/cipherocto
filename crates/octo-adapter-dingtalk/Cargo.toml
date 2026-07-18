@@ -18,7 +18,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
 parking_lot = "0.12"
 tracing = "0.1"
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 
 octo-network = { path = "../octo-network" }

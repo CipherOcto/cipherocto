@@ -53,7 +53,7 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 hmac-sha256 = "1.1"
 
 # For HMAC (AWS SigV4 signing)
-hmac = "0.12"
+hmac = "0.13"
 
 # For bincode serialization (mesh envelope wire format)
 bincode = "1"

@@ -31,7 +31,7 @@ p256 = { version = "0.13", features = ["ecdh"] }
 aes-gcm = "0.10"
 aes = "0.8"
 ctr = "0.9"
-hmac = "0.12"
+hmac = "0.13"
 subtle = "2"
 hkdf = "0.12"
 sha2 = "0.10"

@@ -64,11 +64,12 @@ octo-network = { path = "../octo-network" }
 # Auth flows (only required for the integration-matrix feature; the
 # production cdylib doesn't link to it).
 octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core", optional = true }
-# File-based refresh-token writeback (mission 0850h-c): flock via fs4,
-# atomic rename via fs::rename on a `<config>.json.tmp` sibling file.
+# File-based refresh-token writeback (mission 0850h-c): flock via
+# std::fs::File::lock (Rust 1.89+, backed by flock(2) on Unix and
+# LockFileEx on Windows — same primitives fs4 wraps), atomic rename
+# via fs::rename on a `<config>.json.tmp` sibling file.
 # `libc` is needed for the `EWOULDBLOCK` / `EAGAIN` checks on Unix
-# `lock_exclusive` errors (fs4 surfaces these via `raw_os_error`).
-fs4 = { version = "0.7", features = ["sync"] }
+# `try_lock` errors.
 libc = "0.2"
 # Error type for the config writer.
 thiserror = { workspace = true }

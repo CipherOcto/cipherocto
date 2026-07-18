@@ -50,7 +50,6 @@
 //! place to record the rotated token for restart survival.
 
 use crate::MatrixConfig;
-use fs4::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -182,7 +181,8 @@ pub fn writeback(
         .truncate(false)
         .write(true)
         .open(&lock_path)?;
-    if let Err(e) = lock_file.try_lock_exclusive() {
+    if let Err(try_err) = lock_file.try_lock() {
+        let e: std::io::Error = try_err.into();
         // R2-M3: on Windows, `LockFileEx` returns
         // `ERROR_LOCK_VIOLATION` (raw_os_error = 33) when the
         // region is already exclusively locked. fs4 surfaces this
@@ -453,7 +453,6 @@ mod tests {
         // of blocking forever on the flock. R1-H2 changed the
         // underlying call to `try_lock_exclusive`; this test
         // proves the error path is reachable.
-        use fs4::FileExt;
         let dir = tmpdir();
         let path = dir.path().join("config.json");
         let lock_path = path.with_extension("json.lock");
@@ -474,7 +473,7 @@ mod tests {
             .truncate(false)
             .open(&lock_path)
             .unwrap();
-        holder.lock_exclusive().unwrap();
+        holder.lock().unwrap();
 
         // Now try to writeback — should return LockHeld.
         let rotated = sample_config();
@@ -501,7 +500,6 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn writeback_preserves_lock_file_after_contention_and_happy_path() {
-        use fs4::FileExt;
         let dir = tmpdir();
         let path = dir.path().join("config.json");
         let lock_path = path.with_extension("json.lock");
@@ -523,7 +521,7 @@ mod tests {
             .truncate(false)
             .open(&lock_path)
             .unwrap();
-        holder.lock_exclusive().unwrap();
+        holder.lock().unwrap();
 
         let rotated = sample_config();
         let _ = writeback(&path, &initial, &rotated, false);

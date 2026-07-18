@@ -19,7 +19,7 @@ chrono = { version = "0.4", features = ["clock"] }
 parking_lot = "0.12"
 tracing = "0.1"
 aes = "0.8"
-ecb = "0.1"
+ecb = "0.2"
 
 octo-network = { path = "../octo-network" }
 

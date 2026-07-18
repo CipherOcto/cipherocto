@@ -75,7 +75,7 @@ dirs = "5"
 
 # Phase 5 Part B: observability — Prometheus registry + axum HTTP
 # health/ready/metrics server + HMAC label hashing.
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.14", default-features = false }
 axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 hmac       = "0.12"
 # Phase 5 Part F: shared reqwest::Client for the webhook action dispatcher.

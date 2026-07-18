@@ -8,7 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # AT Protocol (Bluesky)
-atrium-api = "0.1"
+atrium-api = "0.25"
 
 # Shared dependencies
 tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread"] }

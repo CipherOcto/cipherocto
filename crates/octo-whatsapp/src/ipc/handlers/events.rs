@@ -152,6 +152,61 @@ impl RpcHandler for EventsUnknownStats {
     }
 }
 
+/// `events.unknown_stats.history` — daily-rotated history of
+/// per-variant aggregate counts. Returns up to `days` buckets
+/// (default 30, max 90). Each bucket is a `{ day, stats: [...] }`
+/// shape sourced from the daily snapshot file.
+#[derive(Debug)]
+pub struct EventsUnknownStatsHistory;
+
+#[async_trait::async_trait]
+impl RpcHandler for EventsUnknownStatsHistory {
+    fn name(&self) -> &'static str {
+        "events.unknown_stats.history"
+    }
+    async fn call(&self, h: DaemonHandle, params: Value) -> Result<Value, RpcError> {
+        let days = params
+            .get("days")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(30)
+            .clamp(1, 90);
+        let Some(ingress) = h.events_persister_handle() else {
+            return Ok(serde_json::json!({ "buckets": [], "count": 0 }));
+        };
+        let base_dir = ingress.cancellation_token();
+        let _ = base_dir; // path comes from the persister's own world
+                          // The persister exposes the canonical events.ndjson path
+                          // through its UnknownStats sidecar — `unknown_stats_path`
+                          // derives it from the events.ndjson path. The handle keeps
+                          // the events path private; for now the RPC reads via the
+                          // process-global data dir layout.
+        let data_dir = h.data_dir();
+        let events_ndjson = crate::events_persister::default_persistence_path(&data_dir);
+        let history = crate::events_persister::load_unknown_stats_history(&events_ndjson, days)
+            .await
+            .map_err(|e| RpcError {
+                code: RpcErrorCode::Internal.as_i32(),
+                message: format!("load history: {e}"),
+                data: None,
+            })?;
+        let buckets: Vec<Value> = history
+            .into_iter()
+            .map(|b| {
+                serde_json::json!({
+                    "day": b.day,
+                    "stats": b.stats.values().cloned().collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "buckets": buckets,
+            "count": buckets.len(),
+            "days_requested": days,
+        }))
+    }
+}
+
 fn parse_limit(params: &Value) -> Result<usize, RpcError> {
     let n = params
         .get("limit")

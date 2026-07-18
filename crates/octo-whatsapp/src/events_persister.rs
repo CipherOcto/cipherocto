@@ -160,6 +160,138 @@ pub async fn save_unknown_stats(
     Ok(())
 }
 
+/// Resolve the date-stamped history file path. Returns
+/// `<sidecar>.YYYY-MM-DD` so each day's snapshot is a separate file.
+/// Operators keep N days of history by pruning the directory.
+pub fn unknown_stats_history_path(events_path: &Path, day_ymd: &str) -> PathBuf {
+    let base = unknown_stats_path(events_path);
+    let mut s = base.as_os_str().to_owned();
+    s.push(format!(".{}", day_ymd));
+    PathBuf::from(s)
+}
+
+/// List history files for the last `days` days (today inclusive).
+/// Returns paths in chronological order (oldest first).
+pub fn list_unknown_stats_history(events_path: &Path, days: usize) -> Vec<(String, PathBuf)> {
+    let base = unknown_stats_path(events_path);
+    let parent = match base.parent() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let prefix = match base.file_name().and_then(|n| n.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Vec::new(),
+    };
+    let today = chrono_day_ymd(SystemTimeNow::now());
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().to_str() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        // Format: `<prefix>.<YYYY-MM-DD>`.
+        if let Some(day) = name.strip_prefix(&prefix).and_then(|s| s.strip_prefix('.')) {
+            if day.len() == 10 && day.starts_with("20") && day <= today.as_str() {
+                out.push((day.to_string(), entry.path()));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    // Cap to the most recent `days` entries.
+    if out.len() > days {
+        let drop = out.len() - days;
+        out.drain(..drop);
+    }
+    out
+}
+
+/// Daily-archive the current sidecar to `.<YYYY-MM-DD>` and reset
+/// the in-memory map to empty. Idempotent for the same date: if a
+/// history file already exists for today, the archive is skipped
+/// (operators can still inspect it).
+pub async fn rotate_unknown_stats_daily(
+    events_path: &Path,
+    map: &parking_lot::Mutex<std::collections::BTreeMap<String, UnknownStats>>,
+) -> Result<(), PersistError> {
+    let day = chrono_day_ymd(SystemTimeNow::now());
+    let hist = unknown_stats_history_path(events_path, &day);
+    let canonical = unknown_stats_path(events_path);
+    if !hist.exists() {
+        // Move the current sidecar to the date-stamped path. If
+        // the canonical sidecar doesn't exist (cold-start before
+        // any Unknown emission), skip.
+        if canonical.exists() {
+            tokio::fs::rename(&canonical, &hist).await?;
+        }
+    }
+    // Reset in-memory map to empty.
+    map.lock().clear();
+    Ok(())
+}
+
+/// One bucket of the per-day history: `UnknownStats` aggregated
+/// for a specific day.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnknownStatsHistoryBucket {
+    pub day: String,
+    pub stats: std::collections::BTreeMap<String, UnknownStats>,
+}
+
+/// Load up to `days` history files into a sorted list of buckets.
+/// Empty list when no history files exist (cold-start path).
+pub async fn load_unknown_stats_history(
+    events_path: &Path,
+    days: usize,
+) -> Result<Vec<UnknownStatsHistoryBucket>, PersistError> {
+    let paths = list_unknown_stats_history(events_path, days);
+    let mut out = Vec::with_capacity(paths.len());
+    for (day, path) in paths {
+        match load_unknown_stats(&path).await {
+            Ok(stats) => out.push(UnknownStatsHistoryBucket { day, stats }),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "events_persister: failed to load history day {day}"
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Helper: format `now` as `YYYY-MM-DD` (UTC). Used by the daily
+/// rotation path. Kept private + sync so it composes with
+/// `list_unknown_stats_history` without an `.await`.
+fn chrono_day_ymd(now_secs: i64) -> String {
+    let days = now_secs.div_euclid(86_400);
+    // Civil-from-days algorithm (Howard Hinnant).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+struct SystemTimeNow;
+impl SystemTimeNow {
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+}
+
 /// Cap for `UnknownStats::last_sample` — keeps the sidecar small
 /// even when a wacore event carries a multi-KB payload. Operators
 /// only need a hint of the shape when triaging unknown emissions.
@@ -1586,5 +1718,79 @@ mod tests {
         // captured in unit tests). Just ensure the install path
         // is safe to call repeatedly.
         install_unknown_event_alert_threshold(Some(100));
+    }
+
+    /// `chrono_day_ymd` produces `YYYY-MM-DD` for known timestamps.
+    #[test]
+    fn chrono_day_ymd_handles_epoch() {
+        assert_eq!(chrono_day_ymd(0), "1970-01-01");
+        assert_eq!(chrono_day_ymd(86_400), "1970-01-02");
+        assert_eq!(chrono_day_ymd(31_536_000), "1971-01-01");
+        // Year-2000 leap day.
+        assert_eq!(chrono_day_ymd(951_782_400), "2000-02-29");
+    }
+
+    /// `unknown_stats_history_path` derives a date-stamped sibling
+    /// of the canonical sidecar.
+    #[test]
+    fn unknown_stats_history_path_suffixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join("events.ndjson");
+        let p = unknown_stats_history_path(&events, "2026-07-18");
+        let s = p.to_string_lossy().to_string();
+        assert!(s.contains("unknown_stats.ndjson.2026-07-18"));
+    }
+
+    /// Daily rotation: a populated canonical sidecar gets renamed
+    /// to the date-stamped archive and the in-memory map clears.
+    #[tokio::test]
+    async fn rotate_unknown_stats_daily_archives_canonical() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = default_persistence_path(dir.path());
+        let canonical = unknown_stats_path(&events);
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "PictureUpdate".into(),
+            UnknownStats {
+                wacore_variant: "PictureUpdate".into(),
+                count: 7,
+                first_seen_ms: 1,
+                last_seen_ms: 2,
+                last_sample: "x".into(),
+            },
+        );
+        save_unknown_stats(&canonical, &map).await.unwrap();
+        assert!(canonical.exists());
+
+        let shared = parking_lot::Mutex::new(map);
+        rotate_unknown_stats_daily(&events, &shared).await.unwrap();
+        // Canonical file moved aside (now absent or empty after
+        // rename). Map cleared.
+        let m = shared.lock();
+        assert!(m.is_empty());
+        drop(m);
+
+        // The history file for today exists.
+        let today = chrono_day_ymd(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        );
+        let hist = unknown_stats_history_path(&events, &today);
+        assert!(hist.exists(), "history file {hist:?} should exist");
+
+        let loaded = load_unknown_stats(&hist).await.unwrap();
+        assert_eq!(loaded["PictureUpdate"].count, 7);
+    }
+
+    /// `list_unknown_stats_history` returns empty on a cold-start
+    /// with no archived files.
+    #[test]
+    fn list_unknown_stats_history_empty_when_no_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = default_persistence_path(dir.path());
+        let hist = list_unknown_stats_history(&events, 30);
+        assert!(hist.is_empty());
     }
 }

@@ -1041,6 +1041,12 @@ pub enum EventsAction {
         #[arg(long, default_value_t = 32)]
         limit: usize,
     },
+    /// Daily-rotated history of per-variant Unknown-event counts.
+    UnknownStatsHistory {
+        /// Number of days to include (1..=90, default 30).
+        #[arg(long, default_value_t = 30)]
+        days: usize,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -2190,6 +2196,10 @@ pub fn dispatch_events(cli: &Cli, cmd: &EventsCmd) -> anyhow::Result<()> {
         EventsAction::Tail { limit } => ("events.tail", serde_json::json!({ "limit": limit })),
         EventsAction::ListKinds => ("events.list_kinds", serde_json::Value::Null),
         EventsAction::UnknownStats { .. } => ("events.unknown_stats", serde_json::Value::Null),
+        EventsAction::UnknownStatsHistory { days } => (
+            "events.unknown_stats.history",
+            serde_json::json!({ "days": days }),
+        ),
     };
     let result = client.call(method, params)?;
     if let EventsAction::UnknownStats { limit } = &cmd.action {
@@ -3276,6 +3286,25 @@ mod tests {
             Command::Events(cmd) => match cmd.action {
                 EventsAction::UnknownStats { limit } => assert_eq!(limit, 10),
                 _ => panic!("expected EventsAction::UnknownStats"),
+            },
+            _ => panic!("expected Command::Events"),
+        }
+    }
+
+    #[test]
+    fn cli_parses_events_unknown_stats_history() {
+        let us = Cli::try_parse_from([
+            "octo-whatsapp",
+            "events",
+            "unknown-stats-history",
+            "--days",
+            "7",
+        ])
+        .unwrap();
+        match us.command {
+            Command::Events(cmd) => match cmd.action {
+                EventsAction::UnknownStatsHistory { days } => assert_eq!(days, 7),
+                _ => panic!("expected EventsAction::UnknownStatsHistory"),
             },
             _ => panic!("expected Command::Events"),
         }

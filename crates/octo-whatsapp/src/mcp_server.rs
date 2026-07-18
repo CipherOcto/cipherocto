@@ -38,7 +38,7 @@ use serde_json::Value;
 /// contacts.save_contact, contact.block, contact.unblock,
 /// identity.get_pn, identity.get_lid, identity.is_lid_migrated.
 #[cfg(feature = "query")]
-pub const EXPECTED_TOOL_COUNT: usize = 147;
+pub const EXPECTED_TOOL_COUNT: usize = 148;
 #[cfg(not(feature = "query"))]
 pub const EXPECTED_TOOL_COUNT: usize = 139;
 
@@ -652,6 +652,11 @@ pub fn tool_descriptors() -> Vec<Value> {
         "events.unknown_stats",
         "Per-variant aggregate of InboundEvent::Unknown emissions (count, first/last_seen_ms, sample). Operators inspect this to prioritise new typed handlers when wacore adds a variant.",
         schema_empty(),
+    ));
+    v.push(td(
+        "events.unknown_stats.history",
+        "Per-day historical snapshots of unknown_stats (last `days` days, default 30, max 90). Powered by the daily-rotation sidecar files.",
+        schema_props_optional(&[("days", "integer")]),
     ));
     // ─── Agent discovery (3) — Phase 3 ────────────────────────────────
     v.push(td(
@@ -1339,6 +1344,7 @@ async fn handle_tools_call(id: Value, req: &Value, socket: &Path) -> anyhow::Res
         "events.tail" => "events.tail",
         "events.list_kinds" => "events.list_kinds",
         "events.unknown_stats" => "events.unknown_stats",
+        "events.unknown_stats.history" => "events.unknown_stats.history",
         "clients.list" => "clients.list",
         // Phase 1 task 15: query layer tool routing. Names match the
         // tool_descriptors() entries above.

@@ -667,6 +667,14 @@ impl DaemonHandle {
         &self.inner.events_buffer
     }
 
+    /// Resolved data directory (the root for `<data_dir>/events/`,
+    /// `<data_dir>/query/`, etc.). Used by the
+    /// `events.unknown_stats.history` RPC to locate the daily
+    /// snapshots.
+    pub fn data_dir(&self) -> std::path::PathBuf {
+        self.inner.config.data_dir.clone()
+    }
+
     /// Resolve the directory under which the query subsystem keeps
     /// its derived stores (`<data_dir>/query/`). Returns `None`
     /// when no data dir is configured (e.g. ephemeral test

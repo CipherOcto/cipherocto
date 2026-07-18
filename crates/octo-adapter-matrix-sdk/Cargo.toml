@@ -68,7 +68,7 @@ octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core", optional = tr
 # atomic rename via fs::rename on a `<config>.json.tmp` sibling file.
 # `libc` is needed for the `EWOULDBLOCK` / `EAGAIN` checks on Unix
 # `lock_exclusive` errors (fs4 surfaces these via `raw_os_error`).
-fs4 = { version = "0.7", features = ["sync"] }
+fs4 = { version = "1.1", features = ["sync"] }
 libc = "0.2"
 # Error type for the config writer.
 thiserror = { workspace = true }

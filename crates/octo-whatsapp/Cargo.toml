@@ -22,6 +22,13 @@ octo-adapter-whatsapp      = { path = "../octo-adapter-whatsapp" }
 octo-whatsapp-onboard-core = { path = "../octo-whatsapp-onboard-core" }
 octo-network               = { path = "../octo-network" }
 
+# Events first-class overhaul (plan `2026-07-18-whatsapp-events-first-class-overhaul.md`):
+# InboundEvent carries wacore types directly (no Debug-string parser). The
+# adapter already depends on wacore at the same rev; we re-export here so the
+# enum variants can hold `Arc<wacore::types::events::...>` types publicly.
+# Kept in lockstep with `octo-adapter-whatsapp/Cargo.toml` `wacore` entry.
+wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+
 # Async + serialization
 # Explicit pin because this crate is excluded from the workspace; workspace.dependencies does not apply.
 tokio       = { version = "1.35", features = ["full"] }

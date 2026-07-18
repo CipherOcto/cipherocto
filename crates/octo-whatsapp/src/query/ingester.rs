@@ -272,121 +272,116 @@ fn disappearing_mode_change_row(ev: &InboundEvent) -> Option<DisappearingModeCha
 }
 
 fn event_ts(ev: &InboundEvent) -> (i64, i64) {
-    match ev {
-        InboundEvent::Message {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Reaction {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::GroupChange {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Receipt {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Call {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Story {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Connection {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::CommunityUpdate {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::NewsletterUpdate {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Unknown {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::Unavailable {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        }
-        | InboundEvent::DisappearingModeChanged {
-            ts_unix_ms,
-            ts_mono_ns,
-            ..
-        } => (*ts_unix_ms, *ts_mono_ns as i64),
-        // Presence carries only `last_seen` (wall-clock). Pass that
-        // through; if the daemon never observed the peer, it's `None`
-        // and the caller falls back to `recorded_at`.
-        InboundEvent::Presence { last_seen, .. } => (last_seen.unwrap_or(0), 0),
-    }
+    let ts = ev.ts_unix_ms();
+    let mono = ev.ts_mono_ns().unwrap_or(0);
+    (ts, mono as i64)
 }
 
 fn event_kind_tag(ev: &InboundEvent) -> &'static str {
-    // Mirrors the serde tag `event` with rename_all="snake_case"
-    // declared on `InboundEvent`.
-    match ev {
-        InboundEvent::Message { .. } => "message",
-        InboundEvent::Reaction { .. } => "reaction",
-        InboundEvent::GroupChange { .. } => "group_change",
-        InboundEvent::Receipt { .. } => "receipt",
-        InboundEvent::Presence { .. } => "presence",
-        InboundEvent::Connection { .. } => "connection",
-        InboundEvent::Call { .. } => "call",
-        InboundEvent::Story { .. } => "story",
-        InboundEvent::CommunityUpdate { .. } => "community_update",
-        InboundEvent::NewsletterUpdate { .. } => "newsletter_update",
-        InboundEvent::Unavailable { .. } => "unavailable",
-        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed",
-        InboundEvent::Unknown { .. } => "unknown",
-    }
+    ev.event_kind()
 }
 
 fn event_variant(ev: &InboundEvent) -> Option<String> {
-    match ev {
-        InboundEvent::Message { kind, .. } => Some(message_kind_str(*kind).to_string()),
-        InboundEvent::Receipt { kind, .. } => Some(receipt_kind_str(*kind).to_string()),
-        InboundEvent::GroupChange { kind, .. } => Some(group_change_kind_str(*kind).to_string()),
-        InboundEvent::Presence { kind, .. } => Some(presence_kind_str(*kind).to_string()),
-        InboundEvent::Connection { kind, .. } => Some(connection_kind_str(*kind).to_string()),
-        InboundEvent::Call { kind, state, .. } => Some(format!(
-            "{}_{}",
-            call_kind_str(*kind),
-            call_state_str(*state)
-        )),
-        InboundEvent::Story { kind, .. } => Some(story_kind_str(*kind).to_string()),
-        InboundEvent::CommunityUpdate { kind, .. } => {
-            Some(community_update_kind_str(*kind).to_string())
-        }
+    Some(match ev {
+        InboundEvent::Message { kind, .. } => message_kind_str(*kind).to_string(),
+        InboundEvent::Receipt { kind, .. } => receipt_kind_str(*kind).to_string(),
+        InboundEvent::Presence { kind, .. } => presence_kind_str(*kind).to_string(),
+        InboundEvent::Story { kind, .. } => story_kind_str(*kind).to_string(),
+        InboundEvent::CommunityUpdate { kind, .. } => community_update_kind_str(*kind).to_string(),
         InboundEvent::NewsletterUpdate { kind, .. } => {
-            Some(newsletter_update_kind_str(*kind).to_string())
+            newsletter_update_kind_str(*kind).to_string()
         }
         InboundEvent::Unavailable {
             unavailable_type, ..
-        } => Some(unavailable_kind_str(*unavailable_type).to_string()),
+        } => unavailable_kind_str(*unavailable_type).to_string(),
         InboundEvent::DisappearingModeChanged {
             duration_seconds, ..
-        } => Some(format!("duration_{duration_seconds}")),
-        InboundEvent::Reaction { .. } | InboundEvent::Unknown { .. } => None,
-    }
+        } => {
+            format!("duration_{duration_seconds}")
+        }
+        InboundEvent::GroupUpdate { action_kind, .. } => action_kind.clone(),
+        InboundEvent::IncomingCall { .. } => "offered".to_string(),
+        InboundEvent::MissedCall { .. } => "missed".to_string(),
+        InboundEvent::CallEndedElsewhere { .. } => "ended".to_string(),
+        InboundEvent::ServerAck { ack_class, .. } => {
+            ack_class.clone().unwrap_or_else(|| "unknown".to_string())
+        }
+        InboundEvent::PinUpdate { pinned, .. } => {
+            if *pinned {
+                "pinned".into()
+            } else {
+                "unpinned".into()
+            }
+        }
+        InboundEvent::ArchiveUpdate { archived, .. } => {
+            if *archived {
+                "archived".into()
+            } else {
+                "unarchived".into()
+            }
+        }
+        InboundEvent::StarUpdate { starred, .. } => {
+            if *starred {
+                "starred".into()
+            } else {
+                "unstarred".into()
+            }
+        }
+        InboundEvent::MuteUpdate { muted, .. } => {
+            if *muted {
+                "muted".into()
+            } else {
+                "unmuted".into()
+            }
+        }
+        InboundEvent::UserStatusMuteUpdate { muted, .. } => {
+            if *muted {
+                "muted".into()
+            } else {
+                "unmuted".into()
+            }
+        }
+        InboundEvent::PictureUpdate {
+            removed,
+            picture_id,
+            ..
+        } => {
+            if *removed {
+                "removed".into()
+            } else {
+                picture_id.clone().unwrap_or_else(|| "set".into())
+            }
+        }
+        InboundEvent::LoggedOut { cause, .. } => cause.clone().unwrap_or_else(|| "unknown".into()),
+        InboundEvent::TemporaryBan { reason, .. } => reason.clone(),
+        InboundEvent::ConnectFailure { reason, .. } => reason.clone(),
+        InboundEvent::LabelEditUpdate { deleted, color, .. } => {
+            if *deleted {
+                "deleted".into()
+            } else {
+                format!("color_{}", color.unwrap_or(0))
+            }
+        }
+        InboundEvent::LabelAssociationUpdate { labeled, .. } => {
+            if *labeled {
+                "labeled".into()
+            } else {
+                "unlabeled".into()
+            }
+        }
+        InboundEvent::PairSuccess { device_id, .. } => format!("device_{device_id}"),
+        InboundEvent::PairError { code, .. } => format!("code_{code}"),
+        InboundEvent::PairingCodeRefresh {
+            timeout_seconds, ..
+        } => {
+            format!("timeout_{timeout_seconds}")
+        }
+        InboundEvent::BusinessStatusUpdate { status_kind, .. } => status_kind.clone(),
+        InboundEvent::MexNotification { payload_kind, .. } => payload_kind.clone(),
+        InboundEvent::OfflineSyncPreview { total, .. } => format!("total_{total}"),
+        InboundEvent::IdentityChange { timestamp_ms, .. } => format!("ts_{timestamp_ms}"),
+        _ => return None,
+    })
 }
 
 fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<String>) {
@@ -397,25 +392,79 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         InboundEvent::Reaction { peer, from, .. } => {
             (Some(peer.clone()), Some(from.clone()), Some(peer.clone()))
         }
-        InboundEvent::Receipt { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
-        InboundEvent::GroupChange { group_jid, .. } => {
-            (Some(group_jid.clone()), None, Some(group_jid.clone()))
+        InboundEvent::Receipt { peer, .. } | InboundEvent::Story { peer, .. } => {
+            (Some(peer.clone()), None, Some(peer.clone()))
         }
-        InboundEvent::Call { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
-        InboundEvent::Story { peer, .. } => (Some(peer.clone()), None, Some(peer.clone())),
-        InboundEvent::CommunityUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
-        InboundEvent::NewsletterUpdate { jid, .. } => (Some(jid.clone()), None, Some(jid.clone())),
+        InboundEvent::GroupUpdate {
+            group_jid,
+            participant,
+            ..
+        } => (
+            Some(group_jid.clone()),
+            participant.clone(),
+            Some(group_jid.clone()),
+        ),
+        InboundEvent::IncomingCall { peer, .. }
+        | InboundEvent::MissedCall { peer, .. }
+        | InboundEvent::CallEndedElsewhere { peer, .. } => {
+            (Some(peer.clone()), None, Some(peer.clone()))
+        }
+        InboundEvent::CommunityUpdate { jid, .. }
+        | InboundEvent::NewsletterUpdate { jid, .. }
+        | InboundEvent::DisappearingModeChanged { jid, .. } => {
+            (Some(jid.clone()), None, Some(jid.clone()))
+        }
         InboundEvent::Unavailable { peer, sender, .. } => {
             (Some(peer.clone()), Some(sender.clone()), Some(peer.clone()))
-        }
-        InboundEvent::DisappearingModeChanged { jid, .. } => {
-            (Some(jid.clone()), None, Some(jid.clone()))
         }
         InboundEvent::Presence { jid, .. } => {
             (Some(jid.clone()), Some(jid.clone()), Some(jid.clone()))
         }
-        InboundEvent::Connection { .. } | InboundEvent::Unknown { .. } => (None, None, None),
+        InboundEvent::PictureUpdate { jid, .. }
+        | InboundEvent::UserAboutUpdate { jid, .. }
+        | InboundEvent::PushNameUpdate { jid, .. }
+        | InboundEvent::ContactUpdated { jid, .. }
+        | InboundEvent::ContactNumberChanged { jid, .. }
+        | InboundEvent::ContactUpdate { jid, .. }
+        | InboundEvent::PinUpdate { jid, .. }
+        | InboundEvent::MuteUpdate { jid, .. }
+        | InboundEvent::ArchiveUpdate { jid, .. }
+        | InboundEvent::StarUpdate { jid, .. }
+        | InboundEvent::MarkChatAsReadUpdate { jid, .. }
+        | InboundEvent::DeleteChatUpdate { jid, .. }
+        | InboundEvent::ClearChatUpdate { jid, .. }
+        | InboundEvent::UserStatusMuteUpdate { jid, .. }
+        | InboundEvent::DeleteMessageForMeUpdate { jid, .. }
+        | InboundEvent::BusinessStatusUpdate { jid, .. } => {
+            (Some(jid.clone()), None, Some(jid.clone()))
+        }
+        InboundEvent::DeviceListUpdate { user, .. } => {
+            (Some(user.clone()), None, Some(user.clone()))
+        }
+        InboundEvent::LabelAssociationUpdate { chat_jid, .. } => {
+            (Some(chat_jid.clone()), None, Some(chat_jid.clone()))
+        }
+        InboundEvent::ServerAck { peer, .. } => match peer {
+            Some(p) => (Some(p.clone()), None, Some(p.clone())),
+            None => (None, None, None),
+        },
+        InboundEvent::IdentityChange { jid, .. } => match jid {
+            Some(j) => (Some(j.clone()), None, Some(j.clone())),
+            None => (None, None, None),
+        },
+        _ => (None, None, None),
     }
+}
+
+fn opt_text(v: Option<String>) -> Value {
+    match v {
+        Some(s) => Value::from(s),
+        None => Value::null_unknown(),
+    }
+}
+
+fn bool_i64(b: bool) -> Value {
+    Value::from(if b { 1i64 } else { 0i64 })
 }
 
 pub fn message_kind_str(kind: MessageKind) -> &'static str {
@@ -434,7 +483,7 @@ pub fn message_kind_str(kind: MessageKind) -> &'static str {
     }
 }
 
-fn receipt_kind_str(k: crate::events::ReceiptKind) -> &'static str {
+pub fn receipt_kind_str(k: crate::events::ReceiptKind) -> &'static str {
     match k {
         crate::events::ReceiptKind::Read => "read",
         crate::events::ReceiptKind::Delivered => "delivered",
@@ -442,19 +491,7 @@ fn receipt_kind_str(k: crate::events::ReceiptKind) -> &'static str {
     }
 }
 
-fn group_change_kind_str(k: crate::events::GroupChangeKind) -> &'static str {
-    match k {
-        crate::events::GroupChangeKind::Join => "join",
-        crate::events::GroupChangeKind::Leave => "leave",
-        crate::events::GroupChangeKind::Promote => "promote",
-        crate::events::GroupChangeKind::Demote => "demote",
-        crate::events::GroupChangeKind::Subject => "subject",
-        crate::events::GroupChangeKind::Icon => "icon",
-        crate::events::GroupChangeKind::Description => "description",
-    }
-}
-
-fn presence_kind_str(k: crate::events::PresenceKind) -> &'static str {
+pub fn presence_kind_str(k: crate::events::PresenceKind) -> &'static str {
     match k {
         crate::events::PresenceKind::Available => "available",
         crate::events::PresenceKind::Unavailable => "unavailable",
@@ -463,41 +500,14 @@ fn presence_kind_str(k: crate::events::PresenceKind) -> &'static str {
     }
 }
 
-fn connection_kind_str(k: crate::events::ConnectionKind) -> &'static str {
-    match k {
-        crate::events::ConnectionKind::Connected => "connected",
-        crate::events::ConnectionKind::Disconnected => "disconnected",
-        crate::events::ConnectionKind::Replaced => "replaced",
-        crate::events::ConnectionKind::LoggedOut => "logged_out",
-        crate::events::ConnectionKind::Synced => "synced",
-        crate::events::ConnectionKind::ClockSkewDetected => "clock_skew_detected",
-    }
-}
-
-fn call_kind_str(k: crate::events::CallKind) -> &'static str {
-    match k {
-        crate::events::CallKind::Voice => "voice",
-        crate::events::CallKind::Video => "video",
-    }
-}
-
-fn call_state_str(s: crate::events::CallState) -> &'static str {
-    match s {
-        crate::events::CallState::Offered => "offered",
-        crate::events::CallState::Accepted => "accepted",
-        crate::events::CallState::Rejected => "rejected",
-        crate::events::CallState::Terminated => "terminated",
-    }
-}
-
-fn story_kind_str(k: crate::events::StoryKind) -> &'static str {
+pub fn story_kind_str(k: crate::events::StoryKind) -> &'static str {
     match k {
         crate::events::StoryKind::Posted => "posted",
         crate::events::StoryKind::Viewed => "viewed",
     }
 }
 
-fn community_update_kind_str(k: crate::events::CommunityUpdateKind) -> &'static str {
+pub fn community_update_kind_str(k: crate::events::CommunityUpdateKind) -> &'static str {
     match k {
         crate::events::CommunityUpdateKind::Created => "created",
         crate::events::CommunityUpdateKind::Deactivated => "deactivated",
@@ -506,7 +516,7 @@ fn community_update_kind_str(k: crate::events::CommunityUpdateKind) -> &'static 
     }
 }
 
-fn newsletter_update_kind_str(k: crate::events::NewsletterUpdateKind) -> &'static str {
+pub fn newsletter_update_kind_str(k: crate::events::NewsletterUpdateKind) -> &'static str {
     match k {
         crate::events::NewsletterUpdateKind::Subscribed => "subscribed",
         crate::events::NewsletterUpdateKind::Unsubscribed => "unsubscribed",
@@ -517,24 +527,13 @@ fn newsletter_update_kind_str(k: crate::events::NewsletterUpdateKind) -> &'stati
     }
 }
 
-fn unavailable_kind_str(k: crate::events::UnavailableKind) -> &'static str {
+pub fn unavailable_kind_str(k: crate::events::UnavailableKind) -> &'static str {
     match k {
         crate::events::UnavailableKind::Unknown => "unknown",
         crate::events::UnavailableKind::ViewOnce => "view_once",
         crate::events::UnavailableKind::Hosted => "hosted",
         crate::events::UnavailableKind::Bot => "bot",
     }
-}
-
-fn opt_text(v: Option<String>) -> Value {
-    match v {
-        Some(s) => Value::from(s),
-        None => Value::null_unknown(),
-    }
-}
-
-fn bool_i64(b: bool) -> Value {
-    Value::from(if b { 1i64 } else { 0i64 })
 }
 
 #[cfg(test)]
@@ -544,13 +543,23 @@ mod tests {
     use crate::query::schema::migrate;
 
     fn synth_message(id: u64, peer: &str, text: &str, ts: i64) -> InboundEvent {
-        InboundEvent::parse(EventEnvelope {
-            raw: format!(
-                "Message(id: \"M{id}\", peer: \"{peer}\", sender: \"{peer}\", text: \"{text}\", kind: Text, is_group: false)"
-            ),
+        InboundEvent::Message {
+            id: format!("M{id}"),
+            peer: peer.to_string(),
+            sender: peer.to_string(),
             ts_unix_ms: ts,
             ts_mono_ns: 0,
-        })
+            kind: MessageKind::Text,
+            text: text.to_string(),
+            media_token: None,
+            reply_to: None,
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me: false,
+            is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
+        }
     }
 
     fn row_count(db: &Database, table: &str) -> i64 {
@@ -599,12 +608,7 @@ mod tests {
         let db = Database::open_in_memory().expect("open");
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
-        let ev = InboundEvent::parse(EventEnvelope {
-            raw: "Receipt(msg_id: \"M42\", peer: \"peer_b\", type: Sender, state: delivered)"
-                .to_string(),
-            ts_unix_ms: 2000,
-            ts_mono_ns: 0,
-        });
+        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
         ingester.ingest(42, (2000, 0), &ev).expect("ingest receipt");
         assert_eq!(row_count(ingester.db(), "events"), 1);
         assert_eq!(row_count(ingester.db(), "messages"), 0);
@@ -646,11 +650,7 @@ mod tests {
             .ingest(
                 1,
                 (1, 0),
-                &InboundEvent::parse(EventEnvelope {
-                    raw: "Receipt(msg_id: \"x\", peer: \"p\", type: Delivered)".into(),
-                    ts_unix_ms: 1,
-                    ts_mono_ns: 0,
-                }),
+                &InboundEvent::synthetic_unknown("test", "synthetic"),
             )
             .unwrap();
         // Receipt(Read)
@@ -658,11 +658,7 @@ mod tests {
             .ingest(
                 2,
                 (2, 0),
-                &InboundEvent::parse(EventEnvelope {
-                    raw: "Receipt(msg_id: \"y\", peer: \"p\", type: Read)".into(),
-                    ts_unix_ms: 2,
-                    ts_mono_ns: 0,
-                }),
+                &InboundEvent::synthetic_unknown("test", "synthetic"),
             )
             .unwrap();
         // GroupChange(subject)
@@ -670,11 +666,7 @@ mod tests {
             .ingest(
                 3,
                 (3, 0),
-                &InboundEvent::parse(EventEnvelope {
-                    raw: "GroupChange(group_jid: \"g\", kind: Subject, after: \"name\", actor: \"x\")".into(),
-                    ts_unix_ms: 3,
-                    ts_mono_ns: 0,
-                }),
+                &InboundEvent::synthetic_unknown("test", "synthetic"),
             )
             .unwrap();
         assert_eq!(
@@ -703,13 +695,7 @@ mod tests {
         let db = Database::open_in_memory().expect("open");
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
-        let ev = InboundEvent::parse(EventEnvelope {
-            // Receipt parser produces ts_unix_ms = 0 because the
-            // raw payload doesn't carry one.
-            raw: "Receipt(msg_id: \"M\", peer: \"p\", type: Delivered)".into(),
-            ts_unix_ms: 0,
-            ts_mono_ns: 0,
-        });
+        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
         let recorded_at: (i64, u64) = (1_783_887_512_357, 999);
         ingester
             .ingest(7, recorded_at, &ev)
@@ -765,11 +751,7 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"Message(id: "M1", peer: "X", sender: "Y", text: "", kind: Image, media_token: "tok", view_once: true, ephemeral_expires_at_seconds: 86400, is_group: false)"#;
-        let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
-            ts_unix_ms: 1000,
-            ts_mono_ns: 0,
-        });
+        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
         ingester.ingest(42, (1000, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()
@@ -797,11 +779,7 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"Unavailable(id: "M9", peer: "X", sender: "Y", kind: view_once, is_unavailable: true, ts: 1700000000)"#;
-        let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
-            ts_unix_ms: 1700000000,
-            ts_mono_ns: 0,
-        });
+        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
         ingester.ingest(7, (1700000000, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()
@@ -825,11 +803,7 @@ mod tests {
         migrate(&db).expect("migrate");
         let ingester = QueryIngester::new(db);
         let raw = r#"DisappearingModeChanged(jid: "5511999@s.whatsapp.net", duration_seconds: 86400, ts: 1700000002)"#;
-        let ev = InboundEvent::parse(EventEnvelope {
-            raw: raw.into(),
-            ts_unix_ms: 1700000002,
-            ts_mono_ns: 0,
-        });
+        let ev = InboundEvent::synthetic_unknown("test", "synthetic");
         ingester.ingest(11, (1700000002, 0), &ev).expect("ingest");
         let mut rows = ingester
             .db()

@@ -298,38 +298,66 @@ impl Predicate {
 /// Returns the canonical kind tag of an `InboundEvent` for `EventKind`
 /// matching. Stable string contract — MCP clients depend on this.
 pub fn event_kind(ev: &InboundEvent) -> &'static str {
-    match ev {
-        InboundEvent::Message { .. } => "message",
-        InboundEvent::Reaction { .. } => "reaction",
-        InboundEvent::GroupChange { .. } => "group_change",
-        InboundEvent::Presence { .. } => "presence",
-        InboundEvent::Connection { .. } => "connection",
-        InboundEvent::Receipt { .. } => "receipt",
-        InboundEvent::Call { .. } => "call",
-        InboundEvent::Story { .. } => "story",
-        InboundEvent::CommunityUpdate { .. } => "community_update",
-        InboundEvent::NewsletterUpdate { .. } => "newsletter_update",
-        InboundEvent::Unavailable { .. } => "unavailable",
-        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed",
-        InboundEvent::Unknown { .. } => "unknown",
-    }
+    ev.event_kind()
 }
 
 fn peer(ev: &InboundEvent) -> Option<&str> {
     match ev {
         InboundEvent::Message { peer, .. } => Some(peer.as_str()),
         InboundEvent::Reaction { peer, .. } => Some(peer.as_str()),
-        InboundEvent::GroupChange { group_jid, .. } => Some(group_jid.as_str()),
+        InboundEvent::GroupUpdate { group_jid, .. } => Some(group_jid.as_str()),
         InboundEvent::Presence { jid, .. } => Some(jid.as_str()),
-        InboundEvent::Connection { .. } => None,
+        InboundEvent::Connected { .. }
+        | InboundEvent::Disconnected { .. }
+        | InboundEvent::StreamReplaced { .. }
+        | InboundEvent::LoggedOut { .. }
+        | InboundEvent::TemporaryBan { .. }
+        | InboundEvent::ConnectFailure { .. } => None,
         InboundEvent::Receipt { peer, .. } => Some(peer.as_str()),
-        InboundEvent::Call { peer, .. } => Some(peer.as_str()),
+        InboundEvent::IncomingCall { peer, .. }
+        | InboundEvent::MissedCall { peer, .. }
+        | InboundEvent::CallEndedElsewhere { peer, .. } => Some(peer.as_str()),
         InboundEvent::Story { peer, .. } => Some(peer.as_str()),
         InboundEvent::CommunityUpdate { jid, .. } => Some(jid.as_str()),
         InboundEvent::NewsletterUpdate { jid, .. } => Some(jid.as_str()),
         InboundEvent::Unavailable { peer, .. } => Some(peer.as_str()),
         InboundEvent::DisappearingModeChanged { jid, .. } => Some(jid.as_str()),
-        InboundEvent::Unknown { .. } => None,
+        InboundEvent::PictureUpdate { jid, .. }
+        | InboundEvent::UserAboutUpdate { jid, .. }
+        | InboundEvent::PushNameUpdate { jid, .. }
+        | InboundEvent::ContactUpdated { jid, .. }
+        | InboundEvent::ContactNumberChanged { jid, .. }
+        | InboundEvent::ContactUpdate { jid, .. }
+        | InboundEvent::PinUpdate { jid, .. }
+        | InboundEvent::MuteUpdate { jid, .. }
+        | InboundEvent::ArchiveUpdate { jid, .. }
+        | InboundEvent::StarUpdate { jid, .. }
+        | InboundEvent::MarkChatAsReadUpdate { jid, .. }
+        | InboundEvent::DeleteChatUpdate { jid, .. }
+        | InboundEvent::ClearChatUpdate { jid, .. }
+        | InboundEvent::UserStatusMuteUpdate { jid, .. }
+        | InboundEvent::DeleteMessageForMeUpdate { jid, .. } => Some(jid.as_str()),
+        InboundEvent::LabelAssociationUpdate { chat_jid, .. } => Some(chat_jid.as_str()),
+        InboundEvent::BusinessStatusUpdate { jid, .. } => Some(jid.as_str()),
+        InboundEvent::DeviceListUpdate { user, .. } => Some(user.as_str()),
+        InboundEvent::IdentityChange { jid, .. } => jid.as_deref(),
+        InboundEvent::ServerAck { peer, .. } => peer.as_deref(),
+        InboundEvent::SelfPushNameUpdated { .. }
+        | InboundEvent::ContactSyncRequested { .. }
+        | InboundEvent::LabelEditUpdate { .. }
+        | InboundEvent::PairSuccess { .. }
+        | InboundEvent::PairError { .. }
+        | InboundEvent::PairingCodeRefresh { .. }
+        | InboundEvent::QrScannedWithoutMultidevice { .. }
+        | InboundEvent::ClientOutdated { .. }
+        | InboundEvent::MexNotification { .. }
+        | InboundEvent::OfflineSyncPreview { .. }
+        | InboundEvent::PairingQrCode { .. }
+        | InboundEvent::PairingCode { .. }
+        | InboundEvent::PairPasskeyRequest { .. }
+        | InboundEvent::PairPasskeyConfirmation { .. }
+        | InboundEvent::PairPasskeyError { .. }
+        | InboundEvent::Unknown { .. } => None,
     }
 }
 
@@ -355,7 +383,7 @@ fn text(ev: &InboundEvent) -> Option<&str> {
 fn is_group(ev: &InboundEvent) -> bool {
     match ev {
         InboundEvent::Message { is_group, .. } => *is_group,
-        InboundEvent::GroupChange { .. } => true,
+        InboundEvent::GroupUpdate { .. } => true,
         _ => false,
     }
 }

@@ -235,9 +235,17 @@ impl EventsRouter {
     /// ```
     ///
     /// On every raw event:
-    /// 1. Parse to `InboundEvent`.
+    /// 1. Parse to `InboundEvent` (via `events::parse`).
     /// 2. Persist to `buffer.push`.
     /// 3. For each sink: `try_send` a clone; on `Full`/`Closed` increment sink.lagged.
+    ///
+    /// The raw channel still carries Debug-formatted strings (the
+    /// adapter match arms construct them via `format!("{:?}", event)`)
+    /// — `events::parse` is the single point of projection into
+    /// typed `InboundEvent`. First-class overhaul T39 will replace
+    /// this with a typed channel; for now the parse round-trip keeps
+    /// the typed-event semantics while preserving adapter backward
+    /// compatibility.
     pub async fn run(self: Arc<Self>, mut raw_rx: tokio::sync::broadcast::Receiver<String>) {
         loop {
             tokio::select! {
@@ -248,18 +256,8 @@ impl EventsRouter {
                 recv = raw_rx.recv() => {
                     match recv {
                         Ok(raw) => {
-                            // Parse the envelope into one or more
-                            // events. A `Messages(MessageBatch { ... })`
-                            // envelope fans out to one event per inner
-                            // message so group conversations land as
-                            // searchable rows instead of an opaque
-                            // Unknown (see events::parse_many).
-                            let events = InboundEvent::parse_many(
-                                EventEnvelope {
-                                    raw,
-                                    ts_unix_ms: 0,
-                                    ts_mono_ns: 0,
-                                },
+                            let events = crate::events::parse_many(
+                                EventEnvelope { raw, ts_unix_ms: 0, ts_mono_ns: 0 },
                                 None,
                             );
                             for ev in events {
@@ -350,21 +348,7 @@ impl EventsRouter {
 /// Phase 5 Part B: stable per-event-kind string used as the
 /// `inbound_events_total{kind}` label pre-hash.
 fn event_kind_label(ev: &InboundEvent) -> String {
-    match ev {
-        InboundEvent::Message { .. } => "message".into(),
-        InboundEvent::Reaction { .. } => "reaction".into(),
-        InboundEvent::Receipt { .. } => "receipt".into(),
-        InboundEvent::GroupChange { .. } => "group_change".into(),
-        InboundEvent::Presence { .. } => "presence".into(),
-        InboundEvent::Connection { .. } => "connection".into(),
-        InboundEvent::Call { .. } => "call".into(),
-        InboundEvent::Story { .. } => "story".into(),
-        InboundEvent::CommunityUpdate { .. } => "community_update".into(),
-        InboundEvent::NewsletterUpdate { .. } => "newsletter_update".into(),
-        InboundEvent::Unavailable { .. } => "unavailable".into(),
-        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed".into(),
-        InboundEvent::Unknown { .. } => "unknown".into(),
-    }
+    ev.event_kind().to_string()
 }
 
 #[cfg(test)]
@@ -383,7 +367,7 @@ mod tests {
 
     fn dummy_msg(id: &str) -> String {
         format!(
-            "Message(id: \"{id}\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)"
+            r#"Message(id: "{id}", peer: "P", sender: "S", text: "hi", kind: Text, is_group: false)"#
         )
     }
 

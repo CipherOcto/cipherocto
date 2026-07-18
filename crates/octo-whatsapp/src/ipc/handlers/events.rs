@@ -212,12 +212,9 @@ mod tests {
     #[tokio::test]
     async fn events_show_returns_event_by_id() {
         let h = handle();
-        let id = h.events_buffer().push(InboundEvent::Unknown {
-            raw: "m1".into(),
-            ts_unix_ms: 1,
-            ts_mono_ns: 0,
-            untrusted: false,
-        });
+        let id = h
+            .events_buffer()
+            .push(InboundEvent::synthetic_unknown("test", "m1".into()));
         let v = EventsShow
             .call(h.clone(), json!({ "id": id }))
             .await
@@ -261,12 +258,8 @@ mod tests {
     #[tokio::test]
     async fn events_tail_returns_recent_with_lagged_zero() {
         let h = handle();
-        h.events_buffer().push(InboundEvent::Unknown {
-            raw: "t1".into(),
-            ts_unix_ms: 1,
-            ts_mono_ns: 0,
-            untrusted: false,
-        });
+        h.events_buffer()
+            .push(InboundEvent::synthetic_unknown("test", "t1".into()));
         let v = EventsTail.call(h.clone(), Value::Null).await.unwrap();
         assert_eq!(v["lagged"], 0);
         assert_eq!(v["events"].as_array().unwrap().len(), 1);

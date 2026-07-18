@@ -40,12 +40,11 @@ pub async fn dispatch(template: &str, ctx: &ActionContext) -> Result<(), ActionE
     // Push a synthetic InboundEvent::Unknown with the notification
     // payload as its `raw` text. Subscribers can filter by parsing
     // the raw JSON and checking `kind == "rule_notification"`.
-    let notification = crate::events::InboundEvent::Unknown {
-        raw: body_str,
-        ts_unix_ms: ctx.now_ms,
-        ts_mono_ns: 0,
-        untrusted: false,
-    };
+    let mut notification =
+        crate::events::InboundEvent::synthetic_unknown("rule_notification", body_str);
+    if let crate::events::InboundEvent::Unknown { ts_unix_ms, .. } = &mut notification {
+        *ts_unix_ms = ctx.now_ms;
+    }
     ctx.daemon.events_buffer().push(notification);
     Ok(())
 }

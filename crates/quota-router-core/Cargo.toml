@@ -75,7 +75,7 @@ hex = "0.4"
 subtle = "2.6"
 
 # Prometheus metrics (RFC-0937)
-prometheus = "0.13"
+prometheus = "0.14"
 
 # For percent decoding (path normalization security)
 percent-encoding = "2.1"

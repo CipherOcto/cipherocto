@@ -1577,6 +1577,79 @@ impl WhatsAppWebAdapter {
                                 ts_mono_ns,
                             ),
                         ),
+                        // ─── BusinessStatusUpdate — verified-name / hash /
+                        // product-id changes for WhatsApp Business
+                        // accounts. `update_type` is a wacore enum
+                        // (`verified_name_changed` / `photo_changed` /
+                        // …); we project its Debug form so operators
+                        // can filter on `status_kind` without parsing
+                        // the payload.
+                        Event::BusinessStatusUpdate(bsu) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::BusinessStatusUpdate {
+                                jid: bsu.jid.to_string(),
+                                status_kind: format!("{:?}", bsu.update_type),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── ContactUpdated — address-book refresh
+                        // events (someone we have a chat with updated
+                        // their push name / picture / verified metadata).
+                        // wacore only carries `jid` + `timestamp`; the
+                        // full wacore event lands in `payload` for any
+                        // downstream consumer that wants to drill.
+                        Event::ContactUpdated(cu) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::ContactUpdated {
+                                jid: cu.jid.to_string(),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── IdentityChange — account-level device
+                        // identity rotation (rare — fired when the
+                        // operator's own device-id changes mid-session,
+                        // e.g. after a server-side re-key). wacore
+                        // doesn't carry a timestamp field — use the
+                        // daemon-arrival `ts_unix_ms` as the
+                        // `timestamp_ms` projection so consumers can
+                        // correlate against the daemon's connect /
+                        // sync logs.
+                        Event::IdentityChange(ic) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::IdentityChange {
+                                timestamp_ms: ts_unix_ms,
+                                jid: Some(ic.user.to_string()),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── MexNotification — Meta Extension
+                        // notification (`op_name` is the discriminator,
+                        // e.g. "NotificationNewsletterUpdate"). The
+                        // wacore struct carries a full `payload:
+                        // serde_json::Value` which we re-emit through
+                        // `payload` so consumers don't have to do a
+                        // second deserialise pass. `agent_id` is the
+                        // optional `from` JID.
+                        Event::MexNotification(mn) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::MexNotification {
+                                payload_kind: mn.op_name.clone(),
+                                agent_id: mn.from.as_ref().map(|j| j.to_string()),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
                         _ => Arc::new(InboundEvent::unknown_from_wacore(
                             &event,
                             ts_unix_ms,

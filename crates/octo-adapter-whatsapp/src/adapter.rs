@@ -1139,7 +1139,100 @@ impl WhatsAppWebAdapter {
                 async move {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
-                    use crate::events::{InboundEvent, MessageKind, PresenceKind, NewsletterUpdateKind, UnavailableKind};
+                    use wacore::types::events::InboundMessage;
+                    use crate::events::{InboundEvent, MessageKind, PresenceKind, ReceiptKind, NewsletterUpdateKind, UnavailableKind};
+
+                    // Project one inner wacore `InboundMessage` into the
+                    // typed `InboundEvent::Message` shape. Used by the
+                    // `Event::Messages(batch)` fan-out arm below — same
+                    // projection runs for every inner message in a batch.
+                    fn project_inner_message(
+                        m: &InboundMessage,
+                        _ts_unix_ms: i64,
+                        ts_mono_ns: u64,
+                    ) -> InboundEvent {
+                        // Map the wa::Message variant to our typed
+                        // `MessageKind` enum. Text covers both
+                        // `conversation` and `extended_text_message`
+                        // (the latter is text with quote / mentions
+                        // context — same kind at the typed layer; quoted
+                        // context is recovered downstream once we wire
+                        // `extract_message_flags`). `ptv_message`
+                        // (push-to-video) is rolled up under Video.
+                        // Contact / Poll / Location / Sticker / Document
+                        // / Audio each get their matching typed kind.
+                        let kind = if m.message.image_message.is_set() {
+                            MessageKind::Image
+                        } else if m.message.video_message.is_set()
+                            || m.message.ptv_message.is_set()
+                        {
+                            MessageKind::Video
+                        } else if m.message.audio_message.is_set() {
+                            MessageKind::Audio
+                        } else if m.message.document_message.is_set() {
+                            MessageKind::Document
+                        } else if m.message.sticker_message.is_set() {
+                            MessageKind::Sticker
+                        } else if m.message.contact_message.is_set() {
+                            MessageKind::Contact
+                        } else if m.message.location_message.is_set()
+                            || m.message.live_location_message.is_set()
+                        {
+                            MessageKind::Location
+                        } else if m.message.poll_creation_message_v3.is_set()
+                            || m.message.poll_creation_message_v2.is_set()
+                            || m.message.poll_creation_message.is_set()
+                        {
+                            MessageKind::Poll
+                        } else {
+                            MessageKind::Text
+                        };
+                        InboundEvent::Message {
+                            id: m.info.id.clone(),
+                            peer: m.info.source.chat.to_string(),
+                            sender: m.info.source.sender.to_string(),
+                            // Per-message wall-clock wins over the
+                            // daemon-arrival timestamp — operators want
+                            // the message's own `info.timestamp`
+                            // (mirrors what the WA UI shows). The
+                            // `_ts_unix_ms` fallback param is kept in
+                            // signature for callers that need to
+                            // override (none today).
+                            ts_unix_ms: m.info.timestamp.timestamp_millis(),
+                            ts_mono_ns,
+                            kind,
+                            text: m
+                                .message
+                                .text_content()
+                                .unwrap_or("")
+                                .to_string(),
+                            // TODO(Phase 2 follow-up): pull media_token
+                            // from the upload-flow bookkeeping so persisted
+                            // NDJSON rows carry the same media_ref token
+                            // the daemon returns to the CLI/MCP.
+                            media_token: None,
+                            // TODO(Phase 2 follow-up): extract from
+                            // `m.message.context_info.stanza_id`
+                            // (wa::ContextInfo).
+                            reply_to: None,
+                            // TODO(Phase 2 follow-up): extract from
+                            // `m.message.context_info.mentioned_jid`.
+                            mentions: Vec::new(),
+                            mentions_truncated: false,
+                            from_me: m.info.source.is_from_me,
+                            is_group: m.info.source.is_group,
+                            // wacore covers both the legacy
+                            // `view_once_message{,_v2,_v2_extension}`
+                            // wrappers AND the inline `view_once` flag
+                            // on image/video/audio/extended-text
+                            // payloads — `is_view_once()` walks every
+                            // nesting case.
+                            view_once: m.message.is_view_once(),
+                            ephemeral_expires_at_seconds: m
+                                .info
+                                .ephemeral_expiration,
+                        }
+                    }
 
                     // Events first-class overhaul (plan
                     // `docs/plans/2026-07-18-whatsapp-events-first-class-overhaul.md`):
@@ -1326,98 +1419,23 @@ impl WhatsAppWebAdapter {
                             // broadcast that the old Debug-string parser
                             // couldn't produce.
                             let mut first: Option<Arc<InboundEvent>> = None;
-                            for m in batch.messages.iter() {
-                                // Map the wa::Message variant to our
-                                // typed MessageKind enum. Text covers
-                                // both `conversation` and
-                                // `extended_text_message` (the latter is
-                                // text with quote / mentions context —
-                                // same kind at the typed layer; quoted
-                                // context is recovered downstream via
-                                // `extract_message_flags` once we wire it
-                                // up). `ptv_message` (push-to-video) is
-                                // rolled up under Video. Contact / Poll /
-                                // Location / Sticker / Document / Audio
-                                // each get their matching typed kind.
-                                let kind = if m.message.image_message.is_set() {
-                                    MessageKind::Image
-                                } else if m.message.video_message.is_set()
-                                    || m.message.ptv_message.is_set()
-                                {
-                                    MessageKind::Video
-                                } else if m.message.audio_message.is_set() {
-                                    MessageKind::Audio
-                                } else if m.message.document_message.is_set() {
-                                    MessageKind::Document
-                                } else if m.message.sticker_message.is_set() {
-                                    MessageKind::Sticker
-                                } else if m.message.contact_message.is_set() {
-                                    MessageKind::Contact
-                                } else if m.message.location_message.is_set()
-                                    || m.message.live_location_message.is_set()
-                                {
-                                    MessageKind::Location
-                                } else if m.message.poll_creation_message_v3.is_set()
-                                    || m.message.poll_creation_message_v2.is_set()
-                                    || m.message.poll_creation_message.is_set()
-                                {
-                                    MessageKind::Poll
-                                } else {
-                                    MessageKind::Text
-                                };
-                                let ev = InboundEvent::Message {
-                                    id: m.info.id.clone(),
-                                    peer: m.info.source.chat.to_string(),
-                                    sender: m.info.source.sender.to_string(),
-                                    ts_unix_ms: m.info.timestamp.timestamp_millis(),
-                                    ts_mono_ns,
-                                    kind,
-                                    text: m
-                                        .message
-                                        .text_content()
-                                        .unwrap_or("")
-                                        .to_string(),
-                                    // TODO(Phase 2 follow-up): pull
-                                    // media_token from the upload-flow
-                                    // bookkeeping so persisted NDJSON
-                                    // rows carry the same media_ref
-                                    // token the daemon returns to the
-                                    // CLI/MCP. Until then, downstream
-                                    // readers that want media use the
-                                    // `media_token` RPC on the message
-                                    // id directly.
-                                    media_token: None,
-                                    // TODO(Phase 2 follow-up): extract
-                                    // from `m.message.context_info.
-                                    // stanza_id` (wa::ContextInfo).
-                                    reply_to: None,
-                                    // TODO(Phase 2 follow-up): extract
-                                    // from `m.message.context_info.
-                                    // mentioned_jid`.
-                                    mentions: Vec::new(),
-                                    mentions_truncated: false,
-                                    from_me: m.info.source.is_from_me,
-                                    is_group: m.info.source.is_group,
-                                    // wacore covers both the legacy
-                                    // `view_once_message{,_v2,_v2_extension}`
-                                    // wrappers AND the inline `view_once`
-                                    // flag on image/video/audio/extended-
-                                    // text payloads — `is_view_once()`
-                                    // walks every nesting case.
-                                    view_once: m.message.is_view_once(),
-                                    ephemeral_expires_at_seconds: m
-                                        .info
-                                        .ephemeral_expiration,
-                                };
-                                let arc = Arc::new(ev);
-                                // Broadcast each one — the daemon
-                                // assigns a monotonic id per event, so
-                                // each inner message gets its own id and
-                                // lands as a separate NDJSON row.
-                                let _ = raw_event_tx.send(arc.clone());
-                                if first.is_none() {
-                                    first = Some(arc);
-                                }
+                            let mut iter = batch.messages.iter();
+                            // The first inner message is built but NOT
+                            // broadcast here — the post-match broadcast
+                            // below handles it. Subsequent inner messages
+                            // are broadcast inside the loop so each lands
+                            // as its own NDJSON row with its own monotonic
+                            // id. Total = N broadcasts, no duplication.
+                            if let Some(m) = iter.next() {
+                                first = Some(Arc::new(project_inner_message(
+                                    m, ts_unix_ms, ts_mono_ns,
+                                )));
+                            }
+                            for m in iter {
+                                let _ = raw_event_tx
+                                    .send(Arc::new(project_inner_message(
+                                        m, ts_unix_ms, ts_mono_ns,
+                                    )));
                             }
                             // Empty batch (rare — wacore filters empty
                             // arrivals upstream): fall back to a synthetic
@@ -1433,6 +1451,132 @@ impl WhatsAppWebAdapter {
                                 ))
                             })
                         }
+                        // ─── Receipt (per-message-delivered / read /
+                        // played). wacore's `ReceiptType` enum is private
+                        // so we derive the kind via `as_wire_str()` —
+                        // the inverse of `ReceiptType::parse()`. Maps:
+                        //   "read" / "read-self"   → ReceiptKind::Read
+                        //   "played" / "played-self" → ReceiptKind::Played
+                        //   everything else          → ReceiptKind::Delivered
+                        // (Sent / Sender / Retry / Inactive / PeerMsg /
+                        // HistorySync / ServerError all fold into
+                        // Delivered for our consumers — the projection
+                        // records the wire-string on the daemon side
+                        // via the existing `ReceiptType` JSON.)
+                        Event::Receipt(r) => Arc::new(InboundEvent::Receipt {
+                            msg_id: r
+                                .message_ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_default(),
+                            peer: r.source.chat.to_string(),
+                            kind: match r.r#type.as_wire_str() {
+                                "read" | "read-self" => ReceiptKind::Read,
+                                "played" | "played-self" => ReceiptKind::Played,
+                                _ => ReceiptKind::Delivered,
+                            },
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        // ─── GroupUpdate — group admin events
+                        // (add/remove/promote/demote/subject-change/...).
+                        // `action` is a wacore enum; we render its Debug
+                        // form as the action_kind label so operators can
+                        // filter on it without parsing the payload.
+                        Event::GroupUpdate(gu) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::GroupUpdate {
+                                group_jid: gu.group_jid.to_string(),
+                                participant: gu
+                                    .participant
+                                    .as_ref()
+                                    .map(|p| p.to_string()),
+                                action_kind: format!("{:?}", gu.action),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── DeviceListUpdate — companion-device
+                        // roster changes (Phone A → Phone B linked
+                        // device). `devices: Vec<DeviceNotificationInfo>`
+                        // — we project the count, payload carries full
+                        // detail.
+                        Event::DeviceListUpdate(dlu) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::DeviceListUpdate {
+                                user: dlu.user.to_string(),
+                                device_count: dlu.devices.len(),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── PictureUpdate — profile picture set /
+                        // removed. `author` is the JID that performed
+                        // the change (None for self-only updates).
+                        Event::PictureUpdate(pu) => Arc::new(
+                            InboundEvent::PictureUpdate {
+                                jid: pu.jid.to_string(),
+                                author: pu
+                                    .author
+                                    .as_ref()
+                                    .map(|a| a.to_string()),
+                                removed: pu.removed,
+                                picture_id: pu.picture_id.clone(),
+                                payload: serde_json::to_value(&*event)
+                                    .unwrap_or(serde_json::Value::Null),
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            },
+                        ),
+                        // ─── ServerAck — server acknowledgment of OUR
+                        // outbound sends. `class` distinguishes message
+                        // vs receipt vs notification ack; operators
+                        // can correlate against their outbound message
+                        // id via the `msg_id` projection.
+                        Event::ServerAck(sa) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::ServerAck {
+                                msg_id: Some(sa.id.clone()),
+                                peer: sa.from.as_ref().map(|j| j.to_string()),
+                                ack_class: sa.class.clone(),
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        // ─── Notification + RawNode — plan
+                        // §Coverage matrix: explicit Unknown arms for
+                        // the two wacore-unparseable shapes (raw XML
+                        // nodes the server can deliver that wacore
+                        // intentionally doesn't parse — it surfaces them
+                        // as `Event::Notification(OwnedNodeRef)` /
+                        // `Event::RawNode(OwnedNodeRef)` for downstream
+                        // consumers that DO want raw-node access). Our
+                        // typed layer doesn't parse them either; we
+                        // emit `InboundEvent::Unknown { variant_label:
+                        // "Notification" | "RawNode", wacore_event:
+                        // <serialised node> }` so operators see the
+                        // exact per-variant count in `unknown_stats`
+                        // and can correlate with WA server changes
+                        // without us having to ship a typed variant for
+                        // every opaque stanza shape.
+                        //
+                        // `discriminant_label()` (in events.rs) already
+                        // returns "Notification" / "RawNode" for these,
+                        // so `unknown_from_wacore` emits the right
+                        // variant_label without us hard-coding it.
+                        Event::Notification(_) | Event::RawNode(_) => Arc::new(
+                            InboundEvent::unknown_from_wacore(
+                                &event,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            ),
+                        ),
                         _ => Arc::new(InboundEvent::unknown_from_wacore(
                             &event,
                             ts_unix_ms,

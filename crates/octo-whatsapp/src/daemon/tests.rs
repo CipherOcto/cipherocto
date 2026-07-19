@@ -235,18 +235,19 @@ async fn synced_flag_flips_when_adapter_notifies_after_bind() {
 /// developer's machine; bump up if a slow CI starts flake-ing.
 const TEST_STALL: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// Build a `broadcast::Sender<String>` + paired receiver and spawn
-/// `run_connection_watcher_inner` against a fresh daemon. Returns
-/// the sender (caller drives events) and the daemon handle (caller
-/// asserts state).
+/// Build a `broadcast::Sender<Arc<InboundEvent>>` + paired receiver
+/// and spawn `run_connection_watcher_inner` against a fresh daemon.
+/// Returns the sender (caller drives events) and the daemon handle
+/// (caller asserts state).
 async fn spawn_watcher() -> (
-    tokio::sync::broadcast::Sender<String>,
+    tokio::sync::broadcast::Sender<std::sync::Arc<crate::events::InboundEvent>>,
     DaemonHandle,
     tempfile::TempDir,
 ) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_daemon, handle) = Daemon::new_for_tests(tmp.path());
-    let (tx, rx) = tokio::sync::broadcast::channel::<String>(64);
+    let (tx, rx) =
+        tokio::sync::broadcast::channel::<std::sync::Arc<crate::events::InboundEvent>>(64);
     let cancel = handle.cancel_token().clone();
     tokio::spawn(super::run_connection_watcher_inner(
         rx,
@@ -264,11 +265,18 @@ async fn spawn_watcher() -> (
 async fn pairing_stall_timer_fires_awaiting_user_action() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
-    // Send a PairingQr-classified event (the wacore Debug form
-    // starts with `Event::PairingQrCode(...)` per the classifier;
-    // we use the inner identifier after `Event::` stripping).
-    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
-        .expect("send PairingQrCode");
+    // Send a PairingQrCode-classified typed event. The watcher
+    // inspects `event_kind()` for the stable per-variant label.
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairingQrCode {
+            qr_code: "x".to_string(),
+            ref_string: String::new(),
+            timeout: 60,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send PairingQrCode");
 
     // Wait long enough for the classifier + stall timer to fire.
     tokio::time::sleep(TEST_STALL * 3).await;
@@ -287,11 +295,24 @@ async fn pairing_stall_timer_fires_awaiting_user_action() {
 async fn pairing_stall_timer_cleared_by_terminal_event() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
-    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
-        .expect("send PairingQrCode");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairingQrCode {
+            qr_code: "x".to_string(),
+            ref_string: String::new(),
+            timeout: 60,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send PairingQrCode");
     // Send Connected before the stall timer fires.
-    tx.send("Event::Connected(Connected { .. })".to_string())
-        .expect("send Connected");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::Connected {
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send Connected");
 
     // Wait > stall threshold — if the timer were still armed it
     // would fire by now.
@@ -313,12 +334,28 @@ async fn pairing_stall_timer_resets_on_re_pair() {
     // First pairing attempt: PairingQr then LoggedOut (server
     // rejected). The LoggedOut is a terminal event that clears the
     // timer.
-    tx.send("Event::PairingQrCode { code: \"a\", timeout: 60s }".to_string())
-        .expect("send PairingQrCode #1");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairingQrCode {
+            qr_code: "a".to_string(),
+            ref_string: String::new(),
+            timeout: 60,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send PairingQrCode #1");
     // Wait less than the stall threshold, then send LoggedOut.
     tokio::time::sleep(TEST_STALL / 2).await;
-    tx.send("LoggedOut(LoggedOut { on_connect: true, reason: LoggedOut })".to_string())
-        .expect("send LoggedOut");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::LoggedOut {
+            cause: Some("LoggedOut".to_string()),
+            on_connect: true,
+            payload: serde_json::Value::Null,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send LoggedOut");
     tokio::time::sleep(TEST_STALL / 2).await;
 
     assert_eq!(
@@ -330,8 +367,16 @@ async fn pairing_stall_timer_resets_on_re_pair() {
     // Re-pair: new PairingQrCode. The timer must restart from
     // scratch; without a fresh timeout window it would NOT fire
     // before the test's total elapsed time.
-    tx.send("Event::PairingQrCode { code: \"b\", timeout: 60s }".to_string())
-        .expect("send PairingQrCode #2");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairingQrCode {
+            qr_code: "b".to_string(),
+            ref_string: String::new(),
+            timeout: 60,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send PairingQrCode #2");
 
     // Wait > TEST_STALL so the timer fires for the SECOND pair.
     tokio::time::sleep(TEST_STALL * 3).await;
@@ -352,8 +397,13 @@ async fn pairing_stall_does_not_fire_without_pairing_prompt() {
     // Send Connected directly with no prior PairingQrCode. The
     // stall timer is only armed by PairingQr/Code events, so no
     // timer should fire.
-    tx.send("Event::Connected(Connected { .. })".to_string())
-        .expect("send Connected");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::Connected {
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send Connected");
 
     tokio::time::sleep(TEST_STALL * 3).await;
 
@@ -380,17 +430,18 @@ async fn pairing_stall_does_not_fire_without_pairing_prompt() {
 async fn pair_passkey_request_event_marks_awaiting_passkey() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
-    // The wacore `Event::PairPasskeyRequest` Debug form (verified by
-    // Session 3's contract test in `octo-adapter-whatsapp`):
-    //   Event::PairPasskeyRequest(PairPasskeyRequest { \
-    //       request_options_json: "{\"challenge\":\"abc\"}" })
-    // Note: in Rust source this is written as `r#"..."#` so the
-    // backslashes and inner `"` are literal; the classifier only
-    // sees the `ident` after stripping the `Event::` prefix.
-    tx.send(
-        r#"Event::PairPasskeyRequest(PairPasskeyRequest { request_options_json: "{\"challenge\":\"abc\"}" })"#
-            .to_string(),
-    )
+    // The wacore `Event::PairPasskeyRequest` typed payload carries
+    // `request_options_json` only (no `auth` field). Pass a
+    // plausible WebAuthn challenge shape so the classifier matches
+    // on the `event_kind()` label.
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairPasskeyRequest {
+            auth: String::new(),
+            request_json: r#"{"challenge":"abc","rpId":"web.whatsapp.com"}"#.to_string(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
     .expect("send PairPasskeyRequest");
 
     // Brief yield — the watcher's recv loop runs in the same tokio
@@ -426,10 +477,14 @@ async fn pair_passkey_request_event_marks_awaiting_passkey() {
 async fn pair_passkey_confirmation_event_keeps_awaiting_passkey() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
-    tx.send(
-        r#"Event::PairPasskeyConfirmation(PairPasskeyConfirmation { code: "ABCD1234", skip_handoff_ux: false })"#
-            .to_string(),
-    )
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairPasskeyConfirmation {
+            auth: String::new(),
+            confirmation_json: r#"{"code":"ABCD1234","skip_handoff_ux":false}"#.to_string(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
     .expect("send PairPasskeyConfirmation");
 
     tokio::time::sleep(TEST_STALL / 2).await;
@@ -447,10 +502,14 @@ async fn pair_passkey_confirmation_event_keeps_awaiting_passkey() {
 async fn pair_passkey_error_event_advances_to_logged_out() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
-    tx.send(
-        r#"Event::PairPasskeyError(PairPasskeyError { error: "user_cancelled", continuation: false })"#
-            .to_string(),
-    )
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairPasskeyError {
+            auth: String::new(),
+            error_json: "user_cancelled".to_string(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
     .expect("send PairPasskeyError");
 
     tokio::time::sleep(TEST_STALL / 2).await;
@@ -480,14 +539,26 @@ async fn awaiting_passkey_clears_pairing_stall_timer() {
     let (tx, handle, _tmp) = spawn_watcher().await;
 
     // Pairing prompt arms the timer.
-    tx.send("Event::PairingQrCode { code: \"x\", timeout: 60s }".to_string())
-        .expect("send PairingQrCode");
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairingQrCode {
+            qr_code: "x".to_string(),
+            ref_string: String::new(),
+            timeout: 60,
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
+    .expect("send PairingQrCode");
     // Server asks for passkey (well within the stall window).
     tokio::time::sleep(TEST_STALL / 4).await;
-    tx.send(
-        r#"Event::PairPasskeyRequest(PairPasskeyRequest { request_options_json: "{\"challenge\":\"abc\"}" })"#
-            .to_string(),
-    )
+    tx.send(std::sync::Arc::new(
+        crate::events::InboundEvent::PairPasskeyRequest {
+            auth: String::new(),
+            request_json: r#"{"challenge":"abc"}"#.to_string(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+        },
+    ))
     .expect("send PairPasskeyRequest");
 
     // Wait well past the stall window. If the timer had not been

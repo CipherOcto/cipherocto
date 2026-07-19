@@ -1766,9 +1766,10 @@ mod tests {
         rotate_unknown_stats_daily(&events, &shared).await.unwrap();
         // Canonical file moved aside (now absent or empty after
         // rename). Map cleared.
-        let m = shared.lock();
-        assert!(m.is_empty());
-        drop(m);
+        {
+            let m = shared.lock();
+            assert!(m.is_empty());
+        }
 
         // The history file for today exists.
         let today = chrono_day_ymd(

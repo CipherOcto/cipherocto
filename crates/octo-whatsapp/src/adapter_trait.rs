@@ -1190,7 +1190,9 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// to translate WA events into `BotStateMirror` transitions.
     /// Adapters without a single bot lifecycle (Matrix, Telegram)
     /// keep the default `None` and the watcher simply does nothing.
-    fn subscribe_raw_events(&self) -> Option<tokio::sync::broadcast::Receiver<String>> {
+    fn subscribe_raw_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>>> {
         None
     }
 
@@ -2270,12 +2272,17 @@ impl OctoWhatsAppAdapter for octo_adapter_whatsapp::WhatsAppWebAdapter {
 
     // ── Raw event stream forwarder (Phase 6.12.4) ────────────────────────
 
-    fn subscribe_raw_events(&self) -> Option<tokio::sync::broadcast::Receiver<String>> {
+    fn subscribe_raw_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>>> {
         // `WhatsAppWebAdapter::subscribe_raw_events` lives on the
         // concrete type (`adapter.rs:500`) rather than on the
         // `PlatformAdapter` trait (which serves 5+ adapter impls).
         // The trait impl here is targeted specifically at the WA
         // backend, so calling the concrete method is appropriate.
+        // Typed `Arc<InboundEvent>` instead of String per the
+        // events first-class overhaul (plan
+        // `2026-07-18-whatsapp-events-first-class-overhaul.md`).
         Some(octo_adapter_whatsapp::WhatsAppWebAdapter::subscribe_raw_events(self))
     }
 

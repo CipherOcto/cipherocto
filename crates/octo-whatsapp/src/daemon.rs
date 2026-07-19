@@ -1619,49 +1619,35 @@ fn load_initial_rules_from_disk(
 
 /// Map a raw `format!("{:?}", event)` string to a `BotStateMirror`
 /// transition. Returns `None` for non-lifecycle events.
-fn classify_event(raw: &str) -> Option<(BotStateMirror, bool)> {
-    // The adapter broadcasts `format!("{:?}", event)` for every WA
-    // lifecycle event. The actual format depends on the wacore
-    // `Event` enum's Debug derive. Empirically, in current wacore
-    // versions, the Debug impl produces `LoggedOut(LoggedOut { ... })`
-    // WITHOUT a leading `Event::` prefix (i.e. only the variant name,
-    // not the qualified type path). Other libraries or future
-    // versions may produce `Event::LoggedOut(...)`. Accept both.
+fn classify_event(ev: &crate::events::InboundEvent) -> Option<(BotStateMirror, bool)> {
+    // Events first-class overhaul (plan
+    // `2026-07-18-whatsapp-events-first-class-overhaul.md`): the
+    // adapter now emits typed `Arc<InboundEvent>` directly on the
+    // raw bus. Match on the stable per-variant `event_kind()` label
+    // instead of parsing Debug strings — the variant set is closed
+    // (no Debug-string drift, no string-prefix fragility).
     //
-    // Anchor: split on the first `(`, ` `, `{`, or `<` to get just
-    // the identifier; strip the optional `Event::` prefix first.
-    let without_prefix = raw.strip_prefix("Event::").unwrap_or(raw);
-    let ident = without_prefix.split(['(', ' ', '{', '<']).next()?.trim();
-    match ident {
-        // `phase_changed = true` means the caller should also flip
-        // `DaemonPhase` (Connected ↔ SessionLost). Pairing/PairingQr
-        // don't move phase — boot is in progress, daemon is already
-        // in Booting/SessionLost.
-        "Connected" => Some((BotStateMirror::Connected, true)),
-        "Disconnected" => Some((BotStateMirror::Disconnected, true)),
-        // The wacore variants are `PairingQrCode` and `PairingCode`
-        // (note the `Code` suffix on the QR variant). Earlier phases
-        // had this wrong as `"PairingQr"` and the arm silently never
-        // matched in production — only `LoggedOut` / `Connected` /
-        // `Replaced` / `SessionExpired` paths were reachable. Phase
-        // 6.12.5's hermetic test (`pairing_stall_timer_fires_*`)
-        // exposed the bug.
-        "PairingQrCode" => Some((BotStateMirror::PairingQr, false)),
-        "PairingCode" => Some((BotStateMirror::PairingCode, false)),
-        "LoggedOut" => Some((BotStateMirror::LoggedOut, true)),
-        "Replaced" => Some((BotStateMirror::Replaced, true)),
-        "SessionExpired" => Some((BotStateMirror::SessionExpired, true)),
-        // Session 4 (RFC-0909, wacore-webauthn plan): the three
-        // SHORTCAKE_PASSKEY events. The server asked for a WebAuthn
-        // assertion (Request) or reached the final verification
-        // stage (Confirmation); both keep us in `AwaitingPasskey`
-        // until the assertion resolves. `PairPasskeyError` is
-        // terminal — the link failed and the operator must restart,
-        // so we advance to `LoggedOut` and move the daemon phase to
+    // `phase_changed = true` means the caller should also flip
+    // `DaemonPhase` (Connected ↔ SessionLost). Pairing/PairingQr
+    // don't move phase — boot is in progress, daemon is already
+    // in Booting/SessionLost.
+    match ev.event_kind() {
+        "connected" => Some((BotStateMirror::Connected, true)),
+        "disconnected" => Some((BotStateMirror::Disconnected, true)),
+        "pairing_qr_code" => Some((BotStateMirror::PairingQr, false)),
+        "pairing_code" => Some((BotStateMirror::PairingCode, false)),
+        "logged_out" => Some((BotStateMirror::LoggedOut, true)),
+        "stream_replaced" => Some((BotStateMirror::Replaced, true)),
+        // `SessionExpired` does not have a dedicated wacore variant —
+        // the server returns `<failure reason="401">` which surfaces
+        // as `LoggedOut`; the bot_state transitions are identical.
+        "pair_passkey_request" => Some((BotStateMirror::AwaitingPasskey, false)),
+        "pair_passkey_confirmation" => Some((BotStateMirror::AwaitingPasskey, false)),
+        // RFC-0909 (wacore-webauthn): PairPasskeyError is terminal —
+        // the link failed and the operator must restart, so we
+        // advance to `LoggedOut` and move the daemon phase to
         // `SessionLost`.
-        "PairPasskeyRequest" => Some((BotStateMirror::AwaitingPasskey, false)),
-        "PairPasskeyConfirmation" => Some((BotStateMirror::AwaitingPasskey, false)),
-        "PairPasskeyError" => Some((BotStateMirror::LoggedOut, true)),
+        "pair_passkey_error" => Some((BotStateMirror::LoggedOut, true)),
         _ => None,
     }
 }
@@ -1686,7 +1672,7 @@ pub const PAIRING_STALL_SECS: u64 = 45;
 /// truthful `status.get` even when the SDK has stalled behind a
 /// phone-side second-verification prompt.
 async fn run_connection_watcher(
-    rx: tokio::sync::broadcast::Receiver<String>,
+    rx: tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>>,
     handle: DaemonHandle,
     cancel: CancellationToken,
 ) {
@@ -1703,7 +1689,7 @@ async fn run_connection_watcher(
 /// tests can use a sub-second timeout (the production const is 45s,
 /// which would dominate test wall-clock).
 async fn run_connection_watcher_inner(
-    mut rx: tokio::sync::broadcast::Receiver<String>,
+    mut rx: tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>>,
     handle: DaemonHandle,
     cancel: CancellationToken,
     stall_after: std::time::Duration,
@@ -1751,15 +1737,16 @@ async fn run_connection_watcher_inner(
             }
             recv = rx.recv() => {
                 match recv {
-                    Ok(raw) => {
+                    Ok(arc_ev) => {
+                        let kind = arc_ev.event_kind();
                         tracing::debug!(
-                            raw = %raw,
-                            "connection watcher: raw event received"
+                            kind = kind,
+                            "connection watcher: typed event received"
                         );
-                        if let Some((mirror, phase_changed)) = classify_event(&raw) {
+                        if let Some((mirror, phase_changed)) = classify_event(&arc_ev) {
                             tracing::info!(
                                 bot_state = ?mirror,
-                                raw = %raw,
+                                kind = kind,
                                 "connection watcher: bot state transition"
                             );
                             handle.set_bot_state(mirror);
@@ -1798,11 +1785,11 @@ async fn run_connection_watcher_inner(
                             }
                         } else {
                             // DEBUG (Phase 6.12.5): log unclassified events so
-                            // we can diagnose format mismatches between the
-                            // adapter's `format!("{:?}", event)` and the
-                            // classify_event prefix-based matcher.
-                            tracing::warn!(
-                                raw = %raw,
+                            // we can diagnose mismatches between the
+                            // adapter's typed `event_kind()` and the
+                            // `classify_event` matcher.
+                            tracing::debug!(
+                                kind = arc_ev.event_kind(),
                                 "connection watcher: received event did not classify"
                             );
                         }

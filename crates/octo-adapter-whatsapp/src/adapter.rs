@@ -1139,7 +1139,7 @@ impl WhatsAppWebAdapter {
                 async move {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
-                    use crate::events::{InboundEvent, PresenceKind, NewsletterUpdateKind, UnavailableKind};
+                    use crate::events::{InboundEvent, MessageKind, PresenceKind, NewsletterUpdateKind, UnavailableKind};
 
                     // Events first-class overhaul (plan
                     // `docs/plans/2026-07-18-whatsapp-events-first-class-overhaul.md`):
@@ -1298,6 +1298,141 @@ impl WhatsAppWebAdapter {
                         // processes the typed `InboundEvent::Unknown` —
                         // keeps the adapter free of an octo-whatsapp
                         // dependency (would create a cycle).
+                        //
+                        // ─── Event::Messages is NOT in this catch-all ───
+                        // `Messages(MessageBatch)` is a known wacore
+                        // variant carrying N inner `InboundMessage`s.
+                        // The plan §Coverage matrix mandates one typed
+                        // `InboundEvent::Message` per inner message —
+                        // batch fan-out, not one `Unknown` per batch.
+                        // Without this arm the persister sees only batch
+                        // Unknowns and operators cannot search per-text or
+                        // per-peer across the events view. Handled just
+                        // above the `_ =>` arm.
+                        Event::Messages(batch) => {
+                            // Project each inner `InboundMessage` into a
+                            // typed `InboundEvent::Message` and broadcast
+                            // it on `raw_event_tx`. The persister, buffer,
+                            // SQL, Tantivy, MCP, query layer, and rules
+                            // engine all match on `InboundEvent::Message`
+                            // — once the typed event lands, downstream
+                            // consumers Just Work without per-batch
+                            // fan-out heuristics on their side.
+                            //
+                            // The existing DOT-envelope dispatch loop in
+                            // the second match block (below) still runs for
+                            // each inner message after this arm; nothing
+                            // changes there. This arm only adds the typed
+                            // broadcast that the old Debug-string parser
+                            // couldn't produce.
+                            let mut first: Option<Arc<InboundEvent>> = None;
+                            for m in batch.messages.iter() {
+                                // Map the wa::Message variant to our
+                                // typed MessageKind enum. Text covers
+                                // both `conversation` and
+                                // `extended_text_message` (the latter is
+                                // text with quote / mentions context —
+                                // same kind at the typed layer; quoted
+                                // context is recovered downstream via
+                                // `extract_message_flags` once we wire it
+                                // up). `ptv_message` (push-to-video) is
+                                // rolled up under Video. Contact / Poll /
+                                // Location / Sticker / Document / Audio
+                                // each get their matching typed kind.
+                                let kind = if m.message.image_message.is_set() {
+                                    MessageKind::Image
+                                } else if m.message.video_message.is_set()
+                                    || m.message.ptv_message.is_set()
+                                {
+                                    MessageKind::Video
+                                } else if m.message.audio_message.is_set() {
+                                    MessageKind::Audio
+                                } else if m.message.document_message.is_set() {
+                                    MessageKind::Document
+                                } else if m.message.sticker_message.is_set() {
+                                    MessageKind::Sticker
+                                } else if m.message.contact_message.is_set() {
+                                    MessageKind::Contact
+                                } else if m.message.location_message.is_set()
+                                    || m.message.live_location_message.is_set()
+                                {
+                                    MessageKind::Location
+                                } else if m.message.poll_creation_message_v3.is_set()
+                                    || m.message.poll_creation_message_v2.is_set()
+                                    || m.message.poll_creation_message.is_set()
+                                {
+                                    MessageKind::Poll
+                                } else {
+                                    MessageKind::Text
+                                };
+                                let ev = InboundEvent::Message {
+                                    id: m.info.id.clone(),
+                                    peer: m.info.source.chat.to_string(),
+                                    sender: m.info.source.sender.to_string(),
+                                    ts_unix_ms: m.info.timestamp.timestamp_millis(),
+                                    ts_mono_ns,
+                                    kind,
+                                    text: m
+                                        .message
+                                        .text_content()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    // TODO(Phase 2 follow-up): pull
+                                    // media_token from the upload-flow
+                                    // bookkeeping so persisted NDJSON
+                                    // rows carry the same media_ref
+                                    // token the daemon returns to the
+                                    // CLI/MCP. Until then, downstream
+                                    // readers that want media use the
+                                    // `media_token` RPC on the message
+                                    // id directly.
+                                    media_token: None,
+                                    // TODO(Phase 2 follow-up): extract
+                                    // from `m.message.context_info.
+                                    // stanza_id` (wa::ContextInfo).
+                                    reply_to: None,
+                                    // TODO(Phase 2 follow-up): extract
+                                    // from `m.message.context_info.
+                                    // mentioned_jid`.
+                                    mentions: Vec::new(),
+                                    mentions_truncated: false,
+                                    from_me: m.info.source.is_from_me,
+                                    is_group: m.info.source.is_group,
+                                    // wacore covers both the legacy
+                                    // `view_once_message{,_v2,_v2_extension}`
+                                    // wrappers AND the inline `view_once`
+                                    // flag on image/video/audio/extended-
+                                    // text payloads — `is_view_once()`
+                                    // walks every nesting case.
+                                    view_once: m.message.is_view_once(),
+                                    ephemeral_expires_at_seconds: m
+                                        .info
+                                        .ephemeral_expiration,
+                                };
+                                let arc = Arc::new(ev);
+                                // Broadcast each one — the daemon
+                                // assigns a monotonic id per event, so
+                                // each inner message gets its own id and
+                                // lands as a separate NDJSON row.
+                                let _ = raw_event_tx.send(arc.clone());
+                                if first.is_none() {
+                                    first = Some(arc);
+                                }
+                            }
+                            // Empty batch (rare — wacore filters empty
+                            // arrivals upstream): fall back to a synthetic
+                            // Unknown so the match expression returns a
+                            // well-formed `Arc<InboundEvent>` instead of
+                            // Option. Operators see the empty-batch case
+                            // in `unknown_stats` and can correlate.
+                            first.unwrap_or_else(|| {
+                                Arc::new(InboundEvent::unknown_from_wacore(
+                                    &event,
+                                    ts_unix_ms,
+                                    ts_mono_ns,
+                                ))
+                            })
+                        }
                         _ => Arc::new(InboundEvent::unknown_from_wacore(
                             &event,
                             ts_unix_ms,

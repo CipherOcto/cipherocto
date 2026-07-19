@@ -81,7 +81,7 @@ LOG_DIR="${OCTO_WHATSAPP_LOG_DIR:-$DATA_DIR/$NAME/logs}"
 CAPTURE_LOG_DIR="${OCTO_WHATSAPP_CAPTURE_LOG_DIR:-$DATA_DIR/$NAME/capture}"
 PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
 LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
-BIN_DIR="$HOME/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/$PROFILE"
+BIN_DIR="$HOME/_w/ai/cipherocto/target/$PROFILE"
 BIN="$BIN_DIR/octo-whatsapp"
 # Boot wait: with background NDJSON replay (Phase 7.J follow-up,
 # 2026-07-15) the daemon binds its IPC socket in single-digit
@@ -121,9 +121,22 @@ esac
 # === Path discovery (canonical worktree path) ===============================
 
 REPO_ROOT="$HOME/_w/ai/cipherocto"
-for wt in "$REPO_ROOT/.worktrees"/*; do
-    [ -x "$wt/target/$PROFILE/octo-whatsapp" ] && BIN_DIR="$wt/target/$PROFILE" && BIN="$BIN_DIR/octo-whatsapp" && break
-done
+# Discovery order: main checkout first (tracks the `next` branch the
+# active Claude session is committing to), fall back to worktrees. The
+# prior behaviour — worktree first — silently pinned the daemon to the
+# older `feat/whatsapp-runtime-cli-mcp` build and bypassed the typed-event
+# overhaul that lives on `next`. Flip the order so the latest commits
+# always win. Override with OCTO_WHATSAPP_PREFER_WORKTREE=1 to force the
+# legacy worktree-first behaviour.
+if [ "${OCTO_WHATSAPP_PREFER_WORKTREE:-0}" != "1" ] \
+    && [ -x "$REPO_ROOT/target/$PROFILE/octo-whatsapp" ]; then
+    BIN_DIR="$REPO_ROOT/target/$PROFILE"
+    BIN="$BIN_DIR/octo-whatsapp"
+else
+    for wt in "$REPO_ROOT/.worktrees"/*; do
+        [ -x "$wt/target/$PROFILE/octo-whatsapp" ] && BIN_DIR="$wt/target/$PROFILE" && BIN="$BIN_DIR/octo-whatsapp" && break
+    done
+fi
 [ -x "$BIN" ] || { echo "binary not found: $BIN (run: cargo build --profile $PROFILE -p octo-whatsapp --features $FEATURES)" >&2; exit 1; }
 
 # === Helpers ===============================================================

@@ -17,10 +17,24 @@ use octo_whatsapp::events_router::EventsRouter;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-fn dummy_msg(id: &str) -> String {
-    format!(
-        "Message(id: \"{id}\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)"
-    )
+fn dummy_msg(id: &str) -> InboundEvent {
+    InboundEvent::Message {
+        id: id.to_string(),
+        peer: "P".to_string(),
+        sender: "S".to_string(),
+        ts_unix_ms: 0,
+        ts_mono_ns: 0,
+        kind: octo_whatsapp::events::MessageKind::Text,
+        text: "hi".to_string(),
+        media_token: None,
+        reply_to: None,
+        mentions: Vec::new(),
+        mentions_truncated: false,
+        from_me: false,
+        is_group: false,
+        view_once: false,
+        ephemeral_expires_at_seconds: None,
+    }
 }
 
 #[tokio::test]
@@ -29,15 +43,15 @@ async fn router_persists_events_in_order_with_sequential_ids() {
     let cancel = CancellationToken::new();
     let router = EventsRouter::new(buffer.clone(), cancel.clone());
 
-    let (tx, _rx) = broadcast::channel::<String>(16);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(16);
     let rx = tx.subscribe();
 
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
 
-    tx.send(dummy_msg("M1")).unwrap();
-    tx.send(dummy_msg("M2")).unwrap();
-    tx.send(dummy_msg("M3")).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M1"))).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M2"))).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M3"))).unwrap();
 
     // Give the router a beat to drain.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -67,7 +81,7 @@ async fn router_evicts_oldest_at_max_rows() {
     let cancel = CancellationToken::new();
     let router = EventsRouter::new(buffer.clone(), cancel.clone());
 
-    let (tx, _rx) = broadcast::channel::<String>(64);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(64);
     let rx = tx.subscribe();
 
     let router2 = router.clone();
@@ -75,7 +89,8 @@ async fn router_evicts_oldest_at_max_rows() {
 
     // Push 10 events; max_rows=5 means the first 5 get evicted.
     for i in 0..10 {
-        tx.send(dummy_msg(&format!("E{i}"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg(&format!("E{i}"))))
+            .unwrap();
     }
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -105,23 +120,31 @@ async fn router_evicts_oldest_at_max_rows() {
 
 #[tokio::test]
 async fn router_handles_unknown_raw_input_as_unknown_variant() {
-    // The parser maps unrecognised Debug-formatted strings to
-    // `InboundEvent::Unknown`. This test pins that behaviour at the
-    // router boundary so a future change to `InboundEvent::parse`
-    // doesn't silently drop events.
+    // Events first-class overhaul: the router now accepts typed
+    // `Arc<InboundEvent>` directly. Unrecognised wacore events
+    // surface as `InboundEvent::Unknown { wacore_event,
+    // variant_label }`. This test pins that the router preserves
+    // the Unknown payload through the buffer + per-sink fan-out.
     let buffer = EventsBuffer::new(100);
     let cancel = CancellationToken::new();
     let router = EventsRouter::new(buffer.clone(), cancel.clone());
 
-    let (tx, _rx) = broadcast::channel::<String>(16);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(16);
     let rx = tx.subscribe();
 
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
 
-    tx.send("definitely not a wacore Event variant".to_string())
-        .unwrap();
-    tx.send("Another unmapped payload".to_string()).unwrap();
+    tx.send(std::sync::Arc::new(InboundEvent::synthetic_unknown(
+        "FooBar",
+        "definitely not a wacore Event variant",
+    )))
+    .unwrap();
+    tx.send(std::sync::Arc::new(InboundEvent::synthetic_unknown(
+        "BazQux",
+        "Another unmapped payload",
+    )))
+    .unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 

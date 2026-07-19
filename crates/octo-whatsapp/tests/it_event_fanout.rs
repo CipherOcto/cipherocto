@@ -17,10 +17,24 @@ use octo_whatsapp::events_router::EventsRouter;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-fn dummy_msg(id: &str) -> String {
-    format!(
-        "Message(id: \"{id}\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)"
-    )
+fn dummy_msg(id: &str) -> InboundEvent {
+    InboundEvent::Message {
+        id: id.to_string(),
+        peer: "P".to_string(),
+        sender: "S".to_string(),
+        ts_unix_ms: 0,
+        ts_mono_ns: 0,
+        kind: octo_whatsapp::events::MessageKind::Text,
+        text: "hi".to_string(),
+        media_token: None,
+        reply_to: None,
+        mentions: Vec::new(),
+        mentions_truncated: false,
+        from_me: false,
+        is_group: false,
+        view_once: false,
+        ephemeral_expires_at_seconds: None,
+    }
 }
 
 #[tokio::test]
@@ -32,13 +46,14 @@ async fn fanout_delivers_every_event_to_every_sink() {
     let mut sub_a = router.subscribe(8);
     let mut sub_b = router.subscribe(8);
 
-    let (tx, _rx) = broadcast::channel::<String>(16);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(16);
     let rx = tx.subscribe();
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
 
     for i in 0..5 {
-        tx.send(dummy_msg(&format!("M{i}"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg(&format!("M{i}"))))
+            .unwrap();
     }
 
     // Drain each sink fully.
@@ -79,7 +94,7 @@ async fn slow_sink_lagged_counter_increments_under_pressure() {
     // Capacity 64 — keeps up easily.
     let _fast = router.subscribe(64);
 
-    let (tx, _rx) = broadcast::channel::<String>(64);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(64);
     let rx = tx.subscribe();
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
@@ -87,7 +102,8 @@ async fn slow_sink_lagged_counter_increments_under_pressure() {
     // Push 5 events. The slow sink will fill up after the first and
     // drop the rest (lagged counter increments).
     for i in 0..5 {
-        tx.send(dummy_msg(&format!("E{i}"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg(&format!("E{i}"))))
+            .unwrap();
     }
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -112,13 +128,13 @@ async fn dropped_sink_does_not_panic_router() {
     // Drop the consumer immediately so the sink is closed.
     drop(sub);
 
-    let (tx, _rx) = broadcast::channel::<String>(16);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(16);
     let rx = tx.subscribe();
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
 
-    tx.send(dummy_msg("M1")).unwrap();
-    tx.send(dummy_msg("M2")).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M1"))).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M2"))).unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -146,12 +162,12 @@ async fn subscriber_try_recv_returns_none_when_empty() {
     let mut sub = router.subscribe(8);
     assert!(sub.try_recv().is_none(), "empty channel must return None");
 
-    let (tx, _rx) = broadcast::channel::<String>(16);
+    let (tx, _rx) = broadcast::channel::<std::sync::Arc<octo_whatsapp::events::InboundEvent>>(16);
     let rx = tx.subscribe();
     let router2 = router.clone();
     let handle = tokio::spawn(async move { router2.run(rx).await });
 
-    tx.send(dummy_msg("M1")).unwrap();
+    tx.send(std::sync::Arc::new(dummy_msg("M1"))).unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let (_id, ev) = sub.try_recv().expect("event should be available");

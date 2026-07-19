@@ -446,7 +446,9 @@ fn event_denorm(ev: &InboundEvent) -> (Option<String>, Option<String>, Option<St
         }
         InboundEvent::ServerAck { peer: Some(p), .. } => (Some(p.clone()), None, Some(p.clone())),
         InboundEvent::ServerAck { peer: None, .. } => (None, None, None),
-        InboundEvent::IdentityChange { jid: Some(j), .. } => (Some(j.clone()), None, Some(j.clone())),
+        InboundEvent::IdentityChange { jid: Some(j), .. } => {
+            (Some(j.clone()), None, Some(j.clone()))
+        }
         InboundEvent::IdentityChange { jid: None, .. } => (None, None, None),
         _ => (None, None, None),
     }

@@ -305,9 +305,12 @@ pub struct WhatsAppWebAdapter {
     conversation_jids: Arc<Mutex<Vec<String>>>,
     /// StoolapStore reference for persisting conversations. Set in start_bot.
     pub(crate) store: Arc<Mutex<Option<Arc<StoolapStore>>>>,
-    /// Raw event broadcast for debugging/monitoring. Every event from
-    /// wa-rs is stringified and sent here. Used by event_listener binary.
-    raw_event_tx: tokio::sync::broadcast::Sender<String>,
+    /// Raw event broadcast for debugging/monitoring. Every wacore event
+    /// arriving on `on_event` is projected into a typed
+    /// `Arc<InboundEvent>` and pushed here. Consumed by the daemon
+    /// (`subscribe_raw_events` in the `events_router` task) and by the
+    /// `event_listener` debug binary.
+    raw_event_tx: tokio::sync::broadcast::Sender<Arc<crate::events::InboundEvent>>,
     /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
     /// `DOT/2/{token}` download requests from the sync on_event closure
     /// (which does NOT capture `&self`) to the async download_rx
@@ -441,7 +444,8 @@ impl WhatsAppWebAdapter {
             runtime_groups: Arc::new(Mutex::new(Vec::new())),
             conversation_jids: Arc::new(Mutex::new(Vec::new())),
             store: Arc::new(Mutex::new(None)),
-            raw_event_tx: tokio::sync::broadcast::channel::<String>(1000).0,
+            raw_event_tx: tokio::sync::broadcast::channel::<Arc<crate::events::InboundEvent>>(1000)
+                .0,
             // Mission 0850: download_tx is None until start_bot populates
             // it. The channel is created INSIDE start_bot (not here) so
             // the receiver has an immediate owner — the consumer task.
@@ -611,9 +615,14 @@ impl WhatsAppWebAdapter {
         self.conversation_jids.lock().clone()
     }
 
-    /// Subscribe to raw event descriptions from the wa-rs event handler.
-    /// Every event is stringified and broadcast. Useful for debugging.
-    pub fn subscribe_raw_events(&self) -> tokio::sync::broadcast::Receiver<String> {
+    /// Subscribe to raw typed `InboundEvent`s from the wa-rs event
+    /// handler. Every wacore event is projected into a typed
+    /// [`crate::events::InboundEvent`] and broadcast. Used by the
+    /// daemon's events_router task and the `event_listener` debug
+    /// binary.
+    pub fn subscribe_raw_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>> {
         self.raw_event_tx.subscribe()
     }
 
@@ -1130,19 +1139,31 @@ impl WhatsAppWebAdapter {
                 async move {
                     use wacore::proto_helpers::MessageExt;
                     use wacore::types::events::Event;
+                    use crate::events::{InboundEvent, PresenceKind, NewsletterUpdateKind, UnavailableKind};
 
-                    // Special-case chat-presence (typing/recording) and
-                    // availability-presence into the daemon's
-                    // `parse_presence()` shape — those variants carry
-                    // structured data (jid, kind, optional last_seen)
-                    // the Tier-4 live tests assert on, but wacore's
+                    // Events first-class overhaul (plan
+                    // `docs/plans/2026-07-18-whatsapp-events-first-class-overhaul.md`):
+                    // every wacore event arriving on `on_event` is projected
+                    // here into a typed `Arc<InboundEvent>`. The old
+                    // `format!("{:?}", event)` + Debug-string-parser bridge
+                    // path is removed; downstream consumers receive the
+                    // typed event directly.
+                    //
+                    // Catch-all emits `InboundEvent::Unknown { wacore_event,
+                    // variant_label }` for any wacore variant we have not
+                    // projected (graceful — never a compile error on a new
+                    // wacore variant).
                     // default Debug output uses `Event::ChatPresence(
                     // ChatPresenceUpdate { source: MessageSource {
                     // chat: Some(Jid { ... }), ... }, state: ..., media: ... })`
                     // which the daemon parser does not recognise. Format
                     // them into `Presence { jid: ..., kind: Typing|Recording,
                     // last_seen: ... }` so `parse_presence()` matches.
-                    let custom_presence_desc: Option<String> = match &*event {
+
+                    let ts_unix_ms = chrono::Utc::now().timestamp_millis();
+                    let ts_mono_ns = crate::events::now_mono_ns();
+
+                    let typed_event: Arc<InboundEvent> = match &*event {
                         Event::ChatPresence(update) => {
                             let kind_label = match (update.state, update.media) {
                                 (
@@ -1153,99 +1174,144 @@ impl WhatsAppWebAdapter {
                                     wacore::types::presence::ChatPresence::Composing,
                                     wacore::types::presence::ChatPresenceMedia::Text,
                                 ) => "Typing",
-                                (
-                                    wacore::types::presence::ChatPresence::Paused,
-                                    _,
-                                ) => "Paused",
+                                _ => "Paused",
                             };
-                            let sender_jid = update.source.sender.to_string();
-                            Some(format!(
-                                "Presence(jid: {sender_jid:?}, kind: {kind_label}, last_seen: None)"
-                            ))
+                            let kind = match kind_label {
+                                "Recording" => PresenceKind::Recording,
+                                "Typing" => PresenceKind::Typing,
+                                _ => PresenceKind::Available,
+                            };
+                            Arc::new(InboundEvent::Presence {
+                                jid: update.source.sender.to_string(),
+                                kind,
+                                last_seen: None,
+                            })
                         }
                         Event::Presence(update) => {
-                            let kind_label = if update.unavailable {
-                                "Unavailable"
+                            let kind = if update.unavailable {
+                                PresenceKind::Unavailable
                             } else {
-                                "Available"
+                                PresenceKind::Available
                             };
-                            let last_seen_unix = update.last_seen.and_then(|dt| {
+                            let last_seen = update.last_seen.and_then(|dt| {
                                 let secs = dt.timestamp();
                                 if secs >= 0 { Some(secs) } else { None }
                             });
-                            let from_jid = update.from.to_string();
-                            Some(format!(
-                                "Presence(jid: {from_jid:?}, kind: {kind_label}, last_seen: {last_seen_unix:?})"
-                            ))
+                            Arc::new(InboundEvent::Presence {
+                                jid: update.from.to_string(),
+                                kind,
+                                last_seen,
+                            })
                         }
-                        // Phase 7.E+ T15: bridge wacore's server-pushed
-                        // `Event::NewsletterLiveUpdate` (fires when an
-                        // active `subscribe_live_updates` subscription
-                        // receives reaction-count / message-change
-                        // deltas) into our `InboundEvent::NewsletterUpdate`
-                        // shape. Default Debug output is verbose and the
-                        // events-router parser doesn't recognise it, so
-                        // we format the structured fields explicitly.
-                        // Payload granularity is collapsed to
-                        // `MessageReceived` for now — wacore only carries
-                        // `{messages: [{server_id, reactions}]}` per
-                        // live-update; richer sub-kinds can come later
-                        // when the upstream exposes more frame types.
                         Event::NewsletterLiveUpdate(nlu) => {
-                            let jid_str = nlu.newsletter_jid.to_string();
-                            Some(format!(
-                                "NewsletterUpdate(jid: {jid_str:?}, kind: MessageReceived)"
-                            ))
+                            Arc::new(InboundEvent::NewsletterUpdate {
+                                jid: nlu.newsletter_jid.to_string(),
+                                kind: NewsletterUpdateKind::MessageReceived,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
                         }
-                        // Phase 7.K: bridge wacore's
-                        // `Event::UndecryptableMessage` into our typed
-                        // `InboundEvent::Unavailable` shape. Default
-                        // Debug output uses
-                        // `UndecryptableMessage { info: Arc<MessageInfo>, is_unavailable, unavailable_type: ViewOnce, decrypt_fail_mode: Show }`
-                        // which the parser does not recognise. Format
-                        // the structured fields explicitly so
-                        // `parse_unavailable()` matches.
                         Event::UndecryptableMessage(un) => {
-                            let id_str = un.info.id.clone();
-                            let chat = un.info.source.chat.to_string();
-                            let sender = un.info.source.sender.to_string();
-                            let kind_label = format!("{:?}", un.unavailable_type).to_lowercase();
-                            // Use the message-internal timestamp when
-                            // present; the persister already falls back
-                            // to its own clock for `ts: 0` cases.
-                            let ts = un.info.timestamp.timestamp_millis();
-                            Some(format!(
-                                "Unavailable(id: {id_str:?}, peer: {chat:?}, sender: {sender:?}, kind: {kind_label}, is_unavailable: true, ts: {ts})"
-                            ))
+                            let unavailable_type =
+                                format!("{:?}", un.unavailable_type).to_lowercase();
+                            let unavailable_type = match unavailable_type.as_str() {
+                                "viewonce" => UnavailableKind::ViewOnce,
+                                "hosted" => UnavailableKind::Hosted,
+                                "bot" => UnavailableKind::Bot,
+                                _ => UnavailableKind::Unknown,
+                            };
+                            Arc::new(InboundEvent::Unavailable {
+                                id: un.info.id.clone(),
+                                peer: un.info.source.chat.to_string(),
+                                sender: un.info.source.sender.to_string(),
+                                unavailable_type,
+                                is_unavailable: true,
+                                ts_unix_ms: un.info.timestamp.timestamp_millis(),
+                                ts_mono_ns,
+                            })
                         }
-                        // Phase 7.K: bridge wacore's
-                        // `Event::DisappearingModeChanged` into our
-                        // typed `InboundEvent::DisappearingModeChanged`
-                        // shape. Default Debug output uses
-                        // `DisappearingModeChanged { from: Jid { ... },
-                        // duration: 86400, setting_timestamp:
-                        // 2026-07-15T... }` which the parser does not
-                        // recognise. Format the structured fields
-                        // explicitly so `parse_disappearing_mode_changed()`
-                        // matches.
                         Event::DisappearingModeChanged(dmc) => {
-                            let jid_str = dmc.from.to_string();
-                            let dur = dmc.duration;
-                            let ts = dmc.setting_timestamp.timestamp_millis();
-                            Some(format!(
-                                "DisappearingModeChanged(jid: {jid_str:?}, duration_seconds: {dur}, ts: {ts})"
-                            ))
+                            Arc::new(InboundEvent::DisappearingModeChanged {
+                                jid: dmc.from.to_string(),
+                                duration_seconds: dmc.duration,
+                                ts_unix_ms: dmc.setting_timestamp.timestamp_millis(),
+                                ts_mono_ns,
+                            })
                         }
-                        _ => None,
+                        Event::Connected(_) => Arc::new(InboundEvent::Connected {
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        Event::Disconnected(_) => Arc::new(InboundEvent::Disconnected {
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        Event::StreamReplaced(_) => Arc::new(InboundEvent::StreamReplaced {
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        Event::LoggedOut(lo) => {
+                            let payload = serde_json::to_value(&*event)
+                                .unwrap_or(serde_json::Value::Null);
+                            Arc::new(InboundEvent::LoggedOut {
+                                cause: Some(format!("{:?}", lo.reason)),
+                                on_connect: lo.on_connect,
+                                payload,
+                                ts_unix_ms,
+                                ts_mono_ns,
+                            })
+                        }
+                        Event::PairingCode(inner) => Arc::new(InboundEvent::PairingCode {
+                            code: inner.code.clone(),
+                            timeout: inner.timeout.as_secs(),
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        Event::ClientOutdated(_) => Arc::new(InboundEvent::ClientOutdated {
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        }),
+                        Event::StreamError(err) => {
+                            tracing::error!("WhatsApp stream error: {err:?}");
+                            // Return early — StreamError is transport-level
+                            // and intentionally not surfaced as an InboundEvent
+                            // (would spam Unknown stats on transient blips).
+                            return;
+                        }
+                        // Graceful catch-all: emit
+                        // `InboundEvent::Unknown { wacore_event,
+                        // variant_label }` for every wacore variant we have
+                        // not explicitly typed-projected below (all 44+
+                        // 1:1 wrappings: GroupUpdate, PictureUpdate,
+                        // IncomingCall, TemporaryBan, IdentityChange, …),
+                        // the two known wacore-unparseable shapes
+                        // (Notification / RawNode), and any future wacore
+                        // variant that lands before we add a typed arm —
+                        // graceful — never a compile error.
+                        //
+                        // Operators see these in `events.unknown_stats`
+                        // sorted by count desc and prioritise which typed
+                        // arms to add next. The Prometheus counter bump +
+                        // UnknownStats sidecar update + alert-threshold
+                        // check all happen on the daemon side
+                        // (`events_persister::track_unknown`) when it
+                        // processes the typed `InboundEvent::Unknown` —
+                        // keeps the adapter free of an octo-whatsapp
+                        // dependency (would create a cycle).
+                        _ => Arc::new(InboundEvent::unknown_from_wacore(
+                            &event,
+                            ts_unix_ms,
+                            ts_mono_ns,
+                        )),
                     };
-                    if let Some(desc) = custom_presence_desc {
-                        let _ = raw_event_tx.send(desc);
-                        return;
-                    }
 
-                    // Broadcast raw event for debugging/monitoring.
-                    let event_desc = format!("{:?}", event);
-                    let _ = raw_event_tx.send(event_desc);
+                    // Broadcast typed event to subscribers (daemon
+                    // events_router, event_listener debug binary, etc.).
+                    let _ = raw_event_tx.send(typed_event.clone());
+                    // Fall through to the protocol-level action block below
+                    // (only `Event::Messages` and a handful of login
+                    // variants carry side-effects; the rest are
+                    // observability-only).
 
                     match &*event {
                         Event::Messages(batch) => {
@@ -1696,21 +1762,21 @@ impl WhatsAppWebAdapter {
                         }
                         // SHORTCAKE_PASSKEY (RFC-0909, Session 14): the server asked
                         // for a WebAuthn assertion. The full
-                        // `request_options_json` is broadcast via the
-                        // unconditional `format!("{:?}", event)` line
-                        // above. The QR for the operator to scan is
-                        // rendered by the wired `CablePasskeyAuthenticator`
-                        // in the on-call path below — the handler here is
-                        // a passive diagnostic only. DO NOT render a
+                        // `request_options_json` is broadcast above as a
+                        // typed `InboundEvent::PairPasskeyRequest`. The QR
+                        // for the operator to scan is rendered by the
+                        // wired `CablePasskeyAuthenticator` in the
+                        // on-call path below — the handler here is a
+                        // passive diagnostic only. DO NOT render a
                         // second FIDO QR from this arm: the legacy
                         // `build_passkey_fido_uri(payload)` produced a
-                        // different (b64url JSON) URI than the authenticator
-                        // (decimal HandshakeV2 CBOR). Rendering both made
-                        // operators unsure which to scan AND tripped
-                        // Google Lens with two near-simultaneous FIDO
-                        // intents on the phone. The authenticator's
-                        // caBLE-responder URI is the only one the WA
-                        // gms FIDO module accepts.
+                        // different (b64url JSON) URI than the
+                        // authenticator (decimal HandshakeV2 CBOR).
+                        // Rendering both made operators unsure which to
+                        // scan AND tripped Google Lens with two
+                        // near-simultaneous FIDO intents on the phone.
+                        // The authenticator's caBLE-responder URI is the
+                        // only one the WA gms FIDO module accepts.
                         Event::PairPasskeyRequest(req) => {
                             tracing::info!(
                                 request_options_json_len = req.request_options_json.len(),
@@ -1733,7 +1799,9 @@ impl WhatsAppWebAdapter {
                                 "SHORTCAKE_PASSKEY: passkey link failed"
                             );
                         }
-                        Event::StreamError(err) => { tracing::error!("WhatsApp stream error: {err:?}"); }
+                        // `Event::StreamError` is handled above (typed
+                        // event match returns early after a tracing::error
+                        // log) so it never reaches this match.
                         _ => {}
                     }
                 }

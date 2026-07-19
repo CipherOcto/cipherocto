@@ -14,6 +14,14 @@
 //! ```
 
 pub mod adapter;
+/// Events first-class overhaul (plan
+/// `docs/plans/2026-07-18-whatsapp-events-first-class-overhaul.md`):
+/// typed `InboundEvent` enum + Debug-string parser helpers. Lives here
+/// (not in `octo-whatsapp`) so the adapter can emit `Arc<InboundEvent>`
+/// on its `raw_event_tx` broadcast without a dependency cycle. The
+/// daemon crate re-exports this module so all consumers continue to
+/// write `crate::events::InboundEvent` unchanged.
+pub mod events;
 /// Phase 2 — 18 new inherent methods on `WhatsAppWebAdapter`
 /// (`send_image`, `edit_message`, `mark_read`, ...).
 pub mod inherent;

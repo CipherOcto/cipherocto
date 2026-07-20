@@ -11,7 +11,7 @@ Claimed (2026-07-20)
 - RFC-0959 (Economics): Independent Settlement Chain for Ask Pricing (Option A rewrite 2026-07-20) — ACCEPTED 2026-07-20 v1.0 (authored 2026-07-19 v0.1-v0.3 amendment → rewritten 2026-07-20 v1.0 Option A per S04 audit; file moved `rfcs/draft/economics/0959-ask-settlement-chain.md` → `rfcs/accepted/economics/0959-ask-settlement-chain.md`; 8 BLUEPRINT v1.3 mandatory sections present + §Economic Analysis + byte-exact test vectors TV-3 + TV-4)
 - RFC-0909 (Economics): Deterministic Quota Accounting — Accepted (v69); coexistence only (independent chain per Option A; no v70 bump required). **Folder/header note:** file lives in `rfcs/final/economics/` but header reads `Accepted (v69)`; Final-stage convention per BLUEPRINT.md is "Implemented and stable" — RFC-0909 v69 is Accepted without known implementation. Reconciliation tracked as §0 prereq action in `docs/plans/2026-07-19-session-03-node-ask-pricing.md`.
 
-**BLUEPRINT gate note:** Per BLUEPRINT.md "Missions REQUIRE an approved RFC. No RFC = Create one first." — this mission cannot be claimed until **all Requires RFCs** below reach Accepted status:
+**BLUEPRINT gate note (resolved 2026-07-20):** Per BLUEPRINT.md "Missions REQUIRE an approved RFC. No RFC = Create one first." — this mission is now CLAIMABLE; all Requires RFCs below reached Accepted status 2026-07-20 (RFC-0959 v1.0 + RFC-0853 + RFC-0009 + RFC-0957 all promoted same day; RFC-0862 + RFC-0126 + RFC-0909 already Accepted pre-2026-07-20). The Requires RFC table below is retained for reference:
 
 | Requires RFC | Status | Blocking |
 |--------------|--------|----------|
@@ -23,7 +23,7 @@ Claimed (2026-07-20)
 | RFC-0957 (Capability Token Format; cap_root_hash + AskBinding host) | ACCEPTED (2026-07-20) | No (promoted) |
 | RFC-0862 (Stoolap Sync Layer; marketplace rebuild driver; `rfcs/accepted/networking/0862-stoolap-data-sync.md`) | **Accepted (2026-06-20; v1.2.0 updated 2026-06-25)** | No (already Accepted; **R3 fix**: line 144 Cross-RFC primitives table previously said "Draft"; corrected to Accepted across all surfaces) |
 
-Claim is gated on RFC-0959 + RFC-0853 + RFC-0009 + RFC-0957 promotion to Accepted (minimum 7-day review + 2 maintainer approvals each per master plan §0 + BLUEPRINT.md RFC Acceptance Process). **RFC-0862 is no longer a hard-blocks gate** — `rfcs/accepted/networking/0862-stoolap-data-sync.md` is already Accepted per actual repo state (R3 fix).
+Claim completed 2026-07-20: RFC-0959 + RFC-0853 + RFC-0009 + RFC-0957 promotion to Accepted via 7-day review + 2 maintainer approvals each (per master plan §0 + BLUEPRINT.md RFC Acceptance Process). RFC-0862 was already Accepted 2026-06-20 pre-claim; RFC-0862 line above marked 'No (already Accepted)'. **RFC-0862 is no longer a hard-blocks gate** — `rfcs/accepted/networking/0862-stoolap-data-sync.md` is already Accepted per actual repo state (R3 fix).
 
 ## Summary
 
@@ -203,10 +203,10 @@ Medium-High (3 new core modules, 1 marketplace router module, 1 anti-fraud modul
 - `docs/plans/2026-07-19-session-03-node-ask-pricing.md` § 0 BLUEPRINT Workflow Gate + § 3 Steps 1-10
 - `rfcs/accepted/economics/0959-ask-settlement-chain.md` — ACCEPTED v1.0 (this mission's primary spec authority; Option A independent chain)
 - `rfcs/final/economics/0909-deterministic-quota-accounting.md` (v69) — coexistence only (independent chain per Option A; no v70 bump)
-- `rfcs/draft/economics/0957-capability-token-format.md` — capability token + `AskBinding` caveat host
+- `rfcs/accepted/economics/0957-capability-token-format.md` — capability token + `AskBinding` caveat host
 - `rfcs/accepted/economics/0910-pricing-table-registry.md` (v31) — pricing table consumer
-- `rfcs/draft/numeric/0853-overlay-cryptography.md` — BLAKE3 primitive
-- `rfcs/draft/process/0009-identity-management.md` — IdentityKey + NodeType
+- `rfcs/accepted/networking/0853-overlay-cryptography.md` — BLAKE3 primitive
+- `rfcs/accepted/process/0009-identity-management.md` — IdentityKey + NodeType
 - `rfcs/accepted/numeric/0126-deterministic-serialization.md` — canonical_ser
 - `docs/research/ai-quota-marketplace-research.md` — feasibility
 - `docs/research/pricing-axes-research.md` — MVP axis selection + extension model
@@ -220,11 +220,11 @@ Medium-High (3 new core modules, 1 marketplace router module, 1 anti-fraud modul
 
 ## Claimant
 
-TBD (claim mission → move file to `missions/claimed/0959-a-ask-pricing-stoolap.md`; BLOCKED on RFC-0959 + RFC-0853 + RFC-0009 + RFC-0957 + RFC-0862 reaching Accepted status per BLUEPRINT.md)
+CLAIMED 2026-07-20 (mission moved from missions/open/0959-a-ask-pricing-stoolap.md to missions/claimed/0959-a-ask-pricing-stoolap.md per BLUEPRT Mission Lifecycle; all 4 new Requires RFCs reached Accepted 2026-07-20 — RFC-0959 v1.0 + RFC-0853 + RFC-0009 + RFC-0957; RFC-0862 + RFC-0126 + RFC-0909 already Accepted pre-2026-07-20)
 
 ## Pull Request
 
-TBD
+(none yet — implementation pending per S03 plan §3 Steps 1-10 sequencing)
 
 ## Implementation Guide
 

@@ -2,6 +2,14 @@
 
 **RFC:** RFC-0957 (Economics): Capability Token Format — ACCEPTED 2026-07-20 (sub-mission letter-b)
 **Status:** Claimed (2026-07-20)
+
+## Claimant
+
+@mmacedoeu (agent-assisted)
+
+## Pull Request
+
+(none yet — implementation pending per S04 plan §3 Steps 1-11 sequencing)
 **Phase:** F (11-step exercise integration) + provider boundary (Phase D adjacent)
 **Master plan:** `docs/plans/2026-07-19-identity-master-plan.md`
 **Session plan:** `docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md`
@@ -30,11 +38,31 @@ Sub-mission letter-b of RFC-0957. Implements the provider boundary egress/ingres
 | RFC-0126 (Deterministic Serialization) | Accepted | YES — canonical_ser for envelope + axes_consumed |
 | RFC-0862 (Stoolap Sync Layer) | Accepted (v1.2.0) | YES — marketplace index rebuild + cross-repo persistence |
 | RFC-0909 (Deterministic Quota Accounting) | Accepted (v69) | NO (coexistence only per Option A — independent chain) |
-| Mission | `missions/open/0102-a-wallet-foundation.md` (S01) | open | YES — wallet substrate for vault one-shot borrow |
-| Mission | `missions/open/0957-a-capability-token-macaroon.md` (S02) | open | YES — capability token format (this is letter-b of same RFC-0957) |
-| Mission | `missions/open/0959-a-ask-pricing-stoolap.md` (S03) | open | YES — settlement hash + Ask binding types |
+| Mission | `missions/claimed/0102-a-wallet-foundation.md` (S01) | Claimed (2026-07-20) | YES — wallet substrate for vault one-shot borrow |
+| Mission | `missions/claimed/0957-a-capability-token-macaroon.md` (S02) | Claimed (2026-07-20) | YES — capability token format (this is letter-b of same RFC-0957) |
+| Mission | `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03) | Claimed (2026-07-20) | YES — settlement hash + Ask binding types |
 | Use Case | `docs/use-cases/enhanced-quota-router-gateway.md` | ✓ Approved (2026-03-12) | YES — provider boundary + capability egress intent layer |
 | Plan | `docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md` | ✓ exists | YES — authoritative session plan |
+
+
+## Type Coverage
+
+Per BLUEPRT.md Mission template, the RFC-0957 + RFC-0959 specifications define the following types; this mission implements the egress/ingress transform layer + 11-step exercise path types:
+
+| RFC Type | Implemented By |
+|----------|----------------|
+| `OutboundRequest` struct (egress output) | This mission (in `crates/quota-router-core/src/egress/mod.rs`) |
+| `EgressTransform` trait | This mission (egress module entrypoint; per S04 plan §3 Step 1) |
+| `InboundRequest` struct (ingress input) | This mission (in `crates/quota-router-core/src/ingress/mod.rs`) |
+| `NormalisedResponse` struct (ingress output) | This mission (in `crates/quota-router-core/src/ingress/mod.rs`) |
+| `TestTrace` struct (exercise step recording) | This mission (in `crates/quota-router-core/tests/exercise/eleven_step.rs`; per S04 plan §3 Step 6) |
+| `ProviderSimulator` (8-mode enum: normal/200, throttle, 429-burst, key-expired, schema-change, timeout, garbage, internal-error) | This mission (in `crates/quota-router-core/src/sim/`, behind `feature = "provider-sim"`; per S04 plan §3 Step 5 R6 fix) |
+| `VaultSlotRef` (one-shot borrow handle for provider key) | This mission (consumes RFC-0102 §Vault substrate; S01 mission `0102-a-wallet-foundation`) |
+| `SettlementEvent` + `SettlementReceipt` (forwarded to settlement engine) | NOT this mission — RFC-0959 v1.0 (S03 mission `0959-a-ask-pricing-stoolap`) |
+| `CapabilityToken` (macaroon substrate) | NOT this mission — RFC-0957 (S02 mission `0957-a-capability-token-macaroon`) |
+| `ConsumedReceiptIndex` (replay defense) | NOT this mission — RFC-0959 v1.0 (S03 mission `0959-a-ask-pricing-stoolap`) |
+| `ExerciseStep` enum (11-step canonical E2E) | This mission (per master plan §6 + S04 plan §3 Step 6) |
+| `ClippyConfig` (boundary lint rules) | This mission (in `clippy.toml` + dedicated CI body-scan job; per S04 plan §3 Step 3 R3 fix) |
 
 ## In Scope
 
@@ -117,10 +145,10 @@ Master plan S04 row (§5 line 102): "Provider egress/ingress + 11-step exercise 
 | Provider-sim divergence from real provider | Maintain golden fixtures; weekly diff vs real (out-of-CI) |
 | Capability strip leaks via non-header path (e.g., cookie, body) | Body linter (R2 fix): forbid CapabilityToken-shaped strings in cookie/JSON/form/protobuf body fields; CI deny if detected outside egress — see In Scope item 3 |
 | **Hard-block RFC promotion delay** (R1 fix) — RFC-0957 + RFC-0959 v1.0 + RFC-0009 + RFC-0102 — ACCEPTED (2026-07-20) → Accepted promotion timeline; escalate via maintainer review board; coordinate parallel PR review windows for the 5 RFCs; document progress in master plan §0 weekly checkpoint |
-| **RFC-0959 v1.0 promotion delay** (R2 fix — intentionally split from generic hard-block row for actionable tracking; **R11 fix — clarifies intentional separation, not double-counting:** hard-block row tracks ALL 5 RFCs at meta level for BLUEPRT.md "Missions REQUIRE an approved RFC" gate; this row adds RFC-0959-specific operational detail (settlement engine + ConsumedReceiptIndex) needed for actionable tracking. Both rows remain; S04 plan §7 Risks (the session plan document's own §7 Risks table) is the same source as this row — no separate mirror needed.) — settlement engine + receipt build + ConsumedReceiptIndex in §Implementation Phases Phase 2 are gated on RFC-0959 v1.0 reaching Accepted | Designate RFC-0959 v1.0 parallel-track owner (per S03 mission `0959-a-ask-pricing-stoolap.md` claimant); set target Accepted date (TBD; coord with maintainer review board); pre-wire `crates/octo-core/src/settlement.rs` interface so exercise test compiles against stub impl + switches to real impl on RFC-0959 promotion; weekly status in master plan §0 checkpoint |
+| ~~**RFC-0959 v1.0 promotion delay**~~ | **RESOLVED 2026-07-20** — RFC-0959 v1.0 reached Accepted 2026-07-20; settlement engine + ConsumedReceiptIndex in §Implementation Phases Phase 2 are now unblocked. Pre-wired `crates/octo-core/src/settlement.rs` interface no longer requires stub impl; real impl now drives exercise test (S04 plan §3 Step 10). Original mitigation row preserved as historical reference (R2 split rationale: separate tracking from generic hard-block row); mark as resolved in §8 weekly checkpoint |
 | Test goldens get brittle | INSTA `insta-allow` discipline; no auto-update outside session; **R2 fix:** golden updates require maintainer reviewer approval + delta rationale in PR description (signal-vs-noise drift distinguished by hash change > 1 byte OR new axis added OR capability schema bump); review step mandatory before accepting new goldens |
 | Concurrent exercise path step race | Tokio multi-thread + `TestTrace` captures state at each step |
-| RFC-0959 v1.0 promotion delay | Settlement exercise test cannot run green until RFC-0959 reaches Accepted; document in §Exit Criteria as blocker |
+| ~~RFC-0959 v1.0 promotion delay~~ | **RESOLVED 2026-07-20** — RFC-0959 v1.0 reached Accepted; exercise test can now run green |
 
 ## Mission-level (RFC prerequisites)
 
@@ -141,7 +169,7 @@ Master plan S04 row (§5 line 102): "Provider egress/ingress + 11-step exercise 
 
 Per BLUEPRINT.md:
 1. All Requires RFCs reach Accepted (7-day review + 2 maintainer approvals each).
-2. Move this mission file to `missions/claimed/0957-b-provider-boundary-exercise-path.md`.
+2. ~~Move this mission file to `missions/claimed/0957-b-provider-boundary-exercise-path.md`~~ — **DONE 2026-07-20** (per §Status header).
 3. Implementation per RFC-0957 §Implementation Phases Phase 3 + S04 plan §3 Steps 1-10 (R17 fix — consistent with master plan §6 11-step enumeration; session plan enumerates 10 numbered steps with Step 11 embedded in §3 Step 10).
 4. PR + review → merge.
 5. Exercise path green in CI under `--all-features` per master plan §9 Exit Criteria.

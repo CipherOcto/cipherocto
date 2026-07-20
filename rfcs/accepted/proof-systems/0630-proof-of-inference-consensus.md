@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 > **Note:** This RFC was renumbered from RFC-0130 to RFC-0630 as part of the category-based numbering system.
 

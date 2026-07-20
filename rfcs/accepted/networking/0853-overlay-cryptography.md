@@ -1,6 +1,6 @@
 ---
 title: "RFC-0853: Overlay Cryptography (OCrypt)"
-status: Draft
+status: Accepted
 version: 1.0.0
 created: 2026-05-25
 updated: 2026-05-25
@@ -18,7 +18,7 @@ related:
 
 ## Status
 
-Draft
+Accepted
 
 ## Authors
 
@@ -699,6 +699,7 @@ OCrypt ensures that **all cryptographic trust is sovereign** — independent of 
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
 | 1.1.0 | 2026-05-27 | Round 1 adversarial review fixes — 20 issues (1C, 5H, 5M, 3L) |
+| 2026-07-20 | **Promoted to Accepted.** 7-day review + 2 maintainer approvals (@mmacedoeu + @cipherocto); no blocking objections. Status header + YAML frontmatter `status` field updated; file moved via `git mv` from `rfcs/draft/networking/` to `rfcs/accepted/networking/` (R100 rename). Pre-acceptance completeness fixes applied (see prior 1.2.0 / 1.2.1 rows). |
 
 ## Related RFCs
 

@@ -105,7 +105,7 @@ sha2 = "0.11"
 hex = "0.4"
 # p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
 # Same source as octo-cable so we don't pull in a second copy.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 # ciborium for the post-handshake GetInfoResponse CBOR (responder path).
 ciborium = "0.2"
 # Phase 7.J.4: whatsapp_xx_session_probe opens TLS to e.web.whatsapp.com:5222
@@ -139,6 +139,6 @@ ed25519-dalek = "2.1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # p256 for `CablePasskeyAuthenticator::static_key` (Session 8+).
 # Same source as octo-cable so we don't pull in a second copy.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 # ciborium for the post-handshake GetInfoResponse CBOR (responder path).
 ciborium = "0.2"

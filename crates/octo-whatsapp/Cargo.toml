@@ -94,7 +94,7 @@ candle-core         = { version = "0.9", optional = true }
 candle-nn           = { version = "0.9", optional = true }
 candle-transformers = { version = "0.9", optional = true }
 tokenizers          = { version = "0.22", optional = true }
-hf-hub              = { version = "0.4", optional = true }
+hf-hub              = { version = "1.0", optional = true }
 # Minimal single-thread executor for the embedder worker (no tokio
 # runtime dependency for one task).
 futures-executor    = { version = "0.3", optional = true }

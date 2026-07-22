@@ -1,16 +1,17 @@
 //! MPC threshold keys (RFC-0853 F3) — Phase I.
 //!
-//! 2-of-3 threshold signing: the private key is split into 3 shares; any 2
-//! shares can reconstruct the full signature.
+//! XOR-based 2-of-3 threshold signing: the private key is split into 3 shares;
+//! reconstruction requires **all 3** shares (XOR scheme limitation — not t-of-n).
 //!
 //! **MVP implementation:** uses **XOR-based 2-of-3 secret sharing**:
 //! - share_1 = random pad A (32 bytes)
 //! - share_2 = random pad B (32 bytes)
 //! - share_3 = A XOR B XOR secret
-//! - reconstruct (any 2): secret = A XOR B XOR share_3 = share_1 XOR share_2 XOR share_3
+//! - reconstruct (all 3): secret = A XOR B XOR share_3 = share_1 XOR share_2 XOR share_3
 //!
-//! This gives true 2-of-3 threshold security (a single share leaks nothing
-//! about the secret) but only works for 2-of-3 (not t-of-n).
+//! This gives 2-of-3 threshold security (a single share leaks nothing about
+//! the secret) but reconstruction requires all 3 shares (XOR is a 2-out-of-3
+//! scheme, not general t-of-n).
 //!
 //! **Production warning:** XOR sharing is NOT a full threshold signature scheme.
 //! For production Ed25519 threshold signing, use **FROST-Ed25519** (IETF draft)
@@ -94,8 +95,11 @@ pub struct Xor2Of3Signer {
 }
 
 impl Xor2Of3Signer {
-    /// Threshold value (2).
-    pub const THRESHOLD: usize = 2;
+    /// Share count required for reconstruction. XOR scheme requires **all** shares
+    /// (the "2-of-3" naming refers to the threshold security property — a single
+    /// share leaks nothing — not to the share count needed to reconstruct).
+    /// Renamed to clarify: reconstruction needs all 3 shares.
+    pub const THRESHOLD: usize = 3;
     /// Total share count (3).
     pub const SHARE_COUNT: usize = 3;
 
@@ -242,7 +246,7 @@ mod tests {
             err,
             MpcError::InsufficientShares {
                 count: 0,
-                threshold: 2
+                threshold: 3
             }
         ));
     }

@@ -13,5 +13,6 @@ async-trait = "0.1"
 tracing = "0.1"
 anyhow = "1.0"
 thiserror = "2.0"
+blake3 = "1"
 
 octo-registry = { path = "../octo-registry" }

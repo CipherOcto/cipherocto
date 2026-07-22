@@ -11,12 +11,20 @@
 //! This crate contains protocol logic that must be deterministic
 //! and secure.
 
+pub mod ask;
 pub mod identity;
 pub mod role;
 pub mod routing;
 
 pub use identity::Identity;
 pub use role::Role;
+
+pub use ask::cache_key_hash;
+pub use ask::{
+    settlement_cost, Ask, AskId, AxisConsumption, AxisRate, AxisRegistryError, CacheClassification,
+    CachePolicy, ConsumedReceiptIndex, MicroOCTO_W, ModelRateTable, ModelRef, PricingAxis,
+    PricingAxisRegistry, SettlementEnvelope, SettlementError,
+};
 
 /// CipherOcto core configuration
 #[derive(Debug, Clone)]

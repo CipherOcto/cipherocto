@@ -21,6 +21,7 @@ pub mod keystore;
 pub mod mpc;
 pub mod node;
 pub mod vault;
+pub mod vault_rotation;
 
 pub use error::WalletError;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};

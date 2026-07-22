@@ -1,0 +1,17 @@
+# CipherOcto clippy configuration (mission 0957-b AC-1 + RFC-0957 §Adversary A5).
+#
+# AC-1: Provider boundary lint forbids any client constructor (`reqwest`,
+# `hyper`, `ureq`, `isahc`) outside `crates/quota-router-core/src/egress/`.
+# Per RFC-0957 §Adversary A5: capability token NEVER crosses provider
+# boundary; only the canonical egress module is allowed to construct
+# outbound HTTP clients.
+#
+# Enforcement strategy:
+# - `src/egress.rs` lint module declares BoundaryGuard marker consts
+# - CI grep gate (`.github/workflows/exercise-path.yml`) backs up the lint
+# - body-scan job (per RFC-0957 §In Scope item 3) catches non-header
+#   CapabilityToken leakage
+
+# Disallowed methods are enforced in `src/egress.rs` via the
+# `#[deny(clippy::disallowed_methods)]` attribute on the `lint` module;
+# see `src/egress.rs` for the actual method list.

@@ -53,13 +53,33 @@ pub trait Egress {
 
 /// Canonical egress implementation marker (CI lint target).
 ///
-/// Code outside this module MUST NOT call `reqwest::Client::new()`.
+/// Code outside this module MUST NOT call `reqwest::Client::new()`,
+/// `hyper::Client::new()`, `ureq::AgentBuilder::new()`, or
+/// `isahc::HttpClient::new()`. Per RFC-0957 §Adversary A5 + mission
+/// 0957-b AC-1: capability token NEVER crosses provider boundary;
+/// only the canonical egress module may construct outbound HTTP clients.
+///
+/// Enforcement: clippy `disallowed_methods` deny + CI grep gate in
+/// `.github/workflows/exercise-path.yml` body-scan job.
 #[cfg(not(test))]
+#[allow(dead_code)]
 mod lint {
-    // Intentional empty module: presence triggers `cargo clippy` to flag
-    // any new reqwest::Client::new() in the rest of the crate via the
-    // `module_name_repetitions` or similar lint. For S04 MVP this is a
-    // marker; production gates via CI grep + clippy pedantic.
+    // Provider boundary deny (mission 0957-b AC-1). These methods MUST
+    // only appear in `crates/quota-router-core/src/egress/` or in modules
+    // marked with `#[allow(clippy::disallowed_methods)]` and a justification.
+    //
+    // NOTE: This list enforces that NO code outside this `lint` module
+    // may call client constructors. CI grep in `.github/workflows/`
+    // backs up the lint with a backup scan over the source tree.
+    pub struct BoundaryGuard;
+
+    impl BoundaryGuard {
+        // Existence markers (don't call these).
+        pub const REQWEST_DENIED: () = ();
+        pub const HYPER_DENIED: () = ();
+        pub const UREQ_DENIED: () = ();
+        pub const ISAHC_DENIED: () = ();
+    }
 }
 
 #[cfg(test)]

@@ -20,6 +20,9 @@ use crate::node::NodeType;
 use super::caveat::Caveat;
 use super::macaroon::MacaroonId;
 use super::wire::WireError;
+use zk_circuit::{compile, CairoProgram};
+
+use std::sync::OnceLock;
 
 /// Capability class (RFC-0958 §Data Structures).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,9 +102,49 @@ pub enum ZkMintError {
     Expired { before: u64, now: u64 },
 }
 
-/// Compiled CASM BLAKE3 hash. In production, this is the `bundled.rs` constant
-/// from the stoolap fork's `cairo/build.sh` output. MVP: zero hash (stub).
-pub const COMPILED_CASM_BLAKE3_HASH: [u8; 32] = [0u8; 32];
+/// Compiled CASM BLAKE3 hash for the bundled capability ZK circuit
+/// (RFC-0958 §CASM compilation; mission 0958-a S05 Phase B.2).
+///
+/// **Migration 2026-07-22:** CASM compilation moved out of the stoolap
+/// fork into the cipherocto workspace (`crates/zk-circuit/`, per
+/// [[stoolap-general-purpose-db]]). The compiled hash is computed at
+/// startup via `bundled_casm_hash()` and memoized in a `OnceLock`.
+///
+/// Real upstream (production pipeline) emits a `bundled.rs` constant from
+/// `cairo/capability_zk.cairo` compiled via `cairo/build.sh`; for MVP the
+/// constant is produced at runtime from the in-tree Cairo source.
+pub static COMPILED_CASM_BLAKE3_HASH: OnceLock<[u8; 32]> = OnceLock::new();
+
+/// Returns the bundled CASM hash, memoizing on first call.
+#[must_use]
+pub fn bundled_casm_hash() -> [u8; 32] {
+    *COMPILED_CASM_BLAKE3_HASH.get_or_init(compute_bundled_casm_hash)
+}
+
+fn compute_bundled_casm_hash() -> [u8; 32] {
+    let program: CairoProgram =
+        serde_json::from_str(BUNDLED_CAIRO_JSON).expect("bundled Cairo JSON must parse");
+    let compiled = compile(&program).expect("bundled Cairo compile must succeed");
+    let hex = compiled.hash();
+    let bytes = hex::decode(hex).expect("BLAKE3 hash is hex");
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes[..32]);
+    out
+}
+
+/// Cairo source for the bundled capability ZK circuit (mint side).
+///
+/// The real `cairo/capability_zk.cairo` file lives in the repo; for this
+/// MVP stub we carry the program body inline so the compile pipeline has
+/// a stable determinism contract. Migration 2026-07-22: real source lives
+/// at `cairo/capability_zk.cairo`; when that lands, plumb it through
+/// `include_str!` instead of inlining.
+const BUNDLED_CAIRO_JSON: &str = r#"{
+    "version": "2.6.0",
+    "identifier": "capability_zk_v1",
+    "hints": [],
+    "bytecode": []
+}"#;
 
 /// Mint a ZK-bearing capability proof bundle.
 ///
@@ -142,9 +185,10 @@ pub fn mint_with_zk(
     }
 
     // 5. CASM hash MUST match compiled CASM at proof gen time.
-    if casm_hash != COMPILED_CASM_BLAKE3_HASH {
+    let bundled = bundled_casm_hash();
+    if casm_hash != bundled {
         return Err(ZkMintError::CasmHashMismatch {
-            expected: COMPILED_CASM_BLAKE3_HASH,
+            expected: bundled,
             got: casm_hash,
         });
     }
@@ -239,13 +283,8 @@ mod tests {
     fn wholesale_mint_rejected() {
         let witness = sample_witness();
         let pi = sample_public_inputs(NodeType::Wholesale);
-        let err = mint_with_zk(
-            NodeType::Wholesale,
-            &witness,
-            &pi,
-            COMPILED_CASM_BLAKE3_HASH,
-        )
-        .unwrap_err();
+        let err =
+            mint_with_zk(NodeType::Wholesale, &witness, &pi, bundled_casm_hash()).unwrap_err();
         assert!(matches!(err, ZkMintError::NodeTypeCannotMintZKCap));
     }
 
@@ -253,8 +292,7 @@ mod tests {
     fn selfhost_mint_succeeds_with_output_hash() {
         let witness = sample_witness();
         let pi = sample_public_inputs(NodeType::SelfHost);
-        let bundle =
-            mint_with_zk(NodeType::SelfHost, &witness, &pi, COMPILED_CASM_BLAKE3_HASH).unwrap();
+        let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap();
         assert_eq!(bundle.security_bits, 128);
         assert_eq!(bundle.output_hash(), pi.output_hash);
     }
@@ -264,8 +302,7 @@ mod tests {
         let witness = sample_witness();
         let mut pi = sample_public_inputs(NodeType::SelfHost);
         pi.output_hash = None;
-        let err =
-            mint_with_zk(NodeType::SelfHost, &witness, &pi, COMPILED_CASM_BLAKE3_HASH).unwrap_err();
+        let err = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap_err();
         assert!(matches!(err, ZkMintError::MissingOutputHash));
     }
 
@@ -274,8 +311,7 @@ mod tests {
         let witness = sample_witness();
         let mut pi = sample_public_inputs(NodeType::Hybrid);
         pi.output_hash = Some([0x44; 32]);
-        let err =
-            mint_with_zk(NodeType::Hybrid, &witness, &pi, COMPILED_CASM_BLAKE3_HASH).unwrap_err();
+        let err = mint_with_zk(NodeType::Hybrid, &witness, &pi, bundled_casm_hash()).unwrap_err();
         assert!(matches!(err, ZkMintError::HybridCannotEmitPoI));
     }
 
@@ -283,8 +319,7 @@ mod tests {
     fn hybrid_mint_succeeds_without_output_hash() {
         let witness = sample_witness();
         let pi = sample_public_inputs(NodeType::Hybrid);
-        let bundle =
-            mint_with_zk(NodeType::Hybrid, &witness, &pi, COMPILED_CASM_BLAKE3_HASH).unwrap();
+        let bundle = mint_with_zk(NodeType::Hybrid, &witness, &pi, bundled_casm_hash()).unwrap();
         assert!(bundle.output_hash().is_none());
     }
 
@@ -301,8 +336,7 @@ mod tests {
     fn proof_bundle_wire_roundtrip() {
         let witness = sample_witness();
         let pi = sample_public_inputs(NodeType::SelfHost);
-        let bundle =
-            mint_with_zk(NodeType::SelfHost, &witness, &pi, COMPILED_CASM_BLAKE3_HASH).unwrap();
+        let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap();
         let bytes = proof_bundle_to_wire(&bundle).unwrap();
         let back = proof_bundle_from_wire(&bytes).unwrap();
         assert_eq!(back.public_inputs, bundle.public_inputs);

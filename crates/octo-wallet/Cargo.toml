@@ -27,6 +27,9 @@ thiserror.workspace = true
 directories.workspace = true
 rand.workspace = true
 
+# ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
+zk-circuit = { path = "../zk-circuit" }
+
 # Identity crypto (RFC-0009 §Identity Key Format)
 ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 hkdf = "0.12"

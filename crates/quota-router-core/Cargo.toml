@@ -80,6 +80,10 @@ blake3.workspace = true
 # For hex encoding of key hashes
 hex = "0.4"
 
+# ZK capability crypto (RFC-0958; crypto home per [[stoolap-general-purpose-db]] 2026-07-22)
+zk-circuit = { path = "../zk-circuit" }
+zk-verifier = { path = "../zk-verifier" }
+
 # For constant-time comparison (master key bypass)
 subtle = "2.6"
 

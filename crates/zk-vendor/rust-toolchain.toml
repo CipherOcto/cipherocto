@@ -1,0 +1,14 @@
+# CipherOcto zk-vendor: MSRV pinned to stable rust.
+#
+# STWO upstream uses nightly-only features (curve25519-dalek SIMD intrinsics).
+# The vendored source in `crates/zk-vendor/stwo/` (TBD) is patched to:
+# - replace SIMD intrinsics with stable_curve25519 equivalents
+# - drop `#![feature(...)]` attributes
+# - keep API surface aligned with upstream (so proof bundles interop)
+#
+# Per [[stoolap-general-purpose-db]] (2026-07-22), STWO is a proof-system
+# concern, NOT a SQL concern. It lives in cipherocto workspace, NOT in the
+# stoolap fork.
+[toolchain]
+channel = "1.75.0"
+profile = "minimal"

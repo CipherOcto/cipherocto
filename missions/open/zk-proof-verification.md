@@ -7,9 +7,14 @@ Open
 RFC-0100: AI Quota Marketplace Protocol
 RFC-0102: Wallet Cryptography Specification
 
+## Cross-link (2026-07-22 — crypto extraction amendment per [[stoolap-general-purpose-db]])
+
+Shares Phase C.2 STWO substrate with sibling mission `missions/claimed/0958-a-zk-capability-circuit.md`. Per v0.3 amendment of mission 0958-a (2026-07-22), STWO is vendored under `crates/zk-vendor/` (stable-rust patched) and verified via `crates/zk-verifier/` — both in the cipherocto workspace, NOT in the stoolap fork. When this mission implements STWO verifier integration, it should depend on `zk-verifier` (cargo path dep) rather than pulling STWO from stoolap fork or [patch.crates-io]. Cross-link is one-directional: this mission depends on 0958-a's STWO substrate; 0958-a does not depend on this mission.
+
 ## Blockers / Dependencies
 
 - **Blocked by:** Mission: Stoolap Provider Integration (must complete first)
+- **Sibling mission substrate:** 0958-a (claimed 2026-07-22; STWO source vendored in `crates/zk-vendor/`)
 
 ## Acceptance Criteria
 

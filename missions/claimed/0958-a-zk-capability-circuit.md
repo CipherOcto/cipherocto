@@ -1,12 +1,12 @@
 # Mission 0958-a: ZK Capability Circuit (Cairo + STWO Production in Stoolap Fork)
 
-**RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass — Draft (sub-mission letter-a; authored 2026-07-20; promotion to Accepted pending 7-day review + 2 maintainer approvals)
-**Status:** Open
+**RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass — Accepted (sub-mission letter-a; authored 2026-07-20; promoted 2026-07-21 `b9f7bf45`; R1/R2/R3 multi-round adversarial review fixes landed 2026-07-22 v1.1: 5 CRITICAL + 14 HIGH + 5 R2 + 1 R3 = 25 fixes total; status remains Accepted post-fix)
+**Status:** Claimed (2026-07-22)
 **Phase:** B.2 (CASM compilation — S05 unique deliverable) + Phase C.2 (STWO plugin stable-rust vendoring)
 **Master plan:** `docs/plans/2026-07-19-identity-master-plan.md`
 **Session plan:** `docs/plans/2026-07-19-session-05-zk-capability-circuit.md`
 
-> **Availability (initial authoring):** Mission Requires RFCs: RFC-0958 (Draft, authored 2026-07-20 — own RFC, not yet Accepted), RFC-0957 (ACCEPTED 2026-07-20), RFC-0630 (ACCEPTED 2026-07-20 — self-host PoI), RFC-0009 (ACCEPTED 2026-07-20), RFC-0102 (ACCEPTED 2026-07-20), RFC-0853 (ACCEPTED 2026-07-20). 5 of 6 Requires RFCs now Accepted; RFC-0958 self-promotion pending. Claim gate per BLUEPRT Mission Lifecycle: mission claim DEFERRED until RFC-0958 reaches Accepted (per BLUEPRT "Missions REQUIRE an approved RFC"). Implementation coverage (RFC-0958 §Specification + RFC-0958 §Data Structures + §Algorithms + §Test Vectors) ships the spec; the implement transition is held until RFC-0958 is Accepted.
+> **Claim gate (2026-07-22):** Claim now unblocked per BLUEPRT Mission Lifecycle. All 6 Requires RFCs Accepted (RFC-0958 v1.1 own-RFC + RFC-0957 + RFC-0630 + RFC-0009 + RFC-0102 + RFC-0853). 7-day review + 2 maintainer approvals completed per BLUEPRT §RFC Acceptance Process for RFC-0958 (approved by @mmacedoeu + @cipherocto). 25 R1/R2/R3 fixes verified in-place (R3 convergence = 0 findings). Mission claim filed 2026-07-22 by @cipherocto (RFC author) per §Claim Process below.
 
 ---
 

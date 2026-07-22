@@ -78,7 +78,7 @@ The subclass is **non-breaking**: existing v1 macaroons continue to verify via R
 | Goal                                | Target                                                                        | Metric                                                  |
 | ----------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------- |
 | **G1: Proof gen latency**           | <2s for self-host reference trace (≤10K steps); <500ms for Hybrid/Holder mode | Bench `generate_capability_zk(witness)` on reference HW |
-| **G2: Verify latency**              | <100ms per verify (STARK verify is O(log² n))                                 | Bench `verify_capability_zk(proof, public_inputs)`      |
+| **G2: Verify latency**              | <100ms per verify (STARK verify is O(log² n))                                 | Bench `verify_capability_zk(proof, public_inputs, verifier_local_unix_time)` (R2 F-N2 fix: arg list expanded for clock skew) |
 | **G3: Proof size**                  | 50-500KB (STARK range; depends on trace depth)                                | Measured against fixture set                            |
 | **G4: Soundness**                   | 128-bit STARK security (configurable 96-bit for Hybrid mode)                  | `stwo` parameter selection                              |
 | **G5: Determinism**                 | Same witness + same circuit → identical proof bytes                           | Cross-impl test vectors                                 |
@@ -160,7 +160,7 @@ pub enum CapabilityClass {
     ZKBearing,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]   // R2 F-N3 fix: Serialize/Deserialize derive required for canonical_ser(ProofBundle)
 pub struct ProofBundle {
     /// STARK proof bytes (STWO output)
     pub stark_proof: Vec<u8>,
@@ -196,6 +196,10 @@ pub struct PrivateWitness {
     /// Self-host mode only: inference execution trace
     pub inference_trace: Option<ExecutionTrace>,
 }
+
+// R2 F-N1 fix: Ed25519Signature type sourced from ed25519-dalek crate (RFC-0009 §Identity
+// substrate consumes this crate). Cross-ref RFC-0009 §Vault substrate for the wrapping
+// SecureEd25519Signature (zeroize-on-drop) variant used in production.
 
 #[derive(Debug, Clone)]
 pub struct ExecutionTrace {
@@ -400,7 +404,7 @@ stateDiagram-v2
 | ProofGenerated      | InFlight            | HTTP request issued with `X-Capability-Token` header carrying `proof_bundle_borsh` 4th segment                                                                                                  | Yes (request is a discrete event) | Log request (root_id only, never contents)                                                                                                                       | n/a                                                                           |
 | ProofGenerated      | ProofStale          | `casm_hash != COMPILED_CASM_BLAKE3_HASH` at gen time                                                                                                                                            | Yes                               | Emit `ZkProofStale { root_id, casm_hash }` event; **proof_bundle_borsh NEVER transmitted** (no HTTP request issued); holder must regenerate against current CASM | n/a                                                                           |
 | ProofGenerated      | WholesaleAttempt    | `node_type == Wholesale` AND `mint_with_zk` called (Note: Wholesale gating at mint prevents entering ProofGenerated for Wholesale; this row covers the race where NodeType downgrades mid-mint) | Yes                               | Emit `WholesaleAttemptBlocked { node_did }`; **proof_bundle_borsh NEVER transmitted**; proof discarded by holder                                                 | n/a                                                                           |
-| InFlight            | Verified            | `verify_capability_zk(proof, expected_public_inputs)` returns Ok                                                                                                                                | Yes                               | Emit `TokenVerified { root_id }`                                                                                                                                 | n/a                                                                           |
+| InFlight            | Verified            | `verify_capability_zk(proof, expected_public_inputs, verifier_local_unix_time)` returns Ok (R2 F-N2 fix: arg list updated for clock skew) | Yes                               | Emit `TokenVerified { root_id }`                                                                                                                                 | n/a                                                                           |
 | InFlight            | ZkVerifyError       | STWO verify returns Err                                                                                                                                                                         | Yes                               | Emit `ZkVerifyError { root_id, reason }`                                                                                                                         | n/a                                                                           |
 | InFlight            | PublicInputMismatch | `proof.public_inputs != expected_public_inputs` at verify time                                                                                                                                  | Yes                               | Emit `PublicInputMismatch { root_id, expected_ask_id, got_ask_id }`                                                                                              | n/a                                                                           |
 | Verified            | Consumed            | Settlement complete (RFC-0959 v1.0 independent settlement chain)                                                                                                                                | Yes                               | Emit `TokenConsumed { root_id, settlement_receipt_hash }`                                                                                                        | n/a                                                                           |
@@ -418,8 +422,9 @@ stateDiagram-v2
 - **CASM drift** (compiled CASM hash changes) — all in-flight proofs become `ProofStale`; holder must regenerate. Acceptable: CASM regeneration is a rare event (only on circuit changes).
 - **STWO plugin upgrade** — verifies against the new plugin's CASM hash; old proofs become stale if CASM hash changed.
 - **CASM version retention (R1 H13 fix)** — verifier retains the previous N=2 CASM versions (compile-time configurable) so that in-flight proofs generated against recent-but-superseded CASM versions continue to verify for a grace window (default 7 days). After grace window, only current CASM is accepted.
+  - **R2 F-N5 mechanism:** CASM bundles shipped as a versioned directory (`cairo/casms/v{N}/casm.bin`); verifier loads up to N=2 most recent versions matching `casm_hash`. Build pipeline emits one bundle per circuit change.
 - **PublicInputMismatch** — proof was generated against different inputs; reject without retry.
-- **Cross-verifier CASM hash drift (R1 H9 fix)** — different verifier builds (different stwo-plugin commits) may have different CASM hashes; one accepts a proof the other rejects. Verifiers MUST pin stwo-plugin commit hash per `crates/octo-wallet/Cargo.toml` `[dependencies.stwo-plugin]` rev field; weekly diff vs upstream per master plan §8 Risk #6.
+- **Cross-verifier CASM hash drift (R1 H9 fix)** — different verifier builds (different stwo-plugin commits) may have different CASM hashes; one accepts a proof the other rejects. Verifiers MUST pin stwo-plugin commit hash per `Cargo.toml` (workspace-level `[workspace.dependencies] stwo-plugin = { git = "...", rev = "<pinned>" }`, R2 F-N4 fix: clarifies location — workspace-level pinning ensures uniform verifier binary outputs); weekly diff vs upstream per master plan §8 Risk #6.
 
 #### Time Bounds
 
@@ -662,7 +667,7 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 | #   | Threat                                                                              | Impact | Mitigation                                                                                                           |
 | --- | ----------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
 | 1   | **STARK forgery via STWO cryptanalysis** (Finding A1)                               | High   | 128-bit STARK security; CASM hash pinned + verified at every mint/verify; Plonky3 migration path tracked as F2       |
-| 2   | **CASM drift attack** (Finding A2 — prover uses stale/malicious CASM)               | High   | CASM BLAKE3 hash verified at mint + verify; deterministic-layout flag; CI snapshot test; signed CASM (F4)            |
+| 2   | **CASM drift attack** (Finding A2 — prover uses stale/malicious CASM)               | High   | CASM BLAKE3 hash verified at mint + verify; deterministic-layout flag; CI snapshot test; **PARTIALLY MITIGATED** until signed CASM (F4) lands; CASM version retention (N=2, 7-day grace) for in-flight proofs |
 | 3   | **Wholesale NodeType bypass** (Finding A3 — ZK cap minted on Wholesale node)        | High   | Three-layer defense: `mint_with_zk` fail-closed; `CapabilityClass` registry; CI lint; quorum attestation (F5)        |
 | 4   | **Inference trace forgery** (Finding A4 — fake trace for self-host attestation)     | High   | Poseidon hash check INSIDE Cairo circuit (defense-in-depth via STARK soundness); mlock+zeroize; hardware (F6)        |
 | 5   | **PublicInputMismatch replay** (Finding A5)                                         | Medium | `verify_capability_zk` rejects on `proof.public_inputs != expected_public_inputs`; `invocation_hash` body binding    |
@@ -674,7 +679,7 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 | 11  | **CASM pre-image collision** (BLAKE3 second pre-image producing same `casm_hash`)   | Medium | BLAKE3 128-bit collision resistance; CASM regeneration tracked via CI snapshot                                       |
 | 12  | **Replay of in-flight proof against same verifier** (no nonce-based dedup)          | Low    | `PublicInputMismatch` rejects + downstream settlement receipt uniqueness (RFC-0959 v1.0); no nonce-based dedup       |
 
-**Verdict:** All CRITICAL findings (1-5) MITIGATED. Non-critical findings (6-12) tracked as future work items or inherited from upstream RFCs.
+**Verdict:** CRITICAL findings 1, 3, 4, 5 MITIGATED. Finding 2 (CASM drift) PARTIALLY MITIGATED until F4 (signed CASM) lands. Non-critical findings (6-12) tracked as future work items or inherited from upstream RFCs.
 
 ## Economic Analysis
 

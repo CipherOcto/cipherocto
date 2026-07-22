@@ -17,6 +17,7 @@ pub mod identity;
 pub mod migrations;
 pub mod role;
 pub mod routing;
+pub mod sync;
 
 pub use identity::Identity;
 pub use role::Role;
@@ -27,6 +28,7 @@ pub use ask::{
     CachePolicy, ConsumedReceiptIndex, MicroOCTO_W, ModelRateTable, ModelRef, PricingAxis,
     PricingAxisRegistry, SettlementEnvelope, SettlementError,
 };
+pub use sync::{CipheroctoTable, ReplicatedTables};
 
 /// CipherOcto core configuration
 #[derive(Debug, Clone)]

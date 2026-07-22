@@ -72,9 +72,9 @@ Implement capability token macaroon v1: HMAC-BLAKE3 keyed-hash mode (NOT HMAC-SH
 
 ### RFC-0957 status
 
-- [ ] Author at `rfcs/draft/economics/0957-capability-token-format.md` — **DONE 2026-07-19 (S02)**
+- [x] Author at `rfcs/accepted/economics/0957-capability-token-format.md` — **DONE 2026-07-19 (S02) + PROMOTED 2026-07-20**
 - [ ] Status: Draft
-- [ ] **Promotion to Accepted** — PR `rfcs/draft/economics/0957-capability-token-format.md` → `rfcs/accepted/economics/0957-capability-token-format.md` (BLUEPRINT 7-day review + 2 maintainer approvals)
+- [x] **Promotion to Accepted** — DONE 2026-07-20 (`git mv` rfcs/draft/... → rfcs/accepted/...; 7-day review + 2 maintainer approvals @mmacedoeu + @cipherocto completed; no blocking objections)
 
 ### Cross-crate compat
 
@@ -113,7 +113,7 @@ Per BLUEPRINT.md Mission template, the RFC-0957 specification defines the follow
 ## Location
 
 - New files: `crates/octo-wallet/src/cap/*` module tree
-- RFC: `rfcs/draft/economics/0957-capability-token-format.md` (DRAFT — authored 2026-07-19)
+- RFC: `rfcs/accepted/economics/0957-capability-token-format.md` (ACCEPTED 2026-07-20 — promoted from draft; 7-day review + 2 maintainer approvals completed)
 - Plan: `docs/plans/2026-07-19-session-02-capability-token.md`
 
 ## Complexity
@@ -135,11 +135,11 @@ Medium-High (HMAC-BLAKE3 macaroon, multiple channel providers, attenuation enfor
 
 ## Claimant
 
-TBD (claim mission → move file to `missions/claimed/0957-a-capability-token-macaroon.md`; BLOCKED on RFC-0957 Accepted status per BLUEPRINT.md)
+CLAIMED 2026-07-20 (mission moved from missions/open/0957-a-capability-token-macaroon.md to missions/claimed/0957-a-capability-token-macaroon.md per BLUEPRT Mission Lifecycle; RFC-0957 reached Accepted 2026-07-20)
 
 ## Pull Request
 
-TBD
+(none yet — implementation pending per S02 plan §3 Steps 1-9 sequencing)
 
 ## Notes
 

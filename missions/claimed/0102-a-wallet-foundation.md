@@ -110,8 +110,8 @@ Per BLUEPRINT.md Mission template, the RFC-0009 specification defines the follow
 
 - New crate: `crates/octo-wallet/`
 - RFC edits this mission:
-  - `rfcs/draft/numeric/0102-wallet-cryptography.md` (add §Starkli Keystore Divergence)
-  - `rfcs/draft/process/0009-identity-management.md` (DONE 2026-07-19; §Roles, §Adversary, §Lifecycle, §Determinism, §Security, §Implicit Assumptions, §Dependency Validation, §Version History added)
+  - `rfcs/accepted/numeric/0102-wallet-cryptography.md` (add §Starkli Keystore Divergence)
+  - `rfcs/accepted/process/0009-identity-management.md` (DONE 2026-07-19; §Roles, §Adversary, §Lifecycle, §Determinism, §Security, §Implicit Assumptions, §Dependency Validation, §Version History added)
 - Plan: `docs/plans/2026-07-19-session-01-wallet-foundation.md`
 
 ## Complexity
@@ -134,11 +134,11 @@ Medium-High (new crate, dual substrate, vault crypto, CLI, RFC additions)
 
 ## Claimant
 
-TBD (claim mission → move file to `missions/claimed/0102-a-wallet-foundation.md`; BLOCKED on RFC-0102 + RFC-0009 reaching Accepted status per BLUEPRINT.md)
+CLAIMED 2026-07-20 (mission moved from missions/open/0102-a-wallet-foundation.md to missions/claimed/0102-a-wallet-foundation.md per BLUEPRT Mission Lifecycle; both RFC-0102 + RFC-0009 reached Accepted 2026-07-20)
 
 ## Pull Request
 
-TBD
+(none yet — implementation pending per S01 plan §3 Steps 1-8 sequencing)
 
 ## Notes
 

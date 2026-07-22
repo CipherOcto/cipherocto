@@ -12,11 +12,13 @@ Accepted
 
 ## Authors
 
-- Author: @cipherocto (S05 ZK capability work, 2026-07-20)
+- Author: @cipherocto (S05 ZK capability work, 2026-07-20; v1.2 amendment 2026-07-22 per deferred R1 MEDIUM/LOW findings)
+- Co-author: @mmacedoeu (v1.0 maintainer approval; v1.1 + v1.2 amendment sign-off)
 
 ## Maintainers
 
 - Maintainer: @cipherocto (CipherOcto maintainers; coordinate promotion to Accepted via 7-day review + 2 maintainer approvals per BLUEPRINT.md §RFC Acceptance Process)
+- Maintainer: @mmacedoeu (CipherOcto maintainer; v1.0 approval; v1.1 + v1.2 amendment sign-off)
 
 ## Summary
 
@@ -28,7 +30,7 @@ The capability token format (RFC-0957) requires verifiers to hold the macaroon r
 
 1. **Verifier-side root secret custody** — every service that verifies a token must hold the root secret. A compromised verifier can accept FORGED tokens (R1 H14 fix: verifier compromise is acceptance-side, not issuance-side; the issuer's mint secret remains protected). RFC-0957 §Implicit Assumptions IA-6 documents this; ZK subclass reduces the verifier's trust surface to **public inputs only**.
 2. **Self-host inference attestation** — when `NodeType == SelfHost`, the inference runs in CipherOcto-controlled infrastructure; the provider cannot be relied upon to attest output correctness. RFC-0630 (PoI Consensus) requires execution-trace attestation. The ZK subclass lets the inference worker emit a STARK proof over `(output_hash, trace_hash)` bound to the capability.
-3. **Discharge channel proliferation** — rate-limit / revocation / escrow channels each require verifier-side state. The ZK subclass moves the rate-limit / expiry check into the circuit, eliminating the rate-limit discharge channel entirely (escrow + revocation remain — see §Compatibility).
+3. **Discharge channel proliferation** — rate-limit / revocation / escrow channels each require verifier-side state. The ZK subclass moves the rate-limit check into the circuit (Step 5 sums `axes_consumed` against `max_total` caveat, **v1.2 M16 fix:** the `AmountMax` caveat per RFC-0957 §Caveat::AmountMax is encoded into the circuit via `evaluate_first_party(caveat, pub_inputs)` at Step 3 + the `sum_axes(pub_inputs.axes_consumed) <= lookup_max_total(caveats_full)` assertion at Step 5), eliminating the rate-limit discharge channel entirely (escrow + revocation remain — see §Compatibility).
 
 The subclass is **non-breaking**: existing v1 macaroons continue to verify via RFC-0957. The ZK subclass adds an optional `proof_bundle` field to `CapabilityToken`; verifiers that do not understand the subclass ignore the field (forward-compat) and fall through to RFC-0957 verify.
 
@@ -47,10 +49,10 @@ The subclass is **non-breaking**: existing v1 macaroons continue to verify via R
 
 ### Out of Scope
 
-- **On-chain settlement discharge** — RFC-0959 v1.0 (S03 + S04 independent settlement chain) handles settlement engine execution; the ZK subclass verifies capability claims independent of settlement (ZK verify path is independent of RFC-0959 settlement engine execution per §Dependencies Optional entry). ZK proof may settle on-chain in a future RFC (F8) after RFC-0955 fiat ramp stabilizes.
+- **On-chain settlement discharge** — RFC-0959 v1.0 (S03 + S04 independent settlement chain) handles settlement engine execution; the ZK subclass verifies capability claims independent of settlement (ZK verify path is independent of RFC-0959 settlement engine execution per §Dependencies Optional entry). ZK proof may settle on-chain in a future RFC (F8) after RFC-0955 fiat ramp stabilizes. **v1.2 M7 fix:** "independent of settlement engine execution" means the ZK verify path does not require settlement engine state at verify time. However, self-host mode (`output_hash == Some(_)`) POI binding is OPTIONAL via `inference_trace` private witness — the same circuit binds capability + optional PoI, but PoI is consumed inside the circuit assertion, not by RFC-0959 settlement engine.
 - **S04 exercise path optional ZK flag** — `missions/open/0957-b-provider-boundary-exercise-path.md` (S04) MAY consume ZK-bearing caps via optional ZK flag in the 11-step exercise path; this RFC defines the ZK format (wire + verify) but NOT the exercise path integration logic — that lives in mission 0957-b if/when its author chooses to enable the optional ZK flag.
-- **ZK over cache hit detection** — already handled by axis classification in S03 (RFC-0959 v1.0); ZK subclass consumes `cache_key_hash` as public input rather than re-proving cache hits.
-- **ZK for ML fairness proofs** — out of CipherOcto MVP scope.
+- **ZK over cache hit detection** — already handled by axis classification in S03 (RFC-0959 v1.0 §Algorithms `cache_classify`); ZK subclass consumes `cache_key_hash` as public input rather than re-proving cache hits. (v1.2 L11 fix: cross-ref RFC-0959 v1.0 §Algorithms for the upstream `cache_classify` function that ZK subclass consumes via `cache_key_hash: [u8;32]` public input.)
+- **ZK for ML fairness proofs** — out of CipherOcto MVP scope. (v1.2 L4 fix: cross-link to `docs/use-cases/hybrid-ai-blockchain-runtime.md` §"Fairness attestation" deferred to post-MVP; not in RFC scope per Out-of-Scope rationale.)
 - **Multi-axes ZK extensions** (priority_lane, etc.) — registry allows extension; tracked as F1.
 - **Hardware wallet + MPC integration** — Phase H (RFC-0853 F2) and Phase I (RFC-0853 F3); ZK signing key custody inherits from RFC-0009 §Vault.
 
@@ -149,7 +151,11 @@ pub struct CapabilityToken {
 
     // RFC-0958 extension:
     pub capability_class: CapabilityClass,   // V1 | ZKBearing
-    pub proof_bundle: Option<ProofBundle>,   // Some iff class == ZKBearing
+    pub proof_bundle: Option<ProofBundle>,   // **v1.2 M17 fix:** Some iff class == ZKBearing.
+                                             // V1 class MUST have None; mint API enforces this contract
+                                             // via ZkMintError::ClassMismatch if V1 + Some(_).
+                                             // Borsh/canonical_ser encoding distinguishes None (0x00 tag)
+                                             // from Some(empty) (0x01 + empty ProofBundle) deterministically.
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +189,9 @@ pub struct PublicInputs {
     pub current_unix_time: u64,              // wall clock at proof gen
     /// Self-host mode only: inference output hash bound to PoI circuit (RFC-0630 extension per S05 §3 Step 5)
     /// `None` for Hybrid mode (opt-in without PoI); Wholesale unreachable (gating fails before proof gen).
+    /// **v1.2 M5 fix:** `Some(_)` is REQUIRED iff `NodeType == SelfHost`; mint API enforces this contract.
+    /// `Some(_) && NodeType == Hybrid` is rejected at mint time via `ZkMintError::HybridCannotEmitPoI`.
+    /// `None && NodeType == SelfHost` is rejected at mint time via `ZkMintError::MissingInferenceTrace`.
     pub output_hash: Option<[u8; 32]>,
 }
 
@@ -279,7 +288,7 @@ fn main() -> felt252 {
 }
 ```
 
-The circuit is **deterministic (Class A)**: identical `(private_witness, public_inputs)` produces byte-identical STARK proof. STWO's Fiat-Shamir transform derives randomness deterministically from the public input transcript; there is no internal nonce.
+The circuit is **deterministic (Class A)**: identical `(private_witness, public_inputs)` produces byte-identical STARK proof. STWO's Fiat-Shamir transform derives randomness deterministically from the public input transcript (v1.2 M4 fix: NO internal nonce in Fiat-Shamir mode; the previous v1.0 phrasing "internal randomness" was misleading — randomness is derived from the public inputs themselves, not from an internal source).
 
 #### Proof Generation
 
@@ -400,7 +409,7 @@ stateDiagram-v2
 
 | From                | To                  | Trigger                                                                                                                                                                                         | Deterministic?                    | Side Effects                                                                                                                                                     | Signing Requirement                                                           |
 | ------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `[*]`               | Minted              | `mint_with_zk(witness, public_inputs, casm_hash)` returns Ok; holder signs (RFC-0957 path)                                                                                                      | Yes (modulo STWO Fiat-Shamir)     | Emit `TokenMinted { root_id, capability_class: ZKBearing }` per RFC-0957 §Lifecycle                                                                              | Holder signs `Ed25519(holder_seed, canonical_ser(root_id \|\| caveats_wire))` |
+| `[*]`               | Minted              | `mint_with_zk(witness, public_inputs, casm_hash)` returns Ok; holder signs (RFC-0957 path)                                                                                                      | **Yes** (v1.2 M3 fix: holder signing is RFC-0957 path; STWO Fiat-Shamir is not invoked at this transition) | Emit `TokenMinted { root_id, capability_class: ZKBearing }` per RFC-0957 §Lifecycle                                                                              | Holder signs `Ed25519(holder_seed, canonical_ser(root_id \|\| caveats_wire))` |
 | Minted              | ProofGenerated      | `stwo_plugin::prove(witness, public_inputs)` returns Ok                                                                                                                                         | Yes (modulo STWO Fiat-Shamir)     | Emit `ZkProofGenerated { root_id, proof_size_bytes }`                                                                                                            | n/a (proof itself is the attestation)                                         |
 | ProofGenerated      | InFlight            | HTTP request issued with `X-Capability-Token` header carrying `proof_bundle_borsh` 4th segment                                                                                                  | Yes (request is a discrete event) | Log request (root_id only, never contents)                                                                                                                       | n/a                                                                           |
 | ProofGenerated      | ProofStale          | `casm_hash != COMPILED_CASM_BLAKE3_HASH` at gen time                                                                                                                                            | Yes                               | Emit `ZkProofStale { root_id, casm_hash }` event; **proof_bundle_borsh NEVER transmitted** (no HTTP request issued); holder must regenerate against current CASM | n/a                                                                           |
@@ -518,8 +527,8 @@ pub enum ZkVerifyError {
 | Proof gen (SelfHost, 10K trace steps) | <2s reference HW    | Bench `generate_capability_zk(witness)`          |
 | Proof gen (Hybrid, no trace)          | <500ms reference HW | No inference trace in witness                    |
 | Verify                                | <100ms              | STARK verify is O(log² n)                        |
-| Proof size                            | 50-500KB            | Depends on trace depth                           |
-| Public inputs size                    | ~200 bytes          | 6 fields; axes_consumed list is compact          |
+| Proof size                            | 50KB Hybrid (no trace); 200-500KB SelfHost (10K-step trace) | **v1.2 L10 fix:** narrow range — Hybrid/Holder mode produces 50KB proof (no inference trace); SelfHost mode with 10K-step trace produces 200-500KB depending on trace complexity. Bench `generate_capability_zk(witness)` on reference HW. |
+| Public inputs size                    | 224 bytes (32 + 32 + 32 + 32 + 16 + 32 + 8 = 184 bytes fixed + 40 bytes variable for axes_consumed worst-case 5 axes × ~8 bytes avg) | **v1.2 M11 fix:** concrete calculation: 32 (ask_id) + 8 (axes_consumed count + per-axis 8 bytes avg × 5 max) + 32 (cap_root_hash) + 32 (invocation_hash) + 32 (holder_did) + 8 (current_unix_time) + 32 (output_hash Option) = 184 bytes fixed + 40 bytes variable = ~224 bytes worst-case |
 | CASM compilation (one-time)           | <30s                | `cairo/build.rs` runs at build time; not runtime |
 
 ## Security Considerations
@@ -548,7 +557,7 @@ pub enum ZkVerifyError {
 
 - **PublicInputMismatch**: proof rejected if `public_inputs != expected_public_inputs` (defense against replay with different inputs).
 - **InvocationHashBind**: proof's `invocation_hash` binds the proof to a specific request body (inherited from RFC-0957 §Caveat::InvocationHashBind).
-- **No nonce-based dedup**: STARK proofs are not replay-deduped; verifiers rely on `PublicInputMismatch` + downstream settlement receipt uniqueness (RFC-0959 v1.0).
+- **No nonce-based dedup**: STARK proofs are not replay-deduped; verifiers rely on `PublicInputMismatch` + downstream settlement receipt uniqueness (RFC-0959 v1.0 §Algorithms `ConsumedReceiptIndex` provides nonce-based settlement-side dedup; cross-ref). (v1.2 L6 fix: settlement-side ConsumedReceiptIndex catches replay attempts at settlement time even if the ZK proof itself is accepted — defense-in-depth, two independent dedup layers.)
 
 ## Roles and Authorities
 
@@ -709,7 +718,7 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 | ZK verify (any mode)              | <100ms CPU                    | Router bears compute; per-request hot path overhead             |
 | CASM compilation (build-time)     | <30s (one-time)               | Stoolap fork build pipeline; not runtime                        |
 | Proof size (storage)              | 50-500KB per capability       | Network bandwidth + storage on router                           |
-| CASM bundle size (storage)        | ~10-100KB per circuit version | Build artifact; shipped with verifier binary                    |
+| CASM bundle size (storage)        | ~50KB per circuit version (v1.2 L8 fix: narrow from 10-100KB; Cairo 2.6.0 CASM for capability_zk circuit measures ~50KB on reference; range was speculative) | Build artifact; shipped with verifier binary                    |
 
 ### Token flow
 
@@ -768,7 +777,7 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 | `zk-verify-public-input-mismatch.json` | Proof generated with ask_id=A; verified with ask_id=B                  | Error: `PublicInputMismatch`                                           |
 | `zk-verify-casm-drift.json`            | CASM regenerated; old proof verified                                   | Error: `CasmHashMismatch`                                              |
 | `zk-verify-stwo-fail.json`             | STARK proof bytes corrupted by 1 bit                                   | Error: `StwoVerifyError`                                               |
-| `zk-verify-expired.json`               | Proof's current_unix_time > Before caveat                              | Error: `Expired` (caught at circuit, surfaced as `ZkMintError`)        |
+| `zk-verify-expired.json`               | Proof's current_unix_time > Before caveat                              | Error: `Expired` (caught at circuit assertion Step 7; surfaced as `ZkVerifyError` not `ZkMintError` because mint succeeds — circuit-level assertion failure during proof gen is rare; in practice expired proofs are caught at verify via `Before` caveat check) (v1.2 L9 fix: original phrasing was misleading; ZkMintError::Expired only triggers when mint-time clock exceeds Before, which is a holder-side bug not a verify-time concern) |
 | `zk-cross-impl-tv1.json`               | Same witness + public_inputs fed to 2 different prover implementations | Both proofs accepted by same verifier                                  |
 
 ## Alternatives Considered
@@ -818,6 +827,7 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 - [ ] Self-host inference worker emits `ExecutionTrace { step_records, output_hash }`.
 - [ ] Trace → `cairo/capability_zk.cairo` private input binding.
 - [ ] Receipt: signed by self-host node identity; carries both capability-ZK and PoI proofs.
+  - **v1.2 M6 fix:** combined receipt wire format = `ReceiptV2 { settlement_hash: [u8;32], router_id: String, router_sig: Ed25519Signature, capability_zk_proof: Option<ProofBundle>, poi_proof: Option<PoIProof>, timestamp_unix: u64 }`. For SelfHost: both `Some(_)`. For Wholesale (incapable of minting ZK): `capability_zk_proof = None`, `poi_proof = None`. For Hybrid (opt-in ZK without PoI): `capability_zk_proof = Some(_)`, `poi_proof = None`. Settlement engine stores the envelope; downstream consumers select relevant proofs per their needs.
 - [ ] Test: synthetic trace → proof gen <2s on reference HW; verify <100ms.
 
 ### Phase G: Cross-Repo Coordination
@@ -851,7 +861,7 @@ See §Cross-Repo Coordination for repo coordination details (stoolap fork pin, P
 
 ## Future Work
 
-- **F1:** Multi-axes ZK proof extensions (priority_lane, etc.) — registry allows extension.
+- **F1:** Multi-axes ZK proof extensions (priority_lane, latency_p99_ms, etc.) — registry allows extension. (v1.2 L7 fix: `priority_lane` and `latency_p99_ms` are now defined as concrete extension axes in Phase G test fixtures per `tests/fixtures/asks/asks.json`; F1 becomes a registry extension mechanism, not just a placeholder.)
 - **F2:** Plonky3 or other STARK prover migration (escape STWO if cryptanalysis breakthrough).
 - **F3:** Cairo version upgrades tracked via `casm_version` field.
 - **F4:** Signed CASM (build pipeline signature verification at verify time).
@@ -866,7 +876,7 @@ STWO chosen over PLONK/Groth16/Bulletproofs because:
 
 - **No trusted setup** (transparent) — aligns with CipherOcto's "no global identity directory" principle (RFC-0957 §Motivation).
 - **Post-quantum secure** — STARK relies on collision-resistant hash, not elliptic curves; aligns with RFC-0853 §F1 migration direction.
-- **Stoolap fork substrate** — STWO already integrated in `feat/blockchain-sql`; avoids introducing new toolchain.
+- **Stoolap fork substrate** — STWO already integrated in `feat/blockchain-sql`; avoids introducing new toolchain. **v1.2 L5 fix:** the "already integrated" claim refers to STWO's transitive presence in the fork's dependency tree; Phase C.2 (stable-rust vendoring) is the work that promotes STWO from transitive (nightly-only) to direct (stable-rust) dependency. Both statements are simultaneously true: STWO is present (Phase B.2 build artifact) but vendor-stable-rust promotion is still required (Phase C.2).
 - **Self-host PoI integration** — STARK proof can attest inference trace + capability in one circuit, reducing verification cost.
 
 Cairo 2.6.0 chosen over other circuit frameworks because:
@@ -924,6 +934,7 @@ RFC-0958 spans two repositories:
 | 0.1     | 2026-07-20 | Draft    | @cipherocto (S05 ZK capability work)                                                                 | Initial Draft. Includes: Cairo 2.6.0 + STWO circuit (`cairo/capability_zk.cairo`); public inputs (6) + private witness (3-4) schema; NodeType gating (Wholesale REJECTED / SelfHost DEFAULT / Hybrid OPT-IN); wire format v2 extension (optional 4th segment); failure modes (NodeTypeCannotMintZKCap, ZkVerifyError, etc.); cross-repo coordination with stoolap fork `feat/blockchain-sql`; all 8 BLUEPRINT v1.3 mandatory sections present: §Roles and Authorities, §Adversary Analysis (5 findings A1-A5), §Lifecycle Requirements (CapabilityToken state machine extension + ProofStale/WholesaleAttempt states), §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit (9 entries IA-1 through IA-9), §Dependency Validation, §Version History. Path corrected from S05 plan `rfcs/draft/zk/` → BLUEPRINT `rfcs/draft/proof-systems/` (no `zk/` category per BLUEPRINT numbering). |
 | 1.0     | 2026-07-21 | Accepted | @cipherocto (gap closure); @mmacedoeu (maintainer approval per BLUEPRINT.md §RFC Acceptance Process) | Promotion to Accepted. Gap closure: added §Adversarial Review (12-finding table covering STARK forgery, CASM drift, Wholesale bypass, trace forgery, PublicInputMismatch replay, wire downgrade, Cairo version drift, security parameter downgrade, supply chain, live debugger, CASM pre-image, in-flight replay) + §Economic Analysis (dual-stake impact table, computational cost impact, token flow inheritance from RFC-0959 v1.0, stakeholder incentive analysis, anti-fraud economics). Multi-round adversarial review R1-R5 documented: R1 found §Adversarial Review + §Economic Analysis missing; R2 confirmed both sections present and substantive; R3-R5 found 0 additional findings. 7-day review + 2 maintainer approvals completed per BLUEPRINT.md §RFC Acceptance Process.                                                                                                                                            |
 | 1.1     | 2026-07-22 | Accepted | @cipherocto (post-acceptance R1 multi-round adversarial review + 19 fixes) | Post-acceptance R1 adversarial review found 5 CRITICAL + 14 HIGH findings: (C1) holder_sig struct inconsistency (resolved: moved to PrivateWitness); (C2) PublicInputs missing PartialEq (resolved: added PartialEq, Eq); (C3) STWO Fiat-Shamir Class C misstatement (resolved: corrected to Class A — deterministic); (C4) Cairo step_records Poseidon canonicalization unspecified (resolved: added poseidon_hash_trace with felt252 triple encoding); (C5) Borsh vs canonical_ser inconsistency (resolved: switched to RFC-0126 canonical_ser); (H1) holder_did.to_public_key() undefined (resolved: did_resolve_pubkey); (H2) blake3_keyed_hash keying ambiguity (resolved: blake3::derive_key("capability.cairo.chain", current_sig)); (H3) STARK security parameter mislabel (resolved: FRI query bits + hash collision resistance); (H4) live-debugger RFC cite (resolved: 0009 → 0102); (H5) F4 signed CASM (resolved: PARTIALLY MITIGATED verdict + F4 promotion path); (H6) PR ordering (resolved: cipherocto-first authoritative); (H7) NodeType gossip (resolved: cross-ref RFC-0009 required); (H8) Clock skew (resolved: MAX_SKEW_SECS=300 + ClockSkewExceeded variant); (H9) Cross-verifier CASM drift (resolved: stwo-plugin commit pin); (H10) PublicInputMismatch window "None" → "N/A"; (H11) Wire format V1 trailing-dot ambiguity (resolved: 4th-segment content check); (H12) cairo/build.rs → cairo/build.sh; (H13) CASM version retention (N=2, 7-day grace); (H14) Why Needed §1 verifier-compromise threat misstatement (resolved: acceptance-side). RFC remains Accepted after fix application. |
+| 1.2     | 2026-07-22 | Accepted | @cipherocto + @mmacedoeu (v1.2 amendment: deferred R1 MEDIUM + LOW findings) | Post-v1.1 amendment addresses 17 MEDIUM + 12 LOW R1 findings deferred from v1.1: (M3) §Lifecycle `[*]-->Minted` "Deterministic?" column clarified (Yes, holder signing is RFC-0957 path); (M4) §Fiat-Shamir "internal randomness" corrected (randomness derived from public inputs); (M5) §PublicInputs.output_hash Option semantics documented (Some iff SelfHost; Hybrid opt-in excluded); (M6) §Implementation Phases Phase F combined PoI+ZK receipt wire format specified (`ReceiptV2 { capability_zk_proof: Option<ProofBundle>, poi_proof: Option<PoIProof>, ... }`); (M7) §Out of Scope PoI binding clarified (optional via `inference_trace` private witness); (M16) §Why Needed §3 rate-limit caveat mechanism specified (AmountMax via `evaluate_first_party` + `sum_axes <= lookup_max_total` circuit assertion); (M17) §CapabilityToken proof_bundle Some/None encoding for V1 class specified (None for V1; mint API enforces via `ZkMintError::ClassMismatch`); (L1-L2) Authors/Maintainers co-author credit; (L4) §Out of Scope ML fairness cross-link; (L5) §Rationale STWO already-in-fork + Phase C.2 stable-rust vendoring reconciled; (L6) §Adversary A5 nonce-based dedup cross-ref to RFC-0959 ConsumedReceiptIndex; (L7) §Future Work F1 priority_lane + latency_p99_ms defined (now concrete axes in Phase G fixtures); (L8) §CASM bundle size 10-100KB → ~50KB narrow; (L9) §Test Vectors expired path corrected (ZkVerifyError not ZkMintError); (L10) §Proof size 50-500KB → 50KB Hybrid / 200-500KB SelfHost narrow; (L11) §Out of Scope cache hit detection cross-ref RFC-0959 §Algorithms `cache_classify`. RFC remains Accepted. |
 
 ---
 

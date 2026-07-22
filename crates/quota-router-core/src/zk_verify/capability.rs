@@ -2,22 +2,31 @@
 //!
 //! For S05 MVP: implements the verify logic with stub STWO delegation.
 //! Production wiring (cairo-compile + stwo-plugin) lives in the stoolap fork.
+//!
+//! Per RFC-0958 v1.1 R1 H8 fix: clock skew bounds check added
+//! (`MAX_SKEW_SECS = 300`); per R3 N5 fix: emits `ZkVerifyError::ClockSkewExceeded`.
 
 use super::{ProofBundle, PublicInputs, ZkVerifyError};
+
+/// Maximum tolerable clock skew between prover and verifier (RFC-0958 §Time Bounds).
+/// Defense against malicious prover setting arbitrary wall-clock.
+pub const MAX_SKEW_SECS: u64 = 300;
 
 /// Verify a ZK capability proof against expected public inputs.
 ///
 /// Algorithm (RFC-0958 §3.5):
 /// 1. `proof.public_inputs != expected_public_inputs` → PublicInputMismatch
 /// 2. `proof.casm_hash != COMPILED_CASM_BLAKE3_HASH` → CasmHashMismatch
-/// 3. STWO verify (constant-time) → StwoVerifyError
+/// 3. Clock skew bounds check (R1 H8 fix): `|proof.current_unix_time - verifier_local_unix_time| > MAX_SKEW_SECS` → ClockSkewExceeded
+/// 4. STWO verify (constant-time) → StwoVerifyError
 ///
 /// # Errors
-/// Returns `ZkVerifyError` on any of the three checks above.
+/// Returns `ZkVerifyError` on any of the four checks above.
 pub fn verify_capability_zk(
     proof: &ProofBundle,
     expected_public_inputs: &PublicInputs,
     compiled_casm_blake3_hash: &[u8; 32],
+    verifier_local_unix_time: u64,
 ) -> Result<(), ZkVerifyError> {
     // 1. Public input check.
     if !public_inputs_equal(&proof.public_inputs, expected_public_inputs) {
@@ -35,7 +44,20 @@ pub fn verify_capability_zk(
         });
     }
 
-    // 3. STWO verify (stub for S05 MVP; real STWO delegation lands in stoolap fork).
+    // 3. Clock skew bounds check (R1 H8 fix). Defense against malicious prover
+    //    setting arbitrary wall-clock.
+    let skew = proof
+        .public_inputs
+        .current_unix_time
+        .abs_diff(verifier_local_unix_time);
+    if skew > MAX_SKEW_SECS {
+        return Err(ZkVerifyError::ClockSkewExceeded {
+            skew,
+            max: MAX_SKEW_SECS,
+        });
+    }
+
+    // 4. STWO verify (stub for S05 MVP; real STWO delegation lands in stoolap fork).
     #[allow(unused_variables)]
     {
         let _ = &proof.stark_proof; // silence unused warning in MVP
@@ -81,7 +103,8 @@ mod tests {
         let mut expected = proof.public_inputs.clone();
         expected.ask_id = [0xff; 32];
         let casm = proof.casm_hash;
-        let err = verify_capability_zk(&proof, &expected, &casm).unwrap_err();
+        let now = proof.public_inputs.current_unix_time;
+        let err = verify_capability_zk(&proof, &expected, &casm, now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::PublicInputMismatch(_)));
     }
 
@@ -90,8 +113,20 @@ mod tests {
         let proof = sample_proof();
         let expected = proof.public_inputs.clone();
         let wrong_casm = [0u8; 32];
-        let err = verify_capability_zk(&proof, &expected, &wrong_casm).unwrap_err();
+        let now = proof.public_inputs.current_unix_time;
+        let err = verify_capability_zk(&proof, &expected, &wrong_casm, now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::CasmHashMismatch { .. }));
+    }
+
+    #[test]
+    fn verify_rejects_clock_skew() {
+        let proof = sample_proof();
+        let expected = proof.public_inputs.clone();
+        let casm = proof.casm_hash;
+        // 1 hour skew — exceeds MAX_SKEW_SECS=300.
+        let skewed = proof.public_inputs.current_unix_time + 3600;
+        let err = verify_capability_zk(&proof, &expected, &casm, skewed).unwrap_err();
+        assert!(matches!(err, ZkVerifyError::ClockSkewExceeded { .. }));
     }
 
     #[test]
@@ -99,8 +134,9 @@ mod tests {
         let proof = sample_proof();
         let expected = proof.public_inputs.clone();
         let casm = proof.casm_hash;
+        let now = proof.public_inputs.current_unix_time;
         // MVP stub: passes without real STWO verify.
-        verify_capability_zk(&proof, &expected, &casm).unwrap();
+        verify_capability_zk(&proof, &expected, &casm, now).unwrap();
     }
 
     #[test]
@@ -111,7 +147,8 @@ mod tests {
             .axes_consumed
             .push(("output_tokens_per_1k".to_owned(), 50));
         let casm = proof.casm_hash;
-        let err = verify_capability_zk(&proof, &expected, &casm).unwrap_err();
+        let now = proof.public_inputs.current_unix_time;
+        let err = verify_capability_zk(&proof, &expected, &casm, now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::PublicInputMismatch(_)));
     }
 }

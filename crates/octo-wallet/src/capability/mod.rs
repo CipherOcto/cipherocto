@@ -8,14 +8,21 @@
 pub mod caveat;
 pub mod discharge;
 pub mod macaroon;
+pub mod registry;
 pub mod wire;
+pub mod zk_mint;
 
 use serde::{Deserialize, Serialize};
 
 pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
 pub use discharge::{DischargeChannel, DischargeMacaroon};
 pub use macaroon::{hmac_blake3, macaroon_id, Macaroon, MacaroonError, MacaroonId};
+pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
 pub use wire::{deserialize_wire, serialize_wire, WireError};
+pub use zk_mint::{
+    mint_with_zk, proof_bundle_from_wire, proof_bundle_to_wire, CapabilityClass, PrivateWitness,
+    ProofBundle, PublicInputs, ZkMintError, COMPILED_CASM_BLAKE3_HASH,
+};
 
 use crate::identity::IdentityKey;
 

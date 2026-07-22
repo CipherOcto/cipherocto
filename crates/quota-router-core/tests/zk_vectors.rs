@@ -17,6 +17,7 @@ use quota_router_core::zk_verify::capability::verify_capability_zk;
 use quota_router_core::zk_verify::{ProofBundle, PublicInputs, ZkMintError};
 
 const COMPILED_CASM_HASH: [u8; 32] = [0xab; 32];
+const COMPILED_TIME: u64 = 1_700_000_000;
 
 fn sample_proof() -> ProofBundle {
     ProofBundle {
@@ -43,7 +44,7 @@ fn zk_mint_self_host() {
     // Verify roundtrip succeeds (MVP: stub STWO pass-through).
     let proof = sample_proof();
     let expected = proof.public_inputs.clone();
-    verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH).unwrap();
+    verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
 }
 
 /// Vector 2: zk-mint-hybrid-no-trace (Hybrid does NOT require inference trace).
@@ -66,7 +67,8 @@ fn zk_verify_public_input_mismatch() {
     let proof = sample_proof();
     let mut expected = proof.public_inputs.clone();
     expected.ask_id = [0x99; 32];
-    let err = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH).unwrap_err();
+    let err =
+        verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::PublicInputMismatch(_)
@@ -79,7 +81,7 @@ fn zk_verify_casm_drift() {
     let proof = sample_proof();
     let expected = proof.public_inputs.clone();
     let wrong_casm = [0u8; 32];
-    let err = verify_capability_zk(&proof, &expected, &wrong_casm).unwrap_err();
+    let err = verify_capability_zk(&proof, &expected, &wrong_casm, COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::CasmHashMismatch { .. }
@@ -99,7 +101,7 @@ fn zk_verify_stwo_fail_mvp_stub() {
     proof.stark_proof = vec![0xff; 64]; // corrupted
     let expected = proof.public_inputs.clone();
     // MVP stub: still passes (no real STWO verify). Production: returns Err.
-    let result = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH);
+    let result = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME);
     // Document: this test asserts current MVP behavior (pass-through).
     result.unwrap();
 }
@@ -114,10 +116,13 @@ fn zk_verify_stwo_fail_mvp_stub() {
 #[test]
 fn zk_verify_expired() {
     let mut proof = sample_proof();
-    proof.public_inputs.current_unix_time = u64::MAX; // expired
+    // Use a realistic expired time within clock-skew bounds (R1 H8 fix).
+    // The MVP stub does not run the circuit; expiry is enforced by the
+    // circuit's Before caveat assertion (Step 7), not by the verifier wrapper.
+    proof.public_inputs.current_unix_time = COMPILED_TIME - 100; // 100s before verifier time
     let expected = proof.public_inputs.clone();
-    // MVP stub passes; production rejects.
-    let result = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH);
+    // MVP stub passes; production rejects via circuit assertion.
+    let result = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME);
     result.unwrap(); // MVP
 }
 
@@ -130,6 +135,6 @@ fn zk_cross_impl_tv1() {
     let mut p2 = p1.clone();
     p2.stark_proof = vec![0xef; 96]; // different prover, different proof bytes
     let expected = p1.public_inputs.clone();
-    verify_capability_zk(&p1, &expected, &COMPILED_CASM_HASH).unwrap();
-    verify_capability_zk(&p2, &expected, &COMPILED_CASM_HASH).unwrap();
+    verify_capability_zk(&p1, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
+    verify_capability_zk(&p2, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
 }

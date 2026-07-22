@@ -26,7 +26,7 @@ pub enum CapabilityClass {
 }
 
 /// Public inputs to the ZK circuit (RFC-0958 §Data Structures).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicInputs {
     pub ask_id: [u8; 32],
     pub axes_consumed: Vec<(String, u64)>,
@@ -47,7 +47,7 @@ pub struct ProofBundle {
     pub security_bits: u8,
 }
 
-/// ZK verification error (RFC-0958 §Error Handling).
+/// ZK verification error (RFC-0958 §Error Handling + v1.1 R1 H8 fix).
 #[derive(Debug, thiserror::Error)]
 pub enum ZkVerifyError {
     #[error("public input mismatch: {0}")]
@@ -55,6 +55,9 @@ pub enum ZkVerifyError {
 
     #[error("CASM hash mismatch at verify time: expected {expected:02x?}, got {got:02x?}")]
     CasmHashMismatch { expected: [u8; 32], got: [u8; 32] },
+
+    #[error("clock skew exceeded: skew={skew}s, max={max}s tolerance")]
+    ClockSkewExceeded { skew: u64, max: u64 },
 
     #[error("STWO verify failed: {0}")]
     StwoVerifyError(String),

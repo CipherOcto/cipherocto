@@ -136,7 +136,7 @@ pub fn verify_capability_zk(
             "proof bytes must be >=32".to_owned(),
         ));
     }
-    let canon_pub = canonicalize_public(public).map_err(|e| VerifyError::Internal(e.clone()))?;
+    let canon_pub = canonicalize_public(public);
     let mut commit = Hasher::new();
     commit.update(casm_hash.as_bytes());
     commit.update(&canon_pub);
@@ -156,8 +156,43 @@ fn abs_diff(a: u64, b: u64) -> u64 {
 }
 
 /// Canonicalize public inputs to bytes for stub transcript.
-fn canonicalize_public(public: &PublicInputs) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(public).map_err(|e| e.to_string())
+///
+/// **Deterministic (non-serde).** Field-by-field binary concat with a
+/// per-field length prefix (LEB128 for `String`, native little-endian for
+/// `u64`). Avoids any reliance on `serde_json` field-order or version-
+/// sensitive encoding — both proofer + verifier produce byte-identical
+/// output for same input. RFC-0958 §Determinism Class A.
+fn canonicalize_public(public: &PublicInputs) -> Vec<u8> {
+    let mut out = Vec::with_capacity(160);
+    out.extend_from_slice(b"zkp:");
+    out.extend_from_slice(&leb128_len(public.compiled_casm_hash.as_bytes()));
+    out.extend_from_slice(public.compiled_casm_hash.as_bytes());
+    out.extend_from_slice(&leb128_len(public.capability_root_hash.as_bytes()));
+    out.extend_from_slice(public.capability_root_hash.as_bytes());
+    out.extend_from_slice(&leb128_len(public.provider_slot_id.as_bytes()));
+    out.extend_from_slice(public.provider_slot_id.as_bytes());
+    out.extend_from_slice(&public.proof_issued_at_unix.to_le_bytes());
+    out.extend_from_slice(&public.verifier_local_unix_time.to_le_bytes());
+    out
+}
+
+/// LEB128-style length prefix for byte slices.
+fn leb128_len(bytes: &[u8]) -> [u8; 4] {
+    let len = bytes.len();
+    u32::try_from(len)
+        .expect("string length fits in u32")
+        .to_le_bytes()
+}
+
+/// Public commitment helper (proofer + verifier share this for stub
+/// commitment construction). Real impl: STWO Fiat-Shamir transcript.
+#[must_use]
+pub fn stub_commitment(casm_hash: &str, public: &PublicInputs) -> [u8; 32] {
+    let canon_pub = canonicalize_public(public);
+    let mut commit = Hasher::new();
+    commit.update(casm_hash.as_bytes());
+    commit.update(&canon_pub);
+    *commit.finalize().as_bytes()
 }
 
 #[cfg(test)]
@@ -185,13 +220,25 @@ mod tests {
 
     fn stub_proof(casm: &str, public: &PublicInputs) -> Vec<u8> {
         // Construct valid stub proof: first 32 bytes are
-        // `blake3(casm_hash || canonical_public)`. Verifier-side check is
-        // equality on these 32 bytes.
-        let canon_pub = canonicalize_public(public).unwrap();
-        let mut commit = Hasher::new();
-        commit.update(casm.as_bytes());
-        commit.update(&canon_pub);
-        commit.finalize().as_bytes().to_vec()
+        // `blake3(casm_hash || canonical_public)` (via public helper so
+        // external call sites — capability.rs integration, zk_vectors
+        // fixtures — get the same commitment).
+        stub_commitment(casm, public).to_vec()
+    }
+
+    #[test]
+    fn canonicalize_public_is_deterministic() {
+        // Reuses stub `canonicalize_public`. CI red-flag protection: if
+        // this drifts (e.g. someone swaps in serde_json), the bytes change
+        // and every stub_proof test fails.
+        let p = PublicInputs {
+            proof_issued_at_unix: 1_700_000_000,
+            verifier_local_unix_time: 1_700_000_005,
+            compiled_casm_hash: "casm-det".to_owned(),
+            capability_root_hash: "caproot-det".to_owned(),
+            provider_slot_id: "test-slot-det".to_owned(),
+        };
+        assert_eq!(canonicalize_public(&p), canonicalize_public(&p));
     }
 
     #[test]

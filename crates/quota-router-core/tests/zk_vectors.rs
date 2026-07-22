@@ -33,11 +33,7 @@ fn make_stub_proof_bytes(casm: &[u8; 32], public: &PublicInputs) -> Vec<u8> {
         capability_root_hash: hex::encode(public.cap_root_hash),
         provider_slot_id: "test-slot".to_owned(),
     };
-    let canon = serde_json::to_vec(&zk_public).expect("canonical_public serializes");
-    let mut commit = blake3::Hasher::new();
-    commit.update(casm_hex.as_bytes());
-    commit.update(&canon);
-    commit.finalize().as_bytes().to_vec()
+    zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec()
 }
 
 fn sample_proof() -> ProofBundle {

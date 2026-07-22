@@ -69,6 +69,9 @@ octo-network = { path = "../octo-network" }
 # For SHA256 (used in event_id computation)
 sha2.workspace = true
 
+# For Ed25519 (S04 receipt signature + S05 ZK capability)
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+
 # For BLAKE3 (used in tokenizer_id derivation)
 blake3.workspace = true
 

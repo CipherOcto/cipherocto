@@ -14,11 +14,15 @@
 
 pub mod capability;
 pub mod error;
+pub mod hsm;
 pub mod identity;
+pub mod key_hierarchy;
 pub mod keystore;
+pub mod mpc;
 pub mod node;
 pub mod vault;
 
 pub use error::WalletError;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
+pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
 pub use node::{NodeType, NodeTypeParseError};

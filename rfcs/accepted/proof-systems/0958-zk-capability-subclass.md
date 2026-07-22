@@ -6,7 +6,7 @@ Accepted
 
 > **Promotion note (2026-07-21):** Promoted Draft → Accepted. §Adversarial Review (12-finding table) + §Economic Analysis (computational cost + dual-stake + incentive analysis) added per BLUEPRINT v1.3 mandatory sections (gap closure parallel to 6-RFC promotion batch 2026-07-20). 7-day review + 2 maintainer approvals completed per BLUEPRINT.md §RFC Acceptance Process (RFC authored 2026-07-20, review window 2026-07-20 → 2026-07-27 minimum; approval recorded 2026-07-21 by @mmacedoeu + @cipherocto). All 6 Requires RFCs (RFC-0957, RFC-0009, RFC-0102, RFC-0853, RFC-0630, RFC-0126) now Accepted (RFC-0126 + RFC-0630 promoted 2026-07-20; RFC-0957 + RFC-0009 + RFC-0102 + RFC-0853 promoted 2026-07-20).
 
-> **Note:** Filed under **Proof Systems** category (0600-0699) per BLUEPRINT.md §RFC Numbering (path `rfcs/draft/proof-systems/`). Originally cited in S05 session plan §3 Step 6 as `rfcs/draft/zk/0958-zk-capability-subclass.md`; corrected path per BLUEPRINT category range (no `zk/` category exists; proof-systems is the canonical location for STARK/Cairo circuits).
+> **Note:** Filed under **Proof Systems** category (0600-0699) per BLUEPRINT.md §RFC Numbering. Currently at `rfcs/accepted/proof-systems/0958-zk-capability-subclass.md` (R1 M1 fix: was `rfcs/draft/proof-systems/` prior to 2026-07-21 promotion). Originally cited in S05 session plan §3 Step 6 as `rfcs/draft/zk/0958-zk-capability-subclass.md`; corrected path per BLUEPRINT category range (no `zk/` category exists; proof-systems is the canonical location for STARK/Cairo circuits).
 >
 > **Numbering deviation rationale (R9 fix):** RFC number `0958` falls in the Economics range (0900-0999) per BLUEPRINT.md §RFC Numbering, but RFC-0958 content is Proof Systems (0600-0699). The number `0958` is intentionally retained as part of the RFC-0957 / RFC-0958 / RFC-0959 quota-router RFC family grouping (per master plan §Refers line 39) — the three RFCs share the capability token → ZK subclass → independent settlement chain pipeline and are intentionally numbered together for cross-reference discoverability. Per BLUEPRINT.md "RFC Numbering Authority: RFC numbers are allocated by the CipherOcto maintainers based on the category ranges above" — maintainer discretion applied to retain family grouping. Category placement (path) is correct (`proof-systems/`); only the number deviates.
 
@@ -26,7 +26,7 @@ Defines a **zero-knowledge capability subclass** that extends RFC-0957 (Capabili
 
 The capability token format (RFC-0957) requires verifiers to hold the macaroon root secret and discharge channel keys. Three operational gaps remain:
 
-1. **Verifier-side root secret custody** — every service that verifies a token must hold the root secret. A compromised verifier compromises all in-flight tokens of that issuer. RFC-0957 §Implicit Assumptions IA-6 documents this; ZK subclass reduces the verifier's trust surface to **public inputs only**.
+1. **Verifier-side root secret custody** — every service that verifies a token must hold the root secret. A compromised verifier can accept FORGED tokens (R1 H14 fix: verifier compromise is acceptance-side, not issuance-side; the issuer's mint secret remains protected). RFC-0957 §Implicit Assumptions IA-6 documents this; ZK subclass reduces the verifier's trust surface to **public inputs only**.
 2. **Self-host inference attestation** — when `NodeType == SelfHost`, the inference runs in CipherOcto-controlled infrastructure; the provider cannot be relied upon to attest output correctness. RFC-0630 (PoI Consensus) requires execution-trace attestation. The ZK subclass lets the inference worker emit a STARK proof over `(output_hash, trace_hash)` bound to the capability.
 3. **Discharge channel proliferation** — rate-limit / revocation / escrow channels each require verifier-side state. The ZK subclass moves the rate-limit / expiry check into the circuit, eliminating the rate-limit discharge channel entirely (escrow + revocation remain — see §Compatibility).
 
@@ -145,7 +145,6 @@ pub struct CapabilityToken {
     pub root_secret_hash: [u8; 32],
     pub caveats: Vec<Caveat>,
     pub discharges: Vec<DischargeMacaroon>,
-    pub holder_sig: Ed25519Signature,
     pub holder_did: DID,
 
     // RFC-0958 extension:
@@ -174,7 +173,7 @@ pub struct ProofBundle {
 }
 
 /// Public inputs (6 fields per S05 §2 Decision 6 + 1 optional for self-host mode per S05 §3 Step 5).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputs {
     pub ask_id: AskId,                       // RFC-0959 v1.0
     pub axes_consumed: Vec<(PricingAxis, MicroOCTO_W)>,  // RFC-0959 v1.0 canonical
@@ -183,14 +182,15 @@ pub struct PublicInputs {
     pub holder_did: DID,                     // RFC-0009
     pub current_unix_time: u64,              // wall clock at proof gen
     /// Self-host mode only: inference output hash bound to PoI circuit (RFC-0630 extension per S05 §3 Step 5)
-    /// `None` for Wholesale / Hybrid modes; `Some(_)` for SelfHost mode
+    /// `None` for Hybrid mode (opt-in without PoI); Wholesale unreachable (gating fails before proof gen).
     pub output_hash: Option<[u8; 32]>,
 }
 
-/// Private witness (3-4 fields per S05 §2 Decision 7).
+/// Private witness (4 fields per S05 §2 Decision 7 + R1 fix C1: holder_sig is private).
 #[derive(Debug, Clone)]
 pub struct PrivateWitness {
     pub cap_root_secret: [u8; 32],           // macaroon root secret (NEVER serialized after proof gen)
+    pub holder_sig: Ed25519Signature,        // RFC-0957 holder signature (private; STARK proves check)
     pub caveats_full: Vec<Caveat>,           // full caveat list incl. bound to circuit
     pub discharges_full: Vec<DischargeMacaroon>,  // full discharge macaroons
     /// Self-host mode only: inference execution trace
@@ -222,22 +222,29 @@ fn main() -> felt252 {
     let pub_inputs = read_public_inputs();
     let priv_witness = read_private_witness();
 
-    // 1. Verify holder signature (Ed25519)
+    // 1. Verify holder signature (Ed25519). holder_sig is private witness (R1 C1 fix);
+    //    STARK proves signature was checked without revealing it.
     let holder_sig = priv_witness.holder_sig;
     let msg = canonical_ser(pub_inputs.holder_did || pub_inputs.ask_id || pub_inputs.cap_root_hash);
-    assert(ed25519_verify(holder_sig, msg, pub_inputs.holder_did.to_public_key()) == 1, 'HolderSigInvalid');
+    let holder_pk = did_resolve_pubkey(pub_inputs.holder_did);
+    assert(ed25519_verify(holder_sig, msg, holder_pk) == 1, 'HolderSigInvalid');
 
-    // 2. Verify HMAC-BLAKE3 macaroon chain
+    // 2. Verify HMAC-BLAKE3 macaroon chain. Per RFC-0853 §HMAC-BLAKE3:
+    //    hmac_chain(prev, msg) = blake3_keyed_hash(derive_key("capability.cairo.chain", prev), msg).
+    //    The root_secret is the INITIAL input (not the BLAKE3 key) so the final
+    //    cap_root_hash = BLAKE3(root_secret) when there are no caveats, and the
+    //    chain length is the caveat count + 1.
     let mut current_sig = priv_witness.cap_root_secret;
     for caveat in priv_witness.caveats_full {
         let msg = canonical_ser(caveat);
-        current_sig = blake3_keyed_hash(current_sig, msg);
+        let key = blake3::derive_key("capability.cairo.chain", &current_sig);
+        current_sig = blake3_keyed_hash(key, msg);
     }
     assert(current_sig == pub_inputs.cap_root_hash, 'ChainMismatch');
 
-    // 3. Evaluate first-party caveats
+    // 3. Evaluate first-party caveats (non-time: AmountMax, Model, etc.)
     for caveat in priv_witness.caveats_full {
-        evaluate_first_party(caveat, pub_inputs);  // AmountMax, Model, Before, etc.
+        evaluate_first_party(caveat, pub_inputs);
     }
 
     // 4. Verify discharges' HMAC chains (each channel's root secret resolved in witness)
@@ -250,9 +257,12 @@ fn main() -> felt252 {
     let max_total = lookup_max_total(priv_witness.caveats_full);
     assert(total <= max_total, 'AxesExceededMaxTotal');
 
-    // 6. Self-host only: verify inference trace hash matches output hash
+    // 6. Self-host only: verify inference trace hash matches output hash.
+    //    Trace canonicalization (R1 C4 fix): each TraceStep encoded as
+    //    felt252 triple via poseidon_hash(op_as_felt || input_hash_4_felts || output_hash_4_felts).
+    //    The trace_root_hash = poseidon_hash([step_root for step in step_records]).
     if let Some(trace) = priv_witness.inference_trace {
-        let trace_hash = poseidon_hash(trace.step_records);
+        let trace_hash = poseidon_hash_trace(&trace.step_records);
         let expected_output_hash = pub_inputs.output_hash.expect('SelfHost requires output_hash');
         assert(trace_hash == expected_output_hash, 'TraceHashMismatch');
     }
@@ -265,7 +275,7 @@ fn main() -> felt252 {
 }
 ```
 
-The circuit is deterministic: identical `(private_witness, public_inputs)` → identical STARK proof bytes (modulo STWO's internal Fiat-Shamir randomness, which is derived from public inputs).
+The circuit is **deterministic (Class A)**: identical `(private_witness, public_inputs)` produces byte-identical STARK proof. STWO's Fiat-Shamir transform derives randomness deterministically from the public input transcript; there is no internal nonce.
 
 #### Proof Generation
 
@@ -310,6 +320,7 @@ fn mint_with_zk(
 fn verify_capability_zk(
     proof: &ProofBundle,
     expected_public_inputs: &PublicInputs,
+    verifier_local_unix_time: u64,    // R1 H8 fix: clock for skew bounds check
 ) -> Result<(), ZkVerifyError> {
     // 1. Public inputs MUST match expected (defense against replay with stale inputs)
     if proof.public_inputs != *expected_public_inputs {
@@ -319,7 +330,15 @@ fn verify_capability_zk(
     if proof.casm_hash != COMPILED_CASM_BLAKE3_HASH {
         return Err(ZkVerifyError::CasmHashMismatch);
     }
-    // 3. STWO verify
+    // 3. Clock skew bounds check (R1 H8 fix). Proof's current_unix_time MUST be
+    //    within ±MAX_SKEW_SECS of verifier's local clock. Defense against
+    //    malicious prover setting arbitrary wall-clock.
+    const MAX_SKEW_SECS: u64 = 300;
+    let skew = proof.public_inputs.current_unix_time.abs_diff(verifier_local_unix_time);
+    if skew > MAX_SKEW_SECS {
+        return Err(ZkVerifyError::ClockSkewExceeded { skew, max: MAX_SKEW_SECS });
+    }
+    // 4. STWO verify
     stwo_plugin::verify(
         &proof.stark_proof,
         &proof.public_inputs,
@@ -338,10 +357,12 @@ capability_token_v2 := base64url(macaroon_bytes)
                     || "."
                     || base64url(discharges_bag)
                     || "."                              // NEW separator (RFC-0958)
-                    || base64url(proof_bundle_borsh)   // NEW (RFC-0958); empty string if class == V1
+                    || base64url(proof_bundle)         // NEW (RFC-0958); empty string if class == V1
 ```
 
-`proof_bundle_borsh` is Borsh-serialized `ProofBundle` (deterministic encoding). Verifiers that understand v2 parse the optional 4th segment; v1 verifiers split on first 3 dots and ignore the rest (forward-compat per RFC-0957 §Compatibility).
+`proof_bundle` is `canonical_ser(ProofBundle)` per RFC-0126 (R1 C5 fix — was Borsh in v1.0; corrected to match the project's canonical serialization substrate). Deterministic encoding. Verifiers that understand v2 parse the optional 4th segment; v1 verifiers split on first 3 dots and ignore the rest (forward-compat per RFC-0957 §Compatibility).
+
+**Wire format V1 class (R1 H11 fix):** when `capability_class == V1`, the 4th separator `.` and empty `proof_bundle` segment MUST still be emitted (preserves segment count for parser). v2 parsers distinguish V1 vs ZKBearing by checking the 4th segment's content (empty = V1; non-empty = ZKBearing).
 
 #### NodeType Gating Rule
 
@@ -396,7 +417,9 @@ stateDiagram-v2
 
 - **CASM drift** (compiled CASM hash changes) — all in-flight proofs become `ProofStale`; holder must regenerate. Acceptable: CASM regeneration is a rare event (only on circuit changes).
 - **STWO plugin upgrade** — verifies against the new plugin's CASM hash; old proofs become stale if CASM hash changed.
+- **CASM version retention (R1 H13 fix)** — verifier retains the previous N=2 CASM versions (compile-time configurable) so that in-flight proofs generated against recent-but-superseded CASM versions continue to verify for a grace window (default 7 days). After grace window, only current CASM is accepted.
 - **PublicInputMismatch** — proof was generated against different inputs; reject without retry.
+- **Cross-verifier CASM hash drift (R1 H9 fix)** — different verifier builds (different stwo-plugin commits) may have different CASM hashes; one accepts a proof the other rejects. Verifiers MUST pin stwo-plugin commit hash per `crates/octo-wallet/Cargo.toml` `[dependencies.stwo-plugin]` rev field; weekly diff vs upstream per master plan §8 Risk #6.
 
 #### Time Bounds
 
@@ -405,7 +428,8 @@ stateDiagram-v2
 | Proof gen                  | <2s reference HW (G1)          | Self-host latency budget                         |
 | Verify                     | <100ms (G2)                    | In-line verify per request                       |
 | CASM validity              | Permanent until circuit change | No TTL; CASM hash drift is the only invalidation |
-| PublicInputMismatch window | None (deterministic)           | Proof MUST match expected inputs exactly         |
+| PublicInputMismatch window | N/A (deterministic)            | Proof MUST match expected inputs exactly         |
+| Clock skew tolerance       | ±300s (5 min)                  | R1 H8 fix: verifier bounds `current_unix_time` against local clock; rejects proofs with future-dated clock >5min ahead or stale clock >5min behind |
 
 ## Determinism Requirements
 
@@ -414,15 +438,15 @@ Per BLUEPRINT.md, every RFC MUST include an RFC-0008 execution class mapping.
 | RFC-0958 Operation                                     | Execution Class                | Rationale                                                               |
 | ------------------------------------------------------ | ------------------------------ | ----------------------------------------------------------------------- |
 | Cairo circuit execution (private witness evaluation)   | **A** (Protocol Deterministic) | Cairo 2.6.0 deterministic; same witness → same trace                    |
-| STARK proof generation (STWO)                          | **C** (Probabilistic)          | Fiat-Shamir randomness; same witness → different proofs across runs     |
+| STARK proof generation (STWO)                          | **A**                          | Fiat-Shamir transform derives randomness deterministically from public inputs + transcript; same witness + same circuit → byte-identical proof (R1 C3 fix) |
 | STARK proof verification (STWO)                        | **A**                          | STWO verify is deterministic; same proof + public inputs → same verdict |
-| Public input serialization                             | **A**                          | Borsh deterministic; canonical_ser per RFC-0126                         |
+| Public input serialization                             | **A**                          | RFC-0126 `canonical_ser` per R1 C5 fix (replaces Borsh for `proof_bundle`) |
 | Holder signature verification inside circuit (Ed25519) | **A**                          | RFC 8032 deterministic; same message + key → same verdict               |
 | NodeType gating check                                  | **A**                          | Enum match deterministic                                                |
 | CASM hash computation                                  | **A**                          | BLAKE3 deterministic                                                    |
 | Inference trace hash (Poseidon)                        | **A**                          | Poseidon permutation deterministic                                      |
 
-**Determinism contract:** Verify is Class A — two implementations of `verify_capability_zk` MUST return identical `Result<(), ZkVerifyError>` for identical inputs. Proof gen is Class C — implementations MAY produce different proofs across runs but MUST accept each other's proofs (verifier is implementation-agnostic). Cross-implementation test vectors included in `crates/octo-wallet/tests/fixtures/capability-zk/`.
+**Determinism contract (R1 C3 fix):** Both proof generation AND verification are **Class A**. Two implementations of `verify_capability_zk` MUST return identical `Result<(), ZkVerifyError>` for identical inputs. Two implementations of proof generation MUST produce byte-identical proofs given identical `(private_witness, public_inputs)` — STWO's Fiat-Shamir transform derives randomness deterministically from the public input transcript. Cross-implementation test vectors at `crates/octo-wallet/tests/fixtures/capability-zk/`.
 
 ## Error Handling
 
@@ -465,6 +489,9 @@ pub enum ZkVerifyError {
     #[error("CASM hash mismatch at verify time: expected {expected}, got {got}")]
     CasmHashMismatch { expected: [u8; 32], got: [u8; 32] },
 
+    #[error("Clock skew exceeded: {skew}s > {max}s tolerance")]
+    ClockSkewExceeded { skew: u64, max: u64 },
+
     #[error("STWO verify failed: {0}")]
     StwoVerifyError(String),
 
@@ -492,7 +519,7 @@ pub enum ZkVerifyError {
 ### Threat Model
 
 - **In scope:** compromised verifier; compromised inference worker (self-host); CASM drift attack; STWO proof forgery; replay across verifiers.
-- **Out of scope:** live debugger on prover process (inherited from RFC-0009 §Security); quantum adversary (post-quantum migration tracked RFC-0853 §F1); supply chain attacks on Cairo / STWO dependencies (cargo-audit + renovate-bot).
+- **Out of scope:** live debugger on prover process (inherited from RFC-0102 §Vault + mlock/zeroize; R1 H4 fix); quantum adversary (post-quantum migration tracked RFC-0853 §F1); supply chain attacks on Cairo / STWO dependencies (cargo-audit for cargo deps; scarb/asdf pin for Cairo; renovate-bot for GitHub-native updates; R1 H4 follow-up).
 
 ### Key Handling Rules
 
@@ -527,7 +554,7 @@ pub enum ZkVerifyError {
 | ZK Verifier               | `crates/quota-router-core::zk_verify::capability::verify_capability_zk`           | Validate STARK proof + public inputs match                            | Stateless; lifecycle = uptime of verifier service      | RFC-0958 §Algorithms                      |
 | CASM Compiler             | `cairo/build.rs` (cargo build script invoking `cairo-compile >=2.6.0`)            | Compile `cairo/capability_zk.cairo` → CASM bytes; emit BLAKE3 hash    | Build-time only                                        | RFC-0958 §Implementation Phases Phase B.2 |
 | Inference Worker          | Self-host NodeType worker emitting `ExecutionTrace`                               | Generate inference trace + output hash for self-host mode             | Process-lifetime; thread-safe; emits trace per request | RFC-0630 §Inference Pipeline              |
-| NodeType Registry         | RFC-0009 §Identity Types registry                                                 | Track NodeType per node DID; enforce ZK mint gating                   | Persistent; gossip-synced                              | RFC-0009 §Identity                        |
+| NodeType Registry         | RFC-0009 §Identity Types registry                                                 | Track NodeType per node DID; enforce ZK mint gating                   | Persistent; gossip-synced per RFC-0009 (R1 H7 fix: cross-ref required for sync mechanism, conflict resolution, frequency) | RFC-0009 §Identity                        |
 | Capability Class Registry | `crates/octo-wallet::cap::registry`                                               | Map (node_did, capability_class) → mint authorization                 | Persistent; local to wallet                            | RFC-0957 §Data Structures (extension)     |
 | Stoolap Fork Owner        | Maintainer of `/home/mmacedoeu/_w/databases/stoolap` `feat/blockchain-sql` branch | Owns CASM compilation + STWO plugin stable-rust vendoring (Phase C.2) | Cross-repo coordination; commit hash pinned            | RFC-0958 §Cross-Repo Coordination         |
 
@@ -544,12 +571,12 @@ This RFC is security-sensitive (authorization, cryptographic proof, provider-key
 ### Finding A1: STARK forgery via STWO cryptanalysis
 
 1. **Who benefits?** — Attacker who can forge a STARK proof without a valid witness.
-2. **What does it cost them?** — Break STWO's cryptographic soundness (collision-resistance of hash, soundness of FRI). Computationally infeasible at 128-bit security.
+2. **What does it cost them?** — Break STWO's cryptographic soundness (collision-resistance of hash, soundness of FRI). Computationally infeasible at the conjectured security level (R1 H3 fix: "128-bit security" = FRI query bits + hash collision resistance per STWO reference impl).
 3. **What do they gain if successful?** — Bypass capability verification; forge any ZK-bearing capability.
-4. **What's our defense?** — STWO at 128-bit security; CASM hash pinned and verified at every verify call; circuit parameters (FRI layers, query count) configured per STWO reference impl.
+4. **What's our defense?** — STWO with security_bits=128 (Hybrid opt-in: 96); CASM hash pinned and verified at every verify call; circuit parameters (FRI layers, query count) configured per STWO reference impl.
 5. **What's the residual risk?** — Novel STWO cryptanalysis breakthrough. **Mitigation:** track STWO cryptanalysis status; maintain migration path to Plonky3 or other STARK provers (F2).
 
-**Verdict:** MITIGATED at 128-bit security. Residual risk = STWO breakthrough; tracked.
+**Verdict:** MITIGATED at conjectured 128-bit security. Residual risk = STWO breakthrough; tracked.
 
 ### Finding A2: CASM drift attack (prover uses stale CASM)
 
@@ -557,9 +584,9 @@ This RFC is security-sensitive (authorization, cryptographic proof, provider-key
 2. **What does it cost them?** — Compromise the prover process (live debugger or build pipeline).
 3. **What do they gain if successful?** — Verifier accepts proofs that do not actually attest the canonical circuit.
 4. **What's our defense?** — CASM BLAKE3 hash verified at every mint (rejects drift at gen time) AND at every verify (rejects drift at verify time); CASM compilation deterministic (Cairo 2.6.0 + deterministic-layout flag); CI snapshot test detects build-time drift.
-5. **What's the residual risk?** — Build pipeline compromise (supply chain). **Mitigation:** cargo-audit + renovate-bot; signed CASM (F4); reproducible builds.
+5. **What's the residual risk?** — Build pipeline compromise (supply chain). **Mitigation (R1 H5 fix):** F4 signed CASM is **REQUIRED** for full A2 mitigation, not optional; tracked in §Future Work with explicit promotion path. Until F4 lands, A2 is **PARTIALLY MITIGATED** (runtime drift covered; supply-chain compromise residual).
 
-**Verdict:** MITIGATED for runtime drift. Build pipeline compromise inherited from supply chain risk.
+**Verdict:** PARTIALLY MITIGATED at MVP. F4 (signed CASM) required for full mitigation.
 
 ### Finding A3: Wholesale bypass — ZK cap minted on Wholesale node
 
@@ -714,7 +741,7 @@ RFC-0958 does NOT alter token flow. Settlement continues per RFC-0959 v1.0 (inde
 
 - **Cairo version upgrades** tracked via `casm_version` field in `ProofBundle` (F3).
 - **STWO security parameter** configurable per proof; verifier accepts 96-bit and 128-bit.
-- **New public input fields** would require a circuit recompile; CASM hash change is the migration signal.
+- **New public input fields** would require a circuit recompile; CASM hash change is the migration signal. Verifier retains the previous N=2 CASM versions (R1 H13 fix) so in-flight proofs continue to verify during the migration window.
 
 ### Inter-Implementation Compatibility
 
@@ -751,7 +778,7 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 
 ### Phase B.2: Stoolap fork CASM Production (S05 unique deliverable per master plan §4)
 
-- [ ] `cairo/build.rs` invokes `cairo-compile >=2.6.0` (not marker write).
+- [ ] `cairo/build.sh` (R1 H12 fix: was `cairo/build.rs`; Cairo is not Rust) invokes `cairo-compile >=2.6.0` (not marker write).
 - [ ] Pin `cairo-compile` via scarb/asdf in CI.
 - [ ] Compute real CASM Blake3 hash; regenerate `bundled.rs` constants.
 - [ ] Replace `[0x01, 0x02, 0x03, 0x04]`-style stubs with actual compiled bytes.
@@ -793,7 +820,7 @@ See §Cross-Repo Coordination for repo coordination details (stoolap fork pin, P
 - [ ] Cipherocto PR: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (in `cipherocto/` repo — owns Phase D verifier + Phase E gating + Phase F self-host integration).
 - [ ] ZK circuit change → regenerate CASM + run snapshot tests.
 - [ ] Pin ZK-bearing vendor dependencies: blake3, cairo_air, stwo versions.
-- [ ] **PR ordering:** cipherocto PR first (defines interfaces), stoolap fork PR second (implements CASM + STWO); both PRs reviewed together for atomic landing.
+- [ ] **PR ordering (R1 H6 fix — reconciled with §Cross-Repo Coordination):** cipherocto PR first (defines interfaces), stoolap fork PR second (implements CASM + STWO); both PRs reviewed together for atomic landing. §Cross-Repo Coordination L879 ("Either order is acceptable") was ambiguous; this row is the authoritative order.
 
 ## Key Files to Modify
 
@@ -874,11 +901,11 @@ Subclass (not supersede) chosen because:
 RFC-0958 spans two repositories:
 
 1. **`cipherocto/`** — `crates/quota-router-core/src/zk_verify/capability.rs` + `crates/octo-wallet/src/cap/zk_mint.rs`. Cipherocto-side PR (this repo).
-2. **`/home/mmacedoeu/_w/databases/stoolap` fork** on `feat/blockchain-sql` branch — `cairo/capability_zk.cairo` + `cairo/build.rs` + `stwo-plugin/`. Stoolap fork PR (sibling repo).
+2. **`/home/mmacedoeu/_w/databases/stoolap` fork** on `feat/blockchain-sql` branch — `cairo/capability_zk.cairo` + `cairo/build.sh` (R1 H12 fix: was `cairo/build.rs`; Cairo is not Rust so `.rs` was incorrect) + `stwo-plugin/`. Stoolap fork PR (sibling repo).
 
-**Ordering:** Either order is acceptable; document ordering in PR description. Recommended: cipherocto-side PR first (defines interfaces), stoolap fork PR second (implements CASM + STWO). Both PRs MUST be reviewed together for atomic landing.
+**Ordering (R1 H6 fix):** Cipherocto-side PR first (defines interfaces), stoolap fork PR second (implements CASM + STWO). Both PRs MUST be reviewed together for atomic landing. The §Implementation Phases Phase G row is the authoritative ordering.
 
-**Phase G items:** See §Implementation Phases Phase G (L712-721) for the cross-repo coordination checklist (CI gate, vendor pin, PR ordering).
+**Phase G items:** See §Implementation Phases Phase G (L815-824) for the cross-repo coordination checklist (CI gate, vendor pin, PR ordering).
 
 **Stoolap fork branch pin:** commit hash recorded in `docs/plans/2026-07-19-session-05-zk-capability-circuit.md` §1 + master plan §8 Risk #6 mitigation.
 
@@ -888,6 +915,7 @@ RFC-0958 spans two repositories:
 | ------- | ---------- | -------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0.1     | 2026-07-20 | Draft    | @cipherocto (S05 ZK capability work)                                                                 | Initial Draft. Includes: Cairo 2.6.0 + STWO circuit (`cairo/capability_zk.cairo`); public inputs (6) + private witness (3-4) schema; NodeType gating (Wholesale REJECTED / SelfHost DEFAULT / Hybrid OPT-IN); wire format v2 extension (optional 4th segment); failure modes (NodeTypeCannotMintZKCap, ZkVerifyError, etc.); cross-repo coordination with stoolap fork `feat/blockchain-sql`; all 8 BLUEPRINT v1.3 mandatory sections present: §Roles and Authorities, §Adversary Analysis (5 findings A1-A5), §Lifecycle Requirements (CapabilityToken state machine extension + ProofStale/WholesaleAttempt states), §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit (9 entries IA-1 through IA-9), §Dependency Validation, §Version History. Path corrected from S05 plan `rfcs/draft/zk/` → BLUEPRINT `rfcs/draft/proof-systems/` (no `zk/` category per BLUEPRINT numbering). |
 | 1.0     | 2026-07-21 | Accepted | @cipherocto (gap closure); @mmacedoeu (maintainer approval per BLUEPRINT.md §RFC Acceptance Process) | Promotion to Accepted. Gap closure: added §Adversarial Review (12-finding table covering STARK forgery, CASM drift, Wholesale bypass, trace forgery, PublicInputMismatch replay, wire downgrade, Cairo version drift, security parameter downgrade, supply chain, live debugger, CASM pre-image, in-flight replay) + §Economic Analysis (dual-stake impact table, computational cost impact, token flow inheritance from RFC-0959 v1.0, stakeholder incentive analysis, anti-fraud economics). Multi-round adversarial review R1-R5 documented: R1 found §Adversarial Review + §Economic Analysis missing; R2 confirmed both sections present and substantive; R3-R5 found 0 additional findings. 7-day review + 2 maintainer approvals completed per BLUEPRINT.md §RFC Acceptance Process.                                                                                                                                            |
+| 1.1     | 2026-07-22 | Accepted | @cipherocto (post-acceptance R1 multi-round adversarial review + 19 fixes) | Post-acceptance R1 adversarial review found 5 CRITICAL + 14 HIGH findings: (C1) holder_sig struct inconsistency (resolved: moved to PrivateWitness); (C2) PublicInputs missing PartialEq (resolved: added PartialEq, Eq); (C3) STWO Fiat-Shamir Class C misstatement (resolved: corrected to Class A — deterministic); (C4) Cairo step_records Poseidon canonicalization unspecified (resolved: added poseidon_hash_trace with felt252 triple encoding); (C5) Borsh vs canonical_ser inconsistency (resolved: switched to RFC-0126 canonical_ser); (H1) holder_did.to_public_key() undefined (resolved: did_resolve_pubkey); (H2) blake3_keyed_hash keying ambiguity (resolved: blake3::derive_key("capability.cairo.chain", current_sig)); (H3) STARK security parameter mislabel (resolved: FRI query bits + hash collision resistance); (H4) live-debugger RFC cite (resolved: 0009 → 0102); (H5) F4 signed CASM (resolved: PARTIALLY MITIGATED verdict + F4 promotion path); (H6) PR ordering (resolved: cipherocto-first authoritative); (H7) NodeType gossip (resolved: cross-ref RFC-0009 required); (H8) Clock skew (resolved: MAX_SKEW_SECS=300 + ClockSkewExceeded variant); (H9) Cross-verifier CASM drift (resolved: stwo-plugin commit pin); (H10) PublicInputMismatch window "None" → "N/A"; (H11) Wire format V1 trailing-dot ambiguity (resolved: 4th-segment content check); (H12) cairo/build.rs → cairo/build.sh; (H13) CASM version retention (N=2, 7-day grace); (H14) Why Needed §1 verifier-compromise threat misstatement (resolved: acceptance-side). RFC remains Accepted after fix application. |
 
 ---
 

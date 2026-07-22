@@ -26,6 +26,12 @@ pub enum CapabilityClass {
 }
 
 /// Public inputs to the ZK circuit (RFC-0958 §Data Structures).
+///
+/// **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` added for slot-binding
+/// defense against cross-slot replay. Mint-side sources from holder's vault
+/// slot (RFC-0009 §Vault); verifier-side compares against token envelope's
+/// slot ID. Cross-impl test vectors carry concrete slot IDs (e.g.
+/// `"slot-alpha-001"`); pre-v1.4 sentinel placeholders are removed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicInputs {
     pub ask_id: [u8; 32],
@@ -36,6 +42,9 @@ pub struct PublicInputs {
     pub current_unix_time: u64,
     /// Self-host mode only; None for Wholesale / Hybrid.
     pub output_hash: Option<[u8; 32]>,
+    /// **v1.4:** provider vault slot ID (RFC-0009 §Vault). Stable identifier
+    /// for the slot the capability is bound to. Prevents cross-slot replay.
+    pub provider_slot_id: String,
 }
 
 /// Proof bundle (RFC-0958 §Data Structures).

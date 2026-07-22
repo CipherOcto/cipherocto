@@ -47,7 +47,8 @@ pub struct PrivateWitness {
     pub discharges_full: Vec<Vec<u8>>, // opaque discharge macaroons
 }
 
-/// Public inputs (RFC-0958 §Data Structures; v1.2 M5 fix: output_hash Some iff SelfHost).
+/// Public inputs (RFC-0958 §Data Structures; v1.2 M5 fix: output_hash Some iff SelfHost;
+/// **v1.4:** `provider_slot_id` added for slot-binding defense per IA-11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicInputs {
     pub ask_id: [u8; 32],
@@ -57,6 +58,11 @@ pub struct PublicInputs {
     pub holder_did: String,
     pub current_unix_time: u64,
     pub output_hash: Option<[u8; 32]>,
+    /// **v1.4:** provider vault slot ID (RFC-0009 §Vault). Stable identifier
+    /// for the slot that the capability is bound to. Mint API rejects empty
+    /// strings via `ZkMintError::EmptySlotId`. Real proofer sources this
+    /// from holder vault at mint time; test fixtures use concrete slot IDs.
+    pub provider_slot_id: String,
 }
 
 /// Proof bundle (RFC-0958 §Data Structures).
@@ -100,6 +106,10 @@ pub enum ZkMintError {
 
     #[error("capability expired: before={before}, now={now}")]
     Expired { before: u64, now: u64 },
+
+    /// **v1.4:** provider_slot_id is empty; cannot mint without slot binding.
+    #[error("provider_slot_id is empty (RFC-0958 v1.4 IA-11: slot binding required)")]
+    EmptySlotId,
 }
 
 /// Compiled CASM BLAKE3 hash for the bundled capability ZK circuit
@@ -184,7 +194,13 @@ pub fn mint_with_zk(
         return Err(ZkMintError::HybridCannotEmitPoI);
     }
 
-    // 5. CASM hash MUST match compiled CASM at proof gen time.
+    // 5. **v1.4:** provider_slot_id MUST be non-empty (slot binding defense,
+    //    IA-11). Real proofer sources this from holder vault (RFC-0009 §Vault).
+    if public_inputs.provider_slot_id.is_empty() {
+        return Err(ZkMintError::EmptySlotId);
+    }
+
+    // 6. CASM hash MUST match compiled CASM at proof gen time.
     let bundled = bundled_casm_hash();
     if casm_hash != bundled {
         return Err(ZkMintError::CasmHashMismatch {
@@ -193,7 +209,7 @@ pub fn mint_with_zk(
         });
     }
 
-    // 6. STWO proof generation (delegated to stoolap fork; MVP stub returns
+    // 7. STWO proof generation (delegated to stoolap fork; MVP stub returns
     //    empty proof bytes). Production: stwo_plugin::prove(casm, witness, public_inputs).
     let stark_proof = Vec::new();
 
@@ -276,6 +292,9 @@ mod tests {
             } else {
                 None
             },
+            // **v1.4:** real slot ID (no sentinel). In production this is
+            // sourced from the holder's vault slot via RFC-0009 §Vault.
+            provider_slot_id: "slot-mvp-001".to_owned(),
         }
     }
 

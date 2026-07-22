@@ -14,6 +14,10 @@
 //! `zk-verifier` crate (per [[stoolap-general-purpose-db]]). The stub proof
 //! for vectors 1, 8 uses the contract documented in `zk-verifier`
 //! (`first 32 bytes == blake3(casm_hash || canonical_public)`).
+//!
+//! **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` carried in
+//! `PublicInputs`; no sentinel placeholder. Fixtures use concrete slot IDs
+//! (e.g. `"slot-alpha-001"`).
 
 use quota_router_core::node_type_gating::{
     check_zk_mint_allowed, check_zk_mint_preflight, NodeType,
@@ -31,7 +35,7 @@ fn make_stub_proof_bytes(casm: &[u8; 32], public: &PublicInputs) -> Vec<u8> {
         verifier_local_unix_time: COMPILED_TIME,
         compiled_casm_hash: casm_hex.clone(),
         capability_root_hash: hex::encode(public.cap_root_hash),
-        provider_slot_id: "test-slot".to_owned(),
+        provider_slot_id: public.provider_slot_id.clone(),
     };
     zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec()
 }
@@ -45,6 +49,7 @@ fn sample_proof() -> ProofBundle {
         holder_did: "did:octo:holder".to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: None,
+        provider_slot_id: "slot-alpha-001".to_owned(),
     };
     let casm = COMPILED_CASM_HASH;
     ProofBundle {
@@ -159,4 +164,33 @@ fn zk_cross_impl_tv1() {
     // returns StwoVerifyError — proving the contract is enforced.
     let err = verify_capability_zk(&p2, &expected, &COMPILED_CASM_HASH, COMPILED_TIME);
     assert!(err.is_err(), "corrupted p2 should fail");
+}
+
+/// Vector 9 (RFC-0958 v1.4): zk-verify-slot-binding-mismatch.
+///
+/// Proofer binds proof to slot "slot-alpha-001"; verifier expects
+/// "slot-beta-002". Public inputs differ → PublicInputMismatch. Defense
+/// against cross-slot replay (IA-11).
+#[test]
+fn zk_verify_slot_binding_mismatch() {
+    let proof = sample_proof();
+    let mut expected = proof.public_inputs.clone();
+    expected.provider_slot_id = "slot-beta-002".to_owned();
+    let err =
+        verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::zk_verify::ZkVerifyError::PublicInputMismatch(_)
+    ));
+}
+
+/// Vector 10 (RFC-0958 v1.4): zk-verify-slot-binding-match.
+///
+/// Slot binding matches → verify passes (regression: pre-v1.4 sentinels
+/// could not produce a matching slot; v1.4 uses real slot IDs).
+#[test]
+fn zk_verify_slot_binding_match() {
+    let proof = sample_proof();
+    let expected = proof.public_inputs.clone();
+    verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
 }

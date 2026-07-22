@@ -178,7 +178,20 @@ pub struct ProofBundle {
     pub security_bits: u8,
 }
 
-/// Public inputs (6 fields per S05 §2 Decision 6 + 1 optional for self-host mode per S05 §3 Step 5).
+/// Public inputs (6 fields per S05 §2 Decision 6 + 1 optional for self-host mode per S05 §3 Step 5 +
+/// **v1.4:** `provider_slot_id` slot-binding field).
+///
+/// **v1.4 slot binding:** `provider_slot_id` is a stable identifier for the
+/// provider vault slot (RFC-0009 §Vault) that the capability is bound to. The
+/// proofer MUST source it from the holder's vault slot at mint time; the
+/// verifier MUST compare it against the `provider_slot_id` declared in the
+/// token envelope (RFC-0957 §Wire Format v3). A proof generated for slot A
+/// MUST NOT verify against a token claiming slot B — defense against
+/// cross-slot replay where an attacker captures a proof bound to one
+/// provider slot and replays it against another.
+///
+/// Cross-implementation test vectors at §Test Vectors carry concrete slot
+/// IDs (e.g., `"slot-alpha-001"`) — no sentinel placeholders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputs {
     pub ask_id: AskId,                       // RFC-0959 v1.0
@@ -193,6 +206,11 @@ pub struct PublicInputs {
     /// `Some(_) && NodeType == Hybrid` is rejected at mint time via `ZkMintError::HybridCannotEmitPoI`.
     /// `None && NodeType == SelfHost` is rejected at mint time via `ZkMintError::MissingInferenceTrace`.
     pub output_hash: Option<[u8; 32]>,
+    /// **v1.4:** provider vault slot ID (RFC-0009 §Vault). Stable identifier
+    /// for the slot that the capability is bound to. Prevents cross-slot
+    /// replay; consumed by both proofer (mint-side, sourced from vault) and
+    /// verifier (compare-side, sourced from token envelope).
+    pub provider_slot_id: String,
 }
 
 /// Private witness (4 fields per S05 §2 Decision 7 + R1 fix C1: holder_sig is private).
@@ -672,6 +690,7 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 | IA-8 | Capability root secret is zeroized after proof gen                                | §Algorithms `mint_with_zk` (L271-301) step 4 CASM hash check (zeroize location: §Key Handling Rules L495-499); §Key Handling Rules (L495-499, includes header L494)                                                 | Retention → verifier compromise                        | Inherit from RFC-0957 §IA-7 + RFC-0009 §Vault                                             |
 | IA-9 | Stoolap fork `feat/blockchain-sql` branch is the canonical source for CASM + STWO | §Cross-Repo Coordination header (L796); content (L798-808); §Implementation Phases Phase B.2 (L678-682) + Phase C.2 (L684 header; L686-689 content); §Dependencies Optional (RFC-0959, RFC-0955 at L65-69)          | Fork drift → CASM hash mismatch across implementations | Pin commit hash; weekly diff vs upstream; per master plan §8 Risk #6                      |
 | IA-10 | Stoolap fork PR (Phase B.2 + C.2) MUST land before cipherocto's `verify_capability_zk` can promote from MVP stub to production (v1.3 amendment: explicit cross-repo coupling documented; previously implicit in §Cross-Repo Coordination ordering) | §Cross-Repo Coordination; §Implementation Phases Phase G Cross-Repo Coordination checklist | Cipherocto verifier accepts all-comments match as Ok in MVP (per R1 H8 + R1 C5 MVP stub); without fork PR, `stark_proof` is never actually verified | Block on stoolap fork PR landing per master plan §Cross-Repo Coordination; cipherocto PR review includes fork readiness check |
+| IA-11 | **v1.4:** `provider_slot_id` is a stable, globally-unique identifier for the vault slot that the capability is bound to; proofer and verifier MUST agree on the slot ID for the proof to verify. Sourced from RFC-0009 §Vault substrate. | §Data Structures `PublicInputs.provider_slot_id` (v1.4 field); §Algorithms `verify_capability_zk` (slot comparison); §Algorithms `mint_with_zk` (slot sourcing from vault) | Cross-slot replay: attacker captures a proof bound to slot A, replays against token claiming slot B → authorization grant against wrong slot | Verifier compares `proof.public_inputs.provider_slot_id` against token envelope's `provider_slot_id` (RFC-0957 §Wire Format v3 slot segment); mismatch returns `ZkVerifyError::PublicInputMismatch`. Mint API rejects empty / unparseable slot IDs. Vault substrate (RFC-0009 §Vault) provides slot ID provenance. |
 
 ## Adversarial Review
 
@@ -772,7 +791,8 @@ RFC-0958 does NOT alter token flow. Settlement continues per RFC-0959 v1.0 (inde
 - v1.1 (2026-07-22): added ClockSkewExceeded variant (R1 H8); verifier signature became 4-arg (`verifier_local_unix_time`).
 - v1.2 (2026-07-22): added `MissingOutputHash` + `HybridCannotEmitPoI` (R1 M5); wire format clarification (R1 M17).
 - v1.3 (2026-07-22): added IA-10 (cross-repo coupling explicit); F4 promotion path documented.
-- Implementations claiming compatibility with this RFC MUST implement the v1.3 surface (4-arg verifier + 9-variant ZkMintError + clock skew bounds check).
+- v1.4 (2026-07-22): added `provider_slot_id: String` field to `PublicInputs` for slot-binding defense against cross-slot replay. Mint-side sources from holder's vault slot (RFC-0009 §Vault); verifier-side compares against token envelope's `provider_slot_id` (RFC-0957 §Wire Format v3 adds slot segment). Cross-impl test vectors now carry concrete slot IDs; placeholder sentinel ("test-slot") removed from CipherOcto verifier. Implementations claiming compatibility with this RFC MUST implement the v1.4 surface (8-field PublicInputs including `provider_slot_id` + v1.3 surface).
+- Implementations claiming compatibility with this RFC MUST implement the v1.4 surface (8-field PublicInputs including `provider_slot_id` + 4-arg verifier + 9-variant ZkMintError + clock skew bounds check).
 
 ## Test Vectors
 
@@ -945,6 +965,7 @@ RFC-0958 spans two repositories:
 | 1.1     | 2026-07-22 | Accepted | @cipherocto (post-acceptance R1 multi-round adversarial review + 19 fixes) | Post-acceptance R1 adversarial review found 5 CRITICAL + 14 HIGH findings: (C1) holder_sig struct inconsistency (resolved: moved to PrivateWitness); (C2) PublicInputs missing PartialEq (resolved: added PartialEq, Eq); (C3) STWO Fiat-Shamir Class C misstatement (resolved: corrected to Class A — deterministic); (C4) Cairo step_records Poseidon canonicalization unspecified (resolved: added poseidon_hash_trace with felt252 triple encoding); (C5) Borsh vs canonical_ser inconsistency (resolved: switched to RFC-0126 canonical_ser); (H1) holder_did.to_public_key() undefined (resolved: did_resolve_pubkey); (H2) blake3_keyed_hash keying ambiguity (resolved: blake3::derive_key("capability.cairo.chain", current_sig)); (H3) STARK security parameter mislabel (resolved: FRI query bits + hash collision resistance); (H4) live-debugger RFC cite (resolved: 0009 → 0102); (H5) F4 signed CASM (resolved: PARTIALLY MITIGATED verdict + F4 promotion path); (H6) PR ordering (resolved: cipherocto-first authoritative); (H7) NodeType gossip (resolved: cross-ref RFC-0009 required); (H8) Clock skew (resolved: MAX_SKEW_SECS=300 + ClockSkewExceeded variant); (H9) Cross-verifier CASM drift (resolved: stwo-plugin commit pin); (H10) PublicInputMismatch window "None" → "N/A"; (H11) Wire format V1 trailing-dot ambiguity (resolved: 4th-segment content check); (H12) cairo/build.rs → cairo/build.sh; (H13) CASM version retention (N=2, 7-day grace); (H14) Why Needed §1 verifier-compromise threat misstatement (resolved: acceptance-side). RFC remains Accepted after fix application. |
 | 1.2     | 2026-07-22 | Accepted | @cipherocto + @mmacedoeu (v1.2 amendment: deferred R1 MEDIUM + LOW findings) | Post-v1.1 amendment addresses 17 MEDIUM + 12 LOW R1 findings deferred from v1.1: (M3) §Lifecycle `[*]-->Minted` "Deterministic?" column clarified (Yes, holder signing is RFC-0957 path); (M4) §Fiat-Shamir "internal randomness" corrected (randomness derived from public inputs); (M5) §PublicInputs.output_hash Option semantics documented (Some iff SelfHost; Hybrid opt-in excluded); (M6) §Implementation Phases Phase F combined PoI+ZK receipt wire format specified (`ReceiptV2 { capability_zk_proof: Option<ProofBundle>, poi_proof: Option<PoIProof>, ... }`); (M7) §Out of Scope PoI binding clarified (optional via `inference_trace` private witness); (M16) §Why Needed §3 rate-limit caveat mechanism specified (AmountMax via `evaluate_first_party` + `sum_axes <= lookup_max_total` circuit assertion); (M17) §CapabilityToken proof_bundle Some/None encoding for V1 class specified (None for V1; mint API enforces via `ZkMintError::ClassMismatch`); (L1-L2) Authors/Maintainers co-author credit; (L4) §Out of Scope ML fairness cross-link; (L5) §Rationale STWO already-in-fork + Phase C.2 stable-rust vendoring reconciled; (L6) §Adversary A5 nonce-based dedup cross-ref to RFC-0959 ConsumedReceiptIndex; (L7) §Future Work F1 priority_lane + latency_p99_ms defined (now concrete axes in Phase G fixtures); (L8) §CASM bundle size 10-100KB → ~50KB narrow; (L9) §Test Vectors expired path corrected (ZkVerifyError not ZkMintError); (L10) §Proof size 50-500KB → 50KB Hybrid / 200-500KB SelfHost narrow; (L11) §Out of Scope cache hit detection cross-ref RFC-0959 §Algorithms `cache_classify`. RFC remains Accepted. |
 | 1.3     | 2026-07-22 | Accepted | @cipherocto + @mmacedoeu (v1.3 amendment: doc cleanup + IA-10 + F4 promotion path) | Final post-R1 doc cleanup + structural improvements: (L3) §Version History v0.1 row references R1-R5 review process; (IA-10 new) §Implicit Assumptions Audit adds IA-10 for cross-repo coupling (stoolap fork PR MUST land before cipherocto verifier can promote from MVP stub to production); (F4) §Future Work F4 promotion path documented (3-step implementation: build-pipeline Ed25519 sig + casm_build_sig field + verify-side pubkey check); (§Maintainers) v1.3 amendment sign-off; (§Compatibility Across Versions) per-version compatibility table. RFC remains Accepted; all 12 R1 LOW findings now addressed (post-v1.2 had 11/12; v1.3 closes L3). |
+| 1.4     | 2026-07-22 | Accepted | @cipherocto + @mmacedoeu (v1.4 amendment: provider_slot_id binding — closes crypto-extraction deferred item 2026-07-22) | Post-crypto-extraction (2026-07-22) deferred item resolution: `provider_slot_id: String` field added to `PublicInputs` for slot-binding defense. §Data Structures PublicInputs doc-commented with v1.4 slot-binding rationale; §Compatibility Across Versions v1.4 row added; this row added. Implementation surfaces affected: `crates/quota-router-core/src/zk_verify/mod.rs` PublicInputs struct (add field); `crates/quota-router-core/src/zk_verify/capability.rs` (drop `"test-slot"` sentinel — read from `proof.public_inputs.provider_slot_id`); `crates/quota-router-core/tests/zk_vectors.rs` (drop sentinel — pass slot via PublicInputs); `crates/octo-wallet/src/capability/zk_mint.rs` (mint-side source from vault slot config stub until RFC-0009 §Vault substrate wired). Pre-v1.4 test vectors with sentinel are NOT compatible with v1.4 — callers MUST regenerate. RFC remains Accepted. |
 
 ---
 

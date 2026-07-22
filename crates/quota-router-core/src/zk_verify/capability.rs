@@ -9,6 +9,13 @@
 //!
 //! Per RFC-0958 v1.1 R1 H8 fix: clock skew bounds check added
 //! (`MAX_SKEW_SECS = 300`); per R3 N5 fix: emits `ZkVerifyError::ClockSkewExceeded`.
+//!
+//! **v1.4 (2026-07-22):** `provider_slot_id` read directly from
+//! `proof.public_inputs.provider_slot_id` (no sentinel placeholder). The
+//! proofer MUST source the slot from holder vault (RFC-0009 §Vault); the
+//! verifier passes the public-input value through to `zk_verifier` for
+//! canonical-binary commitment. Mismatched slot binding is detected at
+//! public-input equality check (different slot → `PublicInputMismatch`).
 
 use super::{ProofBundle, PublicInputs, ZkVerifyError};
 
@@ -65,21 +72,17 @@ pub fn verify_capability_zk(
     //    (extracted from stoolap fork 2026-07-22). Map domain-layer
     //    CipherOcto PublicInputs → zk-verifier PublicInputs.
     //
-    //    provider_slot_id: migration 2026-07-22 — CipherOcto domain
-    //    PublicInputs doesn't carry a provider_slot_id (slot is a wallet
-    //    concern, not a public-input concern). TBD 0958 v1.4. For now, use
-    //    a stable sentinel so the verifier's canonical JSON matches the
-    //    proofer's. The proofer (zk-mint) is the one that needs to embed
-    //    the slot ID; for cross-impl vectors, both sides must agree on the
-    //    sentinel. Tests hard-code this same sentinel in
-    //    `make_stub_proof_bytes`.
+    //    **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` is read
+    //    directly from `proof.public_inputs.provider_slot_id` (sourced
+    //    from holder vault slot at mint time, per RFC-0009 §Vault). No
+    //    sentinel placeholder. Cross-impl vectors carry concrete slot IDs.
     let casm_hash_hex = hex::encode(compiled_casm_blake3_hash);
     let zk_public = zk_verifier::PublicInputs {
         proof_issued_at_unix: proof.public_inputs.current_unix_time,
         verifier_local_unix_time,
         compiled_casm_hash: casm_hash_hex.clone(),
         capability_root_hash: hex::encode(proof.public_inputs.cap_root_hash),
-        provider_slot_id: "test-slot".to_owned(),
+        provider_slot_id: proof.public_inputs.provider_slot_id.clone(),
     };
     let zk_proof = zk_verifier::ProofBundle {
         proof_bytes: proof.stark_proof.clone(),
@@ -124,7 +127,7 @@ pub fn verify_capability_zk(
     })
 }
 
-/// Public inputs equality (RFC-0958 §Adversary A5).
+/// Public inputs equality (RFC-0958 §Adversary A5 + v1.4 IA-11 slot binding).
 fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
     a.ask_id == b.ask_id
         && a.axes_consumed == b.axes_consumed
@@ -133,6 +136,11 @@ fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
         && a.holder_did == b.holder_did
         && a.current_unix_time == b.current_unix_time
         && a.output_hash == b.output_hash
+        // **v1.4 (RFC-0958 IA-11):** slot binding must match — defense
+        // against cross-slot replay. If the proof was minted for slot A
+        // and the verifier expects slot B, this returns false → caller
+        // returns `PublicInputMismatch`.
+        && a.provider_slot_id == b.provider_slot_id
 }
 
 #[cfg(test)]
@@ -149,7 +157,7 @@ mod tests {
             verifier_local_unix_time: public.current_unix_time,
             compiled_casm_hash: casm_hex.clone(),
             capability_root_hash: hex::encode(public.cap_root_hash),
-            provider_slot_id: "test-slot".to_owned(),
+            provider_slot_id: public.provider_slot_id.clone(),
         };
         zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec()
     }
@@ -163,6 +171,7 @@ mod tests {
             holder_did: "did:octo:holder".to_owned(),
             current_unix_time: 1_700_000_000,
             output_hash: None,
+            provider_slot_id: "slot-alpha-001".to_owned(),
         };
         let casm = [0x42; 32];
         let stark_proof = build_stub_proof(&casm, &public);

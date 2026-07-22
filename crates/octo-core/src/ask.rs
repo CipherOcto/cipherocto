@@ -112,6 +112,36 @@ pub struct Ask {
 }
 
 impl Ask {
+    /// Construct a validated `Ask`. Rejects empty asker_did / model / all-zero nonce.
+    /// # Errors
+    /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyNonce`.
+    pub fn new(
+        asker_did: impl Into<String>,
+        model: impl Into<String>,
+        rates: ModelRateTable,
+        nonce: [u8; 16],
+        expires_at_unix: u64,
+    ) -> Result<Self, AskError> {
+        let asker_did = asker_did.into();
+        let model = model.into();
+        if asker_did.is_empty() {
+            return Err(AskError::EmptyAskerDid);
+        }
+        if model.is_empty() {
+            return Err(AskError::EmptyModel);
+        }
+        if nonce == [0u8; 16] {
+            return Err(AskError::EmptyNonce);
+        }
+        Ok(Self {
+            asker_did,
+            model,
+            rates,
+            nonce,
+            expires_at_unix,
+        })
+    }
+
     /// Compute the content-addressable AskId.
     /// `AskId = BLAKE3(canonical_ser(asker_did || model || axes_hash || nonce))`
     /// where `axes_hash = BLAKE3(canonical_ser(rates.rates))`.
@@ -134,6 +164,17 @@ impl Ask {
         let rates_canonical = serde_json::to_vec(&self.rates).expect("serializable");
         *blake3::hash(&rates_canonical).as_bytes()
     }
+}
+
+/// Ask construction errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AskError {
+    #[error("asker_did is empty")]
+    EmptyAskerDid,
+    #[error("model is empty")]
+    EmptyModel,
+    #[error("nonce is all-zeros (use a real CSPRNG-generated 16-byte nonce)")]
+    EmptyNonce,
 }
 
 /// Per-axis consumption tuple: `(axis_id, units_consumed)`.

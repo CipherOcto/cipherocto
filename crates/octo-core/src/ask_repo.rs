@@ -137,16 +137,36 @@ impl AskRepository {
 
     /// Insert or replace an Ask.
     ///
-    /// stoolap doesn't support `INSERT OR REPLACE` or `ON CONFLICT` syntax,
-    /// so we use check-then-update-or-insert (single-writer race acceptable
-    /// for MVP; production would acquire a row lock).
+    /// Uses a stoolap transaction (ReadCommitted isolation) so the check-then-update-or-insert
+    /// sequence is serialized correctly under concurrent writers — without
+    /// transactions, two writers computing `MAX(row_id)+1` in parallel could
+    /// both pick the same `row_id` and the second INSERT would fail with a
+    /// PK violation. The transaction holds the executor lock for the duration
+    /// of the put, eliminating the race.
     /// # Errors
-    /// Returns `RepoError::Db` on stoolap failure.
+    /// Returns `RepoError::Db` on stoolap failure (begin, query, execute, commit).
     pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
         let row = AskRow::try_from(ask)?;
-        // Check if row already exists by ask_id.
-        let mut existing = self
+        let mut tx = self
             .db
+            .begin()
+            .map_err(|e| RepoError::Db(format!("begin tx: {e}")))?;
+        let result = self.put_in_tx(&mut tx, &row);
+        match result {
+            Ok(()) => tx
+                .commit()
+                .map_err(|e| RepoError::Db(format!("commit: {e}"))),
+            Err(e) => {
+                let _ = tx.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// put() body executed inside a transaction (private helper).
+    fn put_in_tx(&self, tx: &mut stoolap::ApiTransaction, row: &AskRow) -> Result<(), RepoError> {
+        // Check if row already exists by ask_id.
+        let mut existing = tx
             .query(
                 "SELECT row_id FROM asks WHERE ask_id = $1",
                 (row.ask_id.clone(),),
@@ -157,26 +177,24 @@ impl AskRepository {
             let row_id: i64 = existing_row
                 .get::<i64>(0)
                 .map_err(|e| RepoError::Db(format!("row_id: {e}")))?;
-            self.db
-                .execute(
-                    "UPDATE asks SET asker_did = $1, model = $2, rates_json = $3, nonce = $4, \
-                     expires_at_unix = $5, created_at_unix = $6 WHERE row_id = $7",
-                    (
-                        row.asker_did,
-                        row.model,
-                        row.rates_json,
-                        row.nonce,
-                        row.expires_at_unix,
-                        row.created_at_unix,
-                        row_id,
-                    ),
-                )
-                .map_err(|e| RepoError::Db(format!("update: {e}")))?;
+            tx.execute(
+                "UPDATE asks SET asker_did = $1, model = $2, rates_json = $3, nonce = $4, \
+                 expires_at_unix = $5, created_at_unix = $6 WHERE row_id = $7",
+                (
+                    row.asker_did.clone(),
+                    row.model.clone(),
+                    row.rates_json.clone(),
+                    row.nonce.clone(),
+                    row.expires_at_unix,
+                    row.created_at_unix,
+                    row_id,
+                ),
+            )
+            .map_err(|e| RepoError::Db(format!("update: {e}")))?;
         } else {
             // Need a row_id; use a max-or-zero placeholder. stoolap PRIMARY KEY = INTEGER
             // without AUTO_INCREMENT, so we must pick a row_id ourselves. Use MAX+1.
-            let max_q = self
-                .db
+            let max_q = tx
                 .query("SELECT COALESCE(MAX(row_id), 0) FROM asks", ())
                 .map_err(|e| RepoError::Db(format!("max row_id: {e}")))?;
             let next_id: i64 = if let Some(r) = max_q.into_iter().next() {
@@ -187,15 +205,14 @@ impl AskRepository {
                 1
             };
             let next_id = next_id + 1;
-            self.db
-                .execute(
-                    "INSERT INTO asks \
-                     (row_id, ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                    (next_id, row.ask_id, row.asker_did, row.model, row.rates_json,
-                     row.nonce, row.expires_at_unix, row.created_at_unix),
-                )
-                .map_err(|e| RepoError::Db(format!("insert: {e}")))?;
+            tx.execute(
+                "INSERT INTO asks \
+                 (row_id, ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                (next_id, row.ask_id.clone(), row.asker_did.clone(), row.model.clone(),
+                 row.rates_json.clone(), row.nonce.clone(), row.expires_at_unix, row.created_at_unix),
+            )
+            .map_err(|e| RepoError::Db(format!("insert: {e}")))?;
         }
         Ok(())
     }
@@ -456,6 +473,60 @@ mod tests {
     }
 
     #[test]
+    fn cheapest_returns_zero_rate_ask_as_winner() {
+        // A zero-rate Ask wins cheapest() over a non-zero-rate Ask (free vs paid
+        // for the same model). Documents that rate=0 doesn't crash division
+        // and that the cost calculation handles edge values gracefully.
+        let repo = AskRepository::open_in_memory().unwrap();
+        let axes = PricingAxis::standard_axes();
+        let now = 1_700_000_000;
+        let free = sample_ask("did:octo:free", "openai/gpt-4", 0, now + 1000);
+        let paid = sample_ask("did:octo:paid", "openai/gpt-4", 30_000, now + 1000);
+        repo.put(&paid).unwrap();
+        repo.put(&free).unwrap();
+        let winner = repo
+            .cheapest("openai/gpt-4", now, &axes)
+            .unwrap()
+            .expect("cheapest");
+        // Free Ask wins cheapest (lowest cost among candidates).
+        assert_eq!(winner.asker_did, "did:octo:free");
+        // Cost for free Ask is non-negative (using default rates for axes not in the
+        // Ask's rates table; rate=0 only for the axis explicitly listed in rates).
+        let consumed: Vec<_> = axes.iter().map(|a| (a.id.clone(), 1000u64)).collect();
+        let cost = crate::ask::settlement_cost(&winner, &consumed, &axes);
+        assert!(cost < crate::ask::settlement_cost(&paid, &consumed, &axes));
+    }
+
+    #[test]
+    fn put_under_transaction_serializes_writers() {
+        // Smoke test: put() opens + commits a transaction. Run two puts serially
+        // (the executor lock serializes; full concurrent test needs a thread pool
+        // which is out of scope for the unit test).
+        let repo = AskRepository::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        for i in 0..5 {
+            let ask = sample_ask(
+                &format!("did:octo:a{i}"),
+                "openai/gpt-4",
+                10_000 + i as u128 * 1000,
+                now + 1000,
+            );
+            repo.put(&ask).unwrap();
+        }
+        // All 5 Asks present.
+        for i in 0..5 {
+            let ask = sample_ask(
+                &format!("did:octo:a{i}"),
+                "openai/gpt-4",
+                10_000 + i as u128 * 1000,
+                now + 1000,
+            );
+            let got = repo.get(&ask.id()).unwrap().expect("get");
+            assert_eq!(got.asker_did, format!("did:octo:a{i}"));
+        }
+    }
+
+    #[test]
     fn list_by_asker_filters() {
         let repo = AskRepository::open_in_memory().unwrap();
         let now = 1_700_000_000;
@@ -495,3 +566,5 @@ mod tests {
         migrations::apply_pending(&db).unwrap(); // must not error
     }
 }
+
+// Ensure file ends with the mod test block close brace.

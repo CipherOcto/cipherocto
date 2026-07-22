@@ -72,7 +72,48 @@ pub struct MissionId {
     pub model: String,
 }
 
+/// Mission identifier validation errors.
+#[derive(Debug, thiserror::Error)]
+pub enum MissionIdError {
+    #[error("asker_did is empty")]
+    EmptyAskerDid,
+    #[error("model is empty")]
+    EmptyModel,
+    #[error("asker_did contains invalid character `{0}` (must be ASCII printable)")]
+    InvalidAskerDid(char),
+    #[error("model contains invalid character `{0}` (must be ASCII printable)")]
+    InvalidModel(char),
+}
+
 impl MissionId {
+    /// Construct a validated `MissionId` (rejects empty + non-printable chars).
+    /// # Errors
+    /// Returns `MissionIdError::EmptyAskerDid` / `EmptyModel` / `InvalidAskerDid` / `InvalidModel`.
+    pub fn new(
+        asker_did: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, MissionIdError> {
+        let asker_did = asker_did.into();
+        let model = model.into();
+        if asker_did.is_empty() {
+            return Err(MissionIdError::EmptyAskerDid);
+        }
+        if model.is_empty() {
+            return Err(MissionIdError::EmptyModel);
+        }
+        for c in asker_did.chars() {
+            if !is_valid_mission_id_char(c) {
+                return Err(MissionIdError::InvalidAskerDid(c));
+            }
+        }
+        for c in model.chars() {
+            if !is_valid_mission_id_char(c) {
+                return Err(MissionIdError::InvalidModel(c));
+            }
+        }
+        Ok(Self { asker_did, model })
+    }
+
     /// HKDF info string for the mission root key.
     #[must_use]
     pub fn info_string(&self) -> String {
@@ -84,6 +125,11 @@ impl MissionId {
     pub fn axis_info_string(&self, axis_id: &str) -> String {
         format!("{}/{}", self.info_string(), axis_id)
     }
+}
+
+/// MissionId char validator: ASCII printable (0x20..=0x7E), excluding control + non-ASCII.
+fn is_valid_mission_id_char(c: char) -> bool {
+    c.is_ascii() && !c.is_ascii_control()
 }
 
 /// Key hierarchy: derive mission keys + per-axis subkeys from identity seed.
@@ -225,6 +271,67 @@ mod tests {
             m.axis_info_string("input_tokens_per_1k"),
             "cipherocto/mission/v1/did:octo:a:openai/gpt-4/input_tokens_per_1k"
         );
+    }
+
+    #[test]
+    fn mission_id_new_accepts_valid() {
+        let m = MissionId::new("did:octo:a", "openai/gpt-4").unwrap();
+        assert_eq!(m.asker_did, "did:octo:a");
+    }
+
+    #[test]
+    fn mission_id_new_rejects_empty_asker_did() {
+        assert!(matches!(
+            MissionId::new("", "openai/gpt-4"),
+            Err(MissionIdError::EmptyAskerDid)
+        ));
+    }
+
+    #[test]
+    fn mission_id_new_rejects_empty_model() {
+        assert!(matches!(
+            MissionId::new("did:octo:a", ""),
+            Err(MissionIdError::EmptyModel)
+        ));
+    }
+
+    #[test]
+    fn mission_id_new_rejects_control_chars() {
+        // Newline in asker_did — common injection vector for log/CSV contexts.
+        assert!(matches!(
+            MissionId::new("did:octo:a\nINJECT", "openai/gpt-4"),
+            Err(MissionIdError::InvalidAskerDid('\n'))
+        ));
+        // Tab in model.
+        assert!(matches!(
+            MissionId::new("did:octo:a", "openai\tgpt-4"),
+            Err(MissionIdError::InvalidModel('\t'))
+        ));
+    }
+
+    #[test]
+    fn mission_id_new_rejects_non_ascii() {
+        // Non-ASCII (e.g., emoji) — prevents confusion in BLAKE3 info string
+        // where multi-byte chars could cause subtle domain-separator issues.
+        assert!(matches!(
+            MissionId::new("did:octo:🚀", "openai/gpt-4"),
+            Err(MissionIdError::InvalidAskerDid('🚀'))
+        ));
+    }
+
+    #[test]
+    fn mission_id_new_accepts_common_uris() {
+        // Verify typical DIDs + model refs pass validation.
+        for (asker, model) in [
+            ("did:octo:a", "openai/gpt-4"),
+            ("did:octo:b", "anthropic/claude-3-opus"),
+            ("did:example:123", "meta-llama/llama-3.1-70b"),
+        ] {
+            assert!(
+                MissionId::new(asker, model).is_ok(),
+                "valid MissionId rejected: {asker}/{model}"
+            );
+        }
     }
 
     #[test]

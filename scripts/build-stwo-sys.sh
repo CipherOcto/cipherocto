@@ -17,8 +17,8 @@
 # inclusion in the cipherocto deployment tarball at /var/lib/cipherocto/.
 #
 # Requires:
-#   - rustup with nightly-2026-07-15 toolchain installed
-#     (`rustup toolchain install nightly-2026-07-15 --profile minimal`)
+#   - rustup with nightly-2025-06-23 toolchain installed
+#     (`rustup toolchain install nightly-2025-06-23 --profile minimal`)
 #   - On Linux: gcc + libc development headers (libc6-dev)
 
 set -euo pipefail
@@ -54,14 +54,14 @@ if [[ ! -d "$STWO_SYS_DIR" ]]; then
 fi
 
 # Verify nightly toolchain available.
-if ! rustup toolchain list 2>/dev/null | grep -q "nightly-2026-07-15"; then
-    echo "Installing nightly-2026-07-15 (minimal profile)..." >&2
-    rustup toolchain install nightly-2026-07-15 --profile minimal
+if ! rustup toolchain list 2>/dev/null | grep -q "nightly-2025-06-23"; then
+    echo "Installing nightly-2025-06-23 (minimal profile)..." >&2
+    rustup toolchain install nightly-2025-06-23 --profile minimal
 fi
 
 echo "Building stwo-sys ($PROFILE profile)..."
 cd "$STWO_SYS_DIR"
-cargo +nightly-2026-07-15 build "--$PROFILE"
+cargo +nightly-2025-06-23 build "--$PROFILE"
 
 if [[ "$SKIP_COPY" == "true" ]]; then
     echo "Build complete (skip-copy mode). Artifact at $STWO_SYS_DIR/target/$PROFILE/"

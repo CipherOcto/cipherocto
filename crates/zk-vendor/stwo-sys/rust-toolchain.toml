@@ -1,11 +1,18 @@
-# stwo-sys uses nightly toolchain because STWO upstream (keep-stwo/stwo)
-# pulls in curve25519-dalek with nightly-only SIMD intrinsics. The cipherocto
-# workspace stays stable-rust (MSRV 1.75.0); only stwo-sys opts into nightly.
+# stwo-sys uses nightly toolchain because STWO 2.1.0 + cairo-air +
+# stwo-cairo require nightly-only feature flags (`iter_array_chunks`,
+# `portable_simd`, `slice_ptr_get`). The cipherocto workspace stays
+# stable-rust (MSRV 1.75.0); only stwo-sys opts into nightly.
+#
+# Toolchain pin matches stoolap/stwo-plugin/rust-toolchain.toml exactly
+# so we share the same upstream resolution. Newer nightlies (post 2025-07)
+# stabilized `iter_array_chunks`, breaking the `#![feature(...)]` line in
+# stwo 2.1.0's lib.rs.
 #
 # cargo automatically picks this toolchain when invoked from this directory:
-#   cargo +nightly build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml
+#   cargo +nightly-2025-06-23 build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml
 # Or simply `cd crates/zk-vendor/stwo-sys && cargo build --release` and cargo
 # will read this file.
 [toolchain]
-channel = "nightly-2026-07-15"
+channel = "nightly-2025-06-23"
+components = ["rustfmt", "clippy"]
 profile = "minimal"

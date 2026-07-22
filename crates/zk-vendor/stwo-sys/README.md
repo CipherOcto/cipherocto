@@ -9,11 +9,16 @@ cdylib (`libstwo_sys.so` / `.dylib` / `.dll`) loaded at runtime by
 cipherocto via `libloading`. Decouples STWO upstream's nightly
 toolchain requirement from cipherocto's stable-rust invariant.
 
+Mirrors stoolap's `stwo-plugin/` crate
+(`/home/mmacedoeu/_w/databases/stoolap/stwo-plugin/`): same per-crate
+`rust-toolchain.toml` nightly pin, same STWO + cairo-air deps, same
+cdylib artifact shape.
+
 ## Build
 
 ```bash
 cd crates/zk-vendor/stwo-sys
-cargo build --release
+cargo +nightly-2025-06-23 build --release
 # → target/release/libstwo_sys.so
 ```
 
@@ -35,9 +40,18 @@ back to stub verify with a logged warning.
 
 Full FFI contract: see `src/lib.rs` module docs.
 
-## Real impl (TBD)
+## Real impl (2026-07-22)
 
-Mission 0958-a S05 task B. Replace stub `stwo_prove` / `stwo_verify`
-bodies with calls into vendored `keep-stwo/stwo` patched for stable
-rustc. Until then, stub proves a 32-byte XOR digest and verify checks
-XOR equality — NOT a real STARK; cipherocto logs warnings at load time.
+Real STWO `cairo-air` + `stwo` 2.1 + `stwo-cairo-prover` (from
+starkware-libs/stwo-cairo.git v1.1.0). Proof wire format: JSON-encoded
+`CairoProofForRustVerifier<Blake2sMerkleHasher>`. Verify path:
+`cairo_air::verifier::verify_cairo::<Blake2sMerkleChannel>`.
+
+Prove path: parses witness bytes as JSON `ProverInput`
+(`stwo_cairo_adapter::ProverInput`), invokes
+`stwo_cairo_prover::prover::prove_cairo::<Blake2sMerkleChannel>`, returns
+proof as JSON-encoded `CairoProofForRustVerifier<Blake2sMerkleHasher>`.
+
+Default prover params (Blake2s channel, log_blowup_factor=1, n_queries=70,
+canonical preprocessed trace) match stoolap's
+`stwo-plugin/src/verify.rs::create_default_prover_params`.

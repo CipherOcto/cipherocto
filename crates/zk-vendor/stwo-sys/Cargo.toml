@@ -17,9 +17,28 @@ name = "stwo_sys"
 crate-type = ["cdylib"]
 
 [dependencies]
-# No workspace deps — this crate is built standalone with `cargo +nightly`.
-# Once STWO source drops in (mission 0958-a S05 task B real impl),
-# add: stwo = { path = "../../vendor/stwo" } or similar.
+# Real STWO deps (matches stoolap/stwo-plugin/Cargo.toml pattern).
+# These compile on nightly via per-crate rust-toolchain.toml. Cipherocto
+# workspace stays stable; STWO is loaded at runtime via libloading from
+# zk-vendor. See crates/zk-vendor/stwo-sys/README.md.
+cairo-air = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0" }
+# Pin to exact version 2.1.0: stwo-cairo v1.1.0 was built against stwo 2.1.0;
+# newer 2.x versions renamed FriConfig.line_fold_step → fold_step, breaking
+# the cairo-serialize crate at compile time. Matches stoolap/stwo-plugin.
+stwo = "=2.1.0"
+stwo-cairo-prover = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0", package = "stwo-cairo-prover" }
+stwo-cairo-adapter = { git = "https://github.com/starkware-libs/stwo-cairo.git", tag = "v1.1.0", package = "stwo-cairo-adapter" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+# Pin transitive deps to match stoolap/stwo-plugin/Cargo.lock resolutions:
+# - ruint 1.17.2: newer ruint requires rustc 1.90+ which stabilizes
+#   `iter_array_chunks` (breaking stwo 2.1.0's feature flag).
+# - cairo-vm 3.1.0: newer cairo-vm removed `cairo_vm::stdlib::collections::HashMap`,
+#   which stwo-cairo-adapter still imports.
+ruint = "=1.17.2"
+cairo-vm = "=3.1.0"
 
 [profile.release]
 opt-level = 3

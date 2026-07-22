@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "description": "Phase G test fakes: provider simulator 8-mode fixtures. Per mission 0957-b AC-3: 8 modes (normal/200, throttle, 429-burst, key-expired, schema-change, timeout, garbage, internal-error). Per S04 plan §3 Step 5. Each entry = SimConfig seed + expected outcome (status, body_shape, retry-after if applicable).",
+  "modes": [
+    {"mode": "Ok", "delay_ms": 0, "expected_status": 200, "body_shape": "openai_chat_completion", "retry_after_secs": null, "description": "Normal/200 — happy path"},
+    {"mode": "Throttled", "delay_ms": 50, "expected_status": 429, "body_shape": "rate_limit_response", "retry_after_secs": 30, "description": "Throttle — gradual rate-limit response"},
+    {"mode": "RateLimited", "delay_ms": 0, "expected_status": 429, "body_shape": "rate_limit_response", "retry_after_secs": 60, "description": "429-burst — sudden rate-limit spike"},
+    {"mode": "KeyExpired", "delay_ms": 0, "expected_status": 401, "body_shape": "auth_error", "retry_after_secs": null, "description": "Key expired — provider key invalid"},
+    {"mode": "SchemaChange", "delay_ms": 10, "expected_status": 200, "body_shape": "schema_drift_response", "retry_after_secs": null, "description": "Schema change — provider changed response shape"},
+    {"mode": "Timeout", "delay_ms": 30000, "expected_status": 0, "body_shape": "empty", "retry_after_secs": null, "description": "Timeout — no response within window"},
+    {"mode": "Garbage", "delay_ms": 0, "expected_status": 200, "body_shape": "binary_garbage", "retry_after_secs": null, "description": "Garbage — non-parseable response body"},
+    {"mode": "InternalError", "delay_ms": 0, "expected_status": 500, "body_shape": "provider_error_schema", "retry_after_secs": null, "description": "Internal error — provider-side failure"}
+  ]
+}

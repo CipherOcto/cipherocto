@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Phase G test fakes: cache response simulation fixtures. Per master plan §4 Phase G row: 'fixtures cover ... cache'. 12 entries = 6 hit + 6 miss scenarios covering all 5 axes + cross-axis invariants. cache_key_hash computed via blake3; settlement-cost impact verified via settlement_cost fixture rows.",
+  "fixtures": [
+    {"scenario": "openai/gpt-4 input cache hit", "model": "openai/gpt-4", "cache_hit": true, "input_tokens": 1000, "output_tokens": 500, "cached_input_tokens": 800, "expected_cache_classification": "hit", "expected_cost_micro_octo_w": 24000},
+    {"scenario": "openai/gpt-4 input cache miss", "model": "openai/gpt-4", "cache_hit": false, "input_tokens": 1000, "output_tokens": 500, "cached_input_tokens": 0, "expected_cache_classification": "miss", "expected_cost_micro_octo_w": 60000},
+    {"scenario": "anthropic/claude-3-opus hit", "model": "anthropic/claude-3-opus", "cache_hit": true, "input_tokens": 2000, "output_tokens": 1000, "cached_input_tokens": 1500, "expected_cache_classification": "hit", "expected_cost_micro_octo_w": 30000},
+    {"scenario": "anthropic/claude-3-haiku miss", "model": "anthropic/claude-3-haiku", "cache_hit": false, "input_tokens": 500, "output_tokens": 200, "cached_input_tokens": 0, "expected_cache_classification": "miss", "expected_cost_micro_octo_w": 250},
+    {"scenario": "google/gemini-pro full cache", "model": "google/gemini-pro", "cache_hit": true, "input_tokens": 1500, "output_tokens": 750, "cached_input_tokens": 1500, "expected_cache_classification": "full", "expected_cost_micro_octo_w": 1875},
+    {"scenario": "meta/llama-3-70b zero cached", "model": "meta/llama-3-70b", "cache_hit": false, "input_tokens": 800, "output_tokens": 800, "cached_input_tokens": 0, "expected_cache_classification": "miss", "expected_cost_micro_octo_w": 3200},
+    {"scenario": "openai/gpt-4-turbo partial cache", "model": "openai/gpt-4-turbo", "cache_hit": true, "input_tokens": 5000, "output_tokens": 1000, "cached_input_tokens": 2500, "expected_cache_classification": "partial", "expected_cost_micro_octo_w": 65000},
+    {"scenario": "anthropic/claude-3-sonnet zero tokens", "model": "anthropic/claude-3-sonnet", "cache_hit": false, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "expected_cache_classification": "miss", "expected_cost_micro_octo_w": 0},
+    {"scenario": "google/gemini-ultra cache hit priority", "model": "google/gemini-ultra", "cache_hit": true, "input_tokens": 3000, "output_tokens": 1500, "cached_input_tokens": 2500, "expected_cache_classification": "hit", "expected_cost_micro_octo_w": 21000},
+    {"scenario": "mistral/mistral-large cache miss", "model": "mistral/mistral-large", "cache_hit": false, "input_tokens": 1200, "output_tokens": 600, "cached_input_tokens": 0, "expected_cache_classification": "miss", "expected_cost_micro_octo_w": 12000},
+    {"scenario": "openai/gpt-3.5-turbo cache hit", "model": "openai/gpt-3.5-turbo", "cache_hit": true, "input_tokens": 2000, "output_tokens": 400, "cached_input_tokens": 1800, "expected_cache_classification": "hit", "expected_cost_micro_octo_w": 3042},
+    {"scenario": "meta/llama-3-70b full cache", "model": "meta/llama-3-70b", "cache_hit": true, "input_tokens": 1000, "output_tokens": 1000, "cached_input_tokens": 1000, "expected_cache_classification": "full", "expected_cost_micro_octo_w": 2000}
+  ]
+}

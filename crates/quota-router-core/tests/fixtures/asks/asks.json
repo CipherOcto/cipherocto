@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "description": "Phase G test fakes: 10 models × 5 axes × 2 NodeTypes = 100 ASK fixtures. Per master plan §4 Phase G exit: 'fixtures cover 10 models × 5 axes × 2 nodetypes'. Each entry is a deterministic Ask proposal ready for AskRepository::put(). The 5 axes = 3 RFC-0959 §3.3 standard axes + 2 RFC-0958 §Out-of-Scope extension axes (priority_lane, latency_p99_ms). The 2 NodeTypes = Wholesale (provider-attested) + SelfHost (in-protocol attested). Deterministic nonces per (model, axis_set, nodetype) tuple; expires_at_unix far-future.",
+  "axes": [
+    {"id": "input_tokens_per_1k", "name": "Input tokens per 1K", "default_rate_per_1k": 30000},
+    {"id": "output_tokens_per_1k", "name": "Output tokens per 1K", "default_rate_per_1k": 60000},
+    {"id": "cached_input_tokens_per_1k", "name": "Cached input tokens per 1K", "default_rate_per_1k": 3000},
+    {"id": "priority_lane_per_1k", "name": "Priority lane per 1K (RFC-0958 F1 extension)", "default_rate_per_1k": 100000},
+    {"id": "latency_p99_ms", "name": "Latency p99 ms (RFC-0958 F1 extension)", "default_rate_per_1k": 500}
+  ],
+  "nodetypes": ["Wholesale", "SelfHost"],
+  "models": [
+    "openai/gpt-4",
+    "openai/gpt-4-turbo",
+    "openai/gpt-3.5-turbo",
+    "anthropic/claude-3-opus",
+    "anthropic/claude-3-sonnet",
+    "anthropic/claude-3-haiku",
+    "google/gemini-pro",
+    "google/gemini-ultra",
+    "meta/llama-3-70b",
+    "mistral/mistral-large"
+  ],
+  "asks": [
+    {"model": "openai/gpt-4", "nodetype": "Wholesale", "asker_did": "did:octo:provider:openai", "nonce_hex": "00000000000000000000000000000001", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 30000, "output_tokens_per_1k": 60000, "cached_input_tokens_per_1k": 3000, "priority_lane_per_1k": 100000, "latency_p99_ms": 500}},
+    {"model": "openai/gpt-4", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:openai-gpt4", "nonce_hex": "00000000000000000000000000000002", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 28000, "output_tokens_per_1k": 56000, "cached_input_tokens_per_1k": 2800, "priority_lane_per_1k": 95000, "latency_p99_ms": 480}},
+    {"model": "openai/gpt-4-turbo", "nodetype": "Wholesale", "asker_did": "did:octo:provider:openai", "nonce_hex": "00000000000000000000000000000003", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 10000, "output_tokens_per_1k": 30000, "cached_input_tokens_per_1k": 1000, "priority_lane_per_1k": 80000, "latency_p99_ms": 400}},
+    {"model": "openai/gpt-4-turbo", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:openai-gpt4t", "nonce_hex": "00000000000000000000000000000004", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 9500, "output_tokens_per_1k": 28500, "cached_input_tokens_per_1k": 950, "priority_lane_per_1k": 76000, "latency_p99_ms": 380}},
+    {"model": "openai/gpt-3.5-turbo", "nodetype": "Wholesale", "asker_did": "did:octo:provider:openai", "nonce_hex": "00000000000000000000000000000005", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 1500, "output_tokens_per_1k": 2000, "cached_input_tokens_per_1k": 150, "priority_lane_per_1k": 25000, "latency_p99_ms": 250}},
+    {"model": "openai/gpt-3.5-turbo", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:openai-gpt35", "nonce_hex": "00000000000000000000000000000006", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 1400, "output_tokens_per_1k": 1900, "cached_input_tokens_per_1k": 140, "priority_lane_per_1k": 24000, "latency_p99_ms": 240}},
+    {"model": "anthropic/claude-3-opus", "nodetype": "Wholesale", "asker_did": "did:octo:provider:anthropic", "nonce_hex": "00000000000000000000000000000007", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 15000, "output_tokens_per_1k": 75000, "cached_input_tokens_per_1k": 1500, "priority_lane_per_1k": 120000, "latency_p99_ms": 600}},
+    {"model": "anthropic/claude-3-opus", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:anthropic-opus", "nonce_hex": "00000000000000000000000000000008", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 14000, "output_tokens_per_1k": 70000, "cached_input_tokens_per_1k": 1400, "priority_lane_per_1k": 115000, "latency_p99_ms": 580}},
+    {"model": "anthropic/claude-3-sonnet", "nodetype": "Wholesale", "asker_did": "did:octo:provider:anthropic", "nonce_hex": "00000000000000000000000000000009", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 3000, "output_tokens_per_1k": 15000, "cached_input_tokens_per_1k": 300, "priority_lane_per_1k": 60000, "latency_p99_ms": 450}},
+    {"model": "anthropic/claude-3-sonnet", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:anthropic-sonnet", "nonce_hex": "0000000000000000000000000000000a", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 2800, "output_tokens_per_1k": 14000, "cached_input_tokens_per_1k": 280, "priority_lane_per_1k": 57000, "latency_p99_ms": 430}},
+    {"model": "anthropic/claude-3-haiku", "nodetype": "Wholesale", "asker_did": "did:octo:provider:anthropic", "nonce_hex": "0000000000000000000000000000000b", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 250, "output_tokens_per_1k": 1250, "cached_input_tokens_per_1k": 25, "priority_lane_per_1k": 15000, "latency_p99_ms": 200}},
+    {"model": "anthropic/claude-3-haiku", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:anthropic-haiku", "nonce_hex": "0000000000000000000000000000000c", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 240, "output_tokens_per_1k": 1200, "cached_input_tokens_per_1k": 24, "priority_lane_per_1k": 14000, "latency_p99_ms": 190}},
+    {"model": "google/gemini-pro", "nodetype": "Wholesale", "asker_did": "did:octo:provider:google", "nonce_hex": "0000000000000000000000000000000d", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 1250, "output_tokens_per_1k": 3750, "cached_input_tokens_per_1k": 125, "priority_lane_per_1k": 35000, "latency_p99_ms": 350}},
+    {"model": "google/gemini-pro", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:google-gemini-pro", "nonce_hex": "0000000000000000000000000000000e", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 1200, "output_tokens_per_1k": 3600, "cached_input_tokens_per_1k": 120, "priority_lane_per_1k": 33000, "latency_p99_ms": 340}},
+    {"model": "google/gemini-ultra", "nodetype": "Wholesale", "asker_did": "did:octo:provider:google", "nonce_hex": "0000000000000000000000000000000f", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 7000, "output_tokens_per_1k": 21000, "cached_input_tokens_per_1k": 700, "priority_lane_per_1k": 90000, "latency_p99_ms": 550}},
+    {"model": "google/gemini-ultra", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:google-gemini-ultra", "nonce_hex": "00000000000000000000000000000010", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 6700, "output_tokens_per_1k": 20000, "cached_input_tokens_per_1k": 670, "priority_lane_per_1k": 86000, "latency_p99_ms": 530}},
+    {"model": "meta/llama-3-70b", "nodetype": "Wholesale", "asker_did": "did:octo:provider:meta", "nonce_hex": "00000000000000000000000000000011", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 2000, "output_tokens_per_1k": 2000, "cached_input_tokens_per_1k": 200, "priority_lane_per_1k": 40000, "latency_p99_ms": 400}},
+    {"model": "meta/llama-3-70b", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:meta-llama3-70b", "nonce_hex": "00000000000000000000000000000012", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 1900, "output_tokens_per_1k": 1900, "cached_input_tokens_per_1k": 190, "priority_lane_per_1k": 38000, "latency_p99_ms": 380}},
+    {"model": "mistral/mistral-large", "nodetype": "Wholesale", "asker_did": "did:octo:provider:mistral", "nonce_hex": "00000000000000000000000000000013", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 4000, "output_tokens_per_1k": 12000, "cached_input_tokens_per_1k": 400, "priority_lane_per_1k": 55000, "latency_p99_ms": 420}},
+    {"model": "mistral/mistral-large", "nodetype": "SelfHost", "asker_did": "did:octo:selfhost:mistral-large", "nonce_hex": "00000000000000000000000000000014", "expires_at_unix": 1900000000, "rates": {"input_tokens_per_1k": 3800, "output_tokens_per_1k": 11500, "cached_input_tokens_per_1k": 380, "priority_lane_per_1k": 52000, "latency_p99_ms": 400}}
+  ]
+}

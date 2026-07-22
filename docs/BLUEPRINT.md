@@ -761,13 +761,15 @@ Reference material.
 - Updated numbering architecture
 - **v1.3 (2026-06-15):** Added Roles and Authorities, Implicit Assumptions Audit, Adversary Analysis (5-Question Test), Lifecycle Requirements to the RFC template (mirrors `rfcs/draft/process/0000-template.md` v1.3). Added "Roles and Authorities" and "Implicit Assumptions Audit" to the Cross-RFC Consistency Checklist. Linked the Adversarial Review Process to the new Adversary Analysis section and the `adversarial-audit` skill. Introduced the "Nothing should be implied" rule as a cross-cutting principle (specification + validation layers).
 
-```**RFC Process:**
+```text
+**RFC Process:**
 1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`
 2. Submit PR for discussion (minimum 7 days)
 3. Address all feedback
 4. Accepted → Move to `rfcs/accepted/{category}/`
 5. Implemented → Move to `rfcs/final/{category}/`
 6. Rejected/Superseded/Deprecated → Move to `rfcs/archived/`
+```
 
 ---
 
@@ -776,13 +778,12 @@ Reference material.
 **Location:** `missions/`
 
 **Lifecycle:**
-```
-
+```text
 missions/open/ → Available to claim
 missions/claimed/ → Someone working on it
 missions/with-pr/ → PR submitted
 missions/archived/ → Completed or abandoned
-````
+```
 
 **Template:**
 

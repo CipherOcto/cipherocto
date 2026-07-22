@@ -67,6 +67,7 @@ octo-transport = { path = "../../octo-transport" }
 octo-network = { path = "../octo-network" }
 octo-core = { path = "../octo-core" }
 quota-router-storage = { path = "../quota-router-storage" }
+quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 
 # For SHA256 (used in event_id computation)
 sha2.workspace = true

@@ -76,6 +76,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 # Cryptography
 sha2 = "0.10"
 blake3 = "1"
+hex = "0.4"
 # Async traits
 async-trait = "0.1"
 # Logging
@@ -103,6 +104,8 @@ parking_lot = "0.12"
 rand = "0.9"
 # Gzip compression (mission 0850p-a-session-export)
 flate2 = "1"
+# Tempfile for tests (quota-router-sm-engine dev-dep)
+tempfile = "3"
 # Bitflags (mission 0855p-c-sub-admins SubAdminAuthority)
 bitflags = "2"
 
@@ -122,3 +125,8 @@ bitflags = "2"
 # note.
 [patch.crates-io]
 glass_pumpkin = { path = "vendor/glass_pumpkin" }
+# CipherOcto fork of stoolap — workspace-wide git pin per
+# [[stoolap-general-purpose-db]] Path B (cipherocto embeds stoolap as SQL
+# substrate; schema is cipherocto's responsibility). Pinned commit must
+# match the ask-settlement migration expectations.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }

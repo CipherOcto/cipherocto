@@ -21,6 +21,14 @@ on:
 #             missions/open/0957-b-provider-boundary-exercise-path.md
 #             rfcs/draft/economics/0959-ask-settlement-chain.md (independent settlement chain)
 #             rfcs/draft/economics/0957-capability-token-format.md (capability token substrate)
+#
+# Feature gate note (per RFC-0917 invariant): `--all-features` is NOT used
+# because `litellm-mode` and `any-llm-mode` are mutually exclusive
+# (`compile_error!` at quota-router-core/src/router.rs:23). The mode gate
+# controls PROVIDER STRATEGY (reqwest vs PyO3), not interface availability.
+# BOTH HTTP proxy + Python SDK exist in ALL modes. `--features full`
+# enables both strategies simultaneously (single build), which is the
+# canonical "all strategies" form per RFC-0917.
 
 jobs:
   build:
@@ -29,8 +37,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build with all features
-        run: cargo build -p quota-router-core --all-features
+      - name: Build with all features (--features full per RFC-0917 mutex)
+        run: cargo build -p quota-router-core --features full
 
   test:
     name: 11-step exercise (AC-4)
@@ -39,8 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run 11-step exercise under --all-features (provider-sim already included via --all-features)
-        run: cargo test -p quota-router-core --test eleven_step --all-features
+      - name: Run 11-step exercise under --features full (per RFC-0917 mutex; litellm-mode + any-llm-mode mutually exclusive)
+        run: cargo test -p quota-router-core --test eleven_step --features full
 
   body-scan:
     name: Body-field linter (mission In Scope item 3)
@@ -62,7 +70,7 @@ jobs:
         with:
           components: clippy
       - name: Lint with -D warnings (includes reqwest+hyper+ureq+isahc deny rules)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --features full -- -D warnings
 
   exercise-goldens:
     name: Exercise goldens check (AC-5)
@@ -72,7 +80,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify INSTA goldens match
-        run: cargo test -p quota-router-core --test exercise_goldens --all-features
+        run: cargo test -p quota-router-core --test exercise_goldens --features full
 
   cross-impl:
     name: Cross-implementation verification (AC-10)
@@ -82,7 +90,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify RFC-0959 v1.0 TV1+TV2 settlement_hash + receipt_id digests match cross-impl reference
-        run: cargo test -p quota-router-core --test cross_impl_verification --all-features
+        run: cargo test -p quota-router-core --test cross_impl_verification --features full
 
   fuzz-min:
     name: Fuzz capability_verify (5min minimum)

@@ -163,7 +163,7 @@ Pass condition: each step produces a structured event with the asserted hash; fi
 ## 9. Exit Criteria for the Whole Plan
 
 - 11-step exercise green in CI under `--all-features` (no nightly) — authoritative list at `docs/plans/2026-07-19-identity-master-plan.md` §6 above
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean across all cipherocto + companion `quota-router-*` crates (`quota-router-cli`, `quota-router-core`, `quota-router-integration-tests`, `quota-router-pyo3` per actual workspace)
+- `cargo clippy --workspace --all-targets --features full -- -D warnings` clean across all cipherocto + companion `quota-router-*` crates (`quota-router-cli`, `quota-router-core`, `quota-router-integration-tests`, `quota-router-pyo3` per actual workspace). **Note:** `--all-features` is NOT used because `litellm-mode` + `any-llm-mode` are mutually exclusive per RFC-0917 (`compile_error!` at quota-router-core/src/router.rs). `--features full` enables both strategies simultaneously (single build).
 - Fuzz `capability_verify` 24h no crash
 - Stoolap fork passes `cargo test --lib` after Phase C migration PR merged (`feat/blockchain-sql` branch)
 - All exercise steps produce structured events with the asserted hash; final replay reconstructs identical receipt (per §6 pass condition)

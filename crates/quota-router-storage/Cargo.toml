@@ -1,0 +1,30 @@
+[package]
+name = "quota-router-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Cipherocto-side persistence for the quota-router domain (Ask + AskRepository + migrations + sync subscription). Owns consumer schema per [[stoolap-general-purpose-db]]; fork stays untouched."
+
+[dependencies]
+# Schema types + persistence — moved from octo-core 2026-07-21.
+# Cipherocto owns consumer schema; fork is a general-purpose DB.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# Per the persistence convention (RFC-0914-a / 0914-a-stoolap-persistence):
+# ALL new persistence uses CipherOcto's stoolap fork on
+# `feat/blockchain-sql`, never raw SQLite. The crate API is
+# `db.execute(sql, params)` and `db.query(sql, params) -> stoolap::Rows`.
+
+# Hashing (BLAKE3 for AskId, settlement_hash, mission key derivation)
+blake3 = "1"
+
+# Serialization (rates_json column; model rates table)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error types
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3"

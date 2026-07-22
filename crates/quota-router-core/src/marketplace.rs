@@ -59,8 +59,8 @@ impl InMemoryMarketplace {
 // AskRepository-backed marketplace (production)
 // ============================================================================
 
-use octo_core::ask::{settlement_cost, Ask, PricingAxis};
-use octo_core::ask_repo::{AskRepository, RepoError};
+use quota_router_storage::ask::{settlement_cost, Ask, PricingAxis};
+use quota_router_storage::ask_repo::{AskRepository, RepoError};
 
 /// Marketplace backed by cipherocto-side `AskRepository` (Phase C).
 ///
@@ -182,7 +182,7 @@ fn current_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_core::ask::{AxisRate, ModelRateTable};
+    use quota_router_storage::ask::{AxisRate, ModelRateTable};
 
     fn sample_ask(asker: &str, model: &str, rate: u128, expires: u64) -> Ask {
         Ask {

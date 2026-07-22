@@ -6,29 +6,21 @@
 //! - Identity management
 //! - Role staking (simulated in MVP)
 //! - Message routing
-//! - Resource accounting
 //!
 //! This crate contains protocol logic that must be deterministic
 //! and secure.
+//!
+//! **As of 2026-07-21:** pricing/settlement (`ask`), persistence
+//! (`ask_repo`, `migrations`), and sync subscription (`sync`) moved to
+//! `quota-router-storage` — they are quota-router domain, not core.
+//! octo-core is now lean: identity + role + routing only.
 
-pub mod ask;
-pub mod ask_repo;
 pub mod identity;
-pub mod migrations;
 pub mod role;
 pub mod routing;
-pub mod sync;
 
 pub use identity::Identity;
 pub use role::Role;
-
-pub use ask::cache_key_hash;
-pub use ask::{
-    settlement_cost, Ask, AskId, AxisConsumption, AxisRate, AxisRegistryError, CacheClassification,
-    CachePolicy, ConsumedReceiptIndex, MicroOCTO_W, ModelRateTable, ModelRef, PricingAxis,
-    PricingAxisRegistry, SettlementEnvelope, SettlementError,
-};
-pub use sync::{CipheroctoTable, ReplicatedTables};
 
 /// CipherOcto core configuration
 #[derive(Debug, Clone)]

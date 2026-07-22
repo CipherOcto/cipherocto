@@ -192,12 +192,12 @@ fn eleven_step_exercise_green() {
         delay_ms: 0,
     });
     let marketplace = Marketplace::open_in_memory().expect("open marketplace");
-    let inserted_ask = octo_core::ask::Ask {
+    let inserted_ask = quota_router_storage::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
         model: "openai/gpt-4".to_owned(),
-        rates: octo_core::ask::ModelRateTable {
+        rates: quota_router_storage::ask::ModelRateTable {
             model: "openai/gpt-4".to_owned(),
-            rates: vec![octo_core::ask::AxisRate {
+            rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
             }],

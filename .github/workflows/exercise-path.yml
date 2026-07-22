@@ -75,6 +75,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install system deps
+        # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in via
+        # octo-cable -> bluer -> dbus -> libdbus-sys (same as coverage.yml).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Lint with -D warnings (includes reqwest+hyper+ureq+isahc deny rules)
         run: cargo clippy --workspace --all-targets --features full -- -D warnings
 

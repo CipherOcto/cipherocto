@@ -40,7 +40,7 @@ use serde_json::Value;
 #[cfg(feature = "query")]
 pub const EXPECTED_TOOL_COUNT: usize = 148;
 #[cfg(not(feature = "query"))]
-pub const EXPECTED_TOOL_COUNT: usize = 139;
+pub const EXPECTED_TOOL_COUNT: usize = 142;
 
 pub async fn serve(socket: &Path) -> anyhow::Result<()> {
     let stdin = io::stdin();

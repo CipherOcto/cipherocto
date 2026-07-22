@@ -15,11 +15,18 @@ blake3.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# FFI loading for stwo-sys cdylib. Decouples STWO upstream's nightly
+# toolchain from the cipherocto workspace's stable-rust invariant —
+# STWO is built as a separate cdylib (crates/zk-vendor/stwo-sys/) and
+# loaded at runtime. See crates/zk-vendor/stwo-sys/README.md.
+libloading = "0.8"
 
 [dev-dependencies]
 
 [lints.rust]
-unsafe_code = "forbid"
+# `unsafe` is required for FFI loading (libloading, raw pointers,
+# transmute). Each use has a SAFETY block. Non-FFI modules should
+# remain unsafe-free.
 missing_debug_implementations = "warn"
 
 [lints.clippy]

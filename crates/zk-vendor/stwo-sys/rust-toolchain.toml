@@ -1,0 +1,11 @@
+# stwo-sys uses nightly toolchain because STWO upstream (keep-stwo/stwo)
+# pulls in curve25519-dalek with nightly-only SIMD intrinsics. The cipherocto
+# workspace stays stable-rust (MSRV 1.75.0); only stwo-sys opts into nightly.
+#
+# cargo automatically picks this toolchain when invoked from this directory:
+#   cargo +nightly build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml
+# Or simply `cd crates/zk-vendor/stwo-sys && cargo build --release` and cargo
+# will read this file.
+[toolchain]
+channel = "nightly-2026-07-15"
+profile = "minimal"

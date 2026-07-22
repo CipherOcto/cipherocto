@@ -25,6 +25,11 @@ exclude = [
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",
+    # stwo-sys builds on nightly (STWO upstream requires nightly-only
+    # curve25519-dalek SIMD intrinsics). Cipherocto workspace stays
+    # stable-rust; stwo-sys is a separate cargo project loaded at runtime
+    # via libloading. See crates/zk-vendor/stwo-sys/README.md.
+    "crates/zk-vendor/stwo-sys",
     # MTProto onboard crates are intentionally NOT excluded:
     # unlike the TDLib ones, they do not pull in TDLib. They
     # compile against the pure-Rust `octo-adapter-telegram-mtproto`

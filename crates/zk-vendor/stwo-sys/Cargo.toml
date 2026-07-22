@@ -1,0 +1,27 @@
+[package]
+name = "stwo-sys"
+version = "0.1.0"
+edition = "2021"
+authors = ["CipherOcto"]
+license = "MIT OR Apache-2.0"
+description = "STWO STARK verifier FFI shim (CipherOcto zk-vendor libloading target)"
+# This crate is INTENTIONALLY excluded from the cipherocto workspace
+# (see root Cargo.toml `exclude`). It compiles against nightly toolchain
+# (per rust-toolchain.toml) because STWO upstream pulls in curve25519-dalek
+# nightly-only SIMD intrinsics. Cipherocto workspace stays stable-rust.
+
+[lib]
+name = "stwo_sys"
+# cdylib = dynamically loadable shared library (.so/.dylib/.dll).
+# Cipherocto zk-vendor dlopen()s this artifact via libloading.
+crate-type = ["cdylib"]
+
+[dependencies]
+# No workspace deps — this crate is built standalone with `cargo +nightly`.
+# Once STWO source drops in (mission 0958-a S05 task B real impl),
+# add: stwo = { path = "../../vendor/stwo" } or similar.
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

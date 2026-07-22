@@ -12,7 +12,9 @@
 //! and secure.
 
 pub mod ask;
+pub mod ask_repo;
 pub mod identity;
+pub mod migrations;
 pub mod role;
 pub mod routing;
 

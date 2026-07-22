@@ -15,4 +15,8 @@ anyhow = "1.0"
 thiserror = "2.0"
 blake3 = "1"
 
+# Phase C: cipherocto-side migration runner + DAO over stoolap fork
+# (consumer schema lives HERE, not in the fork; see memory [[stoolap-general-purpose-db]])
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
 octo-registry = { path = "../octo-registry" }

@@ -1,0 +1,69 @@
+[package]
+name = "octo-wallet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto user-facing wallet: identity keys, capability key derivation, encrypted provider-key vault, starkli-compatible keystore"
+
+[[bin]]
+name = "octo-wallet"
+path = "src/bin/octo-wallet.rs"
+
+[lib]
+name = "octo_wallet"
+path = "src/lib.rs"
+
+[dependencies]
+# Workspace deps — only what's needed for wallet MVP
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+directories.workspace = true
+rand.workspace = true
+
+# Identity crypto (RFC-0009 §Identity Key Format)
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+hkdf = "0.12"
+getrandom = "0.2"
+hex = "0.4"
+base64 = "0.22"
+
+# Capability token (RFC-0957 §3)
+borsh = { version = "1", optional = true }
+
+# Vault encryption (RFC-0009 §Vault + RFC-0102 §Key Storage post-amendment)
+argon2 = "0.5"
+aes-gcm = "0.10"
+# chacha20poly1305 reserved for Starkli keystore import (diverges from RFC-0102 §Key Storage; see mission §Starkli Keystore Divergence)
+chacha20poly1305 = "0.10"
+
+# Memory hygiene (RFC-0009 §Security Considerations: zeroize all secret-bearing types on drop)
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# CLI (mission acceptance: octo-wallet subcommands)
+clap = { version = "4.5", features = ["derive"] }
+rpassword = "7"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission acceptance: clippy -D warnings clean across workspace
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

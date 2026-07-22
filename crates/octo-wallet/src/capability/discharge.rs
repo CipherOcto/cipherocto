@@ -99,7 +99,11 @@ mod tests {
 
     #[test]
     fn discharge_channel_serde_roundtrip() {
-        for ch in [DischargeChannel::Escrow, DischargeChannel::Revocation, DischargeChannel::RateLimit] {
+        for ch in [
+            DischargeChannel::Escrow,
+            DischargeChannel::Revocation,
+            DischargeChannel::RateLimit,
+        ] {
             let s = ch.as_str();
             let back: DischargeChannel = s.parse().unwrap();
             assert_eq!(ch, back);

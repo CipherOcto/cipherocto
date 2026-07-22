@@ -117,7 +117,7 @@ impl HsmAdapter for LedgerSigner {
 /// Device fingerprint (for audit + multi-device support).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceFingerprint {
-    pub vendor: String,  // "ledger" | "yubihsm" | "tpm" | ...
+    pub vendor: String, // "ledger" | "yubihsm" | "tpm" | ...
     pub model: String,
     pub serial: String,
 }

@@ -1,0 +1,20 @@
+{
+  "description": "Canonical 11-step exercise expected outputs (mission AC-5 goldens). Regenerate with `UPDATE_GOLDENS=1 cargo test ... eleven_step_goldens_dump` when step semantics intentionally change.",
+  "inputs": {
+    "ask_expires_at_unix": 1900000000,
+    "ask_nonce_hex": "42424242424242424242424242424242",
+    "asker_did": "did:octo:asker1",
+    "holder_did": "did:octo:holder-1",
+    "model": "openai/gpt-4",
+    "request_body": "{\"model\":\"openai/gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+    "router_id": "did:octo:router-1"
+  },
+  "steps": {
+    "step10_settlement_hash_blake3": "36f7ea87ac0978c9c7f3354393cb2d0f096c0c03379c64cff1efdbe3535b0095",
+    "step1_idp_token_blake3": "b20a61b9e0bedfe8014c9470c599d0ad7ae0b74e9905c891535502ada774becf",
+    "step2_vak_blake3": "ab9db5d6de8325c47ab5f7537f68ea0ff12bfdae9525d7d6a79b84ab460be7f5",
+    "step3_cap_id_blake3": "5d9d92daf76f253fc571437af814168b371a71ca11c4cc78f071f47664c1894b",
+    "step6_escrow_id_blake3": "6ca33e19834c9a80c6c0b2577ad480250de9656577a1a2e65dcd2f9f1a914136"
+  },
+  "version": 1
+}

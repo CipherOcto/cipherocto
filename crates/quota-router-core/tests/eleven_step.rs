@@ -80,11 +80,8 @@ fn step4_post_request(cap_id: &[u8; 32], body: &[u8]) -> EgressRequest {
 }
 
 /// Step 5: Marketplace lookup.
-fn step5_marketplace_lookup<'a>(
-    marketplace: &'a Marketplace,
-    model: &str,
-) -> Option<&'a MarketplaceEntry> {
-    marketplace.cheapest(model)
+fn step5_marketplace_lookup(marketplace: &Marketplace, model: &str) -> Option<MarketplaceEntry> {
+    marketplace.cheapest(model).expect("cheapest lookup")
 }
 
 /// Step 6: OCTO-W escrow pre-auth (placeholder: derive escrow ID).
@@ -194,13 +191,22 @@ fn eleven_step_exercise_green() {
         kind: SimResponseKind::Ok,
         delay_ms: 0,
     });
-    let mut marketplace = Marketplace::new();
-    marketplace.insert(MarketplaceEntry {
-        ask_id: [1u8; 32],
+    let marketplace = Marketplace::open_in_memory().expect("open marketplace");
+    let inserted_ask = octo_core::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
         model: "openai/gpt-4".to_owned(),
-        cost_per_1k: 30_000,
-    });
+        rates: octo_core::ask::ModelRateTable {
+            model: "openai/gpt-4".to_owned(),
+            rates: vec![octo_core::ask::AxisRate {
+                axis: "input_tokens_per_1k".to_owned(),
+                rate_per_1k: 30_000,
+            }],
+        },
+        nonce: [0x42; 16],
+        expires_at_unix: 1_900_000_000,
+    };
+    let expected_ask_id = inserted_ask.id();
+    marketplace.put(&inserted_ask).expect("put ask");
 
     let mut ledger: HashSet<[u8; 32]> = HashSet::new();
     let request_body = br#"{"model":"openai/gpt-4","messages":[{"role":"user","content":"hi"}]}"#;
@@ -220,7 +226,7 @@ fn eleven_step_exercise_green() {
     // 5
     let entry = step5_marketplace_lookup(&marketplace, "openai/gpt-4")
         .expect("marketplace has gpt-4 entry");
-    assert_eq!(entry.ask_id, [1u8; 32]);
+    assert_eq!(entry.ask_id, expected_ask_id);
     // 6
     let _escrow_id = step6_escrow_preauth(&entry.ask_id);
     // 7
@@ -275,8 +281,8 @@ fn eleven_step_handles_timeout() {
 
 #[test]
 fn marketplace_lookup_returns_none_for_unknown_model() {
-    let m = Marketplace::new();
-    assert!(m.cheapest("nonexistent-model").is_none());
+    let m = Marketplace::open_in_memory().expect("open marketplace");
+    assert!(m.cheapest("nonexistent-model").expect("cheapest").is_none());
 }
 
 #[test]

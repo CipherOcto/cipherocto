@@ -65,6 +65,7 @@ bincode = "1"
 # Mesh network layer dependencies (QuotaRouterNode, gossip, forward, handler)
 octo-transport = { path = "../../octo-transport" }
 octo-network = { path = "../octo-network" }
+octo-core = { path = "../octo-core" }
 
 # For SHA256 (used in event_id computation)
 sha2.workspace = true

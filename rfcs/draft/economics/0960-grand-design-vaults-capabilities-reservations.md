@@ -1199,7 +1199,7 @@ Shard routing:
 
 Bottleneck shifts from "transfers per second" to "independent resource commitments per second."
 
-### §10 Consensus Sessions
+### §10 Execution Envelopes (renamed from "Consensus Sessions" in v2.0)
 
 The billion-dollar opportunity: **preserve the enterprise programming model, replace only the trust model.**
 
@@ -1509,7 +1509,7 @@ gas = w_rows_read    * rows_read
     + w_proof_constraints * proof_constraints
 ```
 
-Where `w_*` are weights calibrated per deployment (RFC-0917 RouterConfig). Each weight is a `u64` constant per row/page/byte/msg/constraint.
+Where `w_*` are weights calibrated per deployment (RFC-0917 RouterConfig `cost_weights` extension; v1.1 schema split per RFC-0927/0928). Each weight is a `u64` constant per row/page/byte/msg/constraint.
 
 **Why database gas, not Ethereum gas:**
 
@@ -1524,14 +1524,14 @@ Where `w_*` are weights calibrated per deployment (RFC-0917 RouterConfig). Each 
 GasAccount {
     account_id:    AccountID,         // capability holder DID
     block_height:  u64,
-    gas_used:      u64,               // cumulative
-    gas_limit:     u64,               // per-envelope ceiling
-    gas_remaining: u64,               // = limit - current envelope projection
+    gas_used:      u64,               // cumulative gas consumed by this account since the last reset
+    gas_limit:     u64,               // per-envelope ceiling (NOT cumulative)
+    gas_remaining: u64,               // = gas_limit - projected_gas(envelope); recomputed at sign time
     last_envelope: Hash,
 }
 ```
 
-An envelope that would exceed `gas_limit` is rejected at sign time with `E_GAS_LIMIT_EXCEEDED`. The envelope is **not** partially applied.
+`gas_used` resets per-account at each block boundary (operator-configurable: per-block, per-day, or per-month). The per-envelope `gas_limit` is independent of the cumulative `gas_used`; an envelope cannot exceed `gas_limit` in a single shot, but a sequence of envelopes can cumulatively consume more than `gas_limit`. An envelope whose projected gas would exceed `gas_limit` is rejected at sign time with `E_GAS_LIMIT_EXCEEDED`. The envelope is **not** partially applied.
 
 **Strategic value:** Deterministic gas makes CipherOcto the first consensus system whose economic cost model is **measurable in real database terms**, not abstract computation units. A DBA can predict costs.
 

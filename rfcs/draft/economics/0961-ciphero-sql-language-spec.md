@@ -6,7 +6,7 @@ Draft v2.0
 
 > **Note (v2.0 reframe):** Renamed from "Consensus-Safe SQL" to **Deterministic SQL** — the determinism is the property, the consensus is an implementation detail. CIPHERO_SQL is the dialect compiled by the Deterministic SQL Engine (RFC-0960 §1) into deterministic WAL entries. The dialect is the surface; the WAL is the protocol.
 
-> **Note (v1.0):** Companion RFC to RFC-0960 §12.3, §12.4 (Deterministic SQL Engine + Stored Procedures survive). Defines the CIPHERO_SQL language: grammar, parse-time determinism checks, runtime determinism verification, allowed/forbidden constructors, the `DETERMINISTIC` flag semantics, and the relationship to PostgreSQL `CREATE PROCEDURE LANGUAGE` syntax. Builds on `docs/research/2026-07-22-enterprise-migration-playbooks.md` §4 (PostgreSQL CREATE PROCEDURE survey).
+> **Note (v1.0):** Companion RFC to RFC-0960 §1 (Deterministic SQL Engine; v2.0 architecture). Defines the CIPHERO_SQL language: grammar, parse-time determinism checks, runtime determinism verification, allowed/forbidden constructors, the `DETERMINISTIC` flag semantics, and the relationship to PostgreSQL `CREATE PROCEDURE LANGUAGE` syntax. Builds on `docs/research/2026-07-22-enterprise-migration-playbooks.md` §4 (PostgreSQL CREATE PROCEDURE survey).
 
 ## Version History
 
@@ -21,7 +21,7 @@ Draft v2.0
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0960 | Required | Defines grand-design §12 Consensus Sessions; §12.3 + §12.4 reference this RFC for deterministic SQL |
+| RFC-0960 | Required | Defines grand-design §1 (Deterministic SQL Engine) + §10 (Execution Envelopes); references this RFC for the deterministic SQL dialect (§7 Deterministic SQL Profile) |
 | RFC-0126 | Required | Canonical serialization for SQL AST + procedure bytecode |
 | RFC-0104 | Required | DFP encoding for all numeric expressions |
 | RFC-0102 | Required | Wallet cryptography (capability holder signs the procedure invocation) |
@@ -626,7 +626,7 @@ The following questions are deferred to RFC-0962 (ExecutionEnvelope protocol):
 
 ## 13. Status
 
-This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine) and §12.3, §12.4. Status: **Draft v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Awaiting review and promotion to Accepted. Once Accepted, the `cipherocto-sql` crate can implement the parser + registry + runtime verification.
+This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Draft v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Awaiting review and promotion to Accepted. Once Accepted, the `cipherocto-sql` crate can implement the parser + registry + runtime verification.
 
 Companion RFCs in flight:
 - RFC-0962 (ExecutionEnvelope object protocol) — Draft v2.0 (2026-07-23)

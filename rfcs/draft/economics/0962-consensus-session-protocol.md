@@ -4,7 +4,7 @@
 
 Draft
 
-> **Note:** Companion RFC to RFC-0960 §12.9 (Execution Envelope object). Defines the wire-protocol shape, lifecycle states, signature aggregation, ZK commitment, and reconciliation semantics of an `ExecutionEnvelope`. Builds on RFC-0959 (SettlementReceipt envelope), RFC-0957 (Capability), RFC-0862 (sync as propagation), RFC-0961 (Deterministic SQL dialect), and RFC-0967 (Policy Object reference).
+> **Note:** Companion RFC to RFC-0960 §10 (Execution Envelopes) and §1 (Deterministic SQL Engine). Defines the wire-protocol shape, lifecycle states, signature aggregation, ZK commitment, and reconciliation semantics of an `ExecutionEnvelope`. Builds on RFC-0959 (SettlementReceipt envelope), RFC-0957 (Capability), RFC-0862 (sync as propagation), RFC-0961 (Deterministic SQL dialect), and RFC-0967 (Policy Object reference).
 
 > **Note (v2.0 rename):** v2.0 (2026-07-23) renames the object from `ConsensusSession` to `ExecutionEnvelope` per strategic reframe (RFC-0960 §1.2): an ExecutionEnvelope is a database-level unit of work that produces a deterministically-replayable WAL segment. Consensus is an implementation detail of WAL certification, not the primary abstraction. Field `mode = CONSENSUS_SAFE` renamed to `mode = DETERMINISTIC`. Field `version_tag` bumped from 1 to 2 to signal breaking change.
 

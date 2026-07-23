@@ -20,6 +20,7 @@ Draft
 | v1.7 | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review). |
 | v1.8 | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review). |
 | v1.9 | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review). |
+| v1.10 | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -372,6 +373,16 @@ R10 pass: post-R9 drift, catalog constraints, reading guide. 2 fixes applied.
 **Defect:** §8 catalog had `parent_capability_id BLOB NULL` for the `WrappedOnly` chain reference but no `FOREIGN KEY` to itself. A `WrappedOnly` could point at a non-existent capability (or at itself, creating a self-cycle that the chain-depth check at R7-F1 might miss in a different code path).
 
 **Fix:** Schema now has `FOREIGN KEY (parent_capability_id) REFERENCES capabilities(capability_id)` and `CHECK (parent_capability_id IS NULL OR parent_capability_id <> capability_id)`. Self-reference is rejected at the DB level; non-existent parent references are also rejected.
+
+## R11 Self-Review (post-R10 sweep)
+
+R11 pass: error code provenance, post-R10 drift. 1 fix applied.
+
+### R11-F1 — Error registry lacks "Defined in" provenance column
+
+**Defect:** The Central Error Code Registry (R9-F1) listed 23 codes with primary RFC and meaning but no "Defined in" column. Reviewer looking for the source of a code (e.g., `E_REPLAY_MISMATCH`) had to grep all 10 R-round sections to find which R introduced it.
+
+**Fix:** Registry table now has 4 columns: `Code`, `Primary RFC`, `Defined in`, `Meaning`. The "Defined in" column points to the R-round (R3, R4-F9, R7-F1, R7-F5, R8-F1, R8-F3, R8-F5) that introduced the code. Reviewer can trace provenance in one lookup.
 
 ## Authors
 
@@ -1190,32 +1201,34 @@ All error codes emitted by the RFC-0960 stack are listed here for cross-RFC
 discoverability. The codes are partitioned by their primary RFC; codes can be
 emitted from other RFCs (e.g., `E_REPLAY_DETECTED` lives in RFC-0962 §11 but
 is also referenced by RFC-0961's `CIPHERO_SQL` parser on nonce collisions).
+The "Defined in" column links each code to the R-round that introduced it,
+so reviewers can trace provenance.
 
-| Code | Primary RFC | Meaning |
-|---|---|---|
-| `E_DETERMINISTIC_VIOLATION` | RFC-0961 §7 | Procedure marked `DETERMINISTIC` but AST contains non-deterministic function |
-| `E_FORBIDDEN_CONSTRUCTOR` | RFC-0961 §7 | AST contains a §4 forbidden constructor |
-| `E_MISSING_ORDER_BY` | RFC-0961 §7 | SELECT returns >1 row but no `ORDER BY` |
-| `E_VOLATILE_FUNCTION` | RFC-0961 §7 | Function call marked `VOLATILE` and not in registry |
-| `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | DDL statement inside procedure body |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | Procedure marked `NON_DETERMINISTIC` invoked in `CONSENSUS_SAFE` |
-| `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | Three-node replay produced non-identical output |
-| `E_PARSE_FAILED` | RFC-0962 §11 | JSON envelope not canonical |
-| `E_SIGNATURE_INVALID` | RFC-0962 §11 | Ed25519 verification failed |
-| `E_CAPABILITY_REVOKED` | RFC-0962 §11 | Capability not in active set |
-| `E_CAPABILITY_EXPIRED` | RFC-0962 §11 | Capability past `expires_at` |
-| `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | Capability constraint violated (e.g., spend cap) |
-| `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 (R8-F1) | Revocation emitted at block_height > envelope's; pre-signed session rejected |
-| `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 (R7-F1) | `WrappedOnly` chain depth > 16 or circular reference |
-| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 (R8-F5) | MultiSession nesting depth > 4 |
-| `E_SUB_SESSION_NOT_REVERSIBLE` | RFC-0962 §7 (R8-F3) | Sub-session does not support reversibility |
-| `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 (R7-F5) | Local chain > 1000 blocks behind envelope's `block_height` |
-| `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
-| `E_REPLAY_DETECTED` | RFC-0962 §11 | Nonce seen in `ConsumedSessionIndex` |
-| `E_REPLAY_MISMATCH` | RFC-0962 §11 (R4-F9) | Write statement's post-state hash doesn't match block producer's |
-| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | SessionProof failed verification |
-| `E_MULTI_SESSION_TIMEOUT` | RFC-0962 §11 | Sub-session did not reach Replayed within timeout |
-| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | Required shard (per RFC-0963) not reachable |
+| Code | Primary RFC | Defined in | Meaning |
+|---|---|---|---|
+| `E_DETERMINISTIC_VIOLATION` | RFC-0961 §7 | R3 | Procedure marked `DETERMINISTIC` but AST contains non-deterministic function |
+| `E_FORBIDDEN_CONSTRUCTOR` | RFC-0961 §7 | R3 | AST contains a §4 forbidden constructor |
+| `E_MISSING_ORDER_BY` | RFC-0961 §7 | R3 | SELECT returns >1 row but no `ORDER BY` |
+| `E_VOLATILE_FUNCTION` | RFC-0961 §7 | R3 | Function call marked `VOLATILE` and not in registry |
+| `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | R3 | DDL statement inside procedure body |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `CONSENSUS_SAFE` |
+| `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | R3 | Three-node replay produced non-identical output |
+| `E_PARSE_FAILED` | RFC-0962 §11 | R3 | JSON envelope not canonical |
+| `E_SIGNATURE_INVALID` | RFC-0962 §11 | R3 | Ed25519 verification failed |
+| `E_CAPABILITY_REVOKED` | RFC-0962 §11 | R3 | Capability not in active set |
+| `E_CAPABILITY_EXPIRED` | RFC-0962 §11 | R3 | Capability past `expires_at` |
+| `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | R3 | Capability constraint violated (e.g., spend cap) |
+| `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 | R8-F1 | Revocation emitted at block_height > envelope's; pre-signed session rejected |
+| `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 | R7-F1 | `WrappedOnly` chain depth > 16 or circular reference |
+| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiSession nesting depth > 4 |
+| `E_SUB_SESSION_NOT_REVERSIBLE` | RFC-0962 §7 | R8-F3 | Sub-session does not support reversibility |
+| `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 | R7-F5 | Local chain > 1000 blocks behind envelope's `block_height` |
+| `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | R3 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
+| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedSessionIndex` |
+| `E_REPLAY_MISMATCH` | RFC-0962 §11 | R4-F9 | Write statement's post-state hash doesn't match block producer's |
+| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | SessionProof failed verification |
+| `E_MULTI_SESSION_TIMEOUT` | RFC-0962 §11 | R3 | Sub-session did not reach Replayed within timeout |
+| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963) not reachable |
 
 Reviewers should consult this registry when implementing error handling
 across RFC boundaries.

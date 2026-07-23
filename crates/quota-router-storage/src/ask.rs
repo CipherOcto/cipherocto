@@ -1,4 +1,4 @@
-//! Ask + PricingAxis + AskId types (RFC-0959 v1.0 §Data Structures).
+//! Ask + PricingAxis + AskId types (RFC-0959 §Data Structures).
 //!
 //! Ask = a node's published pricing offer. `AskId = BLAKE3(canonical_ser(asker_did || model || axes_hash || nonce))`.
 //! PricingAxis registry holds per-axis rate tables keyed by model.
@@ -96,7 +96,7 @@ impl ModelRateTable {
     }
 }
 
-/// Published Ask (per-node pricing offer) per RFC-0959 v1.0.
+/// Published Ask (per-node pricing offer) per RFC-0959.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ask {
     /// Asker (publisher) DID.
@@ -239,7 +239,7 @@ pub enum AxisRegistryError {
     Duplicate(String),
 }
 
-/// Cache classification by cache_key_hash (RFC-0959 v1.0 §Cache Classification).
+/// Cache classification by cache_key_hash (RFC-0959 §Cache Classification).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheClassification {
     /// BLAKE3 hash of the request body.
@@ -280,7 +280,7 @@ impl CachePolicy {
     }
 }
 
-/// Settlement envelope (RFC-0959 v1.0 canonical wire).
+/// Settlement envelope (RFC-0959 canonical wire).
 ///
 /// `envelope = borsh_compat(model || axes_consumed || ask_id || nonce || timestamp || cost_micro_octo_w || settlement_hash)`
 /// where `settlement_hash = BLAKE3(canonical_ser(model || axes_consumed || ask_id || nonce || timestamp))`.

@@ -27,7 +27,7 @@ pub enum CapabilityClass {
 
 /// Public inputs to the ZK circuit (RFC-0958 §Data Structures).
 ///
-/// **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` added for slot-binding
+/// **RFC-0958 (2026-07-22):** `provider_slot_id` added for slot-binding
 /// defense against cross-slot replay. Mint-side sources from holder's vault
 /// slot (RFC-0009 §Vault); verifier-side compares against token envelope's
 /// slot ID. Cross-impl test vectors carry concrete slot IDs (e.g.

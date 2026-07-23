@@ -789,7 +789,7 @@ impl<C: MtprotoTelegramClient + Send + Sync + 'static> PlatformAdapter
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,
-        // RFC-0850 v1.3.0: payload is now part of the trait signature.
+        // RFC-0850: payload is now part of the trait signature.
         // MTProto adapter currently embeds the envelope in sendMessage/sendDocument
         // and does not separately serialise the payload bytes onto the wire;
         // payload handling is tracked as a follow-up.

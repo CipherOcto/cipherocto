@@ -219,7 +219,7 @@ fn step11_reputation_ledger(receipt: &Receipt, ledger: &mut HashSet<[u8; 32]>) {
 
 /// Drive the sm-engine: mint an Ask, settle via the canonical envelope,
 /// return the real `settlement_hash` (BLAKE3 over canonical envelope bytes,
-/// recorded in `asks.settlement_hash` at settle time per RFC-0959 v1.0).
+/// recorded in `asks.settlement_hash` at settle time per RFC-0959).
 ///
 /// Replaces the prior `blake3::hash(b"settlement-mock")` stand-in. The
 /// settlement_hash now derives from real envelope state, so:
@@ -428,7 +428,7 @@ fn marketplace_lookup_returns_none_for_unknown_model() {
 
 // ============================================================================
 // AC-9: ConsumedReceiptIndex replay defense verified end-to-end in exercise
-// (RFC-0959 v1.0 §Algorithms build_receipt)
+// (RFC-0959 §Algorithms build_receipt)
 // ============================================================================
 
 /// Build a canonical SettlementEnvelope for replay-defense testing.
@@ -572,7 +572,7 @@ fn eleven_step_replay_defense_full_path() {
     };
     let computed = envelope.compute_settlement_hash();
     // NOTE: sm-engine settlement_hash uses blake3(canonical_ser(ask || receipt))
-    // (RFC-0959 v1.0 store-layer canonical); envelope.compute_settlement_hash
+    // (RFC-0959 store-layer canonical); envelope.compute_settlement_hash
     // uses the SettlementEnvelope canonicalization from quota-router-storage.
     // They are deliberately independent paths — the sm-engine path is the
     // production settlement hash; the envelope path is the in-memory index
@@ -604,7 +604,7 @@ fn eleven_step_replay_defense_full_path() {
 }
 
 // ============================================================================
-// AC-10: Cross-implementation verification per RFC-0959 v1.0 §Test Vectors
+// AC-10: Cross-implementation verification per RFC-0959 §Test Vectors
 // (≥2 independent impls produce identical settlement_hash + receipt_id digests)
 // ============================================================================
 

@@ -15,7 +15,7 @@
 //! for vectors 1, 8 uses the contract documented in `zk-verifier`
 //! (`first 32 bytes == blake3(casm_hash || canonical_public)`).
 //!
-//! **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` carried in
+//! **RFC-0958 (2026-07-22):** `provider_slot_id` carried in
 //! `PublicInputs`; no sentinel placeholder. Fixtures use concrete slot IDs
 //! (e.g. `"slot-alpha-001"`).
 
@@ -166,7 +166,7 @@ fn zk_cross_impl_tv1() {
     assert!(err.is_err(), "corrupted p2 should fail");
 }
 
-/// Vector 9 (RFC-0958 v1.4): zk-verify-slot-binding-mismatch.
+/// Vector 9 (RFC-0958): zk-verify-slot-binding-mismatch.
 ///
 /// Proofer binds proof to slot "slot-alpha-001"; verifier expects
 /// "slot-beta-002". Public inputs differ → PublicInputMismatch. Defense
@@ -184,7 +184,7 @@ fn zk_verify_slot_binding_mismatch() {
     ));
 }
 
-/// Vector 10 (RFC-0958 v1.4): zk-verify-slot-binding-match.
+/// Vector 10 (RFC-0958): zk-verify-slot-binding-match.
 ///
 /// Slot binding matches → verify passes (regression: pre-v1.4 sentinels
 /// could not produce a matching slot; v1.4 uses real slot IDs).

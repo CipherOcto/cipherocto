@@ -1,4 +1,4 @@
--- Consumed receipt index (RFC-0959 v1.0 §Algorithms `ConsumedReceiptIndex`).
+-- Consumed receipt index (RFC-0959 §Algorithms `ConsumedReceiptIndex`).
 --
 -- Defense against in-flight proof replay: STARK proofs are not
 -- nonce-deduped at ZK verify time; dedup happens at settlement time

@@ -11,6 +11,7 @@ Draft
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
+| v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added three new constraint types in 0xA4-0xA6 range: `DDLActivationHeight` (0xA4), `BranchID` (0xA5), `MVStateHash` (0xA6). Domain-separator registry (§0.1) extended. 0xA7-0xAF reserved for future RFCs. Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -62,7 +63,7 @@ Cross-chain interop: each variant carries an EIP-712-style `typed_data_hash` so 
 |-----|--------------|--------|
 | RFC-0965 | Builds on | Capability extension format (caveat DSL consumer) |
 | RFC-0961 | Builds on | CIPHERO_SQL `AllowIf` constraint embeds a procedure reference |
-| RFC-0962 | Builds on | ConsensusSession envelope references constraints in capability binding |
+| RFC-0962 | Builds on | ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession) references constraints in capability binding |
 
 ### Dependency Validation
 
@@ -124,7 +125,7 @@ Namespace tag values:
 | 0x01 | **Constraint** (this RFC) | §1, §2 below |
 | 0x02 | **Caveat** (RFC-0965) | RFC-0965 §1, §2 |
 | 0x03 | **Capability** (RFC-0965) | RFC-0965 §6 |
-| 0x04 | **ConsensusSession** (RFC-0962) | RFC-0962 §4 |
+| 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** (RFC-0960) | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** (RFC-0959) | RFC-0959 §Data Structures (unchanged) |
 | 0x07-0x1F | reserved for future stack expansion | TBD per stack growth |
@@ -146,7 +147,7 @@ Constraint envelope means `MaxPerTx`; a byte 0x05 inside a Caveat envelope
 means `After` (deprecated time-bound, RFC-0957).
 
 The outer envelope is a fixed 1-byte prefix. The inner envelope's own
-struct definition (e.g., RFC-0962 §4's `ConsensusSession`) is preceded by
+struct definition (e.g., RFC-0962 §4's `ExecutionEnvelope`; renamed from `ConsensusSession`) is preceded by
 this 1-byte tag. The inner envelope's `version_tag` field (if any) is
 inside the inner envelope and is independent of the outer tag.
 
@@ -158,10 +159,10 @@ separator MUST be added here before use in any RFC.
 
 | Range | Purpose | Currently assigned |
 |---|---|---|
-| `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ConsensusSession, 0x05=Reservation, 0x06=SettlementReceipt |
+| `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession), 0x05=Reservation, 0x06=SettlementReceipt |
 | `0x07-0x1F` | Reserved for future namespace expansion | (none) |
 | `0x20-0xFF` | Application-specific | (none) |
-| `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9) |
+| `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9), 0xA4=DDLActivationHeight (v1.1, RFC-0960 §1.4), 0xA5=BranchID (v1.1, RFC-0960 §17), 0xA6=MVStateHash (v1.1, RFC-0960 §15), 0xA7-0xAF=reserved for future cross-RFC prefixes |
 | `0xB0-0xBF` | EIP-712 family | 0xB0=domain_separator, 0xB1=message_hash, 0xB2=typed_data_hash (RFC-0964 §6) |
 | `0xC0-0xFF` | Application-specific hash prefixes | (none) |
 
@@ -382,6 +383,34 @@ ComplianceHold:
     delay_secs:          u64 BE
     // 24 bytes payload
 ```
+
+#### 3.11 Database projection group (v1.1 NEW)
+
+These constraints bind capability holders to specific database-projection primitives introduced by the v2.0 grand-design reframe (RFC-0960 §14-§18).
+
+```text
+DDLActivationHeight:
+    activation_height:   u64 BE                 // block height at which the DDL becomes active
+    // 8 bytes payload
+    // Semantics: constraint is satisfied iff current block_height >= activation_height.
+    // Paired with RFC-0960 §1.4 DDL lifecycle (Schema Proposal → Audit → Activation → Consensus).
+    // Capability holder may only mutate schema after activation_height is reached.
+
+BranchID:
+    branch_id:           [u8; 32]               // Git-style branch identifier (BLAKE3)
+    // 32 bytes payload
+    // Semantics: constraint is satisfied iff current WAL head is on branch_id or a descendant branch.
+    // Paired with RFC-0960 §17 Git-style branches.
+
+MVStateHash:
+    mv_state_hash:       [u8; 32]               // expected Materialized View state hash
+    // 32 bytes payload
+    // Semantics: constraint is satisfied iff current MV state hash equals mv_state_hash,
+    // OR iff MV is allowed to be stale (per MV freshness policy).
+    // Paired with RFC-0960 §15 Materialized Views.
+```
+
+These three constraint types use the high-bit discriminator bytes 0xA4-0xA6 (per §0.1 registry extension in v1.1). The discriminator bytes are domain-separator values, **not** constraint variant indices; they identify the constraint kind within the `Constraint` envelope (RFC-0965 §1.1 caveat enumeration is parallel but distinct).
 
 ### 4. ConstraintSet encoding
 

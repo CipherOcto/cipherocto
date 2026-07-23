@@ -1,16 +1,19 @@
-# RFC-0961 (Economics): CIPHERO_SQL — Deterministic Stored Procedure Language
+# RFC-0961 (Economics): CIPHERO_SQL — Deterministic SQL Dialect (v2.0 Strategic Reframe)
 
 ## Status
 
-Draft
+Draft v2.0
 
-> **Note:** Companion RFC to RFC-0960 §12.3, §12.4 (Deterministic SQL Engine + Stored Procedures survive). Defines the CIPHERO_SQL language: grammar, parse-time determinism checks, runtime determinism verification, allowed/forbidden constructors, the `DETERMINISTIC` flag semantics, and the relationship to PostgreSQL `CREATE PROCEDURE LANGUAGE` syntax. Builds on `docs/research/2026-07-22-enterprise-migration-playbooks.md` §4 (PostgreSQL CREATE PROCEDURE survey).
+> **Note (v2.0 reframe):** Renamed from "Consensus-Safe SQL" to **Deterministic SQL** — the determinism is the property, the consensus is an implementation detail. CIPHERO_SQL is the dialect compiled by the Deterministic SQL Engine (RFC-0960 §1) into deterministic WAL entries. The dialect is the surface; the WAL is the protocol.
+
+> **Note (v1.0):** Companion RFC to RFC-0960 §12.3, §12.4 (Deterministic SQL Engine + Stored Procedures survive). Defines the CIPHERO_SQL language: grammar, parse-time determinism checks, runtime determinism verification, allowed/forbidden constructors, the `DETERMINISTIC` flag semantics, and the relationship to PostgreSQL `CREATE PROCEDURE LANGUAGE` syntax. Builds on `docs/research/2026-07-22-enterprise-migration-playbooks.md` §4 (PostgreSQL CREATE PROCEDURE survey).
 
 ## Version History
 
 | Version | Date | Author | Note |
 |---------|------|--------|------|
-| v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft. |
+| v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as "Consensus-Safe SQL"). |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Renamed to Deterministic SQL Dialect. New §7 **Deterministic SQL Profile** (mandatory `ORDER BY` for `LIMIT`, `COLLATE "C"`, RFC-0104 DFP, `NULLS LAST` default, inclusive `BETWEEN`, deterministic `GROUP BY` order). Reframed as a layer of the Deterministic SQL Engine (RFC-0960 §1), not a standalone language. Bumped to v2.0 to signal breaking terminology change. |
 
 ## Dependencies
 
@@ -24,12 +27,13 @@ Draft
 | RFC-0102 | Required | Wallet cryptography (capability holder signs the procedure invocation) |
 | RFC-0862 | Required | Sync as propagation; the WAL-block-as-transaction model assumes deterministic replay |
 
-### Companion RFCs (Planned)
+### Companion RFCs (Draft)
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0962 | Builds on | ConsensusSession object protocol; one procedure invocation is one `sql_statement` entry |
+| RFC-0962 | Builds on | ExecutionEnvelope object protocol; one procedure invocation is one `sql_statement` entry |
 | RFC-0964 | Builds on | Constraint encoding standard (CIPHERO_SQL is a constraint consumer when `AllowIf` references it) |
+| RFC-0967 | Builds on | Policy Object Graph — procedures may be gated by a `policy_id` reference |
 
 ---
 
@@ -47,7 +51,9 @@ PostgreSQL doesn't enforce `DETERMINISTIC`. If the developer mis-declares, queri
 
 CIPHERO_SQL is **not** a smart-contract language. It is **not** Turing-complete. It is **not** a procedure body language with loops, recursion, or arbitrary control flow.
 
-CIPHERO_SQL is a **constrained deterministic SQL subset** that runs inside a `ConsensusSession` (RFC-0962) and whose result is bit-identical across every node that replays the same block.
+CIPHERO_SQL is a **constrained deterministic SQL dialect** compiled by the **Deterministic SQL Engine** (RFC-0960 §1) into deterministic WAL entries. It runs inside an `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) and its result is bit-identical across every node that replays the same block. The dialect is the **surface**; the WAL is the **protocol**.
+
+**v2.0 framing:** The determinism is the **property**. The consensus is an **implementation detail**. CIPHERO_SQL is "Deterministic SQL," not "Consensus-Safe SQL." Anything that is bit-identical across replays is deterministic, regardless of whether consensus happens to be in the loop.
 
 ### 1.3 What CIPHERO_SQL replaces
 
@@ -112,7 +118,7 @@ Parser is hand-written LALR(1) grammar; no parser generator. Lexer rejects reser
 3. For each statement, check forbidden constructors (§4).
 4. If any forbidden constructor found: **parse fails** with `E_DETERMINISTIC_VIOLATION`.
 
-If `NON_DETERMINISTIC` is declared, parse-time checks still run (forbidden constructors always rejected), but the registry lookup accepts both deterministic and non-deterministic functions. Non-deterministic procedures are explicitly tagged in the catalog and excluded from CONSENSUS_SAFE mode.
+If `NON_DETERMINISTIC` is declared, parse-time checks still run (forbidden constructors always rejected), but the registry lookup accepts both deterministic and non-deterministic functions. Non-deterministic procedures are explicitly tagged in the catalog and excluded from DETERMINISTIC mode.
 
 ### 3.2 Runtime verification
 
@@ -244,7 +250,7 @@ Registry content (canonical set):
 
 ### 5.3 Allowed but **non-deterministic** (requires `NON_DETERMINISTIC` flag)
 
-These are explicitly tagged non-deterministic and excluded from CONSENSUS_SAFE mode:
+These are explicitly tagged non-deterministic and excluded from DETERMINISTIC mode:
 
 | Function | Why non-deterministic | CIPHERO_SQL replacement |
 |---|---|---|
@@ -311,7 +317,7 @@ AS $$
 $$;
 ```
 
-`$block_start_seq` is bound by the ConsensusSession protocol (RFC-0962 §4) to the current block's first event sequence.
+`$block_start_seq` is bound by the ExecutionEnvelope protocol (RFC-0962 §4) to the current block's first event sequence.
 
 ### 6.3 Loops → set operations
 
@@ -384,20 +390,20 @@ CREATE CIPHERO_SUBSCRIPTION enterprise_orders_sub
 | `E_MISSING_ORDER_BY` | SELECT returns >1 row but no `ORDER BY` |
 | `E_VOLATILE_FUNCTION` | Function call marked `VOLATILE` and not in registry |
 | `E_DDL_INSIDE_PROCEDURE` | DDL statement inside procedure body |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | Procedure marked `NON_DETERMINISTIC` invoked in CONSENSUS_SAFE mode |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | Procedure marked `NON_DETERMINISTIC` invoked in DETERMINISTIC mode |
 | `E_RUNTIME_VERIFICATION_FAILED` | Three-node replay produced non-identical output |
 
 ---
 
-## 8. CONSENSUS_SAFE mode semantics
+## 8. DETERMINISTIC mode semantics
 
-A `ConsensusSession` (RFC-0962) declared `mode = CONSENSUS_SAFE` rejects:
+A `ExecutionEnvelope` (RFC-0962) declared `mode = DETERMINISTIC` rejects:
 - Any `NON_DETERMINISTIC` procedure invocation.
 - Any direct SQL using a non-deterministic function from §5.3.
 - Any schema modification (DDL).
 - Any cross-shard write (must use `MultiSettlement` per RFC-0960 §7).
 
-A `ConsensusSession` declared `mode = OFF_CHAIN_SAFE` (or similar) allows all of the above. Off-chain sessions do not enter consensus; they are local-only execution.
+A `ExecutionEnvelope` declared `mode = OFF_CHAIN_SAFE` (or similar) allows all of the above. Off-chain sessions do not enter consensus; they are local-only execution.
 
 ---
 
@@ -472,17 +478,138 @@ $$;
 1. `CREATE PROCEDURE` parsed → AST built → `DETERMINISTIC` registry walked → all calls pass → parse succeeds.
 2. Procedure committed to catalog with `proc_id = blake3(ast_canonical_bytes)`.
 3. Three-node runtime verification runs the procedure against synthetic input → all match → `deterministic_verified_at_unix` recorded.
-4. Procedure now available for `ConsensusSession` invocation (RFC-0962).
-5. Application invokes via JDBC: `Connection.prepareCall("{call close_month()}")` — translates to `ConsensusSession` with one `sql_statement` entry.
+4. Procedure now available for `ExecutionEnvelope` invocation (RFC-0962).
+5. Application invokes via JDBC: `Connection.prepareCall("{call close_month()}")` — translates to `ExecutionEnvelope` with one `sql_statement` entry.
+
+---
+
+## 7. Deterministic SQL Profile (v2.0 NEW)
+
+The forbidden-constructors list (§4) prevents obviously non-deterministic operations. The **Deterministic SQL Profile** goes further: it pins down behavioral rules so that any two compliant implementations produce bit-identical results across all replay paths. These rules apply to **all** CIPHERO_SQL statements, in **all** modes (`DETERMINISTIC`, `NON_DETERMINISTIC`, `OFF_CHAIN`, `AUDIT_ONLY`).
+
+### 7.1 `ORDER BY` requirement for `LIMIT` / `OFFSET`
+
+```sql
+-- Forbidden: row order is implementation-defined
+SELECT * FROM orders LIMIT 10;
+
+-- Required: explicit ordering before LIMIT
+SELECT * FROM orders ORDER BY order_id LIMIT 10;
+```
+
+A query that uses `LIMIT` or `OFFSET` without an `ORDER BY` clause is **rejected at parse time** with `E_DETERMINISTIC_PROFILE_NO_ORDER_BY`. Two implementations might otherwise return different "first 10" rows.
+
+### 7.2 String comparison uses `COLLATE "C"` only
+
+```sql
+-- Forbidden: locale-dependent ordering
+SELECT * FROM customers WHERE name < 'Müller';
+
+-- Required: explicit C collation
+SELECT * FROM customers WHERE name < 'Müller' COLLATE "C";
+```
+
+Locale-dependent comparisons produce different sort orders on different locales (e.g., `é` vs `e`). CIPHERO_SQL accepts only the C (binary) collation. The default collation for any `VARCHAR` column is `COLLATE "C"`; declarations of other collations are rejected.
+
+### 7.3 Floating-point uses RFC-0104 DFP encoding
+
+All numeric computation uses the **Deterministic Floating-Point** encoding from RFC-0104. Naive IEEE-754 floating-point is forbidden:
+
+- **Forbidden:** `SELECT SUM(price * quantity) FROM orders;` where `price` is `DOUBLE PRECISION`.
+- **Required:** `price` and `quantity` columns are RFC-0104 DFP-typed; `SUM` operates on DFP values; result is bit-identical across implementations.
+
+`DOUBLE PRECISION`, `REAL`, `FLOAT` types are **rejected** at `CREATE TABLE` time. `DECIMAL` (RFC-0104 DFP) is the only numeric type.
+
+### 7.4 `NULL` ordering — `NULLS LAST` default
+
+```sql
+-- Default: NULLS LAST
+SELECT * FROM employees ORDER BY salary DESC;
+-- NULLs appear at the end, after all non-NULL salaries.
+
+-- Explicit: NULLS FIRST or NULLS LAST allowed
+SELECT * FROM employees ORDER BY salary DESC NULLS FIRST;
+```
+
+Default null ordering is `NULLS LAST` for `ASC`, `NULLS FIRST` for `DESC`. Explicit `NULLS FIRST` / `NULLS LAST` clauses are required if the application needs a different behavior — implicit reliance on a specific null position is rejected.
+
+### 7.5 `BETWEEN` is inclusive on both ends
+
+```sql
+-- Range: 100 <= salary <= 200 (both inclusive)
+SELECT * FROM employees WHERE salary BETWEEN 100 AND 200;
+```
+
+CIPHERO_SQL `BETWEEN x AND y` is inclusive on both ends: `x <= value <= y`. This matches SQL standard but is reinforced here because some dialects (e.g., T-SQL legacy) had different semantics historically.
+
+### 7.6 Aggregates are deterministic given deterministic input
+
+`SUM`, `AVG`, `MIN`, `MAX`, `COUNT`, `COUNT(DISTINCT ...)` are deterministic provided:
+
+- Input rows are ordered deterministically (§7.1).
+- Numeric inputs are RFC-0104 DFP (§7.3).
+- String inputs are `COLLATE "C"` (§7.2).
+
+`STDDEV`, `VARIANCE` are also deterministic (DFP-encoded sum-of-squares). `MEDIAN` requires a deterministic ordering of input rows and produces the lower median on even-count input (no averaging of the two middles — averaging is forbidden because it can be non-deterministic under DFP rounding choices).
+
+### 7.7 `GROUP BY` produces deterministic row order
+
+```sql
+-- GROUP BY column set forms a deterministic ordering key.
+SELECT region, SUM(amount) FROM sales GROUP BY region ORDER BY region;
+```
+
+The implicit row order produced by `GROUP BY` is deterministic: rows are sorted by the `GROUP BY` columns (lexicographic, `COLLATE "C"`, `NULLS LAST`). A `SELECT ... GROUP BY ...` without an explicit `ORDER BY` returns rows in this deterministic order.
+
+### 7.8 Forbidden `SELECT *` in stored procedures
+
+```sql
+-- Forbidden: column list is implementation-dependent after ALTER TABLE ADD COLUMN
+CREATE PROCEDURE get_orders() LANGUAGE CIPHERO_SQL DETERMINISTIC AS '
+    SELECT * FROM orders;
+';
+
+-- Required: explicit column list
+CREATE PROCEDURE get_orders() LANGUAGE CIPHERO_SQL DETERMINISTIC AS '
+    SELECT order_id, customer_id, amount FROM orders;
+';
+```
+
+`SELECT *` is **forbidden** in stored procedures because adding a column to the table (`ALTER TABLE orders ADD COLUMN foo TEXT`) would change the procedure's output, breaking replay determinism for any prior procedure invocation. Ad-hoc queries (not in procedures) MAY use `SELECT *` because they are not replayed across nodes.
+
+### 7.9 Determinism registry for functions
+
+CIPHERO_SQL ships with a **determinism registry** listing every allowed function and its determinism class. Examples:
+
+| Function | Determinism | Notes |
+|---|---|---|
+| `length(s)` | Deterministic | Pure |
+| `lower(s)` | Deterministic | Locale-independent (C) |
+| `abs(x)` | Deterministic | DFP |
+| `current_block_height()` | Deterministic per block | All nodes see same block height in same WAL segment |
+| `now()` | **Forbidden** | Wall-clock; non-deterministic |
+| `random()` | **Forbidden** | Non-deterministic |
+
+A function not in the registry is rejected at procedure-creation time. Operators may add custom functions to the registry by submitting a CIPHERO_SQL extension RFC.
+
+### 7.10 Enforcement layers
+
+The Deterministic SQL Profile is enforced at three layers:
+
+1. **Parse-time** (§3.1) — static analysis rejects violations.
+2. **Compile-time** — the engine refuses to lower a non-conformant AST to WAL entries.
+3. **Replay-time** — every node replays the WAL and verifies the output matches the recorded `expected_post_state_hash`. Mismatch = `E_REPLAY_MISMATCH`.
+
+The three layers are cumulative: a violation may pass parse-time and be caught at compile or replay. The strictest layer that catches it is the one that fires.
 
 ---
 
 ## 11. Open questions for RFC-0962
 
-The following questions are deferred to RFC-0962 (ConsensusSession protocol):
+The following questions are deferred to RFC-0962 (ExecutionEnvelope protocol):
 
 1. How is `$block_start_seq` bound at procedure invocation time?
-2. How does the `ConsensusSession` sign the procedure invocation?
+2. How does the `ExecutionEnvelope` sign the procedure invocation?
 3. What is the wire format for the canonical AST over the network?
 4. How are runtime verification failures handled in production (alarm routing, procedure quarantine)?
 
@@ -499,8 +626,11 @@ The following questions are deferred to RFC-0962 (ConsensusSession protocol):
 
 ## 13. Status
 
-This RFC = CIPHERO_SQL language spec companion to RFC-0960 §12.3, §12.4. Status: Draft. Awaiting review and promotion to Accepted. Once Accepted, the `cipherocto-sql` crate can implement the parser + registry + runtime verification.
+This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine) and §12.3, §12.4. Status: **Draft v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Awaiting review and promotion to Accepted. Once Accepted, the `cipherocto-sql` crate can implement the parser + registry + runtime verification.
 
 Companion RFCs in flight:
-- RFC-0962 (ConsensusSession object protocol) — Planned
-- RFC-0964 (Constraint encoding) — Planned (CIPHERO_SQL is a consumer when `AllowIf` references procedures)
+- RFC-0962 (ExecutionEnvelope object protocol) — Draft v2.0 (2026-07-23)
+- RFC-0964 (Constraint encoding) — Draft v1.1 (CIPHERO_SQL is a consumer when `AllowIf` references procedures)
+- RFC-0967 (Policy Object Graph) — Draft v1.0 (2026-07-23, NEW; procedures may be gated by `policy_id`)
+
+**v2.0 strategic positioning:** CIPHERO_SQL is the deterministic SQL dialect that compiles to deterministic WAL entries (RFC-0960 §1.1). The dialect is the surface language enterprise developers use (Hibernate → ORM → JDBC → CIPHERO_SQL → deterministic SQL Engine → WAL). The WAL is the protocol; consensus is one possible certifier.

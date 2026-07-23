@@ -26,6 +26,7 @@ Draft
 | v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
 | v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
 | v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962 v2.0). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961 v2.0). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -460,9 +461,9 @@ The 5-RFC stack reached internal consistency at R16. Per the directive "keep doi
 
 ## Summary
 
-This RFC establishes the **canonical value-layer architecture** for CipherOcto's economic operating system. It introduces four primitives (**Vault**, **Capability**, **Reservation**, **Settlement**), twenty-three reusable **Constraints**, an **audit-window** state machine extension, an **event-sourced ledger** (balances are projections, not state), a declarative **Economic VM**, and a **Consensus Session** compatibility layer that preserves the enterprise programming model while replacing the trust model with cryptographic capability authorization.
+This RFC establishes the **canonical value-layer architecture** for CipherOcto's economic operating system. It introduces four primitives (**Vault**, **Capability**, **Reservation**, **Settlement**), twenty-three reusable **Constraints**, an **audit-window** state machine extension, an **event-sourced ledger** (balances are projections, not state), a declarative **Economic VM**, and an **ExecutionEnvelope** compatibility layer (RFC-0962 v2.0; renamed from `ConsensusSession`) that preserves the enterprise programming model while replacing the trust model with cryptographic capability authorization.
 
-Together these primitives constitute CipherOcto's value-layer primitive set. Concrete protocol-level artifacts (`Constraint` encoding, `Capability` macaroon format extensions, event log schema, CONSENSUS_SAFE SQL mode, ConsensusSession object) are specified by companion RFCs (see §Dependencies).
+Together these primitives constitute CipherOcto's value-layer primitive set. Concrete protocol-level artifacts (`Constraint` encoding, `Capability` macaroon format extensions + `PolicyReference` caveat to RFC-0967 Policy Objects, event log schema, DETERMINISTIC SQL mode, ExecutionEnvelope object) are specified by companion RFCs (see §Dependencies).
 
 ## Motivation
 
@@ -516,14 +517,15 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 
 **Companion RFCs:**
 
-- RFC-0961 (Economics): Deterministic SQL Classification — `CIPHERO_SQL` language spec — **Draft (2026-07-22)**
-- RFC-0962 (Economics): ConsensusSession Object Protocol — wire protocol + ZK circuit for batch signature — **Draft (2026-07-22)**
-- RFC-0963 (Economics): Resource Shard Routing — shard routing by `vault_id` — Planned
+- RFC-0961 (Economics): Deterministic SQL Dialect — `CIPHERO_SQL` language spec — **Draft v2.0 (2026-07-23, renamed from Consensus-Safe SQL)**
+- RFC-0962 (Economics): ExecutionEnvelope Object Protocol — wire protocol + ZK circuit for batch signature — **Draft v2.0 (2026-07-23, renamed from ConsensusSession)**
+- RFC-0963 (Economics): Resource Shard Routing — shard routing by `wal_segment_id` — Draft v2.0 (2026-07-23)
+- RFC-0967 (Economics): Policy Object Graph — separable, versionable, shareable authorization policy — **Draft (2026-07-23, NEW)**
 
 **Requires (companion RFCs draft, not yet numbered):**
 
-- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants — Planned
-- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format — Planned
+- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants — Draft v1.1 (2026-07-23)
+- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format (incl. `PolicyReference` caveat for RFC-0967) — Draft v1.1 (2026-07-23)
 
 **Not Requires (parallel primitives):**
 
@@ -539,13 +541,14 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 | RFC-0959 | Requires | Accepted (v1.0 2026-07-20) | Already | No |
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0102 | Requires | Accepted | Already | No |
-| RFC-0961 | Companion | **Draft (2026-07-22)** | Yes (IA-1) | YES |
-| RFC-0962 | Companion | **Draft (2026-07-22)** | Yes (IA-2) | YES |
-| RFC-0963 | Companion | Planned | Best-effort | No |
-| RFC-0964 | Companion | Planned | Best-effort | No |
-| RFC-0965 | Companion | Planned | Best-effort | No |
+| RFC-0961 | Companion | **Draft v2.0 (2026-07-23)** | Yes (IA-1) | YES |
+| RFC-0962 | Companion | **Draft v2.0 (2026-07-23)** | Yes (IA-2) | YES |
+| RFC-0963 | Companion | Draft v2.0 (2026-07-23) | Yes (IA-3) | YES |
+| RFC-0964 | Companion | Draft v1.1 (2026-07-23) | Yes (IA-4) | YES |
+| RFC-0965 | Companion | Draft v1.1 (2026-07-23) | Yes (IA-5) | YES |
+| RFC-0967 | Companion | **Draft v1.0 (2026-07-23, NEW)** | Yes (IA-6) | YES |
 
-**DAG check:** `0960 ← {0957, 0958, 0959, 0126, 0102, 0961*, 0962*, 0963*, 0964*, 0965*}` — acyclic.
+**DAG check:** `0960 ← {0957, 0958, 0959, 0126, 0102, 0961*, 0962*, 0963*, 0964*, 0965*, 0967*}` — acyclic.
 
 ## Design Goals
 
@@ -556,11 +559,132 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 | **G3** | Audit-window dispute in state machine | Settled → Auditable → Released transition with `Frozen` branch |
 | **G4** | Event-sourced ledger | All state is `SUM(events)` projection; no mutable balance rows as source of truth |
 | **G5** | Cross-primitive reuse via Constraint | Single 23-variant `Constraint` set covers all features from time locks to cross-chain atomic swaps |
-| **G6** | Enterprise compatibility | ORMs, JDBC, stored procedures work unchanged via `ConsensusSession` |
+| **G6** | Enterprise compatibility | ORMs, JDBC, stored procedures work unchanged via `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) |
 
 ## Specification
 
-### §1 Seven Layers
+### §1 Architecture (v2.0 — WAL as primary protocol primitive)
+
+**v2.0 reframe (R17+):** The architecture inverts. The **Deterministic WAL** is now the primary protocol primitive. Everything else — Replication, Consensus, ZK Proofs, Time Travel, Materialized Views, Event Streams, Snapshots, Resource Accounting, and the `ExecutionEnvelope` SQL-facing surface — is a *projection* of the WAL. Capabilities authorize the creation of WAL entries, not the execution of SQL statements.
+
+```text
+Application
+        │
+        ▼
+JDBC / SQL / ORM
+        │
+        ▼
+Deterministic SQL Engine (RFC-0961)
+        │
+        ▼
+Deterministic WAL ← §1.1 PRIMARY PROTOCOL OBJECT
+        │
+        ├────────► Replication (OctoSync, RFC-0862)
+        ├────────► Consensus (certifies WAL segments)
+        ├────────► ZK Proof Generation (RFC-0958)
+        ├────────► Time Travel (NEW §14)
+        ├────────► Materialized Views (NEW §15)
+        ├────────► Event Stream / CQRS (NEW §16)
+        ├────────► Git-style branches / merge (NEW §17)
+        ├────────► Resource Accounting (Cost Model, NEW §18)
+        ├────────► Audit Log (RFC-0957)
+        └────────► Snapshots
+
+SQL Engine ──► WAL via ExecutionEnvelope (RFC-0962) projection
+Capabilities ──► authorize WAL entries (§1.3), not SQL execution
+```
+
+#### §1.1 Deterministic WAL Protocol
+
+```text
+WALSegment {
+    segment_id:     Hash,           // BLAKE3(prev_segment_id || canonical_ser(segment_body))
+    prev_segment:   Hash,           // parent in chain
+    height:         u64,            // block height at commit
+    producer:       DID,            // node that produced
+    timestamp_ms:   u64,
+    entries:        Vec<WALEntry>,
+    state_root:     Hash,           // post-commit state root
+    proof:          Option<EnvelopeProof>,    // RFC-0962 envelope proof binding (v2.0 name)
+}
+
+WALEntry {
+    entry_id:   Hash,
+    op:         WALOp,              // Insert | Update | Delete | DDL | BranchCreate | BranchMerge | MVRefresh | AsOfQuery
+    table:      TableID,
+    key:        Key,
+    value:      Bytes,
+    context:    Hash,               // optional cross-ref (e.g., policy_id, envelope_id, branch_id)
+}
+```
+
+The WAL is the protocol. SQL is the surface language. Consensus is one possible certifier of WAL segments.
+
+#### §1.2 ExecutionEnvelope as WAL Projection
+
+An `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) is a signed authorization to append a specific ordered set of WAL entries to the chain. The envelope commits the SQL operations; the WAL certifies them; consensus is one possible certifier.
+
+```text
+ExecutionEnvelope (RFC-0962 v2.0)
+    │ bundles
+    ▼
+N SQL operations
+    │ compiled by Deterministic SQL Engine
+    ▼
+M WAL entries (M ≥ N; SQL ops may expand to multiple WAL entries, e.g., INSERT + index update)
+    │ appended to
+    ▼
+WAL segment at height H
+    │ certified by
+    ▼
+Consensus (one possible certifier) + ZK Proof (optional, RFC-0958)
+```
+
+Other projections of the same WAL segment: a Materialized View refresh, an Event Log append, a Time Travel snapshot, a Branch head advance.
+
+#### §1.3 Capability as WAL-Write Authorization
+
+Capabilities no longer authorize SQL statements or ExecutionEnvelope creation. Capabilities authorize the creation of **WAL entries** within a defined policy (RFC-0967 Policy Object). The Capability is the page-table root register; the Policy Object is the page table; the WAL entry is the access.
+
+```text
+Capability (RFC-0957 + RFC-0965)
+    │ references
+    ▼
+PolicyObject (RFC-0967)
+    │ gates
+    ▼
+WAL entry creation
+    │ recorded in
+    ▼
+WAL segment
+```
+
+A capability carries a `policy_id: PolicyID` reference (BLAKE3 hash). Policy updates create new versions (RFC-0967 §6), not new capability reissuance. Attenuation chains (RFC-0957) track identity lineage; Policy Object lineage tracks policy evolution. The two are independent.
+
+#### §1.4 Strategic Positioning
+
+The architecture targets enterprise database migration, not blockchain disruption.
+
+> **Run your existing enterprise application unchanged while replacing the trust model underneath it.**
+
+| Stays the same | Replaced |
+|---|---|
+| JDBC | Password → Capability |
+| SQL | Replication → Consensus |
+| Stored Procedures | WAL → Cryptographic WAL |
+| ORM (Hibernate, SQLAlchemy, Diesel) | Audit → Immutable Audit |
+| Reports | Schema migration → Activation-Height-controlled DDL |
+| Views (incl. Materialized Views) | Snapshots → Cryptographic Snapshots |
+| Triggers | Branch isolation → Multi-branch coordination |
+| Schemas | Replication → Consensus-certified |
+| Migrations | Time Travel → AS OF block_height queries |
+| Transactions | Cross-DB joins → Deterministic SQL Federation |
+
+The application developer sees a JDBC database. The database administrator sees a familiar schema, query, and migration story. The trust model underneath is cryptographic, deterministic, and consensus-certified. The application is unaware of the change.
+
+This is the difference between "SQL on blockchain" and "**deterministic database with cryptographic trust**." The former is a smart-contract platform; the latter is the default migration target for enterprise systems over the next decade.
+
+### §1 (legacy) Seven Layers
 
 | Layer | Purpose | CipherOcto primitive |
 |---|---|---|
@@ -1210,10 +1334,10 @@ Migrate incrementally. Each level is a superset of the previous. Tooling per lev
 | 3 | + `cipherocto-oracle-adapter`, `cipherocto-sap-rfc` |
 | 4 | + `cipherocto-hibernate-dialect`, capability framework |
 
-#### §10.9 ConsensusSession object
+#### §10.9 ExecutionEnvelope object (renamed from ConsensusSession)
 
 ```text
-ConsensusSession {
+ConsensusSession { // renamed to ExecutionEnvelope in RFC-0962 v2.0
     session_id:        SessionID,
     capability:        CapabilityID,
     sql_statements:    Vec<CanonicalSQL>,
@@ -1242,10 +1366,172 @@ The seven-layer model naturally accommodates:
 - Time locks, vesting, lockups, liquidity locks → reusable constraints
 - Atomic swaps, cross-chain → multi-settlement protocols
 - Audit windows, disputes, delayed release → settlement state machine
-- Massive horizontal scalability → resource shards + append-only events
-- Enterprise migration → Consensus Sessions
+- Massive horizontal scalability → resource shards + append-only events (WAL)
+- Enterprise migration → ExecutionEnvelope (RFC-0962 v2.0) over the WAL
+- Database-native primitives → Time Travel (§14), Materialized Views (§15), Event Store (§16), Git branches (§17), Cost Model (§18)
 
 The bottleneck shifts from "transfers per second" to "independent resource commitments per second" — a much better fit for decentralized AI infrastructure.
+
+### §14 Time Travel — AS OF Queries (v2.0 NEW)
+
+```sql
+SELECT *
+FROM orders
+AS OF block_height = 12345;
+```
+
+The `AS OF <block_height>` clause reads past WAL state deterministically. Implementation:
+
+1. Pin the WAL head to `block_height`.
+2. Replay segments from genesis to `block_height` (or use the nearest snapshot + tail replay).
+3. Apply reads against the pinned state.
+4. Return rows; do **not** mutate.
+
+`AsOfQuery` is a special `ExecutionEnvelope` mode (§RFC-0962 §4 `mode = DETERMINISTIC` with `op_type = Read`) that returns historical view without WAL append. The envelope still commits the read into the audit log, so "show me what I saw" is verifiable.
+
+```text
+AsOfQuery {
+    block_height:    u64,            // target historical height
+    sql_statement:   CanonicalSQL,   // read-only SELECT
+    envelope_id:     Hash,           // recorded for audit
+    wal_segment_hash: Hash,          // pinned at block_height
+    signature:       Ed25519Signature,
+}
+```
+
+Determinism guarantee: two nodes executing `AsOfQuery` against the same `block_height` produce identical row sets (modulo the deterministic SQL Profile, RFC-0961 §7).
+
+### §15 Materialized Views (v2.0 NEW)
+
+```sql
+CREATE MATERIALIZED VIEW daily_revenue AS
+SELECT date_trunc('day', ts) AS day, SUM(amount) AS total
+FROM transfer_events
+GROUP BY day;
+```
+
+Materialized views are deterministic projections of WAL entries. Implementation:
+
+- `mv_state_hash = BLAKE3(prev_mv_state_hash || canonical_ser(mv_diff))` — chained hash, one per MV.
+- MV refresh is triggered by a `MVRefresh` WAL entry at activation height.
+- A node refreshing the MV replays WAL segments since the last refresh; computes the delta; updates the local MV; computes the new `mv_state_hash`.
+- Two nodes refreshing the same MV from the same WAL head produce the same `mv_state_hash`.
+
+```text
+MaterializedView {
+    mv_id:           Hash,           // BLAKE3(canonical_ser(view_def))
+    view_def:        CanonicalSQL,   // SELECT statement
+    last_refresh_height: u64,
+    mv_state_hash:   Hash,
+    refresh_strategy: RefreshStrategy,    // OnCommit | OnSchedule | Manual
+}
+```
+
+A `MVRefresh` WAL entry includes `mv_id` and the pre/post `mv_state_hash`. Determinism is preserved because the MV definition is canonical_ser and the WAL is append-only.
+
+### §16 Event Store / CQRS Projection (v2.0 NEW)
+
+The append-only `WALEntry` log is the event store. CQRS projections are deterministic SQL views built on top:
+
+```sql
+-- Read model (projection)
+CREATE VIEW transfer_events_by_day AS
+SELECT date_trunc('day', ts) AS day, *
+FROM transfer_events_wal  -- projection table populated by event_log subscriber
+WHERE op = 'Insert' AND table = 'transfer_events';
+```
+
+```sql
+-- Write model (event_log table)
+CREATE TABLE event_log (
+    event_id     BLOB PRIMARY KEY,    -- = wal_entry_id
+    event_type   TEXT NOT NULL,
+    payload      BLOB NOT NULL,       -- canonical_ser
+    ts_unix_ms   BIGINT NOT NULL,
+    block_height BIGINT NOT NULL
+);
+```
+
+The `event_log` table is populated by a WAL subscriber: every `WALEntry` whose `op == Insert && table == 'event_log'` is mirrored. SQL views on top are deterministic. Multiple subscribers can build different projections (read models) without re-writing the WAL.
+
+This is the database analog of Event Sourcing / CQRS but built natively on the WAL. No external event bus needed.
+
+### §17 Git-Style Branches (v2.0 NEW)
+
+> Don't emulate PostgreSQL. Become **Git for databases.**
+
+```text
+Branch {
+    branch_id:           Hash,           // BLAKE3(parent_branch_id || canonical_ser(branch_metadata))
+    parent_branch_id:    Option<Hash>,
+    head_wal_segment:    Hash,           // current WAL tip
+    created_at_unix_ms:  u64,
+    branch_metadata:     Metadata,       // human-readable; doesn't participate in canonical_ser
+}
+```
+
+Branches are first-class. Every `BranchCreate` operation is a `WALEntry` with `op = BranchCreate`. A branch is a pointer into the WAL — same chain, different head.
+
+**Merge semantics:**
+
+```text
+Merge {
+    merge_id:        Hash,
+    branch_a_id:     Hash,
+    branch_b_id:     Hash,
+    common_ancestor: Hash,           // LCA of branch_a.head + branch_b.head
+    conflict_set:    Vec<WALEntryID>,// divergent entries since common_ancestor
+    resolution:      Resolution,     // ConflictSet | AutoResolved | ManualResolved
+    new_branch_id:   Hash,           // merge commit
+    timestamp_ms:    u64,
+    signature:       Ed25519Signature,
+}
+```
+
+A merge commit creates a new `Branch` whose `parent_branch_id` is the merge commit itself and whose `head_wal_segment` includes both branches' tail segments in deterministic order (sorted by `wal_segment_id`).
+
+**Conflict resolution:** Two `WALEntry` records conflict if they target the same `(table, key)` and neither is the common ancestor of the other. The merge rejects if the conflict set is non-empty unless explicitly resolved via `ConflictResolution` envelope (an `ExecutionEnvelope` whose `mode = ManualResolved`).
+
+This makes CipherOcto familiar to anyone who has used Git branches, but the "commits" are WAL segments, not source files.
+
+### §18 Deterministic Cost Model (v2.0 NEW)
+
+Every `ExecutionEnvelope` is bounded by a deterministic gas:
+
+```text
+gas = w_rows_read    * rows_read
+    + w_rows_written * rows_written
+    + w_pages_touched* pages_touched
+    + w_wal_bytes    * wal_bytes
+    + w_network_msgs * network_msgs
+    + w_proof_constraints * proof_constraints
+```
+
+Where `w_*` are weights calibrated per deployment (RFC-0917 RouterConfig). Each weight is a `u64` constant per row/page/byte/msg/constraint.
+
+**Why database gas, not Ethereum gas:**
+
+- Rows, pages, WAL bytes are the database's natural cost units. They map to actual disk + memory + CPU cost.
+- The same cost model applies to off-chain (local) execution; it's a real cost, not a virtual one.
+- ZK proof cost scales with circuit constraints, not with `gas_used * gas_price`. The proof is amortized across the same SQL workload on every node, so it should be cheap per node.
+- Network messages are bounded by the envelope size limit (default 1 MB) times the replication factor.
+
+**Gas accounting:**
+
+```text
+GasAccount {
+    account_id:    AccountID,         // capability holder DID
+    block_height:  u64,
+    gas_used:      u64,               // cumulative
+    gas_limit:     u64,               // per-envelope ceiling
+    gas_remaining: u64,               // = limit - current envelope projection
+    last_envelope: Hash,
+}
+```
+
+An envelope that would exceed `gas_limit` is rejected at sign time with `E_GAS_LIMIT_EXCEEDED`. The envelope is **not** partially applied.
+
+**Strategic value:** Deterministic gas makes CipherOcto the first consensus system whose economic cost model is **measurable in real database terms**, not abstract computation units. A DBA can predict costs.
 
 ## Backwards Compatibility
 
@@ -1275,7 +1561,7 @@ so reviewers can trace provenance.
 | `E_MISSING_ORDER_BY` | RFC-0961 §7 | R3 | SELECT returns >1 row but no `ORDER BY` |
 | `E_VOLATILE_FUNCTION` | RFC-0961 §7 | R3 | Function call marked `VOLATILE` and not in registry |
 | `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | R3 | DDL statement inside procedure body |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `CONSENSUS_SAFE` |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `DETERMINISTIC` mode (RFC-0962 v2.0 rename) |
 | `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | R3 | Three-node replay produced non-identical output |
 | `E_PARSE_FAILED` | RFC-0962 §11 | R3 | JSON envelope not canonical |
 | `E_SIGNATURE_INVALID` | RFC-0962 §11 | R3 | Ed25519 verification failed |
@@ -1290,7 +1576,7 @@ so reviewers can trace provenance.
 | `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | R3 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
 | `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedSessionIndex` |
 | `E_REPLAY_MISMATCH` | RFC-0962 §11 | R4-F9 | Write statement's post-state hash doesn't match block producer's |
-| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | SessionProof failed verification |
+| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962 v2.0) |
 | `E_MULTI_SESSION_TIMEOUT` | RFC-0962 §11 | R3 | Sub-session did not reach Replayed within timeout |
 | `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963) not reachable |
 
@@ -1319,9 +1605,9 @@ Two nodes apply the same events in different orders; balance projections diverge
 
 Confidential or private events leak holder state through public event attributes. **Mitigation:** `Confidential` events encrypt payload + carry commitment; `Private` events carry ZK proof of correctness; all attribute keys are committed before insertion.
 
-### Threat 6: ConsensusSession signature forgery
+### Threat 6: ExecutionEnvelope signature forgery (renamed from ConsensusSession)
 
-An attacker forges a `ConsensusSession` signature to apply N SQL ops under a stolen capability. **Mitigation:** capability is bound to holder public key via `CallerBound` constraint; signature is verified per RFC-0957 macaroon rules; WAL segment hash binds all statements.
+An attacker forges an `ExecutionEnvelope` signature (renamed from `ConsensusSession`) to apply N SQL ops under a stolen capability. **Mitigation:** capability is bound to holder public key via `CallerBound` constraint; signature is verified per RFC-0957 macaroon rules; WAL segment hash binds all statements.
 
 ## Test Strategy
 
@@ -1356,7 +1642,7 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 | Canonical `Constraint` encoding | RFC-0964 (companion, planned) |
 | `Capability` macaroon format extensions | RFC-0965 (companion, planned) |
 | `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Draft 2026-07-22**) |
-| `ConsensusSession` wire protocol | RFC-0962 (companion, **Draft 2026-07-22**) |
+| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 v2.0 (companion, **Draft 2026-07-23**) |
 | Resource shard routing algorithm | RFC-0963 (companion, planned) |
 | Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
 

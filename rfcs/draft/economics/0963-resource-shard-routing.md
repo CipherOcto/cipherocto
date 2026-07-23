@@ -1,8 +1,8 @@
-# RFC-0963 (Economics): Resource Shard Routing
+# RFC-0963 (Economics): Resource Shard Routing (v2.0 Strategic Reframe)
 
 ## Status
 
-Draft
+Draft v2.0
 
 > **Note:** Companion RFC to RFC-0960 §10 (Horizontal Scalability — Resource Sharding). Defines the shard routing algorithm, cross-shard transaction protocol, per-shard Merkle commitment, and horizontal scaling invariants. Builds on RFC-0862 (sync as propagation), RFC-0959 (SettlementReceipt), RFC-0960 §7 (MultiSettlement / atomic swaps), and Phase 4 finding (event-sourced ledger precedents) which corrected the draft routing key from event-type to vault-id.
 
@@ -11,6 +11,7 @@ Draft
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 v2.0 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
 
 ## Authors
 
@@ -24,13 +25,13 @@ Draft
 
 ## Summary
 
-CipherOcto shards by **resource**, not by transaction count. Each shard owns the event log + projection for a partition of vaults. Cross-shard mutations use `MultiSession` (RFC-0962 §7) for atomicity. Each shard publishes its own Merkle root; the global chain head is the Merkle mountain range (MMR) over per-shard roots.
+CipherOcto shards by **resource**, not by transaction count. Each shard owns the event log + projection for a partition of vaults. Cross-shard mutations use `MultiEnvelope` (RFC-0962 §7) for atomicity. Each shard publishes its own Merkle root; the global chain head is the Merkle mountain range (MMR) over per-shard roots.
 
 Three artifacts:
 
 1. **Shard ID derivation** — `shard_id(vault_id) = u32::from_be_bytes(BLAKE3(vault_id)[0..4]) % num_shards`. Stable across all nodes; deterministic; no central registry.
 2. **Per-shard event log** — `events_shard_{N}` table per shard N. Append-only. Sync via RFC-0862.
-3. **Cross-shard protocol** — `MultiSession` with `AllRequired` completion rule (default) or `Quorum(n)` for sharded reads.
+3. **Cross-shard protocol** — `MultiEnvelope` with `AllRequired` completion rule (default) or `Quorum(n)` for sharded reads.
 
 ### Routing key selection — `vault_id`, not event type
 
@@ -45,7 +46,7 @@ Event-type routing would also cause divergent balance projections during partial
 | RFC | Status | Reason |
 |-----|--------|--------|
 | RFC-0960 | Draft (companion) | Defines §10 resource sharding architecture |
-| RFC-0962 | Draft (companion) | MultiSession cross-shard coordination |
+| RFC-0962 | Draft (companion) | MultiEnvelope cross-shard coordination |
 | RFC-0862 | Accepted (v1.2.0) | Sync as propagation; per-shard event batch shipping |
 | RFC-0959 | Accepted (v1.0) | SettlementReceipt envelope for cross-shard value transfer |
 | RFC-0126 | Accepted (v2.5.1) | Canonical serialization for shard commitment |
@@ -78,7 +79,7 @@ Event-type routing would also cause divergent balance projections during partial
 | G1 | Balance reads are single-shard | Every vault's event log lives on exactly one shard; reads need no fan-out |
 | G2 | Shard ID derivation deterministic | Two nodes computing `shard_id(vault_id)` produce identical u32 |
 | G3 | Shard count dynamic | Adding/removing shards triggers re-shard with bounded data migration |
-| G4 | Cross-shard atomicity | MultiSession with AllRequired completes or aborts within `timeout_unix_ms` |
+| G4 | Cross-shard atomicity | MultiEnvelope with AllRequired completes or aborts within `timeout_unix_ms` |
 | G5 | Sync-friendly | Per-shard event log is independent; nodes can sync shards out of order |
 | G6 | ZK-friendly | Per-shard Merkle root commits to entire shard state without revealing events |
 
@@ -108,19 +109,34 @@ Vault-id routing co-locates all events for one vault on one shard, making:
 
 ## Specification
 
-### 1. Shard ID derivation
+### 1. Shard ID derivation (v2.0 — WAL-as-primary)
+
+Two shard derivations coexist in v2.0:
+
+**1a. Vault placement** — which shard owns a vault's state rows:
 
 ```text
-shard_id(vault_id: VaultID, num_shards: u32) -> ShardID:
+shard_for_vault(vault_id: VaultID, num_shards: u32) -> ShardID:
     let hash = BLAKE3(vault_id)
     let prefix = u32::from_be_bytes(hash[0..4])
     return prefix % num_shards
 ```
 
+**1b. WAL segment routing** (v2.0 new) — which shard owns the WAL segment that an `ExecutionEnvelope` (RFC-0962 v2.0) commits to:
+
+```text
+shard_for_segment(wal_segment_id: Hash, num_shards: u32) -> ShardID:
+    let hash = BLAKE3(wal_segment_id)
+    let prefix = u32::from_be_bytes(hash[0..4])
+    return prefix % num_shards
+```
+
+A `MultiEnvelope` (RFC-0962 v2.0 §7; renamed from `MultiSession`) may commit to multiple shards when it touches vaults on different shards; each sub-envelope routes to the appropriate shard via `shard_for_segment`. Cross-shard atomicity is enforced via `MultiEnvelope` `AllRequired` / `Quorum(n)` completion rules.
+
 Properties:
 - **Deterministic** — same inputs produce same output on every node.
-- **Uniform distribution** — BLAKE3 output is uniformly random; modulo gives roughly equal vault count per shard.
-- **No central registry** — every node computes shard_id independently.
+- **Uniform distribution** — BLAKE3 output is uniformly random; modulo gives roughly equal distribution per shard.
+- **No central registry** — every node computes shard IDs independently.
 - **Forward-compatible** — increasing `num_shards` triggers re-sharding (§4).
 
 `num_shards` is a network parameter. Default = `ceil(sqrt(network_size))`. For 100 nodes, default = 10 shards. For 10,000 nodes, default = 100 shards.
@@ -212,14 +228,14 @@ Live migration is bounded by network bandwidth + per-shard throughput; default b
 
 ### 5. Cross-shard mutations
 
-A mutation that touches vaults on shards A and B (e.g., transfer from vault V_a on shard A to vault V_b on shard B) uses `MultiSession` (RFC-0962 §7):
+A mutation that touches vaults on shards A and B (e.g., transfer from vault V_a on shard A to vault V_b on shard B) uses `MultiEnvelope` (RFC-0962 §7):
 
 ```text
-MultiSession {
-    multi_session_id: MultiSessionID,
-    sub_sessions: [
-        ConsensusSession { shard_id: A, ... },   // debit V_a
-        ConsensusSession { shard_id: B, ... },   // credit V_b
+MultiEnvelope {
+    multi_envelope_id: MultiEnvelopeID,
+    sub_envelopes: [
+        ExecutionEnvelope { shard_id: A, ... },   // debit V_a
+        ExecutionEnvelope { shard_id: B, ... },   // credit V_b
     ],
     completion: AllRequired,
     timeout_unix_ms: 5000,                       // 5s default
@@ -229,11 +245,11 @@ MultiSession {
 
 Each sub-session is signed by its shard's block producer. Cross-shard coordination:
 
-1. Initiator constructs `MultiSession` envelope.
+1. Initiator constructs `MultiEnvelope` envelope.
 2. Initiator broadcasts to all shard block producers.
 3. Each block producer validates the relevant sub-session against its shard state.
 4. Each block producer signs and broadcasts the sub-session to the global MMR.
-5. If all sub-sessions reach `Replayed` within `timeout_unix_ms`, MultiSession commits.
+5. If all sub-sessions reach `Replayed` within `timeout_unix_ms`, MultiEnvelope commits.
 6. If timeout expires, `fallback_action` runs (default `Abort` — no partial commit).
 
 ### 6. Shard-scoped capabilities
@@ -322,17 +338,17 @@ Capability {
     holder_signature: alice_sig,
 }
 
-MultiSession {
-    sub_sessions: [
-        ConsensusSession { shard_id: 0, sql: [UPDATE vaults SET balance = balance - 100 WHERE vault_id = alice_vault] },
-        ConsensusSession { shard_id: 3, sql: [UPDATE vaults SET balance = balance + 100 WHERE vault_id = bob_vault] },
+MultiEnvelope {
+    sub_envelopes: [
+        ExecutionEnvelope { shard_id: 0, sql: [UPDATE vaults SET balance = balance - 100 WHERE vault_id = alice_vault] },
+        ExecutionEnvelope { shard_id: 3, sql: [UPDATE vaults SET balance = balance + 100 WHERE vault_id = bob_vault] },
     ],
     completion: AllRequired,
     timeout_unix_ms: 5000,
 }
 ```
 
-**Step 2: Broadcast.** Alice's router sends the MultiSession to block producers for shards 0 and 3.
+**Step 2: Broadcast.** Alice's router sends the MultiEnvelope to block producers for shards 0 and 3.
 
 **Step 3: Validate + sign.**
 
@@ -351,7 +367,7 @@ MultiSession {
 |---|----------|-------------------|
 | 1 | Optimal `num_shards` for a network of N nodes? | Empirical; default = `ceil(sqrt(N))` |
 | 2 | Should historical shards (Retired) be queryable? | Yes — read-only archive; GC after 1 year |
-| 3 | Can a single capability span multiple shards? | No — use MultiCapability + MultiSession instead |
+| 3 | Can a single capability span multiple shards? | No — use MultiCapability + MultiEnvelope instead |
 | 4 | What's the cross-shard read cost? | Two shard reads + MMR proof; ~10ms p99 for 100 shards |
 | 5 | How does ZK proof of "vault V has balance B" compose across shards? | Single shard proof + MMR inclusion proof |
 | 6 | Can shard routing change mid-session? | No — `shard_id(vault_id, num_shards)` is fixed at session creation |
@@ -365,12 +381,13 @@ MultiSession {
 
 ## Status
 
-This RFC = Resource shard routing. Status: Draft. Companion RFCs 0960 (architecture), 0962 (MultiSession), 0964 (Constraint encoding), 0965 (capability ext) in flight. Awaiting review and promotion to Accepted.
+This RFC = Resource shard routing. Status: **Draft v2.0** (strategic reframe). Companion RFCs 0960 (architecture v2.0), 0962 (ExecutionEnvelope v2.0), 0964 (Constraint encoding v1.1), 0965 (capability ext v1.1), 0967 (Policy Object Graph v1.0) in flight. Awaiting review and promotion to Accepted.
 
 Once Accepted, the `cipherocto-shard-router` crate implements:
-- `shard_id(vault_id, num_shards) -> ShardID`
-- Per-shard event log writer
-- MultiSession coordinator
+- `shard_for_vault(vault_id, num_shards) -> ShardID`
+- `shard_for_segment(wal_segment_id, num_shards) -> ShardID` (v2.0; WAL-as-primary)
+- Per-shard WAL segment writer (RFC-0960 §1.1)
+- MultiEnvelope coordinator (RFC-0962 v2.0 §7)
 - MMR root builder
 - Live migration coordinator
 - ZK proof aggregator (per-shard proofs → MMR inclusion proof)

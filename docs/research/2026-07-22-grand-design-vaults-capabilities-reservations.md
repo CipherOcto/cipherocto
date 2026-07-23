@@ -1,13 +1,57 @@
-# Grand Design — Vaults, Capabilities, Reservations, Consensus Sessions
+# Grand Design — Vaults, Capabilities, Reservations, Execution Envelopes (over a Deterministic WAL)
 
-**Date:** 2026-07-22
-**Status:** Research Phase 2 of N — grand design synthesis (per user-supplied conversation 2026-07-22)
+**Date:** 2026-07-22 (original); 2026-07-23 (v2.0 strategic reframe)
+**Status:** Research Phase 2 of N — grand design synthesis (per user-supplied conversation 2026-07-22). **v2.0 strategic reframe applied 2026-07-23**: architecture inverted to make the Deterministic WAL the primary protocol primitive (RFC-0960 §1.1); `ConsensusSession` renamed to `ExecutionEnvelope` (RFC-0962 v2.0); "Consensus-Safe SQL" renamed to "Deterministic SQL" (RFC-0961 v2.0); five new database-ergonomic primitives added (Time Travel, Materialized Views, Event Store, Git-branches, Cost Model); Policy Object separation introduced (RFC-0967).
 **Authors direction:** "pause quota-router side; capability-based vaults looks interesting; do our own research; this is strategically the most important part — the economic operating system for AI."
 **Builds on:** `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` (Phase 1 — internal scan)
 
 ---
 
-## 0. The inversion
+## 0. The v2.0 inversion (strategic reframe, 2026-07-23)
+
+> **Run your existing enterprise application unchanged while replacing the trust model underneath it.**
+
+The architectural inversion that the rest of this document develops was sound for v1.0 but framed the stack too blockchain-centric. The v2.0 reframe (RFC-0960 §1, RFC-0962 v2.0, RFC-0961 v2.0, RFC-0967 v1.0) elevates the **Deterministic WAL** to the primary protocol primitive and pushes SQL, Sessions/Envelopes, Consensus, and ZK behind it as projections.
+
+```text
+Application
+        │
+        ▼
+JDBC / SQL / ORM
+        │
+        ▼
+Deterministic SQL Engine (RFC-0961 v2.0)
+        │
+        ▼
+Deterministic WAL ← PRIMARY PROTOCOL OBJECT (RFC-0960 §1.1)
+        │
+        ├────────► Replication (OctoSync)
+        ├────────► Consensus (certifies WAL segments)
+        ├────────► ZK Proof Generation
+        ├────────► Time Travel (RFC-0960 §14)
+        ├────────► Materialized Views (RFC-0960 §15)
+        ├────────► Event Stream / CQRS (RFC-0960 §16)
+        ├────────► Git-style branches / merge (RFC-0960 §17)
+        └────────► Resource Accounting (Cost Model, RFC-0960 §18)
+```
+
+Enterprise migration mapping (the "JDBC stays, trust model changes" story):
+
+| Stays the same | Replaced |
+|---|---|
+| JDBC, SQL, stored procedures, ORM | Password → Capability (with `PolicyReference` caveat, RFC-0967) |
+| Views, triggers, schemas, migrations | Replication → Consensus-certified WAL |
+| Transactions | Audit → Immutable WAL-derived audit log |
+| Reports | Time Travel → `AS OF block_height` queries (RFC-0960 §14) |
+| Branch isolation (DB-level) | Branch isolation → Git-style WAL branches (RFC-0960 §17) |
+
+This is the difference between "SQL on blockchain" and "**deterministic database with cryptographic trust**." The former is a smart-contract platform; the latter is the default migration target for enterprise systems over the next decade.
+
+The remainder of this research document develops the v1.0 framing. The v2.0 inversion is layered on top of the same primitives — Vaults, Capabilities, Reservations, Execution Envelopes — and re-interprets them as projections of the WAL.
+
+---
+
+## 0. The original inversion (v1.0, 2026-07-22)
 
 The mistake almost every blockchain makes: start from **money**.
 

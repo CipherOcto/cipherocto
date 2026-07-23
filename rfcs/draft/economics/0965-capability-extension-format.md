@@ -11,6 +11,7 @@ Draft
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
+| v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -113,7 +114,7 @@ RFC-0964/0965 stack:
 | 0x01 | **Constraint** | RFC-0964 §1, §2 |
 | 0x02 | **Caveat** | RFC-0965 §1, §2 below |
 | 0x03 | **Capability** | RFC-0965 §6 |
-| 0x04 | **ConsensusSession** | RFC-0962 §4 |
+| 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** | RFC-0959 §Data Structures |
 | 0x07-0x1F | reserved | TBD |
@@ -323,6 +324,22 @@ Sharded payload:
 Verification: `shard_id(capability.vault_id, num_shards) == shard_id`. The capability is valid only on this shard.
 
 Attenuation: child's `shard_id` MUST equal parent's. Cannot move a capability across shards via attenuation.
+
+#### 3.10 PolicyReference (0x19) — v1.1 NEW
+
+```text
+PolicyReference payload:
+    policy_id:           [u8; 32]                // BLAKE3 of canonical_ser(PolicyObject); RFC-0967 §2
+    policy_version_seq:  u64 BE                  // pin to specific PolicyObject version
+    attenuation_proof:   AttenuationProof         // RFC-0967 §8.2 (32 bytes policy_id || 32 bytes policy_id || Vec<NodeID> || 64 bytes signature)
+// 32 + 8 + variable payload (typical 100-300 bytes)
+```
+
+Verification: the referenced `PolicyObject` (RFC-0967) MUST exist on-chain with `policy_id` and `policy_version_seq` matching. The `attenuation_proof` attests that the referenced policy is consistent with the parent capability's policy lineage (subgraph relation per RFC-0967 §5). A capability without a `PolicyReference` caveat is interpreted as referencing the empty / fully-permissive policy (`policy_id = 0x00..00`).
+
+Attenuation: a child capability MAY replace the parent's `PolicyReference` with a more restrictive one (subgraph relation per RFC-0967 §5). The child cannot reference a strictly more permissive policy. The `attenuation_proof.witness_signature` MUST be valid (signed by the parent capability issuer).
+
+**Strategic rationale (v2.0 grand-design reframe):** A capability used to embed all policy clauses in caveats. With `PolicyReference`, the capability carries only a 32-byte hash reference; the policy graph is a separate, reusable, versionable, shareable artifact (RFC-0967). One `PolicyObject` may be referenced by N capabilities. Policy updates create new versions, not new capabilities. This separation mirrors how page tables work: the page-table root register (capability) is independent of the page table entries (policy).
 
 ### 4. CaveatSet encoding
 

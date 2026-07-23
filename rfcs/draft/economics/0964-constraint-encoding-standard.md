@@ -150,6 +150,25 @@ struct definition (e.g., RFC-0962 §4's `ConsensusSession`) is preceded by
 this 1-byte tag. The inner envelope's `version_tag` field (if any) is
 inside the inner envelope and is independent of the outer tag.
 
+### 0.1 Domain-separator registry (central)
+
+All internal domain-separator bytes used by the RFC-0964/0965 stack are
+managed in a single registry to prevent future collisions. A new
+separator MUST be added here before use in any RFC.
+
+| Range | Purpose | Currently assigned |
+|---|---|---|
+| `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ConsensusSession, 0x05=Reservation, 0x06=SettlementReceipt |
+| `0x07-0x1F` | Reserved for future namespace expansion | (none) |
+| `0x20-0xFF` | Application-specific | (none) |
+| `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9) |
+| `0xB0-0xBF` | EIP-712 family | 0xB0=domain_separator, 0xB1=message_hash, 0xB2=typed_data_hash (RFC-0964 §6) |
+| `0xC0-0xFF` | Application-specific hash prefixes | (none) |
+
+Future RFCs that need a new internal hash-prefix byte MUST use the next
+free slot in the appropriate range (0xA0-0xAF for cross-RFC, 0xB0-0xBF
+for EIP-712 family) and update this registry.
+
 ### 1. Constraint variant enumeration
 
 The canonical 23-variant set from Phase 3 research, grouped by category:

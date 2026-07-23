@@ -249,7 +249,7 @@ AuditWindow payload:
 
 Verification: after a `Settlement` lands, the reservation stays in `Auditable` state for at least `duration_secs` before transitioning to `Released` (RFC-0960 §6).
 
-Attenuation: child's `duration_secs` MUST be ≥ parent's. Lengthening the window restricts (more time for disputes).
+Attenuation: child's `duration_secs` MUST be ≥ parent's. Lengthening the window restricts (more time for disputes). **Zero-parent edge case:** if parent's `duration_secs` is `0` (instant release, high-trust), child can set any value ≥ 0 — including a non-zero value. This is the "upgrade from high-trust to auditable" path, which is a restriction, not an expansion. The attenuation rule `≥` already permits this; restated explicitly to avoid confusion.
 
 #### 3.6 RedemptionContext (0x15)
 
@@ -283,6 +283,8 @@ WrappedOnly payload:
 Verification: the redeeming operation must present the parent capability in addition to this one. Implements hierarchical capability composition (RFC-0960 §11).
 
 Attenuation: parent's `WrappedOnly` chain must be a prefix of child's. A child can extend the chain downward but cannot skip parents.
+
+**Chain depth limit:** Maximum `WrappedOnly` chain depth = **16**. Verifiers reject any capability whose chain exceeds this. A 17-deep chain (or any circular reference like A→B→A) is malformed; verifiers MUST reject it with `E_CHAIN_DEPTH_EXCEEDED`. Cycle detection: each capability in the chain is identified by its 32-byte `capability_id`; a verifier walks the chain, recording seen IDs and rejecting any repeat or chain length > 16.
 
 #### 3.8 Factory (0x17)
 

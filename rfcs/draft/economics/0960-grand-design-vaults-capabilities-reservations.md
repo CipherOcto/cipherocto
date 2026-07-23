@@ -16,6 +16,7 @@ Draft
 | v1.3 | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review). |
 | v1.4 | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review). |
 | v1.5 | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review). |
+| v1.6 | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -274,6 +275,40 @@ R6 pass: ZK-circuit soundness, attenuation edge cases, MultiSession quorum, EIP-
 **Defect:** §3.2 says "Capability may carry multiple `Permission` caveats; the set is the union" but `CaveatSet` is an ordered list. Two capabilities with the same `Permission` set in different CaveSet positions have different `caveats_hash`es but the same authorization surface. Attenuation rule "child ⊆ parent" compares sets but the spec didn't say "set".
 
 **Fix:** §3.2 now explicitly states: "Even though CaveatSet is an ordered list (and the canonical encoding preserves order for caveats_hash determinism), Permission caveats are evaluated as a set during verification and attenuation. Two capabilities with the same Permission set in different CaveatSet positions have different caveats_hash values but the same authorization surface. This is intentional." Attenuation is set-based.
+
+## R7 Self-Review (overflow + edge cases)
+
+R7 pass: depth limits, vector overflow, domain-separator coverage, fork handling, deterministic close events, zero-parent edge cases. 5 fixes applied.
+
+### R7-F1 — `WrappedOnly` chain has no depth limit
+
+**Defect:** §3.7 attenuation rule says "parent's chain is prefix of child's" but no bound on chain length. A circular chain (A→B→A) or 10000-deep chain causes infinite verification loops or quadratic verification time.
+
+**Fix:** §3.7 now specifies "Maximum chain depth = 16. Verifiers reject any capability whose chain exceeds this. Cycle detection: walk the chain, record seen IDs, reject any repeat or chain length > 16." Failure mode: `E_CHAIN_DEPTH_EXCEEDED`.
+
+### R7-F3 — No central domain-separator registry
+
+**Defect:** R6-F1 + R6-F2 added high-bit domain separators (0xA0-0xA3, 0xB0-0xB2) but the assignment was ad-hoc per RFC. Future RFCs picking 0xA4-0xAF for new things could collide. No central registry.
+
+**Fix:** RFC-0964 §0.1 now lists the **Domain-separator registry**: 0xA0-0xAF for cross-RFC internal prefixes, 0xB0-0xBF for EIP-712 family, 0xC0-0xFF for application-specific. Currently assigned: 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash, 0xA3=sql_statements_hash; 0xB0=domain_separator, 0xB1=message_hash, 0xB2=typed_data_hash. Future RFCs pick next free slot in the appropriate range and update the registry.
+
+### R7-F5 — Local chain fork causes indefinite queueing
+
+**Defect:** §6.2 step 4 said "if the local chain has not yet reached that block height, the session is queued." If a node joins a fork, queued sessions sit forever. No defined bound on how long to queue.
+
+**Fix:** §6.2 step 4 now specifies: "If the local chain height is more than 1000 blocks behind the envelope's `block_height`, the session is rejected with `E_LOCAL_CHAIN_FORKED` rather than queued indefinitely. The node's `pending_sessions` table is drained; the operator must resolve the fork before processing further sessions." Default 1000 blocks is configurable per deployment.
+
+### R7-F6 — `Auditable → Released` transition has no deterministic trigger
+
+**Defect:** §4 said the audit window closes when "now() >= settled_at + audit_window_secs" but `now()` is non-deterministic across nodes (it's the node's wall clock). Two nodes could disagree on whether the window has closed.
+
+**Fix:** §4 now defines the `AuditWindowClose` event with deterministic trigger: `close_block_height = settled_block + ceil(audit_window_secs / block_interval_secs)`. All nodes compute the same `close_block_height` because both inputs are network parameters. The block producer whose turn it is at `close_block_height` emits the event in that block. Catch-up sync replays the event for nodes that have already passed it.
+
+### R7-F8 — `AuditWindow` attenuation rule ambiguous for zero parent
+
+**Defect:** §3.5 attenuation rule says "child's `duration_secs` MUST be ≥ parent's." If parent's `duration_secs` is 0 (instant release, high-trust), a reader might think the only valid child value is also 0. But the intent is that adding an audit window is a restriction (upgrade from high-trust to auditable).
+
+**Fix:** §3.5 now explicitly states: "If parent's `duration_secs` is 0, child can set any value ≥ 0 — including a non-zero value. This is the 'upgrade from high-trust to auditable' path, which is a restriction, not an expansion." The `≥` rule already permits this; restated explicitly to avoid confusion.
 
 ## Authors
 
@@ -720,6 +755,14 @@ Released        (audit window closed; transfers applied; terminal)
 ```
 
 State transitions are themselves events in `transfer_events` (event_type = `ReservationUpdated`). The audit window clock starts when `SettlementReceipt.settled_at_unix` is set; the window length comes from `Reservation.audit_window` (a `u64` duration in **seconds**, identical to the `AuditWindow(duration_secs)` caveat payload in RFC-0965 §3.5 — same field, same unit, one canonical name).
+
+**AuditWindowClose event (deterministic close trigger):** The transition `Auditable → Released` is triggered by an `AuditWindowClose` event emitted at a deterministic block height. Specifically:
+
+```text
+close_block_height = settled_block + ceil(audit_window_secs / block_interval_secs)
+```
+
+All nodes compute the same `close_block_height` because both `settled_block` and `block_interval_secs` are network parameters. The block producer whose turn it is at `close_block_height` is responsible for emitting the `AuditWindowClose` event in that block. Nodes that have already passed `close_block_height` replay the event during catch-up sync. Without this deterministic trigger, two nodes could disagree on when the audit window closes (one node's clock is ahead, another's is behind).
 
 Coupling to RFC-0959:
 

@@ -1387,7 +1387,7 @@ The `AS OF <block_height>` clause reads past WAL state deterministically. Implem
 3. Apply reads against the pinned state.
 4. Return rows; do **not** mutate.
 
-`AsOfQuery` is a special `ExecutionEnvelope` mode (§RFC-0962 §4 `mode = DETERMINISTIC` with `op_type = Read`) that returns historical view without WAL append. The envelope still commits the read into the audit log, so "show me what I saw" is verifiable.
+`AsOfQuery` is a special `ExecutionEnvelope` mode (§RFC-0962 §4 `mode = AUDIT_ONLY`) that returns historical view without WAL append. The envelope still commits the read into the audit log, so "show me what I saw" is verifiable. `mode = AUDIT_ONLY` is the existing read-only mode in RFC-0962 §4 (the `DETERMINISTIC` mode is reserved for write mutations).
 
 ```text
 AsOfQuery {
@@ -1413,7 +1413,7 @@ GROUP BY day;
 Materialized views are deterministic projections of WAL entries. Implementation:
 
 - `mv_state_hash = BLAKE3(prev_mv_state_hash || canonical_ser(mv_diff))` — chained hash, one per MV.
-- MV refresh is triggered by a `MVRefresh` WAL entry at activation height.
+- MV refresh is triggered by a `MVRefresh` WAL entry at the refresh trigger (per `refresh_strategy`: OnCommit = immediately on each committed segment; OnSchedule = at scheduled height; Manual = on explicit refresh envelope).
 - A node refreshing the MV replays WAL segments since the last refresh; computes the delta; updates the local MV; computes the new `mv_state_hash`.
 - Two nodes refreshing the same MV from the same WAL head produce the same `mv_state_hash`.
 
@@ -1482,15 +1482,17 @@ Merge {
     common_ancestor: Hash,           // LCA of branch_a.head + branch_b.head
     conflict_set:    Vec<WALEntryID>,// divergent entries since common_ancestor
     resolution:      Resolution,     // ConflictSet | AutoResolved | ManualResolved
-    new_branch_id:   Hash,           // merge commit
+    new_branch_id:   Hash,           // new merge commit branch (RFC-0967-style lineage; parent_branch_id = branch_a_id, second_parent_branch_id = branch_b_id)
+    initiator:       DID,            // who initiated the merge
     timestamp_ms:    u64,
-    signature:       Ed25519Signature,
+    branch_a_sig:    Ed25519Signature, // signed by branch_a head holder
+    branch_b_sig:    Ed25519Signature, // signed by branch_b head holder
 }
 ```
 
-A merge commit creates a new `Branch` whose `parent_branch_id` is the merge commit itself and whose `head_wal_segment` includes both branches' tail segments in deterministic order (sorted by `wal_segment_id`).
+A merge commit creates a new `Branch` whose `parent_branch_id = branch_a_id` and whose `head_wal_segment` includes both branches' tail segments in deterministic order (sorted by `wal_segment_id`). The merge requires both branch heads to sign; this is the Git-equivalent of requiring both maintainers to approve a merge. If `branch_a_id` and `branch_b_id` reference the same branch (e.g., fast-forward merge), only one signature is required.
 
-**Conflict resolution:** Two `WALEntry` records conflict if they target the same `(table, key)` and neither is the common ancestor of the other. The merge rejects if the conflict set is non-empty unless explicitly resolved via `ConflictResolution` envelope (an `ExecutionEnvelope` whose `mode = ManualResolved`).
+**Conflict resolution:** Two `WALEntry` records conflict if they target the same `(table, key)` and neither is the common ancestor of the other. The merge rejects if the conflict set is non-empty unless explicitly resolved via `ConflictResolution` envelope (an `ExecutionEnvelope` whose `op_type = ConflictResolution` per RFC-0962 §4; a new op type distinct from the three modes `DETERMINISTIC | OFF_CHAIN | AUDIT_ONLY`).
 
 This makes CipherOcto familiar to anyone who has used Git branches, but the "commits" are WAL segments, not source files.
 

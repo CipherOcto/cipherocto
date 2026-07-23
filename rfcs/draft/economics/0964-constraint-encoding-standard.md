@@ -128,7 +128,8 @@ Namespace tag values:
 | 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** (RFC-0960) | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** (RFC-0959) | RFC-0959 §Data Structures (unchanged) |
-| 0x07-0x1F | reserved for future stack expansion | TBD per stack growth |
+| 0x07 | PolicyObject (RFC-0967 v1.0) | policy graph envelopes |
+| 0x08-0x1F | reserved for future stack expansion | TBD per stack growth |
 | 0x20-0xFF | application-specific | per app |
 
 **PermissionKind** and **ReservationState** are NOT standalone envelopes —
@@ -138,7 +139,7 @@ tag of their own.
 
 Receivers MUST read the outer `namespace_tag` first and dispatch to the
 correct inner-envelope parser. A receiver that sees an unknown tag (e.g.,
-0x07) MUST fail-closed and reject the message.
+0x07 (since RFC-0967 v1.0: PolicyObject) MUST fail-closed if the receiver does not recognize the tag and reject the message.
 
 **Discriminator bytes within a Constraint envelope** (§1 below) are local to
 the Constraint namespace; they do NOT share an address space with Caveat
@@ -160,7 +161,8 @@ separator MUST be added here before use in any RFC.
 | Range | Purpose | Currently assigned |
 |---|---|---|
 | `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession), 0x05=Reservation, 0x06=SettlementReceipt |
-| `0x07-0x1F` | Reserved for future namespace expansion | (none) |
+| `0x07` | **PolicyObject (RFC-0967 v1.0)** | Policy graph envelopes |
+| `0x08-0x1F` | Reserved for future namespace expansion | (none) |
 | `0x20-0xFF` | Application-specific | (none) |
 | `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9), 0xA4=DDLActivationHeight (v1.1, RFC-0960 §1.4), 0xA5=BranchID (v1.1, RFC-0960 §17), 0xA6=MVStateHash (v1.1, RFC-0960 §15), 0xA7-0xAF=reserved for future cross-RFC prefixes |
 | `0xB0-0xBF` | EIP-712 family | 0xB0=domain_separator, 0xB1=message_hash, 0xB2=typed_data_hash (RFC-0964 §6) |
@@ -423,7 +425,7 @@ ConstraintSet encoding:
 
 Constraint ordering is preserved exactly. Two `ConstraintSet`s with the same constraints in different orders have **different encodings** and thus different `constraint_hash`es. This is intentional: it preserves canonical ordering for deterministic evaluation.
 
-**Version tag namespace:** All `version_tag` fields across the RFC-0964/0965 stack use the high-bit range (`0xA0-0xBF`) to avoid collision with the outer-namespace tags (`0x00-0x06`, per §0) and the inner-discriminator tags (`0x01-0x19` for Constraint, `0x01-0x18` for Caveat). A `version_tag` of `0xA0` is unambiguously a version, not a namespace or discriminator.
+**Version tag namespace:** All `version_tag` fields across the RFC-0964/0965 stack use the high-bit range (`0xA0-0xBF`) to avoid collision with the outer-namespace tags (`0x00-0x07`, per §0 + RFC-0967 §10) and the inner-discriminator tags (`0x01-0x19` for Constraint, `0x01-0x19` for Caveat — Caveat range extended in v1.1 to include `PolicyReference` at 0x19). A `version_tag` of `0xA0` is unambiguously a version, not a namespace or discriminator.
 
 ### 5. Constraint hash
 

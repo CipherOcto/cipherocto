@@ -117,7 +117,8 @@ RFC-0964/0965 stack:
 | 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** | RFC-0959 §Data Structures |
-| 0x07-0x1F | reserved | TBD |
+| 0x07 | `PolicyReference` (RFC-0967) | RFC-0967 §8.1 (added v1.1; `policy_id` ref) |
+| 0x08-0x1F | reserved | TBD |
 | 0x20-0xFF | application-specific | per app |
 
 **PermissionKind** and **ReservationState** are NOT standalone envelopes —
@@ -130,7 +131,7 @@ envelope and is independent of the outer tag.
 
 ### 1. Caveat type enumeration
 
-RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types. Total: 21. Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x18 (RFC-0965) = 21 distinct bytes. Range 0x0D-0x0F, 0x19-0xCF reserved per §0 (RFC-0964 namespace tag rules). 0xD0-0xFF application-specific.
+RFC-0957 defines 12 existing caveat types. RFC-0965 v1.0 adds 9 new types (0x10-0x18). RFC-0965 v1.1 adds 1 more (`PolicyReference` at 0x19, RFC-0967). Total: 22 distinct bytes. Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x19 (RFC-0965 v1.0 + v1.1) = 22 distinct bytes. Range 0x0D-0x0F reserved per §0 (RFC-0964 namespace tag rules). 0x1A-0xCF reserved for future extensions. 0xD0-0xFF application-specific.
 
 #### 1.1 RFC-0957 existing caveat types (unchanged)
 

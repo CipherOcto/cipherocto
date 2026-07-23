@@ -120,7 +120,7 @@ Per RFC-0126 Part 2 (JSON structured data):
 }
 ```
 
-Wire format: canonical JSON, sorted keys, no whitespace. Hash = `BLAKE3(version_tag || canonical_ser(policy_unsigned))`. Domain separator 0xC0 reserved for policy envelopes (RFC-0964 §0 namespace tag table extension; see §10 of this RFC).
+Wire format: canonical JSON, sorted keys, no whitespace. Hash = `BLAKE3(0xC0 || canonical_ser(policy_unsigned))`. The `0xC0` prefix is the cross-RFC domain separator for PolicyObject hashes, parallel to the `0xA0-0xAF` reserved range (RFC-0964 §0.1). `policy_id = BLAKE3(0xC0 || canonical_ser(policy_unsigned))`. `policy_id` is derived WITHOUT including `policy_id` itself (canonical_ser of `policy_unsigned` excludes the `policy_id` field).
 
 ## 5. Attenuation: subgraph relation
 
@@ -201,19 +201,22 @@ The witness signature binds the attenuation to the policy lineage. Without it, a
 
 ```sql
 CREATE TABLE policy_objects (
-    policy_id           BLOB PRIMARY KEY,        -- 32-byte BLAKE3
+    policy_id           BLOB PRIMARY KEY,        -- 32-byte BLAKE3(0xC0 || canonical_ser(policy_unsigned))
     version_seq         INTEGER NOT NULL,
-    parent_policy_id    BLOB,                    -- FK to policy_objects(policy_id) ON DELETE RESTRICT
+    parent_policy_id    BLOB,                    -- FK to policy_objects(policy_id) ON DELETE RESTRICT; NULL = genesis
     graph_root          BLOB NOT NULL,           -- BLAKE3(canonical_ser(graph))
     audit_ref           BLOB NOT NULL,
     timestamp_unix_ms   INTEGER NOT NULL,
     signature           BLOB NOT NULL,
-    lineage_id          BLOB NOT NULL,           -- BLAKE3(genesis_policy_id || ... ); identifies a version chain
+    lineage_id          BLOB NOT NULL,           -- = policy_id for genesis; = parent's lineage_id for descendants. Identifies a version chain.
     CONSTRAINT fk_parent FOREIGN KEY (parent_policy_id) REFERENCES policy_objects(policy_id)
 );
 
 CREATE INDEX ix_policy_objects_lineage ON policy_objects(lineage_id, version_seq);
 CREATE INDEX ix_policy_objects_audit ON policy_objects(audit_ref);
+
+-- Enforce (lineage_id, version_seq) uniqueness: two policies in the same lineage cannot share a version_seq.
+CREATE UNIQUE INDEX uq_policy_objects_lineage_version ON policy_objects(lineage_id, version_seq);
 ```
 
 `parent_policy_id` is **nullable** (NULL = genesis). Self-referential FK is permitted because `lineage_id` separates the version chain from the pointer.

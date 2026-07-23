@@ -6,14 +6,14 @@ Draft
 
 > **Note:** Companion RFC to RFC-0960 §12.9 (Execution Envelope object). Defines the wire-protocol shape, lifecycle states, signature aggregation, ZK commitment, and reconciliation semantics of an `ExecutionEnvelope`. Builds on RFC-0959 (SettlementReceipt envelope), RFC-0957 (Capability), RFC-0862 (sync as propagation), RFC-0961 (Deterministic SQL dialect), and RFC-0967 (Policy Object reference).
 
-> **Note (v2.0 rename):** v2.0 (2026-07-23) renames the object from `ConsensusSession` to `ExecutionEnvelope` per strategic reframe (RFC-0960 §1.2): an ExecutionEnvelope is a database-level unit of work that produces a deterministically-replayable WAL segment. Consensus is an implementation detail of WAL certification, not the primary abstraction. Field `mode = DETERMINISTIC` renamed to `mode = DETERMINISTIC`. Field `version_tag` bumped from 1 to 2 to signal breaking change.
+> **Note (v2.0 rename):** v2.0 (2026-07-23) renames the object from `ConsensusSession` to `ExecutionEnvelope` per strategic reframe (RFC-0960 §1.2): an ExecutionEnvelope is a database-level unit of work that produces a deterministically-replayable WAL segment. Consensus is an implementation detail of WAL certification, not the primary abstraction. Field `mode = CONSENSUS_SAFE` renamed to `mode = DETERMINISTIC`. Field `version_tag` bumped from 1 to 2 to signal breaking change.
 
 ## Version History
 
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as `ExecutionEnvelope`). |
-| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. New namespace tag 0x04 (was 0x04 by tag-table reshuffle; `ExecutionEnvelope` outer tag retired). |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. Outer namespace tag `0x04` retained for `ExecutionEnvelope` (was `ConsensusSession`); cross-RFC namespace-tag table extended in RFC-0964 §0 to include `0x07 = PolicyObject` (RFC-0967). |
 
 ## Authors
 
@@ -333,7 +333,7 @@ The circuit proves: "I executed the SQL operations under the capability's constr
 
 Verifier runs alongside signature verification in step 4 of §6.2. Proof verification cost is bounded (RFC-0958 design goal G3).
 
-**Public input commitment:** The `public_inputs` array MUST include `sql_statements_hash = BLAKE3(0xA3 || canonical_ser(sql_statements))` in addition to `envelope_id`, `capability_id`, and `wal_segment_hash`. Without this commitment, a prover could execute a different operation set under the same `envelope_id` and produce a valid proof (soundness defect). The `0xA3` prefix is the SQL-statements-hash domain separator, distinct from the namespace tags (0x00-0x06, RFC-0964 §0) and the constraint-hash separator (0xA1, RFC-0964 §5).
+**Public input commitment:** The `public_inputs` array MUST include `sql_statements_hash = BLAKE3(0xA3 || canonical_ser(sql_statements))` in addition to `envelope_id`, `capability_id`, and `wal_segment_hash`. Without this commitment, a prover could execute a different operation set under the same `envelope_id` and produce a valid proof (soundness defect). The `0xA3` prefix is the SQL-statements-hash domain separator, distinct from the namespace tags (0x00-0x07, RFC-0964 §0 + RFC-0967 §10) and the constraint-hash separator (0xA1, RFC-0964 §5).
 
 ### 10. WAL segment binding
 
@@ -350,7 +350,7 @@ WALSegment {
 }
 ```
 
-`wal_segment_hash` = `BLAKE3(segment_id || block_height || post_state_hash)`. A session can only reference WAL segments that exist on every node. The block producer ensures this by including the segment commit in the same block as the session.
+`wal_segment_hash` = `BLAKE3(prev_segment_id || canonical_ser(segment_body))` where `segment_body` includes `block_height`, `post_state_hash`, `entries`. Matches the canonical WAL segment hash formula from RFC-0960 §1.1 — a session can only reference WAL segments that exist on every node. The block producer ensures this by including the segment commit in the same block as the session.
 
 ### 11. Error codes
 

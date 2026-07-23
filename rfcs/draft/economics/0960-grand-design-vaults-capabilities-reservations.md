@@ -18,6 +18,7 @@ Draft
 | v1.5 | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review). |
 | v1.6 | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review). |
 | v1.7 | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review). |
+| v1.8 | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -338,6 +339,22 @@ R8 pass: revocation propagation, queueing persistence, MultiSession reversibilit
 **Defect:** §4 envelope has `parent_sessions: Vec<SessionID>` for nested MultiSessions but no depth limit. A MultiSession of MultiSessions of MultiSessions could explode the verification graph.
 
 **Fix:** §7 (MultiSession) now specifies: "Maximum MultiSession nesting depth = 4. A MultiSession whose `parent_sessions` chain exceeds 4 levels is malformed and rejected at construction with `E_NESTING_DEPTH_EXCEEDED`."
+
+## R9 Self-Review (cross-RFC + post-R8 sweep)
+
+R9 pass: error code discoverability, catalog completeness, post-R8 drift. 2 fixes applied.
+
+### R9-F1 — Error codes scattered across 5 RFCs without central index
+
+**Defect:** RFC-0961 §7 has 7 error codes, RFC-0962 §11 has 11, RFC-0965 has 3. A reviewer implementing error handling across RFC boundaries has to read 3 RFCs to find all codes. Some codes (`E_REPLAY_DETECTED`, `E_REPLAY_MISMATCH`) live in one RFC but are referenced by another (RFC-0961's `CIPHERO_SQL` parser collides on nonces and emits the same `E_REPLAY_DETECTED` family).
+
+**Fix:** Added a new section "Central Error Code Registry" to RFC-0960 listing all 23 error codes from the 5-RFC stack with their primary RFC and meaning. Reviewer consults one table for cross-RFC error handling.
+
+### R9-F3 — `expected_post_state_hash` from R4-F9 not in catalog
+
+**Defect:** RFC-0962 §6.2 step 7a (added in R4-F9 split) introduced `expected_post_state_hash` for write-statement verification, but the §13 catalog had no table or column storing these per-statement expectations. Replay nodes had no canonical place to look up the expected value.
+
+**Fix:** §13 catalog now has `session_statement_expectations` table: `(session_id, statement_index) → (op_type, target_table, expected_post_hash)`. Replay nodes look up the expected hash by `(session_id, statement_index)`, apply the write, compute their own post-state hash, and compare. Mismatch → `E_REPLAY_MISMATCH` (already in error registry, R9-F1).
 
 ## Authors
 
@@ -1149,6 +1166,42 @@ This RFC introduces new primitives (`Vault`, `Capability`, `Reservation`, `Settl
 | RFC-0959 settlement chain | Continues as settlement receipt layer |
 | RFC-0957 macaroon format | Extended via RFC-0965 (companion); old macaroons remain valid |
 | `quota-router-core` 11-step exercise | Step 6 escrow = real `Reservation::mint()` (landed 2026-07-23; R1-F1 closeout). The 13/13 exercise tests pass after the change |
+
+## Central Error Code Registry (RFC-0960/0961/0962/0963/0964/0965)
+
+All error codes emitted by the RFC-0960 stack are listed here for cross-RFC
+discoverability. The codes are partitioned by their primary RFC; codes can be
+emitted from other RFCs (e.g., `E_REPLAY_DETECTED` lives in RFC-0962 §11 but
+is also referenced by RFC-0961's `CIPHERO_SQL` parser on nonce collisions).
+
+| Code | Primary RFC | Meaning |
+|---|---|---|
+| `E_DETERMINISTIC_VIOLATION` | RFC-0961 §7 | Procedure marked `DETERMINISTIC` but AST contains non-deterministic function |
+| `E_FORBIDDEN_CONSTRUCTOR` | RFC-0961 §7 | AST contains a §4 forbidden constructor |
+| `E_MISSING_ORDER_BY` | RFC-0961 §7 | SELECT returns >1 row but no `ORDER BY` |
+| `E_VOLATILE_FUNCTION` | RFC-0961 §7 | Function call marked `VOLATILE` and not in registry |
+| `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | DDL statement inside procedure body |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | Procedure marked `NON_DETERMINISTIC` invoked in `CONSENSUS_SAFE` |
+| `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | Three-node replay produced non-identical output |
+| `E_PARSE_FAILED` | RFC-0962 §11 | JSON envelope not canonical |
+| `E_SIGNATURE_INVALID` | RFC-0962 §11 | Ed25519 verification failed |
+| `E_CAPABILITY_REVOKED` | RFC-0962 §11 | Capability not in active set |
+| `E_CAPABILITY_EXPIRED` | RFC-0962 §11 | Capability past `expires_at` |
+| `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | Capability constraint violated (e.g., spend cap) |
+| `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 (R8-F1) | Revocation emitted at block_height > envelope's; pre-signed session rejected |
+| `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 (R7-F1) | `WrappedOnly` chain depth > 16 or circular reference |
+| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 (R8-F5) | MultiSession nesting depth > 4 |
+| `E_SUB_SESSION_NOT_REVERSIBLE` | RFC-0962 §7 (R8-F3) | Sub-session does not support reversibility |
+| `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 (R7-F5) | Local chain > 1000 blocks behind envelope's `block_height` |
+| `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
+| `E_REPLAY_DETECTED` | RFC-0962 §11 | Nonce seen in `ConsumedSessionIndex` |
+| `E_REPLAY_MISMATCH` | RFC-0962 §11 (R4-F9) | Write statement's post-state hash doesn't match block producer's |
+| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | SessionProof failed verification |
+| `E_MULTI_SESSION_TIMEOUT` | RFC-0962 §11 | Sub-session did not reach Replayed within timeout |
+| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | Required shard (per RFC-0963) not reachable |
+
+Reviewers should consult this registry when implementing error handling
+across RFC boundaries.
 
 ## Security Considerations
 

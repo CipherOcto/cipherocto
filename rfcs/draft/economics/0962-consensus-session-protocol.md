@@ -458,6 +458,19 @@ CREATE TABLE pending_sessions (
 CREATE INDEX ix_pending_sessions_block ON pending_sessions (target_block_height);
 CREATE INDEX ix_pending_sessions_queued ON pending_sessions (queued_at_unix_ms);
 
+-- Session statement expectations (R9-F3): one row per write statement in
+-- the session, recording the post-state hash the block producer computed.
+-- Replay nodes verify their own post-state against this expected value.
+CREATE TABLE session_statement_expectations (
+    session_id           BLOB NOT NULL,
+    statement_index      INT NOT NULL,             -- 0-based position in sql_statements
+    op_type              TEXT NOT NULL,            -- INSERT | UPDATE | DELETE | MERGE
+    target_table         TEXT NOT NULL,
+    expected_post_hash   BYTES NOT NULL,            -- BLAKE3 of expected post-state rows
+    FOREIGN KEY (session_id) REFERENCES consensus_sessions(session_id),
+    PRIMARY KEY (session_id, statement_index)
+);
+
 CREATE TABLE multi_session_members (
     multi_session_id     BLOB NOT NULL,
     sub_session_id       BLOB NOT NULL,

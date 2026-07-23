@@ -503,13 +503,13 @@ let bytes = constraints.encode();
 let h = constraints.hash();
 ```
 
-Both constraints are encoded in order, then hashed with the `0x01` domain separator.
+Both constraints are encoded in order, then hashed with the `0xA1` domain separator (constraint-hash prefix; see §0+§5).
 
 ### 9. Catalog schema
 
 ```sql
 CREATE TABLE constraint_definitions (
-    constraint_hash    BYTES PRIMARY KEY,       -- BLAKE3(0x01 || canonical_ser(constraint_set))
+    constraint_hash    BYTES PRIMARY KEY,       -- BLAKE3(0xA1 || canonical_ser(constraint_set))
     constraint_set     BLOB NOT NULL,           -- canonical_ser encoding
     definition         TEXT NOT NULL,           -- human-readable form
     created_at_unix    BIGINT NOT NULL,
@@ -534,7 +534,7 @@ constraint_envelope := {
 ```
 
 Receivers verify by:
-1. `constraint_hash == BLAKE3(0x01 || canonical_ser(constraint_set))` — encoding consistency.
+1. `constraint_hash == BLAKE3(0xA1 || canonical_ser(constraint_set))` — encoding consistency.
 2. `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))` — EIP-712 consistency.
 3. `signature.verify(signer_pubkey, typed_data_hash)` — if signature present.
 

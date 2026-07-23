@@ -23,6 +23,7 @@ Draft
 | v1.10 | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review). |
 | v1.11 | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review). |
 | v1.12 | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review). |
+| v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -405,6 +406,21 @@ R13 pass: post-R12 sweep. 1 fix applied.
 **Defect:** R12-F1 fixed line 44 (Summary item 3) but missed line 37 — a code-block example in the same Summary block: `blake3(0x01 || constraint_encoding) // 0x01 = "constraint" domain separator`. Same defect class, second occurrence in the same section.
 
 **Fix:** Line 37 now reads `blake3(0xA1 || constraint_encoding) // 0xA1 = "constraint" domain separator (high-bit; see §0 and §5)`. The Summary block is now internally consistent and matches §5.
+
+## R14 Self-Review (stale-formula sweep)
+
+R14 pass: exhaustive grep for remaining 0x01-stale-formula instances in 0964. 1 fix applied (3 sites updated).
+
+### R14-F1 — RFC-0964 has 3 more stale `0x01` formula occurrences
+
+**Defect:** R12 and R13 fixed the Summary block (lines 37, 44) but three more sites in the same RFC still had the OLD `0x01` formula:
+- Line 506: "hashed with the `0x01` domain separator" (in the worked example for `ConstraintSet`)
+- Line 512: `BLAKE3(0x01 || canonical_ser(constraint_set))` (catalog column comment)
+- Line 537: `constraint_hash == BLAKE3(0x01 || canonical_ser(constraint_set))` (wire-format verification)
+
+Same defect class as R12-F1 and R13-F1; each fix only caught one occurrence. R14 exhaustively greps the rest of the file.
+
+**Fix:** All three sites updated to `0xA1`. Worked example now reads "hashed with the `0xA1` domain separator (constraint-hash prefix; see §0+§5)". Catalog column comment and wire-format verification both updated. R14 grep returns 0 stale `0x01` instances for `constraint_hash` / `constraint_set` in 0964.
 
 ## Authors
 

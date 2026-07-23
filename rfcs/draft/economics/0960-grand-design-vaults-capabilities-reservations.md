@@ -24,6 +24,7 @@ Draft
 | v1.11 | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review). |
 | v1.12 | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review). |
 | v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
+| v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -421,6 +422,16 @@ R14 pass: exhaustive grep for remaining 0x01-stale-formula instances in 0964. 1 
 Same defect class as R12-F1 and R13-F1; each fix only caught one occurrence. R14 exhaustively greps the rest of the file.
 
 **Fix:** All three sites updated to `0xA1`. Worked example now reads "hashed with the `0xA1` domain separator (constraint-hash prefix; see §0+§5)". Catalog column comment and wire-format verification both updated. R14 grep returns 0 stale `0x01` instances for `constraint_hash` / `constraint_set` in 0964.
+
+## R15 Self-Review (EIP-712 separator sweep)
+
+R15 pass: exhaustive grep for remaining 0x02/0x03/0x04 stale EIP-712 formulas. 1 fix applied.
+
+### R15-F1 — RFC-0964 line 538 still had 0x04 + 0x03 EIP-712 formulas
+
+**Defect:** Line 538 in the wire-format verification still had `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))`. After R6-F2 we moved these to `0xB2` and `0xB1` (high-bit EIP-712 family separators). Same defect class as R12-R14; missed in earlier sweeps because the line was in a different section.
+
+**Fix:** Line 538 updated: `typed_data_hash == BLAKE3(0xB2 || domain_separator || BLAKE3(0xB1 || constraint_encoding))` with parenthetical noting 0xB1/0xB2 are EIP-712 family high-bit separators. R15 grep returns 0 stale 0x02/0x03/0x04 in EIP-712 contexts (the only remaining occurrences are in the namespace-tag table at line 125-127 and the Constraint discriminator table at line 179-181, both intentional).
 
 ## Authors
 

@@ -535,7 +535,7 @@ constraint_envelope := {
 
 Receivers verify by:
 1. `constraint_hash == BLAKE3(0xA1 || canonical_ser(constraint_set))` — encoding consistency.
-2. `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))` — EIP-712 consistency.
+2. `typed_data_hash == BLAKE3(0xB2 || domain_separator || BLAKE3(0xB1 || constraint_encoding))` — EIP-712 consistency (0xB1/0xB2 are EIP-712 family high-bit separators; see §0+§6).
 3. `signature.verify(signer_pubkey, typed_data_hash)` — if signature present.
 
 ## Open Questions

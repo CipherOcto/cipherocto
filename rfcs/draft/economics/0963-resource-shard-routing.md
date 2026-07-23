@@ -196,6 +196,8 @@ Increasing `num_shards` triggers re-sharding. Two strategies:
 
 Total downtime per vault: zero (vaults are routed to new shards immediately; their pending writes land on new shards).
 
+**Drain timeout:** drains that exceed `7 days` are aborted and the migration is retried as `LiveMigration` (§4.2). A long-running drain blocks the source shard's archival and prevents the `num_shards` change from completing. Default abort threshold: `7 * 86400` seconds. Estimated drain time = `event_count / aggregate_throughput_per_node`; nodes publish throughput estimates to the registry every 1000 events.
+
 #### 4.2 Live migration (advanced)
 
 For large vaults with billions of events, drain+refill is slow. Live migration moves events in batches while writes continue:
@@ -281,7 +283,8 @@ CREATE TABLE shard_migration_log (
     num_shards_after      INT NOT NULL,
     started_at_unix       BIGINT NOT NULL,
     completed_at_unix     BIGINT NULL,
-    state                 TEXT NOT NULL,        -- Pending | DualWriting | Reading | Finalized | Aborted
+    strategy              TEXT NOT NULL,        -- DrainRefill | LiveMigration
+    state                 TEXT NOT NULL,        -- Pending | DualWriting | Reading | Draining | Finalized | Aborted
     events_migrated       BIGINT NOT NULL DEFAULT 0
 );
 ```

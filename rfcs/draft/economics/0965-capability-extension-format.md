@@ -102,27 +102,30 @@ Fail-closed is safer: a malformed capability never gets past verification. The d
 
 ## Specification
 
-### 0. Wire-format envelope tag (namespace prefix)
+### 0. Wire-format envelope (outer prefix + inner envelope)
 
-To disambiguate Caveat envelopes from other tagged-union envelopes on the wire
-(Constraint per RFC-0964, PermissionKind per §3.2 below, etc.), every Caveat
-envelope is preceded by a **namespace tag byte**:
+The outer-envelope model is defined in **RFC-0964 §0**. Tag values for the
+RFC-0964/0965 stack:
 
-```text
-Caveat envelope (wire):
-    namespace_tag:      u8                   // 0x02 = Caveat
-    caveat_envelope:    CaveatEnvelope       // §2 below
-```
+| Tag | Meaning | Inner envelope spec |
+|---|---|---|
+| 0x00 | forbidden (fail-closed) | — |
+| 0x01 | **Constraint** | RFC-0964 §1, §2 |
+| 0x02 | **Caveat** | RFC-0965 §1, §2 below |
+| 0x03 | **Capability** | RFC-0965 §6 |
+| 0x04 | **ConsensusSession** | RFC-0962 §4 |
+| 0x05 | **Reservation** | RFC-0960 §2.3 |
+| 0x06 | **SettlementReceipt** | RFC-0959 §Data Structures |
+| 0x07-0x1F | reserved | TBD |
+| 0x20-0xFF | application-specific | per app |
 
-Namespace tag values are shared with RFC-0964 §0. Tag `0x02` = Caveat.
-Receivers MUST read the tag first and dispatch to the Caveat parser. Unknown
-tags fail-closed.
+**PermissionKind** and **ReservationState** are NOT standalone envelopes —
+they appear only as field values inside Caveat (§3.2) and Reservation
+(RFC-0960 §2.3) envelopes respectively.
 
-**Discriminator bytes within a Caveat envelope** (§1 below) are local to the
-Caveat namespace; they do NOT share an address space with Constraint
-discriminators (RFC-0964). A byte 0x05 inside a Caveat envelope means
-`After` (RFC-0957 deprecated time-bound); a byte 0x05 inside a Constraint
-envelope means `MaxPerTx` (RFC-0964 SpendCap).
+Receivers dispatch on the outer 1-byte tag first. Unknown tags fail-closed.
+The inner Caveat envelope's `version_tag` (if any) is inside the inner
+envelope and is independent of the outer tag.
 
 ### 1. Caveat type enumeration
 

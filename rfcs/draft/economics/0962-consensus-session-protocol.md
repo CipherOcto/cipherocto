@@ -163,7 +163,7 @@ ConsensusSession {
     block_height:          u64,                  // block in which session commits
     timestamp_unix_ms:     u64,                  // wall-clock at session creation
     mode:                  SessionMode,          // CONSENSUS_SAFE | OFF_CHAIN_SAFE | AUDIT_ONLY
-    nonce:                 Nonce,                // replay defense (RFC-0959 pattern)
+    nonce:                 [u8; 32],             // replay defense (RFC-0959 SettlementEnvelope uses [u8; 16]; sessions use [u8; 32] for BLAKE3-derived uniqueness)
     zk_proof:              Option<SessionProof>, // RFC-0958 circuit output
     parent_sessions:       Vec<SessionID>,       // for MultiSession (cross-shard)
     metadata:              Metadata,             // optional application tags
@@ -250,7 +250,9 @@ A node receiving a session for replay:
 4. **Verify WAL segment hash.** Recompute `BLAKE3` over local WAL segment. Reject if mismatch (node is out of sync).
 5. **Verify SQL determinism (CONSENSUS_SAFE only).** Per RFC-0961 §3.1. Reject if any statement is non-deterministic.
 6. **Verify nonce uniqueness.** Check `ConsumedSessionIndex[(signer, nonce)]`. Reject if seen.
-7. **Apply statements.** Execute in order. Each statement's result must match the canonical expectation recorded by the block producer.
+7. **Apply statements.** Execute in order. Split into:
+   - **Writes (INSERT/UPDATE/DELETE/MERGE):** apply each write and verify the post-statement row count + affected-row set matches the block producer's recorded `expected_post_state_hash` for that statement. Mismatch = `E_REPLAY_MISMATCH`.
+   - **Reads (SELECT):** in CONSENSUS_SAFE mode, reads are not part of the session (they cannot be deterministically replayed across nodes if they reference mutable state). In OFF_CHAIN_SAFE / AUDIT_ONLY modes, read results are recorded as session metadata for later inspection but not verified during replay.
 8. **Commit WAL segment.** Append the session's effect to local WAL.
 9. **Update ConsumedSessionIndex.** Record `(signer, nonce) → session_id`.
 

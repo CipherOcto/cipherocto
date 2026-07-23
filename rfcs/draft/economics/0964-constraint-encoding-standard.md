@@ -107,40 +107,48 @@ Cross-chain interop. An Ethereum verifier (e.g., a Solidity contract enforcing a
 
 ## Specification
 
-### 0. Wire-format envelope tag (namespace prefix)
+### 0. Wire-format envelope (outer prefix + inner envelope)
 
-To disambiguate Constraint envelopes from other tagged-union envelopes on the wire
-(Caveat per RFC-0965, Permission per RFC-0965 §3.2, etc.), every Constraint
-envelope is preceded by a **namespace tag byte**:
+Every wire message in the RFC-0964/0965 stack is a **two-layer envelope**:
 
 ```text
-Constraint envelope (wire):
-    namespace_tag:        u8                   // 0x01 = Constraint
-    constraint_envelope:  ConstraintEnvelope   // §2 below
-```
+Outer envelope (universal across the stack):
+    namespace_tag:        u8                   // 0x00-0x06 (reserved stack range)
+    inner_envelope:       bytes                // namespace-specific encoding
 
-Namespace tag values (reserved range `0x01-0x1F` for RFC-0964/0965 stack):
+Namespace tag values:
 
-| Tag | Meaning |
-|---|---|
-| 0x00 | forbidden |
-| 0x01 | **Constraint** (this RFC) |
-| 0x02 | **Caveat** (RFC-0965) |
-| 0x03 | **PermissionKind** (RFC-0965 §3.2) |
-| 0x04 | **ReservationState** (RFC-0960 §2.3) |
-| 0x05 | **Capability** (RFC-0965 §6) |
-| 0x06 | **ConsensusSession** (RFC-0962 §4) |
-| 0x07-0x1F | reserved for future stack expansion |
-| 0x20-0xFF | application-specific |
+| Tag | Meaning | Inner envelope spec |
+|---|---|---|
+| 0x00 | forbidden (fail-closed) | — |
+| 0x01 | **Constraint** (this RFC) | §1, §2 below |
+| 0x02 | **Caveat** (RFC-0965) | RFC-0965 §1, §2 |
+| 0x03 | **Capability** (RFC-0965) | RFC-0965 §6 |
+| 0x04 | **ConsensusSession** (RFC-0962) | RFC-0962 §4 |
+| 0x05 | **Reservation** (RFC-0960) | RFC-0960 §2.3 |
+| 0x06 | **SettlementReceipt** (RFC-0959) | RFC-0959 §Data Structures (unchanged) |
+| 0x07-0x1F | reserved for future stack expansion | TBD per stack growth |
+| 0x20-0xFF | application-specific | per app |
 
-Receivers MUST read the namespace tag first and dispatch to the correct parser.
-A receiver that sees an unknown tag (e.g. 0x07) MUST fail-closed.
+**PermissionKind** and **ReservationState** are NOT standalone envelopes —
+they appear only as field values inside Caveat (RFC-0965 §3.2) and
+Reservation (RFC-0960 §2.3) envelopes respectively. They have no namespace
+tag of their own.
+
+Receivers MUST read the outer `namespace_tag` first and dispatch to the
+correct inner-envelope parser. A receiver that sees an unknown tag (e.g.,
+0x07) MUST fail-closed and reject the message.
 
 **Discriminator bytes within a Constraint envelope** (§1 below) are local to
 the Constraint namespace; they do NOT share an address space with Caveat
 discriminators (RFC-0965) or any other tagged union. A byte 0x05 inside a
 Constraint envelope means `MaxPerTx`; a byte 0x05 inside a Caveat envelope
 means `After` (deprecated time-bound, RFC-0957).
+
+The outer envelope is a fixed 1-byte prefix. The inner envelope's own
+struct definition (e.g., RFC-0962 §4's `ConsensusSession`) is preceded by
+this 1-byte tag. The inner envelope's `version_tag` field (if any) is
+inside the inner envelope and is independent of the outer tag.
 
 ### 1. Constraint variant enumeration
 

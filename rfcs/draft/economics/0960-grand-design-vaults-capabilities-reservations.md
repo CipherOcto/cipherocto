@@ -13,6 +13,7 @@ Draft
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft; synthesizes Phases 1-5 research. Round 1 self-review applied: 8 fixes (see §R1 Self-Review). |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review). |
 | v1.2 | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review). |
+| v1.3 | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -139,6 +140,46 @@ R3 cross-checks the 5-RFC stack (0960 + 0961 + 0962 + 0963 + 0964 + 0965) for in
 **Defect:** RFC-0963 §7 defined `shard_registry` with `num_shards_at_creation` but no `current_num_shards` column. After re-sharding, an old shard's record would show the network size at its birth, not the current size. Re-shard decisions require the current value.
 
 **Fix:** Schema now has both `num_shards_at_creation` (historical) and `current_num_shards` (updated on every re-shard). Querying the current network size is single-row.
+
+## R4 Self-Review (deeper cross-RFC sweep)
+
+R4 deeper pass. Looked at catalog schemas, namespace-tag coverage, edge cases, state machine transitions, R3-F6 follow-on. 6 fixes applied.
+
+### R4-F1 — Orphan `PermissionKind` namespace tag (R3-F6 follow-on)
+
+**Defect:** R3-F6 added tag `0x03 = PermissionKind` to the namespace table, but `PermissionKind` is **never** a standalone envelope — it only appears as a `u8` value inside a `Permission` Caveat payload (RFC-0965 §3.2). The 0x03 tag is reserved for a thing that does not exist on the wire. Receivers dispatching on 0x03 would have no parser to invoke.
+
+**Fix:** RFC-0964 §0 and RFC-0965 §0 now state: "PermissionKind and ReservationState are NOT standalone envelopes — they appear only as field values inside Caveat and Reservation envelopes respectively. They have no namespace tag of their own." Tag table reduced to 6 active tags (0x01-0x06) + reserved range.
+
+### R4-F2 — `ConsensusSession.version_tag` collides with R3-F6 namespace tag
+
+**Defect:** R3-F6 said `0x06 = ConsensusSession`. But RFC-0962 §4 has `version_tag: u8 (currently 1)` as the first field of the `ConsensusSession` struct. A receiver reading byte 0x01 would either see it as a Constraint envelope (R3-F6) or a version tag (RFC-0962). The two specs use the first byte of the same wire message for two different purposes.
+
+**Fix:** R3-F6 namespace table corrected: the outer tag (1 byte) is the namespace tag, **precedes** the inner envelope. The inner envelope's `version_tag` field (if any) is inside the inner envelope and is independent. RFC-0962 §4 is unchanged structurally; the wrapper is just acknowledged. Tag 0x04 (not 0x06) = ConsensusSession after the table reshuffle to 6 active tags.
+
+### R4-F3 — `nonce` type unspecified in RFC-0962
+
+**Defect:** RFC-0962 §4 had `nonce: Nonce` (no type). Replay defense rule §6.2 step 6 keys on `(signer, nonce)` but the type was undefined. Implementers would have to guess (16 bytes? 32 bytes? arbitrary?).
+
+**Fix:** Field type now `[u8; 32]` with comment explaining why: BLAKE3-derived for unique-per-session collision resistance. Differs from RFC-0959's `[u8; 16]` (which is 128-bit) — sessions need 256-bit because they're higher-frequency.
+
+### R4-F6 — `shard_migration_log` state names covered only live-migration path
+
+**Defect:** RFC-0963 §7 catalog `shard_migration_log.state` listed `Pending | DualWriting | Reading | Finalized | Aborted` (5 states). §4.1 (drain + refill) describes only 3 states. The catalog table is referenced from both §4.1 and §4.2, but the state list matches only §4.2.
+
+**Fix:** Schema now has `strategy TEXT NOT NULL` (DrainRefill | LiveMigration) and the state list includes `Draining` for the drain-and-refill path: `Pending | DualWriting | Reading | Draining | Finalized | Aborted` (6 states). `strategy` field disambiguates which state set is active.
+
+### R4-F7 — R3-F6 namespace tag ambiguous: outer-prefix or inner-first-byte?
+
+**Defect:** R3-F6 introduced "outer prefix byte" but didn't specify whether it's a separate byte before the inner envelope, or the inner envelope's first byte. Receiver design was ambiguous.
+
+**Fix:** RFC-0964 §0 and RFC-0965 §0 now explicitly model the wire as a two-layer envelope: 1-byte outer namespace tag, then namespace-specific inner envelope bytes. The inner envelope's own `version_tag` (if any) is inside the inner envelope and is independent of the outer tag.
+
+### R4-F11 — Drain + refill has no upper bound
+
+**Defect:** RFC-0963 §4.1 says "every node must process every event on N before N is retired." For a shard with billions of events, this could take days. No upper bound or progress indicator. A stalled drain blocks the `num_shards` change indefinitely.
+
+**Fix:** §4.1 now specifies a `7-day` default drain timeout. Drains exceeding this abort and retry as live migration. Nodes publish throughput estimates every 1000 events to enable progress tracking.
 
 ## Authors
 

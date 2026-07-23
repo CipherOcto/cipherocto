@@ -19,6 +19,7 @@ Draft
 | v1.6 | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review). |
 | v1.7 | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review). |
 | v1.8 | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review). |
+| v1.9 | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -355,6 +356,22 @@ R9 pass: error code discoverability, catalog completeness, post-R8 drift. 2 fixe
 **Defect:** RFC-0962 §6.2 step 7a (added in R4-F9 split) introduced `expected_post_state_hash` for write-statement verification, but the §13 catalog had no table or column storing these per-statement expectations. Replay nodes had no canonical place to look up the expected value.
 
 **Fix:** §13 catalog now has `session_statement_expectations` table: `(session_id, statement_index) → (op_type, target_table, expected_post_hash)`. Replay nodes look up the expected hash by `(session_id, statement_index)`, apply the write, compute their own post-state hash, and compare. Mismatch → `E_REPLAY_MISMATCH` (already in error registry, R9-F1).
+
+## R10 Self-Review (final sweep)
+
+R10 pass: post-R9 drift, catalog constraints, reading guide. 2 fixes applied.
+
+### R10-F1 — Caveat type count not tied to discriminator range
+
+**Defect:** §1 of RFC-0965 said "RFC-0957's existing 12 caveat types + RFC-0965's 9 new types = 21 total caveat types" but never tied the count to the discriminator range. After R3-F6's namespace-tag reshape, the 9 new types use 0x10-0x18 and the 12 existing use 0x01-0x0C; a reviewer scanning the type list might believe a different number.
+
+**Fix:** §1 now explicitly states: "Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x18 (RFC-0965) = 21 distinct bytes. Range 0x0D-0x0F, 0x19-0xCF reserved per §0 (RFC-0964 namespace tag rules). 0xD0-0xFF application-specific." Count tied to byte range, no ambiguity.
+
+### R10-F2 — `capabilities.parent_capability_id` lacks FK + self-check
+
+**Defect:** §8 catalog had `parent_capability_id BLOB NULL` for the `WrappedOnly` chain reference but no `FOREIGN KEY` to itself. A `WrappedOnly` could point at a non-existent capability (or at itself, creating a self-cycle that the chain-depth check at R7-F1 might miss in a different code path).
+
+**Fix:** Schema now has `FOREIGN KEY (parent_capability_id) REFERENCES capabilities(capability_id)` and `CHECK (parent_capability_id IS NULL OR parent_capability_id <> capability_id)`. Self-reference is rejected at the DB level; non-existent parent references are also rejected.
 
 ## Authors
 

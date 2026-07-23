@@ -129,7 +129,7 @@ envelope and is independent of the outer tag.
 
 ### 1. Caveat type enumeration
 
-RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types. Total: 21.
+RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types. Total: 21. Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x18 (RFC-0965) = 21 distinct bytes. Range 0x0D-0x0F, 0x19-0xCF reserved per §0 (RFC-0964 namespace tag rules). 0xD0-0xFF application-specific.
 
 #### 1.1 RFC-0957 existing caveat types (unchanged)
 
@@ -459,7 +459,9 @@ CREATE TABLE capabilities (
     revoked                BOOLEAN NOT NULL DEFAULT 0,
     expires_at_unix        BIGINT NOT NULL,
     created_at_unix        BIGINT NOT NULL,
-    capability_hash         BLOB NOT NULL             -- BLAKE3 over canonical_ser (independent of id)
+    capability_hash         BLOB NOT NULL,            -- BLAKE3 over canonical_ser (independent of id)
+    FOREIGN KEY (parent_capability_id) REFERENCES capabilities(capability_id),
+    CHECK (parent_capability_id IS NULL OR parent_capability_id <> capability_id)
 );
 
 CREATE INDEX ix_capabilities_holder ON capabilities (holder_did, revoked, expires_at_unix);

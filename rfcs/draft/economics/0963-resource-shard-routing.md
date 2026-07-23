@@ -264,7 +264,8 @@ This enables:
 CREATE TABLE shard_registry (
     shard_id              INT PRIMARY KEY,
     state                 TEXT NOT NULL,        -- Active | Draining | Retired
-    num_shards_at_creation INT NOT NULL,
+    num_shards_at_creation INT NOT NULL,         -- network size when this shard was born
+    current_num_shards    INT NOT NULL,          -- current network size; updated on every re-shard
     created_at_unix       BIGINT NOT NULL,
     retired_at_unix       BIGINT NULL,
     event_count           BIGINT NOT NULL DEFAULT 0,

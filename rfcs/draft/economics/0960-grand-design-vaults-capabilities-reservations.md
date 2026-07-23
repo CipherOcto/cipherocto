@@ -12,6 +12,7 @@ Draft
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft; synthesizes Phases 1-5 research. Round 1 self-review applied: 8 fixes (see §R1 Self-Review). |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review). |
+| v1.2 | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -92,6 +93,52 @@ R2 cross-check after RFC-0961 and RFC-0962 landed (2026-07-22). Each finding tie
 **Defect:** §Open Questions listed all five companion RFCs as `planned`. RFC-0961 and RFC-0962 are now `Draft (2026-07-22)`.
 
 **Fix:** §Open Questions updated to flag both RFCs as `Draft 2026-07-22` (bold). Reviewers reading the open questions should know which gaps are still TODO vs which have a landed Draft to review.
+
+## R3 Cross-RFC Self-Review (multi-round adversarial)
+
+R3 cross-checks the 5-RFC stack (0960 + 0961 + 0962 + 0963 + 0964 + 0965) for internal consistency. 7 fixes applied.
+
+### R3-F1 — RFC-0960 §5 is conceptual; §3 missing normative pointer
+
+**Defect:** §3 ("Constraint Set") shows a 14-variant conceptual list but never tells the reader to consult RFC-0964 for canonical encoding. Reviewer must discover RFC-0964 to know the discriminator bytes, length-prefix format, and wire shape.
+
+**Fix:** §3 now opens with a "Normative reference" note pointing to RFC-0964 §0 (wire-format namespace tag) and §1 (variant enumeration), and to RFC-0965 for the caveat-to-constraint mapping.
+
+### R3-F2 — `audit_window` type name drift between 0960 §531 and 0965 §3.5
+
+**Defect:** RFC-0960 §531 said "the window length comes from `Reservation.audit_window`" (Duration-typed). RFC-0965 §3.5 says "AuditWindow payload: `duration_secs: u64 BE`". Same conceptual field, two type names (Duration vs u64 seconds).
+
+**Fix:** RFC-0960 §531 now explicitly identifies `Reservation.audit_window` as `u64` seconds, identical to the `AuditWindow(duration_secs)` caveat payload in RFC-0965 §3.5. One canonical name (seconds as `u64`), one canonical semantic.
+
+### R3-F3 — RFC-0962 `SessionReceipt` collides with RFC-0959 `SettlementReceipt`
+
+**Defect:** RFC-0962 §32 named a new object `SessionReceipt`. The name collides with RFC-0959's `SettlementReceipt` (Accepted 2026-07-20). Cross-RFC ambiguity: a reader sees "Receipt" and assumes RFC-0959.
+
+**Fix:** RFC-0962 §32 renames the object to `SessionCommitment`. Prose explicitly states it is **not** a `SettlementReceipt`; the two objects are disjoint. The envelope *shape* (canonical_ser + BLAKE3 + Ed25519) is borrowed; the binding (session_id vs ask_id) is distinct.
+
+### R3-F4 — Two replay-defense indexes with overlapping names
+
+**Defect:** RFC-0959 has `ConsumedReceiptIndex` (tracks `ReceiptId` per asker). RFC-0962 introduced `ConsumedSessionIndex` (tracks `session_id` per signer). Names suggest parallel but related functions; the cross-RFC relationship was undocumented.
+
+**Fix:** RFC-0962 §145 (Role/Authority table) now states: "`ConsumedSessionIndex` is disjoint from RFC-0959's `ConsumedReceiptIndex`. Two indexes, two different replay surfaces." Reader knows the two are parallel and not redundant.
+
+### R3-F5 — RFC-0962 session signature vs RFC-0965 capability signature ambiguity
+
+**Defect:** RFC-0962 §8 says "Capability holder signature. Ed25519 over `canonical_ser(session_unsigned)`. Mandatory." RFC-0965 §6 has `holder_signature: Ed25519Signature` on the Capability envelope. Same `Ed25519Signature` type; reader cannot tell whether one signature suffices for both.
+
+**Fix:** RFC-0962 §8 now explicitly distinguishes the two signatures: capability signature proves holder ownership; session signature proves authorization for this specific set of SQL operations. A capability signature alone is **not** sufficient to authorize a session; the session signature is always required.
+
+### R3-F6 — Discriminator namespace collision between RFC-0964 (Constraint) and RFC-0965 (Caveat)
+
+**Defect:** RFC-0964 §1 uses discriminator bytes `0x01-0x19` for Constraint variants. RFC-0965 §1.1 uses `0x01-0x0C` for RFC-0957 caveats and `0x10-0x18` for new caveats. A byte 0x05 means `MaxPerTx` (Constraint) or `After` (Caveat, deprecated). Receivers cannot disambiguate without context.
+
+**Fix:** Both RFCs now open with a §0 "Wire-format envelope tag" introducing a **namespace prefix byte** that precedes every envelope. `0x01` = Constraint (RFC-0964); `0x02` = Caveat (RFC-0965); `0x03` = PermissionKind; `0x04` = ReservationState; `0x05` = Capability; `0x06` = ConsensusSession. Receivers dispatch on the namespace tag first; unknown tags fail-closed. Discriminator bytes within each envelope are local to their namespace.
+
+### R3-F7 — RFC-0963 `shard_registry` schema missing `current_num_shards`
+
+**Defect:** RFC-0963 §7 defined `shard_registry` with `num_shards_at_creation` but no `current_num_shards` column. After re-sharding, an old shard's record would show the network size at its birth, not the current size. Re-shard decisions require the current value.
+
+**Fix:** Schema now has both `num_shards_at_creation` (historical) and `current_num_shards` (updated on every re-shard). Querying the current network size is single-row.
 
 ## Authors
 
@@ -439,6 +486,15 @@ Balance = `SUM(in) - SUM(out) - SUM(active escrow holds)` over `transfer_events`
 
 ### §3 Constraint Set
 
+> **Normative reference:** This section is **conceptual** only. The canonical
+> binary encoding, discriminator-byte mapping, length-prefix format, wire-format
+> namespace tag, and cross-chain interop shape are defined in **RFC-0964**
+> (Constraint Encoding Standard). Any code implementing constraints MUST
+> conform to RFC-0964 §1 (variant enumeration) and §0 (wire-format envelope tag).
+> The `caveats_semantic_view` on `Capability` (RFC-0960 §2.2) carries
+> constraints via the macaroon caveat DSL; the constraint-encoding-to-caveat
+> mapping is defined in **RFC-0965** (Capability Extension Format) §3.
+
 23 constraints. Each is a reusable policy module. Combinations express all classical token features (time locks, vesting, liquidity locks, governance locks, rate limits, multi-sig, etc.).
 
 ```text
@@ -528,7 +584,7 @@ Released        (audit window closed; transfers applied; terminal)
       Rollback  or  Uphold
 ```
 
-State transitions are themselves events in `transfer_events` (event_type = `ReservationUpdated`). The audit window clock starts when `SettlementReceipt.settled_at_unix` is set; the window length comes from `Reservation.audit_window`.
+State transitions are themselves events in `transfer_events` (event_type = `ReservationUpdated`). The audit window clock starts when `SettlementReceipt.settled_at_unix` is set; the window length comes from `Reservation.audit_window` (a `u64` duration in **seconds**, identical to the `AuditWindow(duration_secs)` caveat payload in RFC-0965 §3.5 — same field, same unit, one canonical name).
 
 Coupling to RFC-0959:
 

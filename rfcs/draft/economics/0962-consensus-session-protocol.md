@@ -29,7 +29,7 @@ A `ConsensusSession` is the unit of consensus-level mutation in CipherOcto. One 
 Three artifacts:
 
 1. **`ConsensusSession`** — content-addressable signed envelope binding capability holder, WAL segment hash, SQL statement list, and timestamp. Hash = `BLAKE3(version_tag || canonical_ser(session_unsigned))`.
-2. **`SessionReceipt`** — settlement-layer commitment that mirrors RFC-0959 `SettlementReceipt` shape but binds a session_id instead of an ask_id. Replay defense via `ConsumedSessionIndex`.
+2. **`SessionCommitment`** — consensus-layer commitment that mirrors the RFC-0959 `SettlementReceipt` *envelope shape* (canonical_ser + BLAKE3 hash + Ed25519 signature) but binds a `session_id` instead of an `ask_id`. **Not** a `SettlementReceipt`; the two objects are disjoint. Replay defense via `ConsumedSessionIndex` (§6.3).
 3. **`SessionProof`** — optional ZK proof that the session's SQL operations were executed under the capability's constraints without revealing the operation bodies (per RFC-0958).
 
 Coexists with RFC-0959. RFC-0959 governs per-node Ask pricing; RFC-0962 governs multi-statement transactions under capabilities. Both use the same BLAKE3 envelope shape but bind different objects.
@@ -142,7 +142,7 @@ The mode is a runtime gate, not a runtime check. A CONSENSUS_SAFE session's stat
 | Capability Issuer | `DID` | Minted the capability; co-signs at attenuation | Capability lifetime | RFC-0957 |
 | Session Validator | Node role | Validates envelope + replay against log | Per session | RFC-0009 |
 | Session Verifier (ZK) | Circuit | Verifies `SessionProof` | Per session | RFC-0958 |
-| Replay Defense Index | `ConsumedSessionIndex` | Tracks seen `session_id`s per signer | Persistent | §6.3 |
+| Replay Defense Index | `ConsumedSessionIndex` | Tracks seen `session_id`s per signer. Disjoint from RFC-0959's `ConsumedReceiptIndex` (which tracks `ReceiptId`s per asker). Two indexes, two different replay surfaces. | Persistent | §6.3 |
 | Block Producer | Node role | Bundles sessions into block | Per block | RFC-0862 |
 | Shard Router | Node role | Routes session to correct shard | Per session | RFC-0963 |
 
@@ -294,7 +294,7 @@ This is the database analog of `MultiSettlement` (RFC-0960 §7) but for SQL muta
 
 Two signature layers:
 
-1. **Capability holder signature.** Ed25519 over `canonical_ser(session_unsigned)`. Mandatory.
+1. **Capability holder signature.** Ed25519 over `canonical_ser(session_unsigned)`. Mandatory. This is the **session signature**, distinct from the **capability signature** that bound the capability itself (RFC-0957 + RFC-0965 §6 `holder_signature` field). The two signatures cover different payloads: capability signature proves the holder owns the capability; session signature proves the holder authorized this specific set of SQL operations. A capability signature alone is **not sufficient** to authorize a session; the session signature is always required.
 2. **Co-signer signatures (optional).** For sessions requiring multi-sig (e.g., treasury vault access), each co-signer adds an Ed25519 signature over the same `canonical_ser(session_unsigned)`. Threshold per capability's `MultiSig` constraint.
 
 For sessions spanning N SQL operations, **one signature covers all N**. The session envelope is the unit of signature, not the individual statement.

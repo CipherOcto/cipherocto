@@ -107,6 +107,41 @@ Cross-chain interop. An Ethereum verifier (e.g., a Solidity contract enforcing a
 
 ## Specification
 
+### 0. Wire-format envelope tag (namespace prefix)
+
+To disambiguate Constraint envelopes from other tagged-union envelopes on the wire
+(Caveat per RFC-0965, Permission per RFC-0965 §3.2, etc.), every Constraint
+envelope is preceded by a **namespace tag byte**:
+
+```text
+Constraint envelope (wire):
+    namespace_tag:        u8                   // 0x01 = Constraint
+    constraint_envelope:  ConstraintEnvelope   // §2 below
+```
+
+Namespace tag values (reserved range `0x01-0x1F` for RFC-0964/0965 stack):
+
+| Tag | Meaning |
+|---|---|
+| 0x00 | forbidden |
+| 0x01 | **Constraint** (this RFC) |
+| 0x02 | **Caveat** (RFC-0965) |
+| 0x03 | **PermissionKind** (RFC-0965 §3.2) |
+| 0x04 | **ReservationState** (RFC-0960 §2.3) |
+| 0x05 | **Capability** (RFC-0965 §6) |
+| 0x06 | **ConsensusSession** (RFC-0962 §4) |
+| 0x07-0x1F | reserved for future stack expansion |
+| 0x20-0xFF | application-specific |
+
+Receivers MUST read the namespace tag first and dispatch to the correct parser.
+A receiver that sees an unknown tag (e.g. 0x07) MUST fail-closed.
+
+**Discriminator bytes within a Constraint envelope** (§1 below) are local to
+the Constraint namespace; they do NOT share an address space with Caveat
+discriminators (RFC-0965) or any other tagged union. A byte 0x05 inside a
+Constraint envelope means `MaxPerTx`; a byte 0x05 inside a Caveat envelope
+means `After` (deprecated time-bound, RFC-0957).
+
 ### 1. Constraint variant enumeration
 
 The canonical 23-variant set from Phase 3 research, grouped by category:

@@ -102,6 +102,28 @@ Fail-closed is safer: a malformed capability never gets past verification. The d
 
 ## Specification
 
+### 0. Wire-format envelope tag (namespace prefix)
+
+To disambiguate Caveat envelopes from other tagged-union envelopes on the wire
+(Constraint per RFC-0964, PermissionKind per §3.2 below, etc.), every Caveat
+envelope is preceded by a **namespace tag byte**:
+
+```text
+Caveat envelope (wire):
+    namespace_tag:      u8                   // 0x02 = Caveat
+    caveat_envelope:    CaveatEnvelope       // §2 below
+```
+
+Namespace tag values are shared with RFC-0964 §0. Tag `0x02` = Caveat.
+Receivers MUST read the tag first and dispatch to the Caveat parser. Unknown
+tags fail-closed.
+
+**Discriminator bytes within a Caveat envelope** (§1 below) are local to the
+Caveat namespace; they do NOT share an address space with Constraint
+discriminators (RFC-0964). A byte 0x05 inside a Caveat envelope means
+`After` (RFC-0957 deprecated time-bound); a byte 0x05 inside a Constraint
+envelope means `MaxPerTx` (RFC-0964 SpendCap).
+
 ### 1. Caveat type enumeration
 
 RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types. Total: 21.
@@ -224,12 +246,10 @@ Verification: after a `Settlement` lands, the reservation stays in `Auditable` s
 
 Attenuation: child's `duration_secs` MUST be ≥ parent's. Lengthening the window restricts (more time for disputes).
 
-#### 3.6 RedemptionContext (0x14 in canonical; reserved discriminator)
-
-> **Note:** The table above shows `0x15` for `RedemptionContext`. Re-checking the table values: `0x13` MaxUses, `0x14` AuditWindow, `0x15` RedemptionContext. Corrected.
+#### 3.6 RedemptionContext (0x15)
 
 ```text
-RedemptionContext (0x15) payload:
+RedemptionContext payload:
     context_hash:        [u8; 32]                // BLAKE3(canonical_ser(context))
 // 32 bytes payload
 ```

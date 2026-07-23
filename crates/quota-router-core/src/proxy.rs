@@ -1819,10 +1819,24 @@ where
         }
     }
 
-    // Deduct balance
+    // Deduct balance. Per RFC-0960 §9 the mutable balance is a projection of
+    // the event log; silent underflow is forbidden (was the prior
+    // `saturating_sub` bug). The rate-limit check above is best-effort and
+    // racy, so a concurrent spend can still land us at exactly 0 here —
+    // we treat that as a transient failure and reject the request rather
+    // than allowing the projection to drift negative.
     {
         let mut bal = balance.lock();
-        bal.deduct(1);
+        if let Err(e) = bal.deduct(1) {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header("X-RateLimit-Remaining", "0")
+                .body(SseBody::from_error(format!(
+                    "Rate limit projection underflow: {}",
+                    e
+                )))
+                .unwrap());
+        }
     }
 
     // Extract DispatchInfo fields for mode handlers

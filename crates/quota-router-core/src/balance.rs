@@ -23,8 +23,23 @@ impl Balance {
         }
     }
 
-    pub fn deduct(&mut self, amount: u64) {
-        self.amount = self.amount.saturating_sub(amount);
+    /// Deduct `amount` from this balance.
+    ///
+    /// Returns `Err(BalanceError::Insufficient)` if the balance is smaller than
+    /// `amount` — i.e. the caller MUST prove sufficiency via `check()` before
+    /// calling `deduct()`. Silent underflow (the previous `saturating_sub`
+    /// behavior) is forbidden: it lets a vault's mutable balance drift below
+    /// zero and silently lose accounting correctness. Per RFC-0960 §9 the
+    /// mutable balance row is a projection of the event log, never the
+    /// source of truth; an underflow here means an upstream invariant
+    /// (capability constraint evaluation, reservation accounting) is
+    /// inconsistent with the projection.
+    pub fn deduct(&mut self, amount: u64) -> Result<(), BalanceError> {
+        self.amount = self
+            .amount
+            .checked_sub(amount)
+            .ok_or(BalanceError::Insufficient(self.amount, amount))?;
+        Ok(())
     }
 
     pub fn add(&mut self, amount: u64) {
@@ -81,7 +96,7 @@ mod tests {
     fn test_balance_decrement() {
         let mut balance = Balance::new(100);
         let cost = 10;
-        balance.deduct(cost);
+        balance.deduct(cost).unwrap();
         assert_eq!(balance.amount, 90);
     }
 
@@ -93,10 +108,15 @@ mod tests {
     }
 
     #[test]
-    fn test_balance_saturating_sub() {
+    fn test_balance_deduct_insufficient_returns_err() {
+        // Per RFC-0960 §9: silent underflow is forbidden. The mutable balance
+        // is a projection of the event log; underflow means an upstream
+        // invariant is inconsistent with the projection. deduct() must error.
         let mut balance = Balance::new(5);
-        balance.deduct(10);
-        assert_eq!(balance.amount, 0); // Should saturate, not underflow
+        let result = balance.deduct(10);
+        assert!(matches!(result, Err(BalanceError::Insufficient(5, 10))));
+        // Balance is unchanged on error.
+        assert_eq!(balance.amount, 5);
     }
 
     #[test]
@@ -117,7 +137,7 @@ mod tests {
     #[test]
     fn test_balance_deduct_zero() {
         let mut balance = Balance::new(100);
-        balance.deduct(0);
+        balance.deduct(0).unwrap();
         assert_eq!(balance.amount, 100);
     }
 

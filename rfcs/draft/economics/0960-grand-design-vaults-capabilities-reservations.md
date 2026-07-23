@@ -11,6 +11,7 @@ Draft
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft; synthesizes Phases 1-5 research. Round 1 self-review applied: 8 fixes (see §R1 Self-Review). |
+| v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -69,6 +70,28 @@ Self-applied R1 fixes prior to circulation. Each fix maps to a defect surfaced d
 **Defect:** §10.7 was only about identity translation; it didn't define the `Vet` struct that R1-F7 referenced. Cross-reference dangling.
 
 **Fix:** §10.7 now includes a `Vet` struct definition (target + action_template + required_caller + pre_conditions + expiry_for_deploy), explicit rejection of raw bytes (phishing vector), and the canonical use cases (hierarchical vault creation, cross-DAO delegation).
+
+## R2 Self-Review (multi-round adversarial)
+
+R2 cross-check after RFC-0961 and RFC-0962 landed (2026-07-22). Each finding tied to a specific defect surfaced during the R2 review pass.
+
+### R2-F1 — Companion RFC status staleness
+
+**Defect:** §Dependencies and §Dependency Validation listed RFC-0961 and RFC-0962 as `Planned`. As of 2026-07-22 both have Draft RFCs landed (`rfcs/draft/economics/0961-ciphero-sql-language-spec.md` and `rfcs/draft/economics/0962-consensus-session-protocol.md`). Stale status misleads reviewers about which hard-blocks apply.
+
+**Fix:** Both RFCs now flagged `Draft (2026-07-22)` in the companions list and in the dependency table. Hard-block status promoted from `Best-effort / No` to `Yes (IA-1) / YES` and `Yes (IA-2) / YES` respectively. IA-1: RFC-0961 CIPHERO_SQL parser + registry. IA-2: RFC-0962 ConsensusSession signature aggregation + ZK circuit.
+
+### R2-F2 — Step 6 prose staleness
+
+**Defect:** §2.3 said "Step 6 of the 11-step exercise (currently `blake3::hash(b"escrow/v1")`) becomes a real `Reservation` row." The placeholder is now gone: `crates/quota-router-core/tests/eleven_step.rs::step6_escrow_preauth` now constructs a real `quota_router_sm_engine::Reservation` via `Reservation::mint(...)` (landed 2026-07-23).
+
+**Fix:** §2.3 prose updated to reflect the closeout. The reference to the prior hash-of-string pattern is replaced with: "Step 6 now constructs a real `Reservation` row via `quota_router_sm_engine::Reservation::mint()` (landed 2026-07-23, R1-F1 closeout). The prior `blake3::hash(b"escrow/v1")` placeholder is removed."
+
+### R2-F3 — Open Questions status staleness
+
+**Defect:** §Open Questions listed all five companion RFCs as `planned`. RFC-0961 and RFC-0962 are now `Draft (2026-07-22)`.
+
+**Fix:** §Open Questions updated to flag both RFCs as `Draft 2026-07-22` (bold). Reviewers reading the open questions should know which gaps are still TODO vs which have a landed Draft to review.
 
 ## Authors
 
@@ -136,16 +159,16 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 - RFC-0126 (Numeric): Deterministic Serialization — Accepted; canonical_ser for all primitive fields
 - RFC-0102 (Numeric): Wallet Cryptography — Accepted; `Transfer { sender, receiver, token, amount }` sketch
 
-**Companion RFCs (to be drafted as RFC-0961+):**
+**Companion RFCs:**
 
-- RFC-0961 (Economics): Deterministic SQL Classification — `CIPHERO_SQL` language spec
-- RFC-0962 (Economics): ConsensusSession Object Protocol — wire protocol + ZK circuit for batch signature
-- RFC-0963 (Economics): Resource Shard Routing — shard routing by `vault_id`
+- RFC-0961 (Economics): Deterministic SQL Classification — `CIPHERO_SQL` language spec — **Draft (2026-07-22)**
+- RFC-0962 (Economics): ConsensusSession Object Protocol — wire protocol + ZK circuit for batch signature — **Draft (2026-07-22)**
+- RFC-0963 (Economics): Resource Shard Routing — shard routing by `vault_id` — Planned
 
 **Requires (companion RFCs draft, not yet numbered):**
 
-- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants
-- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format
+- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants — Planned
+- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format — Planned
 
 **Not Requires (parallel primitives):**
 
@@ -161,8 +184,8 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 | RFC-0959 | Requires | Accepted (v1.0 2026-07-20) | Already | No |
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0102 | Requires | Accepted | Already | No |
-| RFC-0961 | Companion | Planned | Best-effort | No |
-| RFC-0962 | Companion | Planned | Best-effort | No |
+| RFC-0961 | Companion | **Draft (2026-07-22)** | Yes (IA-1) | YES |
+| RFC-0962 | Companion | **Draft (2026-07-22)** | Yes (IA-2) | YES |
 | RFC-0963 | Companion | Planned | Best-effort | No |
 | RFC-0964 | Companion | Planned | Best-effort | No |
 | RFC-0965 | Companion | Planned | Best-effort | No |
@@ -332,7 +355,7 @@ ReservationState ∈ {
 }
 ```
 
-Reservations are first-class blockchain objects. Step 6 of the 11-step exercise (currently `blake3::hash(b"escrow/v1")`) becomes a real `Reservation` row.
+Reservations are first-class blockchain objects. Step 6 of the 11-step exercise now constructs a real `Reservation` row via `quota_router_sm_engine::Reservation::mint()` (landed 2026-07-23, R1-F1 closeout). The prior `blake3::hash(b"escrow/v1")` placeholder is removed.
 
 #### §2.4 Settlement — alias to RFC-0959 `SettlementReceipt`
 
@@ -922,8 +945,8 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 |---|---|
 | Canonical `Constraint` encoding | RFC-0964 (companion, planned) |
 | `Capability` macaroon format extensions | RFC-0965 (companion, planned) |
-| `CIPHERO_SQL` full language spec | RFC-0961 (companion, planned) |
-| `ConsensusSession` wire protocol | RFC-0962 (companion, planned) |
+| `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Draft 2026-07-22**) |
+| `ConsensusSession` wire protocol | RFC-0962 (companion, **Draft 2026-07-22**) |
 | Resource shard routing algorithm | RFC-0963 (companion, planned) |
 | Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
 

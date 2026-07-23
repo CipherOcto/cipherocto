@@ -30,8 +30,8 @@ use quota_router_core::{
     sim::{ProviderSim, SimConfig, SimResponseKind},
 };
 use quota_router_sm_engine::{
-    Ask as EngineAsk, Receipt as EngineReceipt, SettlementError as EngineError, SettlementStore,
-    StoolapStore,
+    Ask as EngineAsk, Receipt as EngineReceipt, Reservation, SettlementError as EngineError,
+    SettlementStore, StoolapStore,
 };
 use quota_router_storage::ask::{ConsumedReceiptIndex, SettlementEnvelope, SettlementError};
 use std::collections::HashSet;
@@ -90,13 +90,45 @@ fn step5_marketplace_lookup(marketplace: &Marketplace, model: &str) -> Option<Ma
     marketplace.cheapest(model).expect("cheapest lookup")
 }
 
-/// Step 6: OCTO-W escrow pre-auth (placeholder: derive escrow ID).
-fn step6_escrow_preauth(ask_id: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(ask_id);
-    hasher.update(b"escrow/v1");
-    let escrow_id = hasher.finalize();
-    *escrow_id.as_bytes()
+/// Step 6: OCTO-W escrow pre-auth (real Reservation per RFC-0960 §2.3).
+///
+/// Replaces the prior `blake3::hash(ask_id || b"escrow/v1")` placeholder
+/// flagged by RFC-0960's R1 self-review as R1-F1. Now constructs a real
+/// `Reservation` struct in `Reserved` state, bound to:
+///
+/// - the marketplace ask selected in step 5 (`ask_id`)
+/// - the capability token minted in step 3 (`cap_id`)
+/// - the holder's vault (derived from holder DID + capability for this test)
+/// - the consumed resource axis + amount derived from the request body
+///
+/// `audit_window_secs = 0` keeps this an instant-release escrow (test path);
+/// production reservations would default to 24h for AI marketplace and 7d
+/// for treasury vaults (RFC-0960 §6).
+fn step6_escrow_preauth(
+    ask_id: &[u8; 32],
+    cap_id: &[u8; 32],
+    holder_did: &str,
+    amount_micro: u128,
+) -> Reservation {
+    // Vault ID is derived from holder DID for this test; production code
+    // would resolve it from the capability's `vault_id` caveat (RFC-0957).
+    let mut vault_hasher = Hasher::new();
+    vault_hasher.update(b"vault/v1");
+    vault_hasher.update(holder_did.as_bytes());
+    let vault_id = *vault_hasher.finalize().as_bytes();
+
+    Reservation::mint(
+        vault_id,
+        *cap_id,
+        *ask_id,
+        "input_tokens_per_1k".to_owned(),
+        amount_micro,
+        // 1 hour default deadline; production uses capability's expires_at.
+        1_700_003_600,
+        // Audit window: 0 = instant release for this test.
+        0,
+        1_700_000_000,
+    )
 }
 
 /// Step 7: Egress transform — strip capability token, attach provider key.
@@ -314,7 +346,15 @@ fn eleven_step_exercise_green() {
         .expect("marketplace has gpt-4 entry");
     assert_eq!(entry.ask_id, expected_ask_id);
     // 6
-    let _escrow_id = step6_escrow_preauth(&entry.ask_id);
+    let reservation = step6_escrow_preauth(&entry.ask_id, &cap_id, HOLDER_DID, 30_000);
+    // Reservation must start in Reserved state per RFC-0960 §2.3 state machine.
+    assert_eq!(
+        reservation.state,
+        quota_router_sm_engine::ReservationState::Reserved
+    );
+    assert!(reservation.settlement_ref.is_none());
+    assert_eq!(reservation.amount_micro, 30_000);
+    assert_eq!(reservation.audit_window_secs, 0);
     // 7
     let stripped = step7_egress_transform(&req, PROVIDER_KEY);
     assert!(!stripped
@@ -487,7 +527,11 @@ fn eleven_step_replay_defense_full_path() {
     let cap_id = step3_mint_capability_token(&vak);
     let req = step4_post_request(&cap_id, body);
     let entry = step5_marketplace_lookup(&marketplace, "openai/gpt-4").expect("marketplace");
-    let _escrow_id = step6_escrow_preauth(&entry.ask_id);
+    let reservation2 = step6_escrow_preauth(&entry.ask_id, &cap_id, HOLDER_DID, 30_000);
+    assert_eq!(
+        reservation2.state,
+        quota_router_sm_engine::ReservationState::Reserved
+    );
     let _stripped = step7_egress_transform(&req, PROVIDER_KEY);
     let resp = step8_provider_response(&sim, body);
     let ingress = step9_cache_classify(&resp);

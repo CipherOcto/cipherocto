@@ -25,6 +25,7 @@ Draft
 | v1.12 | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review). |
 | v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
 | v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
+| v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -432,6 +433,20 @@ R15 pass: exhaustive grep for remaining 0x02/0x03/0x04 stale EIP-712 formulas. 1
 **Defect:** Line 538 in the wire-format verification still had `typed_data_hash == BLAKE3(0x04 || domain_separator || BLAKE3(0x03 || constraint_encoding))`. After R6-F2 we moved these to `0xB2` and `0xB1` (high-bit EIP-712 family separators). Same defect class as R12-R14; missed in earlier sweeps because the line was in a different section.
 
 **Fix:** Line 538 updated: `typed_data_hash == BLAKE3(0xB2 || domain_separator || BLAKE3(0xB1 || constraint_encoding))` with parenthetical noting 0xB1/0xB2 are EIP-712 family high-bit separators. R15 grep returns 0 stale 0x02/0x03/0x04 in EIP-712 contexts (the only remaining occurrences are in the namespace-tag table at line 125-127 and the Constraint discriminator table at line 179-181, both intentional).
+
+## R16 Self-Review (0xA_ sweep) — NO DEFECTS
+
+R16 pass: exhaustive grep for 0xA2/0xA3 + remaining 0xA0-0xAF ranges. **No defects found.** All hash-separator usages across the 5-RFC stack are now consistent:
+
+- 0xA0: ConstraintSet version (RFC-0964 §4) ✓
+- 0xA1: constraint_hash (RFC-0964 §5) ✓
+- 0xA2: RedemptionContext context_hash (RFC-0965 §3.6) ✓
+- 0xA3: sql_statements_hash (RFC-0962 §9) ✓
+- 0xA4-0xAF: reserved for future cross-RFC internal prefixes (RFC-0964 §0.1) ✓
+- 0xB0-0xB2: EIP-712 family (RFC-0964 §6) ✓
+- 0xC0-0xFF: application-specific (RFC-0964 §0.1) ✓
+
+The 5-RFC stack reached internal consistency at R16. Per the directive "keep doing more rounds until a new round finds nothing", R16 is the first round with no actionable defects. Future reviews should focus on: (a) implementation-spec drift as code lands, (b) cross-validator test vectors, (c) new RFCs that might add to the registry.
 
 ## Authors
 

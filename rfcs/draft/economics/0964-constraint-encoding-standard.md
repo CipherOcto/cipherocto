@@ -41,7 +41,7 @@ Three artifacts:
 
 1. **`Constraint` enum** — 23-variant tagged union (Time, SpendCap, Destination, CoSigning, Caller, UseCount, Delegation, Composition, Vesting, Compliance groups).
 2. **`ConstraintSet`** — ordered list of Constraints; canonical encoding is concatenation of constraint encodings.
-3. **`constraint_hash`** — `BLAKE3(0x01 || canonical_ser(constraint_set))` for content-addressing.
+3. **`constraint_hash`** — `BLAKE3(0xA1 || canonical_ser(constraint_set))` for content-addressing. (The `0xA1` prefix is the constraint-hash domain separator, distinct from the outer-namespace tag 0x01; see §0 and §5.)
 
 Cross-chain interop: each variant carries an EIP-712-style `typed_data_hash` so an Ethereum verifier can validate a constraint without re-implementing the parser.
 

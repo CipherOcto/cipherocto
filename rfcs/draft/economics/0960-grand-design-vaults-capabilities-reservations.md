@@ -21,6 +21,7 @@ Draft
 | v1.8 | 2026-07-23 | @cipherocto + @mmacedoeu | R9 cross-RFC review: 2 fixes (see §R9 Self-Review). |
 | v1.9 | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review). |
 | v1.10 | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review). |
+| v1.11 | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -383,6 +384,16 @@ R11 pass: error code provenance, post-R10 drift. 1 fix applied.
 **Defect:** The Central Error Code Registry (R9-F1) listed 23 codes with primary RFC and meaning but no "Defined in" column. Reviewer looking for the source of a code (e.g., `E_REPLAY_MISMATCH`) had to grep all 10 R-round sections to find which R introduced it.
 
 **Fix:** Registry table now has 4 columns: `Code`, `Primary RFC`, `Defined in`, `Meaning`. The "Defined in" column points to the R-round (R3, R4-F9, R7-F1, R7-F5, R8-F1, R8-F3, R8-F5) that introduced the code. Reviewer can trace provenance in one lookup.
+
+## R12 Self-Review (stale-summary sweep)
+
+R12 pass: stale formulas in summaries, network parameter definitions. 1 fix applied.
+
+### R12-F1 — RFC-0964 Summary still has old `BLAKE3(0x01 || ...)` formula
+
+**Defect:** RFC-0964 line 44 (Summary section, item 3) still had `BLAKE3(0x01 || canonical_ser(constraint_set))` for `constraint_hash`. After R6-F1 we moved the separator to `0xA1` (high-bit, distinct from the outer-namespace tag 0x01). The §5 normative spec was updated but the Summary at the top of the doc was not, leaving two inconsistent formulas in the same document.
+
+**Fix:** Summary updated: `BLAKE3(0xA1 || canonical_ser(constraint_set))` with parenthetical noting that 0xA1 is the constraint-hash domain separator distinct from 0x01 outer-namespace tag. Reviewer reading the Summary now sees the same formula as §5.
 
 ## Authors
 

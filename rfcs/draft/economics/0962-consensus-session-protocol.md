@@ -248,6 +248,7 @@ A node receiving a session for replay:
 2. **Verify signature.** `verify(capability_holder_pubkey, canonical_ser(session_unsigned), signature)`. Reject on mismatch.
 3. **Verify capability.** Look up `capability_id` in local capability store. Reject if revoked, expired, or exhausted. Reject if `capability_holder` ≠ signature signer.
 4. **Verify WAL segment hash.** Recompute `BLAKE3` over local WAL segment. Reject if mismatch (node is out of sync).
+   - **Block height consistency:** the `block_height` in the session envelope is the block the block producer assigned. A node replaying the session uses the envelope's `block_height` verbatim — it does **not** re-derive from local chain state. If the local chain has not yet reached that block height, the session is queued in a per-node `pending_sessions` table and replayed once sync catches up. A session whose `block_height` is **higher than the node's current head** is never rejected for "future" content; it is just deferred.
 5. **Verify SQL determinism (CONSENSUS_SAFE only).** Per RFC-0961 §3.1. Reject if any statement is non-deterministic.
 6. **Verify nonce uniqueness.** Check `ConsumedSessionIndex[(signer, nonce)]`. Reject if seen.
 7. **Apply statements.** Execute in order. Split into:
@@ -416,7 +417,9 @@ CREATE TABLE consensus_sessions (
     mode                 TEXT NOT NULL,            -- CONSENSUS_SAFE | OFF_CHAIN_SAFE | AUDIT_ONLY
     state                TEXT NOT NULL,            -- Pending | Replayed | Finalized | Rejected
     sql_statement_count  INT NOT NULL,
-    has_zk_proof         BOOLEAN NOT NULL,
+    zk_proof             BLOB NULL,                -- RFC-0958 SessionProof bytes
+    proof_system         TEXT NULL,                -- R1CS | PLONK | STWO | Groth16
+    verifier_key_id      BLOB NULL,                -- RFC-0958 verifier key reference
     signature            BLOB NOT NULL,            -- Ed25519
     metadata             BLOB NULL,                -- canonical_ser JSON
     FOREIGN KEY (capability_id) REFERENCES capabilities(capability_id)
@@ -425,6 +428,7 @@ CREATE TABLE consensus_sessions (
 CREATE INDEX ix_sessions_holder ON consensus_sessions (capability_holder, timestamp_unix_ms);
 CREATE INDEX ix_sessions_block ON consensus_sessions (block_height);
 CREATE INDEX ix_sessions_mode ON consensus_sessions (mode, state);
+CREATE INDEX ix_sessions_proof ON consensus_sessions (proof_system) WHERE zk_proof IS NOT NULL;
 
 CREATE TABLE multi_sessions (
     multi_session_id     BLOB PRIMARY KEY,

@@ -14,6 +14,7 @@ Draft
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | Round 2 self-review applied: 3 fixes (see §R2 Self-Review). |
 | v1.2 | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review). |
 | v1.3 | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review). |
+| v1.4 | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -181,6 +182,52 @@ R4 deeper pass. Looked at catalog schemas, namespace-tag coverage, edge cases, s
 
 **Fix:** §4.1 now specifies a `7-day` default drain timeout. Drains exceeding this abort and retry as live migration. Nodes publish throughput estimates every 1000 events to enable progress tracking.
 
+## R5 Self-Review (implementation + test gap)
+
+R5 pass: implementation/spec gap and missing test vectors. 7 fixes applied.
+
+### R5-F1 — Stale Step 6 references in gap-matrix + test strategy
+
+**Defect:** RFC-0960 §2 (gap-matrix), §18 (backwards compat) and §22 (test strategy) all still listed Step 6 as the `blake3::hash(b"escrow/v1")` placeholder. After R1-F1 + R2-F2 closeouts, the placeholder is gone but the references remained stale.
+
+**Fix:** §2 gap-matrix updated: "Escrow hold/release = `quota_router_sm_engine::Reservation::mint()` (RFC-0960 §2.3; landed 2026-07-23) — Closed (R1-F1 closeout)". §18 + §22 references updated identically.
+
+### R5-F2 — `ValidRange` ordering not specified (parser/evaluator divergence)
+
+**Defect:** RFC-0964 §3.1 (ValidRange payload) defines `valid_after_unix` + `valid_until_unix` but never says what to do if `valid_after > valid_until`. A parser could accept the encoding; an evaluator could go either way (always-reject vs wrap-around).
+
+**Fix:** §3.1 now states: "If `valid_after_unix > valid_until_unix`, the constraint is unsatisfiable (always-reject); parsers MUST accept the encoding but evaluators reject any operation under such a range." Cross-implementations have a single canonical behavior.
+
+### R5-F3 — `block_height` replay semantics unspecified
+
+**Defect:** RFC-0962 §4 envelope has `block_height: u64` and §6.2 step 4 verifies `wal_segment_hash`. A node replaying a session whose `block_height` is higher than its local chain head has no defined behavior — reject as "future" or queue for later?
+
+**Fix:** §6.2 step 4 now explicitly says: "the node uses the envelope's `block_height` verbatim — it does **not** re-derive from local chain state. If the local chain has not yet reached that block height, the session is queued in a per-node `pending_sessions` table and replayed once sync catches up. A session whose `block_height` is **higher than the node's current head** is never rejected for 'future' content; it is just deferred."
+
+### R5-F4 — `PerAssetSpendingCap` max-assets not bounded
+
+**Defect:** RFC-0964 §3.2 has `caps: Vec<(asset_id, amount_micro)>` with no maximum. A 1000-asset cap would be 9 + 48*1000 = 48,009 bytes — far above the G5 design goal "max ≤ 256 bytes".
+
+**Fix:** §3.2 now enforces `N ≤ 5` at parse time: "1 asset = 57 bytes, 5 assets = 249 bytes, 6 assets = 297 (rejected)". Cross-implementations reject any encoding > 256 bytes.
+
+### R5-F5 — `audit_window` field name has three aliases
+
+**Defect:** After R3-F2 we normalized the *type* (`u64` seconds) but three names remain in the doc stack: `audit_window` (RFC-0960 §2.2 caveat semantic view + §2.3 Reservation struct prose), `audit_window_secs` (live code), `duration_secs` (RFC-0965 §3.5 caveat payload). All three refer to the same `u64` seconds field but readers might think they're distinct.
+
+**Fix:** §2.2 caveat view now says: "`audit_window: Option<u64>` (Caveat::AuditWindow(d_secs); same field, same unit as Reservation.audit_window_secs (live code))". §2.3 prose cross-references all three names. Reader sees they're identical.
+
+### R5-F7 — `consensus_sessions` catalog has no `zk_proof` column
+
+**Defect:** RFC-0962 §13 has `has_zk_proof BOOLEAN` but no actual `zk_proof` column or `proof_system` / `verifier_key_id` fields. The ZK proof (RFC-0958 SessionProof) lives only in the envelope; the catalog can't index or query it.
+
+**Fix:** Schema now has `zk_proof BLOB NULL`, `proof_system TEXT NULL` (R1CS|PLONK|STWO|Groth16), `verifier_key_id BLOB NULL`. Plus a partial index `ix_sessions_proof ON proof_system WHERE zk_proof IS NOT NULL` for fast "find all STWO-proven sessions" queries.
+
+### R5-F8 — RFC-0961 forbidden timestamp list missing PostgreSQL aliases
+
+**Defect:** §4.1 forbidden list includes `NOW`, `CURRENT_TIMESTAMP`, `LOCALTIMESTAMP` but not `STATEMENT_TIMESTAMP()`, `TRANSACTION_TIMESTAMP()`, `clock_timestamp()`. Reader might assume only the listed names are forbidden.
+
+**Fix:** §4.1 now explicitly lists all four PostgreSQL time-function aliases as forbidden. Parsers reject any function whose name matches the forbidden set (case-insensitive).
+
 ## Authors
 
 - Author: @cipherocto (S04 + S05 grand-design work)
@@ -207,7 +254,7 @@ Per `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` Phase 
 |---|---|---|
 | Per-DID OCTO-W account | `octo_w_balances(key_id, ...)` keyed by API key | **No DID-keyed accounts** |
 | Value transfer between DIDs | none | **No `transfers` table** |
-| Escrow hold/release | Step 6 of 11-step is `blake3::hash(b"escrow/v1")` | **No escrow primitive** |
+| Escrow hold/release | `quota_router_sm_engine::Reservation::mint()` (RFC-0960 §2.3; landed 2026-07-23) | **Closed (R1-F1 closeout)** |
 | Multi-token (role tokens) | none | **OCTO-A/B/D/etc. not in any schema** |
 | Capability-gated spend | RFC-0957 channel layer exists, no oracle | **No per-capability spending policy** |
 | Negative-balance defense | `Balance::deduct` uses `saturating_sub` (balance.rs:27) | **Silent over-spend bug** |
@@ -377,7 +424,7 @@ Capability (RFC-0957 macaroon) {
         valid_after:          Timestamp,          // Caveat::ValidAfter(ts)
         expires_at:           Timestamp,          // Caveat::ExpiresAt(ts)  (or ValidRange)
         max_uses:             u32,                // Caveat::MaxUses(n) (0 = unlimited)
-        audit_window:         Option<Duration>,   // Caveat::AuditWindow(d)
+        audit_window:         Option<u64>,        // Caveat::AuditWindow(d_secs); same field, same unit as Reservation.audit_window_secs (live code)
         redemption_context:   Bytes,              // Caveat::RedemptionContext(ctx)
         parent_capability:    Option<CapabilityID>,// Caveat::WrappedOnly(parent)
         factory:              Option<Vet>,        // Caveat::Factory(vet) — see §10.7
@@ -646,7 +693,7 @@ transfer_events: 0 TransferApplied; instead, 1 TransferCorrected row
    (attributes carry the original transfer's data + corrections=[original_event_id])
 ```
 
-`audit_window: Option<Duration>` on `Reservation` (carried as `Caveat::AuditWindow` on the originating `Capability`) controls dispute period:
+`audit_window: Option<u64>` (seconds) on `Reservation` (carried as `Caveat::AuditWindow(duration_secs: u64)` on the originating `Capability`) controls dispute period. The `u64` is **seconds**, identical in name + type + unit to RFC-0965 §3.5's `duration_secs` field and the live code's `audit_window_secs` field on `quota_router_sm_engine::Reservation`.
 
 | Window | Default use case |
 |---|---|
@@ -982,7 +1029,7 @@ This RFC introduces new primitives (`Vault`, `Capability`, `Reservation`, `Settl
 | `Balance::deduct` (`balance.rs:27`) | Bug fixed in the same revision: `saturating_sub` → checked subtraction that returns `Err(InsufficientBalance)` |
 | RFC-0959 settlement chain | Continues as settlement receipt layer |
 | RFC-0957 macaroon format | Extended via RFC-0965 (companion); old macaroons remain valid |
-| `quota-router-core` 11-step exercise | Step 6 escrow (`blake3::hash(b"escrow/v1")`) becomes a real `Reservation` row. The 13/13 exercise tests continue to pass after the change |
+| `quota-router-core` 11-step exercise | Step 6 escrow = real `Reservation::mint()` (landed 2026-07-23; R1-F1 closeout). The 13/13 exercise tests pass after the change |
 
 ## Security Considerations
 

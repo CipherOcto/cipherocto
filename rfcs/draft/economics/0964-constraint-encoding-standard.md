@@ -206,6 +206,10 @@ ValidRange:
     valid_after_unix:    u64 BE
     valid_until_unix:    u64 BE
     // 16 bytes payload
+    // Semantics: constraint is satisfied iff valid_after_unix <= t < valid_until_unix.
+    // If valid_after_unix > valid_until_unix, the constraint is unsatisfiable
+    // (always-reject); parsers MUST accept the encoding but evaluators reject
+    // any operation under such a range.
 
 NotBefore:
     not_before_unix:     u64 BE
@@ -231,8 +235,11 @@ MaxPerTx:
 
 PerAssetSpendingCap:
     caps:                Vec<(asset_id, amount_micro)>
-    // Each entry: asset_id (32 bytes) || amount_micro (16 bytes)
+    // Each entry: asset_id (32 bytes) || amount_micro (16 bytes) = 48 bytes
     // Vec length prefix: 4 bytes BE
+    // Encoded total: 9 bytes overhead + 48 * N bytes
+    // N ≤ 5 enforced at parse time (matches G5 max ≤ 256 bytes)
+    //   1 asset = 57 bytes, 5 assets = 249 bytes, 6 assets = 297 (rejected)
     // Average: ~50 bytes payload for 1 asset; ~250 bytes for 5 assets
 
 RateLimit:

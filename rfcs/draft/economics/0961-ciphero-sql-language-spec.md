@@ -140,6 +140,9 @@ The following SQL syntax is **always rejected** by CIPHERO_SQL parser, regardles
 | `CURRENT_TIME` | Same as `NOW()` |
 | `CURRENT_DATE` | Same as `NOW()` (date boundaries differ across timezones) |
 | `LOCALTIMESTAMP` | Same as `NOW()` |
+| `STATEMENT_TIMESTAMP()` | Same as `NOW()` (PostgreSQL statement-start time) |
+| `TRANSACTION_TIMESTAMP()` | Same as `NOW()` (PostgreSQL transaction-start time) |
+| `clock_timestamp()` | Same as `NOW()` (PostgreSQL actual current time) |
 | `RANDOM()` | RNG; non-deterministic |
 | `GEN_RANDOM_UUID()` | Same as `RANDOM()` |
 | `UUID_GENERATE_V4()` | Same as `RANDOM()` |

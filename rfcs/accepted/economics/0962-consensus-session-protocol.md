@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted v2.0
 
 > **Note:** Companion RFC to RFC-0960 §10 (Execution Envelopes) and §1 (Deterministic SQL Engine). Defines the wire-protocol shape, lifecycle states, signature aggregation, ZK commitment, and reconciliation semantics of an `ExecutionEnvelope`. Builds on RFC-0959 (SettlementReceipt envelope), RFC-0957 (Capability), RFC-0862 (sync as propagation), RFC-0961 (Deterministic SQL dialect), and RFC-0967 (Policy Object reference).
 
@@ -14,6 +14,7 @@ Draft
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as `ExecutionEnvelope`). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. Outer namespace tag `0x04` retained for `ExecutionEnvelope` (was `ConsensusSession`); cross-RFC namespace-tag table extended in RFC-0964 §0 to include `0x07 = PolicyObject` (RFC-0967). |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -45,36 +46,37 @@ Coexists with RFC-0959. RFC-0959 governs per-node Ask pricing; RFC-0962 governs 
 
 | RFC | Status | Reason |
 |-----|--------|--------|
-| RFC-0960 | Draft (companion) | Defines §12 Consensus Sessions architecture |
-| RFC-0961 | Draft (companion) | CIPHERO_SQL deterministic procedure language |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §10 Execution Envelopes architecture (renamed from §12 Consensus Sessions in v2.0) |
+| RFC-0961 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | CIPHERO_SQL deterministic procedure language |
 | RFC-0959 | Accepted (v1.0, 2026-07-20) | SettlementReceipt envelope shape; same canonical_ser pattern |
-| RFC-0957 | Draft | Capability binding (capability_holder field) |
-| RFC-0958 | Draft | ZK capability subclass for `EnvelopeProof` |
+| RFC-0957 | Accepted | Capability binding (capability_holder field) |
+| RFC-0958 | Accepted | ZK capability subclass for `EnvelopeProof` |
 | RFC-0862 | Accepted (v1.2.0) | Sync as propagation; sessions ship as event batches |
 | RFC-0126 | Accepted (v2.5.1) | Canonical serialization for session envelope |
 | RFC-0102 | Accepted | Wallet cryptography (Ed25519 substrate for session signature) |
 | RFC-0009 | Draft | Node identity for signature verification |
 | RFC-0853 | Draft | BLAKE3 primitive source |
 
-### Companion RFCs (Planned)
+### Companion RFCs
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0963 | Builds on | Resource shard routing; cross-shard sessions use `MultiEnvelope` |
-| RFC-0964 | Builds on | Constraint encoding for capability constraint evaluation |
-| RFC-0965 | Builds on | Capability extension format (caveat types referenced by `capability_holder`) |
+| RFC-0963 | Builds on | Resource shard routing; cross-shard sessions use `MultiEnvelope` — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0964 | Builds on | Constraint encoding for capability constraint evaluation — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0965 | Builds on | Capability extension format (caveat types referenced by `capability_holder`) — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0967 | Refers to | Policy Object Graph (one-shot reference, RFC-0962 v2.0 §3 imports `policy_id` per RFC-0967) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
 
 ### Dependency Validation
 
 Standalone, top-level section to satisfy BLUEPRINT v1.3 mandatory section set.
 
-| Dependency | Type | Current Status (2026-07-22) | Assumed Before Accept? | Hard-block on RFC-0962 acceptance? |
+| Dependency | Type | Current Status (2026-07-23) | Assumed Before Accept? | Hard-block on RFC-0962 acceptance? |
 |------------|------|------------------------------|------------------------|-------------------------------------|
-| RFC-0960 | Requires | Draft (companion) | Yes | YES |
-| RFC-0961 | Requires | Draft (companion) | Yes | YES |
+| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | Yes | **YES → resolved** |
+| RFC-0961 | Requires | **Accepted v2.0 (promoted in lockstep)** | Yes | **YES → resolved** |
 | RFC-0959 | Requires | Accepted | Already | No |
-| RFC-0957 | Requires | Draft | Yes | YES |
-| RFC-0958 | Requires | Draft | Yes | YES |
+| RFC-0957 | Requires | Accepted | Already | No |
+| RFC-0958 | Requires | Accepted | Already | No |
 | RFC-0862 | Requires | Accepted | Already | No |
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0102 | Requires | Accepted | Already | No |
@@ -84,8 +86,8 @@ Standalone, top-level section to satisfy BLUEPRINT v1.3 mandatory section set.
 **DAG check:** `0962 ← {0960, 0961, 0959, 0957, 0958, 0862, 0126, 0102, 0009, 0853}` — acyclic. No back-edges to RFC-0962.
 
 **Implicit Assumptions Audit:**
-- IA-1: RFC-0957 reaches Accepted with caveat DSL stable enough for `capability_holder` binding.
-- IA-2: RFC-0958 ZK circuit accepts session-style commitments (not just ask-style).
+- IA-1: RFC-0957 reaches Accepted with caveat DSL stable enough for `capability_holder` binding. → resolved (Accepted).
+- IA-2: RFC-0958 ZK circuit accepts session-style commitments (not just ask-style). → resolved (Accepted).
 - IA-3: RFC-0009 node identity provides DID format compatible with `signed_by` field.
 
 ## Design Goals
@@ -521,9 +523,11 @@ Catch-up sync: a node joining mid-blockchain receives the full event log from ge
 
 ## Status
 
-This RFC = ExecutionEnvelope object protocol (v2.0 strategic reframe). Status: Draft. Companion RFCs 0961 (Deterministic SQL), 0963 (Shard routing), 0964 (Constraint encoding), 0965 (Capability extension), 0967 (Policy Object Graph) in flight. Awaiting review and promotion to Accepted.
+This RFC = ExecutionEnvelope object protocol (v2.0 strategic reframe). Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0).
 
-Once Accepted, the `cipherocto-execution-envelope` crate implements:
+All companion RFCs (0961 / 0963 / 0964 / 0965 / 0967) reached Accepted in lockstep on 2026-07-23.
+
+The `cipherocto-execution-envelope` crate implements:
 - `ExecutionEnvelope::sign()` — capability holder signs canonical envelope
 - `ExecutionEnvelope::verify()` — node replay-time verification
 - `MultiEnvelope::coordinate()` — cross-shard coordination

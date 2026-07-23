@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted v1.1
 
 > **Note:** Companion RFC to RFC-0960 §2.2 (Capability). Defines the caveat types added by RFC-0960 to the RFC-0957 macaroon substrate. Each new caveat is a typed wrapper around a `Constraint` (RFC-0964) with macaroon attenuation semantics. Attenuation invariant (add-only, monotonic restriction) is preserved by RFC-0957. Builds on RFC-0957 (macaroon v1), RFC-0126 (canonical_ser), RFC-0964 (constraint encoding), and Phase 3 research (`docs/research/2026-07-22-external-capability-based-spend-systems.md`).
 
@@ -12,6 +12,7 @@ Draft
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
+| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -41,30 +42,31 @@ The new caveat types are the 9 RFC-0960-specific concepts that didn't fit RFC-09
 
 | RFC | Status | Reason |
 |-----|--------|--------|
-| RFC-0960 | Draft (companion) | Defines §2.2 Capability extensions |
-| RFC-0957 | Draft | Macaroon substrate + attenuation invariant |
-| RFC-0964 | Draft (companion) | Constraint canonical encoding (caveats wrap constraints) |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §2.2 Capability extensions |
+| RFC-0957 | Accepted | Macaroon substrate + attenuation invariant |
+| RFC-0964 | **Accepted v1.1 (2026-07-23; promoted in lockstep with this RFC)** | Constraint canonical encoding (caveats wrap constraints) |
 | RFC-0126 | Accepted (v2.5.1) | Canonical serialization for caveat envelopes |
 | RFC-0853 | Draft | BLAKE3 primitive source |
 
-### Companion RFCs (Planned)
+### Companion RFCs
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0961 | Builds on | CIPHERO_SQL procedures referenced by `AllowIf` constraint |
-| RFC-0963 | Builds on | `Sharded` caveat pins capability to one shard |
+| RFC-0961 | Builds on | CIPHERO_SQL procedures referenced by `AllowIf` constraint — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0963 | Builds on | `Sharded` caveat pins capability to one shard — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0967 | Refers to | Policy Object Graph (caveat type `PolicyReference` carries `policy_id`) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
 
 ### Dependency Validation
 
 | Dependency | Type | Current Status (2026-07-23) | Hard-block? |
 |------------|------|------------------------------|-------------|
-| RFC-0960 | Requires | Draft (companion) | YES |
-| RFC-0957 | Requires | Draft | YES |
-| RFC-0964 | Requires | Draft (companion) | YES |
+| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0957 | Requires | Accepted | No |
+| RFC-0964 | Requires | **Accepted v1.1 (promoted in lockstep)** | **YES → resolved** |
 | RFC-0126 | Requires | Accepted | No |
 | RFC-0853 | Requires | Draft | YES |
 
-**DAG check:** `0965 ← {0960, 0957, 0964, 0126, 0853}` — acyclic.
+**DAG check:** `0965 ← {0960, 0957, 0964, 0126, 0853}` — acyclic. RFC-0960 and RFC-0964 promoted to Accepted on 2026-07-23; their hard-blocks resolved.
 
 ## Design Goals
 
@@ -506,10 +508,12 @@ CREATE INDEX ix_capabilities_parent ON capabilities (parent_capability_id);
 
 ## Status
 
-This RFC = Capability extension format. Status: Draft. Companion RFCs 0960, 0961, 0962, 0963, 0964 in flight. Awaiting review and promotion to Accepted.
+This RFC = Capability extension format. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, and RFC-0967 v1.0).
 
-Once Accepted, the `cipherocto-capability-ext` crate implements:
-- `Caveat` enum (21 variants incl. RFC-0957 existing)
+All companion RFCs reached Accepted in lockstep on 2026-07-23.
+
+The `cipherocto-capability-ext` crate implements:
+- `Caveat` enum (22 variants incl. RFC-0957 existing + new `PolicyReference`)
 - `CaveatSet` ordered list with canonical encoding
 - Attenuation rule verification (per-caveat-type)
 - Capability envelope codec (encode / decode / verify)

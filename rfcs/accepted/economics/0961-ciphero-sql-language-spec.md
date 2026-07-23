@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft v2.0
+Accepted v2.0
 
 > **Note (v2.0 reframe):** Renamed from "Consensus-Safe SQL" to **Deterministic SQL** — the determinism is the property, the consensus is an implementation detail. CIPHERO_SQL is the dialect compiled by the Deterministic SQL Engine (RFC-0960 §1) into deterministic WAL entries. The dialect is the surface; the WAL is the protocol.
 
@@ -14,6 +14,7 @@ Draft v2.0
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as "Consensus-Safe SQL"). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Renamed to Deterministic SQL Dialect. New §7 **Deterministic SQL Profile** (mandatory `ORDER BY` for `LIMIT`, `COLLATE "C"`, RFC-0104 DFP, `NULLS LAST` default, inclusive `BETWEEN`, deterministic `GROUP BY` order). Reframed as a layer of the Deterministic SQL Engine (RFC-0960 §1), not a standalone language. Bumped to v2.0 to signal breaking terminology change. |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
 
 ## Dependencies
 
@@ -27,13 +28,13 @@ Draft v2.0
 | RFC-0102 | Required | Wallet cryptography (capability holder signs the procedure invocation) |
 | RFC-0862 | Required | Sync as propagation; the WAL-block-as-transaction model assumes deterministic replay |
 
-### Companion RFCs (Draft)
+### Companion RFCs (Accepted)
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0962 | Builds on | ExecutionEnvelope object protocol; one procedure invocation is one `sql_statement` entry |
-| RFC-0964 | Builds on | Constraint encoding standard (CIPHERO_SQL is a constraint consumer when `AllowIf` references it) |
-| RFC-0967 | Builds on | Policy Object Graph — procedures may be gated by a `policy_id` reference |
+| RFC-0962 | Builds on | ExecutionEnvelope object protocol; one procedure invocation is one `sql_statement` entry — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0964 | Builds on | Constraint encoding standard (CIPHERO_SQL is a constraint consumer when `AllowIf` references it) — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0967 | Builds on | Policy Object Graph — procedures may be gated by a `policy_id` reference — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
 
 ---
 
@@ -626,11 +627,13 @@ The following questions are deferred to RFC-0962 (ExecutionEnvelope protocol):
 
 ## 13. Status
 
-This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Draft v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Awaiting review and promotion to Accepted. Once Accepted, the `cipherocto-sql` crate can implement the parser + registry + runtime verification.
+This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Accepted v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0.
 
-Companion RFCs in flight:
-- RFC-0962 (ExecutionEnvelope object protocol) — Draft v2.0 (2026-07-23)
-- RFC-0964 (Constraint encoding) — Draft v1.1 (CIPHERO_SQL is a consumer when `AllowIf` references procedures)
-- RFC-0967 (Policy Object Graph) — Draft v1.0 (2026-07-23, NEW; procedures may be gated by `policy_id`)
+Companion RFCs (all Accepted in lockstep on 2026-07-23):
+- RFC-0962 (ExecutionEnvelope object protocol) — Accepted v2.0 (2026-07-23)
+- RFC-0964 (Constraint encoding) — Accepted v1.1 (CIPHERO_SQL is a consumer when `AllowIf` references procedures)
+- RFC-0967 (Policy Object Graph) — Accepted v1.0 (2026-07-23, NEW; procedures may be gated by `policy_id`)
 
 **v2.0 strategic positioning:** CIPHERO_SQL is the deterministic SQL dialect that compiles to deterministic WAL entries (RFC-0960 §1.1). The dialect is the surface language enterprise developers use (Hibernate → ORM → JDBC → CIPHERO_SQL → deterministic SQL Engine → WAL). The WAL is the protocol; consensus is one possible certifier.
+
+Implementation: the `cipherocto-sql` crate implements the parser + registry + runtime verification per this RFC.

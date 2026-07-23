@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft v2.0
+Accepted v2.0
 
 > **Note:** Companion RFC to RFC-0960 §10 (Horizontal Scalability — Resource Sharding). Defines the shard routing algorithm, cross-shard transaction protocol, per-shard Merkle commitment, and horizontal scaling invariants. Builds on RFC-0862 (sync as propagation), RFC-0959 (SettlementReceipt), RFC-0960 §7 (MultiSettlement / atomic swaps), and Phase 4 finding (event-sourced ledger precedents) which corrected the draft routing key from event-type to vault-id.
 
@@ -12,6 +12,7 @@ Draft v2.0
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 v2.0 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -45,32 +46,32 @@ Event-type routing would also cause divergent balance projections during partial
 
 | RFC | Status | Reason |
 |-----|--------|--------|
-| RFC-0960 | Draft (companion) | Defines §10 resource sharding architecture |
-| RFC-0962 | Draft (companion) | MultiEnvelope cross-shard coordination |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §10 resource sharding architecture |
+| RFC-0962 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | MultiEnvelope cross-shard coordination |
 | RFC-0862 | Accepted (v1.2.0) | Sync as propagation; per-shard event batch shipping |
 | RFC-0959 | Accepted (v1.0) | SettlementReceipt envelope for cross-shard value transfer |
 | RFC-0126 | Accepted (v2.5.1) | Canonical serialization for shard commitment |
 | RFC-0853 | Draft | BLAKE3 primitive source for shard ID derivation + Merkle commitments |
 
-### Companion RFCs (Planned)
+### Companion RFCs
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0964 | Builds on | Constraint encoding for cross-shard constraint verification |
-| RFC-0965 | Builds on | Capability extension format for shard-scoped capabilities |
+| RFC-0964 | Builds on | Constraint encoding for cross-shard constraint verification — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0965 | Builds on | Capability extension format for shard-scoped capabilities — Accepted v1.1 (2026-07-23; promoted in lockstep) |
 
 ### Dependency Validation
 
 | Dependency | Type | Current Status (2026-07-23) | Hard-block? |
 |------------|------|------------------------------|-------------|
-| RFC-0960 | Requires | Draft (companion) | YES |
-| RFC-0962 | Requires | Draft (companion) | YES |
+| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
+| RFC-0962 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
 | RFC-0862 | Requires | Accepted | No |
 | RFC-0959 | Requires | Accepted | No |
 | RFC-0126 | Requires | Accepted | No |
 | RFC-0853 | Requires | Draft | YES |
 
-**DAG check:** `0963 ← {0960, 0962, 0862, 0959, 0126, 0853}` — acyclic.
+**DAG check:** `0963 ← {0960, 0962, 0862, 0959, 0126, 0853}` — acyclic. Companion RFCs (RFC-0960, RFC-0962) promoted to Accepted on 2026-07-23; their hard-blocks resolved.
 
 ## Design Goals
 
@@ -381,9 +382,11 @@ MultiEnvelope {
 
 ## Status
 
-This RFC = Resource shard routing. Status: **Draft v2.0** (strategic reframe). Companion RFCs 0960 (architecture v2.0), 0962 (ExecutionEnvelope v2.0), 0964 (Constraint encoding v1.1), 0965 (capability ext v1.1), 0967 (Policy Object Graph v1.0) in flight. Awaiting review and promotion to Accepted.
+This RFC = Resource shard routing. Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0).
 
-Once Accepted, the `cipherocto-shard-router` crate implements:
+All companion RFCs reached Accepted in lockstep on 2026-07-23.
+
+The `cipherocto-shard-router` crate implements:
 - `shard_for_vault(vault_id, num_shards) -> ShardID`
 - `shard_for_segment(wal_segment_id, num_shards) -> ShardID` (v2.0; WAL-as-primary)
 - Per-shard WAL segment writer (RFC-0960 §1.1)

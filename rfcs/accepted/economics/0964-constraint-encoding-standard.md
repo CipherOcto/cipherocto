@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted v1.1
 
 > **Note:** Companion RFC to RFC-0960 §5 (Constraints as policy modules). Defines canonical binary encoding for the 23-variant Constraint set identified by Phase 3 research (`docs/research/2026-07-22-external-capability-based-spend-systems.md` §7.7). Encoding is BLAKE3-based, length-prefixed, version-tagged, and ZK-circuit-friendly. Builds on RFC-0126 (deterministic serialization) and EIP-712 (typed-data cross-chain interop).
 
@@ -12,6 +12,7 @@ Draft
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added three new constraint types in 0xA4-0xA6 range: `DDLActivationHeight` (0xA4), `BranchID` (0xA5), `MVStateHash` (0xA6). Domain-separator registry (§0.1) extended. 0xA7-0xAF reserved for future RFCs. Additive (non-breaking) bump. |
+| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -52,29 +53,29 @@ Cross-chain interop: each variant carries an EIP-712-style `typed_data_hash` so 
 
 | RFC | Status | Reason |
 |-----|--------|--------|
-| RFC-0960 | Draft (companion) | Defines §5 Constraint set as policy modules |
+| RFC-0960 | **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** | Defines §5 Constraint set as policy modules |
 | RFC-0126 | Accepted (v2.5.1) | Canonical serialization for all numeric + structured fields |
 | RFC-0853 | Draft | BLAKE3 primitive source for `constraint_hash` |
-| RFC-0957 | Draft | Macaroon caveat substrate (constraints are encoded as caveats) |
+| RFC-0957 | Accepted | Macaroon caveat substrate (constraints are encoded as caveats) |
 
-### Companion RFCs (Planned)
+### Companion RFCs
 
 | RFC | Relationship | Reason |
 |-----|--------------|--------|
-| RFC-0965 | Builds on | Capability extension format (caveat DSL consumer) |
-| RFC-0961 | Builds on | CIPHERO_SQL `AllowIf` constraint embeds a procedure reference |
-| RFC-0962 | Builds on | ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession) references constraints in capability binding |
+| RFC-0965 | Builds on | Capability extension format (caveat DSL consumer) — Accepted v1.1 (2026-07-23; promoted in lockstep) |
+| RFC-0961 | Builds on | CIPHERO_SQL `AllowIf` constraint embeds a procedure reference — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0962 | Builds on | ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession) references constraints in capability binding — Accepted v2.0 (2026-07-23; promoted in lockstep) |
 
 ### Dependency Validation
 
 | Dependency | Type | Current Status (2026-07-23) | Hard-block? |
 |------------|------|------------------------------|-------------|
-| RFC-0960 | Requires | Draft (companion) | YES |
+| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | **YES → resolved** |
 | RFC-0126 | Requires | Accepted | No |
 | RFC-0853 | Requires | Draft | YES |
-| RFC-0957 | Requires | Draft | YES |
+| RFC-0957 | Requires | Accepted | No |
 
-**DAG check:** `0964 ← {0960, 0126, 0853, 0957}` — acyclic.
+**DAG check:** `0964 ← {0960, 0126, 0853, 0957}` — acyclic. RFC-0960 promoted to Accepted on 2026-07-23; its hard-block resolved.
 
 ## Design Goals
 
@@ -588,9 +589,11 @@ Receivers verify by:
 
 ## Status
 
-This RFC = Constraint encoding standard. Status: Draft. Companion RFCs 0960, 0961, 0962, 0965 in flight. Awaiting review and promotion to Accepted.
+This RFC = Constraint encoding standard. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0965 v1.1, and RFC-0967 v1.0).
 
-Once Accepted, the `cipherocto-constraint` crate implements:
+All companion RFCs reached Accepted in lockstep on 2026-07-23.
+
+The `cipherocto-constraint` crate implements:
 - `Constraint` enum (25 variants incl. reserved)
 - `encode()` / `decode()` methods (canonical_ser)
 - `constraint_hash()` (BLAKE3 with domain separator)

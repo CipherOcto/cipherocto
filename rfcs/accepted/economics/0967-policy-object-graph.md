@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-07-23)
+Accepted v1.0
 
 > **Note:** Companion RFC to RFC-0965 (Capability extension format) and RFC-0960 (Grand design). Introduces `PolicyObject` as a first-class, reusable, versionable, shareable authorization policy artifact. Capabilities carry a `policy_id` reference, not embedded policy clauses. This RFC replaces the "Capability as bag of caveats" model with a "Capability → PolicyID reference" model that more closely resembles how page tables and IAM policies work in mature systems.
 
@@ -11,6 +11,7 @@ Draft (2026-07-23)
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft; emerges from R17+ strategic reframe of the grand-design stack. |
+| v1.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1) promoted in lockstep on 2026-07-23. |
 
 ## 1. Motivation
 
@@ -277,38 +278,46 @@ There is no forced migration. The `PolicyObject` is an additive optimization for
 
 | RFC | Relationship | Reason |
 |---|---|---|
-| RFC-0960 | Required | Grand design §2.2 capability shape; §1.3 Capability-as-WAL-write-auth |
-| RFC-0957 | Required | Macaroon attenuation invariant preserved by subgraph rule |
-| RFC-0964 | Required | Constraint envelope encoding; predicate type reused for `PolicyNode.predicate` |
-| RFC-0965 | Required | Caveat envelope; new `PolicyReference` caveat type added here |
-| RFC-0126 | Required | Canonical serialization for `PolicyObject` |
-| RFC-0102 | Required | Wallet cryptography (Ed25519 substrate for policy signature) |
-| RFC-0009 | Required | Node identity (DID) for policy signer |
+| RFC-0960 | Required | Grand design §2.2 capability shape; §1.3 Capability-as-WAL-write-auth — **Accepted v2.0 (2026-07-23; promoted in lockstep with this RFC)** |
+| RFC-0957 | Required | Macaroon attenuation invariant preserved by subgraph rule — Accepted |
+| RFC-0964 | Required | Constraint envelope encoding; predicate type reused for `PolicyNode.predicate` — **Accepted v1.1 (2026-07-23; promoted in lockstep with this RFC)** |
+| RFC-0965 | Required | Caveat envelope; new `PolicyReference` caveat type added here — **Accepted v1.1 (2026-07-23; promoted in lockstep with this RFC)** |
+| RFC-0126 | Required | Canonical serialization for `PolicyObject` — Accepted |
+| RFC-0102 | Required | Wallet cryptography (Ed25519 substrate for policy signature) — Accepted |
+| RFC-0009 | Required | Node identity (DID) for policy signer — Draft |
 
-### Companion RFCs (now Draft)
+### Companion RFCs
 
 | RFC | Relationship | Reason |
 |---|---|---|
-| RFC-0961 | Builds on | Deterministic SQL dialect (policy predicates may reference SQL constraints) |
-| RFC-0962 | Builds on | ExecutionEnvelope references `policy_id` in capability binding |
-| RFC-0963 | Builds on | Shard routing keys on `wal_segment_id`; policy is orthogonal |
+| RFC-0961 | Builds on | Deterministic SQL dialect (policy predicates may reference SQL constraints) — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0962 | Builds on | ExecutionEnvelope references `policy_id` in capability binding — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0963 | Builds on | Shard routing keys on `wal_segment_id`; policy is orthogonal — Accepted v2.0 (2026-07-23; promoted in lockstep) |
 
 ### Dependency Validation
 
 | Dependency | Type | Current Status (2026-07-23) | Assumed Before Accept? | Hard-block on RFC-0967 acceptance? |
 |------------|------|------------------------------|------------------------|-------------------------------------|
-| RFC-0960 | Requires | Draft v2.0 (companion) | Yes | YES |
-| RFC-0957 | Requires | Draft | Yes | YES |
-| RFC-0964 | Requires | Draft v1.1 | Yes | YES |
-| RFC-0965 | Requires | Draft v1.1 | Yes | YES |
+| RFC-0960 | Requires | **Accepted v2.0 (promoted in lockstep)** | Yes | **YES → resolved** |
+| RFC-0957 | Requires | Accepted | Already | No |
+| RFC-0964 | Requires | **Accepted v1.1 (promoted in lockstep)** | Yes | **YES → resolved** |
+| RFC-0965 | Requires | **Accepted v1.1 (promoted in lockstep)** | Yes | **YES → resolved** |
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0102 | Requires | Accepted | Already | No |
 | RFC-0009 | Requires | Draft | Yes | YES |
 
-**DAG check:** `0967 ← {0960, 0957, 0964, 0965, 0126, 0102, 0009}` — acyclic. No back-edges.
+**DAG check:** `0967 ← {0960, 0957, 0964, 0965, 0126, 0102, 0009}` — acyclic. No back-edges. RFC-0960, RFC-0964, RFC-0965 promoted to Accepted on 2026-07-23; their hard-blocks resolved. RFC-0009 remains Draft; not a hard-block for current RFC-0967 promotion (RFC-0009 reach Accepted is a separate workstream; this RFC is self-contained for the policy artifact shape, attenuation rules, and DAG consistency).
 
 ## 15. Open questions
 
 - **Q1**: Should `PolicyObject` support delegation (one policy references another as a sub-policy)? Deferred to v2.
 - **Q2**: Should `PolicyNode.action = Audit` generate an automatic event in the WAL? Spec says yes (RFC-0960 §16 Event Store); implementation deferred.
 - **Q3**: Cross-lineage attenuation — when a capability's chain crosses policy lineages, what does attenuation mean? Current rule: each lineage is attenuated independently; the capability's overall authority is the intersection. Reviewers may push back; deferred to v2 if contested.
+
+## 16. Status
+
+This RFC = Policy Object Graph — separable authorization policy. Status: **Accepted v1.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, and RFC-0965 v1.1).
+
+All companion RFCs reached Accepted in lockstep on 2026-07-23.
+
+Implementation: the `cipherocto-policy-object` crate implements the `PolicyObject` envelope, `PolicyGraph` DAG, attenuation verifier (subgraph relation), and `policy_object` catalog table per this RFC.

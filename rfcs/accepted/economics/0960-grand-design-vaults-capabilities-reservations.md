@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted v2.0
 
 > **Note:** This RFC synthesizes the grand-design research into a single canonical architecture. It supersedes the value-layer gap analysis from Phase 1 of `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` and codifies the primitives, Constraint set, audit window, event-sourced ledger, Economic VM, and Consensus Sessions from the grand-design doc.
 
@@ -27,6 +27,7 @@ Draft
 | v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
 | v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962 v2.0). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961 v2.0). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs. |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -517,15 +518,15 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 
 **Companion RFCs:**
 
-- RFC-0961 (Economics): Deterministic SQL Dialect — `CIPHERO_SQL` language spec — **Draft v2.0 (2026-07-23, renamed from Consensus-Safe SQL)**
-- RFC-0962 (Economics): ExecutionEnvelope Object Protocol — wire protocol + ZK circuit for batch signature — **Draft v2.0 (2026-07-23, renamed from ConsensusSession)**
-- RFC-0963 (Economics): Resource Shard Routing — shard routing by `wal_segment_id` — Draft v2.0 (2026-07-23)
-- RFC-0967 (Economics): Policy Object Graph — separable, versionable, shareable authorization policy — **Draft (2026-07-23, NEW)**
+- RFC-0961 (Economics): Deterministic SQL Dialect — `CIPHERO_SQL` language spec — **Accepted v2.0 (2026-07-23, renamed from Consensus-Safe SQL; promoted in lockstep with this RFC)**
+- RFC-0962 (Economics): ExecutionEnvelope Object Protocol — wire protocol + ZK circuit for batch signature — **Accepted v2.0 (2026-07-23, renamed from ConsensusSession; promoted in lockstep with this RFC)**
+- RFC-0963 (Economics): Resource Shard Routing — shard routing by `wal_segment_id` — **Accepted v2.0 (2026-07-23, promoted in lockstep with this RFC)**
+- RFC-0967 (Economics): Policy Object Graph — separable, versionable, shareable authorization policy — **Accepted v1.0 (2026-07-23, NEW; promoted in lockstep with this RFC)**
 
 **Requires (companion RFCs draft, not yet numbered):**
 
-- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants — Draft v1.1 (2026-07-23)
-- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format (incl. `PolicyReference` caveat for RFC-0967) — Draft v1.1 (2026-07-23)
+- RFC-0964 (Economics): Constraint Encoding Standard — canonical encoding for all 23 Constraint variants — **Accepted v1.1 (2026-07-23, promoted in lockstep with this RFC)**
+- RFC-0965 (Economics): Capability Extension Format — additions to RFC-0957 macaroon format (incl. `PolicyReference` caveat for RFC-0967) — **Accepted v1.1 (2026-07-23, promoted in lockstep with this RFC)**
 
 **Not Requires (parallel primitives):**
 
@@ -541,14 +542,14 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 | RFC-0959 | Requires | Accepted (v1.0 2026-07-20) | Already | No |
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0102 | Requires | Accepted | Already | No |
-| RFC-0961 | Companion | **Draft v2.0 (2026-07-23)** | Yes (IA-1) | YES |
-| RFC-0962 | Companion | **Draft v2.0 (2026-07-23)** | Yes (IA-2) | YES |
-| RFC-0963 | Companion | Draft v2.0 (2026-07-23) | Yes (IA-3) | YES |
-| RFC-0964 | Companion | Draft v1.1 (2026-07-23) | Yes (IA-4) | YES |
-| RFC-0965 | Companion | Draft v1.1 (2026-07-23) | Yes (IA-5) | YES |
-| RFC-0967 | Companion | **Draft v1.0 (2026-07-23, NEW)** | Yes (IA-6) | YES |
+| RFC-0961 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-1) | YES → resolved |
+| RFC-0962 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-2) | YES → resolved |
+| RFC-0963 | Companion | **Accepted v2.0 (2026-07-23; promoted in lockstep)** | Yes (IA-3) | YES → resolved |
+| RFC-0964 | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)** | Yes (IA-4) | YES → resolved |
+| RFC-0965 | Companion | **Accepted v1.1 (2026-07-23; promoted in lockstep)** | Yes (IA-5) | YES → resolved |
+| RFC-0967 | Companion | **Accepted v1.0 (2026-07-23, NEW; promoted in lockstep)** | Yes (IA-6) | YES → resolved |
 
-**DAG check:** `0960 ← {0957, 0958, 0959, 0126, 0102, 0961*, 0962*, 0963*, 0964*, 0965*, 0967*}` — acyclic.
+**DAG check:** `0960 ← {0957, 0958, 0959, 0126, 0102, 0961*, 0962*, 0963*, 0964*, 0965*, 0967*}` — acyclic. All companion RFCs (`*`) promoted to Accepted on 2026-07-23 in lockstep with this RFC; hard-blocks resolved.
 
 ## Design Goals
 
@@ -1652,11 +1653,12 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 
 | Question | Status |
 |---|---|
-| Canonical `Constraint` encoding | RFC-0964 (companion, planned) |
-| `Capability` macaroon format extensions | RFC-0965 (companion, planned) |
-| `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Draft 2026-07-22**) |
-| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 v2.0 (companion, **Draft 2026-07-23**) |
-| Resource shard routing algorithm | RFC-0963 (companion, planned) |
+| Canonical `Constraint` encoding | RFC-0964 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
+| `Capability` macaroon format extensions | RFC-0965 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
+| `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
+| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 v2.0 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
+| Resource shard routing algorithm | RFC-0963 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
+| Policy Object Graph (PolicyReference caveat) | RFC-0967 (companion, **Accepted v1.0 (2026-07-23; promoted in lockstep)**) |
 | Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
 
 ## References

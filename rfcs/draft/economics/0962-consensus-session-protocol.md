@@ -247,6 +247,7 @@ A node receiving a session for replay:
 1. **Parse the JSON envelope.** Verify all fields present and canonical.
 2. **Verify signature.** `verify(capability_holder_pubkey, canonical_ser(session_unsigned), signature)`. Reject on mismatch.
 3. **Verify capability.** Look up `capability_id` in local capability store. Reject if revoked, expired, or exhausted. Reject if `capability_holder` ≠ signature signer.
+   - **Revocation propagation (in-flight sessions):** revocation is checked at session creation time AND at session replay time. An in-flight session that started before revocation is allowed to complete IF the envelope's `block_height` ≤ the block containing the `CapabilityRevoked` event for that capability; otherwise the session is rejected with `E_CAPABILITY_REVOKED_POST_HOC`. This prevents a revoked capability from continuing to consume resources via pre-signed but un-replayed sessions.
 4. **Verify WAL segment hash.** Recompute `BLAKE3` over local WAL segment. Reject if mismatch (node is out of sync).
    - **Block height consistency:** the `block_height` in the session envelope is the block the block producer assigned. A node replaying the session uses the envelope's `block_height` verbatim — it does **not** re-derive from local chain state. If the local chain has not yet reached that block height, the session is queued in a per-node `pending_sessions` table and replayed once sync catches up. A session whose `block_height` is **higher than the node's current head** is never rejected for "future" content; it is just deferred.
    - **Fork detection:** if the local chain height is more than **`1000 blocks` behind the envelope's `block_height`**, the session is rejected with `E_LOCAL_CHAIN_FORKED` rather than queued indefinitely. The node's `pending_sessions` table is drained; the operator must resolve the fork (manual sync, or re-join the network) before processing further sessions. Default `1000` blocks is configurable per deployment; smaller values catch forks faster but increase false positives during long sync windows.
@@ -291,6 +292,8 @@ MultiSession {
 ```
 
 All-or-nothing semantics require every sub-session to reach `Replayed` within `timeout_unix_ms`. If timeout expires, `fallback_action` is executed (default: `Abort`).
+
+**Reversibility requirement (R8-F3):** Sub-sessions must be designed to be safely reversible at any sub-step. The capability holder's runtime is responsible for ensuring writes are idempotent or wrapped in a transaction that can be rolled back at any intermediate state. The MultiSession coordinator MAY issue an explicit "abort sub-session" signal that triggers a `TransferCorrected` event (per RFC-0960 §2.5) for any committed writes. Sub-sessions that do not support reversibility are rejected at MultiSession construction time with `E_SUB_SESSION_NOT_REVERSIBLE`.
 
 This is the database analog of `MultiSettlement` (RFC-0960 §7) but for SQL mutations, not value transfers.
 
@@ -441,6 +444,19 @@ CREATE TABLE multi_sessions (
     fallback_action      TEXT NOT NULL,            -- RollbackAll | CommitPartial | Abort
     state               TEXT NOT NULL             -- Pending | Committed | Aborted | Partial
 );
+
+-- Pending sessions (R8-F2): sessions whose block_height is higher than
+-- the local chain head. Drained on fork detection (R7-F5).
+CREATE TABLE pending_sessions (
+    session_id           BLOB PRIMARY KEY,
+    envelope             BLOB NOT NULL,            -- full serialized ConsensusSession
+    queued_at_unix_ms    BIGINT NOT NULL,
+    target_block_height  BIGINT NOT NULL,
+    reason               TEXT NOT NULL             -- 'future_block' | 'partial_sync'
+);
+
+CREATE INDEX ix_pending_sessions_block ON pending_sessions (target_block_height);
+CREATE INDEX ix_pending_sessions_queued ON pending_sessions (queued_at_unix_ms);
 
 CREATE TABLE multi_session_members (
     multi_session_id     BLOB NOT NULL,

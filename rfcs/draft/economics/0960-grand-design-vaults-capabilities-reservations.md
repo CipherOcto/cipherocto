@@ -17,6 +17,7 @@ Draft
 | v1.4 | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review). |
 | v1.5 | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review). |
 | v1.6 | 2026-07-23 | @cipherocto + @mmacedoeu | R7 overflow + edge case review: 5 fixes (see §R7 Self-Review). |
+| v1.7 | 2026-07-23 | @cipherocto + @mmacedoeu | R8 final review: 4 fixes (see §R8 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -309,6 +310,34 @@ R7 pass: depth limits, vector overflow, domain-separator coverage, fork handling
 **Defect:** §3.5 attenuation rule says "child's `duration_secs` MUST be ≥ parent's." If parent's `duration_secs` is 0 (instant release, high-trust), a reader might think the only valid child value is also 0. But the intent is that adding an audit window is a restriction (upgrade from high-trust to auditable).
 
 **Fix:** §3.5 now explicitly states: "If parent's `duration_secs` is 0, child can set any value ≥ 0 — including a non-zero value. This is the 'upgrade from high-trust to auditable' path, which is a restriction, not an expansion." The `≥` rule already permits this; restated explicitly to avoid confusion.
+
+## R8 Self-Review (revocation + reversibility + propagation)
+
+R8 pass: revocation propagation, queueing persistence, MultiSession reversibility, nesting depth. 4 fixes applied.
+
+### R8-F1 — Capability revocation has no in-flight session semantics
+
+**Defect:** RFC-0965 §8 catalog has `revoked BOOLEAN`; RFC-0960 §5 has `CapabilityRevoked` as a log event. But no spec explains how revocation propagates to in-flight sessions. A capability can be revoked while a session is mid-execution; the pre-signed session envelope is still valid (signature checks pass) but the capability backing it is no longer active.
+
+**Fix:** RFC-0962 §6.2 step 3 now adds: "Revocation propagation: revocation is checked at session creation time AND at session replay time. An in-flight session that started before revocation is allowed to complete IF the envelope's `block_height` ≤ the block containing the `CapabilityRevoked` event for that capability; otherwise the session is rejected with `E_CAPABILITY_REVOKED_POST_HOC`." Prevents a revoked capability from continuing to consume resources via pre-signed but un-replayed sessions.
+
+### R8-F2 — `pending_sessions` table referenced but not defined
+
+**Defect:** §6.2 step 4 says "if the local chain has not yet reached that block height, the session is queued in a per-node `pending_sessions` table" (added in R5-F3). The §13 catalog only has `consensus_sessions`, `multi_sessions`, `multi_session_members`. The `pending_sessions` table referenced in step 4 had no schema.
+
+**Fix:** §13 catalog now has `pending_sessions` table: `session_id`, `envelope` (full serialized ConsensusSession), `queued_at_unix_ms`, `target_block_height`, `reason` (`'future_block' | 'partial_sync'`). Two indexes for fast lookup. Drained on fork detection (R7-F5).
+
+### R8-F3 — MultiSession reversibility not specified
+
+**Defect:** §7 says "if timeout expires, fallback_action runs" but doesn't say what happens to a sub-session that is mid-replay when the timeout fires. Partial commit / abort requires the sub-session to be safely reversible at any sub-step.
+
+**Fix:** §7 now adds: "Sub-sessions must be designed to be safely reversible at any sub-step. The capability holder's runtime is responsible for ensuring writes are idempotent or wrapped in a transaction that can be rolled back at any intermediate state. The MultiSession coordinator MAY issue an explicit 'abort sub-session' signal that triggers a TransferCorrected event (per RFC-0960 §2.5) for any committed writes. Sub-sessions that do not support reversibility are rejected at MultiSession construction time with `E_SUB_SESSION_NOT_REVERSIBLE`."
+
+### R8-F5 — MultiSession nesting depth unbounded
+
+**Defect:** §4 envelope has `parent_sessions: Vec<SessionID>` for nested MultiSessions but no depth limit. A MultiSession of MultiSessions of MultiSessions could explode the verification graph.
+
+**Fix:** §7 (MultiSession) now specifies: "Maximum MultiSession nesting depth = 4. A MultiSession whose `parent_sessions` chain exceeds 4 levels is malformed and rejected at construction with `E_NESTING_DEPTH_EXCEEDED`."
 
 ## Authors
 

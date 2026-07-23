@@ -96,7 +96,7 @@ Standalone, top-level section to satisfy BLUEPRINT v1.3 mandatory section set.
 | G2 | One signature per session | N SQL operations → 1 Ed25519 signature → 1 ZK proof (optional) |
 | G3 | Replay defense | Same `(envelope_unsigned, signed_by)` from same signer yields distinct `envelope_id` via monotonic counter + nonce |
 | G4 | DETERMINISTIC enforcement | Sessions marked `mode = DETERMINISTIC` reject any non-deterministic statement at parse time |
-| G5 | Cross-shard atomicity | `MultiEnvelope` aggregates N sub-sessions; all-or-nothing commit |
+| G5 | Cross-shard atomicity | `MultiEnvelope` aggregates N sub-envelopes; all-or-nothing commit |
 | G6 | Sync-friendly | Sessions serialize as event-log entries; no UPDATE conflicts on replay |
 | G7 | ZK-friendly | Session envelope is canonical_ser → compatible with R1CS / PLONK / STWO circuits |
 
@@ -284,7 +284,7 @@ Index GC: entries older than `2 * audit_window_max` are eligible for compaction.
 
 ### 7. MultiEnvelope — cross-shard atomicity
 
-For sessions that touch multiple resource shards (per RFC-0963), a `MultiEnvelope` aggregates N sub-sessions:
+For sessions that touch multiple resource shards (per RFC-0963), a `MultiEnvelope` aggregates N sub-envelopes:
 
 ```text
 MultiEnvelope {
@@ -296,9 +296,9 @@ MultiEnvelope {
 }
 ```
 
-All-or-nothing semantics require every sub-session to reach `Replayed` within `timeout_unix_ms`. If timeout expires, `fallback_action` is executed (default: `Abort`).
+All-or-nothing semantics require every sub-envelope to reach `Replayed` within `timeout_unix_ms`. If timeout expires, `fallback_action` is executed (default: `Abort`).
 
-**Reversibility requirement (R8-F3):** Sub-sessions must be designed to be safely reversible at any sub-step. The capability holder's runtime is responsible for ensuring writes are idempotent or wrapped in a transaction that can be rolled back at any intermediate state. The MultiEnvelope coordinator MAY issue an explicit "abort sub-session" signal that triggers a `TransferCorrected` event (per RFC-0960 §2.5) for any committed writes. Sub-sessions that do not support reversibility are rejected at MultiEnvelope construction time with `E_SUB_SESSION_NOT_REVERSIBLE`.
+**Reversibility requirement (R8-F3):** Sub-sessions must be designed to be safely reversible at any sub-step. The capability holder's runtime is responsible for ensuring writes are idempotent or wrapped in a transaction that can be rolled back at any intermediate state. The MultiEnvelope coordinator MAY issue an explicit "abort sub-envelope" signal that triggers a `TransferCorrected` event (per RFC-0960 §2.5) for any committed writes. Sub-sessions that do not support reversibility are rejected at MultiEnvelope construction time with `E_SUB_SESSION_NOT_REVERSIBLE`.
 
 This is the database analog of `MultiSettlement` (RFC-0960 §7) but for SQL mutations, not value transfers.
 
@@ -508,7 +508,7 @@ Catch-up sync: a node joining mid-blockchain receives the full event log from ge
 | 1 | What is the maximum session size (SQL statement count, total bytes)? | Operational tuning; default 1000 statements, 1 MB envelope |
 | 2 | How is `wal_segment_hash` bound at session creation if the WAL is still being written? | Two-phase: tentative hash at sign time, final hash at commit; rejected if mismatch |
 | 3 | Can OFF_CHAIN sessions transition to DETERMINISTIC? | No — mode is fixed at session creation |
-| 4 | How does audit window interact with MultiEnvelope? | Each sub-session has its own audit window; MultiEnvelope finalizes when all sub-sessions finalize |
+| 4 | How does audit window interact with MultiEnvelope? | Each sub-envelope has its own audit window; MultiEnvelope finalizes when all sub-envelopes finalize |
 | 5 | What if a node is offline during a MultiEnvelope timeout? | Node catches up via RFC-0862 sync; MultiEnvelope retries until quorum |
 | 6 | Can ZK proof be mandatory for some session modes? | Yes — capability may carry `RequireProof` constraint (RFC-0965) |
 

@@ -243,13 +243,13 @@ MultiEnvelope {
 }
 ```
 
-Each sub-session is signed by its shard's block producer. Cross-shard coordination:
+Each sub-envelope is signed by its shard's block producer. Cross-shard coordination:
 
 1. Initiator constructs `MultiEnvelope` envelope.
 2. Initiator broadcasts to all shard block producers.
-3. Each block producer validates the relevant sub-session against its shard state.
-4. Each block producer signs and broadcasts the sub-session to the global MMR.
-5. If all sub-sessions reach `Replayed` within `timeout_unix_ms`, MultiEnvelope commits.
+3. Each block producer validates the relevant sub-envelope against its shard state.
+4. Each block producer signs and broadcasts the sub-envelope to the global MMR.
+5. If all sub-envelopes reach `Replayed` within `timeout_unix_ms`, MultiEnvelope commits.
 6. If timeout expires, `fallback_action` runs (default `Abort` — no partial commit).
 
 ### 6. Shard-scoped capabilities
@@ -352,12 +352,12 @@ MultiEnvelope {
 
 **Step 3: Validate + sign.**
 
-- Shard 0 producer: validates `alice_vault` lives on shard 0 (yes). Validates Alice's capability covers the transfer (yes). Signs sub-session.
-- Shard 3 producer: validates `bob_vault` lives on shard 3 (yes). Validates the credit is paired with shard 0's debit (yes, via tx_id linkage). Signs sub-session.
+- Shard 0 producer: validates `alice_vault` lives on shard 0 (yes). Validates Alice's capability covers the transfer (yes). Signs sub-envelope.
+- Shard 3 producer: validates `bob_vault` lives on shard 3 (yes). Validates the credit is paired with shard 0's debit (yes, via tx_id linkage). Signs sub-envelope.
 
-**Step 4: Commit.** Both sub-sessions included in their respective shards' blocks. Shard 0 root updated. Shard 3 root updated. Global MMR updated.
+**Step 4: Commit.** Both sub-envelopes included in their respective shards' blocks. Shard 0 root updated. Shard 3 root updated. Global MMR updated.
 
-**Step 5: Replay.** Every node receives both sub-sessions via RFC-0862 sync. Replays both in deterministic order. State converges.
+**Step 5: Replay.** Every node receives both sub-envelopes via RFC-0862 sync. Replays both in deterministic order. State converges.
 
 **Timeout case:** If shard 3 producer is offline > 5s, `fallback_action = Abort`. Shard 0's debit is reverted (a `TransferCorrected` event is appended).
 

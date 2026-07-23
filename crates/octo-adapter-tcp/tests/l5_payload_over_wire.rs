@@ -1,6 +1,6 @@
 //! L5: TcpAdapter payload wire-format regression tests
 //!
-//! Verifies TcpAdapter honours RFC-0850's `send_message(domain, envelope, payload)`
+//! Verifies TcpAdapter honours RFC-0850 v1.3.0's `send_message(domain, envelope, payload)`
 //! signature: the wire frame includes the payload bytes alongside the envelope.
 //!
 //! Plan reference: `docs/plans/2026-06-28-payload-transport-regression-tests.md` (L5)

@@ -26,7 +26,7 @@ pub type OverlayIdentity = String;
 /// ISO-3166 country code (2-letter).
 pub type ISO3166 = String;
 
-/// Ask identifier (RFC-0959 `AskId` — content-addressable hash).
+/// Ask identifier (RFC-0959 v1.0 `AskId` — content-addressable hash).
 pub type AskId = [u8; 32];
 
 /// BLAKE3 32-byte digest.

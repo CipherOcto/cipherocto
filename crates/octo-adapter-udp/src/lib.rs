@@ -111,7 +111,7 @@ impl PlatformAdapter for UdpAdapter {
         payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let envelope_bytes = envelope.to_wire_bytes();
-        // RFC-0850 §8.9: transmit envelope + payload in one datagram.
+        // RFC-0850 v1.3.0 §8.9: transmit envelope + payload in one datagram.
         let total = envelope_bytes.len() + payload.len();
 
         if total > MAX_DATAGRAM_SIZE {

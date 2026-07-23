@@ -6,7 +6,7 @@
 //! - SelfHost → default (mint succeeds)
 //! - Hybrid → opt-in (mint succeeds if explicit mint_with_zk call)
 //!
-//! Per RFC-0958 M5/M17 fix:
+//! Per RFC-0958 v1.2 M5/M17 fix:
 //! - M5: `output_hash: Some(_)` iff NodeType == SelfHost; mint API enforces
 //!   `HybridCannotEmitPoI` and `MissingInferenceTrace` errors
 //! - M17: `proof_bundle: Some(_)` iff capability_class == ZKBearing; mint
@@ -108,7 +108,7 @@ pub enum ZkMintError {
     Expired { before: u64, now: u64 },
 
     /// **v1.4:** provider_slot_id is empty; cannot mint without slot binding.
-    #[error("provider_slot_id is empty (RFC-0958 IA-11: slot binding required)")]
+    #[error("provider_slot_id is empty (RFC-0958 v1.4 IA-11: slot binding required)")]
     EmptySlotId,
 }
 

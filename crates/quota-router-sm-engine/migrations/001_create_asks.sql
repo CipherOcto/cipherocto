@@ -1,4 +1,4 @@
--- Asks table (RFC-0959 §Data Structures; cipherocto-owned per
+-- Asks table (RFC-0959 v1.0 §Data Structures; cipherocto-owned per
 -- [[stoolap-general-purpose-db]] Path B).
 --
 -- Schema owner: cipherocto (quota-router-sm-engine crate).

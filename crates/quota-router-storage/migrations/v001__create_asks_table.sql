@@ -1,4 +1,4 @@
--- Migration v001: Create `asks` table for per-node Ask pricing (RFC-0959).
+-- Migration v001: Create `asks` table for per-node Ask pricing (RFC-0959 v1.0).
 --
 -- cipherocto-side migration per [[stoolap-general-purpose-db]] principle.
 -- The stoolap fork stays a general-purpose DB; consumer schema lives here.

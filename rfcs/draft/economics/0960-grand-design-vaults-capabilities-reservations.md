@@ -22,6 +22,7 @@ Draft
 | v1.9 | 2026-07-23 | @cipherocto + @mmacedoeu | R10 final sweep: 2 fixes (see §R10 Self-Review). |
 | v1.10 | 2026-07-23 | @cipherocto + @mmacedoeu | R11 post-R10 sweep: 1 fix (see §R11 Self-Review). |
 | v1.11 | 2026-07-23 | @cipherocto + @mmacedoeu | R12 stale-summary sweep: 1 fix (see §R12 Self-Review). |
+| v1.12 | 2026-07-23 | @cipherocto + @mmacedoeu | R13 stale-formula second-occurrence: 1 fix (see §R13 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -394,6 +395,16 @@ R12 pass: stale formulas in summaries, network parameter definitions. 1 fix appl
 **Defect:** RFC-0964 line 44 (Summary section, item 3) still had `BLAKE3(0x01 || canonical_ser(constraint_set))` for `constraint_hash`. After R6-F1 we moved the separator to `0xA1` (high-bit, distinct from the outer-namespace tag 0x01). The §5 normative spec was updated but the Summary at the top of the doc was not, leaving two inconsistent formulas in the same document.
 
 **Fix:** Summary updated: `BLAKE3(0xA1 || canonical_ser(constraint_set))` with parenthetical noting that 0xA1 is the constraint-hash domain separator distinct from 0x01 outer-namespace tag. Reviewer reading the Summary now sees the same formula as §5.
+
+## R13 Self-Review (stale-formula second-occurrence)
+
+R13 pass: post-R12 sweep. 1 fix applied.
+
+### R13-F1 — RFC-0964 line 37 still had the OLD `0x01` formula
+
+**Defect:** R12-F1 fixed line 44 (Summary item 3) but missed line 37 — a code-block example in the same Summary block: `blake3(0x01 || constraint_encoding) // 0x01 = "constraint" domain separator`. Same defect class, second occurrence in the same section.
+
+**Fix:** Line 37 now reads `blake3(0xA1 || constraint_encoding) // 0xA1 = "constraint" domain separator (high-bit; see §0 and §5)`. The Summary block is now internally consistent and matches §5.
 
 ## Authors
 

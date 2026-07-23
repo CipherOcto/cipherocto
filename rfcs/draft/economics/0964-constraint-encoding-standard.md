@@ -34,7 +34,7 @@ variant_payload:
     fields in canonical order (length-prefixed strings, BE-encoded numbers, etc.)
 
 Constraint hash:
-    blake3(0x01 || constraint_encoding)  // 0x01 = "constraint" domain separator
+    blake3(0xA1 || constraint_encoding)  // 0xA1 = "constraint" domain separator (high-bit; see §0 and §5)
 ```
 
 Three artifacts:

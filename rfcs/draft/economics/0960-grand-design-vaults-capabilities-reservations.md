@@ -1572,15 +1572,26 @@ so reviewers can trace provenance.
 | `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | R3 | Capability constraint violated (e.g., spend cap) |
 | `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 | R8-F1 | Revocation emitted at block_height > envelope's; pre-signed session rejected |
 | `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 | R7-F1 | `WrappedOnly` chain depth > 16 or circular reference |
-| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiSession nesting depth > 4 |
-| `E_SUB_SESSION_NOT_REVERSIBLE` | RFC-0962 §7 | R8-F3 | Sub-session does not support reversibility |
+| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiEnvelope nesting depth > 4 (renamed from MultiSession in RFC-0962 v2.0) |
+| `E_SUB_ENVELOPE_NOT_REVERSIBLE` | RFC-0962 §7 | R8-F3 | Sub-envelope does not support reversibility (renamed from sub-session) |
 | `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 | R7-F5 | Local chain > 1000 blocks behind envelope's `block_height` |
 | `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | R3 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
-| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedSessionIndex` |
+| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedEnvelopeIndex` (renamed from ConsumedSessionIndex in RFC-0962 v2.0) |
 | `E_REPLAY_MISMATCH` | RFC-0962 §11 | R4-F9 | Write statement's post-state hash doesn't match block producer's |
 | `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962 v2.0) |
-| `E_MULTI_SESSION_TIMEOUT` | RFC-0962 §11 | R3 | Sub-session did not reach Replayed within timeout |
-| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963) not reachable |
+| `E_MULTI_ENVELOPE_TIMEOUT` | RFC-0962 §11 | R3 | Sub-envelope did not reach Replayed within timeout (renamed from MultiSession in RFC-0962 v2.0) |
+| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963 v2.0) not reachable |
+| `E_GAS_LIMIT_EXCEEDED` | RFC-0960 §18 | R25 | Envelope projected gas exceeds `gas_limit` at sign time |
+| `E_BRANCH_NOT_FOUND` | RFC-0960 §17 | R25 | `branch_id` not found in catalog |
+| `E_MERGE_CONFLICT_UNRESOLVED` | RFC-0960 §17 | R25 | Merge has non-empty `conflict_set` and no `ConflictResolution` envelope |
+| `E_MERGE_SIGNATURE_MISSING` | RFC-0960 §17 | R25 | Merge lacks branch_a_sig and/or branch_b_sig |
+| `E_MV_STATE_HASH_MISMATCH` | RFC-0960 §15 | R25 | MV refresh produced different `mv_state_hash` than expected |
+| `E_AS_OF_QUERY_FAILED` | RFC-0960 §14 | R25 | AsOfQuery replay against pinned `block_height` failed |
+| `E_DETERMINISTIC_PROFILE_NO_ORDER_BY` | RFC-0961 §7 | R25 | SELECT with LIMIT/OFFSET but no ORDER BY (Deterministic SQL Profile) |
+| `E_DETERMINISTIC_PROFILE_INVALID_COLLATE` | RFC-0961 §7 | R25 | String column uses non-"C" collation |
+| `E_POLICY_NOT_FOUND` | RFC-0967 §8 | R25 | `PolicyReference.policy_id` not found in catalog |
+| `E_POLICY_ATTENUATION_INVALID` | RFC-0967 §8 | R25 | AttenuationProof's subgraph relation doesn't hold (child not ⊆ parent) |
+| `E_DDL_NOT_ACTIVATED` | RFC-0964 §3.11 | R25 | DDL operation attempted before `DDLActivationHeight` constraint satisfied |
 
 Reviewers should consult this registry when implementing error handling
 across RFC boundaries.
@@ -1601,7 +1612,7 @@ A holder settles a high-value transfer, then files a dispute within the audit wi
 
 ### Threat 4: Event log divergence
 
-Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `vault_id` (Phase 4 §6.4); intra-shard writes serialize via consensus; cross-shard writes use `MultiSettlement`.
+Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `shard_for_vault(vault_id)` for state placement (RFC-0963 v2.0 §1a) + `shard_for_segment(wal_segment_id)` for WAL segment routing (§1b); intra-shard writes serialize via consensus; cross-shard writes use `MultiEnvelope` (RFC-0962 v2.0 §7).
 
 ### Threat 5: Privacy leak via public event log
 

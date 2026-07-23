@@ -362,11 +362,11 @@ WALSegment {
 | `E_CAPABILITY_EXPIRED` | Capability past `expires_at` | Acquire new capability |
 | `E_CAPABILITY_EXHAUSTED` | Capability constraint violated (e.g., spend cap) | Acquire new capability |
 | `E_WAL_SEGMENT_MISMATCH` | Local WAL segment hash differs | Sync from peer |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | DETERMINISTIC session contains non-deterministic op (RFC-0961) | Rewrite as deterministic |
-| `E_REPLAY_DETECTED` | Nonce seen in `ConsumedEnvelopeIndex` | Use new nonce |
-| `E_ZK_PROOF_INVALID` | EnvelopeProof failed verification | Regenerate proof |
-| `E_MULTI_SESSION_TIMEOUT` | Sub-session did not reach Replayed within timeout | Fallback action |
-| `E_SHARD_UNREACHABLE` | Required shard (per RFC-0963) not reachable | Retry on shard recovery |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | Envelope with `mode = DETERMINISTIC` contains a non-deterministic statement (RFC-0961) | Rewrite statement as deterministic |
+| `E_REPLAY_DETECTED` | Nonce seen in `ConsumedEnvelopeIndex` (renamed from `ConsumedSessionIndex` in v2.0) | Use new nonce |
+| `E_ZK_PROOF_INVALID` | EnvelopeProof failed verification (renamed from `SessionProof` in v2.0) | Regenerate proof |
+| `E_MULTI_ENVELOPE_TIMEOUT` | Sub-envelope did not reach Replayed within timeout (renamed from `E_MULTI_SESSION_TIMEOUT` in v2.0) | Fallback action |
+| `E_SHARD_UNREACHABLE` | Required shard (per RFC-0963 v2.0) not reachable | Retry on shard recovery |
 
 ### 12. Worked example
 

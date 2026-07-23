@@ -12,7 +12,7 @@ Accepted v1.1
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
-| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
+| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0967) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -116,7 +116,7 @@ RFC-0964/0965 stack:
 | 0x01 | **Constraint** | RFC-0964 §1, §2 |
 | 0x02 | **Caveat** | RFC-0965 §1, §2 below |
 | 0x03 | **Capability** | RFC-0965 §6 |
-| 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
+| 0x04 | **ExecutionEnvelope** (RFC-0962; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** | RFC-0959 §Data Structures |
 | 0x07 | `PolicyReference` (RFC-0967) | RFC-0967 §8.1 (added v1.1; `policy_id` ref) |
@@ -133,7 +133,7 @@ envelope and is independent of the outer tag.
 
 ### 1. Caveat type enumeration
 
-RFC-0957 defines 12 existing caveat types. RFC-0965 v1.0 adds 9 new types (0x10-0x18). RFC-0965 v1.1 adds 1 more (`PolicyReference` at 0x19, RFC-0967). Total: 22 distinct bytes. Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x19 (RFC-0965 v1.0 + v1.1) = 22 distinct bytes. Range 0x0D-0x0F reserved per §0 (RFC-0964 namespace tag rules). 0x1A-0xCF reserved for future extensions. 0xD0-0xFF application-specific.
+RFC-0957 defines 12 existing caveat types. RFC-0965 adds 9 new types (0x10-0x18). RFC-0965 adds 1 more (`PolicyReference` at 0x19, RFC-0967). Total: 22 distinct bytes. Discriminator byte range: 0x01-0x0C (RFC-0957) + 0x10-0x19 (RFC-0965 + v1.1) = 22 distinct bytes. Range 0x0D-0x0F reserved per §0 (RFC-0964 namespace tag rules). 0x1A-0xCF reserved for future extensions. 0xD0-0xFF application-specific.
 
 #### 1.1 RFC-0957 existing caveat types (unchanged)
 
@@ -508,7 +508,7 @@ CREATE INDEX ix_capabilities_parent ON capabilities (parent_capability_id);
 
 ## Status
 
-This RFC = Capability extension format. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, and RFC-0967 v1.0).
+This RFC = Capability extension format. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, and RFC-0967).
 
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 

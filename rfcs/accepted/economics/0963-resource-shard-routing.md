@@ -11,8 +11,8 @@ Accepted v2.0
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
-| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 v2.0 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
-| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -123,7 +123,7 @@ shard_for_vault(vault_id: VaultID, num_shards: u32) -> ShardID:
     return prefix % num_shards
 ```
 
-**1b. WAL segment routing** (v2.0 new) — which shard owns the WAL segment that an `ExecutionEnvelope` (RFC-0962 v2.0) commits to:
+**1b. WAL segment routing** (v2.0 new) — which shard owns the WAL segment that an `ExecutionEnvelope` (RFC-0962) commits to:
 
 ```text
 shard_for_segment(wal_segment_id: Hash, num_shards: u32) -> ShardID:
@@ -132,7 +132,7 @@ shard_for_segment(wal_segment_id: Hash, num_shards: u32) -> ShardID:
     return prefix % num_shards
 ```
 
-A `MultiEnvelope` (RFC-0962 v2.0 §7; renamed from `MultiSession`) may commit to multiple shards when it touches vaults on different shards; each sub-envelope routes to the appropriate shard via `shard_for_segment`. Cross-shard atomicity is enforced via `MultiEnvelope` `AllRequired` / `Quorum(n)` completion rules.
+A `MultiEnvelope` (RFC-0962 §7; renamed from `MultiSession`) may commit to multiple shards when it touches vaults on different shards; each sub-envelope routes to the appropriate shard via `shard_for_segment`. Cross-shard atomicity is enforced via `MultiEnvelope` `AllRequired` / `Quorum(n)` completion rules.
 
 Properties:
 - **Deterministic** — same inputs produce same output on every node.
@@ -382,7 +382,7 @@ MultiEnvelope {
 
 ## Status
 
-This RFC = Resource shard routing. Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0).
+This RFC = Resource shard routing. Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, and RFC-0967).
 
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 
@@ -390,7 +390,7 @@ The `cipherocto-shard-router` crate implements:
 - `shard_for_vault(vault_id, num_shards) -> ShardID`
 - `shard_for_segment(wal_segment_id, num_shards) -> ShardID` (v2.0; WAL-as-primary)
 - Per-shard WAL segment writer (RFC-0960 §1.1)
-- MultiEnvelope coordinator (RFC-0962 v2.0 §7)
+- MultiEnvelope coordinator (RFC-0962 §7)
 - MMR root builder
 - Live migration coordinator
 - ZK proof aggregator (per-shard proofs → MMR inclusion proof)

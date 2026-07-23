@@ -11,7 +11,7 @@ Accepted v1.0
 | Version | Date | Author | Note |
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft; emerges from R17+ strategic reframe of the grand-design stack. |
-| v1.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1) promoted in lockstep on 2026-07-23. |
+| v1.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0965) promoted in lockstep on 2026-07-23. |
 
 ## 1. Motivation
 
@@ -231,7 +231,7 @@ The wire format gains a new namespace tag (RFC-0964 §0 extension):
 | 0x01 | Constraint (RFC-0964) |
 | 0x02 | Caveat (RFC-0965) |
 | 0x03 | (reserved) |
-| 0x04 | ExecutionEnvelope (RFC-0962 v2.0) |
+| 0x04 | ExecutionEnvelope (RFC-0962) |
 | 0x05 | Capability (RFC-0965) |
 | 0x06 | (reserved) |
 | 0x07 | **PolicyObject (RFC-0967)** — new |
@@ -254,7 +254,7 @@ Domain separator for `policy_id` hash: 0xC0. Cross-RFC reserved range 0xC0-0xFF 
 
 ## 12. Migration path
 
-1. Phase 1: Land RFC-0967 + the new `PolicyReference` caveat (RFC-0965 v1.1).
+1. Phase 1: Land RFC-0967 + the new `PolicyReference` caveat (RFC-0965).
 2. Phase 2: Existing capabilities continue to work — caveat semantics unchanged. Issuers may optionally replace embedded caveats with `PolicyReference(policy_id)` for frequently-used policies.
 3. Phase 3: Audit windows on policy objects allow gradual retirement of legacy caveat-heavy capabilities.
 
@@ -316,7 +316,7 @@ There is no forced migration. The `PolicyObject` is an additive optimization for
 
 ## 16. Status
 
-This RFC = Policy Object Graph — separable authorization policy. Status: **Accepted v1.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, and RFC-0965 v1.1).
+This RFC = Policy Object Graph — separable authorization policy. Status: **Accepted v1.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, and RFC-0965).
 
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 

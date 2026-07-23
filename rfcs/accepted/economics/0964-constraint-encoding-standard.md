@@ -12,7 +12,7 @@ Accepted v1.1
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added three new constraint types in 0xA4-0xA6 range: `DDLActivationHeight` (0xA4), `BranchID` (0xA5), `MVStateHash` (0xA6). Domain-separator registry (§0.1) extended. 0xA7-0xAF reserved for future RFCs. Additive (non-breaking) bump. |
-| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
+| v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -64,7 +64,7 @@ Cross-chain interop: each variant carries an EIP-712-style `typed_data_hash` so 
 |-----|--------------|--------|
 | RFC-0965 | Builds on | Capability extension format (caveat DSL consumer) — Accepted v1.1 (2026-07-23; promoted in lockstep) |
 | RFC-0961 | Builds on | CIPHERO_SQL `AllowIf` constraint embeds a procedure reference — Accepted v2.0 (2026-07-23; promoted in lockstep) |
-| RFC-0962 | Builds on | ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession) references constraints in capability binding — Accepted v2.0 (2026-07-23; promoted in lockstep) |
+| RFC-0962 | Builds on | ExecutionEnvelope (RFC-0962; renamed from ConsensusSession) references constraints in capability binding — Accepted v2.0 (2026-07-23; promoted in lockstep) |
 
 ### Dependency Validation
 
@@ -126,10 +126,10 @@ Namespace tag values:
 | 0x01 | **Constraint** (this RFC) | §1, §2 below |
 | 0x02 | **Caveat** (RFC-0965) | RFC-0965 §1, §2 |
 | 0x03 | **Capability** (RFC-0965) | RFC-0965 §6 |
-| 0x04 | **ExecutionEnvelope** (RFC-0962 v2.0; renamed from ConsensusSession) | RFC-0962 §4 |
+| 0x04 | **ExecutionEnvelope** (RFC-0962; renamed from ConsensusSession) | RFC-0962 §4 |
 | 0x05 | **Reservation** (RFC-0960) | RFC-0960 §2.3 |
 | 0x06 | **SettlementReceipt** (RFC-0959) | RFC-0959 §Data Structures (unchanged) |
-| 0x07 | PolicyObject (RFC-0967 v1.0) | policy graph envelopes |
+| 0x07 | PolicyObject (RFC-0967) | policy graph envelopes |
 | 0x08-0x1F | reserved for future stack expansion | TBD per stack growth |
 | 0x20-0xFF | application-specific | per app |
 
@@ -140,7 +140,7 @@ tag of their own.
 
 Receivers MUST read the outer `namespace_tag` first and dispatch to the
 correct inner-envelope parser. A receiver that sees an unknown tag (e.g.,
-0x07 (since RFC-0967 v1.0: PolicyObject) MUST fail-closed if the receiver does not recognize the tag and reject the message.
+0x07 (since RFC-0967: PolicyObject) MUST fail-closed if the receiver does not recognize the tag and reject the message.
 
 **Discriminator bytes within a Constraint envelope** (§1 below) are local to
 the Constraint namespace; they do NOT share an address space with Caveat
@@ -161,8 +161,8 @@ separator MUST be added here before use in any RFC.
 
 | Range | Purpose | Currently assigned |
 |---|---|---|
-| `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ExecutionEnvelope (RFC-0962 v2.0; renamed from ConsensusSession), 0x05=Reservation, 0x06=SettlementReceipt |
-| `0x07` | **PolicyObject (RFC-0967 v1.0)** | Policy graph envelopes |
+| `0x00-0x06` | Outer-namespace tags | 0x00=forbidden, 0x01=Constraint, 0x02=Caveat, 0x03=Capability, 0x04=ExecutionEnvelope (RFC-0962; renamed from ConsensusSession), 0x05=Reservation, 0x06=SettlementReceipt |
+| `0x07` | **PolicyObject (RFC-0967)** | Policy graph envelopes |
 | `0x08-0x1F` | Reserved for future namespace expansion | (none) |
 | `0x20-0xFF` | Application-specific | (none) |
 | `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9), 0xA4=DDLActivationHeight (v1.1, RFC-0960 §1.4), 0xA5=BranchID (v1.1, RFC-0960 §17), 0xA6=MVStateHash (v1.1, RFC-0960 §15), 0xA7-0xAF=reserved for future cross-RFC prefixes |
@@ -589,7 +589,7 @@ Receivers verify by:
 
 ## Status
 
-This RFC = Constraint encoding standard. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0965 v1.1, and RFC-0967 v1.0).
+This RFC = Constraint encoding standard. Status: **Accepted v1.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0965, and RFC-0967).
 
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 

@@ -14,7 +14,7 @@ Accepted v2.0
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as "Consensus-Safe SQL"). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Renamed to Deterministic SQL Dialect. New §7 **Deterministic SQL Profile** (mandatory `ORDER BY` for `LIMIT`, `COLLATE "C"`, RFC-0104 DFP, `NULLS LAST` default, inclusive `BETWEEN`, deterministic `GROUP BY` order). Reframed as a layer of the Deterministic SQL Engine (RFC-0960 §1), not a standalone language. Bumped to v2.0 to signal breaking terminology change. |
-| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0962, RFC-0963, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 
 ## Dependencies
 
@@ -52,7 +52,7 @@ PostgreSQL doesn't enforce `DETERMINISTIC`. If the developer mis-declares, queri
 
 CIPHERO_SQL is **not** a smart-contract language. It is **not** Turing-complete. It is **not** a procedure body language with loops, recursion, or arbitrary control flow.
 
-CIPHERO_SQL is a **constrained deterministic SQL dialect** compiled by the **Deterministic SQL Engine** (RFC-0960 §1) into deterministic WAL entries. It runs inside an `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) and its result is bit-identical across every node that replays the same block. The dialect is the **surface**; the WAL is the **protocol**.
+CIPHERO_SQL is a **constrained deterministic SQL dialect** compiled by the **Deterministic SQL Engine** (RFC-0960 §1) into deterministic WAL entries. It runs inside an `ExecutionEnvelope` (RFC-0962; renamed from `ConsensusSession`) and its result is bit-identical across every node that replays the same block. The dialect is the **surface**; the WAL is the **protocol**.
 
 **v2.0 framing:** The determinism is the **property**. The consensus is an **implementation detail**. CIPHERO_SQL is "Deterministic SQL," not "Consensus-Safe SQL." Anything that is bit-identical across replays is deterministic, regardless of whether consensus happens to be in the loop.
 
@@ -627,7 +627,7 @@ The following questions are deferred to RFC-0962 (ExecutionEnvelope protocol):
 
 ## 13. Status
 
-This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Accepted v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0962 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0.
+This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Accepted v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0962, RFC-0963, RFC-0964, RFC-0965, and RFC-0967.
 
 Companion RFCs (all Accepted in lockstep on 2026-07-23):
 - RFC-0962 (ExecutionEnvelope object protocol) — Accepted v2.0 (2026-07-23)

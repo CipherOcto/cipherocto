@@ -14,7 +14,7 @@ Accepted v2.0
 |---------|------|--------|------|
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as `ExecutionEnvelope`). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. Outer namespace tag `0x04` retained for `ExecutionEnvelope` (was `ConsensusSession`); cross-RFC namespace-tag table extended in RFC-0964 §0 to include `0x07 = PolicyObject` (RFC-0967). |
-| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960 v2.0, RFC-0961 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, RFC-0967 v1.0) promoted in lockstep on 2026-07-23. |
+| v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0963, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 
 ## Authors
 
@@ -64,7 +64,7 @@ Coexists with RFC-0959. RFC-0959 governs per-node Ask pricing; RFC-0962 governs 
 | RFC-0963 | Builds on | Resource shard routing; cross-shard sessions use `MultiEnvelope` — Accepted v2.0 (2026-07-23; promoted in lockstep) |
 | RFC-0964 | Builds on | Constraint encoding for capability constraint evaluation — Accepted v1.1 (2026-07-23; promoted in lockstep) |
 | RFC-0965 | Builds on | Capability extension format (caveat types referenced by `capability_holder`) — Accepted v1.1 (2026-07-23; promoted in lockstep) |
-| RFC-0967 | Refers to | Policy Object Graph (one-shot reference, RFC-0962 v2.0 §3 imports `policy_id` per RFC-0967) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
+| RFC-0967 | Refers to | Policy Object Graph (one-shot reference, RFC-0962 §3 imports `policy_id` per RFC-0967) — Accepted v1.0 (2026-07-23, NEW; promoted in lockstep) |
 
 ### Dependency Validation
 
@@ -368,7 +368,7 @@ WALSegment {
 | `E_REPLAY_DETECTED` | Nonce seen in `ConsumedEnvelopeIndex` (renamed from `ConsumedSessionIndex` in v2.0) | Use new nonce |
 | `E_ZK_PROOF_INVALID` | EnvelopeProof failed verification (renamed from `SessionProof` in v2.0) | Regenerate proof |
 | `E_MULTI_ENVELOPE_TIMEOUT` | Sub-envelope did not reach Replayed within timeout (renamed from `E_MULTI_SESSION_TIMEOUT` in v2.0) | Fallback action |
-| `E_SHARD_UNREACHABLE` | Required shard (per RFC-0963 v2.0) not reachable | Retry on shard recovery |
+| `E_SHARD_UNREACHABLE` | Required shard (per RFC-0963) not reachable | Retry on shard recovery |
 
 ### 12. Worked example
 
@@ -523,7 +523,7 @@ Catch-up sync: a node joining mid-blockchain receives the full event log from ge
 
 ## Status
 
-This RFC = ExecutionEnvelope object protocol (v2.0 strategic reframe). Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960 v2.0, RFC-0961 v2.0, RFC-0963 v2.0, RFC-0964 v1.1, RFC-0965 v1.1, and RFC-0967 v1.0).
+This RFC = ExecutionEnvelope object protocol (v2.0 strategic reframe). Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0963, RFC-0964, RFC-0965, and RFC-0967).
 
 All companion RFCs (0961 / 0963 / 0964 / 0965 / 0967) reached Accepted in lockstep on 2026-07-23.
 

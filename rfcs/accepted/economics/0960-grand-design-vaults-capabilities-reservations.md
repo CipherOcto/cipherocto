@@ -26,7 +26,7 @@ Accepted v2.0
 | v1.13 | 2026-07-23 | @cipherocto + @mmacedoeu | R14 stale-formula sweep: 3 more occurrences (see §R14 Self-Review). |
 | v1.14 | 2026-07-23 | @cipherocto + @mmacedoeu | R15 EIP-712 separator sweep: 1 fix (see §R15 Self-Review). |
 | v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
-| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962 v2.0). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961 v2.0). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
+| v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs. |
 
 ## R1 Self-Review (multi-round adversarial)
@@ -35,7 +35,7 @@ Self-applied R1 fixes prior to circulation. Each fix maps to a defect surfaced d
 
 ### R1-F1 — RFC-0959 `SettlementReceipt` already defines the on-chain receipt
 
-**Defect:** §2.4 defined a new `Settlement { settlement_id, reservation_id, proof, transfers, timestamp }` whose `proof: Proof` was unspecified, leaving a wire incompatibility with RFC-0959 v1.0's `SettlementReceipt { envelope, router_signature }` (Accepted 2026-07-20).
+**Defect:** §2.4 defined a new `Settlement { settlement_id, reservation_id, proof, transfers, timestamp }` whose `proof: Proof` was unspecified, leaving a wire incompatibility with RFC-0959's `SettlementReceipt { envelope, router_signature }` (Accepted 2026-07-20).
 
 **Fix:** §2.4 now aliases `Settlement` to RFC-0959's `SettlementReceipt`. No new primitive; RFC-0960 only adds the **`reservation_id`** link that RFC-0959 does not have. The audit-window extension (§4) is layered onto RFC-0959's state machine without overriding it.
 
@@ -47,7 +47,7 @@ Self-applied R1 fixes prior to circulation. Each fix maps to a defect surfaced d
 
 ### R1-F3 — Settlement state machine layering, not override
 
-**Defect:** §4 introduced "Reserved → Executing → Settled → Auditable → Released" as a state machine for `Settlement`, but RFC-0959 v1.0 already defines `Minted → Settled → Consumed` as the receipt state machine. The two machines operate on different objects: `Reservation` (RFC-0960) and `SettlementReceipt` (RFC-0959). Conflating them invited a contradiction.
+**Defect:** §4 introduced "Reserved → Executing → Settled → Auditable → Released" as a state machine for `Settlement`, but RFC-0959 already defines `Minted → Settled → Consumed` as the receipt state machine. The two machines operate on different objects: `Reservation` (RFC-0960) and `SettlementReceipt` (RFC-0959). Conflating them invited a contradiction.
 
 **Fix:** §4 explicitly separates the two machines. `Reservation` has the 8-state machine. `SettlementReceipt` keeps RFC-0959's 3-state machine. The audit-window logic lives on `Reservation`, and the transition `Reservation: Auditable → Released` is what consumes the corresponding `SettlementReceipt` (via `settlement_ref`).
 
@@ -55,7 +55,7 @@ Self-applied R1 fixes prior to circulation. Each fix maps to a defect surfaced d
 
 **Defect:** `proof: Proof` was unspecified.
 
-**Fix:** §2.4 now states `proof = SettlementReceipt` (RFC-0959 v1.0 type). No new `Proof` primitive.
+**Fix:** §2.4 now states `proof = SettlementReceipt` (RFC-0959 type). No new `Proof` primitive.
 
 ### R1-F5 — `Transfer` projection semantics, not primitive
 
@@ -462,7 +462,7 @@ The 5-RFC stack reached internal consistency at R16. Per the directive "keep doi
 
 ## Summary
 
-This RFC establishes the **canonical value-layer architecture** for CipherOcto's economic operating system. It introduces four primitives (**Vault**, **Capability**, **Reservation**, **Settlement**), twenty-three reusable **Constraints**, an **audit-window** state machine extension, an **event-sourced ledger** (balances are projections, not state), a declarative **Economic VM**, and an **ExecutionEnvelope** compatibility layer (RFC-0962 v2.0; renamed from `ConsensusSession`) that preserves the enterprise programming model while replacing the trust model with cryptographic capability authorization.
+This RFC establishes the **canonical value-layer architecture** for CipherOcto's economic operating system. It introduces four primitives (**Vault**, **Capability**, **Reservation**, **Settlement**), twenty-three reusable **Constraints**, an **audit-window** state machine extension, an **event-sourced ledger** (balances are projections, not state), a declarative **Economic VM**, and an **ExecutionEnvelope** compatibility layer (RFC-0962; renamed from `ConsensusSession`) that preserves the enterprise programming model while replacing the trust model with cryptographic capability authorization.
 
 Together these primitives constitute CipherOcto's value-layer primitive set. Concrete protocol-level artifacts (`Constraint` encoding, `Capability` macaroon format extensions + `PolicyReference` caveat to RFC-0967 Policy Objects, event log schema, DETERMINISTIC SQL mode, ExecutionEnvelope object) are specified by companion RFCs (see §Dependencies).
 
@@ -482,7 +482,7 @@ Per `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` Phase 
 | Negative-balance defense | `Balance::deduct` uses `saturating_sub` (balance.rs:27) | **Silent over-spend bug** |
 | Audit trail | none | **No per-transfer event log** |
 
-Per RFC-0959 v1.0, the settlement receipt primitive ships; the value flow that settlement triggers does not. RFC-0957 §discharge assumes "Channel provider evaluates its own predicate (escrow balance, ...)" but the escrow table is missing — circular dependency.
+Per RFC-0959, the settlement receipt primitive ships; the value flow that settlement triggers does not. RFC-0957 §discharge assumes "Channel provider evaluates its own predicate (escrow balance, ...)" but the escrow table is missing — circular dependency.
 
 ### The inversion
 
@@ -531,7 +531,7 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 **Not Requires (parallel primitives):**
 
 - RFC-0955 (Economics): Model Liquidity Layer — coexistence; MLL is a marketplace of model ownership; this RFC is the value layer
-- RFC-0909 (Economics): Deterministic Quota Accounting — coexistence per RFC-0959 v1.0
+- RFC-0909 (Economics): Deterministic Quota Accounting — coexistence per RFC-0959
 
 ## Dependency Validation
 
@@ -560,7 +560,7 @@ This RFC codifies that hypothesis. Capability IS the spend authority. Ledger IS 
 | **G3** | Audit-window dispute in state machine | Settled → Auditable → Released transition with `Frozen` branch |
 | **G4** | Event-sourced ledger | All state is `SUM(events)` projection; no mutable balance rows as source of truth |
 | **G5** | Cross-primitive reuse via Constraint | Single 23-variant `Constraint` set covers all features from time locks to cross-chain atomic swaps |
-| **G6** | Enterprise compatibility | ORMs, JDBC, stored procedures work unchanged via `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) |
+| **G6** | Enterprise compatibility | ORMs, JDBC, stored procedures work unchanged via `ExecutionEnvelope` (RFC-0962; renamed from `ConsensusSession`) |
 
 ## Specification
 
@@ -623,10 +623,10 @@ The WAL is the protocol. SQL is the surface language. Consensus is one possible 
 
 #### §1.2 ExecutionEnvelope as WAL Projection
 
-An `ExecutionEnvelope` (RFC-0962 v2.0; renamed from `ConsensusSession`) is a signed authorization to append a specific ordered set of WAL entries to the chain. The envelope commits the SQL operations; the WAL certifies them; consensus is one possible certifier.
+An `ExecutionEnvelope` (RFC-0962; renamed from `ConsensusSession`) is a signed authorization to append a specific ordered set of WAL entries to the chain. The envelope commits the SQL operations; the WAL certifies them; consensus is one possible certifier.
 
 ```text
-ExecutionEnvelope (RFC-0962 v2.0)
+ExecutionEnvelope (RFC-0962)
     │ bundles
     ▼
 N SQL operations
@@ -839,10 +839,10 @@ Reservations are first-class blockchain objects. Step 6 of the 11-step exercise 
 
 #### §2.4 Settlement — alias to RFC-0959 `SettlementReceipt`
 
-RFC-0959 v1.0 (Accepted 2026-07-20) defines `SettlementReceipt { envelope, router_signature }` with `envelope.receipt_id = BLAKE3(canonical_ser(event, nonce, settled_at_unix))` and `event.cost` bound into `settlement_hash = BLAKE3(canonical_ser(cap_root_hash, ask_id, invocation_hash, canonical_axes_consumed, cost))`. RFC-0960 does **not** redefine this primitive.
+RFC-0959 (Accepted 2026-07-20) defines `SettlementReceipt { envelope, router_signature }` with `envelope.receipt_id = BLAKE3(canonical_ser(event, nonce, settled_at_unix))` and `event.cost` bound into `settlement_hash = BLAKE3(canonical_ser(cap_root_hash, ask_id, invocation_hash, canonical_axes_consumed, cost))`. RFC-0960 does **not** redefine this primitive.
 
 ```text
-// RFC-0959 v1.0 (Accepted, authoritative):
+// RFC-0959 (Accepted, authoritative):
 SettlementReceipt {
     envelope: {
         receipt_id:        ReceiptId,       // = BLAKE3(canonical_ser(event, nonce, settled_at_unix))
@@ -996,7 +996,7 @@ Reuse table:
 
 ### §4 Audit Window — Reservation state machine (separate from RFC-0959 receipt state)
 
-RFC-0959 v1.0 defines `SettlementReceipt` state as `Minted → Settled → Consumed`. RFC-0960 does **not** alter this. RFC-0960 adds a **separate** state machine on `Reservation`, the audit-window lifecycle. The two machines are coupled via `Reservation.settlement_ref`:
+RFC-0959 defines `SettlementReceipt` state as `Minted → Settled → Consumed`. RFC-0960 does **not** alter this. RFC-0960 adds a **separate** state machine on `Reservation`, the audit-window lifecycle. The two machines are coupled via `Reservation.settlement_ref`:
 
 ```text
 // Reservation state machine (RFC-0960; lives on the Reservation row)
@@ -1338,7 +1338,7 @@ Migrate incrementally. Each level is a superset of the previous. Tooling per lev
 #### §10.9 ExecutionEnvelope object (renamed from ConsensusSession)
 
 ```text
-ConsensusSession { // renamed to ExecutionEnvelope in RFC-0962 v2.0
+ConsensusSession { // renamed to ExecutionEnvelope in RFC-0962
     session_id:        SessionID,
     capability:        CapabilityID,
     sql_statements:    Vec<CanonicalSQL>,
@@ -1368,7 +1368,7 @@ The seven-layer model naturally accommodates:
 - Atomic swaps, cross-chain → multi-settlement protocols
 - Audit windows, disputes, delayed release → settlement state machine
 - Massive horizontal scalability → resource shards + append-only events (WAL)
-- Enterprise migration → ExecutionEnvelope (RFC-0962 v2.0) over the WAL
+- Enterprise migration → ExecutionEnvelope (RFC-0962) over the WAL
 - Database-native primitives → Time Travel (§14), Materialized Views (§15), Event Store (§16), Git branches (§17), Cost Model (§18)
 
 The bottleneck shifts from "transfers per second" to "independent resource commitments per second" — a much better fit for decentralized AI infrastructure.
@@ -1564,7 +1564,7 @@ so reviewers can trace provenance.
 | `E_MISSING_ORDER_BY` | RFC-0961 §7 | R3 | SELECT returns >1 row but no `ORDER BY` |
 | `E_VOLATILE_FUNCTION` | RFC-0961 §7 | R3 | Function call marked `VOLATILE` and not in registry |
 | `E_DDL_INSIDE_PROCEDURE` | RFC-0961 §7 | R3 | DDL statement inside procedure body |
-| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `DETERMINISTIC` mode (RFC-0962 v2.0 rename) |
+| `E_NON_DETERMINISTIC_IN_SAFE_MODE` | RFC-0961 §7 | R3 | Procedure marked `NON_DETERMINISTIC` invoked in `DETERMINISTIC` mode (RFC-0962 rename) |
 | `E_RUNTIME_VERIFICATION_FAILED` | RFC-0961 §7 | R3 | Three-node replay produced non-identical output |
 | `E_PARSE_FAILED` | RFC-0962 §11 | R3 | JSON envelope not canonical |
 | `E_SIGNATURE_INVALID` | RFC-0962 §11 | R3 | Ed25519 verification failed |
@@ -1573,15 +1573,15 @@ so reviewers can trace provenance.
 | `E_CAPABILITY_EXHAUSTED` | RFC-0962 §11 | R3 | Capability constraint violated (e.g., spend cap) |
 | `E_CAPABILITY_REVOKED_POST_HOC` | RFC-0962 §11 | R8-F1 | Revocation emitted at block_height > envelope's; pre-signed session rejected |
 | `E_CHAIN_DEPTH_EXCEEDED` | RFC-0965 §3.7 | R7-F1 | `WrappedOnly` chain depth > 16 or circular reference |
-| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiEnvelope nesting depth > 4 (renamed from MultiSession in RFC-0962 v2.0) |
+| `E_NESTING_DEPTH_EXCEEDED` | RFC-0962 §7 | R8-F5 | MultiEnvelope nesting depth > 4 (renamed from MultiSession in RFC-0962) |
 | `E_SUB_ENVELOPE_NOT_REVERSIBLE` | RFC-0962 §7 | R8-F3 | Sub-envelope does not support reversibility (renamed from sub-session) |
 | `E_LOCAL_CHAIN_FORKED` | RFC-0962 §11 | R7-F5 | Local chain > 1000 blocks behind envelope's `block_height` |
 | `E_WAL_SEGMENT_MISMATCH` | RFC-0962 §11 | R3 | Local WAL segment hash differs from envelope's `wal_segment_hash` |
-| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedEnvelopeIndex` (renamed from ConsumedSessionIndex in RFC-0962 v2.0) |
+| `E_REPLAY_DETECTED` | RFC-0962 §11 | R3 | Nonce seen in `ConsumedEnvelopeIndex` (renamed from ConsumedSessionIndex in RFC-0962) |
 | `E_REPLAY_MISMATCH` | RFC-0962 §11 | R4-F9 | Write statement's post-state hash doesn't match block producer's |
-| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962 v2.0) |
-| `E_MULTI_ENVELOPE_TIMEOUT` | RFC-0962 §11 | R3 | Sub-envelope did not reach Replayed within timeout (renamed from MultiSession in RFC-0962 v2.0) |
-| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963 v2.0) not reachable |
+| `E_ZK_PROOF_INVALID` | RFC-0962 §11 | R3 | EnvelopeProof failed verification (renamed from SessionProof in RFC-0962) |
+| `E_MULTI_ENVELOPE_TIMEOUT` | RFC-0962 §11 | R3 | Sub-envelope did not reach Replayed within timeout (renamed from MultiSession in RFC-0962) |
+| `E_SHARD_UNREACHABLE` | RFC-0962 §11 | R3 | Required shard (per RFC-0963) not reachable |
 | `E_GAS_LIMIT_EXCEEDED` | RFC-0960 §18 | R25 | Envelope projected gas exceeds `gas_limit` at sign time |
 | `E_BRANCH_NOT_FOUND` | RFC-0960 §17 | R25 | `branch_id` not found in catalog |
 | `E_MERGE_CONFLICT_UNRESOLVED` | RFC-0960 §17 | R25 | Merge has non-empty `conflict_set` and no `ConflictResolution` envelope |
@@ -1613,7 +1613,7 @@ A holder settles a high-value transfer, then files a dispute within the audit wi
 
 ### Threat 4: Event log divergence
 
-Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `shard_for_vault(vault_id)` for state placement (RFC-0963 v2.0 §1a) + `shard_for_segment(wal_segment_id)` for WAL segment routing (§1b); intra-shard writes serialize via consensus; cross-shard writes use `MultiEnvelope` (RFC-0962 v2.0 §7).
+Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `shard_for_vault(vault_id)` for state placement (RFC-0963 §1a) + `shard_for_segment(wal_segment_id)` for WAL segment routing (§1b); intra-shard writes serialize via consensus; cross-shard writes use `MultiEnvelope` (RFC-0962 §7).
 
 ### Threat 5: Privacy leak via public event log
 
@@ -1656,7 +1656,7 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 | Canonical `Constraint` encoding | RFC-0964 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
 | `Capability` macaroon format extensions | RFC-0965 (companion, **Accepted v1.1 (2026-07-23; promoted in lockstep)**) |
 | `CIPHERO_SQL` full language spec | RFC-0961 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
-| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 v2.0 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
+| `ExecutionEnvelope` wire protocol (renamed from ConsensusSession) | RFC-0962 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
 | Resource shard routing algorithm | RFC-0963 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
 | Policy Object Graph (PolicyReference caveat) | RFC-0967 (companion, **Accepted v1.0 (2026-07-23; promoted in lockstep)**) |
 | Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |

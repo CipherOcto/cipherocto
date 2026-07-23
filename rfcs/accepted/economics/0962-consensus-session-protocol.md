@@ -15,6 +15,7 @@ Accepted v2.0
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as `ExecutionEnvelope`). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. Outer namespace tag `0x04` retained for `ExecutionEnvelope` (was `ConsensusSession`); cross-RFC namespace-tag table extended in RFC-0964 §0 to include `0x07 = PolicyObject` (RFC-0967). |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0963, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers (max session size caps, WAL two-phase hash binding, MultiEnvelope audit window + offline recovery semantics, `RequireProof` constraint integration). §6.4 added for WAL hash two-phase binding. Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -513,6 +514,51 @@ Catch-up sync: a node joining mid-blockchain receives the full event log from ge
 | 4 | How does audit window interact with MultiEnvelope? | Each sub-envelope has its own audit window; MultiEnvelope finalizes when all sub-envelopes finalize |
 | 5 | What if a node is offline during a MultiEnvelope timeout? | Node catches up via RFC-0862 sync; MultiEnvelope retries until quorum |
 | 6 | Can ZK proof be mandatory for some session modes? | Yes — capability may carry `RequireProof` constraint (RFC-0965) |
+
+## Resolved Decisions (v2.1-Resolved)
+
+All Open Questions resolved with concrete answers (R28+ risk-closure round):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| 1 | Max session size | **1000 statements / 1MB default; 10000 / 10MB hard cap; beyond = MultiEnvelope.** STWO proof gen ~O(n²) on circuit size; 10000 ≈ 4M constraints ≈ 30s proof time on 32-core node. Caps chosen so per-envelope ZK proof stays under interactive response budget. | Resolved |
+| 2 | WAL hash binding at sign-time vs commit-time | **Two-phase commit.** Tentative hash at sign: `wal_segment_hash_tentative = BLAKE3(0xA3 \|\| canonical_ser(envelope_unsigned_with_placeholder))`. Final hash at commit: `wal_segment_hash = BLAKE3(prev_segment_id \|\| canonical_ser(segment_body))`. Mismatch → reject with new error code `E_WAL_HASH_MISMATCH`. See §6.4. | Resolved |
+| 3 | OFF_CHAIN → DETERMINISTIC transition | **No.** Mode is fixed at session creation (per §4 envelope struct: `mode` is non-mutable field). Re-issue session under new mode if needed. | Resolved |
+| 4 | MultiEnvelope audit window interaction | **Per-sub-envelope independence.** Each sub-envelope has its own audit window starting at its respective settlement landing. MultiEnvelope finalizes only when all sub-envelopes finalize. Cross-shard disputes are filed per sub-envelope. Settle latency = max(per-shard audit window). | Resolved |
+| 5 | Offline node during MultiEnvelope timeout | **RFC-0862 sync catch-up.** MultiEnvelope retries until quorum reached OR `timeout_unix_ms` expires. After timeout, MultiEnvelope aborts and resources are released. Offline node catches up on reconnect via event log replay (RFC-0862 §event-replay). | Resolved |
+| 6 | ZK proof mandatory for some modes | **Yes via `RequireProof` constraint (RFC-0965).** Capability verifier rejects envelope if `mode = DETERMINISTIC` and `RequireProof` is set but `envelope_proof` field is missing. `EnvelopeProof` envelope (RFC-0958) carries the public-input commitment + circuit. | Resolved |
+
+### §6.4 WAL hash two-phase binding
+
+ExecutionEnvelopes commit SQL operations to a Deterministic WAL segment whose hash is bound into the envelope. Because the WAL is being written concurrently with envelope signing, a two-phase protocol binds the segment hash:
+
+**Sign-time (tentative).** The signer computes:
+
+```text
+envelope_unsigned_tentative := envelope_unsigned {
+    wal_segment_hash: BLAKE3(0xA3 || canonical_ser(envelope_unsigned_placeholder)),
+    ...
+}
+envelope_id := BLAKE3(0xA3 || canonical_ser(envelope_unsigned_tentative))
+signature := Ed25519.sign(signer_sk, canonical_ser(envelope_unsigned_tentative))
+```
+
+The placeholder WAL hash is `BLAKE3(0x00 || canonical_ser(envelope_body_predicate))` — deterministic given the SQL operations, but does NOT commit to a specific segment position in the WAL chain. This lets the signer create an envelope_id before the WAL segment is committed.
+
+**Commit-time (final).** When the WAL segment containing the envelope's entries is appended to the chain:
+
+```text
+wal_segment_hash_final := BLAKE3(prev_segment_id || canonical_ser(segment_body))
+envelope_final := envelope_unsigned_tentative { wal_segment_hash: wal_segment_hash_final }
+```
+
+The validator recomputes `envelope_final_id = BLAKE3(0xA3 || canonical_ser(envelope_final))` and rejects if it does not match `envelope_id` (signing identity preserved) **OR** if the tentative→final hash transition is not present in the WAL at the cited segment.
+
+**Error codes (added to §11):**
+
+- `E_WAL_HASH_MISMATCH` — `envelope_final_id ≠ envelope_id` after tentative→final transition.
+- `E_WAL_SEGMENT_MISSING` — `wal_segment_hash_final` not found in WAL chain at validator's height.
+- `E_WAL_OUT_OF_ORDER` — referenced segment is not yet committed (validator height < segment height).
 
 ## Out of Scope
 

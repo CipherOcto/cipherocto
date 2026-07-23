@@ -13,6 +13,7 @@ Accepted v1.1
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
 | v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0967) promoted in lockstep on 2026-07-23. |
+| v1.2-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved: multi-`Permission` set union + RFC-0957 attenuation; `MaxUses` failsafe (`uses_consumed + 1 > max_uses` rejects even on partial sync); `Factory.Vet` per RFC-0126 + RFC-0964; `Sharded` caveat original-only; `PermissionKind` 2-byte expansion deferred v1.1 (schedule: post-v2.0); `AuditWindow` sync semantics (RFC-0862 delivers dispute; late = no effect). Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -497,7 +498,35 @@ CREATE INDEX ix_capabilities_parent ON capabilities (parent_capability_id);
 | 3 | How is `Factory`'s `Vet` canonically encoded? | Per RFC-0126 + RFC-0964 (Constraint subset); see RFC-0960 §10.7 |
 | 4 | Can a `Sharded` caveat be added in attenuation? | No — must be in the original capability; cannot move across shards. |
 | 5 | What is the encoding of `PermissionKind` if more kinds are added? | Single byte (current); could grow to 2 bytes if >255 kinds. v1.1 decision. |
-| 6 | How does `AuditWindow` interact with offline dispute filing? | Dispute period counts from settlement landing; offline dispute = late filing = no effect. |
+| 6 | How does `AuditWindow` interaction with offline dispute filing? | Dispute period counts from settlement landing; offline dispute = late filing = no effect. |
+
+## Resolved Decisions (v1.2-Resolved)
+
+All Open Questions resolved with concrete answers (R28+ risk-closure round):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| 1 | Multiple `Permission` caveats per capability | **Yes — set union semantics.** Child capability's effective `Permission` set = subset of parent's (RFC-0957 §Attenuation invariant: child only restricts). Multi-`Permission` union is monotone restriction only; no expansion possible. | Resolved |
+| 2 | `MaxUses` during long sync | **Conservative failsafe.** `uses_consumed` = event-log count of `Redemption` events referencing this capability. During partial sync (RFC-0862), verifier computes `uses_consumed` from locally-known events. **Verifier rule: reject if `uses_consumed + 1 > max_uses` even when event log is incomplete** — partial sync under-counts consumed uses, so conservative check prevents double-spend. Catch-up sync may later observe the rejection and reconcile. | Resolved |
+| 3 | `Factory.Vet` canonical encoding | **RFC-0126 + RFC-0964 (Constraint subset).** `Vet` is a constraint payload (RFC-0964 §3) wrapped in a `Factory` caveat (RFC-0965 §3.4). `predicate_hash` references a CIPHERO_SQL procedure (RFC-0961 §9). Cross-reference: RFC-0960 §10.7 (`Factory` specification). | Resolved |
+| 4 | `Sharded` caveat added during attenuation | **No.** `Sharded` binds a capability to a specific shard (RFC-0963). Moving across shards mid-capability would invalidate ZK proofs that depend on per-shard MMR roots. Must be set in original capability. Attenuation chain inherits shard binding (immutable). | Resolved |
+| 5 | `PermissionKind` encoding (1 vs 2 bytes) | **Defer to v1.1.** Currently 1 byte = 255 kinds (0x00 reserved, 0x01-0xFF available). v1.1 bumps to 2 bytes (LE) if any RFC adds the 255th kind. Migration path: 2-byte form is length-prefixed (`kind_hi == 0xFF` → 16-bit kind); 1-byte form remains wire-compatible. Schedule: post-v2.0 lockstep promotion. | Deferred v1.1 |
+| 6 | `AuditWindow` + offline dispute filing | **Dispute counts from settlement landing at the producer node.** RFC-0862 sync delivers dispute events to all nodes; nodes that miss the dispute window (offline > `audit_window`) reject late-filed disputes with `E_DISPUTE_WINDOW_EXPIRED`. The settlement itself is NOT reversed — late disputes have no effect. Producer node publishes settlement landing timestamp to enable clients to compute remaining window. | Resolved |
+
+### §10 AuditWindow + Sync semantics (v1.2 NEW)
+
+AuditWindow interaction with offline nodes is precise:
+
+```text
+Settlement lands at node N0 at unix_time T0.
+AuditWindow = duration D.
+Window closes at T0 + D.
+Offline node N1 reconnects at T1 > T0 + D.
+N1 receives dispute event via RFC-0862 sync.
+N1 evaluates: T1 > T0 + D → E_DISPUTE_WINDOW_EXPIRED → reject.
+```
+
+The producer publishes `(T0, D)` in the settlement receipt metadata (RFC-0959). Offline nodes can compute remaining window from receipt + current clock, even before sync delivers dispute events.
 
 ## Out of Scope
 

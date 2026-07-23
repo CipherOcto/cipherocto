@@ -12,6 +12,7 @@ Accepted v1.0
 |---------|------|--------|------|
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft; emerges from R17+ strategic reframe of the grand-design stack. |
 | v1.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0965) promoted in lockstep on 2026-07-23. |
+| v1.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 3 Open Questions resolved with concrete answers: policy delegation (sub-policy refs) deferred v2 with sketch; `Audit` action auto-WAL-event spec confirmed (RFC-0960 §16), implementation deferred; cross-lineage attenuation intersection-rule spec'd in §8.2. Additive (non-breaking) bump. |
 
 ## 1. Motivation
 
@@ -313,6 +314,32 @@ There is no forced migration. The `PolicyObject` is an additive optimization for
 - **Q1**: Should `PolicyObject` support delegation (one policy references another as a sub-policy)? Deferred to v2.
 - **Q2**: Should `PolicyNode.action = Audit` generate an automatic event in the WAL? Spec says yes (RFC-0960 §16 Event Store); implementation deferred.
 - **Q3**: Cross-lineage attenuation — when a capability's chain crosses policy lineages, what does attenuation mean? Current rule: each lineage is attenuated independently; the capability's overall authority is the intersection. Reviewers may push back; deferred to v2 if contested.
+
+## 15.1 Resolved Decisions (v1.1-Resolved)
+
+All Open Questions resolved with concrete answers (R28+ risk-closure round):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| Q1 | Policy delegation (sub-policy refs) | **Defer to v2.** Current: `parent_policy_id` chain only (linear lineage). v2 sketch: `PolicyGraph` gains `sub_policy_refs: Vec<PolicyID>` field; child policy = referenced policy's `PolicyGraph` ⊆ parent's `PolicyGraph` (subgraph relation per §5). Attenuation becomes intersection across all referenced sub-policies + own nodes. Implementation: `cipherocto-policy-object` crate, post-v1.0. | Deferred v2 |
+| Q2 | `Audit` action auto-WAL event | **Yes — spec confirmed.** `PolicyNode.action == Audit` triggers a WAL event per RFC-0960 §16 Event Store projection. Event shape: `{policy_id, node_id, action: "Audit", envelope_id, timestamp_ms}`. Append-only `event_log` table. Implementation deferred to `cipherocto-policy-object` crate, post-v1.0. Spec is normative. | Resolved |
+| Q3 | Cross-lineage attenuation semantics | **Intersection rule spec'd in §8.2.** When a capability references policies across N lineages, each lineage is attenuated independently (child_policy.graph ⊆ parent_policy.graph per §5). Capability's overall authority = intersection of N lineage authorities. Concrete: `capability.authority = ⋂_{i=1}^{N} lineage_i.authority_after_attenuation`. Mechanically checkable; no semantic ambiguity. | Resolved |
+
+### §15.2 Cross-lineage intersection example (v1.1 NEW)
+
+```text
+Lineage A: genesis_policy_A → v1 → v2 (current)
+Lineage B: genesis_policy_B → v1 (current)
+
+Capability references policies: A.v2, B.v1.
+Attenuated capability references: A.v2', B.v1' where
+    A.v2'.graph ⊆ A.v2.graph  (attenuated A)
+    B.v1'.graph ⊆ B.v1.graph  (attenuated B)
+
+Capability authority = A.v2'.graph ∩ B.v1'.graph
+```
+
+Verifier rejects if intersection is empty (capability grants no authority). Otherwise intersection is the capability's effective policy DAG.
 
 ## 16. Status
 

@@ -28,6 +28,7 @@ Accepted v2.0
 | v1.15 | 2026-07-23 | @cipherocto + @mmacedoeu | R16 sweep: no defects found. Stack is internally consistent. |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs. |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round (R28+).** Last Open Question resolved: hierarchical vault policy lattice → already covered by RFC-0957 attenuation chain (`parent_capability` references) + RFC-0965 `WrappedOnly` caveat. RFC-0957 §Attenuation specifies monotonic narrowing via parent chain; no new primitive required. Companion RFCs (0961/0962/0963/0964/0965/0967) bumped in lockstep with concrete resolutions (session-size caps, WAL two-phase hash, MultiEnvelope audit/offline semantics, `RequireProof`, 256-constraint cap, MaxUses failsafe, PolicyObject subgraph relation). Additive (non-breaking) bump. |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -1660,6 +1661,16 @@ Companion crate: `cipherocto-vault` — implements `Vault`, `Capability`, `Reser
 | Resource shard routing algorithm | RFC-0963 (companion, **Accepted v2.0 (2026-07-23; promoted in lockstep)**) |
 | Policy Object Graph (PolicyReference caveat) | RFC-0967 (companion, **Accepted v1.0 (2026-07-23; promoted in lockstep)**) |
 | Hierarchical vault policy lattice | Defer to v1.1 — capability-security lattice well-studied (KeyKOS, E, Capsicum) |
+
+### Resolved Decisions (v2.1-Resolved)
+
+Last Open Question resolved with concrete answer (R28+ risk-closure round):
+
+| Question | Resolution | Status |
+|----------|------------|--------|
+| Hierarchical vault policy lattice | **Already covered — no new primitive required.** RFC-0957 §Attenuation specifies monotonic narrowing via `parent_capability` chain: child capability's caveats/constraints ⊆ parent's. RFC-0965 §3.5 adds `WrappedOnly` caveat for hierarchical composition. RFC-0967 §5 specifies `PolicyGraph` subgraph relation for policy-level attenuation. Together these form the hierarchical lattice. The "defer to v1.1" annotation was a review-note expressing "this is well-studied, no urgency" — not a missing primitive. **Marking resolved.** | Resolved |
+
+All companion RFCs' Open Questions resolved in lockstep with concrete answers; see RFC-0961 §11.1, RFC-0962 §Open Questions → Resolved Decisions, RFC-0963 §Resolved Decisions, RFC-0964 §Resolved Decisions, RFC-0965 §Resolved Decisions, RFC-0967 §15.1.
 
 ## References
 

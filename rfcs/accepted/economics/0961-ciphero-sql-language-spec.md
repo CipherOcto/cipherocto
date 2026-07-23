@@ -15,6 +15,7 @@ Accepted v2.0
 | v1.0 | 2026-07-22 | @cipherocto + @mmacedoeu | Initial draft (as "Consensus-Safe SQL"). |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Renamed to Deterministic SQL Dialect. New §7 **Deterministic SQL Profile** (mandatory `ORDER BY` for `LIMIT`, `COLLATE "C"`, RFC-0104 DFP, `NULLS LAST` default, inclusive `BETWEEN`, deterministic `GROUP BY` order). Reframed as a layer of the Deterministic SQL Engine (RFC-0960 §1), not a standalone language. Bumped to v2.0 to signal breaking terminology change. |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0962, RFC-0963, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 4 §11 Open Questions resolved inline (originally deferred to RFC-0962): `$block_start_seq` binding via envelope parameter (RFC-0962 §4); proc invocation signing via `sql_statements_hash = BLAKE3(0xA3 \|\| canonical_ser(proc_invocation))`; opaque AST bytes (SDK choice — JSON or protobuf); runtime violation counter `ciphero_sql_runtime_violation_total` + auto-quarantine at 3 violations/24h. Additive (non-breaking) bump. |
 
 ## Dependencies
 
@@ -613,6 +614,17 @@ The following questions are deferred to RFC-0962 (ExecutionEnvelope protocol):
 2. How does the `ExecutionEnvelope` sign the procedure invocation?
 3. What is the wire format for the canonical AST over the network?
 4. How are runtime verification failures handled in production (alarm routing, procedure quarantine)?
+
+### 11.1 Resolved Decisions (v2.1-Resolved)
+
+All §11 Open Questions resolved inline with concrete answers (R28+ risk-closure round, in lockstep with RFC-0962):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| 1 | `$block_start_seq` binding at procedure invocation | **Passed as parameter to CIPHERO_SQL procedure at invocation time.** Source of truth: `ExecutionEnvelope.envelope_unsigned.block_start_seq` (RFC-0962 §4 envelope struct). The procedure receives `$block_start_seq` via parameter binding; CIPHERO_SQL does NOT define a `NOW()`-like intrinsic (per §4.1 forbidden constructors). Envelope replay at any validator uses the same `block_start_seq` from canonical_ser; deterministic. | Resolved |
+| 2 | `ExecutionEnvelope` signing the procedure invocation | **`sql_statements_hash = BLAKE3(0xA3 \|\| canonical_ser(proc_invocation))`** where `proc_invocation` = the procedure's catalog row reference + parameter bindings (typed per §9 catalog schema). Per RFC-0962 §9 (`EnvelopeProof` public-input commitment). Validator recomputes hash and rejects on mismatch with `E_STATEMENTS_HASH_MISMATCH`. | Resolved |
+| 3 | Wire format for canonical AST | **Opaque bytes; envelope hashes bytes, not AST structure.** CIPHERO_SQL AST is serialized by the client SDK as either UTF-8 JSON or protobuf (SDK configuration); the bytes are passed verbatim into the envelope. This avoids version-drift risk: AST schema can evolve without breaking consensus, as long as `canonical_ser(bytes)` remains stable. Verifier-side parse may fail with newer AST schema → `E_AST_PARSE_UNSUPPORTED_VERSION`. | Resolved |
+| 4 | Runtime verification failure handling | **Prometheus counter `ciphero_sql_runtime_violation_total{violation_kind}` + auto-quarantine.** Each runtime violation (e.g., non-deterministic function call observed in DETERMINISTIC mode) increments counter. After 3 violations within 24h window, procedure is auto-quarantined (subsequent invocations rejected with `E_PROCEDURE_QUARANTINED` until operator review). Alarm routing: Prometheus alert rule fires at sustained rate > 0.1 violations/sec across the network. Spec'd; implementation deferred to `cipherocto-sql-runtime` crate. | Resolved |
 
 ---
 

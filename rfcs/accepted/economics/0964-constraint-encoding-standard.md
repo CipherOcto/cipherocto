@@ -13,6 +13,7 @@ Accepted v1.1
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added three new constraint types in 0xA4-0xA6 range: `DDLActivationHeight` (0xA4), `BranchID` (0xA5), `MVStateHash` (0xA6). Domain-separator registry (§0.1) extended. 0xA7-0xAF reserved for future RFCs. Additive (non-breaking) bump. |
 | v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
+| v1.2-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved: 254-variant budget confirmed (25 used / 229 free; 2-byte expansion = 65K); `Composite(AND)` + `GovernanceLock.proposal_id` deferred to v1.1 with concrete schedules; `AllowIf` predicate spec'd; **256 constraints/capability hard cap** (O(N) eval ≈ 1ms commodity HW; beyond → MultiCapability); constraint composition out-of-scope via RFC-0957 `parent_capability`. Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -580,6 +581,32 @@ Receivers verify by:
 | 4 | How is `AllowIf` predicate serialized? | Reference to a CIPHERO_SQL procedure (RFC-0961); `predicate_hash` is `BLAKE3(canonical_ser(proc_id))` |
 | 5 | Can a capability carry 1000+ constraints? | Technically yes; performance-wise, evaluation cost is O(N) per check. Caps to be determined. |
 | 6 | What about constraint intersection/union for cross-capability composition? | Out of scope; capabilities compose via parent_capability reference |
+
+## Resolved Decisions (v1.2-Resolved)
+
+All Open Questions resolved with concrete answers (R28+ risk-closure round):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| 1 | 0x01-0xFF variant budget | **254 max variants.** Currently 25 used (23 constraints + 2 reserved); 229 free. At 2-byte discriminator expansion: 65,280 slots. No exhaustion risk within v1.x line. | Resolved |
+| 2 | ConstraintSet references ConstraintSet | **Defer to v1.1.** New variant `Composite(AND(set_a, set_b))` with discriminator `0xAA`. Spec sketch: `Composite { kind: AND\|OR, sets: [Hash; N] }` where each `set_hash` references a `ConstraintSet` envelope. Schedule: post-v2.0 lockstep promotion (target: 2026-Q4). | Deferred v1.1 |
+| 3 | `GovernanceLock.proposal_id` binding | **Defer to v1.1.** Current: `GovernanceLock { active: bool }` — boolean flag. v1.1: `GovernanceLock { proposal_id: Option<Hash>, locked_until_height: u64 }`. Proposal binding enables per-proposal governance restrictions. Spec ready; implementation pending post-v1.0. | Deferred v1.1 |
+| 4 | `AllowIf` predicate serialization | **`predicate_hash = BLAKE3(canonical_ser(proc_id))`** where `proc_id` is the CIPHERO_SQL procedure's catalog-row ID (RFC-0961 §9). The verifier resolves `proc_id → proc_body` at evaluation time and executes the procedure against the envelope context. `AllowIf` only valid for capabilities carrying a `CIPHERO_SQL` access tag (RFC-0961 §8). | Resolved |
+| 5 | 1000+ constraints per capability | **Hard cap = 256 constraints per capability.** Eval cost O(N) per check; 256 BLAKE3 hashes ≈ 1ms on commodity HW (Intel Xeon / Apple M-series). Beyond 256 = `MultiCapability` (RFC-0957 §Attenuation) composed of N single-capability children. Verification enforces cap at parse time; oversize capability rejected with `E_CONSTRAINT_OVERFLOW`. | Resolved |
+| 6 | Constraint intersection/union for cross-capability composition | **Out of scope.** Capabilities compose via `parent_capability` reference (RFC-0957 §Attenuation). Child capability's effective constraint set = subset-of-parent's; this IS the intersection semantics. No separate set-operation primitive. | Resolved (out of scope) |
+
+### §11 Constraint count budget (v1.2 NEW)
+
+To bound verifier cost, every capability carries at most 256 constraints. Budget rationale:
+
+```text
+256 constraints × 1 BLAKE3 hash per constraint × ~4µs/hash (commodity HW)
+    = 1024µs ≈ 1ms per capability evaluation
+```
+
+This keeps interactive envelopes under the 5ms response budget (RFC-0962 §6) when paired with constraint evaluation. Capabilities requiring >256 constraints MUST use `MultiCapability` composition, where each child capability holds ≤256 and the parent enforces `ALL_REQUIRED` semantics.
+
+Verifier-side enforcement: at parse time, count `len(capability.constraints)`. Reject with `E_CONSTRAINT_OVERFLOW` if >256.
 
 ## Out of Scope
 

@@ -13,6 +13,7 @@ Accepted v2.0
 | v1.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
+| v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers: `num_shards = ceil(sqrt(N))` bounded `[4, 256]`; 1y Retired archive GC; MultiCapability + MultiEnvelope for cross-shard; ~10ms p99 cross-shard read budget; per-shard ZK proof + cross-shard MMR inclusion (256B at 256 shards); shard_id immutable per session. §4.1 drain timeout already specified (7d abort → live migration). Additive (non-breaking) bump. |
 
 ## Authors
 
@@ -372,6 +373,29 @@ MultiEnvelope {
 | 4 | What's the cross-shard read cost? | Two shard reads + MMR proof; ~10ms p99 for 100 shards |
 | 5 | How does ZK proof of "vault V has balance B" compose across shards? | Single shard proof + MMR inclusion proof |
 | 6 | Can shard routing change mid-session? | No — `shard_id(vault_id, num_shards)` is fixed at session creation |
+
+## Resolved Decisions (v2.1-Resolved)
+
+All Open Questions resolved with concrete answers (R28+ risk-closure round):
+
+| # | Question | Resolution | Status |
+|---|----------|------------|--------|
+| 1 | Optimal `num_shards` for N nodes | **`num_shards = clamp(ceil(sqrt(N)), 4, 256)`.** Default = `ceil(sqrt(N))`. Override via network config. Re-shard trigger: N changes by >2×, OR sustained load >70% on any shard for 24h, OR operator-initiated. | Resolved |
+| 2 | Historical (Retired) shards queryable? | **Read-only archive for 1 year, then GC.** Archive = per-shard MMR + events flushed to cold storage via RFC-0862 §archive. Queries against Retired shards return archived data; new writes forbidden. After 1y GC reclaims storage. | Resolved |
+| 3 | Capability across multiple shards | **No.** Single capability binds to one shard via `Sharded` caveat (RFC-0965). Cross-shard composition uses `MultiCapability` (RFC-0957 §Attenuation) + `MultiEnvelope` (RFC-0962 §7). MultiCapability carries `parent_capability` references to N single-shard capabilities. | Resolved |
+| 4 | Cross-shard read cost | **~10ms p99 for 100 shards** on commodity HW (1Gbps network, NVMe storage). Cost = 2 shard reads + MMR inclusion proof verification ≈ 2× BLAKE3 hashes (~100µs each) + 1 network RTT (~5ms). 256 shards: ~25ms p99. Linear in `num_shards`. | Resolved |
+| 5 | ZK balance proof composition across shards | **Per-shard MMR proof + cross-shard MMR inclusion proof.** Proof size = `log2(num_shards) × 32 bytes` = 256B at 256 shards. Proof generation: O(shard_size + log(num_shards)) field ops. Compatible with R1CS / PLONK / STWO circuits. | Resolved |
+| 6 | Shard routing change mid-session | **No.** `shard_id(vault_id, num_shards)` computed at session creation (per RFC-0962 §6). Routing table immutable for session lifetime. Re-sharding does NOT migrate in-flight sessions; they complete on source shard before retirement. New sessions after re-sharding route by new `num_shards`. | Resolved |
+
+### §4.3 Re-sharding migration safety
+
+Re-sharding triggers from §4.1 (drain+refill) and §4.2 (live migration) are bounded by the following safety invariants:
+
+1. **No data loss.** Every event on source shard must be either (a) replicated to destination shard before drain completes, or (b) retained in source's read-only archive after retirement.
+2. **No split-brain.** During dual-write (§4.2 step 1), writes commit to source first (source is authoritative); destination follows. Reads continue from source until step 3 (atomic switch).
+3. **Bounded migration time.** 7-day hard timeout per §4.1. After timeout, drain aborts; operator must retry as live migration or extend budget.
+4. **Bounded throughput impact.** Live migration uses ≤10% of shard throughput (§4.2). Producer nodes publish throughput estimates every 1000 events to the registry so migration budget is shared fairly across shards.
+5. **Atomic switch.** Step 3 of §4.2 (`switch reads to destination`) is a single height-bounded operation: all nodes observe the switch at the same WAL segment height. No client-visible inconsistency window.
 
 ## Out of Scope
 

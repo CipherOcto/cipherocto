@@ -209,9 +209,11 @@ PermissionKind values:
 | 0x04 | `Reservation` |
 | 0x05 | `VaultMutation` |
 
-Verification: the redeeming operation's `permission_kind` must be in this caveat's set. (Capability may carry multiple `Permission` caveats; the set is the union.)
+Verification: the redeeming operation's `permission_kind` must be in this caveat's set. (Capability may carry multiple `Permission` caveats; the **set** is the union — order does not matter for verification.)
 
-Attenuation: child's `Permission` set MUST be a subset of parent's. Adding a `Permission` caveat restricts; removing is not allowed.
+**Set semantics for `Permission`:** Even though `CaveatSet` is an ordered list (and the canonical encoding preserves order for `caveats_hash` determinism), `Permission` caveats are evaluated as a **set** during verification and attenuation. Two capabilities with the same `Permission` set in different CaveatSet positions have **different `caveats_hash` values** but **the same authorization surface**. This is intentional: `caveats_hash` is content-addressed; authorization is set-based.
+
+Attenuation: child's `Permission` set MUST be a subset of parent's. Adding a `Permission` caveat restricts; removing is not allowed. The attenuation check is set-based, not sequence-based.
 
 #### 3.3 ValidAfter (0x12)
 
@@ -253,11 +255,20 @@ Attenuation: child's `duration_secs` MUST be ≥ parent's. Lengthening the windo
 
 ```text
 RedemptionContext payload:
-    context_hash:        [u8; 32]                // BLAKE3(canonical_ser(context))
+    context_hash:        [u8; 32]                // BLAKE3(0xA2 || canonical_ser(context))
 // 32 bytes payload
 ```
 
-`context` is application-defined (e.g., a specific request_id, a chain_id, a marketplace_id). Verification: `BLAKE3(canonical_ser(operation.context)) == context_hash`. The same operation submitted with a different context fails.
+`context` is application-defined. Two canonical encodings are accepted:
+
+| Encoding | Format | When to use |
+|---|---|---|
+| `CanonicalContext::Bytes(Vec<u8>)` | `0x01 || length_prefix || bytes` | Opaque blob; verifier does not interpret |
+| `CanonicalContext::Structured(ContextFields)` | `0x02 || canonical_ser({request_id, chain_id, marketplace_id, ...})` | Typed fields; verifier validates structure |
+
+Verification: `BLAKE3(0xA2 || canonical_ser(context)) == context_hash`. The same operation submitted with a different context fails. The `0xA2` prefix is the RedemptionContext-hash domain separator, distinct from the namespace tags (0x00-0x06) and version tags (0xA0-0xA1) per RFC-0964 §0+§4.
+
+Cross-implementations MUST use the same `CanonicalContext` encoding. Mixed JSON vs protobuf encodings produce different hashes for the same logical context.
 
 Attenuation: child's `context_hash` MUST equal parent's. Cannot change the bound context.
 

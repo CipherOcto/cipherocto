@@ -241,6 +241,12 @@ PerAssetSpendingCap:
     // N ≤ 5 enforced at parse time (matches G5 max ≤ 256 bytes)
     //   1 asset = 57 bytes, 5 assets = 249 bytes, 6 assets = 297 (rejected)
     // Average: ~50 bytes payload for 1 asset; ~250 bytes for 5 assets
+    // **Ordering rule:** elements MUST be sorted by asset_id in
+    // **lexicographic byte order** (BLAKE3-style, i.e. unsigned-byte
+    // comparison). Encoders MUST canonicalize to sorted order before
+    // encoding. Decoders MUST reject any encoding that is not in sorted
+    // order. This ensures two encoders with the same logical constraint
+    // produce identical bytes.
 
 RateLimit:
     max_per_window:      u128 BE
@@ -362,38 +368,50 @@ ComplianceHold:
 
 ```text
 ConstraintSet encoding:
-    version_tag:         u8                   // 0x01 (current)
+    version_tag:         u8                   // 0xA0 (high-bit; never collides with namespace tag 0x01-0x06 or constraint discriminator 0x01-0x19)
     constraint_count:    u32 BE               // number of constraints
     constraints:         [Constraint; count]  // concatenated constraint encodings
 ```
 
 Constraint ordering is preserved exactly. Two `ConstraintSet`s with the same constraints in different orders have **different encodings** and thus different `constraint_hash`es. This is intentional: it preserves canonical ordering for deterministic evaluation.
 
+**Version tag namespace:** All `version_tag` fields across the RFC-0964/0965 stack use the high-bit range (`0xA0-0xBF`) to avoid collision with the outer-namespace tags (`0x00-0x06`, per §0) and the inner-discriminator tags (`0x01-0x19` for Constraint, `0x01-0x18` for Caveat). A `version_tag` of `0xA0` is unambiguously a version, not a namespace or discriminator.
+
 ### 5. Constraint hash
 
 ```text
 constraint_hash(constraint_set: ConstraintSet) -> [u8; 32]:
-    return BLAKE3(0x01 || canonical_ser(constraint_set))
+    return BLAKE3(0xA1 || canonical_ser(constraint_set))
 ```
 
-The `0x01` prefix is the domain separator. Distinct from RFC-0853's other domain separators (e.g., `0x02` for shard roots, `0x03` for session envelopes).
+The `0xA1` prefix is the **constraint-hash domain separator**, distinct from:
+- The outer-namespace tag `0x01` (Constraint envelope, §0)
+- The inner-version tag `0xA0` (ConstraintSet version, §4)
+- The inner-discriminator bytes `0x01-0x19` (Constraint variants, §1)
+- The EIP-712 typed-data separators `0xB0-0xB2` (§6 below)
+- Other RFC-0853 domain separators (network-specific)
+
+Using `0xA1` (high-bit) ensures the prefix cannot be confused with any other byte role in the wire format or hash input.
 
 ### 6. EIP-712 typed-data hash
 
-For cross-chain verifiability:
+For cross-chain verifiability. Uses **high-bit domain separators** (`0xB0-0xB2`)
+to avoid collision with the outer-namespace tags (`0x00-0x06`, §0), the
+inner-version tags (`0xA0-0xBF`, §4), the inner-discriminator bytes
+(`0x01-0x19` for Constraint), and the constraint-hash separator (`0xA1`, §5):
 
 ```text
 typed_data_hash(constraint: Constraint) -> [u8; 32]:
-    let domain_separator = BLAKE3(0x02 || canonical_ser({
+    let domain_separator = BLAKE3(0xB0 || canonical_ser({
         name: "CipherOcto.Constraint",
         version: "1",
         chain_id: <network_chain_id>,
         verifying_contract: <capability_id>,
     }))
 
-    let message_hash = BLAKE3(0x03 || constraint_encoding)
+    let message_hash = BLAKE3(0xB1 || constraint_encoding)
 
-    return BLAKE3(0x04 || domain_separator || message_hash)
+    return BLAKE3(0xB2 || domain_separator || message_hash)
 ```
 
 `typed_data_hash` is what an Ethereum contract calls to verify a constraint. Solidity equivalent:

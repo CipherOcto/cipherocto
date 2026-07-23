@@ -310,7 +310,7 @@ For `SessionProof` (RFC-0958):
 SessionProof {
     proof_system:        ProofSystem,           // R1CS | PLONK | STWO | Groth16
     circuit_id:          CircuitID,             // e.g., "capability_constraint_satisfaction_v1"
-    public_inputs:       Vec<FieldElement>,     // session_id, capability_id, wal_segment_hash
+    public_inputs:       Vec<FieldElement>,     // session_id, capability_id, wal_segment_hash, sql_statements_hash
     proof_bytes:         Bytes,                 // proof serialization
     verifier_key_id:     VerifierKeyID,         // RFC-0958 verifier key reference
 }
@@ -323,6 +323,8 @@ The circuit proves: "I executed the SQL operations under the capability's constr
 - **Cross-organization audit** — auditor sees proof of compliance, not data.
 
 Verifier runs alongside signature verification in step 4 of §6.2. Proof verification cost is bounded (RFC-0958 design goal G3).
+
+**Public input commitment:** The `public_inputs` array MUST include `sql_statements_hash = BLAKE3(0xA3 || canonical_ser(sql_statements))` in addition to `session_id`, `capability_id`, and `wal_segment_hash`. Without this commitment, a prover could execute a different operation set under the same `session_id` and produce a valid proof (soundness defect). The `0xA3` prefix is the SQL-statements-hash domain separator, distinct from the namespace tags (0x00-0x06, RFC-0964 §0) and the constraint-hash separator (0xA1, RFC-0964 §5).
 
 ### 10. WAL segment binding
 
@@ -433,6 +435,7 @@ CREATE INDEX ix_sessions_proof ON consensus_sessions (proof_system) WHERE zk_pro
 CREATE TABLE multi_sessions (
     multi_session_id     BLOB PRIMARY KEY,
     completion_rule      TEXT NOT NULL,            -- AllRequired | Quorum | AnyOne
+    completion_quorum_n  INT NULL,                 -- threshold for Quorum rule; NULL for AllRequired/AnyOne
     timeout_unix_ms      BIGINT NOT NULL,
     fallback_action      TEXT NOT NULL,            -- RollbackAll | CommitPartial | Abort
     state               TEXT NOT NULL             -- Pending | Committed | Aborted | Partial

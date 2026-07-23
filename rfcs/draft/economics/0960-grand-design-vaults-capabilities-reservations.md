@@ -15,6 +15,7 @@ Draft
 | v1.2 | 2026-07-23 | @cipherocto + @mmacedoeu | Cross-RFC review applied: 7 fixes (see §R3 Cross-RFC Self-Review). |
 | v1.3 | 2026-07-23 | @cipherocto + @mmacedoeu | Deeper R4 review: 6 fixes (see §R4 Self-Review). |
 | v1.4 | 2026-07-23 | @cipherocto + @mmacedoeu | R5 implementation/test gap review: 7 fixes (see §R5 Self-Review). |
+| v1.5 | 2026-07-23 | @cipherocto + @mmacedoeu | R6 ZK + soundness review: 7 fixes (see §R6 Self-Review). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -227,6 +228,52 @@ R5 pass: implementation/spec gap and missing test vectors. 7 fixes applied.
 **Defect:** §4.1 forbidden list includes `NOW`, `CURRENT_TIMESTAMP`, `LOCALTIMESTAMP` but not `STATEMENT_TIMESTAMP()`, `TRANSACTION_TIMESTAMP()`, `clock_timestamp()`. Reader might assume only the listed names are forbidden.
 
 **Fix:** §4.1 now explicitly lists all four PostgreSQL time-function aliases as forbidden. Parsers reject any function whose name matches the forbidden set (case-insensitive).
+
+## R6 Self-Review (ZK soundness + edge cases)
+
+R6 pass: ZK-circuit soundness, attenuation edge cases, MultiSession quorum, EIP-712 collision risk, set vs sequence semantics. 7 fixes applied.
+
+### R6-F1 — Domain separator `0x01` collides with outer-namespace tag
+
+**Defect:** RFC-0964 §5 used `BLAKE3(0x01 || canonical_ser(constraint_set))` as `constraint_hash`. After R3-F6/R4-F2 made `0x01` the outer-namespace tag for Constraint envelopes, the same byte served two roles. A receiver computing `constraint_hash` over a wire-encoded constraint would hash a payload that *starts with* `0x01` (the namespace tag) — but a separate computation starting from in-memory state would not include the tag. The two paths produce different hashes for the same logical constraint.
+
+**Fix:** §4 + §5 now use the high-bit range for version + hash separators. `version_tag = 0xA0`; `constraint_hash = BLAKE3(0xA1 || canonical_ser(constraint_set))`. Both bytes are unambiguous: no other spec uses 0xA0-0xA1 for namespace or discriminator purposes.
+
+### R6-F2 — EIP-712 typed_data_hash separators collide with namespace table
+
+**Defect:** §6 used `0x02`, `0x03`, `0x04` as the three EIP-712 internal domain separators. After R4-F1 reshuffled the namespace table, `0x02` = Caveat tag, `0x04` = ConsensusSession tag. Re-using those bytes as EIP-712 internal separators means a wire message that starts with one of those bytes (because the next envelope happens to be Caveat or ConsensusSession) gets misinterpreted as part of an EIP-712 computation.
+
+**Fix:** §6 now uses `0xB0`, `0xB1`, `0xB2` (high-bit) for the three EIP-712 internal separators. No collision possible with namespace tags (`0x00-0x06`) or with version/hash separators (`0xA0-0xA1`).
+
+### R6-F3 — `multi_sessions` catalog missing `completion_quorum_n`
+
+**Defect:** §7 catalog has `completion_rule TEXT` (AllRequired | Quorum | AnyOne) but no column for the `Quorum(n)` threshold. A MultiSession with `Quorum(3)` could not be distinguished from `Quorum(5)` in storage.
+
+**Fix:** Schema now has `completion_quorum_n INT NULL` (NULL when rule is AllRequired or AnyOne). Index added to find in-flight Quorum-sessions quickly.
+
+### R6-F4 — `PerAssetSpendingCap` element ordering not specified
+
+**Defect:** §3.2 had `Vec<(asset_id, amount_micro)>` with no ordering rule. Two encoders with the same set in different orders produce different bytes → different `constraint_hash` for the same logical constraint. Consensus divergence.
+
+**Fix:** §3.2 now specifies: "Elements MUST be sorted by asset_id in lexicographic byte order. Encoders MUST canonicalize to sorted order before encoding. Decoders MUST reject any encoding that is not in sorted order." Cross-implementations have a single canonical encoding.
+
+### R6-F5 — `RedemptionContext` has no canonical context type
+
+**Defect:** §3.6 says "context is application-defined (e.g., a specific request_id, a chain_id, a marketplace_id)" and "verification: BLAKE3(canonical_ser(operation.context)) == context_hash". But no `context` type. If application A serializes as JSON and application B as protobuf, the same logical context produces different `context_hash`es.
+
+**Fix:** §3.6 now defines `CanonicalContext` with two encodings: `Bytes(Vec<u8>)` (opaque) and `Structured(ContextFields)` (typed). `context_hash = BLAKE3(0xA2 || canonical_ser(context))` with the `0xA2` domain separator. Cross-implementations pick one encoding consistently.
+
+### R6-F6 — ZK `SessionProof` missing `sql_statements_hash` public input (soundness defect)
+
+**Defect:** §9 `SessionProof.public_inputs` listed `session_id, capability_id, wal_segment_hash` but NOT a commitment to the SQL operations. A prover could execute a different operation set under the same public inputs and produce a valid proof — the circuit's soundness rests on the public-input commitment, which was incomplete.
+
+**Fix:** §9 now adds `sql_statements_hash = BLAKE3(0xA3 || canonical_ser(sql_statements))` to the public inputs. Domain separator `0xA3` is distinct from namespace tags (0x00-0x06) and other hash separators (0xA1, 0xA2). The ZK circuit now commits to the full operation list, restoring soundness.
+
+### R6-F7 — `Permission` set vs sequence ambiguity
+
+**Defect:** §3.2 says "Capability may carry multiple `Permission` caveats; the set is the union" but `CaveatSet` is an ordered list. Two capabilities with the same `Permission` set in different CaveSet positions have different `caveats_hash`es but the same authorization surface. Attenuation rule "child ⊆ parent" compares sets but the spec didn't say "set".
+
+**Fix:** §3.2 now explicitly states: "Even though CaveatSet is an ordered list (and the canonical encoding preserves order for caveats_hash determinism), Permission caveats are evaluated as a set during verification and attenuation. Two capabilities with the same Permission set in different CaveatSet positions have different caveats_hash values but the same authorization surface. This is intentional." Attenuation is set-based.
 
 ## Authors
 

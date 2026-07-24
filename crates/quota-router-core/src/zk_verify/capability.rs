@@ -17,11 +17,11 @@
 //! canonical-binary commitment. Mismatched slot binding is detected at
 //! public-input equality check (different slot → `PublicInputMismatch`).
 //!
-//! **Gap 3 / RFC-0962 §6 (2026-07-24):** batch verification is layered on
-//! top of the existing single-capability path. `verify_capability_zk`
-//! remains the canonical single-proof verifier; `verify_batch_capability_zk`
-//! adds per-signer slot binding + batch commitment checks for the
-//! multi-signer envelope.
+//! **Gap 3 / RFC-0958 + RFC-0962 §9 (2026-07-24):** batch verification is
+//! layered on top of the existing single-capability path.
+//! `verify_capability_zk` remains the canonical single-proof verifier;
+//! `verify_batch_capability_zk` adds per-signer slot binding + batch
+//! commitment checks for the multi-signer envelope.
 
 use super::{ProofBundle, PublicInputs, ZkVerifyError};
 
@@ -149,7 +149,7 @@ fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
         && a.provider_slot_id == b.provider_slot_id
 }
 
-/// Verifier parameters (Gap 3 / RFC-0962 §6 / Task 3.4).
+/// Verifier parameters (Gap 3 / RFC-0958 + RFC-0962 §9 / Task 3.4).
 ///
 /// Bundles the long-lived verifier configuration so the call sites can
 /// pass a single `&CapabilityVerifier` instead of three separate args.
@@ -178,7 +178,7 @@ impl CapabilityVerifier {
     }
 }
 
-/// Verify a capability ZK proof (Gap 3 / RFC-0962 §6 / Task 3.4 wrapper).
+/// Verify a capability ZK proof (Gap 3 / RFC-0958 + RFC-0962 §9 / Task 3.4 wrapper).
 ///
 /// Convenience wrapper that threads the `CapabilityVerifier` through to
 /// the canonical `verify_capability_zk` function. The signature mirrors
@@ -204,7 +204,8 @@ pub fn verify_capability_zk_token(
     )
 }
 
-/// Verify a batch capability ZK proof (Gap 3 / RFC-0962 §6 / Task 3.4).
+/// Verify a batch capability ZK proof (Gap 3 / RFC-0958 + RFC-0962 §9 /
+/// Task 3.4).
 ///
 /// Layered on top of the canonical single-capability verifier:
 ///
@@ -368,7 +369,7 @@ mod tests {
         ));
     }
 
-    // ---- Gap 3 / RFC-0962 §6 batch verifier tests ----
+    // ---- Gap 3 / RFC-0958 + RFC-0962 §9 batch verifier tests ----
 
     fn sample_batch_proof() -> (ProofBundle, [u8; 32]) {
         let public = PublicInputs {

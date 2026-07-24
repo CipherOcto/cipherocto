@@ -12,7 +12,8 @@
 //! - M17: `proof_bundle: Some(_)` iff capability_class == ZKBearing; mint
 //!   API enforces via `ClassMismatch` if V1 token gets Some(_)
 //!
-//! Per RFC-0962 §6 (Gap 3 / Task 3.3): when the caller supplies a non-empty
+//! Per RFC-0958 capability ZK subclass + RFC-0962 §9 ZK proof integration
+//! (Gap 3 / Task 3.3): when the caller supplies a non-empty
 //! `signers` list, `mint_with_zk` also generates a batch signature proof via
 //! `zk_circuit::prove_batch_signature`. The proof is embedded into the
 //! returned `ProofBundle.stark_proof` so downstream verifiers see a single
@@ -117,9 +118,9 @@ pub enum ZkMintError {
     #[error("provider_slot_id is empty (RFC-0958 v1.4 IA-11: slot binding required)")]
     EmptySlotId,
 
-    /// **RFC-0962 §6 (Gap 3 / Task 3.3):** the batch signature prover
-    /// rejected the inputs (empty signers, exceeds max, FFI null handle,
-    /// internal prover error).
+    /// **RFC-0958 + RFC-0962 §9 (Gap 3 / Task 3.3):** the batch signature
+    /// prover rejected the inputs (empty signers, exceeds max, FFI null
+    /// handle, internal prover error).
     #[error("batch signature prover error: {0}")]
     BatchProver(String),
 }
@@ -194,7 +195,7 @@ pub fn mint_with_zk(
 }
 
 /// Mint a ZK-bearing capability proof bundle with explicit batch signature
-/// (RFC-0962 §6 / Gap 3 / Task 3.3).
+/// (RFC-0958 + RFC-0962 §9 / Gap 3 / Task 3.3).
 ///
 /// When `signers` is non-empty, the function generates a
 /// `BatchSigPublicInputs` from the capability public inputs + the supplied
@@ -252,7 +253,7 @@ pub fn mint_with_zk_and_signers(
         // Backward-compatible single-capability path (MVP stub).
         Vec::new()
     } else {
-        // Batch signature path (RFC-0962 §6 / Gap 3 / Task 3.3).
+        // Batch signature path (RFC-0958 + RFC-0962 §9 / Gap 3 / Task 3.3).
         let inputs = batch_sig_inputs(public_inputs, signers);
         let zk_public = zk_verifier_public(public_inputs);
         prove_batch_signature(Program::BatchSig, casm_hash, &inputs, &zk_public)

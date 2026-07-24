@@ -261,8 +261,8 @@ impl StwoSys {
         }
     }
 
-    /// Generate a STARK proof via the FFI shim (RFC-0962 §6 batch sig +
-    /// RFC-0958 capability ZK).
+    /// Generate a STARK proof via the FFI shim (RFC-0958 capability ZK
+    /// + RFC-0962 §9 ZK proof integration).
     ///
     /// Returns `Ok(ProofBytes)` on success; the returned `ProofBytes`
     /// holds the opaque `ProofHandle` pointer and a sidecar commitment

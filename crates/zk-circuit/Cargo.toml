@@ -23,13 +23,13 @@ thiserror.workspace = true
 # with a stable field order contract (sorted keys) — see hash() doc comment.
 hex = "0.4"
 
-# Canonical proof commitment shape (Gap 3 / RFC-0962 §6). Used by the
+# Canonical proof commitment shape (Gap 3 / RFC-0958). Used by the
 # mock proofer to emit commitment bytes that match the downstream
 # verifier's `zk_verifier::stub_commitment` so the full mint -> verify
 # round-trip exercises the canonical check.
 zk-verifier = { path = "../zk-verifier" }
 
-# Real STWO FFI (RFC-0962 §6 batch signature; Gap 3 Task 3.2). Only
+# Real STWO FFI (RFC-0958 capability ZK + RFC-0962 §9; Gap 3 Task 3.2). Only
 # enabled when explicitly opted in — see zk-circuit::prove_batch_signature
 # FFI branch. Default builds use the mock-prover path (deterministic
 # BLAKE3 commitment), which preserves Class A determinism without

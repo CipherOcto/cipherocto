@@ -1,4 +1,4 @@
-//! 11-step ZK mint flow (Gap 3 / RFC-0962 §6 / Task 3.4).
+//! 11-step ZK mint flow (Gap 3 / RFC-0958 + RFC-0962 §9 / Task 3.4).
 //!
 //! Builds a 11-signer batch signature envelope via `mint_with_zk_and_signers`,
 //! then verifies the resulting `ProofBundle` with `verify_capability_zk`

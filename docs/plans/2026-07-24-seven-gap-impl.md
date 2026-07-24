@@ -186,7 +186,25 @@ pub fn check_nesting_depth(multi: &MultiEnvelope, current_depth: u8) -> Result<(
 
 ---
 
-## Gap 3 — ZK batch signature circuit (RFC-0962 §6)
+## Gap 3 — ZK batch signature circuit
+
+> **Spec correction (2026-07-24):** the original plan + commits cited
+> "RFC-0962 §6" but RFC-0962 §6 is the Lifecycle section. The
+> ZK batch signature surface actually targets:
+>
+> - **RFC-0958** (capability ZK subclass) — `ProofBundle.stark_proof`
+>   shape. This is where the capability ZK surface lives; the Gap 3
+>   implementation extends `ProofBundle.stark_proof` with a
+>   batch-aggregated commitment.
+> - **RFC-0962 §9** (ZK proof integration) — `EnvelopeProof` shape on
+>   the ExecutionEnvelope side. Not directly modified by Gap 3 (Gap 3
+>   is capability-side only); cross-referenced for the downstream
+>   envelope that consumes the capability ZK proof.
+>
+> The original commits' "RFC-0962 §6" reference should be read as
+> "RFC-0958 (capability ZK subclass) + RFC-0962 §9 (ZK proof
+> integration)". Cannot rewrite git history per project convention; the
+> live source comments have been updated to cite RFC-0958.
 
 **Why:** `verify_capability_zk` exists but no proof generation; fuzz harness runs smoke only.
 

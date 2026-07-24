@@ -30,7 +30,7 @@ rand.workspace = true
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
 zk-circuit = { path = "../zk-circuit" }
 
-# ZK verifier (Gap 3 / RFC-0962 §6 batch signature). Used at mint time
+# ZK verifier (Gap 3 / RFC-0958 + RFC-0962 §9 batch signature). Used at mint time
 # to construct the canonical `zk_verifier::PublicInputs` the downstream
 # verifier will reconstruct, so the proofer's mock commitment shape
 # matches the verifier's stub_commitment check.

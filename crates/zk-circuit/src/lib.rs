@@ -17,7 +17,8 @@
 //!   `compiled_casm_hash` field shape).
 //! - [`HashError`]: error type for malformed Cairo input.
 //! - [`Program`], [`BatchSigPublicInputs`], [`prove_batch_signature`]:
-//!   batch signature circuit surface (Gap 3 / RFC-0962 §6).
+//!   batch signature circuit surface (Gap 3; RFC-0958 capability ZK
+//!   subclass + RFC-0962 §9 ZK proof integration).
 //!
 //! ## Determinism contract
 //!
@@ -135,24 +136,26 @@ fn blake3_hex(bytes: &[u8]) -> String {
 }
 
 // =========================================================================
-// Batch signature circuit surface (Gap 3 / RFC-0962 §6)
+// Batch signature circuit surface (Gap 3; RFC-0958 capability ZK subclass
+// + RFC-0962 §9 ZK proof integration)
 // =========================================================================
 
-/// Program selector for the ZK prover (RFC-0962 §6 batch signature).
+/// Program selector for the ZK prover (RFC-0958 capability ZK subclass +
+/// RFC-0962 §9 ZK proof integration).
 ///
 /// Currently two programs:
 /// - `Capability`: the existing single-capability ZK circuit (RFC-0958).
-/// - `BatchSig`: batch signature aggregation (RFC-0962 §6) — N signers,
-///   one message root, one proof.
+/// - `BatchSig`: batch signature aggregation (RFC-0958 + RFC-0962 §9) —
+///   N signers, one message root, one proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Program {
     /// RFC-0958 single-capability ZK circuit.
     Capability,
-    /// RFC-0962 §6 batch signature circuit.
+    /// RFC-0958 batch signature circuit (Gap 3).
     BatchSig,
 }
 
-/// Public inputs to the batch signature circuit (RFC-0962 §6).
+/// Public inputs to the batch signature circuit (RFC-0958).
 ///
 /// The verifier checks:
 /// - `signer_roots[i]` is the BLAKE3 root of signer i's public key +
@@ -186,7 +189,7 @@ pub struct Proof {
 /// Errors emitted by `prove_batch_signature`.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProverError {
-    #[error("empty signer_roots (RFC-0962 §6 requires at least 1 signer)")]
+    #[error("empty signer_roots (RFC-0958 batch signature requires at least 1 signer)")]
     EmptySigners,
     #[error("signer count {count} exceeds maximum {max}")]
     TooManySigners { count: usize, max: usize },
@@ -196,11 +199,12 @@ pub enum ProverError {
     Internal(String),
 }
 
-/// Maximum batch size (RFC-0962 §6 — bounded for Fiat-Shamir transcript
-/// determinism + verifier memory bound).
+/// Maximum batch size (RFC-0958 batch signature — bounded for Fiat-
+/// Shamir transcript determinism + verifier memory bound).
 pub const MAX_BATCH_SIGNERS: usize = 256;
 
-/// Generate a batch signature proof (RFC-0962 §6).
+/// Generate a batch signature proof (RFC-0958 capability ZK subclass +
+/// RFC-0962 §9 ZK proof integration).
 ///
 /// Behavior:
 /// - If `zk_vendor::loaded_library()` returns `Some` AND the `real-zk`
@@ -337,7 +341,7 @@ fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
 /// accepts it). This helper re-derives the same commitment for round-trip
 /// tests.
 ///
-/// Real impl defers to `stwo-sys` `verify` (RFC-0962 §6).
+/// Real impl defers to `stwo-sys` `verify` (RFC-0958 + RFC-0962 §9).
 #[must_use]
 pub fn verify_mock_batch_proof(proof: &Proof, zk_public: &zk_verifier::PublicInputs) -> bool {
     let casm_hash_hex = hex::encode(proof.casm_hash);
@@ -398,7 +402,7 @@ mod tests {
         assert_eq!(compiled.compiled_casm_hash.len(), 64);
     }
 
-    // ---- Batch signature circuit (Gap 3 / RFC-0962 §6) ----
+    // ---- Batch signature circuit (Gap 3; RFC-0958 + RFC-0962 §9) ----
 
     fn sample_batch_inputs(n: usize) -> BatchSigPublicInputs {
         BatchSigPublicInputs {

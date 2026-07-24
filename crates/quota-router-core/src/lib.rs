@@ -53,6 +53,7 @@ pub mod settle_classify {
     pub use crate::settle::classify::*;
 }
 pub mod storage;
+pub mod task_market;
 pub mod tracing;
 pub mod zk_verify;
 

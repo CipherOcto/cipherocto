@@ -87,7 +87,7 @@ fn step4_post_request(cap_id: &[u8; 32], body: &[u8]) -> EgressRequest {
 
 /// Step 5: Marketplace lookup.
 fn step5_marketplace_lookup(marketplace: &Marketplace, model: &str) -> Option<MarketplaceEntry> {
-    marketplace.cheapest(model).expect("cheapest lookup")
+    marketplace.cheapest(model)
 }
 
 /// Step 6: OCTO-W escrow pre-auth (real Reservation per RFC-0960 §2.3).
@@ -423,7 +423,7 @@ fn eleven_step_handles_timeout() {
 #[test]
 fn marketplace_lookup_returns_none_for_unknown_model() {
     let m = Marketplace::open_in_memory().expect("open marketplace");
-    assert!(m.cheapest("nonexistent-model").expect("cheapest").is_none());
+    assert!(m.cheapest("nonexistent-model").is_none());
 }
 
 // ============================================================================

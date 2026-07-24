@@ -73,15 +73,33 @@ use quota_router_storage::ask_repo::{AskRepository, RepoError};
 
 /// Marketplace backed by cipherocto-side `AskRepository` (Phase C).
 ///
-/// `cheapest()` delegates to `AskRepository::cheapest()` which queries the
-/// `asks` table with `idx_model` index + filters expired entries.
+/// `cheapest()` reads through an in-memory `OrderBook<AskSpec>` that is
+/// populated write-through by `put()`. The orderbook uses price-time
+/// priority (RFC-0900 §Order Book) so cheapest lookup is O(log N) and
+/// avoids the previous linear BTreeMap scan. The `AskRepository` remains
+/// the canonical persistence layer (Gap 7 still queries it via
+/// `list_by_asker`).
 ///
-/// Conversion: `Ask` (full content) → `MarketplaceEntry` (compact wire shape).
-/// Cost computation is done in `AskRepository`; here we just snapshot
-/// the canonical "asker_did, model, ask_id, cost_per_1k".
+/// Conversion: `Ask` (full content) → `AskSpec` (compact order payload)
+/// → `MarketplaceEntry` (wire shape). Cost computation uses the order's
+/// `price` (= cost_per_1k) directly; the full `Ask` cost path is still
+/// available via the storage layer.
 pub struct Marketplace {
     repo: AskRepository,
     axes: Vec<PricingAxis>,
+    book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
+}
+
+/// Order payload carried by `Marketplace`'s internal order book.
+///
+/// One `AskSpec` per published Ask; the order's `price` field carries
+/// the cost-per-1k-token settled against the marketplace's pricing axes
+/// at publish time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskSpec {
+    pub ask_id: [u8; 32],
+    pub asker_did: String,
+    pub model: String,
 }
 
 impl Marketplace {
@@ -92,6 +110,7 @@ impl Marketplace {
         Ok(Self {
             repo: AskRepository::open_in_memory()?,
             axes: PricingAxis::standard_axes(),
+            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
         })
     }
 
@@ -102,6 +121,7 @@ impl Marketplace {
         Ok(Self {
             repo: AskRepository::open_path(path)?,
             axes: PricingAxis::standard_axes(),
+            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
         })
     }
 
@@ -111,6 +131,7 @@ impl Marketplace {
         Self {
             repo,
             axes: PricingAxis::standard_axes(),
+            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
         }
     }
 
@@ -121,31 +142,54 @@ impl Marketplace {
         self
     }
 
-    /// Insert (or replace) an Ask in the underlying repository.
+    /// Insert (or replace) an Ask in the underlying repository AND
+    /// the in-memory order book. Expired Asks are still persisted but
+    /// not indexed in the order book so `cheapest()` never returns them.
     /// # Errors
     /// Returns `RepoError` on stoolap failure.
     pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
-        self.repo.put(ask)
+        self.repo.put(ask)?;
+        // Write-through to order book; skip expired.
+        let now = current_unix();
+        if ask.expires_at_unix > now {
+            let consumed = build_unit_consumed(ask, &self.axes);
+            let cost = settlement_cost(ask, &consumed, &self.axes);
+            let ask_id = compute_ask_id_static(ask);
+            let mut book = self.book.lock();
+            book.place_ask(
+                AskSpec {
+                    ask_id,
+                    asker_did: ask.asker_did.clone(),
+                    model: ask.model.clone(),
+                },
+                cost,
+                1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
+                ask.asker_did.clone(),
+                now,
+            );
+        }
+        Ok(())
     }
 
-    /// Find the cheapest Ask matching `model`.
-    /// # Errors
-    /// Returns `RepoError` on stoolap failure or deserialization.
-    pub fn cheapest(&self, model: &str) -> Result<Option<MarketplaceEntry>, RepoError> {
-        let now = current_unix();
-        let ask = match self.repo.cheapest(model, now, &self.axes)? {
-            None => return Ok(None),
-            Some(a) => a,
-        };
-        // Compute cost proxy: 1 unit per known axis.
-        let consumed = build_unit_consumed(&ask, &self.axes);
-        let cost = settlement_cost(&ask, &consumed, &self.axes);
-        Ok(Some(MarketplaceEntry {
-            ask_id: compute_ask_id_static(&ask),
-            asker_did: ask.asker_did.clone(),
-            model: ask.model.clone(),
-            cost_per_1k: cost,
-        }))
+    /// Find the cheapest Ask matching `model` via the in-memory order
+    /// book. Returns `None` if no matching ask is active.
+    ///
+    /// The orderbook is queried via `OrderBook::best_ask_matching`,
+    /// which gives price-time priority across all indexed asks. The
+    /// previous `Result<Option<...>, RepoError>` signature was dropped:
+    /// the order book is in-memory, so there is no I/O failure mode.
+    /// Callers needing repository-side errors should still use
+    /// `list_by_asker`.
+    #[must_use]
+    pub fn cheapest(&self, model: &str) -> Option<MarketplaceEntry> {
+        let book = self.book.lock();
+        let order = book.best_ask_matching(|spec| spec.model == model)?;
+        Some(MarketplaceEntry {
+            ask_id: order.spec.ask_id,
+            asker_did: order.spec.asker_did.clone(),
+            model: order.spec.model.clone(),
+            cost_per_1k: order.price,
+        })
     }
 
     /// List Asks published by a single asker (delegates to AskRepository).
@@ -296,7 +340,7 @@ mod tests {
             now + 1000,
         ))
         .unwrap();
-        let cheapest = m.cheapest("openai/gpt-4").unwrap().expect("cheapest");
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
         assert_eq!(cheapest.asker_did, "did:octo:c");
         assert_eq!(cheapest.cost_per_1k, 10_000);
     }
@@ -304,7 +348,7 @@ mod tests {
     #[test]
     fn ask_repo_backed_cheapest_unknown_model_returns_none() {
         let m = Marketplace::open_in_memory().unwrap();
-        assert!(m.cheapest("nonexistent").unwrap().is_none());
+        assert!(m.cheapest("nonexistent").is_none());
     }
 
     #[test]
@@ -326,7 +370,7 @@ mod tests {
             now + 1000,
         ))
         .unwrap();
-        let cheapest = m.cheapest("openai/gpt-4").unwrap().expect("cheapest");
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
         assert_eq!(cheapest.asker_did, "did:octo:active");
         assert_eq!(cheapest.cost_per_1k, 50_000);
     }
@@ -370,5 +414,73 @@ mod tests {
         let attachment = m.attach_org_policy([0xab; 32], 1);
         assert_eq!(attachment.policy_id, [0xab; 32]);
         assert_eq!(attachment.policy_version, 1);
+    }
+
+    #[test]
+    fn put_indexes_active_ask_in_orderbook() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:a",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // The orderbook should now hold 1 active ask matching the model.
+        let (ask_count, best_asker) = {
+            let book = m.book.lock();
+            let best = book
+                .best_ask_matching(|spec| spec.model == "openai/gpt-4")
+                .expect("matching ask");
+            (book.ask_count(), (best.spec.asker_did.clone(), best.price))
+        };
+        assert_eq!(ask_count, 1);
+        assert_eq!(best_asker.0, "did:octo:a");
+        assert_eq!(best_asker.1, 30_000);
+    }
+
+    #[test]
+    fn cheapest_via_orderbook_skips_expired() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheap but expired → should NOT be in the orderbook.
+        m.put(&sample_ask(
+            "did:octo:expired",
+            "openai/gpt-4",
+            1_000,
+            now - 1,
+        ))
+        .unwrap();
+        // Active but expensive → in the orderbook.
+        m.put(&sample_ask(
+            "did:octo:active",
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // Only the active one is indexed.
+        {
+            let book = m.book.lock();
+            assert_eq!(book.ask_count(), 1);
+        }
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(cheapest.asker_did, "did:octo:active");
+    }
+
+    #[test]
+    fn cheapest_returns_none_when_orderbook_empty_for_model() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:a",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // Different model has no matching ask.
+        assert!(m.cheapest("anthropic/claude").is_none());
     }
 }

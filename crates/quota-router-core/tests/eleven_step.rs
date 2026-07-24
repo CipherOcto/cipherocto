@@ -757,7 +757,7 @@ fn capability_token_stripped_at_egress_boundary() {
 //   W6: ExecutionEnvelope (sm-engine)
 //   W7: shard routing (sm-engine)
 
-use cipherocto_encoding::{encode, decode, Constraint, MAX_ENCODED_SIZE};
+use cipherocto_encoding::{decode, encode, Constraint, MAX_ENCODED_SIZE};
 use cipherocto_policy::{intersect, is_subgraph, PolicyObject, PolicySurface};
 use quota_router_core::{
     egress::validate_provider_caveats,
@@ -765,8 +765,8 @@ use quota_router_core::{
     shard_route::{route_to_shard, ClusterShardConfig},
 };
 use quota_router_sm_engine::envelope::{
-    build_envelope, check_replay, sql_statements_hash, verify_envelope_signature,
-    ReplayIndex, ReplayIndexMut, MAX_STATEMENTS,
+    build_envelope, check_replay, sql_statements_hash, verify_envelope_signature, ReplayIndex,
+    ReplayIndexMut, MAX_STATEMENTS,
 };
 use quota_router_sm_engine::shard::{num_shards_for, shard_for_segment};
 
@@ -783,7 +783,10 @@ fn wave_integration_w4_caveat_subsumes_amount_max() {
 
 #[test]
 fn wave_integration_w3_constraint_encoding() {
-    let c = Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0u8; 32] };
+    let c = Constraint::MaxPerTx {
+        amount_micro: 1_000_000,
+        asset_id: [0u8; 32],
+    };
     let bytes = encode(&c).expect("encode");
     assert!(bytes.len() <= MAX_ENCODED_SIZE);
     let back = decode(&bytes).expect("decode");
@@ -833,7 +836,9 @@ fn wave_integration_w6_envelope() {
     let h = sql_statements_hash(&env.sql_statements);
     assert_ne!(h, [0u8; 32]);
 
-    let stmts: Vec<String> = (0..MAX_STATEMENTS + 1).map(|i| format!("SELECT {i}")).collect();
+    let stmts: Vec<String> = (0..MAX_STATEMENTS + 1)
+        .map(|i| format!("SELECT {i}"))
+        .collect();
     let err = build_envelope(
         [0x01; 32],
         [0x02; 32],
@@ -859,7 +864,9 @@ fn wave_integration_w6_envelope() {
     }
     impl ReplayIndex for InMem {
         fn consumed_contains_for(&self, signer_did: &[u8], nonce: &[u8; 32]) -> bool {
-            self.seen.iter().any(|(d, n)| d.as_slice() == signer_did && n == nonce)
+            self.seen
+                .iter()
+                .any(|(d, n)| d.as_slice() == signer_did && n == nonce)
         }
     }
     impl ReplayIndexMut for InMem {
@@ -887,8 +894,12 @@ fn wave_integration_w7_shard_routing() {
 fn wave_integration_q3_egress_caveats() {
     let allowed = vec!["api.openai.com".to_owned()];
     validate_provider_caveats("api.openai.com", Some("gpt-4"), &allowed, Some("gpt-4")).unwrap();
-    let err = validate_provider_caveats("api.cohere.com", Some("command"), &allowed, None).unwrap_err();
-    assert!(matches!(err, quota_router_core::egress::EgressCaveatError::ProviderDenied { .. }));
+    let err =
+        validate_provider_caveats("api.cohere.com", Some("command"), &allowed, None).unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::egress::EgressCaveatError::ProviderDenied { .. }
+    ));
 }
 
 #[test]
@@ -905,7 +916,7 @@ fn wave_integration_q5_receipt_envelope() {
         cache_key_hash: Some([0xcd; 32]),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
     };
-    let (env, _) = wrap_receipt_envelope(r, c);
+    let env = wrap_receipt_envelope(r, c);
     assert_ne!(env.envelope_hash, [0u8; 32]);
 }
 
@@ -920,7 +931,10 @@ fn wave_integration_q6_shard_routing() {
 
 #[test]
 fn wave_integration_master_consistency() {
-    let c = Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0u8; 32] };
+    let c = Constraint::MaxPerTx {
+        amount_micro: 1_000_000,
+        asset_id: [0u8; 32],
+    };
     let encoded = encode(&c).unwrap();
     let env = build_envelope(
         [0x01; 32],

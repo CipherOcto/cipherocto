@@ -252,16 +252,107 @@ impl Marketplace {
     /// pure price-time priority lookup as before. The skip walks the
     /// candidate set so a single excluded provider cannot return `None`
     /// when a non-excluded provider is still in the book.
+    ///
+    /// This is the price-only specialization of
+    /// `cheapest_with_ranking(model, LatencyRanking::cheapest())`.
     #[must_use]
     pub fn cheapest(&self, model: &str) -> Option<MarketplaceEntry> {
+        self.cheapest_with_ranking(model, LatencyRanking::cheapest())
+    }
+
+    /// Latency-aware ranking (Gap 7.2). Scans every ask matching
+    /// `model` and returns the one with the lowest composite score
+    /// under `ranking`.
+    ///
+    /// With `LatencyRanking::cheapest()` the result is identical to
+    /// `cheapest(model)`. With `LatencyRanking::prefer_latency()` the
+    /// scan blends normalized price + observed latency so a
+    /// faster-but-pricier provider can outrank a slower-but-cheaper
+    /// one.
+    ///
+    /// Cost: O(N) over the model's ask set; for the documented
+    /// ≤1k-provider target (Gap 5 perf note) this is well under any
+    /// per-request budget. If the marketplace grows beyond that,
+    /// swap the implementation for a heap-indexed ranking.
+    ///
+    /// When no latency observations exist for a provider, its
+    /// latency contribution defaults to `0` (i.e., the "no data"
+    /// provider is treated as the fastest candidate in the min-max
+    /// normalization). Operators can avoid this bias by recording at
+    /// least one outcome per provider before enabling
+    /// `prefer_latency`.
+    ///
+    /// Circuit-breaker behavior matches `cheapest()`: providers below
+    /// `min_reputation` are excluded before ranking runs.
+    #[must_use]
+    pub fn cheapest_with_ranking(
+        &self,
+        model: &str,
+        ranking: LatencyRanking,
+    ) -> Option<MarketplaceEntry> {
         let book = self.book.lock();
-        // `asks_matching` yields in price-time order; the first
-        // non-excluded ask is the cheapest eligible one.
-        let order = book
+
+        // Collect candidates matching `model` and not circuit-broken.
+        let candidates: Vec<&orderbook::Order<AskSpec>> = book
             .asks_matching(|spec| spec.model == model)
             .into_iter()
-            .find(|o| !self.reputation.is_excluded(&o.spec.asker_did))?;
-        Some(self.entry_from_order(order))
+            .filter(|o| !self.reputation.is_excluded(&o.spec.asker_did))
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Fast path: price-only ranking is already encoded by the
+        // orderbook's price-time priority.
+        if ranking.latency_weight == 0.0 {
+            let order = candidates.into_iter().next()?;
+            return Some(self.entry_from_order(order));
+        }
+
+        // Latency-aware path: normalize price + latency across the
+        // candidate set, then pick the lowest composite. Ties break
+        // by price (cheaper wins).
+        let (min_price, max_price) = candidates
+            .iter()
+            .fold((u128::MAX, u128::MIN), |(lo, hi), o| {
+                (lo.min(o.price), hi.max(o.price))
+            });
+        let latencies: Vec<u64> = candidates
+            .iter()
+            .map(|o| {
+                self.reputation
+                    .score(&o.spec.asker_did)
+                    .map(|s| s.latency_ms)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let (min_lat, max_lat) = latencies
+            .iter()
+            .copied()
+            .fold((u64::MAX, u64::MIN), |(lo, hi), l| (lo.min(l), hi.max(l)));
+
+        let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
+        for (order, latency_ms) in candidates.iter().zip(latencies.iter()) {
+            let score = ranking.composite(
+                order.price,
+                *latency_ms,
+                min_price,
+                max_price,
+                min_lat,
+                max_lat,
+            );
+            let dominated = match &best {
+                None => true,
+                Some((best_score, best_order)) => {
+                    score < *best_score || (score == *best_score && order.price < best_order.price)
+                }
+            };
+            if dominated {
+                best = Some((score, order));
+            }
+        }
+        best.map(|(_, o)| self.entry_from_order(o))
     }
 
     fn entry_from_order(&self, order: &orderbook::Order<AskSpec>) -> MarketplaceEntry {
@@ -712,5 +803,174 @@ mod tests {
             s.success_rate
         );
         assert_eq!(s.samples, 3);
+    }
+
+    // ========================================================================
+    // Gap 7.2 — Latency-aware ranking (RFC-0900 §Market Operations)
+    // ========================================================================
+
+    use crate::marketplace::scoring::LatencyRanking;
+
+    fn put_ask_with_latency(
+        m: &Marketplace,
+        asker: &str,
+        model: &str,
+        rate: u128,
+        expires: u64,
+        latency_ms: u64,
+    ) {
+        m.put(&sample_ask(asker, model, rate, expires)).unwrap();
+        // Seed latency directly on the registry. EWMA on a single
+        // observation converges to the observed value.
+        m.set_provider_score(score(asker, 1.0, latency_ms, 1));
+    }
+
+    #[test]
+    fn cheapest_with_ranking_prefer_latency_picks_fastest() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheaper-but-slow (10k, 5s).
+        put_ask_with_latency(
+            &m,
+            "did:octo:cheap",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        // Mid-price + fast (30k, 100ms) — should win under prefer_latency.
+        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+        // Slower + more expensive (50k, 4s).
+        put_ask_with_latency(
+            &m,
+            "did:octo:slow",
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+            4_000,
+        );
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+            .expect("a non-excluded provider must exist");
+        assert_eq!(
+            best.asker_did, "did:octo:fast",
+            "lower latency must beat cheaper price when prefer_latency=true"
+        );
+        // Latency must surface on the entry.
+        assert_eq!(best.latency_ms, Some(100));
+    }
+
+    #[test]
+    fn cheapest_default_still_picks_cheapest_price() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(
+            &m,
+            "did:octo:cheap",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+
+        let best = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            best.asker_did, "did:octo:cheap",
+            "default cheapest() must preserve price-only ranking"
+        );
+    }
+
+    #[test]
+    fn cheapest_with_ranking_returns_none_when_all_excluded() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(&m, "did:octo:a", "openai/gpt-4", 10_000, now + 1000, 100);
+        put_ask_with_latency(&m, "did:octo:b", "openai/gpt-4", 20_000, now + 1000, 200);
+
+        // Override both providers with bad scores so they fall below
+        // the threshold.
+        m.set_provider_score(score("did:octo:a", 0.1, 100, 10));
+        m.set_provider_score(score("did:octo:b", 0.2, 200, 10));
+        m.set_min_reputation(0.5);
+
+        let best = m.cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency());
+        assert!(best.is_none(), "all providers excluded → None");
+    }
+
+    #[test]
+    fn cheapest_with_ranking_skips_circuit_broken_in_prefer_latency() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheapest ask from a bad-rep provider should be skipped even
+        // under latency-aware ranking.
+        put_ask_with_latency(&m, "did:octo:bad", "openai/gpt-4", 10_000, now + 1000, 50);
+        put_ask_with_latency(&m, "did:octo:good", "openai/gpt-4", 30_000, now + 1000, 100);
+
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score("did:octo:bad", 0.1, 50, 10));
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+            .expect("good provider remains eligible");
+        assert_eq!(best.asker_did, "did:octo:good");
+    }
+
+    #[test]
+    fn ranking_cheapest_pure_price_path_ignores_latency() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(
+            &m,
+            "did:octo:cheap",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::cheapest())
+            .expect("cheapest");
+        assert_eq!(
+            best.asker_did, "did:octo:cheap",
+            "with price-only ranking, the cheapest ask wins regardless of latency"
+        );
+    }
+
+    #[test]
+    fn ranking_handles_degenerate_single_candidate() {
+        let r = LatencyRanking::prefer_latency();
+        // Single candidate → range collapses to 0 on both axes →
+        // composite pinned at 0.
+        let score = r.composite(50, 100, 50, 50, 100, 100);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn ranking_composite_normalizes_axes() {
+        let r = LatencyRanking::prefer_latency();
+        // Cheaper-but-slow vs expensive-but-fast.
+        // price range [10, 100]; latency range [50, 200].
+        // slow: price_norm = (10-10)/(100-10) = 0, latency_norm = (200-50)/(200-50) = 1
+        //       → 0*0.3 + 1*0.7 = 0.7
+        // fast: price_norm = (100-10)/(100-10) = 1, latency_norm = (50-50)/(200-50) = 0
+        //       → 1*0.3 + 0*0.7 = 0.3
+        let slow = r.composite(10, 200, 10, 100, 50, 200);
+        let fast = r.composite(100, 50, 10, 100, 50, 200);
+        assert!(slow > fast, "slow={slow} fast={fast}");
+        assert!((slow - 0.7).abs() < 1e-9);
+        assert!((fast - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ranking_composite_cheapest_cancels_latency_axis() {
+        let r = LatencyRanking::cheapest();
+        // Same price (100 = min), different latency → identical composite.
+        let a = r.composite(100, 50, 100, 200, 50, 200);
+        let b = r.composite(100, 200, 100, 200, 50, 200);
+        assert_eq!(a, b, "price-only ranking must ignore latency");
     }
 }

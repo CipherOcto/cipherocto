@@ -182,6 +182,39 @@ impl LatencyRanking {
             latency_weight: 0.7,
         }
     }
+
+    /// Weighted blend of normalized price + latency. Lower = better.
+    ///
+    /// `price`/`latency_ms` are the candidate's values; `min_*`/`max_*`
+    /// describe the candidate set used for normalization. When the
+    /// range collapses (all candidates identical on an axis), that
+    /// axis is pinned at 0.0 so the other axis alone determines the
+    /// ranking. Callers should pass `price_weight = 1.0` and
+    /// `latency_weight = 0.0` for the legacy price-only behavior
+    /// (`Self::cheapest` does this).
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn composite(
+        &self,
+        price: u128,
+        latency_ms: u64,
+        min_price: u128,
+        max_price: u128,
+        min_latency: u64,
+        max_latency: u64,
+    ) -> f64 {
+        let price_norm = if max_price > min_price {
+            (price - min_price) as f64 / (max_price - min_price) as f64
+        } else {
+            0.0
+        };
+        let latency_norm = if max_latency > min_latency {
+            (latency_ms - min_latency) as f64 / (max_latency - min_latency) as f64
+        } else {
+            0.0
+        };
+        price_norm * self.price_weight + latency_norm * self.latency_weight
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +254,33 @@ mod tests {
         assert!(r.is_excluded("p"));
         // Unknown provider → not excluded.
         assert!(!r.is_excluded("unknown"));
+    }
+
+    #[test]
+    fn ranking_cheapest_cancels_latency_axis() {
+        let r = LatencyRanking::cheapest();
+        // Same price (min), different latency → identical composite.
+        let a = r.composite(100, 50, 100, 200, 50, 200);
+        let b = r.composite(100, 200, 100, 200, 50, 200);
+        assert_eq!(a, b, "price-only ranking must ignore latency");
+    }
+
+    #[test]
+    fn ranking_prefer_latency_normalizes_axes() {
+        let r = LatencyRanking::prefer_latency();
+        // slow: price_norm=0, latency_norm=1 → 0*0.3 + 1*0.7 = 0.7
+        // fast: price_norm=1, latency_norm=0 → 1*0.3 + 0*0.7 = 0.3
+        let slow = r.composite(10, 200, 10, 100, 50, 200);
+        let fast = r.composite(100, 50, 10, 100, 50, 200);
+        assert!(slow > fast, "slow={slow} fast={fast}");
+        assert!((slow - 0.7).abs() < 1e-9);
+        assert!((fast - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ranking_composite_handles_degenerate_ranges() {
+        let r = LatencyRanking::prefer_latency();
+        // All candidates identical on both axes → both norms pinned at 0.
+        assert_eq!(r.composite(50, 100, 50, 50, 100, 100), 0.0);
     }
 }

@@ -41,7 +41,7 @@
 
 #![warn(missing_debug_implementations)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cipherocto_encoding::Constraint;
 use serde::{Deserialize, Serialize};
@@ -519,7 +519,7 @@ fn intersect_surfaces(a: &PolicySurface, b: &PolicySurface) -> Result<PolicySurf
 }
 
 /// Subgraph relation (RFC-0967 §5): `child ⊆ parent` iff child surface is
-/// contained in parent surface.
+/// contained in parent surface AND child's graph is a subgraph of parent's.
 #[must_use]
 pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool {
     if let Some(pm) = &parent.surface.allowed_models {
@@ -560,6 +560,105 @@ pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool {
             return false;
         }
     }
+    // RFC-0967 §5: graph containment in addition to surface containment.
+    // Empty child graph is trivially a subgraph of any parent graph.
+    if !is_subgraph_graph(&child.graph, &parent.graph) {
+        return false;
+    }
+    true
+}
+
+/// Policy action ordering (RFC-0967 §5): `Deny < RequireApproval < Allow`.
+/// `Audit` is an independent (parallel) dimension — child `Audit` requires
+/// parent `Audit` (exact match).
+///
+/// `child ≤ parent` means "child is at most as permissive as parent":
+/// - `Deny` is the most restrictive — always allowed (parent covers `Deny`).
+/// - `RequireApproval` is allowed when parent is `Allow` or `RequireApproval`.
+/// - `Allow` is the most permissive — only allowed when parent is `Allow`.
+/// - `Audit` is independent: child `Audit(X)` is allowed iff parent is `Audit(Y)`
+///   (the duration is a property of the audit envelope, not the gating
+///   decision; the graph check covers equality here).
+#[must_use]
+pub fn action_at_least(child: &PolicyAction, parent: &PolicyAction) -> bool {
+    use PolicyAction::{Allow, Audit, Deny, RequireApproval};
+    match (child, parent) {
+        // Deny is the most restrictive: child Deny is always within parent.
+        // Allow is the most permissive: only allowed when parent is Allow.
+        // Audit is independent: only matches within the Audit dimension.
+        (Deny, _)
+        | (RequireApproval(_) | Allow, Allow)
+        | (RequireApproval(_), RequireApproval(_))
+        | (Audit(_), Audit(_)) => true,
+        // All other combinations are not allowed.
+        _ => false,
+    }
+}
+
+/// Policy graph subgraph relation (RFC-0967 §5).
+///
+/// For every node `n` in `child.all_nodes` there exists a node `n'` in
+/// `parent.all_nodes` with:
+/// - `n.predicate == n'.predicate` (constraint equality — `Constraint` has
+///   no partial-order by default; we use identity matching)
+/// - `child.action ≤ parent.action` per [`action_at_least`]
+/// - every node in `n.children` is also in `n'.children` (reachability is
+///   covered by the parent)
+///
+/// And every `child.root_nodes` entry is a node in the parent.
+///
+/// **Note on additive nodes:** RFC-0967 §5 says "the child may add nodes"
+/// alongside restricting existing ones. This implementation requires
+/// *every* child node to exist in the parent by `node_id` — additive nodes
+/// (with new `node_id`s) are rejected. Extending this to permit additive
+/// nodes is out of scope for the surface-check companion; the strict
+/// `node_id`-match is the safe interpretation and matches the existing
+/// `set_subsumes` style of the wallet crate.
+///
+/// **Empty graphs:** `child.all_nodes.empty()` is trivially a subgraph of
+/// any parent (no nodes to check).
+#[must_use]
+pub fn is_subgraph_graph(child: &PolicyGraph, parent: &PolicyGraph) -> bool {
+    // Empty graph is a subgraph of any graph.
+    if child.all_nodes.is_empty() {
+        return true;
+    }
+
+    // Build a parent lookup by node_id.
+    let parent_by_id: HashMap<&[u8; 32], &PolicyNode> =
+        parent.all_nodes.iter().map(|n| (&n.node_id, n)).collect();
+
+    // Every child node must exist in parent.
+    for child_node in &child.all_nodes {
+        let Some(parent_node) = parent_by_id.get(&child_node.node_id) else {
+            return false;
+        };
+
+        // Predicate must match (constraint equality).
+        if child_node.predicate != parent_node.predicate {
+            return false;
+        }
+
+        // Parent action must be at least as permissive as child action.
+        if !action_at_least(&child_node.action, &parent_node.action) {
+            return false;
+        }
+
+        // Parent's children must reach all of child's children.
+        for child_child_id in &child_node.children {
+            if !parent_node.children.contains(child_child_id) {
+                return false;
+            }
+        }
+    }
+
+    // Every child root must be a parent node.
+    for root_id in &child.root_nodes {
+        if !parent_by_id.contains_key(root_id) {
+            return false;
+        }
+    }
+
     true
 }
 
@@ -826,5 +925,357 @@ mod tests {
         // Per RFC-0967 §3: Quorum n in 1..=23
         let k = ApprovalKind::Quorum(5);
         assert_eq!(k, ApprovalKind::Quorum(5));
+    }
+
+    // ---- RFC-0967 §5 — graph containment complement to surface check ----
+
+    fn policy_node(
+        id: [u8; 32],
+        predicate: Constraint,
+        action: PolicyAction,
+        children: Vec<[u8; 32]>,
+    ) -> PolicyNode {
+        PolicyNode {
+            node_id: id,
+            predicate,
+            action,
+            children,
+            description: None,
+        }
+    }
+
+    #[test]
+    fn action_at_least_deny_covers_everything() {
+        // Deny is the most restrictive — child Deny is always within parent.
+        use PolicyAction::{Allow, Audit, Deny, RequireApproval};
+        assert!(action_at_least(&Deny, &Allow));
+        assert!(action_at_least(
+            &Deny,
+            &RequireApproval(ApprovalKind::SingleSigner)
+        ));
+        assert!(action_at_least(&Deny, &Deny));
+        assert!(action_at_least(&Deny, &Audit(60)));
+    }
+
+    #[test]
+    fn action_at_least_require_approval_under_allow() {
+        use PolicyAction::{Allow, RequireApproval};
+        assert!(action_at_least(
+            &RequireApproval(ApprovalKind::SingleSigner),
+            &Allow
+        ));
+        assert!(action_at_least(
+            &RequireApproval(ApprovalKind::SingleSigner),
+            &RequireApproval(ApprovalKind::SingleSigner)
+        ));
+        // Reverse — child Allow is more permissive than parent RequireApproval.
+        assert!(!action_at_least(
+            &Allow,
+            &RequireApproval(ApprovalKind::SingleSigner)
+        ));
+    }
+
+    #[test]
+    fn action_at_least_allow_only_under_allow() {
+        use PolicyAction::{Allow, RequireApproval};
+        assert!(action_at_least(&Allow, &Allow));
+        assert!(!action_at_least(
+            &Allow,
+            &RequireApproval(ApprovalKind::SingleSigner)
+        ));
+    }
+
+    #[test]
+    fn action_at_least_audit_axis_independent() {
+        use PolicyAction::{Allow, Audit, RequireApproval};
+        // Audit is independent: child Audit only matches parent Audit.
+        assert!(action_at_least(&Audit(60), &Audit(60)));
+        assert!(action_at_least(&Audit(60), &Audit(120)));
+        // Audit is NOT a subset of Allow / RequireApproval / Deny.
+        assert!(!action_at_least(&Audit(60), &Allow));
+        assert!(!action_at_least(
+            &Audit(60),
+            &RequireApproval(ApprovalKind::SingleSigner)
+        ));
+    }
+
+    #[test]
+    fn is_subgraph_graph_empty_child_is_subgraph() {
+        // Empty graph is trivially a subgraph of any parent.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph::default();
+        assert!(is_subgraph_graph(&child, &parent));
+        // Empty parent + empty child is also a subgraph.
+        assert!(is_subgraph_graph(&child, &PolicyGraph::default()));
+    }
+
+    #[test]
+    fn is_subgraph_graph_identical_graphs() {
+        let node = policy_node(
+            [0x01; 32],
+            Constraint::SingleUse,
+            PolicyAction::Allow,
+            vec![],
+        );
+        let graph = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![node],
+        };
+        assert!(is_subgraph_graph(&graph, &graph));
+    }
+
+    #[test]
+    fn is_subgraph_graph_child_with_restricted_action() {
+        // Parent has Allow; child has RequireApproval on same node.
+        // Per RFC-0967 §5: child is more restrictive ⇒ subgraph.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::RequireApproval(ApprovalKind::SingleSigner),
+                vec![],
+            )],
+        };
+        assert!(is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_child_with_more_permissive_action_rejected() {
+        // Parent has RequireApproval; child has Allow. Widening ⇒ reject.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::RequireApproval(ApprovalKind::SingleSigner),
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        assert!(!is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_child_with_unknown_node_id_rejected() {
+        // Strict node_id match: child has a node that doesn't exist in parent.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0xab; 32]],
+            all_nodes: vec![policy_node(
+                [0xab; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        assert!(!is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_child_with_predicate_mismatch_rejected() {
+        // Same node_id, different predicate ⇒ reject.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::MaxUses { count: 5 },
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        assert!(!is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_parent_children_must_cover_child_children() {
+        // Parent has node A with children [B, C]; child has node A with child [B].
+        // Parent's children reach both B and C; child's reachability is a subset.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![
+                policy_node(
+                    [0x01; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![[0x02; 32], [0x03; 32]],
+                ),
+                policy_node(
+                    [0x02; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![],
+                ),
+                policy_node(
+                    [0x03; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![],
+                ),
+            ],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![
+                policy_node(
+                    [0x01; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![[0x02; 32]],
+                ),
+                policy_node(
+                    [0x02; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![],
+                ),
+            ],
+        };
+        assert!(is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_child_with_extra_child_rejected() {
+        // Child has node A with child [C] but parent has node A with child [B].
+        // Child's reachability exceeds parent's ⇒ reject.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![
+                policy_node(
+                    [0x01; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![[0x02; 32]],
+                ),
+                policy_node(
+                    [0x02; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![],
+                ),
+            ],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![
+                policy_node(
+                    [0x01; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![[0x03; 32]],
+                ),
+                policy_node(
+                    [0x03; 32],
+                    Constraint::SingleUse,
+                    PolicyAction::Allow,
+                    vec![],
+                ),
+            ],
+        };
+        assert!(!is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_graph_root_must_be_in_parent() {
+        // Child root [0x02] isn't in parent (parent has [0x01]) ⇒ reject.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0x02; 32]],
+            all_nodes: vec![policy_node(
+                [0x02; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        assert!(!is_subgraph_graph(&child, &parent));
+    }
+
+    #[test]
+    fn is_subgraph_combined_rejects_on_graph_mismatch() {
+        // Combined surface+graph check: passing surface, failing graph ⇒ reject.
+        let parent = PolicyGraph {
+            root_nodes: vec![[0x01; 32]],
+            all_nodes: vec![policy_node(
+                [0x01; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![[0xab; 32]],
+            all_nodes: vec![policy_node(
+                [0xab; 32],
+                Constraint::SingleUse,
+                PolicyAction::Allow,
+                vec![],
+            )],
+        };
+        let p = PolicyObject::mint(parent, [0u8; 32], 1_000_000);
+        let c = PolicyObject::mint(child, [0u8; 32], 1_000_000);
+        // Surface trivially matches (both empty); graph mismatches ⇒ reject.
+        assert!(!is_subgraph(&c, &p));
+    }
+
+    #[test]
+    fn is_subgraph_combined_rejects_on_surface_mismatch() {
+        // Combined surface+graph check: failing surface, passing graph ⇒ reject.
+        let parent =
+            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child =
+            PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        // Both have empty graphs (passing graph check); surface fails.
+        assert!(!is_subgraph(&child, &parent));
     }
 }

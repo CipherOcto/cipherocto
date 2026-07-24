@@ -44,6 +44,12 @@ impl TaskMarketSlashing {
         Ok(self.ledger.slash(provider_id, reason, miss_rate)?)
     }
 
+    /// Current remaining stake for `provider_id`, or `None` if unregistered.
+    #[must_use]
+    pub fn ledger_stake(&self, provider_id: &str) -> Option<u128> {
+        self.ledger.stake(provider_id).map(|s| s.stake_micro_octo_w)
+    }
+
     #[must_use]
     pub fn rules(&self) -> &SlashingRules {
         self.ledger.rules()

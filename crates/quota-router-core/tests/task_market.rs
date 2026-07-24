@@ -472,3 +472,182 @@ fn task_market_slashing_unknown_provider_errors() {
         )
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Task 6.5 — Acceptance test: full RFC-0918 inference flow.
+// ---------------------------------------------------------------------------
+// Flow: place bid → place ask → match → execute (mocked) → settle OR
+// dispute → slash → release. Asserts state at every stage.
+
+use quota_router_core::task_market::DisputeRegistry;
+
+/// Simulated inference execution. Returns the result hash and a
+/// `success` flag so the calling test can drive the happy / failure
+/// branch deterministically.
+fn execute_inference(success: bool) -> [u8; 32] {
+    let mut h = [0u8; 32];
+    if success {
+        h[0] = 0x01;
+    } else {
+        h[0] = 0xff;
+    }
+    h
+}
+
+#[test]
+fn full_rfc_0918_inference_flow_happy_path() {
+    // 1. Set up the market and the slashing ledger.
+    let market = TaskMarket::new();
+    let mut slashing = TaskMarketSlashing::new();
+    let disputes = DisputeRegistry::new();
+    slashing.register("did:octo:worker-a", 1_000_000);
+
+    // 2. Buyer places a buy order (max 120 micro-OCTO-W).
+    let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 120, 0, 1);
+    market.place_buy(buyer_spec, 120, 1, "did:octo:buyer", 1_000);
+
+    // 3. Worker places a sell order (asking 100 micro-OCTO-W).
+    let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
+    market.place_sell(worker_spec, 100, 1, "did:octo:worker-a", 1_500);
+
+    // 4. Top-of-book matches; bid (120) >= ask (100) → cross at 100.
+    let matched = market.match_top().expect("match");
+    assert_eq!(matched.bid.owner, "did:octo:buyer");
+    assert_eq!(matched.ask.owner, "did:octo:worker-a");
+    assert_eq!(matched.price, 100);
+    assert_eq!(matched.qty, 1);
+    assert!(market.is_empty());
+
+    // 5. Open and lock the escrow for the matched trade.
+    let escrow_id = [0x10; 32];
+    let task_id = [0x11; 32];
+    let request_id = [0x12; 32];
+    let mut escrow = TaskEscrow::new(
+        escrow_id,
+        task_id,
+        request_id,
+        matched.bid.owner.clone(),
+        matched.ask.owner.clone(),
+        matched.price * matched.qty as u128,
+    );
+    assert_eq!(escrow.state(), EscrowState::Pending);
+    escrow.lock().expect("lock");
+    assert_eq!(escrow.state(), EscrowState::Locked);
+
+    // 6. Worker executes the inference task (mocked).
+    let result = execute_inference(true);
+    assert_eq!(result[0], 0x01);
+
+    // 7. Happy path: settle the escrow → funds released to seller.
+    escrow.settle().expect("settle");
+    assert_eq!(escrow.state(), EscrowState::Settled);
+    assert!(escrow.is_terminal());
+    assert_eq!(escrow.base.amount_micro_octo_w, 100);
+
+    // 8. No dispute opened; provider stake untouched.
+    assert!(disputes.is_empty());
+    let stake = slashing.ledger_stake("did:octo:worker-a").unwrap();
+    assert_eq!(stake, 1_000_000);
+}
+
+#[test]
+fn full_rfc_0918_inference_flow_dispute_then_slash() {
+    let market = TaskMarket::new();
+    let mut slashing = TaskMarketSlashing::new();
+    let mut disputes = DisputeRegistry::new();
+    slashing.register("did:octo:bad-worker", 1_000_000);
+
+    // Place + match.
+    let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 200, 0, 1);
+    market.place_buy(buyer_spec, 200, 1, "did:octo:buyer", 100);
+    let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
+    market.place_sell(worker_spec, 150, 1, "did:octo:bad-worker", 200);
+    let matched = market.match_top().expect("match");
+    assert_eq!(matched.price, 150);
+
+    // Lock escrow.
+    let escrow_id = [0x20; 32];
+    let mut escrow = TaskEscrow::new(
+        escrow_id,
+        [0x21; 32],
+        [0x22; 32],
+        matched.bid.owner.clone(),
+        matched.ask.owner.clone(),
+        matched.price * matched.qty as u128,
+    );
+    escrow.lock().expect("lock");
+
+    // Worker returns garbage — buyer opens a dispute.
+    let evidence = Evidence {
+        hash: execute_inference(false),
+        description: "result did not match task commitment".into(),
+    };
+    let dispute = Dispute::new(
+        escrow_id,
+        "did:octo:buyer",
+        DisputeReason::ResultMismatch,
+        Some(evidence),
+    );
+    disputes.open(dispute).expect("open dispute");
+    assert_eq!(disputes.len(), 1);
+
+    // Dispute resolves valid → seller is slashed.
+    escrow.dispute().expect("dispute");
+    assert_eq!(escrow.state(), EscrowState::Disputed);
+    escrow.resolve_valid().expect("resolve valid");
+    assert_eq!(escrow.state(), EscrowState::Slashed);
+    assert!(escrow.is_terminal());
+
+    // Apply the slash (miss_rate = 1.0 → first-offense penalty 10%).
+    let out = slashing
+        .slash("did:octo:bad-worker", SlashReason::ProviderError, 1.0)
+        .expect("slash");
+    assert_eq!(out.amount_micro_octo_w, 100_000);
+    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert!(!out.banned);
+
+    // Close the dispute (admin path).
+    let closed = disputes.resolve(&escrow_id).expect("resolve");
+    assert!(closed.has_evidence());
+    assert!(disputes.is_empty());
+}
+
+#[test]
+fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
+    let market = TaskMarket::new();
+    let mut disputes = DisputeRegistry::new();
+
+    let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 80, 0, 1);
+    market.place_buy(buyer_spec, 80, 1, "did:octo:buyer", 1);
+    let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
+    market.place_sell(worker_spec, 70, 1, "did:octo:worker", 2);
+    let matched = market.match_top().expect("match");
+    assert_eq!(matched.price, 70);
+
+    let escrow_id = [0x30; 32];
+    let mut escrow = TaskEscrow::new(
+        escrow_id,
+        [0x31; 32],
+        [0x32; 32],
+        matched.bid.owner.clone(),
+        matched.ask.owner.clone(),
+        matched.price * matched.qty as u128,
+    );
+    escrow.lock().expect("lock");
+
+    // Buyer raises a bad-faith dispute (no evidence).
+    disputes
+        .open(Dispute::new(
+            escrow_id,
+            "did:octo:buyer",
+            DisputeReason::ResultMismatch,
+            None,
+        ))
+        .expect("open");
+    escrow.dispute().expect("dispute");
+    escrow.resolve_invalid().expect("resolve invalid");
+    assert_eq!(escrow.state(), EscrowState::Settled);
+
+    disputes.resolve(&escrow_id).expect("resolve");
+    assert!(disputes.is_empty());
+}

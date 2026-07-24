@@ -440,6 +440,30 @@ impl MultiEnvelope {
         check_nesting_depth(self, 0)
     }
 
+    /// Compute `multi_envelope_id = BLAKE3(b"cipherocto/envelope/v1/multi_envelope_id" || sorted(sub_envelope_ids))`
+    /// per RFC-0962 §7.
+    ///
+    /// The sub-envelope ids are sorted lexicographically before being
+    /// folded into the hash so the resulting id is independent of the
+    /// order in which sub-envelopes appear in `sub_envelopes`. The
+    /// domain separator prevents collision with the per-envelope
+    /// `envelope_id` namespace (which uses the `0xA3` prefix).
+    #[must_use]
+    pub fn multi_envelope_id(&self) -> [u8; 32] {
+        let mut ids: Vec<[u8; 32]> = self
+            .sub_envelopes
+            .iter()
+            .map(ExecutionEnvelope::envelope_id)
+            .collect();
+        ids.sort_unstable();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(MULTI_ENVELOPE_ID_DOMAIN);
+        for id in &ids {
+            hasher.update(id);
+        }
+        *hasher.finalize().as_bytes()
+    }
+
     /// Deserialize a `MultiEnvelope` from wire bytes and run the
     /// structural invariants. This is the canonical entry point for
     /// any consumer reading a serialized `MultiEnvelope` — call this
@@ -451,6 +475,22 @@ impl MultiEnvelope {
         })?;
         multi.validate()?;
         Ok(multi)
+    }
+}
+
+/// Domain separator for `multi_envelope_id` (RFC-0962 §7).
+const MULTI_ENVELOPE_ID_DOMAIN: &[u8] = b"cipherocto/envelope/v1/multi_envelope_id";
+
+impl ExecutionEnvelope {
+    /// Canonical `[u8; 32]` envelope identifier (RFC-0962 §4 + §6.4).
+    ///
+    /// At sign time this is the deterministic placeholder id
+    /// (`tentative_envelope_id`); validators recompute the same value
+    /// after commit. Callers wanting the WAL-finalized id should use
+    /// `finalize_envelope_id` explicitly to document the distinction.
+    #[must_use]
+    pub fn envelope_id(&self) -> [u8; 32] {
+        tentative_envelope_id(self)
     }
 }
 
@@ -1213,6 +1253,102 @@ mod tests {
         assert_ne!(h1, h2);
         // Same inputs → same hash
         assert_eq!(h1, finalize_wal_hash(&prev, body));
+    }
+
+    // === RFC-0962 §7 multi_envelope_id derivation (Gap 8.1) ===
+
+    fn deterministic_envelope(nonce_byte: u8) -> ExecutionEnvelope {
+        // Build an envelope whose `envelope_id()` is deterministic as a
+        // function of the nonce byte (we vary only the nonce so each
+        // test envelope has a distinct deterministic id).
+        build_envelope(
+            [0x01; 32],
+            [0x02; 32],
+            "did:octo:multi_envelope_id".to_owned(),
+            vec!["SELECT 1".to_owned()],
+            vec![],
+            vec![],
+            [0x03; 32],
+            100,
+            [nonce_byte; NONCE_SIZE],
+            EnvelopeMode::Deterministic,
+            1_000_000,
+            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn multi_envelope_id_is_blake3_of_sorted_sub_envelope_ids() {
+        // Two distinct sub-envelopes → multi_envelope_id is BLAKE3 of the
+        // concatenation of their (sorted) sub_envelope_id values.
+        let env_a = deterministic_envelope(0x01);
+        let env_b = deterministic_envelope(0x02);
+        let id_a = env_a.envelope_id();
+        let id_b = env_b.envelope_id();
+        let multi = MultiEnvelope {
+            sub_envelopes: vec![env_a, env_b],
+            ..build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![])
+        };
+        let multi_id = multi.multi_envelope_id();
+
+        // Sort the ids; assemble expected hash.
+        let mut sorted = [id_a, id_b];
+        sorted.sort_unstable();
+        let mut expected_hasher = blake3::Hasher::new();
+        expected_hasher.update(b"cipherocto/envelope/v1/multi_envelope_id");
+        for id in &sorted {
+            expected_hasher.update(id);
+        }
+        let expected: [u8; 32] = *expected_hasher.finalize().as_bytes();
+        assert_eq!(multi_id, expected);
+    }
+
+    #[test]
+    fn multi_envelope_id_is_order_independent() {
+        // Per RFC-0962 §7: ids are sorted before hashing, so [a, b] and
+        // [b, a] produce the same multi_envelope_id.
+        let env_a = deterministic_envelope(0x01);
+        let env_b = deterministic_envelope(0x02);
+        let multi_ab = MultiEnvelope {
+            sub_envelopes: vec![env_a.clone(), env_b.clone()],
+            ..build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![])
+        };
+        let multi_ba = MultiEnvelope {
+            sub_envelopes: vec![env_b, env_a],
+            ..build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![])
+        };
+        assert_eq!(multi_ab.multi_envelope_id(), multi_ba.multi_envelope_id());
+    }
+
+    #[test]
+    fn multi_envelope_id_empty_sub_envelopes_is_domain_separator_only() {
+        // Empty sub_envelope list → BLAKE3 of the domain separator alone
+        // (no ids to fold in).
+        let multi = build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![]);
+        let id = multi.multi_envelope_id();
+        let mut expected_hasher = blake3::Hasher::new();
+        expected_hasher.update(b"cipherocto/envelope/v1/multi_envelope_id");
+        let expected: [u8; 32] = *expected_hasher.finalize().as_bytes();
+        assert_eq!(id, expected);
+    }
+
+    #[test]
+    fn multi_envelope_id_is_idempotent() {
+        // Same MultiEnvelope → same id across multiple calls.
+        let multi = MultiEnvelope {
+            sub_envelopes: vec![deterministic_envelope(0x07)],
+            ..build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![])
+        };
+        assert_eq!(multi.multi_envelope_id(), multi.multi_envelope_id());
+    }
+
+    #[test]
+    fn envelope_id_is_method_on_execution_envelope() {
+        // Sanity: `ExecutionEnvelope::envelope_id()` is callable and
+        // returns the same value as the free function `tentative_envelope_id`.
+        let env = deterministic_envelope(0x42);
+        assert_eq!(env.envelope_id(), tentative_envelope_id(&env));
     }
 
     // === RFC-0962 §7 MultiEnvelope fields tests ===

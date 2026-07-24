@@ -1152,4 +1152,98 @@ mod tests {
         assert_eq!(multi.completion_rule, CompletionRule::Quorum);
         assert_eq!(multi.completion_quorum_n, Some(1));
     }
+
+    // === RFC-0962 §7 R8-F5 MultiEnvelope serialization round-trip (Gap 2) ===
+
+    #[test]
+    fn multi_envelope_serde_roundtrip_preserves_nested_field() {
+        // Build parent wrapping a child MultiEnvelope. JSON round-trip
+        // must preserve the recursive `nested` field.
+        let child = build_multi_envelope(
+            vec![sample_child_env()],
+            CompletionRule::AllRequired,
+            None,
+            vec![],
+        );
+        let parent = MultiEnvelope {
+            nested: Some(Box::new(child.clone())),
+            ..build_multi_envelope(
+                vec![sample_child_env()],
+                CompletionRule::Quorum,
+                Some(1),
+                vec![],
+            )
+        };
+        let json = serde_json::to_string(&parent).expect("serialize");
+        let decoded: MultiEnvelope = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, parent);
+        // Explicit nested-presence assertion.
+        assert!(decoded.nested.is_some());
+        assert_eq!(decoded.nested.as_ref().unwrap().as_ref(), &child);
+    }
+
+    #[test]
+    fn multi_envelope_serde_roundtrip_none_nested_field() {
+        // Builder default is nested = None. JSON round-trip must preserve
+        // the absence.
+        let env = sample_child_env();
+        let multi = build_multi_envelope(vec![env], CompletionRule::AllRequired, None, vec![]);
+        assert!(multi.nested.is_none());
+        let json = serde_json::to_string(&multi).expect("serialize");
+        let decoded: MultiEnvelope = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, multi);
+        assert!(decoded.nested.is_none());
+    }
+
+    #[test]
+    fn multi_envelope_serde_back_compat_omitted_nested_key() {
+        // Wire-format back-compat: v2.0 envelopes serialized before the
+        // `nested` field existed must deserialize cleanly via
+        // `#[serde(default)]` (nested = None).
+        let env = sample_child_env();
+        let multi = build_multi_envelope(vec![env], CompletionRule::AllRequired, None, vec![]);
+        let mut json_value = serde_json::to_value(&multi).expect("to_value");
+        // Strip the nested key to simulate a pre-field wire payload.
+        if let Some(obj) = json_value.as_object_mut() {
+            obj.remove("nested");
+        }
+        let decoded: MultiEnvelope = serde_json::from_value(json_value).expect("from_value");
+        assert!(decoded.nested.is_none());
+        assert_eq!(decoded.sub_envelopes.len(), multi.sub_envelopes.len());
+        assert_eq!(decoded.completion_rule, multi.completion_rule);
+    }
+
+    #[test]
+    fn multi_envelope_serde_roundtrip_preserves_three_level_chain() {
+        // Three-level chain: parent → child → grandchild. Recursive Box
+        // inside Box must round-trip cleanly.
+        let grandchild = build_multi_envelope(
+            vec![sample_child_env()],
+            CompletionRule::AllRequired,
+            None,
+            vec![],
+        );
+        let child = MultiEnvelope {
+            nested: Some(Box::new(grandchild)),
+            ..build_multi_envelope(
+                vec![sample_child_env()],
+                CompletionRule::AllRequired,
+                None,
+                vec![],
+            )
+        };
+        let parent = MultiEnvelope {
+            nested: Some(Box::new(child.clone())),
+            ..build_multi_envelope(
+                vec![sample_child_env()],
+                CompletionRule::AllRequired,
+                None,
+                vec![],
+            )
+        };
+        let json = serde_json::to_string(&parent).expect("serialize");
+        let decoded: MultiEnvelope = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, parent);
+        assert_eq!(decoded.nested.as_ref().unwrap().as_ref(), &child,);
+    }
 }

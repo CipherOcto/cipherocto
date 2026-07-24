@@ -30,6 +30,12 @@ rand.workspace = true
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
 zk-circuit = { path = "../zk-circuit" }
 
+# ZK verifier (Gap 3 / RFC-0962 §6 batch signature). Used at mint time
+# to construct the canonical `zk_verifier::PublicInputs` the downstream
+# verifier will reconstruct, so the proofer's mock commitment shape
+# matches the verifier's stub_commitment check.
+zk-verifier = { path = "../zk-verifier" }
+
 # Identity crypto (RFC-0009 §Identity Key Format)
 ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 hkdf = "0.12"
@@ -63,6 +69,11 @@ rpassword = "7"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+# Gap 3 / Task 3.4: eleven_step_zk.rs uses `verify_batch_capability_zk` +
+# `CapabilityVerifier` from quota-router-core. Dev-dep only — production
+# wallet code does not depend on quota-router-core (one-way dependency).
+quota-router-core = { path = "../quota-router-core" }
 
 [lints.rust]
 unsafe_code = "forbid"

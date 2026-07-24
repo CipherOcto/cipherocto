@@ -954,5 +954,5 @@ fn wave_integration_master_consistency() {
     let config = ClusterShardConfig::for_cluster(100, 0);
     let shard = route_to_shard(&config, &env.session_id).unwrap();
     assert!(shard.0 < config.num_shards());
-    assert!(encoded.len() > 0);
+    assert!(!encoded.is_empty());
 }

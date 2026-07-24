@@ -79,6 +79,12 @@ pub enum ZkVerifyError {
         proof_version: String,
         verifier_version: String,
     },
+
+    /// **Gap 3 / RFC-0962 §6 (2026-07-24):** the batch signature verifier
+    /// received an empty `signer_pubkeys` list, or one of the supplied
+    /// signer pubkeys is not represented in the batch commitment.
+    #[error("batch signer list mismatch: count={count}, expected at least {expected}")]
+    BatchSignerMissing { count: usize, expected: usize },
 }
 
 /// ZK mint error (RFC-0958 §Error Handling).

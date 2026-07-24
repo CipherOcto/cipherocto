@@ -254,7 +254,8 @@ pub fn mint_with_zk_and_signers(
     } else {
         // Batch signature path (RFC-0962 §6 / Gap 3 / Task 3.3).
         let inputs = batch_sig_inputs(public_inputs, signers);
-        prove_batch_signature(Program::BatchSig, casm_hash, &inputs)
+        let zk_public = zk_verifier_public(public_inputs);
+        prove_batch_signature(Program::BatchSig, casm_hash, &inputs, &zk_public)
             .map_err(|e| ZkMintError::BatchProver(e.to_string()))?
             .bytes
     };
@@ -303,6 +304,29 @@ fn batch_sig_inputs(public_inputs: &PublicInputs, signers: &[[u8; 32]]) -> Batch
     BatchSigPublicInputs {
         signer_roots,
         message_root,
+    }
+}
+
+/// Construct the `zk_verifier::PublicInputs` that the downstream verifier
+/// (`quota_router_core::zk_verify::capability::verify_capability_zk`)
+/// will reconstruct from the proof's public inputs. Used by the batch
+/// proofer to compute a `stub_commitment` byte-identical to the one the
+/// verifier expects, so the mock round-trip is a single check rather than
+/// a parallel commitment re-derivation.
+///
+/// **Contract:** MUST stay in sync with the field mapping in
+/// `verify_capability_zk` (the `zk_public` construction there).
+fn zk_verifier_public(public_inputs: &PublicInputs) -> zk_verifier::PublicInputs {
+    zk_verifier::PublicInputs {
+        proof_issued_at_unix: public_inputs.current_unix_time,
+        verifier_local_unix_time: public_inputs.current_unix_time,
+        // `compiled_casm_hash` is set by the proofer to the hex-encoded
+        // CASM hash BEFORE the proofer delegates to `stub_commitment`
+        // (the field is a placeholder here; prove_batch_signature
+        // substitutes the real value).
+        compiled_casm_hash: String::new(),
+        capability_root_hash: hex::encode(public_inputs.cap_root_hash),
+        provider_slot_id: public_inputs.provider_slot_id.clone(),
     }
 }
 

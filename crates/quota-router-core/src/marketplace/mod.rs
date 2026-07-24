@@ -11,6 +11,7 @@
 
 pub mod escrow;
 pub mod orderbook;
+pub mod slashing;
 
 use serde::{Deserialize, Serialize};
 

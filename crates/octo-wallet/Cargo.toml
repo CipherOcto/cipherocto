@@ -43,6 +43,9 @@ borsh = { version = "1", optional = true }
 # Typed Constraint substrate (RFC-0964) for Caveat::Factory pre_conditions
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 
+# Policy Object Graph (RFC-0967) — subgraph check at redemption (Gap 1)
+cipherocto-policy = { path = "../cipherocto-policy" }
+
 # Vault encryption (RFC-0009 §Vault + RFC-0102 §Key Storage post-amendment)
 argon2 = "0.5"
 aes-gcm = "0.10"

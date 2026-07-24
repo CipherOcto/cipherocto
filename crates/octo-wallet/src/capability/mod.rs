@@ -8,6 +8,7 @@
 pub mod caveat;
 pub mod discharge;
 pub mod macaroon;
+pub mod redemption;
 pub mod registry;
 pub mod wire;
 pub mod zk_mint;

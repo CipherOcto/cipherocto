@@ -3,6 +3,13 @@
 //! Backed by `octo_core::ask_repo::AskRepository` (cipherocto-side persistence
 //! per Phase C). In-memory `Marketplace` kept as a legacy stub for tests that
 //! don't want the stoolap dependency.
+//!
+//! Submodules (RFC-0900):
+//! - `orderbook` — price-time priority order book (Gap 5.1).
+//! - `escrow`    — escrow state machine (Gap 5.2).
+//! - `slashing`  — provider slashing model (Gap 5.3).
+
+pub mod orderbook;
 
 use serde::{Deserialize, Serialize};
 
@@ -198,11 +205,7 @@ impl Marketplace {
     /// the `policy_catalog` table (RFC-0967 §8). For now it's a stub
     /// that returns the attachment descriptor.
     #[must_use]
-    pub fn attach_org_policy(
-        &self,
-        policy_id: [u8; 32],
-        policy_version: u64,
-    ) -> PolicyAttachment {
+    pub fn attach_org_policy(&self, policy_id: [u8; 32], policy_version: u64) -> PolicyAttachment {
         PolicyAttachment {
             policy_id,
             policy_version,

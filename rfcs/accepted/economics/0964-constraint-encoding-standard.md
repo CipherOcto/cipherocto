@@ -166,7 +166,7 @@ separator MUST be added here before use in any RFC.
 | `0x07` | **PolicyObject (RFC-0967)** | Policy graph envelopes |
 | `0x08-0x1F` | Reserved for future namespace expansion | (none) |
 | `0x20-0xFF` | Application-specific | (none) |
-| `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9), 0xA4=DDLActivationHeight (v1.1, RFC-0960 §1.4), 0xA5=BranchID (v1.1, RFC-0960 §17), 0xA6=MVStateHash (v1.1, RFC-0960 §15), 0xA7-0xAF=reserved for future cross-RFC prefixes |
+| `0xA0-0xAF` | Cross-RFC internal prefixes | 0xA0=ConstraintSet version, 0xA1=constraint_hash, 0xA2=RedemptionContext context_hash (RFC-0965 §3.6), 0xA3=sql_statements_hash (RFC-0962 §9), 0xA4=DDLActivationHeight (v1.1, RFC-0960 §1.4), 0xA5=BranchID (v1.1, RFC-0960 §17), 0xA6=MVStateHash (v1.1, RFC-0960 §15), 0xA7=receipt_envelope_hash (v1.1, RFC-0962 §9.1), 0xA8-0xAF=reserved for future cross-RFC prefixes |
 | `0xB0-0xBF` | EIP-712 family | 0xB0=domain_separator, 0xB1=message_hash, 0xB2=typed_data_hash (RFC-0964 §6) |
 | `0xC0-0xFF` | Application-specific hash prefixes | (none) |
 

@@ -338,6 +338,20 @@ Verifier runs alongside signature verification in step 4 of §6.2. Proof verific
 
 **Public input commitment:** The `public_inputs` array MUST include `sql_statements_hash = BLAKE3(0xA3 || canonical_ser(sql_statements))` in addition to `envelope_id`, `capability_id`, and `wal_segment_hash`. Without this commitment, a prover could execute a different operation set under the same `envelope_id` and produce a valid proof (soundness defect). The `0xA3` prefix is the SQL-statements-hash domain separator, distinct from the namespace tags (0x00-0x07, RFC-0964 §0 + RFC-0967 §10) and the constraint-hash separator (0xA1, RFC-0964 §5).
 
+### 9.1. ReceiptEnvelope hash commitment (informative)
+
+A `ReceiptEnvelope` (quota-router-core projection over `Receipt` + `CacheClassifyMeta`) is a distinct object from `ExecutionEnvelope` and MUST NOT share the `0xA3` domain separator. The `0xA3` prefix is reserved for `sql_statements_hash`; reusing it for a different object would create a soundness-defect waiting for the first verifier (a 32-byte BLAKE3 output has no type tag, and context-unaware dispatchers cannot distinguish a receipt envelope hash from a SQL-statements commitment).
+
+The dedicated domain separator for `ReceiptEnvelope::envelope_hash` is `0xA7` (first free byte in the RFC-0964 §0.1 reserved range `0xA7-0xAF`):
+
+```text
+receipt_envelope_hash = BLAKE3(0xA7 || canonical_ser(receipt || cache_classify))
+```
+
+`canonical_ser(receipt || cache_classify)` follows the RFC-0126 deterministic encoding (length-prefixed, fixed field order, no whitespace; `axes_consumed` sorted lexicographically by axis name). The router signs the same preimage (sans the `0xA7` prefix) to bind cache-classify to the settlement; verifiers recompute from `envelope.receipt` + `envelope.cache_classify`, check `envelope_hash`, then verify the Ed25519 signature.
+
+**Cross-reference:** RFC-0964 §0.1 domain-separator registry (allocates `0xA7`); RFC-0960 §10 (clarifies `ReceiptEnvelope` is a projection, not an `ExecutionEnvelope`).
+
 ### 10. WAL segment binding
 
 A `ExecutionEnvelope` commits to a specific WAL segment via `wal_segment_hash`. This binds the session to a specific database state.

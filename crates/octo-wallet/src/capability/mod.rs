@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 
 pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
 pub use discharge::{DischargeChannel, DischargeMacaroon};
-pub use macaroon::{hmac_blake3, macaroon_id, Macaroon, MacaroonError, MacaroonId};
+pub use macaroon::{
+    hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
+};
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
 pub use wire::{deserialize_wire, serialize_wire, WireError};
 pub use zk_mint::{
@@ -63,18 +65,25 @@ mod ed25519_sig_serde {
 impl CapabilityToken {
     /// Mint a capability token: generate macaroon + holder signature.
     ///
+    /// The catalog is required for the `WrappedOnly` chain guard (RFC-0965
+    /// §3.7) — every attenuation funnels through `Macaroon::attenuate`,
+    /// which walks the parent chain via the catalog. For tokens that do
+    /// not carry any `WrappedOnly` caveats, an empty catalog suffices.
+    ///
     /// # Errors
-    /// Returns `MacaroonError::OsRng` on RNG failure, `WalletError::Signature`
-    /// on invalid signature (should never happen for self-signed).
+    /// Returns `MacaroonError::OsRng` on RNG failure, `WrappedCycle` /
+    /// `WrappedDepthExceeded` / `WrappedParentNotFound` if the catalog
+    /// rejects the assembled chain.
     pub fn mint(
         root_secret: &[u8; 32],
         holder: &IdentityKey,
         holder_did: impl Into<String>,
         initial_caveats: Vec<Caveat>,
+        catalog: &dyn CapabilityCatalog,
     ) -> Result<Self, MintError> {
         let mut macaroon = Macaroon::mint(root_secret)?;
         for caveat in initial_caveats {
-            macaroon = macaroon.attenuate(caveat);
+            macaroon = macaroon.attenuate(caveat, catalog)?;
         }
         let holder_pub = holder.public_key_bytes();
         let holder_did = holder_did.into();
@@ -92,28 +101,38 @@ impl CapabilityToken {
     }
 
     /// Append a caveat (attenuation). Returns a new token.
-    #[must_use]
-    pub fn attenuate(&self, caveat: Caveat) -> Self {
+    ///
+    /// # Errors
+    /// Returns `MacaroonError` (cycle / depth / parent-not-found) if the
+    /// catalog rejects the assembled chain. Holder signature is stale —
+    /// callers without the holder key MUST use `attenuate_with_signer`.
+    pub fn attenuate(
+        &self,
+        caveat: Caveat,
+        catalog: &dyn CapabilityCatalog,
+    ) -> Result<Self, MintError> {
         let mut next = self.clone();
-        next.macaroon = next.macaroon.attenuate(caveat);
+        next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         // Holder signature no longer covers the new caveat list — re-sign.
         // Note: holder private key is required for re-sign; this method is
         // only useful for the holder. Attenuators without the holder key can
         // produce a re-signed token by calling `attenuate_with_signer`.
-        next
+        Ok(next)
     }
 
     /// Attenuate and re-sign with the given holder key.
     ///
     /// # Errors
-    /// Returns `MacaroonError::OsRng` on RNG failure.
+    /// Returns `MacaroonError::OsRng` on RNG failure, or any `WrappedOnly`
+    /// chain guard error from the catalog.
     pub fn attenuate_with_signer(
         &self,
         caveat: Caveat,
         holder: &IdentityKey,
+        catalog: &dyn CapabilityCatalog,
     ) -> Result<Self, MintError> {
         let mut next = self.clone();
-        next.macaroon = next.macaroon.attenuate(caveat);
+        next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
         next.holder_sig = holder.sign(&msg);
         Ok(next)
@@ -157,13 +176,21 @@ pub enum MintError {
 mod tests {
     use super::*;
     use crate::capability::caveat::Caveat;
+    use crate::capability::macaroon::InMemoryCatalog;
+
+    fn empty_catalog() -> InMemoryCatalog {
+        InMemoryCatalog::default()
+    }
 
     #[test]
     fn mint_and_verify_holder_sig() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
         let caveats = vec![Caveat::Model("gpt-4".to_owned())];
-        let token = CapabilityToken::mint(&root_secret, &holder, "did:octo:test", caveats).unwrap();
+        let catalog = empty_catalog();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:test", caveats, &catalog)
+                .unwrap();
         token.verify_holder_sig().unwrap();
     }
 
@@ -171,9 +198,11 @@ mod tests {
     fn attenuate_preserves_holder_pub() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let token = CapabilityToken::mint(&root_secret, &holder, "did:octo:test", vec![]).unwrap();
+        let catalog = empty_catalog();
+        let token = CapabilityToken::mint(&root_secret, &holder, "did:octo:test", vec![], &catalog)
+            .unwrap();
         let attenuated = token
-            .attenuate_with_signer(Caveat::Model("gpt-4".to_owned()), &holder)
+            .attenuate_with_signer(Caveat::Model("gpt-4".to_owned()), &holder, &catalog)
             .unwrap();
         assert_eq!(attenuated.holder_pub, token.holder_pub);
         attenuated.verify_holder_sig().unwrap();
@@ -183,8 +212,12 @@ mod tests {
     fn attenuate_without_signer_breaks_holder_sig() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let token = CapabilityToken::mint(&root_secret, &holder, "did:octo:test", vec![]).unwrap();
-        let broken = token.attenuate(Caveat::Model("gpt-4".to_owned()));
+        let catalog = empty_catalog();
+        let token = CapabilityToken::mint(&root_secret, &holder, "did:octo:test", vec![], &catalog)
+            .unwrap();
+        let broken = token
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
         // Without re-signing, holder sig is stale.
         assert!(broken.verify_holder_sig().is_err());
     }

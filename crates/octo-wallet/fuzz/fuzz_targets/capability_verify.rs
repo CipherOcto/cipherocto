@@ -16,6 +16,7 @@ use blake3::Hasher;
 use ed25519_dalek::{Signer, SigningKey};
 use libfuzzer_sys::fuzz_target;
 use octo_wallet::capability::caveat::Caveat;
+use octo_wallet::capability::macaroon::InMemoryCatalog;
 use octo_wallet::capability::{CapabilityToken, Macaroon};
 
 /// Maximum number of caveats to chain in a single fuzz iteration.
@@ -57,7 +58,14 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Mint + verify with the holder key.
-    let token = match CapabilityToken::mint(&root_secret, &holder, "did:octo:fuzz", caveats.clone()) {
+    let catalog = InMemoryCatalog::default();
+    let token = match CapabilityToken::mint(
+        &root_secret,
+        &holder,
+        "did:octo:fuzz",
+        caveats.clone(),
+        &catalog,
+    ) {
         Ok(t) => t,
         Err(_) => return,
     };

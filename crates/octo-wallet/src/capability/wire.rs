@@ -119,17 +119,20 @@ mod borsh_compat {
 mod tests {
     use super::*;
     use crate::capability::caveat::Caveat;
+    use crate::capability::macaroon::InMemoryCatalog;
     use crate::identity::IdentityKey;
 
     #[test]
     fn wire_format_three_segments() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
+        let catalog = InMemoryCatalog::default();
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
             "did:octo:test",
             vec![Caveat::Before(1_700_000_000)],
+            &catalog,
         )
         .unwrap();
         let wire = serialize_wire(&token).unwrap();
@@ -144,11 +147,13 @@ mod tests {
     fn wire_roundtrip() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
+        let catalog = InMemoryCatalog::default();
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
             "did:octo:test",
             vec![Caveat::Before(1_700_000_000)],
+            &catalog,
         )
         .unwrap();
         let wire = serialize_wire(&token).unwrap();

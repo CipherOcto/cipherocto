@@ -7,13 +7,13 @@
 
 use octo_wallet::capability::caveat::Caveat;
 use octo_wallet::capability::macaroon::{CapabilityCatalog, Macaroon};
-use octo_wallet::capability::redemption::{redeem_capability, RedemptionError};
+use octo_wallet::capability::redemption::{redeem_capability, PolicyCatalog, RedemptionError};
 use octo_wallet::capability::CapabilityToken;
 use octo_wallet::identity::IdentityKey;
 
 use cipherocto_policy::{PolicyObject, PolicySurface};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Empty `CapabilityCatalog` for tests that don't use `WrappedOnly` caveats.
 /// `CapabilityCatalog` is in scope but `InMemoryCatalog` is `cfg(test)`-only
@@ -24,6 +24,27 @@ struct EmptyCatalog;
 impl CapabilityCatalog for EmptyCatalog {
     fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
         None
+    }
+}
+
+/// In-memory `PolicyCatalog` for integration tests. Symmetric to the
+/// `cfg(test)`-only `InMemoryPolicyCatalog` in the lib (also gated) — the
+/// integration test cannot reach into the crate's `cfg(test)` items, so we
+/// inline a stub.
+#[derive(Debug, Default)]
+struct TestPolicyCatalog {
+    by_id: HashMap<[u8; 32], PolicyObject>,
+}
+
+impl TestPolicyCatalog {
+    fn insert(&mut self, policy: PolicyObject) {
+        self.by_id.insert(policy.policy_id, policy);
+    }
+}
+
+impl PolicyCatalog for TestPolicyCatalog {
+    fn get(&self, policy_id: &[u8; 32]) -> Option<&PolicyObject> {
+        self.by_id.get(policy_id)
     }
 }
 
@@ -101,7 +122,7 @@ fn redeem_rejects_capability_exceeding_policy() {
         Caveat::AmountMax(1_000_000),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     let err = redeem_capability(&cap, &catalog).unwrap_err();
@@ -130,7 +151,7 @@ fn redeem_accepts_capability_within_policy() {
         Caveat::AmountMax(500_000),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     redeem_capability(&cap, &catalog).expect("within-policy capability should redeem");
@@ -141,7 +162,7 @@ fn redeem_rejects_missing_policy_reference() {
     // No PolicyReference caveat ⇒ error.
     let cap = build_capability(vec![Caveat::AmountMax(1_000)]);
 
-    let catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let catalog = TestPolicyCatalog::default();
     let err = redeem_capability(&cap, &catalog).unwrap_err();
     assert_eq!(err, RedemptionError::MissingPolicyReference);
 }
@@ -156,7 +177,7 @@ fn redeem_rejects_policy_not_found_in_catalog() {
         attenuation_witness: [0u8; 64],
     }]);
 
-    let catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let catalog = TestPolicyCatalog::default();
     let err = redeem_capability(&cap, &catalog).unwrap_err();
     assert_eq!(
         err,
@@ -181,7 +202,7 @@ fn redeem_rejects_model_not_in_policy() {
         Caveat::Model("claude-3".to_owned()),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     let err = redeem_capability(&cap, &catalog).unwrap_err();
@@ -208,7 +229,7 @@ fn redeem_accepts_model_in_policy() {
         Caveat::Model("gpt-4".to_owned()),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     redeem_capability(&cap, &catalog).expect("model in policy should redeem");
@@ -233,7 +254,7 @@ fn capability_redeem_runs_holder_sig_then_subgraph_check() {
         Caveat::AmountMax(1_000_000),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     let err = cap.redeem(&catalog).unwrap_err();
@@ -260,7 +281,7 @@ fn capability_redeem_accepts_in_policy_capability() {
         Caveat::AmountMax(500_000),
     ]);
 
-    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
     cap.redeem(&catalog)

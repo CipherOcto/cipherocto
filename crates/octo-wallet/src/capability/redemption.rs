@@ -31,7 +31,9 @@
 //! callers must invoke `redeem_capability` directly from any new envelope
 //! verifier path.
 
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 use cipherocto_policy::{is_subgraph, PolicyObject, PolicySurface};
 use thiserror::Error;
@@ -51,11 +53,15 @@ pub trait PolicyCatalog {
 
 /// Test-only in-memory `PolicyCatalog`. Mirrors the `InMemoryCatalog`
 /// pattern used by [`crate::capability::macaroon::CapabilityCatalog`].
+/// `#[cfg(test)]`-gated for symmetry with `InMemoryCatalog` — integration
+/// tests should inline a `PolicyCatalog` stub.
+#[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryPolicyCatalog {
     pub(crate) by_id: HashMap<[u8; 32], PolicyObject>,
 }
 
+#[cfg(test)]
 impl InMemoryPolicyCatalog {
     /// Construct an empty catalog.
     #[must_use]
@@ -70,6 +76,7 @@ impl InMemoryPolicyCatalog {
     }
 }
 
+#[cfg(test)]
 impl PolicyCatalog for InMemoryPolicyCatalog {
     fn get(&self, policy_id: &[u8; 32]) -> Option<&PolicyObject> {
         self.by_id.get(policy_id)
@@ -153,15 +160,16 @@ pub fn redeem_capability(
 /// - `AmountMax` → `max_total_spend` (min across all `AmountMax` caveats)
 /// - `Model` → `allowed_models` (set of allowed models)
 /// - `Provider` → `allowed_providers` (set of allowed providers)
-/// - `PerAxisMax` → `per_axis_caps` (one entry per axis, last wins — a
-///   capability that attenuates multiple caps on the same axis must
-///   narrow via `set_subsumes` at mint time, not here)
+/// - `PerAxisMax` → `per_axis_caps` (one entry per axis; each entry is
+///   checked independently by `is_subgraph` — conflicting entries on the
+///   same axis will be rejected by the subgraph check; attenuation that
+///   multi-caps an axis must narrow via `set_subsumes` at mint time)
 ///
 /// Caveats that don't map to a surface field are ignored at this
 /// layer (they remain enforced by the per-caveat subsumption checks
 /// in `octo-wallet::capability::caveat::set_subsumes`).
 #[must_use]
-pub fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
+pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
     let mut allowed_models: Option<HashSet<String>> = None;
     let mut allowed_providers: Option<HashSet<String>> = None;
     let mut max_total_spend: Option<u128> = None;

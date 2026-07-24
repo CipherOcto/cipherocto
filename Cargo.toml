@@ -130,3 +130,11 @@ glass_pumpkin = { path = "vendor/glass_pumpkin" }
 # substrate; schema is cipherocto's responsibility). Pinned commit must
 # match the ask-settlement migration expectations.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# The cipherocto fork of stoolap (`cipherocto/stoolap@feat/blockchain-sql`)
+# declares `octo-sync` as a git dep against `cipherocto/cipherocto@next`.
+# That git checkout is a duplicate of our workspace member `octo-sync/`.
+# Patch the duplicate out so cargo picks the workspace path and emits
+# NO `skipping duplicate package octo-sync` warning on every build.
+[patch."https://github.com/CipherOcto/cipherocto"]
+octo-sync = { path = "octo-sync" }

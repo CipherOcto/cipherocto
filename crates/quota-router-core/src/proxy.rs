@@ -89,6 +89,38 @@ fn extract_client_key<B>(req: &Request<B>) -> Option<String> {
     None
 }
 
+/// Extract capability token (RFC-0957) from request headers (PR-Q1, W1).
+///
+/// X-Capability-Token (canonical) or `Authorization: CipherOcto-Cap <token>`
+/// (when bearer coexists). The token is opaque to the proxy at this stage;
+/// the downstream verifier confirms HMAC chain + holder signature before
+/// minting any escrow (PR-Q2 picks up the verify call into `sm-engine`).
+///
+/// Returns `None` when no capability token is present. The token is
+/// stripped from outbound provider-bound requests at the egress boundary
+/// (single egress invariant per `quota_router_core::egress`).
+pub fn extract_capability_token<B>(req: &Request<B>) -> Option<String> {
+    // X-Capability-Token (canonical)
+    if let Some(token) = req.headers().get("x-capability-token") {
+        if let Ok(token_str) = token.to_str() {
+            if !token_str.is_empty() {
+                return Some(token_str.to_string());
+            }
+        }
+    }
+    // Authorization: CipherOcto-Cap <token> (when bearer coexists)
+    if let Some(auth) = req.headers().get("authorization") {
+        if let Ok(auth_str) = auth.to_str() {
+            if let Some(stripped) = auth_str.strip_prefix("CipherOcto-Cap ") {
+                if !stripped.is_empty() {
+                    return Some(stripped.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Validate resource ID contains only safe characters (alphanumeric, hyphens, underscores).
 /// Rejects path traversal attempts (e.g., `../`, `..%2F`).
 fn validate_resource_id(id: &str) -> bool {

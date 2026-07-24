@@ -24,6 +24,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"], optional = true }
 
+# Ed25519 signature substrate for ExecutionEnvelope (RFC-0962 §4 + RFC-0009 §Identity)
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 

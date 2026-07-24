@@ -175,6 +175,41 @@ fn current_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// Org policy attachment (PR-Q4, W5).
+///
+/// When minting a capability with an org policy, the policy's constraints
+/// are intersected with the cap's own constraints. The resulting capability
+/// carries a `PolicyReference` caveat (RFC-0965 §3.9) pointing at the
+/// policy's id. At verify time, the verifier fetches the policy and
+/// checks `capability ⊆ policy` (RFC-0967 §5 subgraph relation).
+///
+/// This module exposes the registration helper. The actual mint step
+/// happens in `octo-wallet::capability::CapabilityToken::mint` (W1).
+pub struct PolicyAttachment {
+    pub policy_id: [u8; 32],
+    pub policy_version: u64,
+}
+
+impl Marketplace {
+    /// Register an org policy attachment for a marketplace. Returns the
+    /// attachment descriptor that downstream capability mint can use.
+    ///
+    /// In the full implementation, this stores the policy reference in
+    /// the `policy_catalog` table (RFC-0967 §8). For now it's a stub
+    /// that returns the attachment descriptor.
+    #[must_use]
+    pub fn attach_org_policy(
+        &self,
+        policy_id: [u8; 32],
+        policy_version: u64,
+    ) -> PolicyAttachment {
+        PolicyAttachment {
+            policy_id,
+            policy_version,
+        }
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -322,5 +357,13 @@ mod tests {
         assert_eq!(bob_asks.len(), 1);
         let none = m.list_by_asker("did:octo:nonexistent").unwrap();
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn attach_org_policy_returns_attachment() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let attachment = m.attach_org_policy([0xab; 32], 1);
+        assert_eq!(attachment.policy_id, [0xab; 32]);
+        assert_eq!(attachment.policy_version, 1);
     }
 }

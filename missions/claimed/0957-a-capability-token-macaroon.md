@@ -75,6 +75,10 @@ Implement capability token macaroon v1: HMAC-BLAKE3 keyed-hash mode (NOT HMAC-SH
 - [x] Author at `rfcs/accepted/economics/0957-capability-token-format.md` — **DONE 2026-07-19 (S02) + PROMOTED 2026-07-20**
 - [ ] Status: Draft
 - [x] **Promotion to Accepted** — DONE 2026-07-20 (`git mv` rfcs/draft/... → rfcs/accepted/...; 7-day review + 2 maintainer approvals @mmacedoeu + @cipherocto completed; no blocking objections)
+- [x] `set_subsumes(parent, child)` monotonic verification (RFC-0957 §3.5 attenuation invariant) — DONE 2026-07-23 (`crates/octo-wallet/src/capability/caveat.rs`; 16 unit tests covering all 13 base variants + 9 RFC-0965 §3 variants)
+- [x] 9 new caveat variants per RFC-0965 §3 (Vault, Permission, ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference) — DONE 2026-07-23 (`crates/octo-wallet/src/capability/caveat.rs`)
+- [x] `PermissionKind` enum (5 variants) + `FactoryVet` struct — DONE 2026-07-23
+- [x] Wire format fuzz basis (parse_capability_token + serialize_wire + deserialize_wire) — DONE (existing `crates/octo-wallet/src/capability/wire.rs`)
 
 ### Cross-crate compat
 

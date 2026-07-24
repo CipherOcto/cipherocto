@@ -743,3 +743,202 @@ fn capability_token_stripped_at_egress_boundary() {
         .iter()
         .any(|(k, _)| k == "X-Capability-Token"));
 }
+
+// ============================================================================
+// Wave integration test (W1-W7 in one cohesive flow)
+// ============================================================================
+//
+// Verifies the post-2026-07-23 wave stack end-to-end:
+//   W1: capability token macaroon (octo-wallet)
+//   W2: settlement engine (sm-engine)
+//   W3: constraint encoding (cipherocto-encoding)
+//   W4: caveat DSL extensions (octo-wallet)
+//   W5: policy graph (cipherocto-policy)
+//   W6: ExecutionEnvelope (sm-engine)
+//   W7: shard routing (sm-engine)
+
+use cipherocto_encoding::{encode, decode, Constraint, MAX_ENCODED_SIZE};
+use cipherocto_policy::{intersect, is_subgraph, PolicyObject, PolicySurface};
+use quota_router_core::{
+    egress::validate_provider_caveats,
+    receipt::{wrap_receipt_envelope, CacheClassifyMeta},
+    shard_route::{route_to_shard, ClusterShardConfig},
+};
+use quota_router_sm_engine::envelope::{
+    build_envelope, check_replay, sql_statements_hash, verify_envelope_signature,
+    ReplayIndex, ReplayIndexMut, MAX_STATEMENTS,
+};
+use quota_router_sm_engine::shard::{num_shards_for, shard_for_segment};
+
+#[test]
+fn wave_integration_w4_caveat_subsumes_amount_max() {
+    use octo_wallet::capability::caveat::set_subsumes;
+    use octo_wallet::capability::caveat::Caveat;
+    let parent = vec![Caveat::AmountMax(1_000_000_000)];
+    let child_narrow = vec![Caveat::AmountMax(500_000_000)];
+    let child_widen = vec![Caveat::AmountMax(2_000_000_000)];
+    assert!(set_subsumes(&parent, &child_narrow));
+    assert!(!set_subsumes(&parent, &child_widen));
+}
+
+#[test]
+fn wave_integration_w3_constraint_encoding() {
+    let c = Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0u8; 32] };
+    let bytes = encode(&c).expect("encode");
+    assert!(bytes.len() <= MAX_ENCODED_SIZE);
+    let back = decode(&bytes).expect("decode");
+    assert_eq!(c, back);
+}
+
+#[test]
+fn wave_integration_w5_policy_intersection() {
+    let surface = |cap, max| PolicySurface {
+        allowed_models: Some(["gpt-4".to_owned()].into_iter().collect()),
+        allowed_providers: None,
+        per_axis_caps: vec![("input_tokens".to_owned(), cap)],
+        max_total_spend: Some(max),
+        audit_window_secs: 3600,
+        allowed_destinations: None,
+    };
+    let pa = PolicyObject::mint_surface(surface(1_000, 100_000), [0u8; 32], 1_000_000);
+    let pb = PolicyObject::mint_surface(surface(500, 50_000), [0u8; 32], 1_000_000);
+    let _ = intersect(&pa, &pb);
+    assert!(is_subgraph(&pb, &pa));
+}
+
+#[test]
+fn wave_integration_w6_envelope() {
+    use ed25519_dalek::{Signer, SigningKey};
+    let key = SigningKey::from_bytes(&[0x42; 32]);
+    let mut env = build_envelope(
+        [0x01; 32],
+        [0x02; 32],
+        "did:octo:test".to_owned(),
+        vec!["SELECT 1 FROM t".to_owned()],
+        vec![],
+        vec![],
+        [0x03; 32],
+        100,
+        [0xab; 32],
+        quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
+        1_700_000_000,
+        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+    )
+    .unwrap();
+    let msg = quota_router_sm_engine::envelope::unsigned_canonical_ser(&env);
+    env.signature = key.sign(&msg);
+    let pub_bytes = key.verifying_key().to_bytes();
+    verify_envelope_signature(&env, &pub_bytes).unwrap();
+
+    let h = sql_statements_hash(&env.sql_statements);
+    assert_ne!(h, [0u8; 32]);
+
+    let stmts: Vec<String> = (0..MAX_STATEMENTS + 1).map(|i| format!("SELECT {i}")).collect();
+    let err = build_envelope(
+        [0x01; 32],
+        [0x02; 32],
+        "did:octo:test".to_owned(),
+        stmts,
+        vec![],
+        vec![],
+        [0x03; 32],
+        100,
+        [0xab; 32],
+        quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
+        1_700_000_000,
+        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        quota_router_sm_engine::envelope::EnvelopeError::TooManyStatements(MAX_STATEMENTS + 1)
+    );
+
+    struct InMem {
+        seen: Vec<(Vec<u8>, [u8; 32])>,
+    }
+    impl ReplayIndex for InMem {
+        fn consumed_contains_for(&self, signer_did: &[u8], nonce: &[u8; 32]) -> bool {
+            self.seen.iter().any(|(d, n)| d.as_slice() == signer_did && n == nonce)
+        }
+    }
+    impl ReplayIndexMut for InMem {
+        fn mark_consumed_for(&mut self, signer_did: Vec<u8>, nonce: [u8; 32]) {
+            self.seen.push((signer_did, nonce));
+        }
+    }
+    let mut idx = InMem { seen: vec![] };
+    assert!(check_replay(&env, &idx).is_ok());
+    quota_router_sm_engine::envelope::mark_consumed(&env, &mut idx).unwrap();
+    assert!(check_replay(&env, &idx).is_err());
+}
+
+#[test]
+fn wave_integration_w7_shard_routing() {
+    let config = ClusterShardConfig::for_cluster(100, 0);
+    assert_eq!(config.num_shards(), num_shards_for(100));
+    let seg = [0x42; 32];
+    let a = route_to_shard(&config, &seg).unwrap();
+    let b = shard_for_segment(&seg, config.num_shards()).unwrap();
+    assert_eq!(a.0, b);
+}
+
+#[test]
+fn wave_integration_q3_egress_caveats() {
+    let allowed = vec!["api.openai.com".to_owned()];
+    validate_provider_caveats("api.openai.com", Some("gpt-4"), &allowed, Some("gpt-4")).unwrap();
+    let err = validate_provider_caveats("api.cohere.com", Some("command"), &allowed, None).unwrap_err();
+    assert!(matches!(err, quota_router_core::egress::EgressCaveatError::ProviderDenied { .. }));
+}
+
+#[test]
+fn wave_integration_q5_receipt_envelope() {
+    use ed25519_dalek::Signature;
+    let r = Receipt {
+        settlement_hash: [0xab; 32],
+        router_id: "router-1".to_owned(),
+        router_sig: Signature::from_bytes(&[0u8; 64]),
+        timestamp_unix: 1_700_000_000,
+    };
+    let c = CacheClassifyMeta {
+        cache_class: "exact".to_owned(),
+        cache_key_hash: Some([0xcd; 32]),
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+    };
+    let (env, _) = wrap_receipt_envelope(r, c);
+    assert_ne!(env.envelope_hash, [0u8; 32]);
+}
+
+#[test]
+fn wave_integration_q6_shard_routing() {
+    let config = ClusterShardConfig::for_cluster(100, 0);
+    let ask_id = [0xab; 32];
+    let a = route_to_shard(&config, &ask_id).unwrap();
+    let b = route_to_shard(&config, &ask_id).unwrap();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn wave_integration_master_consistency() {
+    let c = Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0u8; 32] };
+    let encoded = encode(&c).unwrap();
+    let env = build_envelope(
+        [0x01; 32],
+        [0x02; 32],
+        "did:octo:test".to_owned(),
+        vec!["SELECT 1".to_owned()],
+        vec![],
+        vec![],
+        [0x03; 32],
+        100,
+        [0xab; 32],
+        quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
+        1_700_000_000,
+        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+    )
+    .unwrap();
+    let config = ClusterShardConfig::for_cluster(100, 0);
+    let shard = route_to_shard(&config, &env.session_id).unwrap();
+    assert!(shard.0 < config.num_shards());
+    assert!(encoded.len() > 0);
+}

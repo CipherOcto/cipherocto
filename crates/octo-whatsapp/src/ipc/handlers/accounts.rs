@@ -1,7 +1,10 @@
 //! Multi-account RPC surface (Phase 6.1).
 //!
 //! Three handlers round-trip through the daemon's `MultiAccountStore`:
-//! - `daemon.accounts.list`  — enumerate all linked accounts.
+//! - `daemon.accounts.list`  — enumerate all linked accounts. The result
+//!   is the union of the persisted index AND a fresh on-disk scan
+//!   (see `MultiAccountStore::discover_from_disk`), so newly-linked
+//!   sessions appear immediately without a daemon restart.
 //! - `daemon.accounts.use`   — set the active account (writes `<base>/active` symlink
 //!   AND atomically rebinds the running adapter to the new account's session path).
 //!   Operators may follow up with `reconnect.now` to establish a fresh connection.
@@ -13,7 +16,7 @@ use serde_json::{json, Value};
 use super::super::protocol::{RpcError, RpcErrorCode};
 use super::super::server::RpcHandler;
 use crate::daemon::DaemonHandle;
-use octo_whatsapp_onboard_core::{AccountEntry, CoreError};
+use octo_whatsapp_onboard_core::{default_index_base_dir, AccountEntry, CoreError, MultiAccountStore};
 
 #[derive(Debug)]
 pub struct AccountsList;
@@ -65,8 +68,34 @@ impl RpcHandler for AccountsList {
     }
 
     async fn call(&self, h: DaemonHandle, _params: Value) -> Result<Value, RpcError> {
-        let entries = h.accounts().list();
-        let arr: Vec<Value> = entries.iter().map(entry_to_json).collect();
+        // 1. Resolve base_dir while holding the lock briefly. Drop the
+        //    guard before doing the read_dir scan so we don't block
+        //    other handlers on a slow filesystem during the merge.
+        //    Fall back to the env-derived default if the store never
+        //    initialised at boot — operators still see on-disk accounts.
+        let base = {
+            let store = h.accounts();
+            store
+                .base_dir()
+                .unwrap_or_else(default_index_base_dir)
+        };
+
+        // 2. Fresh on-disk scan: finds accounts that exist as `<id>.session.db/`
+        //    + `<id>.session.db.meta.json` but are not yet in index.json.
+        //    Best-effort: silently skips broken entries.
+        let discovered = MultiAccountStore::discover_from_disk(&base);
+
+        // 3. Merge with cached index. Cached entries win on conflicts
+        //    so we preserve `last_used_at` and any operator-edited
+        //    fields. Discovered entries fill in accounts that exist
+        //    on disk but were never imported into the index.
+        let cached = { h.accounts().list() };
+        let mut by_id: std::collections::BTreeMap<String, AccountEntry> =
+            cached.into_iter().map(|e| (e.account_id.clone(), e)).collect();
+        for d in discovered {
+            by_id.entry(d.account_id.clone()).or_insert(d);
+        }
+        let arr: Vec<Value> = by_id.values().map(entry_to_json).collect();
         Ok(json!({ "accounts": arr }))
     }
 }
@@ -136,6 +165,34 @@ mod tests {
         let result = AccountsList.call(h, json!({})).await.unwrap();
         let arr = result.get("accounts").unwrap().as_array().unwrap();
         assert_eq!(arr.len(), 0, "no index.json => empty accounts list");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn accounts_list_picks_up_on_disk_account_without_restart() {
+        // Daemon::new_for_tests opens `tmpdir/data/index.json` and
+        // seeds it with `{"accounts":{}}`. Drop a `Pattern A` pair
+        // (dir + meta.json) into the same `data/` dir WITHOUT
+        // touching the index — list should still surface it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = tmp.path().join("data");
+        std::fs::create_dir_all(base.join("lia.session.db")).unwrap();
+        std::fs::write(
+            base.join("lia.session.db.meta.json"),
+            br#"{"self_phone":"5521998469965","linked_at":"2026-07-23T19:04:11Z","mode":"qr-link","groups":[]}"#,
+        )
+        .unwrap();
+
+        let (_daemon, h) = Daemon::new_for_tests(tmp.path());
+        let result = AccountsList.call(h, json!({})).await.unwrap();
+        let arr = result.get("accounts").unwrap().as_array().unwrap();
+        let ids: Vec<&str> = arr
+            .iter()
+            .map(|v| v.get("account_id").unwrap().as_str().unwrap())
+            .collect();
+        assert!(
+            ids.contains(&"lia"),
+            "expected list to discover lia from disk; got {ids:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

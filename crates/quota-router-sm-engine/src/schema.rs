@@ -13,8 +13,27 @@ pub const MIGRATION_001_SQL: &str = include_str!("../migrations/001_create_asks.
 /// Migration 002: create consumed_receipt_index table.
 pub const MIGRATION_002_SQL: &str = include_str!("../migrations/002_create_receipt_index.sql");
 
+/// Migration 003: per-shard event log (RFC-0963 §7).
+pub const MIGRATION_003_SQL: &str = include_str!("../migrations/003_create_events_shard.sql");
+
+/// Migration 004: shard registry + migration log (RFC-0963 §7 R3-F7/R4-F6).
+pub const MIGRATION_004_SQL: &str = include_str!("../migrations/004_create_shard_registry.sql");
+
+/// Migration 005: policy catalog (RFC-0967 §8).
+pub const MIGRATION_005_SQL: &str = include_str!("../migrations/005_create_policy_catalog.sql");
+
+/// Migration 006: consumed envelope index (RFC-0962 §6.3).
+pub const MIGRATION_006_SQL: &str = include_str!("../migrations/006_create_consumed_envelopes.sql");
+
 /// Static list of `(version, sql)` migrations applied in order.
-pub const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_001_SQL), (2, MIGRATION_002_SQL)];
+pub const MIGRATIONS: &[(u32, &str)] = &[
+    (1, MIGRATION_001_SQL),
+    (2, MIGRATION_002_SQL),
+    (3, MIGRATION_003_SQL),
+    (4, MIGRATION_004_SQL),
+    (5, MIGRATION_005_SQL),
+    (6, MIGRATION_006_SQL),
+];
 
 /// Errors from migration runner.
 #[derive(Debug, thiserror::Error)]

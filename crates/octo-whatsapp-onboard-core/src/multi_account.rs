@@ -266,6 +266,15 @@ impl MultiAccountStore {
         self.index.accounts.get(account_id)
     }
 
+    /// Returns the directory the index file lives in. Used by callers
+    /// that want to re-scan the on-disk layout via `discover_from_disk`
+    /// without having to plumb the base dir through separately.
+    pub fn base_dir(&self) -> &Path {
+        self.path
+            .parent()
+            .expect("MultiAccountStore path always has a parent directory")
+    }
+
     /// Register a new account in the index. The session DB and
     /// config file must already exist on disk (typically written
     /// by `pair-link` or `qr-link`). The `linked_at` is set to
@@ -622,7 +631,12 @@ impl MultiAccountStore {
     }
 }
 
-fn default_index_base_dir() -> PathBuf {
+/// Resolves the default base directory the index file lives in
+/// (`<data_dir>/octo/whatsapp/`, honours `OCTO_WHATSAPP_DATA_DIR`).
+/// `pub` so downstream crates (e.g. the runtime daemon's
+/// `accounts.list` handler) can fall back to the env-derived path
+/// when the store fails to initialise at boot.
+pub fn default_index_base_dir() -> PathBuf {
     let mut base = dirs_data_dir();
     base.push("octo");
     base.push("whatsapp");

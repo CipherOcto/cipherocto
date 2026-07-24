@@ -82,6 +82,51 @@ mod lint {
     }
 }
 
+/// Provider boundary caveat check (PR-Q3, W4).
+///
+/// Validates that the egress request honors the capability's `Bind/ModelRef`
+/// and `Bind/Provider` caveats (RFC-0965 §3.4 + RFC-0957 §Attenuation).
+/// Returns `Err(EgressCaveatError)` if the request would violate a caveat.
+///
+/// This is the entry point for PR-Q3: the actual egress path (gated behind
+/// `litellm-mode` / `full` features in `proxy.rs`) calls this helper before
+/// dispatching to the provider. The capability caveat decoding lives in
+/// `octo-wallet::capability` (W4 mission scope).
+pub fn validate_provider_caveats(
+    req_host: &str,
+    req_model: Option<&str>,
+    caveat_provider: &[String],
+    caveat_model: Option<&str>,
+) -> Result<(), EgressCaveatError> {
+    // Bind/Provider: the egress host must be in the allowed provider list.
+    if !caveat_provider.is_empty() && !caveat_provider.iter().any(|p| p == req_host) {
+        return Err(EgressCaveatError::ProviderDenied {
+            requested: req_host.to_string(),
+        });
+    }
+    // Bind/ModelRef: if the capability pins a model, the request must match.
+    if let Some(pinned) = caveat_model {
+        if let Some(req_m) = req_model {
+            if pinned != req_m {
+                return Err(EgressCaveatError::ModelDenied {
+                    requested: req_m.to_string(),
+                    pinned: pinned.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Provider boundary caveat error.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum EgressCaveatError {
+    #[error("provider {requested} not in capability's allowed providers")]
+    ProviderDenied { requested: String },
+    #[error("model {requested} does not match capability's pinned model {pinned}")]
+    ModelDenied { requested: String, pinned: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +154,59 @@ mod tests {
         };
         let resp = e.send(&req, b"sk-test").unwrap();
         assert_eq!(resp.status, 200);
+    }
+
+    #[test]
+    fn validate_caveats_empty_caveats_accepts_any() {
+        validate_provider_caveats("api.openai.com", Some("gpt-4"), &[], None).unwrap();
+    }
+
+    #[test]
+    fn validate_caveats_allowed_provider_succeeds() {
+        let providers = vec!["api.openai.com".to_owned(), "api.anthropic.com".to_owned()];
+        validate_provider_caveats("api.openai.com", Some("gpt-4"), &providers, None).unwrap();
+    }
+
+    #[test]
+    fn validate_caveats_denied_provider_rejected() {
+        let providers = vec!["api.openai.com".to_owned()];
+        let err = validate_provider_caveats("api.cohere.com", Some("command"), &providers, None).unwrap_err();
+        assert_eq!(err, EgressCaveatError::ProviderDenied { requested: "api.cohere.com".to_owned() });
+    }
+
+    #[test]
+    fn validate_caveats_pinned_model_match_succeeds() {
+        validate_provider_caveats(
+            "api.openai.com",
+            Some("gpt-4"),
+            &[],
+            Some("gpt-4"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn validate_caveats_pinned_model_mismatch_rejected() {
+        let err = validate_provider_caveats(
+            "api.openai.com",
+            Some("gpt-3.5-turbo"),
+            &[],
+            Some("gpt-4"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            EgressCaveatError::ModelDenied {
+                requested: "gpt-3.5-turbo".to_owned(),
+                pinned: "gpt-4".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn validate_caveats_pinned_model_no_request_model_succeeds() {
+        // If caveat pins a model but request doesn't specify a model, allow
+        // (caller may fill in later or proxy may have defaulted).
+        validate_provider_caveats("api.openai.com", None, &[], Some("gpt-4")).unwrap();
     }
 }

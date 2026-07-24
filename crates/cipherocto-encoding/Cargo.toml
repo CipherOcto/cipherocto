@@ -1,0 +1,29 @@
+[package]
+name = "cipherocto-encoding"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Canonical encoding for RFC-0960 constraint types (RFC-0964 §1)"
+
+[lib]
+name = "cipherocto_encoding"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+blake3.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

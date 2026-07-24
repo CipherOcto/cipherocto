@@ -21,7 +21,7 @@ pub mod time;
 pub mod validate;
 
 pub use error::{CoreError, Result};
-pub use multi_account::{AccountEntry, MultiAccountStore};
+pub use multi_account::{default_index_base_dir, AccountEntry, MultiAccountStore};
 pub use output::{PairLinkArgs, QrLinkArgs, SessionInfo, WhatsAppSession};
 pub use sidecar::SidecarMode;
 

@@ -21,9 +21,13 @@ use serde::{Deserialize, Serialize};
 pub mod schema;
 pub mod state_machine;
 pub mod store;
+pub mod envelope;
+pub mod shard;
 
 pub use schema::{apply_migrations, MigrationError};
-pub use state_machine::{transition, StateTransitionError};
+pub use state_machine::{
+    transition, transition_reservation, ReservationTransitionError, StateTransitionError,
+};
 pub use store::{SettlementStore, StoolapStore, StorageError};
 
 /// Ask state (RFC-0959 v1.0 §State Machine).

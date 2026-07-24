@@ -1,0 +1,30 @@
+[package]
+name = "cipherocto-policy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967)"
+
+[lib]
+name = "cipherocto_policy"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+blake3.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

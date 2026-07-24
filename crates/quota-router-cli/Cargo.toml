@@ -13,6 +13,8 @@ license.workspace = true
 [dependencies]
 # Core library
 quota-router-core = { path = "../quota-router-core" }
+quota-router-sm-engine = { path = "../quota-router-sm-engine" }
+blake3.workspace = true
 
 # Transport + adapter for mesh daemon
 octo-transport = { path = "../../octo-transport" }

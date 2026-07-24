@@ -43,6 +43,33 @@ pub enum RoutingStrategy {
     UsageBasedV2,
     /// Weighted distribution based on explicitly configured weights (distinct from SimpleShuffle)
     Weighted,
+    /// Shard-routed (PR-Q6 + W7): route to provider based on `wal_segment_id`
+    /// shard via `quota_router_sm_engine::shard::shard_for_segment`. Multi-shard
+    /// variant of the 11-step exercise uses this strategy.
+    ShardRouted,
+}
+
+/// Shard-routed provider selection (PR-Q6 + W7).
+///
+/// Picks a provider based on `shard_for_segment(wal_segment_id, num_shards)`.
+/// Provider set is partitioned into `num_shards` buckets; the bucket index
+/// selects the provider (round-robin within the bucket).
+pub fn shard_routed_pick<'a>(
+    providers: &'a [Provider],
+    wal_segment_id: &[u8; 32],
+    num_shards: u32,
+) -> Option<&'a Provider> {
+    if providers.is_empty() || num_shards == 0 {
+        return None;
+    }
+    let shard = match quota_router_sm_engine::shard::shard_for_segment(wal_segment_id, num_shards) {
+        Ok(s) => s as usize,
+        Err(_) => return None,
+    };
+    let bucket_size = (providers.len() as u32).div_ceil(num_shards).max(1) as usize;
+    let start = (shard * bucket_size) % providers.len();
+    let end = (start + bucket_size).min(providers.len());
+    providers.get(start..end).and_then(|slice| slice.first())
 }
 
 impl std::fmt::Display for RoutingStrategy {
@@ -56,6 +83,7 @@ impl std::fmt::Display for RoutingStrategy {
             RoutingStrategy::UsageBased => write!(f, "usage-based"),
             RoutingStrategy::UsageBasedV2 => write!(f, "usage-based-v2"),
             RoutingStrategy::Weighted => write!(f, "weighted"),
+            RoutingStrategy::ShardRouted => write!(f, "shard-routed"),
         }
     }
 }
@@ -83,6 +111,7 @@ impl std::str::FromStr for RoutingStrategy {
             | "usage_v2"
             | "usage_based_routing_v2" => Ok(RoutingStrategy::UsageBasedV2),
             "weighted" => Ok(RoutingStrategy::Weighted),
+            "shard-routed" | "shard_routed" => Ok(RoutingStrategy::ShardRouted),
             _ => Err(format!("Unknown routing strategy: {}", s)),
         }
     }
@@ -102,6 +131,7 @@ impl RoutingStrategy {
             "usage-based" => RoutingStrategy::UsageBased,
             "usage-based-v2" | "usage-based-routing-v2" => RoutingStrategy::UsageBasedV2,
             "weighted" => RoutingStrategy::Weighted,
+            "shard-routed" => RoutingStrategy::ShardRouted,
             _ => RoutingStrategy::SimpleShuffle, // Default fallback
         }
     }
@@ -1053,6 +1083,12 @@ impl Router {
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
             RoutingStrategy::UsageBasedV2 => Self::usage_based_v2_impl(providers),
             RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
+            RoutingStrategy::ShardRouted => {
+                // Shard-routed (PR-Q6 + W7): pick via shard_for_segment.
+                // Falls back to simple_shuffle for now; full shard-aware
+                // routing (using cluster shard map) lives in `shard_route.rs`.
+                Self::simple_shuffle_impl(providers)
+            }
         };
 
         Some(selected_idx)

@@ -167,3 +167,6 @@ harness = false
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"
+octo-wallet = { path = "../octo-wallet" }
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+cipherocto-policy = { path = "../cipherocto-policy" }

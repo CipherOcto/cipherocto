@@ -936,6 +936,13 @@ impl<'a> AccountStoreGuard<'a> {
         self.inner.as_ref().map(|s| s.list()).unwrap_or_default()
     }
 
+    /// Directory the index file lives in. `None` when the store
+    /// failed to initialize at boot — callers fall back to
+    /// `default_index_base_dir()` for the on-disk scan.
+    pub fn base_dir(&self) -> Option<std::path::PathBuf> {
+        self.inner.as_ref().map(|s| s.base_dir().to_path_buf())
+    }
+
     /// Look up one account by `account_id`. Returns `None` if not in
     /// the index OR if the store failed to initialize — handlers
     /// cannot tell the two apart and should treat both identically.

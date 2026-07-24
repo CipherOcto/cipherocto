@@ -44,7 +44,14 @@ pub mod receipt;
 pub mod router;
 pub mod schema;
 pub mod secret_manager;
+pub mod settle;
+pub mod shard_route;
 pub mod sim;
+
+pub mod settle_classify {
+    //! Re-export the cache-classify module.
+    pub use crate::settle::classify::*;
+}
 pub mod storage;
 pub mod tracing;
 pub mod zk_verify;

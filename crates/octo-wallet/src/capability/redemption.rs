@@ -5,11 +5,23 @@
 //! must be a subgraph of the policy it claims to authorize. Without this
 //! check, a holder with a `PolicyReference` caveat could mint a capability
 //! that violates the parent policy.
+//!
+//! ## Catalog ownership
+//!
+//! The catalog is owned by the **caller** (envelope / network verifier),
+//! not by `octo-wallet`. `redeem_capability` takes `&dyn PolicyCatalog`
+//! as a parameter — the same pattern as `Macaroon::attenuate(_, &dyn
+//! CapabilityCatalog)`. This keeps `octo-wallet` storage-agnostic and
+//! lets the verifier plug in a SQLite-backed, in-memory, or network-backed
+//! catalog without recompilation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use cipherocto_policy::PolicyObject;
+use cipherocto_policy::{is_subgraph, PolicyObject, PolicySurface};
 use thiserror::Error;
+
+use super::caveat::Caveat;
+use super::CapabilityToken;
 
 /// Capability redemption against a policy catalog (RFC-0967 §5).
 ///
@@ -72,4 +84,116 @@ pub enum RedemptionError {
     /// Catalog has no entry for the policy id referenced by the capability.
     #[error("policy {policy_id:?} not found in catalog")]
     PolicyNotFound { policy_id: [u8; 32] },
+}
+
+/// Redeem a capability against a policy catalog (RFC-0967 §5).
+///
+/// Steps:
+/// 1. Require a `PolicyReference` caveat on the capability.
+/// 2. Look up the referenced policy in the catalog.
+/// 3. Derive a `PolicySurface` from the capability's caveats.
+/// 4. Reject iff `!is_subgraph(&cap_surface, &policy.surface)`.
+///
+/// # Errors
+/// - `RedemptionError::MissingPolicyReference` if no `PolicyReference`
+///   caveat is present.
+/// - `RedemptionError::PolicyNotFound { policy_id }` if the catalog
+///   has no entry for the referenced policy.
+/// - `RedemptionError::PolicyNotSuperseded { cap_id, policy_id }` if
+///   the capability's surface is not contained in the policy's surface.
+pub fn redeem_capability(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+) -> Result<(), RedemptionError> {
+    let policy_ref = cap
+        .macaroon
+        .caveats
+        .iter()
+        .find_map(|c| match c {
+            Caveat::PolicyReference { policy_id, .. } => Some(*policy_id),
+            _ => None,
+        })
+        .ok_or(RedemptionError::MissingPolicyReference)?;
+
+    let policy = catalog
+        .get(&policy_ref)
+        .ok_or(RedemptionError::PolicyNotFound {
+            policy_id: policy_ref,
+        })?;
+
+    if !is_subgraph(&cap.to_policy_object(), policy) {
+        return Err(RedemptionError::PolicyNotSuperseded {
+            cap_id: cap.macaroon.id,
+            policy_id: policy_ref,
+        });
+    }
+
+    Ok(())
+}
+
+/// Derive a `PolicySurface` from a capability's caveats (RFC-0967 §5).
+///
+/// Maps relevant caveats to the surface fields used by `is_subgraph`:
+/// - `AmountMax` → `max_total_spend` (min across all `AmountMax` caveats)
+/// - `Model` → `allowed_models` (set of allowed models)
+/// - `Provider` → `allowed_providers` (set of allowed providers)
+/// - `PerAxisMax` → `per_axis_caps` (one entry per axis, last wins — a
+///   capability that attenuates multiple caps on the same axis must
+///   narrow via `set_subsumes` at mint time, not here)
+///
+/// Caveats that don't map to a surface field are ignored at this
+/// layer (they remain enforced by the per-caveat subsumption checks
+/// in `octo-wallet::capability::caveat::set_subsumes`).
+#[must_use]
+pub fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
+    let mut allowed_models: Option<HashSet<String>> = None;
+    let mut allowed_providers: Option<HashSet<String>> = None;
+    let mut max_total_spend: Option<u128> = None;
+    let mut per_axis_caps: Vec<(String, u128)> = Vec::new();
+
+    for caveat in &cap.macaroon.caveats {
+        match caveat {
+            Caveat::AmountMax(amount) => {
+                max_total_spend = Some(max_total_spend.map_or(*amount, |m| m.min(*amount)));
+            }
+            Caveat::Model(m) => {
+                allowed_models
+                    .get_or_insert_with(HashSet::new)
+                    .insert(m.clone());
+            }
+            Caveat::Provider(p) => {
+                allowed_providers
+                    .get_or_insert_with(HashSet::new)
+                    .extend(p.iter().cloned());
+            }
+            Caveat::PerAxisMax(p) => {
+                per_axis_caps.push((p.axis.clone(), p.max_per_1k));
+            }
+            _ => {}
+        }
+    }
+
+    PolicySurface {
+        allowed_models,
+        allowed_providers,
+        per_axis_caps,
+        max_total_spend,
+        audit_window_secs: 0,
+        allowed_destinations: None,
+    }
+}
+
+impl CapabilityToken {
+    /// Mint a `PolicyObject` snapshot from the capability's caveats.
+    ///
+    /// Used by `redeem_capability` to perform the subgraph check. The
+    /// returned `PolicyObject` is a transient surface derivation — it
+    /// does not carry a real signature or audit reference and is not
+    /// intended for storage. The `audit_ref` is all zero and the
+    /// timestamp is zero so the result is deterministic.
+    #[must_use]
+    pub fn to_policy_object(&self) -> PolicyObject {
+        let surface = capability_to_surface(self);
+        PolicyObject::mint_surface(surface, [0u8; 32], 0)
+    }
 }

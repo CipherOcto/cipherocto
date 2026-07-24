@@ -195,6 +195,103 @@ impl Macaroon {
             _ => None,
         })
     }
+
+    /// Attenuate with chain validation against a catalog.
+    ///
+    /// Walks the `WrappedOnly` parent chain via `catalog`, rejecting:
+    /// - chain depth exceeding `MAX_WRAPPED_DEPTH` (RFC-0965 §3.7), and
+    /// - any cycle in the chain (Task 4.3).
+    ///
+    /// Existing `attenuate` remains unchanged for back-compat with callers
+    /// that do not have a catalog handle (e.g. legacy tests). All new callers
+    /// that may append a `WrappedOnly` caveat SHOULD use `attenuate_checked`.
+    ///
+    /// # Errors
+    /// Returns `MacaroonError::WrappedCycle` on a chain cycle, or
+    /// `MacaroonError::WrappedDepthExceeded(usize)` when the depth exceeds
+    /// `MAX_WRAPPED_DEPTH`.
+    pub fn attenuate_checked(
+        &self,
+        caveat: Caveat,
+        catalog: &dyn CapabilityCatalog,
+    ) -> Result<Self, MacaroonError> {
+        check_wrapped_chain(self, catalog)?;
+        let next = self.attenuate(caveat);
+        // Re-check after appending — a `WrappedOnly` caveat may have extended
+        // the chain beyond the limit.
+        check_wrapped_chain(&next, catalog)?;
+        Ok(next)
+    }
+}
+
+/// Capability catalog: resolves a parent `WrappedOnly` reference to a macaroon.
+///
+/// RFC-0960 §8 specifies a SQL `capabilities` table with `capability_id` →
+/// `parent_capability_id` references; implementations back this trait with
+/// that catalog (or any equivalent storage). The chain walker treats a
+/// missing parent as "end of chain" rather than an error — a capability
+/// whose parent is unknown simply terminates the chain at that point.
+pub trait CapabilityCatalog {
+    /// Resolve a capability id to its `Macaroon`, or `None` if absent.
+    fn get(&self, id: &[u8; 32]) -> Option<&Macaroon>;
+}
+
+/// Walk the `WrappedOnly` chain rooted at `macaroon`, rejecting cycles and
+/// depth overruns (RFC-0965 §3.7). The caller (e.g. `attenuate_checked`)
+/// invokes this both before and after appending a caveat, so a chain that
+/// is valid pre-append but invalid post-append is still rejected.
+///
+/// # Errors
+/// Returns `MacaroonError::WrappedCycle` on a repeated `id` in the chain.
+/// Returns `MacaroonError::WrappedDepthExceeded(usize)` when the chain
+/// length exceeds `MAX_WRAPPED_DEPTH`.
+pub fn check_wrapped_chain(
+    macaroon: &Macaroon,
+    catalog: &dyn CapabilityCatalog,
+) -> Result<(), MacaroonError> {
+    let mut visited: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+    let mut current = macaroon;
+    let mut depth: usize = 1;
+    visited.insert(current.id);
+    loop {
+        if depth > MAX_WRAPPED_DEPTH {
+            return Err(MacaroonError::WrappedDepthExceeded(depth));
+        }
+        let Some(parent_id) = current.parent_capability().copied() else {
+            return Ok(());
+        };
+        if !visited.insert(parent_id) {
+            return Err(MacaroonError::WrappedCycle);
+        }
+        depth += 1;
+        let Some(parent) = catalog.get(&parent_id) else {
+            // Unknown parent terminates the chain — verifier will look it up
+            // out of band. We only enforce depth + cycle for the known prefix.
+            return Ok(());
+        };
+        current = parent;
+    }
+}
+
+/// Single-step depth probe (RFC-0965 §3.7). Returns the next depth if the
+/// current macaroon is within bounds, or `WrappedDepthExceeded` otherwise.
+/// Local self-reference check only; cross-macaroon cycle detection lives in
+/// `check_wrapped_chain`.
+///
+/// # Errors
+/// Returns `MacaroonError::WrappedDepthExceeded(count)` when `count >=
+/// MAX_WRAPPED_DEPTH`. Returns `MacaroonError::WrappedCycle` if the macaroon
+/// references its own id via `WrappedOnly` (local self-cycle).
+pub fn check_wrapped_depth(macaroon: &Macaroon, count: usize) -> Result<usize, MacaroonError> {
+    if count > MAX_WRAPPED_DEPTH {
+        return Err(MacaroonError::WrappedDepthExceeded(count));
+    }
+    if let Some(parent_id) = macaroon.parent_capability() {
+        if parent_id == &macaroon.id {
+            return Err(MacaroonError::WrappedCycle);
+        }
+    }
+    Ok(count + 1)
 }
 
 /// Macaroon errors.
@@ -388,5 +485,104 @@ mod tests {
             parent_capability: [0x02; 32],
         });
         assert_eq!(m.parent_capability(), Some(&[0x01; 32]));
+    }
+
+    // RFC-0965 §3.7: WrappedOnly chain depth bounded to MAX_WRAPPED_DEPTH (= 16).
+
+    #[test]
+    fn wrapped_depth_exceeded_variant_exists() {
+        let err = MacaroonError::WrappedDepthExceeded(42);
+        assert!(err.to_string().contains("42"));
+        assert!(err.to_string().to_lowercase().contains("depth"));
+    }
+
+    #[test]
+    fn check_wrapped_depth_ok_at_max_boundary() {
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        // A single (root) macaroon with no WrappedOnly is depth 1.
+        assert_eq!(check_wrapped_depth(&m, 1).unwrap(), 2);
+        // Count == MAX_WRAPPED_DEPTH is the last allowed value.
+        assert_eq!(
+            check_wrapped_depth(&m, MAX_WRAPPED_DEPTH).unwrap(),
+            MAX_WRAPPED_DEPTH + 1
+        );
+    }
+
+    #[test]
+    fn check_wrapped_depth_rejects_past_max() {
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        // Count = MAX + 1 is the first disallowed value (RFC-0965 §3.7: a
+        // 17-deep chain is malformed).
+        let past_max = MAX_WRAPPED_DEPTH + 1;
+        let err = check_wrapped_depth(&m, past_max).unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedDepthExceeded(n) if n == past_max));
+    }
+
+    // -- Catalog + attenuate_checked (depth walk) --
+
+    #[derive(Default)]
+    struct InMemoryCatalog {
+        by_id: std::collections::HashMap<[u8; 32], Macaroon>,
+    }
+
+    impl CapabilityCatalog for InMemoryCatalog {
+        fn get(&self, id: &[u8; 32]) -> Option<&Macaroon> {
+            self.by_id.get(id)
+        }
+    }
+
+    fn build_chain(secret: &[u8; 32], depth: usize) -> (Macaroon, InMemoryCatalog) {
+        // Build a chain of `depth` macaroons: each links via WrappedOnly to
+        // its parent's id. Root (oldest) at index 0; leaf (newest) at depth-1.
+        let mut catalog = InMemoryCatalog::default();
+        let mut macaroons: Vec<Macaroon> = (0..depth)
+            .map(|_| Macaroon::mint(secret).unwrap())
+            .collect();
+        for i in 0..depth - 1 {
+            let parent = &macaroons[i];
+            let child = macaroons[i + 1].clone().attenuate(Caveat::WrappedOnly {
+                parent_capability: parent.id,
+            });
+            macaroons[i + 1] = child;
+        }
+        for m in &macaroons {
+            catalog.by_id.insert(m.id, m.clone());
+        }
+        let leaf = macaroons.pop().expect("non-empty");
+        (leaf, catalog)
+    }
+
+    #[test]
+    fn attenuate_checked_accepts_chain_within_depth() {
+        // Chain of 3 (within MAX_WRAPPED_DEPTH = 16).
+        let secret = [0x42; 32];
+        let (leaf, catalog) = build_chain(&secret, 3);
+        let next = leaf
+            .attenuate_checked(Caveat::Before(1_700_000_000), &catalog)
+            .unwrap();
+        assert_eq!(next.caveats.last(), Some(&Caveat::Before(1_700_000_000)));
+    }
+
+    #[test]
+    fn attenuate_checked_rejects_chain_exceeding_depth() {
+        // Chain of (MAX_WRAPPED_DEPTH + 1) = 17 — must fail with WrappedDepthExceeded.
+        let secret = [0x42; 32];
+        let (leaf, catalog) = build_chain(&secret, MAX_WRAPPED_DEPTH + 1);
+        let err = leaf
+            .attenuate_checked(Caveat::Before(1_700_000_000), &catalog)
+            .unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedDepthExceeded(_)));
+    }
+
+    #[test]
+    fn attenuate_checked_ok_when_extending_short_chain_to_within_depth() {
+        // Chain of 1 (just the leaf) extended by attenuate_checked — depth 2.
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        let catalog = InMemoryCatalog::default();
+        m.attenuate_checked(Caveat::Before(1_700_000_000), &catalog)
+            .unwrap();
     }
 }

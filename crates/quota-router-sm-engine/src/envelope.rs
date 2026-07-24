@@ -112,6 +112,12 @@ pub struct MultiEnvelope {
     pub timeout_unix_ms: u64,
     /// Action on timeout / partial commit (RFC-0962 §7).
     pub fallback_action: FallbackAction,
+    /// Optional recursive child `MultiEnvelope`. Enforces the R8-F5
+    /// nesting cap via [`check_nesting_depth`]. `serde(default)` keeps
+    /// wire-format back-compat for v2.0 envelopes that pre-date the
+    /// field.
+    #[serde(default)]
+    pub nested: Option<Box<MultiEnvelope>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,13 +160,19 @@ pub enum EnvelopeError {
     Storage(String),
     /// RFC-0962 §6.4: tentative→final `envelope_id` mismatch.
     #[error("WAL hash mismatch: envelope_id {envelope_id:?} ≠ final_id {final_id:?}")]
-    WalHashMismatch { envelope_id: [u8; 32], final_id: [u8; 32] },
+    WalHashMismatch {
+        envelope_id: [u8; 32],
+        final_id: [u8; 32],
+    },
     /// RFC-0962 §6.4: `wal_segment_hash_final` not present in local WAL chain.
     #[error("WAL segment missing: {0:?}")]
     WalSegmentMissing([u8; 32]),
     /// RFC-0962 §6.4: referenced segment committed after validator's height.
     #[error("WAL out of order: segment_height {segment_height} > local_height {local_height}")]
-    WalOutOfOrder { segment_height: u64, local_height: u64 },
+    WalOutOfOrder {
+        segment_height: u64,
+        local_height: u64,
+    },
 }
 
 impl From<StorageError> for EnvelopeError {
@@ -288,7 +300,7 @@ pub fn tentative_envelope_id(envelope: &ExecutionEnvelope) -> [u8; 32] {
 #[must_use]
 pub fn finalize_envelope_id(envelope: &ExecutionEnvelope) -> [u8; 32] {
     tentative_envelope_id(envelope) // placeholder hash = final hash in this scaffold;
-    // real impl recomputes with the final wal_segment_hash.
+                                    // real impl recomputes with the final wal_segment_hash.
 }
 
 /// Final WAL segment hash (RFC-0960 §1.1 + RFC-0962 §10):
@@ -345,14 +357,18 @@ pub fn verify_envelope_signature(
 
 /// Check a `MultiEnvelope` for nesting depth (RFC-0962 §7 R8-F5).
 ///
-/// Returns `Err(NestingDepthExceeded)` if the chain exceeds 4 deep.
-pub fn check_nesting_depth(_multi: &MultiEnvelope, current_depth: u8) -> Result<(), EnvelopeError> {
-    if current_depth > MAX_NESTING_DEPTH {
+/// Recursively walks the `nested` chain. Returns
+/// `Err(NestingDepthExceeded(current_depth))` the moment the depth
+/// reaches `MAX_NESTING_DEPTH`. `current_depth` is the depth of the
+/// caller-supplied `multi` itself; the function increments it by 1
+/// before descending into `nested`.
+pub fn check_nesting_depth(multi: &MultiEnvelope, current_depth: u8) -> Result<(), EnvelopeError> {
+    if current_depth >= MAX_NESTING_DEPTH {
         return Err(EnvelopeError::NestingDepthExceeded(current_depth));
     }
-    // Note: nested MultiEnvelopes are not yet supported in this scaffold.
-    // Future: when MultiEnvelope itself can contain MultiEnvelopes,
-    // recurse with `current_depth + 1`.
+    if let Some(nested) = &multi.nested {
+        check_nesting_depth(nested, current_depth + 1)?;
+    }
     Ok(())
 }
 
@@ -427,6 +443,7 @@ pub fn build_multi_envelope(
         parent_sessions,
         timeout_unix_ms: 5_000,
         fallback_action: FallbackAction::Abort,
+        nested: None,
     }
 }
 
@@ -446,6 +463,7 @@ pub fn build_multi_envelope_with(
         parent_sessions,
         timeout_unix_ms,
         fallback_action,
+        nested: None,
     }
 }
 
@@ -504,7 +522,9 @@ mod tests {
 
     #[test]
     fn build_envelope_too_many_statements_rejected() {
-        let stmts: Vec<String> = (0..MAX_STATEMENTS + 1).map(|i| format!("SELECT {i}")).collect();
+        let stmts: Vec<String> = (0..MAX_STATEMENTS + 1)
+            .map(|i| format!("SELECT {i}"))
+            .collect();
         let err = build_envelope(
             [0x01; 32],
             [0x02; 32],
@@ -594,7 +614,9 @@ mod tests {
         }
         impl ReplayIndex for InMemoryIndex {
             fn consumed_contains_for(&self, signer_did: &[u8], nonce: &[u8; NONCE_SIZE]) -> bool {
-                self.seen.iter().any(|(d, n)| d.as_slice() == signer_did && n == nonce)
+                self.seen
+                    .iter()
+                    .any(|(d, n)| d.as_slice() == signer_did && n == nonce)
             }
         }
         let nonce = [0xab; NONCE_SIZE];
@@ -615,7 +637,9 @@ mod tests {
         .unwrap();
         let key = make_key();
         sign_envelope(&mut env, &key);
-        let index = InMemoryIndex { seen: vec![(b"did:octo:test".to_vec(), nonce)] };
+        let index = InMemoryIndex {
+            seen: vec![(b"did:octo:test".to_vec(), nonce)],
+        };
         let err = check_replay(&env, &index).unwrap_err();
         assert_eq!(err, EnvelopeError::ReplayDetected(nonce));
     }
@@ -655,7 +679,9 @@ mod tests {
         }
         impl ReplayIndex for InMemoryIndex {
             fn consumed_contains_for(&self, signer_did: &[u8], nonce: &[u8; NONCE_SIZE]) -> bool {
-                self.seen.iter().any(|(d, n)| d.as_slice() == signer_did && n == nonce)
+                self.seen
+                    .iter()
+                    .any(|(d, n)| d.as_slice() == signer_did && n == nonce)
             }
         }
         impl ReplayIndexMut for InMemoryIndex {
@@ -688,25 +714,93 @@ mod tests {
 
     #[test]
     fn check_nesting_depth_under_cap_accepts() {
-        let multi = build_multi_envelope(
-            vec![],
-            CompletionRule::AllRequired,
-            None,
-            vec![],
-        );
+        let multi = build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![]);
         check_nesting_depth(&multi, 1).unwrap();
     }
 
     #[test]
     fn check_nesting_depth_over_cap_rejects() {
-        let multi = build_multi_envelope(
+        let multi = build_multi_envelope(vec![], CompletionRule::AllRequired, None, vec![]);
+        let err = check_nesting_depth(&multi, MAX_NESTING_DEPTH + 1).unwrap_err();
+        assert_eq!(
+            err,
+            EnvelopeError::NestingDepthExceeded(MAX_NESTING_DEPTH + 1)
+        );
+    }
+
+    // === RFC-0962 §7 R8-F5 recursive nesting tests (Gap 2) ===
+
+    fn sample_child_env() -> ExecutionEnvelope {
+        build_envelope(
+            [0x01; 32],
+            [0x02; 32],
+            "did:octo:test".to_owned(),
+            vec!["SELECT 1".to_owned()],
             vec![],
+            vec![],
+            [0x03; 32],
+            100,
+            [0x04; NONCE_SIZE],
+            EnvelopeMode::Deterministic,
+            1_000_000,
+            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn check_nesting_depth_accepts_two_level_envelope() {
+        // Parent at depth 0 wrapping a child MultiEnvelope at depth 1.
+        // MAX_NESTING_DEPTH = 4 → depth 1 is well under the cap.
+        let child = build_multi_envelope(
+            vec![sample_child_env()],
             CompletionRule::AllRequired,
             None,
             vec![],
         );
-        let err = check_nesting_depth(&multi, MAX_NESTING_DEPTH + 1).unwrap_err();
-        assert_eq!(err, EnvelopeError::NestingDepthExceeded(MAX_NESTING_DEPTH + 1));
+        let parent = build_multi_envelope(
+            vec![sample_child_env()],
+            CompletionRule::AllRequired,
+            None,
+            vec![],
+        );
+        // Manually attach the nested child via struct update (builder
+        // default is nested = None).
+        let parent = MultiEnvelope {
+            nested: Some(Box::new(child)),
+            ..parent
+        };
+        check_nesting_depth(&parent, 0).unwrap();
+    }
+
+    #[test]
+    fn check_nesting_depth_rejects_five_level_chain() {
+        // Build a chain parent → child → grandchild → ... 5 levels deep.
+        // At top-level call with current_depth=0, the chain hits depth=5
+        // which exceeds MAX_NESTING_DEPTH=4.
+        let env = sample_child_env();
+        let level5 = MultiEnvelope {
+            nested: None,
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level4 = MultiEnvelope {
+            nested: Some(Box::new(level5)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level3 = MultiEnvelope {
+            nested: Some(Box::new(level4)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level2 = MultiEnvelope {
+            nested: Some(Box::new(level3)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level1 = MultiEnvelope {
+            nested: Some(Box::new(level2)),
+            ..build_multi_envelope(vec![env], CompletionRule::AllRequired, None, vec![])
+        };
+        let err = check_nesting_depth(&level1, 0).unwrap_err();
+        assert!(matches!(err, EnvelopeError::NestingDepthExceeded(d) if d == MAX_NESTING_DEPTH));
     }
 
     #[test]
@@ -746,7 +840,9 @@ mod tests {
         }
         impl ReplayIndex for InMemoryIndex {
             fn consumed_contains_for(&self, signer_did: &[u8], nonce: &[u8; NONCE_SIZE]) -> bool {
-                self.seen.iter().any(|(d, n)| d.as_slice() == signer_did && n == nonce)
+                self.seen
+                    .iter()
+                    .any(|(d, n)| d.as_slice() == signer_did && n == nonce)
             }
         }
         impl ReplayIndexMut for InMemoryIndex {
@@ -845,21 +941,23 @@ mod tests {
         )
         .unwrap();
         env.capability_holder = "did:octo:b".to_owned();
-        let env_a = tentative_envelope_id(&build_envelope(
-            [0x01; 32],
-            [0x02; 32],
-            "did:octo:a".to_owned(),
-            vec!["SELECT 1".to_owned()],
-            vec![],
-            vec![],
-            [0x03; 32],
-            100,
-            [0x04; NONCE_SIZE],
-            EnvelopeMode::Deterministic,
-            1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
-        )
-        .unwrap());
+        let env_a = tentative_envelope_id(
+            &build_envelope(
+                [0x01; 32],
+                [0x02; 32],
+                "did:octo:a".to_owned(),
+                vec!["SELECT 1".to_owned()],
+                vec![],
+                vec![],
+                [0x03; 32],
+                100,
+                [0x04; NONCE_SIZE],
+                EnvelopeMode::Deterministic,
+                1_000_000,
+                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            )
+            .unwrap(),
+        );
         let env_b = tentative_envelope_id(&env);
         assert_ne!(env_a, env_b);
     }

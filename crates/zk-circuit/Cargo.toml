@@ -23,6 +23,18 @@ thiserror.workspace = true
 # with a stable field order contract (sorted keys) — see hash() doc comment.
 hex = "0.4"
 
+# Real STWO FFI (RFC-0962 §6 batch signature; Gap 3 Task 3.2). Only
+# enabled when explicitly opted in — see zk-circuit::prove_batch_signature
+# FFI branch. Default builds use the mock-prover path (deterministic
+# BLAKE3 commitment), which preserves Class A determinism without
+# requiring the nightly-only `libstwo_sys.so`.
+zk-vendor = { path = "../zk-vendor", optional = true }
+
+[features]
+# Default OFF: build without the real-zk dep. Mock prover handles all
+# test vectors and the default 11-step ZK mint flow.
+real-zk = ["dep:zk-vendor"]
+
 [dev-dependencies]
 
 [lints.rust]

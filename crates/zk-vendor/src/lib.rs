@@ -260,6 +260,101 @@ impl StwoSys {
             Err(VendorError::VerifyFailed { code: ret })
         }
     }
+
+    /// Generate a STARK proof via the FFI shim (RFC-0962 §6 batch sig +
+    /// RFC-0958 capability ZK).
+    ///
+    /// Returns `Ok(ProofBytes)` on success; the returned `ProofBytes`
+    /// holds the opaque `ProofHandle` pointer and a sidecar commitment
+    /// computed over `casm || public || witness` so the caller can
+    /// serialize the proof without needing the `stwo-sys` type. The
+    /// pointer MUST be released by passing the returned `ProofBytes`
+    /// back to `release_proof` (or via `Drop`).
+    ///
+    /// # Errors
+    ///
+    /// - `ProverNull`: `stwo_prove` returned a null handle (OOM or setup
+    ///   failure).
+    pub fn prove(
+        &self,
+        casm: &[u8],
+        public: &[u8],
+        witness: &[u8],
+    ) -> Result<ProofBytes, VendorError> {
+        // SAFETY: `casm`, `public`, `witness` are valid slices for the FFI
+        // call duration; pointers come from non-null slice references;
+        // lengths match the FFI signature. The returned `ProofHandle`
+        // pointer is owned by the library; we wrap it in `ProofBytes`
+        // which `Drop` releases via `stwo_free_proof`.
+        let handle = unsafe {
+            (self.prove)(
+                casm.as_ptr(),
+                casm.len(),
+                public.as_ptr(),
+                public.len(),
+                witness.as_ptr(),
+                witness.len(),
+            )
+        };
+        if handle.is_null() {
+            return Err(VendorError::ProverNull);
+        }
+        // Capture a raw function pointer to `stwo_free_proof` so we can
+        // call it from `ProofBytes::drop` without borrowing `self` (the
+        // `libloading::Symbol` type is not `Copy`). The library lives in
+        // `'static` `OnceLock`, so the pointer is valid for the lifetime
+        // of any `ProofBytes` produced from this process.
+        let free: FreeFn = *self.free_proof;
+        // Sidecar commitment (BLAKE3) lets the caller serialize a stable
+        // proof digest without touching the opaque pointer. Matches the
+        // mock prover's `BLAKE3(casm || canonical_ser(inputs))` shape so
+        // verifier-side round-trip works whether the proof came from the
+        // mock or real prover.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(casm);
+        hasher.update(public);
+        hasher.update(witness);
+        let commitment: [u8; 32] = *hasher.finalize().as_bytes();
+        Ok(ProofBytes {
+            handle,
+            commitment,
+            free,
+        })
+    }
+}
+
+/// Raw function pointer alias for `stwo_free_proof` (plain `extern "C" fn`
+/// — no `libloading::Symbol` lifetime tie, so it's `Copy` and can live in
+/// `ProofBytes` without borrowing `StwoSys`).
+type FreeFn = unsafe extern "C" fn(*mut ProofHandle);
+
+/// Stable, sidecar commitment derived by `StwoSys::prove`. Owns the
+/// underlying opaque `ProofHandle`; `Drop` releases it via
+/// `stwo_free_proof`.
+#[derive(Debug)]
+pub struct ProofBytes {
+    handle: *mut ProofHandle,
+    /// BLAKE3 commitment over `(casm || public || witness)`. Stable across
+    /// processes + architectures (Class A determinism).
+    pub commitment: [u8; 32],
+    free: FreeFn,
+}
+
+// SAFETY: The handle is owned by this struct; `Drop` releases it. We
+// never access the pointee from Rust.
+unsafe impl Send for ProofBytes {}
+
+impl Drop for ProofBytes {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            // SAFETY: `handle` is non-null and was allocated by
+            // `stwo_prove`. The library holds the matching free function
+            // for the lifetime of `_lib` (which outlives `ProofBytes`
+            // because `_lib` is held in `'static` `StwoSys` via the
+            // `OnceLock` cache).
+            unsafe { (self.free)(self.handle) };
+        }
+    }
 }
 
 #[cfg(test)]

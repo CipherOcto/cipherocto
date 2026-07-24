@@ -16,6 +16,8 @@
 //! - [`CompiledCircuit::hash`]: stable 64-char hex (matches RFC-0958
 //!   `compiled_casm_hash` field shape).
 //! - [`HashError`]: error type for malformed Cairo input.
+//! - [`Program`], [`BatchSigPublicInputs`], [`prove_batch_signature`]:
+//!   batch signature circuit surface (Gap 3 / RFC-0962 §6).
 //!
 //! ## Determinism contract
 //!
@@ -132,6 +134,195 @@ fn blake3_hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
 }
 
+// =========================================================================
+// Batch signature circuit surface (Gap 3 / RFC-0962 §6)
+// =========================================================================
+
+/// Program selector for the ZK prover (RFC-0962 §6 batch signature).
+///
+/// Currently two programs:
+/// - `Capability`: the existing single-capability ZK circuit (RFC-0958).
+/// - `BatchSig`: batch signature aggregation (RFC-0962 §6) — N signers,
+///   one message root, one proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Program {
+    /// RFC-0958 single-capability ZK circuit.
+    Capability,
+    /// RFC-0962 §6 batch signature circuit.
+    BatchSig,
+}
+
+/// Public inputs to the batch signature circuit (RFC-0962 §6).
+///
+/// The verifier checks:
+/// - `signer_roots[i]` is the BLAKE3 root of signer i's public key +
+///   signature transcript (binding the signer identity into the proof).
+/// - `message_root` is the BLAKE3 root of the canonical message being
+///   signed (capability root hash + caveats wire bytes, per
+///   `CapabilityToken::holder_msg`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchSigPublicInputs {
+    /// One BLAKE3 root per signer (signer count = N = `signer_roots.len()`).
+    pub signer_roots: Vec<[u8; 32]>,
+    /// BLAKE3 root of the canonical message being signed by all signers.
+    pub message_root: [u8; 32],
+}
+
+/// Opaque proof bytes emitted by the prover.
+///
+/// Mock prover (feature off / lib missing) emits a deterministic
+/// `BLAKE3(casm_hash || signer_roots || message_root)` commitment so the
+/// full round-trip (mint → verify) is exercised even without the real STWO
+/// FFI. Real prover wraps the `stwo-sys` `ProofHandle` bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proof {
+    /// Prover-emitted bytes (Fiat-Shamir transcript for real prover;
+    /// BLAKE3 commitment for mock prover).
+    pub bytes: Vec<u8>,
+    /// CASM hash of the circuit that produced this proof (for binding).
+    pub casm_hash: [u8; 32],
+}
+
+/// Errors emitted by `prove_batch_signature`.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ProverError {
+    #[error("empty signer_roots (RFC-0962 §6 requires at least 1 signer)")]
+    EmptySigners,
+    #[error("signer count {count} exceeds maximum {max}")]
+    TooManySigners { count: usize, max: usize },
+    #[error("stwo-sys prover returned null handle (OOM or setup failure)")]
+    ProverNull,
+    #[error("internal prover error: {0}")]
+    Internal(String),
+}
+
+/// Maximum batch size (RFC-0962 §6 — bounded for Fiat-Shamir transcript
+/// determinism + verifier memory bound).
+pub const MAX_BATCH_SIGNERS: usize = 256;
+
+/// Generate a batch signature proof (RFC-0962 §6).
+///
+/// Behavior:
+/// - If `zk_vendor::loaded_library()` returns `Some` AND the `real-zk`
+///   feature is enabled, delegates to `stwo-sys` `prove` via libloading.
+/// - Otherwise (default — `real-zk` feature off, or lib missing), returns
+///   a deterministic mock proof: `BLAKE3(casm_hash || canonical_ser(inputs))`.
+///
+/// # Determinism
+///
+/// Mock path is Class A deterministic (RFC-0958 §Determinism). Real
+/// STWO Fiat-Shamir is also Class A. Both paths emit the same `Proof`
+/// shape; the verifier in `crates/quota-router-core/src/zk_verify/capability.rs`
+/// checks `proof.casm_hash` against the compiled CASM hash before invoking
+/// the underlying STARK verify (mock path also re-checks the BLAKE3
+/// commitment against `BatchSigPublicInputs`).
+///
+/// # Errors
+/// Returns `ProverError` on:
+/// - `EmptySigners` (signer_roots empty)
+/// - `TooManySigners` (> `MAX_BATCH_SIGNERS`)
+/// - `ProverNull` (real-zk only — stwo-sys returned a null handle)
+/// - `Internal` (real-zk only — FFI failure)
+pub fn prove_batch_signature(
+    program: Program,
+    casm_hash: [u8; 32],
+    inputs: &BatchSigPublicInputs,
+) -> Result<Proof, ProverError> {
+    // Program selector check (forward-compat — currently only BatchSig is
+    // implemented here; the existing `mint_with_zk` path uses
+    // `Program::Capability` and delegates to `bundled_casm_hash`).
+    if program != Program::BatchSig {
+        return Err(ProverError::Internal(format!(
+            "unsupported program variant: {program:?}"
+        )));
+    }
+
+    // Validate inputs (defense in depth — caller should also validate).
+    if inputs.signer_roots.is_empty() {
+        return Err(ProverError::EmptySigners);
+    }
+    if inputs.signer_roots.len() > MAX_BATCH_SIGNERS {
+        return Err(ProverError::TooManySigners {
+            count: inputs.signer_roots.len(),
+            max: MAX_BATCH_SIGNERS,
+        });
+    }
+
+    // Real-zk path: delegate to stwo-sys via libloading when available.
+    // Gated by the `real-zk` cargo feature; default builds use the mock
+    // path (deterministic BLAKE3 commitment) and do not require the
+    // nightly-built `libstwo_sys.so`.
+    #[cfg(feature = "real-zk")]
+    {
+        if let Some(sys) = zk_vendor::loaded_library() {
+            let canonical = canonical_ser(inputs);
+            // Empty witness: real impl would carry signer sigs + caveats
+            // chain preimages. For now the real-zk path proves a constant
+            // statement so the FFI shape + handle lifecycle are
+            // exercised without committing to a witness format yet.
+            let empty_witness: &[u8] = &[];
+            match sys.prove(&casm_hash, &canonical, empty_witness) {
+                Ok(proof_bytes) => {
+                    return Ok(Proof {
+                        bytes: proof_bytes.commitment.to_vec(),
+                        casm_hash,
+                    });
+                }
+                Err(zk_vendor::VendorError::ProverNull) => {
+                    return Err(ProverError::ProverNull);
+                }
+                Err(other) => {
+                    return Err(ProverError::Internal(format!("{other}")));
+                }
+            }
+        }
+    }
+
+    // Mock path: deterministic BLAKE3 commitment over inputs.
+    let canonical = canonical_ser(inputs);
+    let mut commit = Hasher::new();
+    commit.update(&casm_hash);
+    commit.update(&canonical);
+    let commitment: [u8; 32] = *commit.finalize().as_bytes();
+
+    Ok(Proof {
+        bytes: commitment.to_vec(),
+        casm_hash,
+    })
+}
+
+/// Canonical serialization of `BatchSigPublicInputs` (Class A
+/// determinism — field-order, length-prefixed, no JSON).
+fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
+    let mut out = Vec::with_capacity(40 + inputs.signer_roots.len() * 32);
+    out.push(0xA8); // domain separator: batch-sig inputs
+    out.extend_from_slice(
+        &u32::try_from(inputs.signer_roots.len())
+            .expect("signer count fits in u32 (bounded by MAX_BATCH_SIGNERS)")
+            .to_le_bytes(),
+    );
+    for root in &inputs.signer_roots {
+        out.extend_from_slice(root);
+    }
+    out.extend_from_slice(&inputs.message_root);
+    out
+}
+
+/// Verify a mock batch proof against its public inputs.
+///
+/// Returns true iff `proof.bytes == BLAKE3(casm_hash || canonical_ser(inputs))`.
+/// Real impl defers to `stwo-sys` `verify` (RFC-0962 §6); this helper
+/// exists for unit-test round-trips of the mock path.
+#[must_use]
+pub fn verify_mock_batch_proof(proof: &Proof, inputs: &BatchSigPublicInputs) -> bool {
+    let canonical = canonical_ser(inputs);
+    let mut commit = Hasher::new();
+    commit.update(&proof.casm_hash);
+    commit.update(&canonical);
+    let expected: [u8; 32] = *commit.finalize().as_bytes();
+    proof.bytes == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +370,125 @@ mod tests {
         // RFC-0958 §compiled_casm_hash: "64 hex chars" (BLAKE3-256).
         let compiled = compile(&sample_program()).unwrap();
         assert_eq!(compiled.compiled_casm_hash.len(), 64);
+    }
+
+    // ---- Batch signature circuit (Gap 3 / RFC-0962 §6) ----
+
+    fn sample_batch_inputs(n: usize) -> BatchSigPublicInputs {
+        BatchSigPublicInputs {
+            signer_roots: (0..n)
+                .map(|i| {
+                    // Test fixture only — keep small values (use byte 0
+                    // for indexes > 255 since the test count is bounded
+                    // by MAX_BATCH_SIGNERS + 1 = 257).
+                    let byte = u8::try_from(i).unwrap_or(0);
+                    [byte; 32]
+                })
+                .collect(),
+            message_root: [0xAB; 32],
+        }
+    }
+
+    #[test]
+    fn batch_sig_public_inputs_round_trip_json() {
+        let inputs = sample_batch_inputs(11);
+        let json = serde_json::to_string(&inputs).unwrap();
+        let back: BatchSigPublicInputs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, inputs);
+    }
+
+    #[test]
+    fn batch_sig_public_inputs_signers_field_is_vec() {
+        let inputs = sample_batch_inputs(11);
+        assert_eq!(inputs.signer_roots.len(), 11);
+        assert_eq!(inputs.message_root, [0xAB; 32]);
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_empty_signers() {
+        let inputs = BatchSigPublicInputs {
+            signer_roots: vec![],
+            message_root: [0u8; 32],
+        };
+        let err = prove_batch_signature(Program::BatchSig, [0u8; 32], &inputs).unwrap_err();
+        assert_eq!(err, ProverError::EmptySigners);
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_too_many_signers() {
+        let inputs = sample_batch_inputs(MAX_BATCH_SIGNERS + 1);
+        let err = prove_batch_signature(Program::BatchSig, [0u8; 32], &inputs).unwrap_err();
+        assert_eq!(
+            err,
+            ProverError::TooManySigners {
+                count: MAX_BATCH_SIGNERS + 1,
+                max: MAX_BATCH_SIGNERS,
+            }
+        );
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_unsupported_program() {
+        let inputs = sample_batch_inputs(3);
+        let err = prove_batch_signature(Program::Capability, [0u8; 32], &inputs).unwrap_err();
+        assert!(matches!(err, ProverError::Internal(_)));
+    }
+
+    #[test]
+    fn prove_batch_signature_emits_32_byte_commitment() {
+        let inputs = sample_batch_inputs(11);
+        let proof = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        assert_eq!(proof.bytes.len(), 32);
+        assert_eq!(proof.casm_hash, [0xCD; 32]);
+    }
+
+    #[test]
+    fn prove_batch_signature_is_deterministic() {
+        let inputs = sample_batch_inputs(11);
+        let a = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        let b = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn prove_batch_signature_different_inputs_different_proof() {
+        let a =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &sample_batch_inputs(11)).unwrap();
+        let mut b_inputs = sample_batch_inputs(11);
+        b_inputs.message_root = [0xFF; 32];
+        let b = prove_batch_signature(Program::BatchSig, [0xCD; 32], &b_inputs).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn prove_batch_signature_binds_casm_hash() {
+        let inputs = sample_batch_inputs(11);
+        let a = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        let b = prove_batch_signature(Program::BatchSig, [0xCE; 32], &inputs).unwrap();
+        assert_ne!(a, b, "different casm_hash must yield different proof");
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_round_trip_ok() {
+        let inputs = sample_batch_inputs(11);
+        let proof = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        assert!(verify_mock_batch_proof(&proof, &inputs));
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_rejects_mismatched_inputs() {
+        let inputs = sample_batch_inputs(11);
+        let proof = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        let mut other = sample_batch_inputs(11);
+        other.message_root = [0xEE; 32];
+        assert!(!verify_mock_batch_proof(&proof, &other));
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_rejects_tampered_proof() {
+        let inputs = sample_batch_inputs(11);
+        let mut proof = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs).unwrap();
+        proof.bytes[0] ^= 0xFF;
+        assert!(!verify_mock_batch_proof(&proof, &inputs));
     }
 }

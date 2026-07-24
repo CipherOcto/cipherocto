@@ -1,8 +1,7 @@
 //! Macaroon v1: HMAC-BLAKE3 chained bearer token (RFC-0957 §3.2).
 //!
-//! `macaroon_root_secret` = `[u8; 32]` random per mint.
-//! `macaroon_id` = `HMAC-BLAKE3(salt: root_secret, info: "cipherocto/macaroon/v1", msg: nonce)[:16]`.
-//! `capability_id` = `BLAKE3(0x05 || canonical_ser_unsigned(macaroon))` per RFC-0965 §3.7.
+//! `macaroon_root_id` = `HMAC-BLAKE3(salt: root_secret, info: MACAR_ID_DOMAIN, msg: nonce)[:16]`.
+//! `capability_id` = `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))` per RFC-0965 §3.7.
 //! Each caveat: `hmac_i = HMAC-BLAKE3(salt: hmac_{i-1}, info: caveat_name,
 //!                                       msg: canonical_ser(caveat_value) || capability_id_{i-1})`.
 //!
@@ -16,8 +15,12 @@ use serde::{Deserialize, Serialize};
 use super::caveat::Caveat;
 
 /// Domain separator for `capability_id` derivation (RFC-0965 §3.7).
-/// `capability_id = BLAKE3(0x05 || canonical_ser_unsigned(macaroon))`.
+/// `capability_id = BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))`.
 pub const CAPABILITY_ID_DOMAIN: u8 = 0x05;
+
+/// Domain string for the HMAC chain seed (`chain[0]`). HMAC per RFC 2104
+/// uses this as the `info` parameter to derive the mint-time chain entry.
+pub const MACAR_ID_DOMAIN: &str = "cipherocto/macaroon/v1/id";
 
 /// BLAKE3 block size (per BLAKE3 spec §2.5).
 const BLOCK_SIZE: usize = 64;
@@ -70,9 +73,6 @@ pub fn macaroon_id(root_secret: &[u8; 32], nonce: &[u8; 16]) -> MacaroonId {
     id
 }
 
-/// Wire info string for macaroon_id derivation.
-pub const MACAROON_ID_INFO: &str = "cipherocto/macaroon/v1/id";
-
 /// Convert a length to a big-endian `u32` length prefix. The macaroon's
 /// fields are bounded (chain < 2^16 entries, caveats < 2^16 entries) so
 /// this never panics in practice.
@@ -93,10 +93,10 @@ pub struct Macaroon {
     /// 32-byte capability identifier used for `WrappedOnly` chain checks
     /// (RFC-0960 §8 + RFC-0965 §3.7). Distinct from `root_id` (16 bytes) —
     /// the 32-byte form matches the catalog schema (`capability_id BLOB`).
-    /// **Derived**: `BLAKE3(0x05 || canonical_ser_unsigned(self))` — never
-    /// random, never supplied by the caller. Recomputed on every mint and
-    /// attenuation; tamper-evident via the HMAC chain (`hmac_i` includes
-    /// `capability_id_{i-1}` in its input, per the defect-2 fix).
+    /// **Derived**: `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(self))` —
+    /// never random, never supplied by the caller. Recomputed on every mint
+    /// and attenuation; tamper-evident via the HMAC chain (`hmac_i` includes
+    /// `capability_id_{i-1}` in its input, per RFC-0965 §3.7).
     pub id: [u8; 32],
     /// Chained caveat HMACs — `chain[i]` is the HMAC output after applying
     /// caveat `caveats[i]` (RFC-0957 §3.2). The final `chain[last]` is the
@@ -104,6 +104,18 @@ pub struct Macaroon {
     pub chain: Vec<[u8; 32]>,
     /// Caveat list (in attenuation order).
     pub caveats: Vec<Caveat>,
+}
+
+/// Compute the 32-byte capability id per RFC-0965 §3.7:
+/// `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))`.
+/// Free function (not a method) — doesn't use `self` for state beyond
+/// the input slice.
+#[must_use]
+pub fn compute_capability_id(macaroon: &Macaroon) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&[CAPABILITY_ID_DOMAIN]);
+    hasher.update(&macaroon.canonical_ser_unsigned());
+    *hasher.finalize().as_bytes()
 }
 
 impl Macaroon {
@@ -119,10 +131,10 @@ impl Macaroon {
         let root_id = macaroon_id(root_secret, &nonce);
         let root_secret_hash = *blake3::hash(root_secret).as_bytes();
 
-        // Empty chain: chain[0] = HMAC(root_secret, MACAROON_ID_INFO || nonce)
+        // Empty chain: chain[0] = HMAC(root_secret, MACAR_ID_DOMAIN || nonce)
         let mut hmac_state = *root_secret;
-        let mut chained_msg = Vec::with_capacity(MACAROON_ID_INFO.len() + 16);
-        chained_msg.extend_from_slice(MACAROON_ID_INFO.as_bytes());
+        let mut chained_msg = Vec::with_capacity(MACAR_ID_DOMAIN.len() + 16);
+        chained_msg.extend_from_slice(MACAR_ID_DOMAIN.as_bytes());
         chained_msg.extend_from_slice(&nonce);
         hmac_state = hmac_blake3(&hmac_state, &chained_msg);
 
@@ -134,46 +146,49 @@ impl Macaroon {
             caveats: Vec::new(),
         };
         // Derived capability_id per RFC-0965 §3.7.
-        macaroon.id = Self::compute_capability_id(&macaroon);
+        macaroon.id = compute_capability_id(&macaroon);
         Ok(macaroon)
-    }
-
-    /// Compute the 32-byte capability id per RFC-0965 §3.7:
-    /// `BLAKE3(0x05 || canonical_ser_unsigned(macaroon))`.
-    #[must_use]
-    pub fn compute_capability_id(macaroon: &Self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&[CAPABILITY_ID_DOMAIN]);
-        hasher.update(&macaroon.canonical_ser_unsigned());
-        *hasher.finalize().as_bytes()
     }
 
     /// Canonical serialization of the unsigned macaroon (everything except
     /// `id`). Used for `capability_id` derivation (RFC-0965 §3.7) and as the
-    /// base for verify-side recomputation. Length-prefixed per field to
-    /// prevent concatenation-collision attacks (see
-    /// `crates/quota-router-sm-engine/src/envelope.rs:224` for the same
-    /// pattern).
+    /// base for verify-side recomputation.
+    ///
+    /// **Format (interleaved chain + producer-caveat):**
+    /// ```text
+    ///   u32(16) | root_id | u32(32) | root_secret_hash
+    /// | chain[0] | u32(0)
+    /// | chain[1] | u32(|caveat_0|) | caveat_0
+    /// | chain[2] | u32(|caveat_1|) | caveat_1
+    /// | ...
+    /// ```
+    /// Each chain entry is followed by the caveat that produced it
+    /// (length-prefixed canonical JSON); `chain[0]` has a `u32(0)` "empty
+    /// producer" placeholder. The interleaving lets `verify_signature`
+    /// hash the stream incrementally — at step `i`, the hasher has
+    /// processed `chain[0..=i] + caveat_0..=i-1`, and `chain[i]` is the
+    /// last entry added. Length-prefixed per field to prevent
+    /// concatenation-collision attacks (see
+    /// `crates/quota-router-sm-engine/src/envelope.rs:224`).
     #[must_use]
     pub fn canonical_ser_unsigned(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        // root_id (16 bytes) — fixed size, length-prefix for symmetry.
         buf.extend_from_slice(&u32_len(self.root_id.len()));
         buf.extend_from_slice(&self.root_id);
-        // root_secret_hash (32 bytes).
         buf.extend_from_slice(&u32_len(self.root_secret_hash.len()));
         buf.extend_from_slice(&self.root_secret_hash);
-        // chain: length-prefixed array of 32-byte HMACs.
-        buf.extend_from_slice(&u32_len(self.chain.len()));
-        for entry in &self.chain {
+        // Interleave chain entries with their producer caveats.
+        // chain[0] has no producer (it's the mint-time state) — use u32(0)
+        // as the empty-caveat placeholder.
+        for (i, entry) in self.chain.iter().enumerate() {
             buf.extend_from_slice(entry);
-        }
-        // caveats: length-prefixed array of canonicalised JSON.
-        buf.extend_from_slice(&u32_len(self.caveats.len()));
-        for caveat in &self.caveats {
-            let ser = caveat.canonical_ser();
-            buf.extend_from_slice(&u32_len(ser.len()));
-            buf.extend_from_slice(&ser);
+            if i == 0 {
+                buf.extend_from_slice(&u32_len(0));
+            } else if let Some(caveat) = self.caveats.get(i - 1) {
+                let ser = caveat.canonical_ser();
+                buf.extend_from_slice(&u32_len(ser.len()));
+                buf.extend_from_slice(&ser);
+            }
         }
         buf
     }
@@ -201,42 +216,62 @@ impl Macaroon {
         // Pre-append check — rejects cyclic / over-deep chains before we
         // mutate anything.
         check_wrapped_chain(self, catalog)?;
+        let next = self.clone().extend_chain(caveat);
+        // Post-append check — a freshly-added WrappedOnly may have extended
+        // the chain beyond the limit, or pointed at a non-existent parent.
+        // Skip for non-WrappedOnly caveats: they don't add a parent link, so
+        // the chain walk would yield the same result as the pre-check.
+        // (Halves the walk cost in the common case.)
+        if matches!(next.caveats.last(), Some(Caveat::WrappedOnly { .. })) {
+            check_wrapped_chain(&next, catalog)?;
+        }
+        Ok(next)
+    }
 
-        let mut next = self.clone();
+    /// Private chain-extension helper shared between `attenuate` (checked)
+    /// and `attenuate_unchecked_for_test` (unchecked). Pushes the new
+    /// caveat, derives `chain[i+1]` = HMAC(chain[i], caveat_name ||
+    /// canonical_ser(caveat) || capability_id_{i-1}), and recomputes id.
+    fn extend_chain(self, caveat: Caveat) -> Self {
+        let mut next = self;
         let prev_chain = *next.chain.last().expect("chain non-empty");
-        let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + self.id.len());
+        let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + next.id.len());
         msg.extend_from_slice(caveat.name().as_str().as_bytes());
         msg.extend_from_slice(&caveat.canonical_ser());
         // HMAC binds to capability_id per RFC-0965 §3.7 — without this,
         // an attacker could swap `id` (and the catalog-resolved parent
         // chain) without invalidating the signature.
-        msg.extend_from_slice(&self.id);
+        msg.extend_from_slice(&next.id);
         let new_chain = hmac_blake3(&prev_chain, &msg);
         next.caveats.push(caveat);
         next.chain.push(new_chain);
         // Recompute id AFTER chain push so the derived id covers the new
         // HMAC entry (content-addressed tamper-evidence).
-        next.id = Self::compute_capability_id(&next);
-
-        // Post-append check — a freshly-added WrappedOnly may have extended
-        // the chain beyond the limit, or pointed at a non-existent parent.
-        check_wrapped_chain(&next, catalog)?;
-        Ok(next)
+        next.id = compute_capability_id(&next);
+        next
     }
 
     /// Verify the macaroon signature against the issuer's root secret.
     /// Re-derives the HMAC chain from `root_secret` over the caveat list
     /// and compares the final chain entry.
     ///
+    /// **O(n) BLAKE3 ops** — the hasher state is built incrementally: at
+    /// step `i`, the running hasher already contains fixed-prefix + chain
+    /// entries + caveats up to state_i. We add `chain[i+1]` + `caveat[i]`,
+    /// finalize to obtain `id_{i+1}`, and use it for the next HMAC check.
+    /// This avoids the O(n²) cost of re-serializing the partial macaroon
+    /// at every step.
+    ///
     /// # Errors
     /// Returns `MacaroonError::ChainMismatch` if the chain doesn't rederive,
     /// `MacaroonError::RootSecretMismatch` if the embedded hash differs,
-    /// `CapabilityIdMismatch` if the stored id doesn't match the
-    /// content-addressed derivation, `WrappedCycle` if the chain has a cycle,
-    /// `WrappedDepthExceeded` if the chain exceeds `MAX_WRAPPED_DEPTH`.
-    /// **Note:** `verify_signature` does NOT take a catalog; it only checks
-    /// locally-detectable invariants. Cross-macaroon cycle detection
-    /// requires `check_wrapped_chain` with a catalog.
+    /// `CapabilityIdMismatch` if the final stored id doesn't match the
+    /// re-derived id.
+    ///
+    /// **verify_signature does NOT check `WrappedCycle` / `WrappedDepthExceeded`.**
+    /// Those invariants require catalog lookup; callers needing full
+    /// verification must additionally invoke [`check_wrapped_chain`] with
+    /// a populated catalog.
     pub fn verify_signature(&self, root_secret: &[u8; 32]) -> Result<(), MacaroonError> {
         // Root secret hash must match (proves issuer had this root secret).
         let computed_hash = *blake3::hash(root_secret).as_bytes();
@@ -244,20 +279,26 @@ impl Macaroon {
             return Err(MacaroonError::RootSecretMismatch);
         }
 
-        // capability_id must match content-addressed derivation (RFC-0965 §3.7).
-        let expected_id = Self::compute_capability_id(self);
-        if expected_id != self.id {
-            return Err(MacaroonError::CapabilityIdMismatch);
-        }
+        // Build the running capability_id hasher incrementally. The
+        // canonical_ser_unsigned format interleaves each chain entry
+        // with its producer caveat; after step `i` the hasher has
+        // processed exactly the bytes of `canonical_ser_unsigned(state_i)`.
+        let mut h = blake3::Hasher::new();
+        h.update(&[CAPABILITY_ID_DOMAIN]);
+        h.update(&u32_len(self.root_id.len()));
+        h.update(&self.root_id);
+        h.update(&u32_len(self.root_secret_hash.len()));
+        h.update(&self.root_secret_hash);
 
-        // Re-derive chain. chain[0] is issuer-side; we accept it as-is.
-        // chain[i+1] = HMAC(chain[i], caveat_name || canonical_ser(caveat) ||
-        //                                       capability_id_at_step_i).
-        // We need the id at each step, which requires re-deriving ids in
-        // lockstep with the chain.
+        // Step 0: mint-time state (chain = [chain[0]], caveats = []).
+        h.update(&self.chain[0]);
+        h.update(&u32_len(0)); // empty producer for chain[0]
         let mut prev_chain = self.chain[0];
-        let mut prev_id = Self::compute_capability_id_at(self, 0)?;
+        let mut prev_id: [u8; 32] = *h.finalize().as_bytes();
+
+        // Steps 1..n: each caveat extends the chain by one entry.
         for (i, caveat) in self.caveats.iter().enumerate() {
+            // Verify HMAC for chain[i+1] using capability_id from state i.
             let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + prev_id.len());
             msg.extend_from_slice(caveat.name().as_str().as_bytes());
             msg.extend_from_slice(&caveat.canonical_ser());
@@ -266,30 +307,22 @@ impl Macaroon {
             if expected != self.chain[i + 1] {
                 return Err(MacaroonError::ChainMismatch(i));
             }
-            // Step forward: id_{i+1} = BLAKE3(0x05 || canonical_ser_unsigned
-            // of state with chain[0..=i+1] and caveats[0..=i]).
+
+            // Extend the running hasher to state_{i+1}: append chain[i+1]
+            // followed by the caveat that produced it (length-prefixed).
+            let ser = caveat.canonical_ser();
+            h.update(&self.chain[i + 1]);
+            h.update(&u32_len(ser.len()));
+            h.update(&ser);
+            prev_id = *h.finalize().as_bytes();
             prev_chain = self.chain[i + 1];
-            prev_id = Self::compute_capability_id_at(self, i + 1)?;
+        }
+
+        // Final id (state_n) must match the stored id.
+        if prev_id != self.id {
+            return Err(MacaroonError::CapabilityIdMismatch);
         }
         Ok(())
-    }
-
-    /// Re-derive the capability_id at step `step` (0 = mint-time state,
-    /// `n` = state after applying caveats[0..step]). Used by
-    /// `verify_signature` to walk id history in lockstep with chain
-    /// verification.
-    fn compute_capability_id_at(&self, step: usize) -> Result<[u8; 32], MacaroonError> {
-        if step > self.caveats.len() || step + 1 > self.chain.len() {
-            return Err(MacaroonError::ChainMismatch(step));
-        }
-        let partial = Self {
-            root_id: self.root_id,
-            root_secret_hash: self.root_secret_hash,
-            id: [0u8; 32],
-            chain: self.chain[..=step].to_vec(),
-            caveats: self.caveats[..step].to_vec(),
-        };
-        Ok(Self::compute_capability_id(&partial))
     }
 
     /// Final chain entry — the macaroon signature that the verifier checks.
@@ -302,9 +335,9 @@ impl Macaroon {
     /// §3.7), if any. Walks the caveat list and returns the LAST
     /// `WrappedOnly { parent_capability }` so that attenuation re-walks
     /// the full chain rather than skipping intermediate parents.
-    /// A macaroon with two `WrappedOnly` caveats (defect-4 scenario)
-    /// chains parent→child→grandchild: the deepest reference is the
-    /// immediate parent, the outermost is the root.
+    /// A macaroon with two `WrappedOnly` caveats chains
+    /// parent→child→grandchild: the deepest reference is the immediate
+    /// parent, the outermost is the root.
     #[must_use]
     pub fn parent_capability(&self) -> Option<&[u8; 32]> {
         self.caveats.iter().rev().find_map(|c| match c {
@@ -320,7 +353,7 @@ impl Macaroon {
 /// `parent_capability_id` references; implementations back this trait with
 /// that catalog (or any equivalent storage). The chain walker rejects
 /// unknown parents with `WrappedParentNotFound` — a missing parent is an
-/// error, not a chain terminator (defect 5).
+/// error, not a chain terminator.
 pub trait CapabilityCatalog {
     /// Resolve a capability id to its `Macaroon`, or `None` if absent.
     fn get(&self, id: &[u8; 32]) -> Option<&Macaroon>;
@@ -334,10 +367,9 @@ pub trait CapabilityCatalog {
 /// # Errors
 /// Returns `MacaroonError::WrappedCycle` on a repeated `id` in the chain.
 /// Returns `MacaroonError::WrappedDepthExceeded(usize)` when the chain
-/// length is at or above `MAX_WRAPPED_DEPTH`.
+/// length exceeds `MAX_WRAPPED_DEPTH` (16).
 /// Returns `MacaroonError::WrappedParentNotFound { parent_id }` when a
-/// `WrappedOnly` parent is missing from `catalog` (defect 5: an unresolved
-/// parent is malformed, not a terminator).
+/// `WrappedOnly` parent is missing from `catalog`.
 pub fn check_wrapped_chain(
     macaroon: &Macaroon,
     catalog: &dyn CapabilityCatalog,
@@ -347,7 +379,7 @@ pub fn check_wrapped_chain(
     let mut depth: u8 = 1;
     visited.insert(current.id);
     loop {
-        if depth >= MAX_WRAPPED_DEPTH {
+        if depth > MAX_WRAPPED_DEPTH {
             return Err(MacaroonError::WrappedDepthExceeded(usize::from(depth)));
         }
         let Some(parent_id) = current.parent_capability().copied() else {
@@ -368,16 +400,16 @@ pub fn check_wrapped_chain(
 
 /// Single-step depth probe (RFC-0965 §3.7). Plan signature:
 /// `fn check_wrapped_depth(macaroon: &Macaroon, count: u8) -> Result<(), MacaroonError>`.
-/// Rejects when `count >= MAX_WRAPPED_DEPTH` (the canonical threshold).
-/// Local self-reference check only — cross-macaroon cycle detection lives
-/// in `check_wrapped_chain`.
+/// Rejects when `count > MAX_WRAPPED_DEPTH` (the last allowed depth is
+/// `MAX_WRAPPED_DEPTH = 16` per RFC-0965 §3.7). Local self-reference check
+/// only — cross-macaroon cycle detection lives in `check_wrapped_chain`.
 ///
 /// # Errors
-/// Returns `MacaroonError::WrappedDepthExceeded(count)` when `count >=
+/// Returns `MacaroonError::WrappedDepthExceeded(count)` when `count >
 /// MAX_WRAPPED_DEPTH`. Returns `MacaroonError::WrappedCycle` if the macaroon
 /// references its own id via `WrappedOnly`.
 pub fn check_wrapped_depth(macaroon: &Macaroon, count: u8) -> Result<(), MacaroonError> {
-    if count >= MAX_WRAPPED_DEPTH {
+    if count > MAX_WRAPPED_DEPTH {
         return Err(MacaroonError::WrappedDepthExceeded(usize::from(count)));
     }
     if let Some(parent_id) = macaroon.parent_capability() {
@@ -406,8 +438,8 @@ pub enum MacaroonError {
     #[error("WrappedOnly chain cycle detected")]
     WrappedCycle,
 
-    /// `WrappedOnly` chain depth reached the rejection threshold
-    /// (`>= MAX_WRAPPED_DEPTH` per RFC-0965 §3.7). `usize` = observed depth.
+    /// `WrappedOnly` chain depth exceeded the maximum
+    /// (`> MAX_WRAPPED_DEPTH` per RFC-0965 §3.7). `usize` = observed depth.
     #[error("WrappedOnly chain depth {0} exceeds maximum")]
     WrappedDepthExceeded(usize),
 
@@ -418,17 +450,17 @@ pub enum MacaroonError {
     WrappedParentNotFound { parent_id: [u8; 32] },
 
     /// `capability_id` does not match the content-addressed derivation
-    /// `BLAKE3(0x05 || canonical_ser_unsigned(macaroon))` per RFC-0965 §3.7.
+    /// `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))`
+    /// per RFC-0965 §3.7.
     #[error("capability_id does not match content-addressed derivation")]
     CapabilityIdMismatch,
 }
 
-/// Threshold at which the `WrappedOnly` chain is rejected (RFC-0965 §3.7).
-/// `MAX_WRAPPED_DEPTH = 17` is the FIRST depth that is rejected — counts
-/// 1..=16 are allowed, `count >= 17` returns `WrappedDepthExceeded`. The
-/// value matches the RFC's "A 17-deep chain … is malformed" wording and
-/// is the canonical threshold for `check_wrapped_depth`'s `>=` comparison.
-pub const MAX_WRAPPED_DEPTH: u8 = 17;
+/// Maximum depth of a `WrappedOnly` chain (RFC-0965 §3.7 — "Maximum
+/// `WrappedOnly` chain depth = 16"). Depths 1..=16 are allowed; depth 17
+/// returns `WrappedDepthExceeded`. The check is `count > MAX_WRAPPED_DEPTH`
+/// so this constant is the last allowed depth (cleanest reading).
+pub const MAX_WRAPPED_DEPTH: u8 = 16;
 
 /// Test-only in-memory `CapabilityCatalog`. Visible to integration tests and
 /// to other test modules in this crate (e.g. `capability::tests`,
@@ -479,7 +511,7 @@ mod tests {
         // root_secret_hash must match BLAKE3(secret).
         assert_eq!(m.root_secret_hash, *blake3::hash(&secret).as_bytes());
         // capability_id must match the content-addressed derivation.
-        assert_eq!(m.id, Macaroon::compute_capability_id(&m));
+        assert_eq!(m.id, compute_capability_id(&m));
     }
 
     #[test]
@@ -542,15 +574,15 @@ mod tests {
             .unwrap();
         // Tamper: replace caveat with a different one without re-deriving chain.
         m.caveats[0] = Caveat::Before(1_800_000_000);
-        m.id = Macaroon::compute_capability_id(&m); // attacker re-derives id
+        m.id = compute_capability_id(&m); // attacker re-derives id
         let err = m.verify_signature(&secret).unwrap_err();
         assert!(matches!(err, MacaroonError::ChainMismatch(0)));
     }
 
     #[test]
     fn verify_rejects_tampered_capability_id() {
-        // Defect 2: id must be tamper-evident. Attacker swaps id without
-        // touching chain/caveats; verify must reject.
+        // id must be tamper-evident. Attacker swaps id without touching
+        // chain/caveats; verify must reject.
         let secret = [0x42; 32];
         let catalog = empty_catalog();
         let m = Macaroon::mint(&secret).unwrap();
@@ -678,25 +710,29 @@ mod tests {
     }
 
     // ---- Defect 3: check_wrapped_depth signature ----
+    // MAX_WRAPPED_DEPTH = 16 is the LAST allowed depth (per RFC-0965 §3.7).
 
     #[test]
-    fn check_wrapped_depth_accepts_counts_below_max() {
+    fn check_wrapped_depth_accepts_counts_up_to_max() {
         let secret = [0x42; 32];
         let m = Macaroon::mint(&secret).unwrap();
-        // Counts 1..=MAX-1 are accepted.
+        // Counts 0..=MAX_WRAPPED_DEPTH are accepted (max is the last
+        // allowed value).
+        check_wrapped_depth(&m, 0).unwrap();
         check_wrapped_depth(&m, 1).unwrap();
-        check_wrapped_depth(&m, MAX_WRAPPED_DEPTH - 1).unwrap();
+        check_wrapped_depth(&m, MAX_WRAPPED_DEPTH).unwrap();
     }
 
     #[test]
-    fn check_wrapped_depth_rejects_at_max() {
+    fn check_wrapped_depth_rejects_above_max() {
         let secret = [0x42; 32];
         let m = Macaroon::mint(&secret).unwrap();
-        // Count == MAX is the first rejected value (per plan: `>=`).
-        let err = check_wrapped_depth(&m, MAX_WRAPPED_DEPTH).unwrap_err();
+        // Count == MAX + 1 is the first rejected value (per plan: `>`).
+        let past_max = MAX_WRAPPED_DEPTH + 1;
+        let err = check_wrapped_depth(&m, past_max).unwrap_err();
         assert!(matches!(
             err,
-            MacaroonError::WrappedDepthExceeded(n) if n == usize::from(MAX_WRAPPED_DEPTH)
+            MacaroonError::WrappedDepthExceeded(n) if n == usize::from(past_max)
         ));
     }
 
@@ -708,13 +744,9 @@ mod tests {
         // manually for the test.
         let secret = [0x42; 32];
         let mut cyclic = Macaroon::mint(&secret).unwrap();
-        // Inject a WrappedOnly pointing at our own (not-yet-set) id.
         cyclic.caveats.push(Caveat::WrappedOnly {
             parent_capability: cyclic.id,
         });
-        // Now make parent_capability == self.id: this is the local self-ref
-        // the check catches. (Caveat ordering: parent_capability returns
-        // the last WrappedOnly, so push a dummy after to ensure ordering.)
         let err = check_wrapped_depth(&cyclic, 1).unwrap_err();
         // self-ref triggers WrappedCycle (parent == self.id).
         assert!(matches!(err, MacaroonError::WrappedCycle));
@@ -729,17 +761,7 @@ mod tests {
     /// `check_wrapped_depth`. **Production callers must use `attenuate`.**
     impl Macaroon {
         pub(crate) fn attenuate_unchecked_for_test(self, caveat: Caveat) -> Self {
-            let mut next = self;
-            let prev_chain = *next.chain.last().expect("chain non-empty");
-            let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + next.id.len());
-            msg.extend_from_slice(caveat.name().as_str().as_bytes());
-            msg.extend_from_slice(&caveat.canonical_ser());
-            msg.extend_from_slice(&next.id);
-            let new_chain = hmac_blake3(&prev_chain, &msg);
-            next.caveats.push(caveat);
-            next.chain.push(new_chain);
-            next.id = Self::compute_capability_id(&next);
-            next
+            self.extend_chain(caveat)
         }
     }
 
@@ -767,22 +789,14 @@ mod tests {
     }
 
     #[test]
-    fn attenuate_enforces_depth_in_chain() {
-        // Chain at the boundary (depth = MAX_WRAPPED_DEPTH) + further
-        // attenuation must fail.
+    fn attenuate_allows_depth_below_threshold() {
+        // Chain at the max allowed depth (MAX_WRAPPED_DEPTH = 16). Attenuating
+        // with a non-WrappedOnly caveat should pass — the post-check is
+        // skipped for non-WrappedOnly caveats (I5), and the pre-check sees
+        // depth == MAX which is allowed (`>` not `>=`).
         let secret = [0x42; 32];
         let mut catalog = InMemoryCatalog::default();
-        // MAX_WRAPPED_DEPTH = 17 is the rejection threshold; build a chain
-        // of length MAX - 1 = 16 (allowed) and try to attenuate one more
-        // time, which should still be allowed (count starts at 1, depth
-        // grows each step). Actually MAX_WRAPPED_DEPTH is the threshold
-        // count, so a chain of MAX-1 macaroons has walked depth =
-        // MAX-1 = 16, and the next attenuation would not add another
-        // WrappedOnly — it would still be allowed. The depth check
-        // applies when adding WrappedOnly caveats.
-        let leaf = build_chain(&secret, MAX_WRAPPED_DEPTH as usize - 1, &mut catalog);
-        // Pre-append is OK (depth = MAX-1 < MAX). Post-append with no new
-        // WrappedOnly does not extend the chain — should pass.
+        let leaf = build_chain(&secret, MAX_WRAPPED_DEPTH as usize, &mut catalog);
         let _next = leaf
             .attenuate(Caveat::Before(1_700_000_000), &catalog)
             .unwrap();
@@ -790,13 +804,11 @@ mod tests {
 
     #[test]
     fn attenuate_rejects_chain_exceeding_depth() {
-        // Build a chain of length MAX_WRAPPED_DEPTH (the threshold). Adding
-        // a non-WrappedOnly caveat doesn't change chain depth (the chain is
-        // only walked via parent_capability, which is determined by the
-        // already-present WrappedOnly). The pre-append check rejects.
+        // Chain of length MAX_WRAPPED_DEPTH + 1 — first disallowed depth.
+        // The pre-append check rejects because depth > MAX.
         let secret = [0x42; 32];
         let mut catalog = InMemoryCatalog::default();
-        let leaf = build_chain(&secret, MAX_WRAPPED_DEPTH as usize, &mut catalog);
+        let leaf = build_chain(&secret, MAX_WRAPPED_DEPTH as usize + 1, &mut catalog);
         let err = leaf
             .attenuate(Caveat::Before(1_700_000_000), &catalog)
             .unwrap_err();
@@ -887,8 +899,8 @@ mod tests {
         // Same secret → different nonces → different chain[0] → different ids.
         assert_ne!(m1.id, m2.id);
         // Each id matches its own content-addressed derivation.
-        assert_eq!(m1.id, Macaroon::compute_capability_id(&m1));
-        assert_eq!(m2.id, Macaroon::compute_capability_id(&m2));
+        assert_eq!(m1.id, compute_capability_id(&m1));
+        assert_eq!(m2.id, compute_capability_id(&m2));
     }
 
     #[test]
@@ -901,7 +913,7 @@ mod tests {
             .attenuate(Caveat::Before(1_700_000_000), &catalog)
             .unwrap();
         assert_ne!(m.id, id_before, "id must change on attenuation");
-        assert_eq!(m.id, Macaroon::compute_capability_id(&m));
+        assert_eq!(m.id, compute_capability_id(&m));
     }
 
     #[test]
@@ -940,6 +952,32 @@ mod tests {
         // Sanity: untouched macaroon still verifies.
         m_for_sanity.verify_signature(&secret).unwrap();
         // Original id sanity.
-        assert_eq!(original_id, Macaroon::compute_capability_id(&m));
+        assert_eq!(original_id, compute_capability_id(&m));
+    }
+
+    // ---- C1: verify_signature is O(n) BLAKE3 ops ----
+    //
+    // We can't directly assert O(n) at runtime, but we can verify the
+    // contract: verify accepts a long chain and produces no false
+    // positives/negatives. The hash-streaming correctness is implicit
+    // in the other verify tests (which all pass), plus the following
+    // size-scaling sanity check.
+
+    #[test]
+    fn verify_signature_long_chain() {
+        // 16 caveats — verifies the streaming hasher still produces the
+        // correct final id for a non-trivial chain length.
+        let secret = [0x42; 32];
+        let catalog = empty_catalog();
+        let m = Macaroon::mint(&secret).unwrap();
+        let mut current = m;
+        for i in 0..16u64 {
+            current = current
+                .attenuate(Caveat::Before(1_700_000_000 + i), &catalog)
+                .unwrap();
+        }
+        current
+            .verify_signature(&secret)
+            .expect("16-caveat chain verifies");
     }
 }

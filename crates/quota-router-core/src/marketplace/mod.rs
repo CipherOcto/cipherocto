@@ -11,6 +11,7 @@
 
 pub mod escrow;
 pub mod orderbook;
+pub mod scoring;
 pub mod slashing;
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,11 @@ pub struct MarketplaceEntry {
     pub asker_did: String,
     pub model: String,
     pub cost_per_1k: u128,
+    /// Observed latency (EWMA in ms) when reputation observations
+    /// exist. `None` for unknown providers (no recorded outcomes) or
+    /// when the latency-aware ranking was not requested.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_ms: Option<u64>,
 }
 
 // ============================================================================
@@ -71,6 +77,8 @@ impl InMemoryMarketplace {
 use quota_router_storage::ask::{settlement_cost, Ask, PricingAxis};
 use quota_router_storage::ask_repo::{AskRepository, RepoError};
 
+pub use scoring::{LatencyRanking, ProviderScore};
+
 /// Marketplace backed by cipherocto-side `AskRepository` (Phase C).
 ///
 /// `cheapest()` reads through an in-memory `OrderBook<AskSpec>` that is
@@ -84,10 +92,24 @@ use quota_router_storage::ask_repo::{AskRepository, RepoError};
 /// → `MarketplaceEntry` (wire shape). Cost computation uses the order's
 /// `price` (= cost_per_1k) directly; the full `Ask` cost path is still
 /// available via the storage layer.
+///
+/// Gap 7 extensions:
+///
+/// - `reputation` — provider-scoring registry with circuit-breaker
+///   (RFC-0900 §Reputation System). When the registry's
+///   `min_reputation` is positive, providers whose `success_rate` falls
+///   below the threshold are skipped by `cheapest()`. When
+///   `min_reputation <= 0.0` (the default), the registry is a passive
+///   observer and `cheapest()` preserves pre-Gap-7 behavior.
+/// - `cheapest_with_ranking(model, ranking)` — latency-aware ranking
+///   (RFC-0900 §Market Operations). Scans all matching asks and returns
+///   the best by a min-max-normalized weighted blend of price and
+///   observed latency.
 pub struct Marketplace {
     repo: AskRepository,
     axes: Vec<PricingAxis>,
     book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
+    reputation: scoring::ProviderReputationRegistry,
 }
 
 /// Order payload carried by `Marketplace`'s internal order book.
@@ -111,6 +133,7 @@ impl Marketplace {
             repo: AskRepository::open_in_memory()?,
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            reputation: scoring::ProviderReputationRegistry::new(),
         })
     }
 
@@ -122,6 +145,7 @@ impl Marketplace {
             repo: AskRepository::open_path(path)?,
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            reputation: scoring::ProviderReputationRegistry::new(),
         })
     }
 
@@ -132,6 +156,7 @@ impl Marketplace {
             repo,
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            reputation: scoring::ProviderReputationRegistry::new(),
         }
     }
 
@@ -140,6 +165,47 @@ impl Marketplace {
     pub fn with_axes(mut self, axes: Vec<PricingAxis>) -> Self {
         self.axes = axes;
         self
+    }
+
+    // ========================================================================
+    // Gap 7.1 — Reputation registry (RFC-0900 §Reputation System)
+    // ========================================================================
+
+    /// Set the circuit-breaker threshold (`success_rate` below which a
+    /// provider is excluded from `cheapest()`).
+    ///
+    /// `0.0` (or any negative value) disables the breaker — every
+    /// provider remains eligible. Positive values activate the breaker.
+    pub fn set_min_reputation(&self, min: f64) {
+        self.reputation.set_min_reputation(min);
+    }
+
+    /// Current circuit-breaker threshold.
+    #[must_use]
+    pub fn min_reputation(&self) -> f64 {
+        self.reputation.min_reputation()
+    }
+
+    /// Override a provider's reputation (operator / test fixture).
+    pub fn set_provider_score(&self, score: ProviderScore) {
+        self.reputation.set_score(score);
+    }
+
+    /// Read a provider's recorded reputation. `None` for unknown
+    /// providers (no observations recorded yet).
+    #[must_use]
+    pub fn provider_score(&self, asker_did: &str) -> Option<ProviderScore> {
+        self.reputation.score(asker_did)
+    }
+
+    /// Record a transaction outcome. Updates the EWMA-tracked success
+    /// rate + latency for the provider.
+    ///
+    /// Typical call sites: the inference task market settlement path
+    /// (after a successful or failed prompt completion), and the mesh
+    /// `node::scorer` when it observes an HTTP completion.
+    pub fn record_outcome(&self, asker_did: &str, success: bool, latency_ms: u64) {
+        self.reputation.record(asker_did, success, latency_ms);
     }
 
     /// Insert (or replace) an Ask in the underlying repository AND
@@ -174,22 +240,42 @@ impl Marketplace {
     /// Find the cheapest Ask matching `model` via the in-memory order
     /// book. Returns `None` if no matching ask is active.
     ///
-    /// The orderbook is queried via `OrderBook::best_ask_matching`,
-    /// which gives price-time priority across all indexed asks. The
-    /// previous `Result<Option<...>, RepoError>` signature was dropped:
-    /// the order book is in-memory, so there is no I/O failure mode.
+    /// The orderbook is queried in price-time priority. The previous
+    /// `Result<Option<...>, RepoError>` signature was dropped: the
+    /// order book is in-memory, so there is no I/O failure mode.
     /// Callers needing repository-side errors should still use
     /// `list_by_asker`.
+    ///
+    /// Circuit-breaker (Gap 7.1): if `min_reputation > 0.0`, asks from
+    /// providers whose `success_rate` is below the threshold are
+    /// skipped. With `min_reputation <= 0.0` (the default), this is a
+    /// pure price-time priority lookup as before. The skip walks the
+    /// candidate set so a single excluded provider cannot return `None`
+    /// when a non-excluded provider is still in the book.
     #[must_use]
     pub fn cheapest(&self, model: &str) -> Option<MarketplaceEntry> {
         let book = self.book.lock();
-        let order = book.best_ask_matching(|spec| spec.model == model)?;
-        Some(MarketplaceEntry {
+        // `asks_matching` yields in price-time order; the first
+        // non-excluded ask is the cheapest eligible one.
+        let order = book
+            .asks_matching(|spec| spec.model == model)
+            .into_iter()
+            .find(|o| !self.reputation.is_excluded(&o.spec.asker_did))?;
+        Some(self.entry_from_order(order))
+    }
+
+    fn entry_from_order(&self, order: &orderbook::Order<AskSpec>) -> MarketplaceEntry {
+        let latency_ms = self
+            .reputation
+            .score(&order.spec.asker_did)
+            .map(|s| s.latency_ms);
+        MarketplaceEntry {
             ask_id: order.spec.ask_id,
             asker_did: order.spec.asker_did.clone(),
             model: order.spec.model.clone(),
             cost_per_1k: order.price,
-        })
+            latency_ms,
+        }
     }
 
     /// List Asks published by a single asker (delegates to AskRepository).
@@ -292,18 +378,21 @@ mod tests {
             asker_did: "a".into(),
             model: "gpt-4".into(),
             cost_per_1k: 30_000,
+            latency_ms: None,
         });
         m.insert(MarketplaceEntry {
             ask_id: [2; 32],
             asker_did: "b".into(),
             model: "gpt-4".into(),
             cost_per_1k: 25_000,
+            latency_ms: None,
         });
         m.insert(MarketplaceEntry {
             ask_id: [3; 32],
             asker_did: "c".into(),
             model: "other".into(),
             cost_per_1k: 1,
+            latency_ms: None,
         });
         let cheapest = m.cheapest("gpt-4").unwrap();
         assert_eq!(cheapest.ask_id, [2; 32]);
@@ -482,5 +571,146 @@ mod tests {
         .unwrap();
         // Different model has no matching ask.
         assert!(m.cheapest("anthropic/claude").is_none());
+    }
+
+    // ========================================================================
+    // Gap 7.1 — Provider scoring circuit-breaker (RFC-0900)
+    // ========================================================================
+
+    use crate::marketplace::scoring::ProviderScore;
+
+    fn score(asker: &str, success_rate: f64, latency_ms: u64, samples: u64) -> ProviderScore {
+        ProviderScore {
+            asker_did: asker.to_owned(),
+            success_rate,
+            latency_ms,
+            samples,
+        }
+    }
+
+    #[test]
+    fn cheapest_excludes_provider_below_reputation_threshold() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:good",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            "did:octo:bad",
+            "openai/gpt-4",
+            10_000, // cheaper but excluded
+            now + 1000,
+        ))
+        .unwrap();
+
+        // Configure circuit-breaker at 0.5 success_rate.
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score("did:octo:bad", 0.3, 0, 10));
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did, "did:octo:good",
+            "provider below reputation threshold must be excluded"
+        );
+        assert_eq!(cheapest.cost_per_1k, 30_000);
+    }
+
+    #[test]
+    fn cheapest_includes_provider_at_or_above_threshold() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:borderline",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            "did:octo:good",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score("did:octo:borderline", 0.5, 0, 10)); // exactly threshold
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(cheapest.asker_did, "did:octo:borderline");
+    }
+
+    #[test]
+    fn cheapest_no_filter_when_threshold_zero() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:bad",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            "did:octo:good",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // No min_reputation set; default is 0.0 → no filtering.
+        m.set_provider_score(score("did:octo:bad", 0.0, 0, 10));
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did, "did:octo:bad",
+            "with threshold=0.0, no providers are excluded"
+        );
+    }
+
+    #[test]
+    fn cheapest_unknown_provider_not_excluded() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            "did:octo:unknown",
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+
+        m.set_min_reputation(0.5);
+        // No score registered for `did:octo:unknown` → treat as max reputation.
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(cheapest.asker_did, "did:octo:unknown");
+    }
+
+    #[test]
+    fn record_outcome_updates_ewma_success_rate() {
+        let m = Marketplace::open_in_memory().unwrap();
+        m.record_outcome("did:octo:p", true, 100);
+        m.record_outcome("did:octo:p", true, 100);
+        let s = m
+            .provider_score("did:octo:p")
+            .expect("score registered after two observations");
+        assert!(s.success_rate > 0.9, "success_rate={}", s.success_rate);
+        assert_eq!(s.latency_ms, 100);
+        assert_eq!(s.samples, 2);
+
+        m.record_outcome("did:octo:p", false, 100);
+        let s = m.provider_score("did:octo:p").unwrap();
+        assert!(
+            s.success_rate < 0.9 && s.success_rate > 0.0,
+            "EWMA should decay: success_rate={}",
+            s.success_rate
+        );
+        assert_eq!(s.samples, 3);
     }
 }

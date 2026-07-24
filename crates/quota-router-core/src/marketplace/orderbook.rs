@@ -165,6 +165,16 @@ impl<Spec: Clone> OrderBook<Spec> {
         self.asks.values().find(|o| spec_pred(&o.spec))
     }
 
+    /// All asks whose `spec` satisfies `spec_pred`, in price-time order
+    /// (lowest price first, FIFO at the same price).
+    ///
+    /// Used by `Marketplace::cheapest_with_ranking` for latency-aware
+    /// scanning (Gap 7.2).
+    #[must_use]
+    pub fn asks_matching<P: Fn(&Spec) -> bool>(&self, spec_pred: P) -> Vec<&Order<Spec>> {
+        self.asks.values().filter(|o| spec_pred(&o.spec)).collect()
+    }
+
     /// Total number of resting bids.
     #[must_use]
     pub fn bid_count(&self) -> usize {

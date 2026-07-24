@@ -196,4 +196,21 @@ impl CapabilityToken {
         let surface = capability_to_surface(self);
         PolicyObject::mint_surface(surface, [0u8; 32], 0)
     }
+
+    /// Full redemption: verify holder signature + subgraph check (RFC-0967 §5).
+    ///
+    /// This is the canonical entry point for envelope-side verification.
+    /// It runs:
+    /// 1. `verify_holder_sig` — Ed25519 over `canonical_ser(root_id || caveats)`.
+    /// 2. `redeem_capability` — subgraph check against the policy catalog.
+    ///
+    /// # Errors
+    /// - `RedemptionError::HolderSig(msg)` if the holder signature fails.
+    /// - `RedemptionError::PolicyNotSuperseded / MissingPolicyReference /
+    ///   PolicyNotFound` from the subgraph check (see [`redeem_capability`]).
+    pub fn redeem(&self, catalog: &dyn PolicyCatalog) -> Result<(), RedemptionError> {
+        self.verify_holder_sig()
+            .map_err(|e| RedemptionError::HolderSig(e.to_string()))?;
+        redeem_capability(self, catalog)
+    }
 }

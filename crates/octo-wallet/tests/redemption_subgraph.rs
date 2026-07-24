@@ -213,3 +213,56 @@ fn redeem_accepts_model_in_policy() {
 
     redeem_capability(&cap, &catalog).expect("model in policy should redeem");
 }
+
+// -----------------------------------------------------------------------------
+// Task 1.3 — end-to-end via CapabilityToken::redeem (holder sig + subgraph).
+// -----------------------------------------------------------------------------
+
+#[test]
+fn capability_redeem_runs_holder_sig_then_subgraph_check() {
+    let org_policy = policy_with_max_total(100_000);
+    let org_id = org_policy.policy_id;
+
+    // Build a capability whose AmountMax exceeds the policy.
+    let cap = build_capability(vec![
+        Caveat::PolicyReference {
+            policy_id: org_id,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        },
+        Caveat::AmountMax(1_000_000),
+    ]);
+
+    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    catalog.insert(org_policy);
+
+    let err = cap.redeem(&catalog).unwrap_err();
+    assert_eq!(
+        err,
+        RedemptionError::PolicyNotSuperseded {
+            cap_id: cap.macaroon.id,
+            policy_id: org_id,
+        }
+    );
+}
+
+#[test]
+fn capability_redeem_accepts_in_policy_capability() {
+    let org_policy = policy_with_max_total(1_000_000);
+    let org_id = org_policy.policy_id;
+
+    let cap = build_capability(vec![
+        Caveat::PolicyReference {
+            policy_id: org_id,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        },
+        Caveat::AmountMax(500_000),
+    ]);
+
+    let mut catalog = octo_wallet::capability::redemption::InMemoryPolicyCatalog::default();
+    catalog.insert(org_policy);
+
+    cap.redeem(&catalog)
+        .expect("in-policy capability should redeem");
+}

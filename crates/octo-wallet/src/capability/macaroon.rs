@@ -585,4 +585,65 @@ mod tests {
         m.attenuate_checked(Caveat::Before(1_700_000_000), &catalog)
             .unwrap();
     }
+
+    // -- Task 4.3: cycle detection across catalog (A→B→A) --
+
+    fn build_cyclic_pair(secret: &[u8; 32]) -> (Macaroon, Macaroon, InMemoryCatalog) {
+        // Construct A and B with reciprocal WrappedOnly references. We use
+        // the raw `attenuate` (no check) to build the cycle for the test;
+        // production callers MUST go through `attenuate_checked`.
+        let a = Macaroon::mint(secret).unwrap();
+        let b = Macaroon::mint(secret).unwrap();
+        let a_prime = a.clone().attenuate(Caveat::WrappedOnly {
+            parent_capability: b.id,
+        });
+        let b_prime = b.clone().attenuate(Caveat::WrappedOnly {
+            parent_capability: a.id,
+        });
+        let mut catalog = InMemoryCatalog::default();
+        catalog.by_id.insert(a_prime.id, a_prime.clone());
+        catalog.by_id.insert(b_prime.id, b_prime.clone());
+        (a_prime, b_prime, catalog)
+    }
+
+    #[test]
+    fn check_wrapped_chain_detects_a_to_b_to_a_cycle() {
+        let secret = [0x42; 32];
+        let (a, _b, catalog) = build_cyclic_pair(&secret);
+        let err = check_wrapped_chain(&a, &catalog).unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedCycle));
+    }
+
+    #[test]
+    fn check_wrapped_chain_detects_b_to_a_to_b_cycle() {
+        let secret = [0x42; 32];
+        let (_a, b, catalog) = build_cyclic_pair(&secret);
+        let err = check_wrapped_chain(&b, &catalog).unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedCycle));
+    }
+
+    #[test]
+    fn check_wrapped_chain_detects_self_reference() {
+        // A single macaroon with WrappedOnly(self.id) is a trivial cycle.
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        let cyclic = m.clone().attenuate(Caveat::WrappedOnly {
+            parent_capability: m.id,
+        });
+        let mut catalog = InMemoryCatalog::default();
+        catalog.by_id.insert(cyclic.id, cyclic.clone());
+        let err = check_wrapped_chain(&cyclic, &catalog).unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedCycle));
+    }
+
+    #[test]
+    fn attenuate_checked_rejects_appending_to_cyclic_chain() {
+        // Cannot extend a cyclic chain — even with a non-WrappedOnly caveat.
+        let secret = [0x42; 32];
+        let (a, _b, catalog) = build_cyclic_pair(&secret);
+        let err = a
+            .attenuate_checked(Caveat::Before(1_700_000_000), &catalog)
+            .unwrap_err();
+        assert!(matches!(err, MacaroonError::WrappedCycle));
+    }
 }

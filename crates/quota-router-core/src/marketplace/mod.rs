@@ -9,6 +9,7 @@
 //! - `escrow`    — escrow state machine (Gap 5.2).
 //! - `slashing`  — provider slashing model (Gap 5.3).
 
+pub mod escrow;
 pub mod orderbook;
 
 use serde::{Deserialize, Serialize};

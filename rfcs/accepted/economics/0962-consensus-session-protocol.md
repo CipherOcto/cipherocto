@@ -16,6 +16,7 @@ Accepted v2.0
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+): renamed to `ExecutionEnvelope`. WAL-as-primary inversion. `mode = DETERMINISTIC`. `version_tag = 2`. Outer namespace tag `0x04` retained for `ExecutionEnvelope` (was `ConsensusSession`); cross-RFC namespace-tag table extended in RFC-0964 §0 to include `0x07 = PolicyObject` (RFC-0967). |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0963, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 | v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers (max session size caps, WAL two-phase hash binding, MultiEnvelope audit window + offline recovery semantics, `RequireProof` constraint integration). §6.4 added for WAL hash two-phase binding. Additive (non-breaking) bump. |
+| v2.1-R8-F5 | 2026-07-24 | @cipherocto + @mmacedoeu | **MultiEnvelope recursive nesting (R8-F5).** §7.1 added to define the `nested: Option<Box<MultiEnvelope>>` field on `MultiEnvelope` and the `check_nesting_depth` recursion contract (`MAX_NESTING_DEPTH = 4`, accepting depths `0..=3`). Additive (non-breaking): `#[serde(default)]` on the new field keeps v2.0 wire payloads deserializable with `nested = None`. |
 
 ## Authors
 
@@ -304,6 +305,48 @@ All-or-nothing semantics require every sub-envelope to reach `Replayed` within `
 **Reversibility requirement (R8-F3):** Sub-sessions must be designed to be safely reversible at any sub-step. The capability holder's runtime is responsible for ensuring writes are idempotent or wrapped in a transaction that can be rolled back at any intermediate state. The MultiEnvelope coordinator MAY issue an explicit "abort sub-envelope" signal that triggers a `TransferCorrected` event (per RFC-0960 §2.5) for any committed writes. Sub-sessions that do not support reversibility are rejected at MultiEnvelope construction time with `E_SUB_SESSION_NOT_REVERSIBLE`.
 
 This is the database analog of `MultiSettlement` (RFC-0960 §7) but for SQL mutations, not value transfers.
+
+### 7.1. MultiEnvelope recursive nesting (R8-F5)
+
+A `MultiEnvelope` MAY carry an optional recursive child `MultiEnvelope`. The nesting chain is bounded by `MAX_NESTING_DEPTH = 4` to prevent unbounded recursion and the associated verification + storage cost.
+
+**Field shape:**
+
+```text
+MultiEnvelope {
+    multi_envelope_id:    MultiEnvelopeID,        // BLAKE3(sorted(sub_envelope_ids))
+    sub_envelopes:        Vec<ExecutionEnvelope>, // one per shard (leaves)
+    completion:           CompletionRule,         // AllRequired | Quorum(n) | AnyOne
+    timeout_unix_ms:      u64,                    // hard deadline
+    fallback_action:      FallbackAction,         // RollbackAll | CommitPartial | Abort
+    nested:               Option<Box<MultiEnvelope>>, // optional recursive child (R8-F5)
+}
+```
+
+`nested` is optional and `None` by default. Builders (`build_multi_envelope`, `build_multi_envelope_with`) construct with `nested = None`; callers attach a child explicitly when the use case calls for chaining across sub-shards of sub-shards.
+
+**Recursive depth check (`check_nesting_depth`):**
+
+The function `check_nesting_depth(multi, current_depth) -> Result<(), EnvelopeError>` walks the `nested` chain and rejects the envelope when the depth reaches `MAX_NESTING_DEPTH`. The semantics are:
+
+- `current_depth` is the depth of the caller-supplied `multi` itself. The top-level envelope is called with `current_depth = 0`.
+- The recursion walks `multi.nested` only. `sub_envelopes` are `ExecutionEnvelope` leaves and are NOT recursed into; leaves are out of scope for the depth check.
+- The depth boundary is `MAX_NESTING_DEPTH = 4`. Accepted depths are `0..=3` (4 nested edges total before the 5th is rejected). The condition `current_depth >= MAX_NESTING_DEPTH` triggers `Err(NestingDepthExceeded(current_depth))`.
+- Recursion is depth-first. On `Err`, the call chain unwinds without further descent.
+
+**Error payload:**
+
+```text
+EnvelopeError::NestingDepthExceeded(current_depth: u8)
+```
+
+The `current_depth` field carries the depth at which the cap was reached, allowing the caller to log / surface the precise boundary violation (e.g., `current_depth = 4` indicates the rejection happened on the 5th nested edge).
+
+**Wire format back-compat:**
+
+`nested` carries `#[serde(default)]` on the impl, so v2.0 envelopes serialized before the field was introduced deserialize cleanly with `nested = None`. The change is additive and non-breaking.
+
+**Why bounded:** Unbounded recursion in the `nested` chain would let an attacker construct a chain whose verification cost dominates validator throughput but whose `sub_envelopes` count is small (well under the 1000-stmt cap), bypassing the caps in §4. The fixed cap of 4 keeps worst-case verification work bounded to O(4 × per-envelope cost).
 
 ### 8. Signature aggregation
 

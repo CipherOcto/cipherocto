@@ -16,7 +16,7 @@ pub mod escrow;
 pub mod orders;
 pub mod slashing;
 
-pub use dispute::{Dispute, DisputeError, DisputeReason, Evidence};
+pub use dispute::{Dispute, DisputeError, DisputeReason, DisputeRegistry, Evidence};
 pub use escrow::{TaskEscrow, TaskEscrowError};
 pub use orders::{TaskMarket, TaskSpec, TaskType};
 pub use slashing::{TaskMarketSlashing, TaskSlashError};

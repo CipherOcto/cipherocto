@@ -11,7 +11,9 @@
 // Task 6.1 — TaskType enum + TaskSpec constructors
 // ---------------------------------------------------------------------------
 
-use quota_router_core::task_market::{TaskMarket, TaskSpec, TaskType};
+use quota_router_core::task_market::{
+    Dispute, DisputeReason, Evidence, TaskEscrow, TaskMarket, TaskSpec, TaskType,
+};
 
 #[test]
 fn task_type_inference_constructor_is_distinct() {
@@ -178,4 +180,205 @@ fn task_market_match_top_returns_none_when_no_cross() {
     assert!(m.match_top().is_none());
     assert_eq!(m.bid_count(), 1);
     assert_eq!(m.ask_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Task 6.3 — escrow + dispute resolution (RFC-0918 §Escrow Flow).
+// ---------------------------------------------------------------------------
+
+use quota_router_core::marketplace::escrow::EscrowState;
+
+#[test]
+fn task_escrow_new_starts_pending() {
+    let e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    assert_eq!(e.state(), EscrowState::Pending);
+    assert_eq!(e.task_id, [0x11; 32]);
+    assert_eq!(e.request_id, [0x22; 32]);
+    assert!(!e.is_terminal());
+}
+
+#[test]
+fn task_escrow_happy_path_lock_then_settle() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    e.lock().expect("lock");
+    assert_eq!(e.state(), EscrowState::Locked);
+    e.settle().expect("settle");
+    assert_eq!(e.state(), EscrowState::Settled);
+    assert!(e.is_terminal());
+}
+
+#[test]
+fn task_escrow_dispute_valid_slashes_seller() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    e.lock().expect("lock");
+    let dispute = Dispute::new(
+        [0xaa; 32],
+        "did:octo:buyer",
+        DisputeReason::ResultMismatch,
+        Some(Evidence {
+            hash: [0x99; 32],
+            description: "result did not match commitment".into(),
+        }),
+    );
+    assert_eq!(dispute.escrow_id, [0xaa; 32]);
+    assert_eq!(dispute.raised_by, "did:octo:buyer");
+    assert_eq!(dispute.reason, DisputeReason::ResultMismatch);
+    assert_eq!(dispute.evidence.expect("evidence").hash, [0x99; 32]);
+
+    e.dispute().expect("dispute");
+    assert_eq!(e.state(), EscrowState::Disputed);
+    e.resolve_valid().expect("resolve valid");
+    assert_eq!(e.state(), EscrowState::Slashed);
+    assert!(e.is_terminal());
+}
+
+#[test]
+fn task_escrow_dispute_invalid_confirms_payment() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    e.lock().expect("lock");
+    e.dispute().expect("dispute");
+    e.resolve_invalid().expect("resolve invalid");
+    assert_eq!(e.state(), EscrowState::Settled);
+    assert!(e.is_terminal());
+}
+
+#[test]
+fn task_escrow_rejects_lock_from_non_pending() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    e.lock().expect("lock");
+    assert!(e.lock().is_err());
+}
+
+#[test]
+fn task_escrow_rejects_settle_from_pending() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    assert!(e.settle().is_err());
+}
+
+#[test]
+fn task_escrow_rejects_dispute_from_pending() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    assert!(e.dispute().is_err());
+}
+
+#[test]
+fn task_escrow_rejects_resolve_from_non_disputed() {
+    let mut e = TaskEscrow::new(
+        [0xaa; 32],
+        [0x11; 32],
+        [0x22; 32],
+        "did:octo:buyer",
+        "did:octo:seller",
+        100_000,
+    );
+    e.lock().expect("lock");
+    assert!(e.resolve_valid().is_err());
+    assert!(e.resolve_invalid().is_err());
+}
+
+#[test]
+fn dispute_without_evidence_allowed() {
+    let d = Dispute::new(
+        [0x01; 32],
+        "did:octo:buyer",
+        DisputeReason::ProviderTimeout,
+        None,
+    );
+    assert!(d.evidence.is_none());
+    assert_eq!(d.reason, DisputeReason::ProviderTimeout);
+}
+
+#[test]
+fn task_market_match_then_full_escrow_happy_path() {
+    let m = TaskMarket::new();
+    let spec = TaskSpec::new(TaskType::Inference, "gpt-4", 100, 0, 1);
+    m.place_buy(spec.clone(), 100, 1, "buyer", 1);
+    m.place_sell(spec, 90, 1, "seller", 2);
+
+    let matched = m.match_top().expect("match");
+    assert_eq!(matched.price, 90);
+
+    let mut escrow = TaskEscrow::new(
+        [0x42; 32],
+        [0x11; 32],
+        [0x22; 32],
+        matched.bid.owner.clone(),
+        matched.ask.owner.clone(),
+        matched.price * matched.qty as u128,
+    );
+    escrow.lock().expect("lock");
+    escrow.settle().expect("settle");
+    assert_eq!(escrow.state(), EscrowState::Settled);
+    assert_eq!(escrow.base.amount_micro_octo_w, 90);
+}
+
+#[test]
+fn task_market_match_then_dispute_path() {
+    let m = TaskMarket::new();
+    let spec = TaskSpec::new(TaskType::Inference, "gpt-4", 200, 0, 1);
+    m.place_buy(spec.clone(), 200, 1, "buyer", 1);
+    m.place_sell(spec, 150, 1, "seller", 2);
+
+    let matched = m.match_top().expect("match");
+    let mut escrow = TaskEscrow::new(
+        [0x42; 32],
+        [0x11; 32],
+        [0x22; 32],
+        matched.bid.owner.clone(),
+        matched.ask.owner.clone(),
+        matched.price * matched.qty as u128,
+    );
+    escrow.lock().expect("lock");
+    escrow.dispute().expect("dispute");
+    escrow.resolve_valid().expect("resolve valid");
+    assert_eq!(escrow.state(), EscrowState::Slashed);
 }

@@ -11,6 +11,12 @@
 //!   `HybridCannotEmitPoI` and `MissingInferenceTrace` errors
 //! - M17: `proof_bundle: Some(_)` iff capability_class == ZKBearing; mint
 //!   API enforces via `ClassMismatch` if V1 token gets Some(_)
+//!
+//! Per RFC-0962 §6 (Gap 3 / Task 3.3): when the caller supplies a non-empty
+//! `signers` list, `mint_with_zk` also generates a batch signature proof via
+//! `zk_circuit::prove_batch_signature`. The proof is embedded into the
+//! returned `ProofBundle.stark_proof` so downstream verifiers see a single
+//! proof that covers the full multi-signer envelope.
 
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
@@ -20,7 +26,7 @@ use crate::node::NodeType;
 use super::caveat::Caveat;
 use super::macaroon::MacaroonId;
 use super::wire::WireError;
-use zk_circuit::{compile, CairoProgram};
+use zk_circuit::{compile, prove_batch_signature, BatchSigPublicInputs, CairoProgram, Program};
 
 use std::sync::OnceLock;
 
@@ -110,6 +116,12 @@ pub enum ZkMintError {
     /// **v1.4:** provider_slot_id is empty; cannot mint without slot binding.
     #[error("provider_slot_id is empty (RFC-0958 v1.4 IA-11: slot binding required)")]
     EmptySlotId,
+
+    /// **RFC-0962 §6 (Gap 3 / Task 3.3):** the batch signature prover
+    /// rejected the inputs (empty signers, exceeds max, FFI null handle,
+    /// internal prover error).
+    #[error("batch signature prover error: {0}")]
+    BatchProver(String),
 }
 
 /// Compiled CASM BLAKE3 hash for the bundled capability ZK circuit
@@ -175,6 +187,32 @@ pub fn mint_with_zk(
     public_inputs: &PublicInputs,
     casm_hash: [u8; 32],
 ) -> Result<ProofBundle, ZkMintError> {
+    // Backward-compatible shim: delegates to the signers-aware variant
+    // with an empty signer list (single-capability STARK proof / MVP
+    // stub path).
+    mint_with_zk_and_signers(node_type, witness, public_inputs, casm_hash, &[])
+}
+
+/// Mint a ZK-bearing capability proof bundle with explicit batch signature
+/// (RFC-0962 §6 / Gap 3 / Task 3.3).
+///
+/// When `signers` is non-empty, the function generates a
+/// `BatchSigPublicInputs` from the capability public inputs + the supplied
+/// signer public keys, calls `zk_circuit::prove_batch_signature`, and
+/// embeds the resulting proof bytes into `ProofBundle.stark_proof`. When
+/// `signers` is empty, falls back to the single-capability MVP stub
+/// (empty `stark_proof`).
+///
+/// # Errors
+/// Returns `ZkMintError::BatchProver` if the prover rejects the inputs;
+/// returns the same errors as `mint_with_zk` for gating / preconditions.
+pub fn mint_with_zk_and_signers(
+    node_type: NodeType,
+    witness: &PrivateWitness,
+    public_inputs: &PublicInputs,
+    casm_hash: [u8; 32],
+    signers: &[[u8; 32]],
+) -> Result<ProofBundle, ZkMintError> {
     // 1. NodeType gating (RFC-0958 §Adversary A3 — fail-closed for Wholesale).
     if !node_type.permits_zk_mint() {
         return Err(ZkMintError::NodeTypeCannotMintZKCap);
@@ -209,9 +247,17 @@ pub fn mint_with_zk(
         });
     }
 
-    // 7. STWO proof generation (delegated to stoolap fork; MVP stub returns
-    //    empty proof bytes). Production: stwo_plugin::prove(casm, witness, public_inputs).
-    let stark_proof = Vec::new();
+    // 7. STARK proof generation.
+    let stark_proof = if signers.is_empty() {
+        // Backward-compatible single-capability path (MVP stub).
+        Vec::new()
+    } else {
+        // Batch signature path (RFC-0962 §6 / Gap 3 / Task 3.3).
+        let inputs = batch_sig_inputs(public_inputs, signers);
+        prove_batch_signature(Program::BatchSig, casm_hash, &inputs)
+            .map_err(|e| ZkMintError::BatchProver(e.to_string()))?
+            .bytes
+    };
 
     Ok(ProofBundle {
         stark_proof,
@@ -219,6 +265,45 @@ pub fn mint_with_zk(
         casm_hash,
         security_bits: 128,
     })
+}
+
+/// Construct `BatchSigPublicInputs` from capability public inputs + signers.
+///
+/// `signer_roots[i] = BLAKE3(0xB1 || signer_pubkey_i)` — domain-separated
+/// BLAKE3 root per signer (binds the signer identity into the proof).
+/// `message_root = BLAKE3(0xB2 || canonical_ser(public_inputs))` — domain-
+/// separated BLAKE3 root over the capability public inputs (the message
+/// being co-signed by all signers).
+fn batch_sig_inputs(public_inputs: &PublicInputs, signers: &[[u8; 32]]) -> BatchSigPublicInputs {
+    use blake3::Hasher;
+
+    let signer_roots: Vec<[u8; 32]> = signers
+        .iter()
+        .map(|pk| {
+            let mut h = Hasher::new();
+            h.update(&[0xB1]); // domain separator: batch-sig signer root
+            h.update(pk);
+            *h.finalize().as_bytes()
+        })
+        .collect();
+
+    let mut msg_hasher = Hasher::new();
+    msg_hasher.update(&[0xB2]); // domain separator: batch-sig message root
+                                // Canonical form: ask_id || cap_root_hash || invocation_hash ||
+                                // holder_did || current_unix_time || provider_slot_id. Field-order
+                                // binary concat (no serde_json) for Class A determinism.
+    msg_hasher.update(&public_inputs.ask_id);
+    msg_hasher.update(&public_inputs.cap_root_hash);
+    msg_hasher.update(&public_inputs.invocation_hash);
+    msg_hasher.update(public_inputs.holder_did.as_bytes());
+    msg_hasher.update(&public_inputs.current_unix_time.to_le_bytes());
+    msg_hasher.update(public_inputs.provider_slot_id.as_bytes());
+    let message_root: [u8; 32] = *msg_hasher.finalize().as_bytes();
+
+    BatchSigPublicInputs {
+        signer_roots,
+        message_root,
+    }
 }
 
 /// Convert wire bytes to `ProofBundle` (canonical_ser round-trip per v1.1 C5 fix).
@@ -368,5 +453,53 @@ mod tests {
         let h1 = derive_root_hash_from_secret(&secret);
         let h2 = derive_root_hash_from_secret(&secret);
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn mint_with_zk_and_signers_emits_batch_proof_for_eleven_signers() {
+        // Gap 3 / Task 3.3: 11 signers (matches the 11-step exercise).
+        let witness = sample_witness();
+        let pi = sample_public_inputs(NodeType::SelfHost);
+        let casm = bundled_casm_hash();
+        let signers: Vec<[u8; 32]> = (0..11)
+            .map(|i| [u8::try_from(i).expect("11 signers fit in u8"); 32])
+            .collect();
+        let bundle =
+            mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, casm, &signers).unwrap();
+        // Batch proof path emits a non-empty stark_proof (32-byte BLAKE3
+        // commitment from the mock prover).
+        assert_eq!(bundle.stark_proof.len(), 32);
+        assert_eq!(bundle.security_bits, 128);
+        assert_eq!(bundle.casm_hash, casm);
+    }
+
+    #[test]
+    fn mint_with_zk_and_signers_propagates_prover_error() {
+        // Wholesale + signers → NodeType gating still fires first.
+        let witness = sample_witness();
+        let pi = sample_public_inputs(NodeType::Wholesale);
+        let signers: Vec<[u8; 32]> = (0..3)
+            .map(|i| [u8::try_from(i).expect("3 signers fit in u8"); 32])
+            .collect();
+        let err = mint_with_zk_and_signers(
+            NodeType::Wholesale,
+            &witness,
+            &pi,
+            bundled_casm_hash(),
+            &signers,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ZkMintError::NodeTypeCannotMintZKCap));
+    }
+
+    #[test]
+    fn mint_with_zk_empty_signers_matches_legacy_path() {
+        // Empty signers list → backward-compat path; stark_proof empty.
+        let witness = sample_witness();
+        let pi = sample_public_inputs(NodeType::SelfHost);
+        let bundle =
+            mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, bundled_casm_hash(), &[])
+                .unwrap();
+        assert!(bundle.stark_proof.is_empty());
     }
 }

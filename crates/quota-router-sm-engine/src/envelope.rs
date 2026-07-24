@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn build_envelope_too_many_statements_rejected() {
-        let stmts: Vec<String> = (0..MAX_STATEMENTS + 1)
+        let stmts: Vec<String> = (0..=MAX_STATEMENTS)
             .map(|i| format!("SELECT {i}"))
             .collect();
         let err = build_envelope(

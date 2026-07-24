@@ -36,6 +36,11 @@ pub const MAX_SHARDS: u32 = 256;
 /// - `N = 100000` → 256 (clamped to max)
 #[must_use]
 pub fn num_shards_for(n: usize) -> u32 {
+    // `usize as f64` may lose precision for very large N, but the
+    // final value is clamped to [MIN_SHARDS, MAX_SHARDS] = [4, 256], so
+    // the truncation is bounded and the floor on sqrt() guarantees we
+    // never under-count shards for any real cluster size.
+    #[allow(clippy::cast_precision_loss)]
     let sqrt = (n as f64).sqrt().ceil() as u32;
     sqrt.clamp(MIN_SHARDS, MAX_SHARDS)
 }
@@ -80,7 +85,10 @@ pub struct ShardMap {
 impl ShardMap {
     #[must_use]
     pub fn new(num_shards: u32, created_at_unix: u64) -> Self {
-        Self { num_shards, created_at_unix }
+        Self {
+            num_shards,
+            created_at_unix,
+        }
     }
 
     /// Build a ShardMap sized for a cluster of `n` nodes.
@@ -108,9 +116,9 @@ mod tests {
 
     #[test]
     fn num_shards_uses_sqrt() {
-        assert_eq!(num_shards_for(17), 5);  // ceil(sqrt(17)) = 5
-        assert_eq!(num_shards_for(25), 5);  // ceil(sqrt(25)) = 5
-        assert_eq!(num_shards_for(26), 6);  // ceil(sqrt(26)) = 6
+        assert_eq!(num_shards_for(17), 5); // ceil(sqrt(17)) = 5
+        assert_eq!(num_shards_for(25), 5); // ceil(sqrt(25)) = 5
+        assert_eq!(num_shards_for(26), 6); // ceil(sqrt(26)) = 6
         assert_eq!(num_shards_for(100), 10);
         assert_eq!(num_shards_for(10_000), 100);
     }
@@ -156,7 +164,11 @@ mod tests {
         let num_shards = 16u32;
         let mut touched = vec![false; num_shards as usize];
         for i in 0..1000u32 {
-            let seg = i.to_le_bytes().into_iter().chain([0u8; 28]).collect::<Vec<u8>>();
+            let seg = i
+                .to_le_bytes()
+                .into_iter()
+                .chain([0u8; 28])
+                .collect::<Vec<u8>>();
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&seg);
             let shard = shard_for_segment(&arr, num_shards).unwrap() as usize;

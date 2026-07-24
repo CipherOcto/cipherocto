@@ -55,16 +55,22 @@ pub fn transition_reservation(
 ) -> Result<(), ReservationTransitionError> {
     let valid = matches!(
         (from, to),
-        (ReservationState::Reserved, ReservationState::Executing)
-            | (ReservationState::Reserved, ReservationState::Cancelled)
-            | (ReservationState::Reserved, ReservationState::Expired)
-            | (ReservationState::Executing, ReservationState::Settled)
-            | (ReservationState::Settled, ReservationState::Auditable)
-            | (ReservationState::Settled, ReservationState::Frozen)
-            | (ReservationState::Auditable, ReservationState::Released)
-            | (ReservationState::Auditable, ReservationState::Frozen)
-            | (ReservationState::Frozen, ReservationState::Released)
-            | (ReservationState::Frozen, ReservationState::Settled)
+        (
+            ReservationState::Reserved,
+            ReservationState::Executing | ReservationState::Cancelled | ReservationState::Expired
+        ) | (ReservationState::Executing, ReservationState::Settled)
+            | (
+                ReservationState::Settled,
+                ReservationState::Auditable | ReservationState::Frozen
+            )
+            | (
+                ReservationState::Auditable,
+                ReservationState::Released | ReservationState::Frozen
+            )
+            | (
+                ReservationState::Frozen,
+                ReservationState::Released | ReservationState::Settled
+            )
     );
     if valid {
         Ok(())
@@ -132,52 +138,72 @@ mod tests {
 
     #[test]
     fn reservation_reserved_to_executing_valid() {
-        assert!(transition_reservation(ReservationState::Reserved, ReservationState::Executing).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Reserved, ReservationState::Executing).is_ok()
+        );
     }
 
     #[test]
     fn reservation_reserved_to_cancelled_valid() {
-        assert!(transition_reservation(ReservationState::Reserved, ReservationState::Cancelled).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Reserved, ReservationState::Cancelled).is_ok()
+        );
     }
 
     #[test]
     fn reservation_reserved_to_expired_valid() {
-        assert!(transition_reservation(ReservationState::Reserved, ReservationState::Expired).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Reserved, ReservationState::Expired).is_ok()
+        );
     }
 
     #[test]
     fn reservation_executing_to_settled_valid() {
-        assert!(transition_reservation(ReservationState::Executing, ReservationState::Settled).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Executing, ReservationState::Settled).is_ok()
+        );
     }
 
     #[test]
     fn reservation_settled_to_auditable_valid() {
-        assert!(transition_reservation(ReservationState::Settled, ReservationState::Auditable).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Settled, ReservationState::Auditable).is_ok()
+        );
     }
 
     #[test]
     fn reservation_settled_to_frozen_valid() {
-        assert!(transition_reservation(ReservationState::Settled, ReservationState::Frozen).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Settled, ReservationState::Frozen).is_ok()
+        );
     }
 
     #[test]
     fn reservation_auditable_to_released_valid() {
-        assert!(transition_reservation(ReservationState::Auditable, ReservationState::Released).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Auditable, ReservationState::Released).is_ok()
+        );
     }
 
     #[test]
     fn reservation_auditable_to_frozen_valid() {
-        assert!(transition_reservation(ReservationState::Auditable, ReservationState::Frozen).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Auditable, ReservationState::Frozen).is_ok()
+        );
     }
 
     #[test]
     fn reservation_frozen_to_released_valid() {
-        assert!(transition_reservation(ReservationState::Frozen, ReservationState::Released).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Frozen, ReservationState::Released).is_ok()
+        );
     }
 
     #[test]
     fn reservation_frozen_to_settled_valid() {
-        assert!(transition_reservation(ReservationState::Frozen, ReservationState::Settled).is_ok());
+        assert!(
+            transition_reservation(ReservationState::Frozen, ReservationState::Settled).is_ok()
+        );
     }
 
     #[test]
@@ -237,10 +263,18 @@ mod tests {
     #[test]
     fn reservation_no_skip_steps() {
         // Cannot skip from Reserved directly to Settled.
-        assert!(transition_reservation(ReservationState::Reserved, ReservationState::Settled).is_err());
+        assert!(
+            transition_reservation(ReservationState::Reserved, ReservationState::Settled).is_err()
+        );
         // Cannot skip from Reserved to Auditable.
-        assert!(transition_reservation(ReservationState::Reserved, ReservationState::Auditable).is_err());
+        assert!(
+            transition_reservation(ReservationState::Reserved, ReservationState::Auditable)
+                .is_err()
+        );
         // Cannot skip from Executing to Released.
-        assert!(transition_reservation(ReservationState::Executing, ReservationState::Released).is_err());
+        assert!(
+            transition_reservation(ReservationState::Executing, ReservationState::Released)
+                .is_err()
+        );
     }
 }

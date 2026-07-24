@@ -123,7 +123,7 @@ The canonical schema has **no `transfers` table**. The canonical schema has one 
 
 ---
 
-## 3. Constraint Set (23 variants)
+## 3. Constraint Set (25 variants)
 
 ```mermaid
 graph TB
@@ -174,7 +174,7 @@ graph TB
   end
 ```
 
-Categories: Time (4), Spend caps (3), Destination/intent (3), Co-signing (2), Caller binding (1), Use count (2), Policy delegation (2), Composition (3), Vesting/time-lock (4), Compliance (1). Total = 23.
+Categories: Time (4), Spend caps (3), Destination/intent (3), Co-signing (2), Caller binding (1), Use count (2), Policy delegation (2), Composition (3), Vesting/time-lock (4), Compliance (1). Total = 25.
 
 **Canonical encoding in RFC-0964** (companion). Each `Constraint` is a tagged-union variant with deterministic field ordering per RFC-0126. Namespace tag `0x01` precedes the inner envelope on the wire; receivers dispatch on the namespace tag first.
 

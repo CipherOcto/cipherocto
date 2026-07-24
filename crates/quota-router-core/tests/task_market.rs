@@ -382,3 +382,93 @@ fn task_market_match_then_dispute_path() {
     escrow.resolve_valid().expect("resolve valid");
     assert_eq!(escrow.state(), EscrowState::Slashed);
 }
+
+// ---------------------------------------------------------------------------
+// Task 6.4 — slashing (RFC-0918 §Slashing Model — reuses Gap 5.3
+// SlashingLedger).
+// ---------------------------------------------------------------------------
+
+use quota_router_core::marketplace::slashing::SlashReason;
+use quota_router_core::task_market::TaskMarketSlashing;
+
+#[test]
+fn task_market_slashing_register_then_slash_deducts_stake() {
+    let mut slashing = TaskMarketSlashing::new();
+    slashing.register("did:octo:worker", 1_000_000);
+    let out = slashing
+        .slash("did:octo:worker", SlashReason::Timeout, 1.0)
+        .expect("slash");
+    assert_eq!(out.amount_micro_octo_w, 100_000);
+    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert!(!out.banned);
+}
+
+#[test]
+fn task_market_slashing_repeated_offenses_escalate() {
+    let mut slashing = TaskMarketSlashing::new();
+    slashing.register("did:octo:flaky", 1_000_000);
+    let o1 = slashing
+        .slash("did:octo:flaky", SlashReason::ProviderError, 1.0)
+        .expect("slash 1");
+    assert_eq!(o1.amount_micro_octo_w, 100_000);
+    let o2 = slashing
+        .slash("did:octo:flaky", SlashReason::ProviderError, 1.0)
+        .expect("slash 2");
+    // 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
+    assert_eq!(o2.amount_micro_octo_w, 135_000);
+    assert!(!o2.banned);
+}
+
+#[test]
+fn task_market_slashing_eventually_bans_provider() {
+    let mut slashing = TaskMarketSlashing::new();
+    slashing.register("did:octo:bad", 1_000_000);
+    // 4 consecutive offenses at default rules → banned.
+    for _ in 0..4 {
+        let _ = slashing
+            .slash("did:octo:bad", SlashReason::ProviderError, 1.0)
+            .expect("slash");
+    }
+    let err = slashing
+        .slash("did:octo:bad", SlashReason::Timeout, 1.0)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::task_market::TaskSlashError::Slash(
+            quota_router_core::marketplace::slashing::SlashError::BannedProvider { .. }
+        )
+    ));
+}
+
+#[test]
+fn task_market_slashing_below_tolerance_does_not_slash() {
+    let mut slashing =
+        TaskMarketSlashing::with_rules(quota_router_core::marketplace::slashing::SlashingRules {
+            miss_rate_tolerance: 0.05,
+            ..quota_router_core::marketplace::slashing::SlashingRules::default()
+        });
+    slashing.register("did:octo:ok", 1_000_000);
+    let err = slashing
+        .slash("did:octo:ok", SlashReason::Timeout, 0.01)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::task_market::TaskSlashError::Slash(
+            quota_router_core::marketplace::slashing::SlashError::BelowTolerance { .. }
+        )
+    ));
+}
+
+#[test]
+fn task_market_slashing_unknown_provider_errors() {
+    let mut slashing = TaskMarketSlashing::new();
+    let err = slashing
+        .slash("ghost", SlashReason::Timeout, 1.0)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::task_market::TaskSlashError::Slash(
+            quota_router_core::marketplace::slashing::SlashError::UnknownProvider(_)
+        )
+    ));
+}

@@ -11,14 +11,14 @@
 //! Maximum total encoding size: 256 bytes (RFC-0960 §G5 design goal).
 //!
 //! Hash separators (RFC-0964 §0.1 Domain-separator registry):
-//! - 0xA0: ConstraintSet version (reserved for future use)
-//! - 0xA1: constraint_hash prefix
-//! - 0xA2: RedemptionContext context_hash
-//! - 0xA3: sql_statements_hash
+//! - 0xA0: `ConstraintSet` version (reserved for future use)
+//! - 0xA1: `constraint_hash` prefix
+//! - 0xA2: `RedemptionContext` `context_hash`
+//! - 0xA3: `sql_statements_hash`
 //! - 0xA4-0xAF: reserved
-//! - 0xB0: EIP-712 domain_separator
-//! - 0xB1: EIP-712 message_hash
-//! - 0xB2: EIP-712 typed_data_hash
+//! - 0xB0: `EIP-712` `domain_separator`
+//! - 0xB1: `EIP-712` `message_hash`
+//! - 0xB2: `EIP-712` `typed_data_hash`
 //! - 0xC0-0xFF: application-specific
 //!
 //! Namespace tag (RFC-0964 §0):
@@ -181,17 +181,26 @@ impl Constraint {
     fn encode_body(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
-            Self::ValidRange { valid_after_unix, valid_until_unix } => {
+            Self::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => {
                 out.extend_from_slice(&valid_after_unix.to_be_bytes());
                 out.extend_from_slice(&valid_until_unix.to_be_bytes());
             }
             Self::NotBefore(ts) => out.extend_from_slice(&ts.to_be_bytes()),
             Self::UnlockAfter(h) => out.extend_from_slice(&h.to_be_bytes()),
-            Self::Period { max_per_period, period_duration_secs } => {
+            Self::Period {
+                max_per_period,
+                period_duration_secs,
+            } => {
                 out.extend_from_slice(&max_per_period.to_be_bytes());
                 out.extend_from_slice(&period_duration_secs.to_be_bytes());
             }
-            Self::MaxPerTx { amount_micro, asset_id } => {
+            Self::MaxPerTx {
+                amount_micro,
+                asset_id,
+            } => {
                 out.extend_from_slice(&amount_micro.to_be_bytes());
                 out.extend_from_slice(asset_id);
             }
@@ -199,47 +208,51 @@ impl Constraint {
                 // Per RFC-0964 §3.2 + R6-F4: elements MUST be sorted by asset_id
                 // in lexicographic byte order. max N=5 (R5-F4).
                 let mut sorted = caps.clone();
-                sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                sorted.sort_by_key(|c| c.0);
                 if sorted.len() > 5 {
                     // Silently cap at 5 (encoder); decoding rejects >5.
                     sorted.truncate(5);
                 }
-                out.extend_from_slice(&(sorted.len() as u32).to_be_bytes());
+                out.extend_from_slice(&len_as_u32(sorted.len()).to_be_bytes());
                 for (asset_id, amount) in &sorted {
                     out.extend_from_slice(asset_id);
                     out.extend_from_slice(&amount.to_be_bytes());
                 }
             }
-            Self::RateLimit { max_per_window, window_duration_secs, asset_id } => {
+            Self::RateLimit {
+                max_per_window,
+                window_duration_secs,
+                asset_id,
+            } => {
                 out.extend_from_slice(&max_per_window.to_be_bytes());
                 out.extend_from_slice(&window_duration_secs.to_be_bytes());
                 out.extend_from_slice(asset_id);
             }
-            Self::AllowedDestinations { dids } => {
-                encode_string_set(&mut out, dids);
-            }
-            Self::DeniedDestinations { dids } => {
+            Self::AllowedDestinations { dids } | Self::DeniedDestinations { dids } => {
                 encode_string_set(&mut out, dids);
             }
             Self::IntentBound { message_template } => {
-                out.extend_from_slice(&(message_template.len() as u32).to_be_bytes());
+                out.extend_from_slice(&len_as_u32(message_template.len()).to_be_bytes());
                 out.extend_from_slice(message_template);
             }
             Self::MultiSig { n, signers } => {
                 out.extend_from_slice(&n.to_be_bytes());
                 encode_string_set(&mut out, signers);
             }
-            Self::RequireReceiptSignatureBy(did) => encode_string(&mut out, did),
-            Self::CallerBound(did) => encode_string(&mut out, did),
+            Self::RequireReceiptSignatureBy(did) | Self::CallerBound(did) => {
+                encode_string(&mut out, did);
+            }
             Self::MaxUses { count } => out.extend_from_slice(&count.to_be_bytes()),
-            Self::SingleUse => {}
-            Self::AllowIf { predicate, step_budget } => {
+            Self::SingleUse | Self::WrappedOnly => {}
+            Self::AllowIf {
+                predicate,
+                step_budget,
+            } => {
                 out.extend_from_slice(&step_budget.to_be_bytes());
-                out.extend_from_slice(&(predicate.len() as u32).to_be_bytes());
+                out.extend_from_slice(&len_as_u32(predicate.len()).to_be_bytes());
                 out.extend_from_slice(predicate);
             }
             Self::VerifierRequired { circuit_id } => out.extend_from_slice(circuit_id),
-            Self::WrappedOnly => {}
             Self::SponsoredBy { vault } => out.extend_from_slice(vault),
             Self::CoordinatorCanSubmit { coordinator } => encode_string(&mut out, coordinator),
             Self::LinearRelease { start, end, cliff } => {
@@ -254,7 +267,10 @@ impl Constraint {
             }
             Self::LiquidityLock { until } => out.extend_from_slice(&until.to_be_bytes()),
             Self::GovernanceLock { while_vote_active } => out.push(u8::from(*while_vote_active)),
-            Self::ComplianceHold { threshold, delay_secs } => {
+            Self::ComplianceHold {
+                threshold,
+                delay_secs,
+            } => {
                 out.extend_from_slice(&threshold.to_be_bytes());
                 out.extend_from_slice(&delay_secs.to_be_bytes());
             }
@@ -265,7 +281,7 @@ impl Constraint {
 
 fn encode_string(out: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
-    out.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    out.extend_from_slice(&len_as_u32(bytes.len()).to_be_bytes());
     out.extend_from_slice(bytes);
 }
 
@@ -273,10 +289,18 @@ fn encode_string_set(out: &mut Vec<u8>, items: &[String]) {
     // RFC-0964 §3.3: sorted lexicographically by string bytes.
     let mut sorted: Vec<&String> = items.iter().collect();
     sorted.sort();
-    out.extend_from_slice(&(sorted.len() as u32).to_be_bytes());
+    out.extend_from_slice(&len_as_u32(sorted.len()).to_be_bytes());
     for s in sorted {
         encode_string(out, s);
     }
+}
+
+/// Convert a `usize` length to `u32` for wire-format encoding.
+///
+/// All lengths in the canonical encoding are bounded by [`MAX_ENCODED_SIZE`]
+/// (256 bytes), so the conversion cannot truncate on any supported target.
+fn len_as_u32(len: usize) -> u32 {
+    u32::try_from(len).expect("length bounded by MAX_ENCODED_SIZE")
 }
 
 /// Encoding errors.
@@ -302,6 +326,11 @@ pub enum EncodingError {
 ///
 /// Output: `[NAMESPACE_TAG, VERSION_TAG, discriminator, len_be_u32, payload]`.
 /// Total size capped at [`MAX_ENCODED_SIZE`] bytes (RFC-0960 §G5; RFC-0964 §3.2).
+///
+/// # Errors
+///
+/// Returns [`EncodingError::ConstraintOverflow`] when the encoded payload
+/// would exceed [`MAX_ENCODED_SIZE`] bytes.
 pub fn encode(c: &Constraint) -> Result<Vec<u8>, EncodingError> {
     let body = c.encode_body();
     // Pre-check the total wire size before prepending headers.
@@ -313,15 +342,26 @@ pub fn encode(c: &Constraint) -> Result<Vec<u8>, EncodingError> {
     out.push(NAMESPACE_TAG);
     out.push(VERSION_TAG);
     out.push(c.discriminator());
-    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    out.extend_from_slice(&len_as_u32(body.len()).to_be_bytes());
     out.extend_from_slice(&body);
     Ok(out)
 }
 
 /// Decode a `Constraint` from wire bytes. Inverse of [`encode`].
+///
+/// # Errors
+///
+/// Returns [`EncodingError::InvalidNamespaceTag`] / [`EncodingError::InvalidVersionTag`]
+/// / [`EncodingError::UnknownDiscriminator`] for malformed prefixes,
+/// [`EncodingError::Truncated`] if the payload is shorter than the declared
+/// length, [`EncodingError::TooManyCaps`] / [`EncodingError::CapsNotSorted`]
+/// for malformed `PerAssetSpendingCap` entries.
 pub fn decode(bytes: &[u8]) -> Result<Constraint, EncodingError> {
     if bytes.len() < 6 {
-        return Err(EncodingError::Truncated { expected: 6, got: bytes.len() });
+        return Err(EncodingError::Truncated {
+            expected: 6,
+            got: bytes.len(),
+        });
     }
     if bytes[0] != NAMESPACE_TAG {
         return Err(EncodingError::InvalidNamespaceTag(bytes[0]));
@@ -333,13 +373,20 @@ pub fn decode(bytes: &[u8]) -> Result<Constraint, EncodingError> {
     let len = u32::from_be_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]) as usize;
     let body = &bytes[7..];
     if body.len() < len {
-        return Err(EncodingError::Truncated { expected: len, got: body.len() });
+        return Err(EncodingError::Truncated {
+            expected: len,
+            got: body.len(),
+        });
     }
     let body = &body[..len];
 
     decode_body(disc, body)
 }
 
+// Function is intentionally long: each discriminator branch decodes a
+// different field layout. Refactoring to per-variant helpers obscures the
+// wire-format table without reducing real complexity.
+#[allow(clippy::too_many_lines)]
 fn decode_body(disc: u8, body: &[u8]) -> Result<Constraint, EncodingError> {
     let mut r = Reader::new(body);
     match disc {
@@ -351,19 +398,28 @@ fn decode_body(disc: u8, body: &[u8]) -> Result<Constraint, EncodingError> {
                 // Encoded form is valid; semantic check is at evaluation.
                 // Continue decoding.
             }
-            Ok(Constraint::ValidRange { valid_after_unix, valid_until_unix })
+            Ok(Constraint::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            })
         }
         0x02 => Ok(Constraint::NotBefore(r.read_u64()?)),
         0x03 => Ok(Constraint::UnlockAfter(r.read_u64()?)),
         0x04 => {
             let max_per_period = r.read_u128()?;
             let period_duration_secs = r.read_u64()?;
-            Ok(Constraint::Period { max_per_period, period_duration_secs })
+            Ok(Constraint::Period {
+                max_per_period,
+                period_duration_secs,
+            })
         }
         0x05 => {
             let amount_micro = r.read_u128()?;
             let asset_id = r.read_bytes32()?;
-            Ok(Constraint::MaxPerTx { amount_micro, asset_id })
+            Ok(Constraint::MaxPerTx {
+                amount_micro,
+                asset_id,
+            })
         }
         0x06 => {
             let count = r.read_u32()?;
@@ -388,10 +444,18 @@ fn decode_body(disc: u8, body: &[u8]) -> Result<Constraint, EncodingError> {
             let max_per_window = r.read_u128()?;
             let window_duration_secs = r.read_u64()?;
             let asset_id = r.read_bytes32()?;
-            Ok(Constraint::RateLimit { max_per_window, window_duration_secs, asset_id })
+            Ok(Constraint::RateLimit {
+                max_per_window,
+                window_duration_secs,
+                asset_id,
+            })
         }
-        0x08 => Ok(Constraint::AllowedDestinations { dids: r.read_string_set()? }),
-        0x09 => Ok(Constraint::DeniedDestinations { dids: r.read_string_set()? }),
+        0x08 => Ok(Constraint::AllowedDestinations {
+            dids: r.read_string_set()?,
+        }),
+        0x09 => Ok(Constraint::DeniedDestinations {
+            dids: r.read_string_set()?,
+        }),
         0x0A => {
             let n = r.read_u32()?;
             let message_template = r.read_bytes(n as usize)?;
@@ -404,18 +468,29 @@ fn decode_body(disc: u8, body: &[u8]) -> Result<Constraint, EncodingError> {
         }
         0x0C => Ok(Constraint::RequireReceiptSignatureBy(r.read_string()?)),
         0x0D => Ok(Constraint::CallerBound(r.read_string()?)),
-        0x0E => Ok(Constraint::MaxUses { count: r.read_u32()? }),
+        0x0E => Ok(Constraint::MaxUses {
+            count: r.read_u32()?,
+        }),
         0x0F => Ok(Constraint::SingleUse),
         0x10 => {
             let step_budget = r.read_u32()?;
             let n = r.read_u32()?;
             let predicate = r.read_bytes(n as usize)?;
-            Ok(Constraint::AllowIf { predicate, step_budget })
+            Ok(Constraint::AllowIf {
+                predicate,
+                step_budget,
+            })
         }
-        0x11 => Ok(Constraint::VerifierRequired { circuit_id: r.read_bytes32()? }),
+        0x11 => Ok(Constraint::VerifierRequired {
+            circuit_id: r.read_bytes32()?,
+        }),
         0x12 => Ok(Constraint::WrappedOnly),
-        0x13 => Ok(Constraint::SponsoredBy { vault: r.read_bytes32()? }),
-        0x14 => Ok(Constraint::CoordinatorCanSubmit { coordinator: r.read_string()? }),
+        0x13 => Ok(Constraint::SponsoredBy {
+            vault: r.read_bytes32()?,
+        }),
+        0x14 => Ok(Constraint::CoordinatorCanSubmit {
+            coordinator: r.read_string()?,
+        }),
         0x15 => {
             let start = r.read_u64()?;
             let end = r.read_u64()?;
@@ -428,12 +503,19 @@ fn decode_body(disc: u8, body: &[u8]) -> Result<Constraint, EncodingError> {
             let period = r.read_u64()?;
             Ok(Constraint::CliffVesting { until, pct, period })
         }
-        0x17 => Ok(Constraint::LiquidityLock { until: r.read_u64()? }),
-        0x18 => Ok(Constraint::GovernanceLock { while_vote_active: r.read_u8()? != 0 }),
+        0x17 => Ok(Constraint::LiquidityLock {
+            until: r.read_u64()?,
+        }),
+        0x18 => Ok(Constraint::GovernanceLock {
+            while_vote_active: r.read_u8()? != 0,
+        }),
         0x19 => {
             let threshold = r.read_u128()?;
             let delay_secs = r.read_u64()?;
-            Ok(Constraint::ComplianceHold { threshold, delay_secs })
+            Ok(Constraint::ComplianceHold {
+                threshold,
+                delay_secs,
+            })
         }
         _ => Err(EncodingError::UnknownDiscriminator(disc)),
     }
@@ -451,7 +533,10 @@ impl<'a> Reader<'a> {
 
     fn read_u8(&mut self) -> Result<u8, EncodingError> {
         if self.pos + 1 > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: 1, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: 1,
+                got: self.buf.len() - self.pos,
+            });
         }
         let v = self.buf[self.pos];
         self.pos += 1;
@@ -460,7 +545,10 @@ impl<'a> Reader<'a> {
 
     fn read_u32(&mut self) -> Result<u32, EncodingError> {
         if self.pos + 4 > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: 4, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: 4,
+                got: self.buf.len() - self.pos,
+            });
         }
         let v = u32::from_be_bytes([
             self.buf[self.pos],
@@ -474,7 +562,10 @@ impl<'a> Reader<'a> {
 
     fn read_u64(&mut self) -> Result<u64, EncodingError> {
         if self.pos + 8 > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: 8, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: 8,
+                got: self.buf.len() - self.pos,
+            });
         }
         let mut arr = [0u8; 8];
         arr.copy_from_slice(&self.buf[self.pos..self.pos + 8]);
@@ -484,7 +575,10 @@ impl<'a> Reader<'a> {
 
     fn read_u128(&mut self) -> Result<u128, EncodingError> {
         if self.pos + 16 > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: 16, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: 16,
+                got: self.buf.len() - self.pos,
+            });
         }
         let mut arr = [0u8; 16];
         arr.copy_from_slice(&self.buf[self.pos..self.pos + 16]);
@@ -494,7 +588,10 @@ impl<'a> Reader<'a> {
 
     fn read_bytes32(&mut self) -> Result<[u8; 32], EncodingError> {
         if self.pos + 32 > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: 32, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: 32,
+                got: self.buf.len() - self.pos,
+            });
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&self.buf[self.pos..self.pos + 32]);
@@ -504,7 +601,10 @@ impl<'a> Reader<'a> {
 
     fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>, EncodingError> {
         if self.pos + n > self.buf.len() {
-            return Err(EncodingError::Truncated { expected: n, got: self.buf.len() - self.pos });
+            return Err(EncodingError::Truncated {
+                expected: n,
+                got: self.buf.len() - self.pos,
+            });
         }
         let v = self.buf[self.pos..self.pos + n].to_vec();
         self.pos += n;
@@ -514,7 +614,10 @@ impl<'a> Reader<'a> {
     fn read_string(&mut self) -> Result<String, EncodingError> {
         let n = self.read_u32()?;
         let bytes = self.read_bytes(n as usize)?;
-        String::from_utf8(bytes).map_err(|_| EncodingError::Truncated { expected: n as usize, got: 0 })
+        String::from_utf8(bytes).map_err(|_| EncodingError::Truncated {
+            expected: n as usize,
+            got: 0,
+        })
     }
 
     fn read_string_set(&mut self) -> Result<Vec<String>, EncodingError> {
@@ -530,6 +633,11 @@ impl<'a> Reader<'a> {
 /// BLAKE3 hash of a constraint (RFC-0964 §5).
 ///
 /// `BLAKE3(CONSTRAINT_HASH_PREFIX || canonical_ser(constraint))`.
+///
+/// # Panics
+///
+/// Panics if the in-memory constraint fails to encode (only possible on
+/// future encodings; current variants never exceed [`MAX_ENCODED_SIZE`]).
 #[must_use]
 pub fn constraint_hash(c: &Constraint) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
@@ -552,7 +660,10 @@ mod tests {
 
     #[test]
     fn encode_decode_roundtrip_valid_range() {
-        let c = Constraint::ValidRange { valid_after_unix: 1000, valid_until_unix: 2000 };
+        let c = Constraint::ValidRange {
+            valid_after_unix: 1000,
+            valid_until_unix: 2000,
+        };
         let bytes = encode(&c).unwrap();
         let back = decode(&bytes).unwrap();
         assert_eq!(c, back);
@@ -591,7 +702,9 @@ mod tests {
 
     #[test]
     fn encode_decode_roundtrip_governance_lock() {
-        let c = Constraint::GovernanceLock { while_vote_active: true };
+        let c = Constraint::GovernanceLock {
+            while_vote_active: true,
+        };
         let bytes = encode(&c).unwrap();
         let back = decode(&bytes).unwrap();
         assert_eq!(c, back);
@@ -625,7 +738,7 @@ mod tests {
             body.extend_from_slice(&0u128.to_be_bytes());
         }
         let mut bytes = vec![NAMESPACE_TAG, VERSION_TAG, 0x06];
-        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&len_as_u32(body.len()).to_be_bytes());
         bytes.extend_from_slice(&body);
         let err = decode(&bytes).unwrap_err();
         assert_eq!(err, EncodingError::TooManyCaps(6));
@@ -642,7 +755,7 @@ mod tests {
         body.extend_from_slice(&b);
         body.extend_from_slice(&0u128.to_be_bytes());
         let mut bytes = vec![NAMESPACE_TAG, VERSION_TAG, 0x06];
-        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&len_as_u32(body.len()).to_be_bytes());
         bytes.extend_from_slice(&body);
         let err = decode(&bytes).unwrap_err();
         assert_eq!(err, EncodingError::CapsNotSorted);
@@ -679,7 +792,10 @@ mod tests {
 
     #[test]
     fn constraint_hash_deterministic() {
-        let c = Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0u8; 32] };
+        let c = Constraint::MaxPerTx {
+            amount_micro: 1_000_000,
+            asset_id: [0u8; 32],
+        };
         let h1 = constraint_hash(&c);
         let h2 = constraint_hash(&c);
         assert_eq!(h1, h2);
@@ -687,8 +803,14 @@ mod tests {
 
     #[test]
     fn constraint_hash_differs_for_different_values() {
-        let a = constraint_hash(&Constraint::MaxPerTx { amount_micro: 1_000, asset_id: [0u8; 32] });
-        let b = constraint_hash(&Constraint::MaxPerTx { amount_micro: 2_000, asset_id: [0u8; 32] });
+        let a = constraint_hash(&Constraint::MaxPerTx {
+            amount_micro: 1_000,
+            asset_id: [0u8; 32],
+        });
+        let b = constraint_hash(&Constraint::MaxPerTx {
+            amount_micro: 2_000,
+            asset_id: [0u8; 32],
+        });
         assert_ne!(a, b);
     }
 
@@ -696,34 +818,72 @@ mod tests {
     fn all_23_variants_have_unique_discriminators() {
         // Ensure no two variants collide.
         let variants = [
-            Constraint::ValidRange { valid_after_unix: 0, valid_until_unix: 0 },
+            Constraint::ValidRange {
+                valid_after_unix: 0,
+                valid_until_unix: 0,
+            },
             Constraint::NotBefore(0),
             Constraint::UnlockAfter(0),
-            Constraint::Period { max_per_period: 0, period_duration_secs: 0 },
-            Constraint::MaxPerTx { amount_micro: 0, asset_id: [0; 32] },
+            Constraint::Period {
+                max_per_period: 0,
+                period_duration_secs: 0,
+            },
+            Constraint::MaxPerTx {
+                amount_micro: 0,
+                asset_id: [0; 32],
+            },
             Constraint::PerAssetSpendingCap { caps: vec![] },
-            Constraint::RateLimit { max_per_window: 0, window_duration_secs: 0, asset_id: [0; 32] },
+            Constraint::RateLimit {
+                max_per_window: 0,
+                window_duration_secs: 0,
+                asset_id: [0; 32],
+            },
             Constraint::AllowedDestinations { dids: vec![] },
             Constraint::DeniedDestinations { dids: vec![] },
-            Constraint::IntentBound { message_template: vec![] },
-            Constraint::MultiSig { n: 0, signers: vec![] },
+            Constraint::IntentBound {
+                message_template: vec![],
+            },
+            Constraint::MultiSig {
+                n: 0,
+                signers: vec![],
+            },
             Constraint::RequireReceiptSignatureBy(String::new()),
             Constraint::CallerBound(String::new()),
             Constraint::MaxUses { count: 0 },
             Constraint::SingleUse,
-            Constraint::AllowIf { predicate: vec![], step_budget: 0 },
-            Constraint::VerifierRequired { circuit_id: [0; 32] },
+            Constraint::AllowIf {
+                predicate: vec![],
+                step_budget: 0,
+            },
+            Constraint::VerifierRequired {
+                circuit_id: [0; 32],
+            },
             Constraint::WrappedOnly,
             Constraint::SponsoredBy { vault: [0; 32] },
-            Constraint::CoordinatorCanSubmit { coordinator: String::new() },
-            Constraint::LinearRelease { start: 0, end: 0, cliff: 0 },
-            Constraint::CliffVesting { until: 0, pct: 0, period: 0 },
+            Constraint::CoordinatorCanSubmit {
+                coordinator: String::new(),
+            },
+            Constraint::LinearRelease {
+                start: 0,
+                end: 0,
+                cliff: 0,
+            },
+            Constraint::CliffVesting {
+                until: 0,
+                pct: 0,
+                period: 0,
+            },
             Constraint::LiquidityLock { until: 0 },
-            Constraint::GovernanceLock { while_vote_active: false },
-            Constraint::ComplianceHold { threshold: 0, delay_secs: 0 },
+            Constraint::GovernanceLock {
+                while_vote_active: false,
+            },
+            Constraint::ComplianceHold {
+                threshold: 0,
+                delay_secs: 0,
+            },
         ];
         let mut discs: Vec<u8> = variants.iter().map(Constraint::discriminator).collect();
-        discs.sort();
+        discs.sort_unstable();
         discs.dedup();
         assert_eq!(discs.len(), variants.len(), "discriminator collision");
     }
@@ -732,36 +892,80 @@ mod tests {
     fn all_25_variants_roundtrip() {
         // 23 listed in RFC-0960 §3 + 2 we've added (SponsoredBy, CoordinatorCanSubmit).
         let variants = vec![
-            Constraint::ValidRange { valid_after_unix: 100, valid_until_unix: 200 },
+            Constraint::ValidRange {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            },
             Constraint::NotBefore(1_000),
             Constraint::UnlockAfter(2_000),
-            Constraint::Period { max_per_period: 100, period_duration_secs: 60 },
-            Constraint::MaxPerTx { amount_micro: 1_000_000, asset_id: [0xab; 32] },
-            Constraint::PerAssetSpendingCap { caps: vec![([1; 32], 100), ([2; 32], 200)] },
-            Constraint::RateLimit { max_per_window: 100, window_duration_secs: 60, asset_id: [0xcd; 32] },
-            Constraint::AllowedDestinations { dids: vec!["did:octo:a".to_owned()] },
-            Constraint::DeniedDestinations { dids: vec!["did:octo:b".to_owned()] },
-            Constraint::IntentBound { message_template: b"transfer".to_vec() },
-            Constraint::MultiSig { n: 2, signers: vec!["did:octo:s1".to_owned(), "did:octo:s2".to_owned()] },
+            Constraint::Period {
+                max_per_period: 100,
+                period_duration_secs: 60,
+            },
+            Constraint::MaxPerTx {
+                amount_micro: 1_000_000,
+                asset_id: [0xab; 32],
+            },
+            Constraint::PerAssetSpendingCap {
+                caps: vec![([1; 32], 100), ([2; 32], 200)],
+            },
+            Constraint::RateLimit {
+                max_per_window: 100,
+                window_duration_secs: 60,
+                asset_id: [0xcd; 32],
+            },
+            Constraint::AllowedDestinations {
+                dids: vec!["did:octo:a".to_owned()],
+            },
+            Constraint::DeniedDestinations {
+                dids: vec!["did:octo:b".to_owned()],
+            },
+            Constraint::IntentBound {
+                message_template: b"transfer".to_vec(),
+            },
+            Constraint::MultiSig {
+                n: 2,
+                signers: vec!["did:octo:s1".to_owned(), "did:octo:s2".to_owned()],
+            },
             Constraint::RequireReceiptSignatureBy("did:octo:r".to_owned()),
             Constraint::CallerBound("did:octo:c".to_owned()),
             Constraint::MaxUses { count: 5 },
             Constraint::SingleUse,
-            Constraint::AllowIf { predicate: b"check".to_vec(), step_budget: 100 },
-            Constraint::VerifierRequired { circuit_id: [0xab; 32] },
+            Constraint::AllowIf {
+                predicate: b"check".to_vec(),
+                step_budget: 100,
+            },
+            Constraint::VerifierRequired {
+                circuit_id: [0xab; 32],
+            },
             Constraint::WrappedOnly,
             Constraint::SponsoredBy { vault: [0x99; 32] },
-            Constraint::CoordinatorCanSubmit { coordinator: "did:octo:co".to_owned() },
-            Constraint::LinearRelease { start: 0, end: 1000, cliff: 100 },
-            Constraint::CliffVesting { until: 5_000, pct: 50, period: 30 },
+            Constraint::CoordinatorCanSubmit {
+                coordinator: "did:octo:co".to_owned(),
+            },
+            Constraint::LinearRelease {
+                start: 0,
+                end: 1000,
+                cliff: 100,
+            },
+            Constraint::CliffVesting {
+                until: 5_000,
+                pct: 50,
+                period: 30,
+            },
             Constraint::LiquidityLock { until: 10_000 },
-            Constraint::GovernanceLock { while_vote_active: true },
-            Constraint::ComplianceHold { threshold: 1_000_000, delay_secs: 86400 },
+            Constraint::GovernanceLock {
+                while_vote_active: true,
+            },
+            Constraint::ComplianceHold {
+                threshold: 1_000_000,
+                delay_secs: 86400,
+            },
         ];
         for v in &variants {
-            let bytes = encode(v).unwrap_or_else(|e| panic!("encode {:?} failed: {e}", v));
-            assert!(bytes.len() <= MAX_ENCODED_SIZE, "overflow for {:?}", v);
-            let back = decode(&bytes).unwrap_or_else(|e| panic!("decode {:?} failed: {e}", v));
+            let bytes = encode(v).unwrap_or_else(|e| panic!("encode {v:?} failed: {e}"));
+            assert!(bytes.len() <= MAX_ENCODED_SIZE, "overflow for {v:?}");
+            let back = decode(&bytes).unwrap_or_else(|e| panic!("decode {v:?} failed: {e}"));
             assert_eq!(v, &back);
         }
     }

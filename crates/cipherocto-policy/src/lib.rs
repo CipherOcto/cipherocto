@@ -13,9 +13,12 @@
 //! ```text
 //! PolicyObject {
 //!   version_tag:        1,
+//!   policy_id:          PolicyId,         // BLAKE3(0xC0 || canonical_ser(unsigned))
 //!   version_seq:        u64,
 //!   parent_policy_id:   Option<PolicyId>,
 //!   graph:              PolicyGraph,
+//!   surface:            PolicySurface,    // semantic view derived from graph
+//!   lineage:            Vec<LineageEdge>, // history of parent_policy_id + parent_version
 //!   audit_ref:          [u8; 32],
 //!   timestamp_unix_ms:  u64,
 //!   signature:          Ed25519Signature,
@@ -49,10 +52,10 @@ pub const POLICY_VERSION_TAG: u8 = 1;
 /// Policy identifier (32-byte BLAKE3 hash).
 pub type PolicyId = [u8; 32];
 
-/// Policy version_seq (monotonic u64 per lineage; 1 = genesis).
+/// Policy `version_seq` (monotonic u64 per lineage; 1 = genesis).
 pub type PolicyVersion = u64;
 
-/// PolicyNode identifier (32-byte BLAKE3 hash of canonical node body).
+/// `PolicyNode` identifier (32-byte BLAKE3 hash of canonical node body).
 pub type PolicyNodeId = [u8; 32];
 
 /// Resource axis identifier (RFC-0959 §axes).
@@ -119,7 +122,7 @@ pub struct LineageEdge {
     pub parent_version: PolicyVersion,
 }
 
-/// PolicyNode (RFC-0967 §3).
+/// `PolicyNode` (RFC-0967 §3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyNode {
     pub node_id: PolicyNodeId,
@@ -129,7 +132,7 @@ pub struct PolicyNode {
     pub description: Option<String>,
 }
 
-/// PolicyAction (RFC-0967 §3).
+/// `PolicyAction` (RFC-0967 §3).
 ///
 /// Order matters for attenuation: `Deny < RequireApproval < Allow`.
 /// `Audit` is independent (parallel dimension).
@@ -143,7 +146,7 @@ pub enum PolicyAction {
     Audit(u64),
 }
 
-/// ApprovalKind (RFC-0967 §3).
+/// `ApprovalKind` (RFC-0967 §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalKind {
@@ -153,23 +156,14 @@ pub enum ApprovalKind {
     TimeLocked(u64),
 }
 
-/// PolicyGraph — DAG of PolicyNodes (RFC-0967 §3).
+/// `PolicyGraph` — DAG of `PolicyNode`s (RFC-0967 §3).
 ///
 /// `all_nodes` is canonicalized sorted by `node_id` ascending;
 /// `root_nodes` likewise; each node's `children` array is sorted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyGraph {
     pub root_nodes: Vec<PolicyNodeId>,
     pub all_nodes: Vec<PolicyNode>,
-}
-
-impl Default for PolicyGraph {
-    fn default() -> Self {
-        Self {
-            root_nodes: Vec::new(),
-            all_nodes: Vec::new(),
-        }
-    }
 }
 
 /// A versioned policy object (RFC-0967 §2).
@@ -192,7 +186,7 @@ pub struct PolicyObject {
 }
 
 impl PolicyObject {
-    /// Mint a new policy (version_seq = 1) from a `PolicyGraph` (RFC-0967 §2).
+    /// Mint a new policy (`version_seq` = 1) from a `PolicyGraph` (RFC-0967 §2).
     #[must_use]
     pub fn mint(graph: PolicyGraph, audit_ref: AuditRef, timestamp_unix_ms: u64) -> Self {
         let surface = derive_surface_from_graph(&graph);
@@ -241,8 +235,8 @@ impl PolicyObject {
         out
     }
 
-    /// Update the policy (new version_seq). The policy ID is preserved;
-    /// the new version's lineage + parent_policy_id point back at the
+    /// Update the policy (new `version_seq`). The `policy_id` is preserved;
+    /// the new version's `lineage` + `parent_policy_id` point back at the
     /// previous version (RFC-0967 §6).
     #[must_use]
     pub fn update(
@@ -297,16 +291,10 @@ fn trivial_graph_from_surface(_surface: &PolicySurface) -> PolicyGraph {
     }
 }
 
-/// Domain separator for `policy_id` hash (RFC-0967 §4).
-///
-/// Distinct from RFC-0964 §0.1 namespace tags (0x00-0x07) and
-/// constraint/version/hash separators (0xA0-0xB2); the 0xC0 prefix
-/// is the PolicyObject-specific hash prefix.
-// (POLICY_ID_HASH_PREFIX already declared at top of file.)
-
 /// Compute `node_id = BLAKE3(0xC1 || canonical_ser(predicate) || canonical_ser(action) || sorted(children))`.
 ///
 /// Used by `PolicyNode::mint`. RFC-0967 §3 specifies the body commit.
+#[must_use]
 pub fn compute_node_id(
     predicate: &Constraint,
     action: &PolicyAction,
@@ -319,7 +307,7 @@ pub fn compute_node_id(
     hasher.update(&cipherocto_encoding::constraint_hash(predicate));
     hasher.update(&policy_action_canonical_bytes(action));
     let mut sorted_children: Vec<PolicyNodeId> = children.to_vec();
-    sorted_children.sort();
+    sorted_children.sort_unstable();
     for c in &sorted_children {
         hasher.update(c);
     }
@@ -328,6 +316,7 @@ pub fn compute_node_id(
 
 /// Compute `policy_id = BLAKE3(0xC0 || canonical_ser(policy_unsigned))`
 /// per RFC-0967 §4.
+#[must_use]
 pub fn compute_policy_id(p: &PolicyObject) -> PolicyId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&[POLICY_ID_HASH_PREFIX]);
@@ -347,6 +336,7 @@ pub const POLICY_GRAPH_ROOT_PREFIX: u8 = 0xC2;
 
 /// `graph_root = BLAKE3(0xC2 || BLAKE3(0xC2 || sorted(all_nodes)))` —
 /// nested commitment so graph edits are detectable.
+#[must_use]
 pub fn compute_graph_root(graph: &PolicyGraph) -> PolicyId {
     let mut sorted_nodes = graph.all_nodes.clone();
     sorted_nodes.sort_by_key(|n| n.node_id);
@@ -409,6 +399,12 @@ pub enum PolicyError {
 /// Produces a child policy that must satisfy BOTH parents. Returns
 /// `Err(EmptyIntersection)` if the surfaces contradict (e.g., allowed
 /// models disjoint).
+///
+/// # Errors
+///
+/// Returns [`PolicyError::EmptyIntersection`] when the intersection of the
+/// parent surfaces is empty (disjoint `allowed_models`, `allowed_providers`,
+/// `allowed_destinations`, or violated caps).
 pub fn intersect(
     parent_a: &PolicyObject,
     parent_b: &PolicyObject,
@@ -416,15 +412,16 @@ pub fn intersect(
     let surface = intersect_surfaces(&parent_a.surface, &parent_b.surface)?;
     let id = choose_intersection_id(parent_a, parent_b);
     let version_seq = parent_a.version_seq.max(parent_b.version_seq) + 1;
-    let mut lineage = Vec::new();
-    lineage.push(LineageEdge {
-        parent_policy_id: parent_a.policy_id,
-        parent_version: parent_a.version_seq,
-    });
-    lineage.push(LineageEdge {
-        parent_policy_id: parent_b.policy_id,
-        parent_version: parent_b.version_seq,
-    });
+    let lineage = vec![
+        LineageEdge {
+            parent_policy_id: parent_a.policy_id,
+            parent_version: parent_a.version_seq,
+        },
+        LineageEdge {
+            parent_policy_id: parent_b.policy_id,
+            parent_version: parent_b.version_seq,
+        },
+    ];
     let child = PolicyObject {
         version_tag: POLICY_VERSION_TAG,
         policy_id: id,
@@ -458,10 +455,7 @@ fn choose_intersection_id(a: &PolicyObject, b: &PolicyObject) -> PolicyId {
     }
 }
 
-fn intersect_surfaces(
-    a: &PolicySurface,
-    b: &PolicySurface,
-) -> Result<PolicySurface, PolicyError> {
+fn intersect_surfaces(a: &PolicySurface, b: &PolicySurface) -> Result<PolicySurface, PolicyError> {
     let allowed_models = match (&a.allowed_models, &b.allowed_models) {
         (Some(a), Some(b)) => {
             let inter: HashSet<String> = a.intersection(b).cloned().collect();
@@ -526,6 +520,7 @@ fn intersect_surfaces(
 
 /// Subgraph relation (RFC-0967 §5): `child ⊆ parent` iff child surface is
 /// contained in parent surface.
+#[must_use]
 pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool {
     if let Some(pm) = &parent.surface.allowed_models {
         if let Some(cm) = &child.surface.allowed_models {
@@ -576,7 +571,7 @@ mod tests {
         let allowed_models = if models.is_empty() {
             None
         } else {
-            Some(models.iter().map(|s| s.to_string()).collect())
+            Some(models.iter().map(ToString::to_string).collect())
         };
         PolicySurface {
             allowed_models,
@@ -639,15 +634,24 @@ mod tests {
     #[test]
     fn intersect_disjoint_models_fails() {
         let pa = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let pb = PolicyObject::mint_surface(surface(Some(1000), &["claude-3"]), [0u8; 32], 1_000_000);
+        let pb =
+            PolicyObject::mint_surface(surface(Some(1000), &["claude-3"]), [0u8; 32], 1_000_000);
         let err = intersect(&pa, &pb).unwrap_err();
         assert_eq!(err, PolicyError::EmptyIntersection);
     }
 
     #[test]
     fn intersect_overlapping_models_succeeds() {
-        let pa = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4", "claude-3"]), [0u8; 32], 1_000_000);
-        let pb = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4", "cohere"]), [0u8; 32], 1_000_000);
+        let pa = PolicyObject::mint_surface(
+            surface(Some(1000), &["gpt-4", "claude-3"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let pb = PolicyObject::mint_surface(
+            surface(Some(1000), &["gpt-4", "cohere"]),
+            [0u8; 32],
+            1_000_000,
+        );
         let child = intersect(&pa, &pb).unwrap();
         let models = child.surface.allowed_models.as_ref().unwrap();
         assert!(models.contains("gpt-4"));
@@ -674,29 +678,43 @@ mod tests {
 
     #[test]
     fn subgraph_child_with_subset_models() {
-        let parent = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4", "claude-3"]), [0u8; 32], 1_000_000);
-        let child = PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent = PolicyObject::mint_surface(
+            surface(Some(1000), &["gpt-4", "claude-3"]),
+            [0u8; 32],
+            1_000_000,
+        );
+        let child =
+            PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
         assert!(is_subgraph(&child, &parent));
     }
 
     #[test]
     fn subgraph_child_with_superset_models_rejected() {
-        let parent = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child = PolicyObject::mint_surface(surface(Some(500), &["gpt-4", "claude-3"]), [0u8; 32], 1_000_000);
+        let parent =
+            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child = PolicyObject::mint_surface(
+            surface(Some(500), &["gpt-4", "claude-3"]),
+            [0u8; 32],
+            1_000_000,
+        );
         assert!(!is_subgraph(&child, &parent));
     }
 
     #[test]
     fn subgraph_child_with_overlapping_spend() {
-        let parent = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child = PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent =
+            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child =
+            PolicyObject::mint_surface(surface(Some(500), &["gpt-4"]), [0u8; 32], 1_000_000);
         assert!(is_subgraph(&child, &parent));
     }
 
     #[test]
     fn subgraph_child_with_higher_spend_rejected() {
-        let parent = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
-        let child = PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let parent =
+            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
+        let child =
+            PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
         assert!(!is_subgraph(&child, &parent));
     }
 
@@ -706,8 +724,14 @@ mod tests {
         let pb = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0u8; 32], 1_000_000);
         let child = intersect(&pa, &pb).unwrap();
         assert_eq!(child.lineage.len(), 2);
-        assert!(child.lineage.iter().any(|e| e.parent_policy_id == pa.policy_id));
-        assert!(child.lineage.iter().any(|e| e.parent_policy_id == pb.policy_id));
+        assert!(child
+            .lineage
+            .iter()
+            .any(|e| e.parent_policy_id == pa.policy_id));
+        assert!(child
+            .lineage
+            .iter()
+            .any(|e| e.parent_policy_id == pb.policy_id));
     }
 
     #[test]
@@ -726,7 +750,8 @@ mod tests {
 
     #[test]
     fn policy_object_envelope_has_all_required_fields() {
-        let p = PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0xab; 32], 1_700_000_000);
+        let p =
+            PolicyObject::mint_surface(surface(Some(1000), &["gpt-4"]), [0xab; 32], 1_700_000_000);
         assert_eq!(p.version_tag, POLICY_VERSION_TAG);
         assert_eq!(p.version_seq, 1);
         assert!(p.parent_policy_id.is_none());

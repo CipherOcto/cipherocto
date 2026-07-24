@@ -425,11 +425,42 @@ pub trait ReplayIndexMut: ReplayIndex {
     }
 }
 
+impl MultiEnvelope {
+    /// Validate a `MultiEnvelope` against all structural invariants
+    /// (RFC-0962 §7.1 R8-F5).
+    ///
+    /// Currently enforces the recursive nesting depth cap. Designed to
+    /// grow as additional invariants are added (e.g., cross-shard
+    /// consistency checks, completion-rule/quorum-n coherence).
+    ///
+    /// TODO: invoke `validate()` from the consensus-session verifier when
+    ///       it lands (likely alongside Gap 1.3 / `CapabilityToken::redeem`
+    ///       wiring).
+    pub fn validate(&self) -> Result<(), EnvelopeError> {
+        check_nesting_depth(self, 0)
+    }
+
+    /// Deserialize a `MultiEnvelope` from wire bytes and run the
+    /// structural invariants. This is the canonical entry point for
+    /// any consumer reading a serialized `MultiEnvelope` — call this
+    /// instead of `serde_json::from_slice` directly so the R8-F5 depth
+    /// check (and any future invariants) fire on every deserialization.
+    pub fn from_wire(bytes: &[u8]) -> Result<Self, EnvelopeError> {
+        let multi: Self = serde_json::from_slice(bytes).map_err(|e| {
+            EnvelopeError::Storage(format!("MultiEnvelope wire decode failed: {e}"))
+        })?;
+        multi.validate()?;
+        Ok(multi)
+    }
+}
+
 /// Build a `MultiEnvelope` from sub-envelopes (RFC-0962 §7).
 ///
 /// Default `timeout_unix_ms` = 5_000 (5 seconds; matches the worked
 /// example in RFC-0962 §5 + RFC-0963 §9). Default `fallback_action`
-/// = `Abort` (no partial commit).
+/// = `Abort` (no partial commit). Always constructs with `nested =
+/// None`, so the R8-F5 depth cap cannot be exceeded — no validation
+/// needed at this builder.
 pub fn build_multi_envelope(
     sub_envelopes: Vec<ExecutionEnvelope>,
     completion_rule: CompletionRule,
@@ -448,6 +479,12 @@ pub fn build_multi_envelope(
 }
 
 /// Builder with explicit timeout + fallback (RFC-0962 §7).
+///
+/// Returns `Err` if the constructed envelope fails R8-F5 structural
+/// validation. The default builder (`build_multi_envelope`) cannot
+/// trigger the failure since it constructs with `nested = None`; this
+/// variant is the one that callers are expected to extend with nested
+/// children, hence the explicit validate.
 pub fn build_multi_envelope_with(
     sub_envelopes: Vec<ExecutionEnvelope>,
     completion_rule: CompletionRule,
@@ -455,8 +492,8 @@ pub fn build_multi_envelope_with(
     parent_sessions: Vec<[u8; 32]>,
     timeout_unix_ms: u64,
     fallback_action: FallbackAction,
-) -> MultiEnvelope {
-    MultiEnvelope {
+) -> Result<MultiEnvelope, EnvelopeError> {
+    let multi = MultiEnvelope {
         sub_envelopes,
         completion_rule,
         completion_quorum_n,
@@ -464,7 +501,9 @@ pub fn build_multi_envelope_with(
         timeout_unix_ms,
         fallback_action,
         nested: None,
-    }
+    };
+    multi.validate()?;
+    Ok(multi)
 }
 
 // Ed25519 signature serde shim.
@@ -801,6 +840,89 @@ mod tests {
         };
         let err = check_nesting_depth(&level1, 0).unwrap_err();
         assert!(matches!(err, EnvelopeError::NestingDepthExceeded(d) if d == MAX_NESTING_DEPTH));
+    }
+
+    // === RFC-0962 §7.1 R8-F5 MultiEnvelope::validate (re-review issue #1) ===
+
+    #[test]
+    fn validate_accepts_single_level_envelope() {
+        let multi = build_multi_envelope(
+            vec![sample_child_env()],
+            CompletionRule::AllRequired,
+            None,
+            vec![],
+        );
+        assert!(multi.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_five_level_chain() {
+        let env = sample_child_env();
+        let level5 = MultiEnvelope {
+            nested: None,
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level4 = MultiEnvelope {
+            nested: Some(Box::new(level5)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level3 = MultiEnvelope {
+            nested: Some(Box::new(level4)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level2 = MultiEnvelope {
+            nested: Some(Box::new(level3)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level1 = MultiEnvelope {
+            nested: Some(Box::new(level2)),
+            ..build_multi_envelope(vec![env], CompletionRule::AllRequired, None, vec![])
+        };
+        let err = level1.validate().unwrap_err();
+        assert!(matches!(err, EnvelopeError::NestingDepthExceeded(d) if d == MAX_NESTING_DEPTH));
+    }
+
+    #[test]
+    fn from_wire_accepts_valid_single_level() {
+        let multi = build_multi_envelope(
+            vec![sample_child_env()],
+            CompletionRule::AllRequired,
+            None,
+            vec![],
+        );
+        let bytes = serde_json::to_vec(&multi).expect("serialize");
+        let decoded = MultiEnvelope::from_wire(&bytes).expect("from_wire");
+        assert_eq!(decoded, multi);
+    }
+
+    #[test]
+    fn from_wire_rejects_overcap_chain() {
+        // Build a 5-level chain, serialize, then try to deserialize via
+        // from_wire. validate() must reject.
+        let env = sample_child_env();
+        let level5 = MultiEnvelope {
+            nested: None,
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level4 = MultiEnvelope {
+            nested: Some(Box::new(level5)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level3 = MultiEnvelope {
+            nested: Some(Box::new(level4)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level2 = MultiEnvelope {
+            nested: Some(Box::new(level3)),
+            ..build_multi_envelope(vec![env.clone()], CompletionRule::AllRequired, None, vec![])
+        };
+        let level1 = MultiEnvelope {
+            nested: Some(Box::new(level2)),
+            ..build_multi_envelope(vec![env], CompletionRule::AllRequired, None, vec![])
+        };
+        let bytes = serde_json::to_vec(&level1).expect("serialize");
+        let err = MultiEnvelope::from_wire(&bytes).unwrap_err();
+        assert!(matches!(err, EnvelopeError::NestingDepthExceeded(_)));
     }
 
     #[test]
@@ -1146,7 +1268,8 @@ mod tests {
             vec![],
             30_000,
             FallbackAction::RollbackAll,
-        );
+        )
+        .unwrap();
         assert_eq!(multi.timeout_unix_ms, 30_000);
         assert_eq!(multi.fallback_action, FallbackAction::RollbackAll);
         assert_eq!(multi.completion_rule, CompletionRule::Quorum);

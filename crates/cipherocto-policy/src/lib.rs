@@ -183,6 +183,16 @@ pub struct PolicyObject {
     pub audit_ref: AuditRef,
     pub timestamp_unix_ms: u64,
     pub signature: PolicySignature,
+    /// Templates the parent permits a child to add to its graph (RFC-0967 §5).
+    ///
+    /// Per RFC-0967 §5: "the child may add nodes". The parent enumerates
+    /// which additional nodes the child is allowed to include; the child
+    /// then exercises that template by attaching a node with the same
+    /// `node_id` (and matching predicate / action / reachability
+    /// constraints). Empty by default ⇒ strict `node_id` match (legacy
+    /// behavior).
+    #[serde(default)]
+    pub additive_nodes: Vec<PolicyNode>,
 }
 
 impl PolicyObject {
@@ -202,7 +212,22 @@ impl PolicyObject {
             audit_ref,
             timestamp_unix_ms,
             signature: PolicySignature([0u8; 64]),
+            additive_nodes: Vec::new(),
         };
+        out.policy_id = compute_policy_id(&out);
+        out
+    }
+
+    /// Mint a new policy with explicit additive-node templates (RFC-0967 §5).
+    #[must_use]
+    pub fn mint_with_additive(
+        graph: PolicyGraph,
+        additive_nodes: Vec<PolicyNode>,
+        audit_ref: AuditRef,
+        timestamp_unix_ms: u64,
+    ) -> Self {
+        let mut out = Self::mint(graph, audit_ref, timestamp_unix_ms);
+        out.additive_nodes = additive_nodes;
         out.policy_id = compute_policy_id(&out);
         out
     }
@@ -230,6 +255,7 @@ impl PolicyObject {
             audit_ref,
             timestamp_unix_ms,
             signature: PolicySignature([0u8; 64]),
+            additive_nodes: Vec::new(),
         };
         out.policy_id = compute_policy_id(&out);
         out
@@ -262,6 +288,7 @@ impl PolicyObject {
             audit_ref: new_audit_ref,
             timestamp_unix_ms,
             signature: PolicySignature([0u8; 64]),
+            additive_nodes: self.additive_nodes.clone(),
         };
         out.policy_id = compute_policy_id(&out);
         out
@@ -436,6 +463,7 @@ pub fn intersect(
         audit_ref: [0u8; 32],
         timestamp_unix_ms: 0,
         signature: PolicySignature([0u8; 64]),
+        additive_nodes: Vec::new(),
     };
     Ok(child)
 }
@@ -562,7 +590,7 @@ pub fn is_subgraph(child: &PolicyObject, parent: &PolicyObject) -> bool {
     }
     // RFC-0967 §5: graph containment in addition to surface containment.
     // Empty child graph is trivially a subgraph of any parent graph.
-    if !is_subgraph_graph(&child.graph, &parent.graph) {
+    if !is_subgraph_graph(&child.graph, &parent.graph, &parent.additive_nodes) {
         return false;
     }
     true
@@ -598,27 +626,32 @@ pub fn action_at_least(child: &PolicyAction, parent: &PolicyAction) -> bool {
 /// Policy graph subgraph relation (RFC-0967 §5).
 ///
 /// For every node `n` in `child.all_nodes` there exists a node `n'` in
-/// `parent.all_nodes` with:
+/// `parent.all_nodes` (or in `parent_additive`) with:
 /// - `n.predicate == n'.predicate` (constraint equality — `Constraint` has
 ///   no partial-order by default; we use identity matching)
 /// - `child.action ≤ parent.action` per [`action_at_least`]
 /// - every node in `n.children` is also in `n'.children` (reachability is
 ///   covered by the parent)
 ///
-/// And every `child.root_nodes` entry is a node in the parent.
+/// And every `child.root_nodes` entry is a node in the parent (or in
+/// `parent_additive`).
 ///
-/// **Note on additive nodes:** RFC-0967 §5 says "the child may add nodes"
-/// alongside restricting existing ones. This implementation requires
-/// *every* child node to exist in the parent by `node_id` — additive nodes
-/// (with new `node_id`s) are rejected. Extending this to permit additive
-/// nodes is out of scope for the surface-check companion; the strict
-/// `node_id`-match is the safe interpretation and matches the existing
-/// `set_subsumes` style of the wallet crate.
+/// **Additive nodes (RFC-0967 §5):** "the child may add nodes". The parent
+/// enumerates which additional nodes the child is permitted to attach via
+/// the `parent_additive` slice. A child node whose `node_id` is not in the
+/// parent's `all_nodes` is admitted iff it matches an entry in
+/// `parent_additive` by `node_id` (and predicate / action / children
+/// constraints are checked against the additive template). Empty
+/// `parent_additive` ⇒ strict `node_id` match (legacy behavior).
 ///
 /// **Empty graphs:** `child.all_nodes.empty()` is trivially a subgraph of
 /// any parent (no nodes to check).
 #[must_use]
-pub fn is_subgraph_graph(child: &PolicyGraph, parent: &PolicyGraph) -> bool {
+pub fn is_subgraph_graph(
+    child: &PolicyGraph,
+    parent: &PolicyGraph,
+    parent_additive: &[PolicyNode],
+) -> bool {
     // Empty graph is a subgraph of any graph.
     if child.all_nodes.is_empty() {
         return true;
@@ -627,34 +660,42 @@ pub fn is_subgraph_graph(child: &PolicyGraph, parent: &PolicyGraph) -> bool {
     // Build a parent lookup by node_id.
     let parent_by_id: HashMap<&[u8; 32], &PolicyNode> =
         parent.all_nodes.iter().map(|n| (&n.node_id, n)).collect();
+    // Additive-template lookup by node_id.
+    let additive_by_id: HashMap<&[u8; 32], &PolicyNode> =
+        parent_additive.iter().map(|n| (&n.node_id, n)).collect();
 
-    // Every child node must exist in parent.
+    // Every child node must exist in parent (strict) or in additive
+    // templates (additive).
     for child_node in &child.all_nodes {
-        let Some(parent_node) = parent_by_id.get(&child_node.node_id) else {
+        let template = if let Some(parent_node) = parent_by_id.get(&child_node.node_id) {
+            *parent_node
+        } else if let Some(additive_node) = additive_by_id.get(&child_node.node_id) {
+            *additive_node
+        } else {
             return false;
         };
 
-        // Predicate must match (constraint equality).
-        if child_node.predicate != parent_node.predicate {
+        // Predicate must match the source-of-truth template (constraint equality).
+        if child_node.predicate != template.predicate {
             return false;
         }
 
-        // Parent action must be at least as permissive as child action.
-        if !action_at_least(&child_node.action, &parent_node.action) {
+        // Template action must be at least as permissive as child action.
+        if !action_at_least(&child_node.action, &template.action) {
             return false;
         }
 
-        // Parent's children must reach all of child's children.
+        // Template's children must reach all of child's children.
         for child_child_id in &child_node.children {
-            if !parent_node.children.contains(child_child_id) {
+            if !template.children.contains(child_child_id) {
                 return false;
             }
         }
     }
 
-    // Every child root must be a parent node.
+    // Every child root must be a parent node or an additive template.
     for root_id in &child.root_nodes {
-        if !parent_by_id.contains_key(root_id) {
+        if !parent_by_id.contains_key(root_id) && !additive_by_id.contains_key(root_id) {
             return false;
         }
     }
@@ -1012,9 +1053,9 @@ mod tests {
             )],
         };
         let child = PolicyGraph::default();
-        assert!(is_subgraph_graph(&child, &parent));
+        assert!(is_subgraph_graph(&child, &parent, &[]));
         // Empty parent + empty child is also a subgraph.
-        assert!(is_subgraph_graph(&child, &PolicyGraph::default()));
+        assert!(is_subgraph_graph(&child, &PolicyGraph::default(), &[]));
     }
 
     #[test]
@@ -1029,7 +1070,7 @@ mod tests {
             root_nodes: vec![[0x01; 32]],
             all_nodes: vec![node],
         };
-        assert!(is_subgraph_graph(&graph, &graph));
+        assert!(is_subgraph_graph(&graph, &graph, &[]));
     }
 
     #[test]
@@ -1054,7 +1095,7 @@ mod tests {
                 vec![],
             )],
         };
-        assert!(is_subgraph_graph(&child, &parent));
+        assert!(is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1078,7 +1119,7 @@ mod tests {
                 vec![],
             )],
         };
-        assert!(!is_subgraph_graph(&child, &parent));
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1102,7 +1143,7 @@ mod tests {
                 vec![],
             )],
         };
-        assert!(!is_subgraph_graph(&child, &parent));
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1126,7 +1167,7 @@ mod tests {
                 vec![],
             )],
         };
-        assert!(!is_subgraph_graph(&child, &parent));
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1173,7 +1214,7 @@ mod tests {
                 ),
             ],
         };
-        assert!(is_subgraph_graph(&child, &parent));
+        assert!(is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1214,7 +1255,7 @@ mod tests {
                 ),
             ],
         };
-        assert!(!is_subgraph_graph(&child, &parent));
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1238,7 +1279,7 @@ mod tests {
                 vec![],
             )],
         };
-        assert!(!is_subgraph_graph(&child, &parent));
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
     }
 
     #[test]
@@ -1277,5 +1318,172 @@ mod tests {
             PolicyObject::mint_surface(surface(Some(2000), &["gpt-4"]), [0u8; 32], 1_000_000);
         // Both have empty graphs (passing graph check); surface fails.
         assert!(!is_subgraph(&child, &parent));
+    }
+
+    // === RFC-0967 §5 additive child nodes (Gap 8.2) ===
+
+    fn make_node(id: [u8; 32], action: PolicyAction) -> PolicyNode {
+        policy_node(id, Constraint::SingleUse, action, vec![])
+    }
+
+    #[test]
+    fn is_subgraph_graph_admits_additive_child_node_in_parent_additive_set() {
+        // Per RFC-0967 §5: "the child may add nodes". The parent's
+        // `additive_nodes` field lists templates the child is permitted
+        // to include.
+        let a = [0x01; 32];
+        let b = [0x02; 32];
+        let c = [0x03; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+            ],
+        };
+        let additive_c = make_node(c, PolicyAction::Allow);
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+                additive_c.clone(),
+            ],
+        };
+        assert!(is_subgraph_graph(&child, &parent, &[additive_c]));
+    }
+
+    #[test]
+    fn is_subgraph_graph_rejects_additive_child_node_not_in_parent_additive_set() {
+        // Child adds node C, but parent does not list C in
+        // `additive_nodes` ⇒ reject.
+        let a = [0x01; 32];
+        let b = [0x02; 32];
+        let c = [0x03; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+            ],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+                make_node(c, PolicyAction::Allow),
+            ],
+        };
+        // Empty additive set ⇒ reject.
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
+    }
+
+    #[test]
+    fn is_subgraph_graph_accepts_multiple_additive_child_nodes() {
+        // Multiple additive nodes declared in the parent → all accepted.
+        let a = [0x01; 32];
+        let b = [0x02; 32];
+        let c = [0x03; 32];
+        let d = [0x04; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+            ],
+        };
+        let additive = vec![
+            make_node(c, PolicyAction::Allow),
+            make_node(d, PolicyAction::Allow),
+        ];
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+                make_node(c, PolicyAction::Allow),
+                make_node(d, PolicyAction::Allow),
+            ],
+        };
+        assert!(is_subgraph_graph(&child, &parent, &additive));
+    }
+
+    #[test]
+    fn is_subgraph_graph_empty_additive_set_preserves_legacy_strict_match() {
+        // Empty additive set + child node with unknown node_id ⇒ reject
+        // (legacy behavior preserved).
+        let a = [0x01; 32];
+        let unknown = [0xab; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![make_node(a, PolicyAction::Allow)],
+        };
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(unknown, PolicyAction::Allow),
+            ],
+        };
+        assert!(!is_subgraph_graph(&child, &parent, &[]));
+    }
+
+    #[test]
+    fn is_subgraph_graph_additive_template_must_share_node_id() {
+        // Parent declares an additive template keyed by node_id X; child
+        // adds a node with node_id X but mismatched predicate ⇒ reject.
+        let a = [0x01; 32];
+        let b = [0x02; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+            ],
+        };
+        let additive_template = make_node(b, PolicyAction::Allow);
+        let mut child_node = make_node(b, PolicyAction::Allow);
+        child_node.predicate = Constraint::MaxUses { count: 5 };
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![make_node(a, PolicyAction::Allow), child_node],
+        };
+        // Additive node_id matched, but predicate differs ⇒ reject.
+        assert!(!is_subgraph_graph(
+            &child,
+            &parent,
+            std::slice::from_ref(&additive_template)
+        ));
+    }
+
+    #[test]
+    fn is_subgraph_with_additive_accepts_augmented_child() {
+        // Full `is_subgraph` (combined surface + graph) with additive
+        // nodes in the parent — child includes all parent nodes + an
+        // additive node.
+        let a = [0x01; 32];
+        let b = [0x02; 32];
+        let c = [0x03; 32];
+        let parent = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+            ],
+        };
+        let additive_c = make_node(c, PolicyAction::Allow);
+        let child = PolicyGraph {
+            root_nodes: vec![a],
+            all_nodes: vec![
+                make_node(a, PolicyAction::Allow),
+                make_node(b, PolicyAction::Allow),
+                additive_c.clone(),
+            ],
+        };
+        let mut parent_obj = PolicyObject::mint(parent, [0u8; 32], 1_000_000);
+        parent_obj.additive_nodes = vec![additive_c];
+        let child_obj = PolicyObject::mint(child, [0u8; 32], 1_000_000);
+        assert!(is_subgraph(&child_obj, &parent_obj));
     }
 }

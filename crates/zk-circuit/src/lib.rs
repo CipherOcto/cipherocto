@@ -225,6 +225,52 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// public inputs and checks `proof.stark_proof[..32]` against
 /// `stub_commitment`.
 ///
+/// # Mock-path signer-binding limitation
+///
+/// **The mock-path commitment is over `zk_verifier::PublicInputs` only.**
+/// `BatchSigPublicInputs::signer_roots` and `message_root` are
+/// accepted as inputs (so the API surface + validation match the
+/// real-zk path) but they are NOT folded into the deterministic mock
+/// bytes. The canonical proofer → verifier round-trip passes by
+/// structure: the proofer emits a BLAKE3 commitment over
+/// `(casm_hash || zk_verifier::PublicInputs)`, the verifier
+/// reconstructs the same struct from the proof's public inputs and
+/// checks the bytes match.
+///
+/// **What this means for security:** in the default build (mock path),
+/// `signer_roots` is a structural input only. A malicious proofer
+/// could submit different `signer_roots` than the verifier-side
+/// check assumed; the canonical `verify_capability_zk` would still
+/// pass because the proof bytes are over the capability-side
+/// `PublicInputs`, not over the signers. The `verify_batch_capability_zk`
+/// wrapper mitigates by rejecting an empty `signer_pubkeys` list at
+/// the verifier (defense in depth), but it does not bind individual
+/// signers to the proof bytes in the mock path.
+///
+/// **Real-zk path (gated by the `real-zk` cargo feature):** the
+/// `canonical_ser(BatchSigPublicInputs)` helper below is used as the
+/// STWO public-input commitment. `signer_roots` + `message_root` are
+/// folded into the Fiat-Shamir transcript and the STARK proof binds
+/// them cryptographically. Production deployments MUST enable the
+/// `real-zk` feature and ship the `libstwo_sys.so` artifact.
+///
+/// # Round-trip smoke
+///
+/// The 11-step ZK mint integration test (`octo-wallet::tests::eleven_step_zk`)
+/// exercises the full mint → verify path end-to-end with the mock
+/// proofer; the test passes by structure (canonical commitment
+/// round-trip + non-empty signer list check). It is a smoke test for
+/// the wire shape + API surface, NOT a security test for signer
+/// binding; security requires the `real-zk` feature path.
+///
+/// **TODO (follow-up gap):** when the real-zk path ships, add a
+/// `signer_roots_public` field to `zk_verifier::PublicInputs` (or a
+/// parallel public-input struct) so the STARK proof's public input
+/// commitment includes the signers. The mock-path commitment shape
+/// would then need to mirror the real-zk layout for byte-identical
+/// verifier behavior. Tracked under Gap 3 follow-up; see
+/// `docs/plans/2026-07-24-seven-gap-impl.md` §"Done When" + Risks.
+///
 /// # Errors
 /// Returns `ProverError` on:
 /// - `EmptySigners` (signer_roots empty)

@@ -349,6 +349,7 @@ pub fn set_subsumes(parent: &[Caveat], child: &[Caveat]) -> bool {
     child.iter().all(|c| parent_caveat_implies(parent, c))
 }
 
+#[allow(clippy::too_many_lines)]
 fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
     match child {
         Caveat::AmountMax(c) => parent
@@ -491,6 +492,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
 /// Permissiveness order: `Off` (no cache, most restrictive) ⊂ `OptIn`
 /// (opt-in caching) ⊂ `Always` (cache always, least restrictive).
 /// `parent ⊇ child` iff parent's policy permits all caching that child does.
+#[allow(clippy::match_same_arms, clippy::unnested_or_patterns)]
 fn cache_policy_subsumes(parent: &CachePolicy, child: &CachePolicy) -> bool {
     match (parent, child) {
         // Off ↔ Off: same restriction level.
@@ -520,9 +522,9 @@ fn cache_policy_subsumes(parent: &CachePolicy, child: &CachePolicy) -> bool {
         (CachePolicy::Always { .. }, CachePolicy::Off) => true,          // Always allows Off
         (CachePolicy::OptIn { .. }, CachePolicy::Off) => true,           // OptIn allows Off
         // Off is most restrictive; cannot permit OptIn or Always.
+        // OptIn is more restrictive than Always.
         (CachePolicy::Off, CachePolicy::OptIn { .. }) => false,
         (CachePolicy::Off, CachePolicy::Always { .. }) => false,
-        // OptIn is more restrictive than Always.
         (CachePolicy::OptIn { .. }, CachePolicy::Always { .. }) => false,
     }
 }
@@ -604,7 +606,10 @@ impl Caveat {
             }),
             Caveat::Vault(id) => serde_json::json!({"type": "vault", "value": hex::encode(id)}),
             Caveat::Permission(k) => serde_json::json!({"type": "permission", "value": k.as_str()}),
-            Caveat::ValidRange { valid_after_unix, valid_until_unix } => serde_json::json!({
+            Caveat::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => serde_json::json!({
                 "type": "valid_range",
                 "value": {
                     "valid_after_unix": valid_after_unix,
@@ -643,7 +648,11 @@ impl Caveat {
                     }
                 })
             }
-            Caveat::PolicyReference { policy_id, policy_version_seq, attenuation_witness } => {
+            Caveat::PolicyReference {
+                policy_id,
+                policy_version_seq,
+                attenuation_witness,
+            } => {
                 serde_json::json!({
                     "type": "policy_reference",
                     "value": {
@@ -990,20 +999,38 @@ mod tests {
     #[test]
     fn subsumes_permission_must_match_kind() {
         let parent = vec![Caveat::Permission(PermissionKind::NativeTokenTransfer)];
-        assert!(set_subsumes(&parent, &[Caveat::Permission(PermissionKind::NativeTokenTransfer)]));
-        assert!(!set_subsumes(&parent, &[Caveat::Permission(PermissionKind::Reservation)]));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::Permission(PermissionKind::NativeTokenTransfer)]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::Permission(PermissionKind::Reservation)]
+        ));
     }
 
     #[test]
     fn subsumes_valid_range_narrows() {
-        let parent = vec![Caveat::ValidRange { valid_after_unix: 100, valid_until_unix: 1000 }];
+        let parent = vec![Caveat::ValidRange {
+            valid_after_unix: 100,
+            valid_until_unix: 1000,
+        }];
         // child narrower on both sides ⇒ accepted
-        let child = vec![Caveat::ValidRange { valid_after_unix: 200, valid_until_unix: 800 }];
+        let child = vec![Caveat::ValidRange {
+            valid_after_unix: 200,
+            valid_until_unix: 800,
+        }];
         assert!(set_subsumes(&parent, &child));
         // child widens on either side ⇒ rejected
-        let widens_after = vec![Caveat::ValidRange { valid_after_unix: 50, valid_until_unix: 800 }];
+        let widens_after = vec![Caveat::ValidRange {
+            valid_after_unix: 50,
+            valid_until_unix: 800,
+        }];
         assert!(!set_subsumes(&parent, &widens_after));
-        let widens_until = vec![Caveat::ValidRange { valid_after_unix: 200, valid_until_unix: 2000 }];
+        let widens_until = vec![Caveat::ValidRange {
+            valid_after_unix: 200,
+            valid_until_unix: 2000,
+        }];
         assert!(!set_subsumes(&parent, &widens_until));
     }
 
@@ -1019,10 +1046,14 @@ mod tests {
         // R7-F8: parent 0 (high-trust, instant) can upgrade to non-zero
         // (auditable). `c_dur >= p_dur` rule admits this.
         let parent = vec![Caveat::AuditWindow { duration_secs: 0 }];
-        let child = vec![Caveat::AuditWindow { duration_secs: 86400 }];
+        let child = vec![Caveat::AuditWindow {
+            duration_secs: 86400,
+        }];
         assert!(set_subsumes(&parent, &child));
         // Reverse: parent 24h, child 0 (releaseaudit) — disallowed (downgrade).
-        let reverse_parent = vec![Caveat::AuditWindow { duration_secs: 86400 }];
+        let reverse_parent = vec![Caveat::AuditWindow {
+            duration_secs: 86400,
+        }];
         let reverse_child = vec![Caveat::AuditWindow { duration_secs: 0 }];
         assert!(!set_subsumes(&reverse_parent, &reverse_child));
     }
@@ -1045,9 +1076,21 @@ mod tests {
     fn subsumes_wrapped_only_must_match_parent() {
         let p1 = [0xaa; 32];
         let p2 = [0xbb; 32];
-        let parent = vec![Caveat::WrappedOnly { parent_capability: p1 }];
-        assert!(set_subsumes(&parent, &[Caveat::WrappedOnly { parent_capability: p1 }]));
-        assert!(!set_subsumes(&parent, &[Caveat::WrappedOnly { parent_capability: p2 }]));
+        let parent = vec![Caveat::WrappedOnly {
+            parent_capability: p1,
+        }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::WrappedOnly {
+                parent_capability: p1
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::WrappedOnly {
+                parent_capability: p2
+            }]
+        ));
     }
 
     #[test]
@@ -1081,24 +1124,47 @@ mod tests {
             policy_version_seq: 1,
             attenuation_witness: [0u8; 64],
         }];
-        assert!(set_subsumes(&parent, &[Caveat::PolicyReference {
-            policy_id: p1,
-            policy_version_seq: 1,
-            attenuation_witness: [0u8; 64],
-        }]));
-        assert!(!set_subsumes(&parent, &[Caveat::PolicyReference {
-            policy_id: p2,
-            policy_version_seq: 1,
-            attenuation_witness: [0u8; 64],
-        }]));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::PolicyReference {
+                policy_id: p1,
+                policy_version_seq: 1,
+                attenuation_witness: [0u8; 64],
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::PolicyReference {
+                policy_id: p2,
+                policy_version_seq: 1,
+                attenuation_witness: [0u8; 64],
+            }]
+        ));
     }
 
     #[test]
     fn subsumes_valid_after_narrows() {
-        let parent = vec![Caveat::ValidAfter { not_before_unix: 100 }];
-        assert!(set_subsumes(&parent, &[Caveat::ValidAfter { not_before_unix: 100 }]));
-        assert!(set_subsumes(&parent, &[Caveat::ValidAfter { not_before_unix: 200 }]));
-        assert!(!set_subsumes(&parent, &[Caveat::ValidAfter { not_before_unix: 50 }]));
+        let parent = vec![Caveat::ValidAfter {
+            not_before_unix: 100,
+        }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 100
+            }]
+        ));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 200
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 50
+            }]
+        ));
     }
 
     #[test]
@@ -1106,8 +1172,14 @@ mod tests {
         let h = [0x42; 32];
         let h2 = [0x99; 32];
         let parent = vec![Caveat::RedemptionContext { context_hash: h }];
-        assert!(set_subsumes(&parent, &[Caveat::RedemptionContext { context_hash: h }]));
-        assert!(!set_subsumes(&parent, &[Caveat::RedemptionContext { context_hash: h2 }]));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::RedemptionContext { context_hash: h }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::RedemptionContext { context_hash: h2 }]
+        ));
     }
 
     #[test]
@@ -1122,11 +1194,16 @@ mod tests {
         // Each new variant must produce a distinct canonical_ser output.
         let v1 = Caveat::Vault([0x01; 32]);
         let v2 = Caveat::Permission(PermissionKind::NativeTokenTransfer);
-        let v3 = Caveat::ValidRange { valid_after_unix: 0, valid_until_unix: 100 };
+        let v3 = Caveat::ValidRange {
+            valid_after_unix: 0,
+            valid_until_unix: 100,
+        };
         let v4 = Caveat::MaxPerTx(100);
         let v5 = Caveat::AuditWindow { duration_secs: 60 };
         let v6 = Caveat::MaxUses { count: 5 };
-        let v7 = Caveat::WrappedOnly { parent_capability: [0xab; 32] };
+        let v7 = Caveat::WrappedOnly {
+            parent_capability: [0xab; 32],
+        };
         let v8 = Caveat::Factory(FactoryVet {
             target_vault_id: [0x01; 32],
             action_template: ActionTemplate {
@@ -1154,7 +1231,11 @@ mod tests {
             v9.canonical_ser(),
         ];
         let unique: std::collections::HashSet<_> = serials.iter().collect();
-        assert_eq!(unique.len(), 9, "RFC-0965 variants must have distinct canonical_ser");
+        assert_eq!(
+            unique.len(),
+            9,
+            "RFC-0965 variants must have distinct canonical_ser"
+        );
     }
 
     #[test]
@@ -1164,11 +1245,18 @@ mod tests {
         let names = vec![
             Caveat::Vault([0; 32]).name(),
             Caveat::Permission(PermissionKind::NativeTokenTransfer).name(),
-            Caveat::ValidRange { valid_after_unix: 0, valid_until_unix: 0 }.name(),
+            Caveat::ValidRange {
+                valid_after_unix: 0,
+                valid_until_unix: 0,
+            }
+            .name(),
             Caveat::MaxPerTx(0).name(),
             Caveat::AuditWindow { duration_secs: 0 }.name(),
             Caveat::MaxUses { count: 0 }.name(),
-            Caveat::WrappedOnly { parent_capability: [0; 32] }.name(),
+            Caveat::WrappedOnly {
+                parent_capability: [0; 32],
+            }
+            .name(),
             Caveat::Factory(FactoryVet {
                 target_vault_id: [0; 32],
                 action_template: ActionTemplate {
@@ -1178,12 +1266,14 @@ mod tests {
                 required_caller: None,
                 pre_conditions: vec![],
                 expiry_for_deploy_unix: 0,
-            }).name(),
+            })
+            .name(),
             Caveat::PolicyReference {
                 policy_id: [0; 32],
                 policy_version_seq: 0,
                 attenuation_witness: [0; 64],
-            }.name(),
+            }
+            .name(),
         ];
         let unique: HashSet<_> = names.iter().collect();
         assert_eq!(unique.len(), 9);

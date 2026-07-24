@@ -75,6 +75,13 @@ pub struct Macaroon {
     /// BLAKE3 hash of the root secret — embedded in the token so the verifier
     /// can confirm the root secret they hold matches without leaking it.
     pub root_secret_hash: [u8; 32],
+    /// 32-byte capability identifier used for `WrappedOnly` chain checks
+    /// (RFC-0960 §8 + RFC-0965 §3.7). Distinct from `root_id` (16 bytes) —
+    /// the 32-byte form matches the catalog schema (`capability_id BLOB`).
+    /// Generated fresh per mint; defaults to `[0;32]` when deserializing
+    /// pre-existing tokens for wire-format back-compat.
+    #[serde(default)]
+    pub id: [u8; 32],
     /// Chained caveat HMACs — `chain[i]` is the HMAC output after applying
     /// caveat `caveats[i]` (RFC-0957 §3.2). The final `chain[last]` is the
     /// macaroon signature that the verifier checks.
@@ -106,9 +113,18 @@ impl Macaroon {
         Ok(Self {
             root_id,
             root_secret_hash,
+            id: Self::mint_id(),
             chain: vec![hmac_state],
             caveats: Vec::new(),
         })
+    }
+
+    /// Generate a fresh 32-byte capability id (random per mint).
+    fn mint_id() -> [u8; 32] {
+        let mut rng = rand::rng();
+        let mut id = [0u8; 32];
+        rng.fill_bytes(&mut id);
+        id
     }
 
     /// Append a caveat. Returns the new macaroon with the caveat added.
@@ -169,6 +185,16 @@ impl Macaroon {
     pub fn signature(&self) -> &[u8; 32] {
         self.chain.last().expect("chain non-empty")
     }
+
+    /// Return the `WrappedOnly` parent capability id (RFC-0965 §3.7), if any.
+    /// Returns the first matching `WrappedOnly { parent_capability }` caveat.
+    #[must_use]
+    pub fn parent_capability(&self) -> Option<&[u8; 32]> {
+        self.caveats.iter().find_map(|c| match c {
+            Caveat::WrappedOnly { parent_capability } => Some(parent_capability),
+            _ => None,
+        })
+    }
 }
 
 /// Macaroon errors.
@@ -182,7 +208,23 @@ pub enum MacaroonError {
 
     #[error("root secret does not match embedded hash")]
     RootSecretMismatch,
+
+    /// `WrappedOnly` chain has a cycle (RFC-0965 §3.7): a capability in
+    /// the chain appears twice, or a `WrappedOnly` references the macaroon
+    /// itself.
+    #[error("WrappedOnly chain cycle detected")]
+    WrappedCycle,
+
+    /// `WrappedOnly` chain depth exceeded the maximum
+    /// (`MAX_WRAPPED_DEPTH` per RFC-0965 §3.7). `usize` = observed depth.
+    #[error("WrappedOnly chain depth {0} exceeds maximum")]
+    WrappedDepthExceeded(usize),
 }
+
+/// Maximum depth of a `WrappedOnly` chain (RFC-0965 §3.7 — "Maximum
+/// `WrappedOnly` chain depth = 16"). A 17-deep chain or any circular
+/// reference is malformed; verifiers reject with `E_CHAIN_DEPTH_EXCEEDED`.
+pub const MAX_WRAPPED_DEPTH: usize = 16;
 
 #[cfg(test)]
 mod tests {
@@ -293,5 +335,58 @@ mod tests {
             ProviderId::from("anthropic"),
         ]));
         m.verify_signature(&secret).unwrap();
+    }
+
+    // RFC-0960 §8 + RFC-0965 §3.7: WrappedOnly chain has depth + cycle limits.
+
+    #[test]
+    fn wrapped_cycle_variant_exists() {
+        // TDD fail-first: variant must compile + carry a non-empty message.
+        let err = MacaroonError::WrappedCycle;
+        assert!(!err.to_string().is_empty());
+        assert!(err.to_string().to_lowercase().contains("cycle"));
+    }
+
+    #[test]
+    fn mint_assigns_unique_32byte_capability_id() {
+        let secret = [0x42; 32];
+        let m1 = Macaroon::mint(&secret).unwrap();
+        let m2 = Macaroon::mint(&secret).unwrap();
+        // Each mint produces a fresh id (different nonces ⇒ different ids).
+        assert_eq!(m1.id.len(), 32);
+        assert_eq!(m2.id.len(), 32);
+        assert_ne!(m1.id, m2.id, "ids must be unique across mints");
+        // root_secret_hash is the same (same root_secret) — id is the
+        // distinguishing identifier.
+        assert_eq!(m1.root_secret_hash, m2.root_secret_hash);
+    }
+
+    #[test]
+    fn parent_capability_returns_wrapped_only_target() {
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        assert!(m.parent_capability().is_none());
+
+        let parent = [0xab; 32];
+        let m = m.attenuate(Caveat::WrappedOnly {
+            parent_capability: parent,
+        });
+        assert_eq!(m.parent_capability(), Some(&parent));
+    }
+
+    #[test]
+    fn parent_capability_returns_first_when_multiple_wrapped_only() {
+        // If a malformed chain carries multiple WrappedOnly caveats,
+        // we report the first (attenuation-time only appends, but
+        // defensive: subsumption should forbid this anyway).
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        let m = m.attenuate(Caveat::WrappedOnly {
+            parent_capability: [0x01; 32],
+        });
+        let m = m.attenuate(Caveat::WrappedOnly {
+            parent_capability: [0x02; 32],
+        });
+        assert_eq!(m.parent_capability(), Some(&[0x01; 32]));
     }
 }

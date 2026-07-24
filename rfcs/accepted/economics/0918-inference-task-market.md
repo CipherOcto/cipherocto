@@ -2,9 +2,16 @@
 
 ## Status
 
-Draft
+Accepted
 
 > **Note:** This RFC was renumbered from RFC-0144 to RFC-0918 as part of the category-based numbering system.
+
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.1     | 2026-07-24 | Phase 1 (Core Market) implemented as `crates/quota-router-core::task_market` (Gap 6). Simplified `TaskType` to 4 unit variants per plan: `Inference / Embedding / FineTune / Eval`. Order book reuses `marketplace::orderbook::OrderBook<TaskSpec>` (Gap 5.1). Escrow layer uses `TaskEscrow` wrapping `marketplace::escrow::Escrow` (Gap 5.2). Slashing reuses `marketplace::slashing::SlashingLedger` (Gap 5.3). Phases 2-4 (dynamic pricing, worker selection, reward distribution) remain future work. |
+| 1.0     | 2026-03-07 | Initial draft with proof market / inference task market research. |
 
 ## Summary
 
@@ -90,76 +97,32 @@ RFC-0143 (OCTO-Network)
 ### Task Types
 
 ```rust
-/// Inference task types
-enum TaskType {
-    /// Standard inference request
-    Inference(InferenceTask),
-
-    /// Proof generation task
-    ProofGeneration(ProofTask),
-
-    /// Verification task
-    Verification(VerificationTask),
-
-    /// Aggregation task
-    Aggregation(AggregationTask),
+/// Inference task types (Gap 6 simplified spine).
+///
+/// The four-variant simplification matches the Phase 1 (Core Market)
+/// implementation in `crates/quota-router-core::task_market::orders`.
+/// Future Phases (2: dynamic pricing, 3: worker selection, 4: rewards)
+/// may extend each variant with a richer payload struct; the unit
+/// variants here are sufficient for the order book and escrow layer.
+pub enum TaskType {
+    /// Standard inference request (LLM completion, embedding-free).
+    Inference,
+    /// Embedding generation (vector output).
+    Embedding,
+    /// Fine-tuning job (model mutation).
+    FineTune,
+    /// Evaluation / benchmark run.
+    Eval,
 }
 
-/// Standard inference task
-struct InferenceTask {
-    /// Unique task ID
-    task_id: Digest,
-
-    /// Model to execute
-    model_id: Digest,
-
-    /// Required shards
-    required_shards: Vec<u32>,
-
-    /// Input data commitment
-    input_commitment: Digest,
-
-    /// Output format
-    output_spec: OutputSpec,
-
-    /// Maximum price willing to pay
-    max_price: TokenAmount,
-
-    /// Deadline
-    deadline: Timestamp,
-
-    /// Verification level
-    verification: VerificationLevel,
-}
-
-/// Proof generation task
-struct ProofTask {
-    /// Task ID
-    task_id: Digest,
-
-    /// Execution trace to prove
-    trace_hash: Digest,
-
-    /// Proof type required
-    proof_type: ProofType,
-
-    /// Reward
-    reward: TokenAmount,
-}
-
-/// Verification task
-struct VerificationTask {
-    /// Task ID
-    task_id: Digest,
-
-    /// Proof to verify
-    proof_id: Digest,
-
-    /// Verification level
-    level: VerificationLevel,
-
-    /// Reward
-    reward: TokenAmount,
+/// Orderable payload carried by every bid / ask in the inference task
+/// market. One `TaskSpec` per order.
+pub struct TaskSpec {
+    pub task_type: TaskType,
+    pub model: String,
+    pub max_price: u128,
+    pub deadline_unix: u64,
+    pub quantity: u64,
 }
 ```
 
@@ -722,9 +685,11 @@ sequenceDiagram
 
 ### Phase 1: Core Market
 
-- [ ] Order book
-- [ ] Basic matching
-- [ ] Fixed pricing
+- [x] Order book — `task_market::orders::TaskMarket` wraps `OrderBook<TaskSpec>` (Gap 5.1)
+- [x] Basic matching — price-time priority matching (`match_top`)
+- [x] Fixed pricing — explicit ask price per sell order
+- [x] Escrow flow — `task_market::escrow::TaskEscrow` (Gap 5.2 + dispute resolution)
+- [x] Slashing integration — `task_market::slashing::TaskMarketSlashing` (Gap 5.3)
 
 ### Phase 2: Dynamic Pricing
 
@@ -741,7 +706,7 @@ sequenceDiagram
 ### Phase 4: Economics
 
 - [ ] Reward distribution
-- [ ] Slashing integration
+- [ ] Slashing integration (arbitration path)
 - [ ] Fee market
 
 ## Future Work
@@ -783,6 +748,6 @@ Each task type needs different pricing:
 
 ---
 
-**Version:** 1.0
+**Version:** 1.1
 **Submission Date:** 2026-03-07
-**Last Updated:** 2026-03-07
+**Last Updated:** 2026-07-24

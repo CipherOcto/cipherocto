@@ -2,7 +2,7 @@
 
 ## Status
 
-**Deferred.** Depends on RFC-0955 acceptance.
+**Deferred.** Depends on RFC-0955 acceptance (and the RFC-0955 `reputation:blake3_digest` follow-up amendment). RFC-0968 acceptance (now satisfied 2026-07-25) was a transitive prerequisite but was not the binding blocker; future 0968a work remains pending RFC-0955 acceptance + amendment.
 
 **v3.0-r15 (2026-07-25, Gap 9):** RFC-0968's reputation data model now uses `octo_determin::Dfp` per RFC-0104. The `SignalEvent.score_delta` BLOB and the `ReputationAggregate.score_ewma` BLOB are bit-deterministic across compilers and platforms. Anchoring these BLOBs is straightforward: anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (a 32-byte BLAKE3 digest of the canonical 24-byte Dfp encoding) into the RFC-0955 `reputation:blake3_digest` field. v3.3-r18 (C12) corrects the previous "anchor 24-byte DFP directly into RFC-0955 `reputation:u64`" wording — `reputation:u64` is 8 bytes and cannot carry a 24-byte BLOB. The BLAKE3 digest form is the canonical binding contract: 32 bytes fit cleanly into `blake3_digest`, the digest commits to the exact 24-byte Dfp encoding bit-for-bit, and anchoring the digest (rather than the encoding) is what makes the binding consistent across on-chain size constraints. No `f64` migration path exists in the parent mission.
 
@@ -32,10 +32,13 @@ this mission owns on-chain anchoring).
 ## Why deferred?
 
 - RFC-0955 is still Draft. On-chain anchoring requires the binding contract
-  to be live.
+  to be live; the RFC-0955 `reputation:blake3_digest` follow-up amendment
+  must also be accepted before the 32-byte BLAKE3 digest field becomes the
+  canonical binding target.
 - Anchoring is a separate cost model (gas, batch frequency) from gossip
   federation (storage, durability).
-- Mission 0968a unblocks independently of RFC-0968 acceptance.
+- Mission 0968a unblocks independently of RFC-0968 acceptance (RFC-0968
+  was promoted to Accepted 2026-07-25; the blocker is RFC-0955).
 
 ## Scope (when unblocked)
 

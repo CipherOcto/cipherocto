@@ -399,7 +399,10 @@ pub enum GovernanceError {
 /// `ReputationError::GovernanceSnapshotStale` before the registry lookup.
 pub struct GovernanceProof {
     pub governance_pubkey: PublicKey,
-    pub signature: Vec<u8>,
+    pub recorder_id: RecorderId,
+    pub recorder_pubkey: [u8; 32],
+    pub reason_hash: [u8; 32],
+    pub signature: [u8; 64],
     pub snapshot: GovernanceSnapshot,
 }
 
@@ -420,8 +423,11 @@ pub const BLAKE3_REPUTATION_STAKE_DOMAIN: &[u8] =
     b"cipherocto/reputation/stake/v1";
 
 // Round 3 H2: resume-proof domain separator binds the governance signature
-// to the canonical resume-request form (recorder_id || "resume" || current_unix).
+// to the canonical resume-request form (recorder_id || current_unix).
 // Round 6 M12: canonical declaration lives in §10; this is a re-export pointer.
+// Round 12: dropped the literal "resume" sub-tag; the domain separator alone
+// is sufficient to disambiguate the resume proof from stake/suspension
+// authorization.
 pub const BLAKE3_REPUTATION_RESUME_DOMAIN: &[u8] =
     b"cipherocto/reputation/resume/v1";
 
@@ -624,23 +630,34 @@ impl StoolapReputationStore {
         self.update_recorder_registration(&reg)
     }
 
-    /// Round 10 H1: verify the governance-signed suspension authorization.
-    /// The signed payload is the ed25519 signature over
+    /// Round 10 H1 + Round 12: verify the governance-signed suspension
+    /// authorization. The signed payload is the ed25519 signature over
     /// `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder.0 || reason_hash
     /// || now_unix)` where `reason_hash = blake3(canonical_ser(reason))`. The
     /// domain constant is `b"cipherocto/reputation/suspension/v1"` (§10).
     ///
+    /// Round 12: the impl signature now matches the `ReputationStore` trait
+    /// method declaration in §10 (`auth: &SuspensionAuth, snapshot:
+    /// &GovernanceSnapshot, now_unix: u64`). The carried `GovernanceProof`
+    /// supplies `recorder_id`, `recorder_pubkey`, `reason_hash`, and
+    /// `signature` so the verify path is self-contained — the caller
+    /// (`suspend_recorder`) does not need to re-pass them.
+    ///
     /// Verification order (matches the carry-snapshot universality rule from
     /// Round 8 H1/H2):
-    /// 1. `proof.snapshot.validate_fresh(now_unix)` — returns
-    ///    `GovernanceSnapshotStale` before any registry lookup.
-    /// 2. `GovernanceRegistry::lookup_at_snapshot(pubkey, &proof.snapshot)` —
-    ///    `Ok(false)` returns `GovernanceKeyInactive`; `Err(e)` propagates as
-    ///    `GovernanceRegistryError(_)` (NOT collapsed to `GovernanceKeyInactive`).
+    /// 1. Destructure `SuspensionAuth::Governance { proof }` — the internal
+    ///    `Severity` variant is rejected with `SuspensionAuthInvalid`.
+    /// 2. `snapshot_age(snapshot, now_unix) > MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`
+    ///    returns `GovernanceSnapshotStale` before any registry lookup.
     /// 3. Reconstruct the digest from `BLAKE3_REPUTATION_SUSPENSION_DOMAIN ||
-    ///    recorder.0 || reason_hash || now_unix` and verify the ed25519
-    ///    signature by `proof.governance_pubkey`. A bad signature returns
-    ///    `SignatureInvalid`; a malformed signature returns `SignatureMalformed`.
+    ///    proof.recorder_id.0 || proof.reason_hash || now_unix` and verify
+    ///    the ed25519 signature by `proof.recorder_pubkey`. A bad signature
+    ///    returns `SignatureInvalid`; a malformed signature returns
+    ///    `SignatureMalformed`.
+    /// 4. `self.governance_registry.lookup_at_snapshot(&proof.governance_pubkey,
+    ///    snapshot)` — `Ok(false)` returns `GovernanceKeyInactive`; `Err(e)`
+    ///    propagates as `GovernanceRegistryError(_)` (NOT collapsed to
+    ///    `GovernanceKeyInactive`).
     ///
     /// This is the canonical authorization gate for `SuspensionAuth::Governance`;
     /// the internal `Severity` variant is constructed only inside
@@ -648,46 +665,31 @@ impl StoolapReputationStore {
     /// never externally invokable.
     fn verify_governance_suspension(
         &self,
-        proof: &GovernanceProof,
-        recorder_id: &RecorderId,
-        reason: &SuspensionReason,
-        governance_registry: &dyn GovernanceRegistry,
+        auth: &SuspensionAuth,
+        snapshot: &GovernanceSnapshot,
         now_unix: u64,
     ) -> Result<(), ReputationError> {
-        // 1. Snapshot freshness check (Round 8 H1 universality).
-        proof.snapshot.validate_fresh(now_unix)?;
-        // 2. Snapshot-bound governance lookup (Round 7 H3 + Round 8 H1).
-        if governance_registry
-            .lookup_at_snapshot(&proof.governance_pubkey, &proof.snapshot)
-            .map_err(|e| {
-                tracing::warn!(
-                    governance_pubkey = ?proof.governance_pubkey,
-                    snapshot = ?proof.snapshot,
-                    err = %e,
-                    "governance registry lookup failed during verify_governance_suspension"
-                );
-                ReputationError::GovernanceRegistryError(e)
-            })?
-            == false
+        let SuspensionAuth::Governance { proof } = auth else {
+            return Err(ReputationError::SuspensionAuthInvalid);
+        };
+        if snapshot_age(snapshot, now_unix) > MAX_GOVERNANCE_SNAPSHOT_AGE_SECS {
+            return Err(ReputationError::GovernanceSnapshotStale);
+        }
+        let mut msg = Vec::new();
+        msg.extend_from_slice(BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
+        msg.extend_from_slice(proof.recorder_id.0.as_bytes());
+        msg.extend_from_slice(&proof.reason_hash);
+        msg.extend_from_slice(&now_unix.to_be_bytes());
+        let digest = blake3::hash(&msg);
+        proof
+            .signature
+            .verify(&proof.recorder_pubkey, digest.as_bytes())?;
+        if !self
+            .governance_registry
+            .lookup_at_snapshot(&proof.governance_pubkey, snapshot.clone())?
         {
             return Err(ReputationError::GovernanceKeyInactive);
         }
-        // 3. Reconstruct the signed digest.
-        let reason_hash = blake3::hash(&canonical_ser(reason));
-        let mut msg = Vec::new();
-        msg.extend_from_slice(BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
-        msg.extend_from_slice(recorder_id.0.0.as_bytes());
-        msg.extend_from_slice(reason_hash.as_bytes());
-        msg.extend_from_slice(&now_unix.to_be_bytes());
-        let digest = blake3::hash(&msg);
-        // 4. Verify the ed25519 signature over the canonical digest.
-        let sig = ed25519::Signature::from_bytes(
-            proof.signature.as_slice()
-                .try_into()
-                .map_err(|_| ReputationError::SignatureMalformed)?,
-        );
-        ed25519::Verifier::verify(&proof.governance_pubkey, digest.as_bytes(), &sig)
-            .map_err(|_| ReputationError::SignatureInvalid)?;
         Ok(())
     }
 
@@ -865,7 +867,7 @@ pub fn resume_recorder(
 ) -> Result<(), ReputationError>;
 ```
 
-`ResumeProof` is an ed25519 signature by a governance key over `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || "resume" || current_unix)` and carries the `GovernanceSnapshot` at which that key must be active. Before verifying the signature, the store calls `proof.snapshot.validate_fresh(now_unix)` and then `GovernanceRegistry::lookup_at_snapshot(&proof.governance_pubkey, &proof.snapshot)`. A snapshot older than `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS` returns `ReputationError::GovernanceSnapshotStale` before the registry lookup; registry failures remain `GovernanceRegistryError(_)`. For a Suspended row, the function clears `suspended_at_unix`, `suspension_reason`, and `grace_until_unix` in place. For a Revoked row, governance-authorized resume clears all lifecycle fields and removes the cleared registration row while preserving historical events, enabling the mandatory second step: `register_recorder` performs a fresh INSERT with a fresh stake proof. `register_recorder` always rejects an existing `recorder_id` with `RecorderAlreadyRegistered`; it never reconstructs or upserts lifecycle state.
+`ResumeProof` is an ed25519 signature by a governance key over `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)` and carries the `GovernanceSnapshot` at which that key must be active. Before verifying the signature, the store calls `proof.snapshot.validate_fresh(now_unix)` and then `GovernanceRegistry::lookup_at_snapshot(&proof.governance_pubkey, &proof.snapshot)`. A snapshot older than `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS` returns `ReputationError::GovernanceSnapshotStale` before the registry lookup; registry failures remain `GovernanceRegistryError(_)`. For a Suspended row, the function clears `suspended_at_unix`, `suspension_reason`, and `grace_until_unix` in place. For a Revoked row, governance-authorized resume clears all lifecycle fields and removes the cleared registration row while preserving historical events, enabling the mandatory second step: `register_recorder` performs a fresh INSERT with a fresh stake proof. `register_recorder` always rejects an existing `recorder_id` with `RecorderAlreadyRegistered`; it never reconstructs or upserts lifecycle state.
 
 Round 2 H6: Suspended → Revoked is automatic after `SUSPENSION_GRACE_UNIX` (default 7 days). UnderStaked (stake < `MIN_RECORDER_STAKE`) and Stale (no signals for `STALE_RECORDER_THRESHOLD_UNIX`, default 30 days) are also valid non-Active states computed in `state()`. Expired (registered > `MAX_RECORDER_AGE_UNIX`, default 365 days) marks the registration as past its useful lifetime; renewal requires the same resume → register flow. Adapter-produced severity is the input signal, while `suspend_recorder_self_check` enforces the threshold inside the same store transaction as `record_signal`; governance/manual suspension uses `SuspensionAuth::Governance`, and the internal severity transition uses `SuspensionAuth::Severity { internal: () }`.
 
@@ -2791,6 +2793,7 @@ Backward compat via shadow-write (Phase 1-2) preserves existing API surface whil
 | 1.9-r9  | 2026-07-24 | Round 9 convergence: `AttestorAuthInvalid` variant (0x27) added to `ReputationError`; §2.1 references `reputation_rotations` table (not `RotationState`); `AttestorAuth` doc note about sibling `AttestorRegistration`; `AttestorAuth.signature` is `[u8; 64]`; §27 closes five Round 9 questions (see Round 9 Notes).                                                                                                                                                                                                                                                   |
 | 2.0-r10 | 2026-07-25 | Round 10 convergence: `verify_governance_suspension` defined as the canonical gate for `SuspensionAuth::Governance` over `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                                                                                                                                                                                     |     | recorder.0 |     | reason_hash |     | now_unix)`; `suspend_recorder`takes`governance_registry`; `ReputationError`gains`#[repr(u8)]`with explicit discriminants matching §13; §13 table is now monotonic 0x01..0x27 (Storage moved to 0x21);`AuditorAuth`doc comment references`BLAKE3_REPUTATION_AUDITOR_DOMAIN`; `record_attestation`takes`now_unix`and validates drift ≤`MAX_ATTESTATION_DRIFT_SECS = 60` seconds (see Round 10 Notes). |
 | 2.1-r11 | 2026-07-25 | Round 11 critical fixes: removed the broken §10 free `verify_governance_suspension`; added governance-suspension verification to the `ReputationStore` trait and routed `suspend_recorder` through `self`; corrected reader and retention signature-domain documentation; removed the literal `"resume"` sub-tag in favor of `BLAKE3_REPUTATION_RESUME_DOMAIN`; §27 records the resolutions (see Round 11 Notes).                                                                                                                                                        |
+| 2.2-r12 | 2026-07-25 | Round 12 conformance: aligned the §3 `StoolapReputationStore::verify_governance_suspension` impl signature with the `ReputationStore` trait (`auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix: u64`); extended `GovernanceProof` with `recorder_id`, `recorder_pubkey`, `reason_hash`, and fixed-size `signature: [u8; 64]`; removed the `"resume"` sub-tag from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment and the `ResumeProof` prose; Round 11 Notes corrected to state the trait/impl alignment is delivered by v2.2-r12 (see Round 12 Notes).                                              |
 
 ### Round 1 Notes
 
@@ -2864,6 +2867,19 @@ v2.0-r10 is the convergence round. It closes all two HIGH, one MEDIUM, and one L
 ### Round 11 Notes
 
 v2.1-r11 removes the broken §10 free `verify_governance_suspension` and makes governance-suspension verification a `ReputationStore` trait requirement. `suspend_recorder` delegates through `self` to enforce consistent behavior across store implementors. Reader, retention, and resume signature documentation now names the canonical domain constants, and resume authorization no longer appends the redundant literal `"resume"` sub-tag.
+
+Round 12 corrects the v2.1-r11 framing: the trait/impl signature mismatch in the §3 `StoolapReputationStore::verify_governance_suspension` body (the impl previously took `proof, recorder_id, reason, governance_registry, now_unix` while the trait declared `auth, snapshot, now_unix`) was an open v2.1-r11 defect. v2.2-r12 aligns the impl body with the trait signature, and `GovernanceProof` now carries the recorder-id, recorder-pubkey, reason-hash, and fixed-size signature fields the impl needs to verify the digest in place. `suspend_recorder` continues to call `self.verify_governance_suspension(auth, &proof.snapshot, now_unix)` exactly as v2.1-r11 specified.
+
+### Round 12 Notes
+
+v2.2-r12 is a targeted conformance round. It does not introduce new behavior; it closes the v2.1-r11 defect list:
+
+- **H1 (HIGH):** The §3 `StoolapReputationStore::verify_governance_suspension` impl body now matches the `ReputationStore` trait signature `(auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix: u64)`. The body destructures `SuspensionAuth::Governance { proof }`, validates snapshot age via `snapshot_age(snapshot, now_unix) > MAX_GOVERNANCE_SNAPSHOT_AGE_SECS` (returning `GovernanceSnapshotStale` before any registry access), reconstructs the digest `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || proof.recorder_id.0 || proof.reason_hash || now_unix)`, verifies the ed25519 signature against `proof.recorder_pubkey`, and finally calls `self.governance_registry.lookup_at_snapshot(&proof.governance_pubkey, snapshot)`. File:line — `rfcs/draft/economics/0968-reputation-registry.md:666` (impl) vs `:1937` (trait declaration).
+- **H2 (HIGH):** `GovernanceProof` struct now carries `recorder_id: RecorderId`, `recorder_pubkey: [u8; 32]`, `reason_hash: [u8; 32]`, and `signature: [u8; 64]` alongside the existing `governance_pubkey` and `snapshot`. The proof is now self-contained for suspension authorization; the verify path no longer needs `recorder_id` or `reason` as separate arguments. File:line — `rfcs/draft/economics/0968-reputation-registry.md:400`.
+- **M1 (MEDIUM):** The literal `"resume"` sub-tag is removed from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment. The signed payload is now stated consistently as `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)` everywhere it appears. File:line — `rfcs/draft/economics/0968-reputation-registry.md:422` (comment) and `:870` (`ResumeProof` prose).
+- **L1 (LOW):** Round 11 Notes now states the trait/impl alignment is being delivered by v2.2-r12 rather than describing the prior v2.1-r11 release as already conforming. File:line — `rfcs/draft/economics/0968-reputation-registry.md:2864`.
+
+Round 12 does not touch the use case, mission, or research docs. Per the task constraints, those doc-propagation items (Round 11 entries in `docs/use-cases/reputation-persistence.md`, `missions/open/0968-reputation-persistence-blocked.md`, and `docs/research/2026-07-24-reputation-persistence-research.md`) are deferred to the caller.
 
 ## Related RFCs
 

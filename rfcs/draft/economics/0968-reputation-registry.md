@@ -931,7 +931,7 @@ The `event_unsigned` view is the projection that **excludes** `event_id` and `si
 1. `did` (Length-prefixed UTF-8 string)
 2. `signal_kind` (u8)
 3. `layer` (u8)
-4. `score_delta` (`octo_determin::Dfp` — serialized as the canonical 24-byte `DfpEncoding::to_bytes()` form; see §6 + §10)
+4. `score_delta` (`octo_determin::Dfp` — serialized as the canonical 24-byte `DfpEncoding::from_dfp(&d).to_bytes()` form; see §6 + §10)
 5. `samples_delta` (u32 BE)
 6. `severity` (u32 BE)
 7. `payload` (Option<Vec<u8>> — 1-byte tag + 4-byte big-endian length + bytes)
@@ -1282,14 +1282,17 @@ pub fn update_ewma(
     }
     // v3.2-r17: weight = clamp(|delta|, 0, 1) via pure Dfp free functions.
     // `Dfp` has no `abs` / `lt` methods; use `dfp_abs` and `dfp_lt`.
+    // v3.3-r18: use the single `one = Dfp::from_i64(1)` constant (no
+    // `one_f = Dfp::from_f64(1.0)` shadowing). The `one_f` literal was
+    // redundant — `1` and `1.0` produce the same Dfp value for the
+    // semantic we care about, and keeping both names invites drift.
     let one = octo_determin::Dfp::from_i64(1);
     let d_abs = dfp_abs(delta);
     let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
-    let one_f = octo_determin::Dfp::from_f64(1.0);
     // Class B arithmetic: prev * (1 - alpha * weight) + delta * alpha * weight.
     // v3.2-r17: `dfp_*` free functions return `Dfp` (not `Result`); no `?`
     // operators are needed.
-    let left = dfp_mul(prev, dfp_sub(one_f, dfp_mul(alpha, weight)));
+    let left = dfp_mul(prev, dfp_sub(one, dfp_mul(alpha, weight)));
     let right = dfp_mul(dfp_mul(delta, alpha), weight);
     dfp_add(left, right)
 }
@@ -1332,6 +1335,8 @@ Either path produces a `score_delta` BLOB whose 24-byte encoding is byte-stable 
 **Backfill strategy (Round 2 H8, Phase 2.5):** In-memory stores continue to be authoritative for reads until the parity cutover. A background reconciliation job replays historical events from the in-memory store into `ReputationStore` to seed the persisted aggregates. Backfill events are marked with `received_at_unix = canonicalized_now` (storage-time, not in-memory historical time) to avoid breaking monotonicity going forward; backfill events are tagged via a separate `payload` marker (`b"BACKFILL_V1"`) so they can be distinguished from ongoing events.
 
 **Parity metric (Round 2 H14):** `parity_score = matches / total` where `matches` = number of `(did, kind, layer)` triples where in-memory and persisted aggregates agree within `1e-6`. Cutover threshold: `parity_score > 0.999` sustained for 24h. The previous `parity_score` Prometheus counter had no min-traffic guard; the new design requires `total >= 100` triples before the metric is reported, so a sparse traffic pattern cannot falsely show `parity_score == 1.0`.
+
+**v3.3-r18 (M4) — `parity_score` `1e-6` tolerance rationale:** the `1e-6` tolerance is required only during Phase 2.5 (backfill + reconciliation), which compares the existing in-memory `f64` EWMA store against the new `Dfp` persisted store while the shadow-write transition is in flight. Both paths run on the same `octo_determin::Dfp` arithmetic from the moment Phase 2 ships, so any later comparison of two pure-Dfp stores (e.g., a future migration, federation reconciliation, or audit replay) is **exact**, not approximate. Phase 2.5 keeps `1e-6` because the in-memory store's pre-Dfp history is still `f64` and the conversion at backfill introduces a one-time `f64 → Dfp` rounding. Pure-Dfp comparisons never use this tolerance.
 
 ### 8. Transactional and Ordering Semantics (Round 1 finding H4, Round 3 M6, M7)
 
@@ -1384,18 +1389,32 @@ impl Normalizer for SlashNormalizer {
     fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         let cap = if input.max_severity == 0 { MAX_SEVERITY } else { input.max_severity };
         // s = severity / cap; result = -s clamped to [-1, 0].
-        let s = octo_determin::div(
+        // v3.3-r18 (C1): helper names (`dfp_div`, `dfp_neg`, `dfp_clamp`) are
+        // the canonical `octo_determin` free functions; all return `Dfp`
+        // (not `Result`), so the `?` operators are removed. Bounds are
+        // `Dfp::from_f64(...)` literals — mixed `f64`/`Dfp` bounds no longer
+        // exist.
+        let s = dfp_div(
             octo_determin::Dfp::from_i64(input.severity as i64),
             octo_determin::Dfp::from_i64(cap as i64),
-        )?;
-        octo_determin::clamp_dfp(octo_determin::neg(s)?, -1.0, 0.0)
+        );
+        dfp_clamp(
+            dfp_neg(s),
+            octo_determin::Dfp::from_f64(-1.0),
+            octo_determin::Dfp::from_f64(0.0),
+        )
     }
 }
 
 pub struct OutcomeNormalizer;
 impl Normalizer for OutcomeNormalizer {
     fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
-        octo_determin::clamp_dfp(input.delta, -1.0, 1.0)
+        // v3.3-r18 (C1): Dfp-only bounds.
+        dfp_clamp(
+            input.delta,
+            octo_determin::Dfp::from_f64(-1.0),
+            octo_determin::Dfp::from_f64(1.0),
+        )
     }
 }
 
@@ -1408,17 +1427,24 @@ impl Normalizer for LatencyNormalizer {
     ///
     /// v3.0-r15 (Gap 9): arithmetic uses `octo_determin::Dfp` so the result
     /// is deterministic across replicas.
+    ///
+    /// v3.3-r18 (C1): all helpers are `dfp_*` free functions returning
+    /// `Dfp` (no `Result`); bounds are `Dfp::from_f64(...)`.
     fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.target_ms == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        let ratio = octo_determin::div(
+        let ratio = dfp_div(
             octo_determin::Dfp::from_i64(input.latency_ms as i64),
             octo_determin::Dfp::from_i64((10 * input.target_ms) as i64),
-        )?;
-        let ratio_clamped = octo_determin::clamp_dfp(ratio, 0.0, 1.0);
-        octo_determin::max_dfp(
-            dfp_sub(octo_determin::Dfp::from_i64(1), ratio_clamped)?,
+        );
+        let ratio_clamped = dfp_clamp(
+            ratio,
+            octo_determin::Dfp::from_f64(0.0),
+            octo_determin::Dfp::from_f64(1.0),
+        );
+        dfp_max(
+            dfp_sub(octo_determin::Dfp::from_i64(1), ratio_clamped),
             octo_determin::Dfp::zero(),
         )
     }
@@ -1428,15 +1454,21 @@ pub struct CapacityNormalizer;
 impl Normalizer for CapacityNormalizer {
     /// Round 3 C4: reads `input.served`, not `input.samples`. The previous
     /// code used `samples` which is domain-general and was wrong for Capacity.
+    ///
+    /// v3.3-r18 (C1): `dfp_*` helpers + Dfp-only bounds.
     fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.max_capacity == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        let v = octo_determin::div(
+        let v = dfp_div(
             octo_determin::Dfp::from_i64(input.served as i64),
             octo_determin::Dfp::from_i64(input.max_capacity as i64),
-        )?;
-        Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
+        );
+        Ok(dfp_clamp(
+            v,
+            octo_determin::Dfp::from_f64(0.0),
+            octo_determin::Dfp::from_f64(1.0),
+        ))
     }
 }
 
@@ -1444,15 +1476,21 @@ pub struct DiscoveryNormalizer;
 impl Normalizer for DiscoveryNormalizer {
     /// Round 3 C4: reads `input.lookups`, not `input.samples`. The previous
     /// code conflated these with Capacity.
+    ///
+    /// v3.3-r18 (C1): `dfp_*` helpers + Dfp-only bounds.
     fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.max_lookups == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        let v = octo_determin::div(
+        let v = dfp_div(
             octo_determin::Dfp::from_i64(input.lookups as i64),
             octo_determin::Dfp::from_i64(input.max_lookups as i64),
-        )?;
-        Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
+        );
+        Ok(dfp_clamp(
+            v,
+            octo_determin::Dfp::from_f64(0.0),
+            octo_determin::Dfp::from_f64(1.0),
+        ))
     }
 }
 
@@ -1928,7 +1966,7 @@ pub enum ReputationError {
     // discriminants matching the §13 error table. The §13 table is the
     // authoritative declaration; this enum mirrors it 1:1 so wire-level
     // serialization of an error code is stable across replicas. Internal
-    // use of `0x28..=0xFF` is reserved for future variants. The naïve
+    // use of `0x29..=0xFF` is reserved for future variants. The naïve
     // ordering of the variants in the source (Source order) does NOT match
     // the table — the discriminant is the source of truth, not the source order.
     #[error("subject DID invalid: must be did:octo:b<52>")]
@@ -2016,7 +2054,7 @@ pub enum ReputationError {
     /// v3.1-r16 (Fix L4) + v3.2-r17: BLOB-encode-write invariant. The
     /// `record_signal` / `record_aggregate` WRITE paths reject a `Dfp` that
     /// is `NaN` or out of `[-1, 1]` with `ScoreEncodingInvalid` before the
-    /// 24-byte `DfpEncoding::to_bytes()` form is ever persisted; the WRITE
+    /// 24-byte `DfpEncoding::from_dfp(&d).to_bytes()` form is ever persisted; the WRITE
     /// gate is the only producer of this variant. The READ path is
     /// infallible: `DfpEncoding::from_bytes(blob)` returns `Self` (no
     /// `Result`). The decoded value is sanity-checked via `Dfp::nan()` (or
@@ -2525,7 +2563,7 @@ The enum has 40 variants and this table has 40 unique assignments across `0x01..
 | Storage per DID                 | < 200 bytes / tuple; up to 36 tuples (6 kinds × 6 layers) ⇒ ~7.2 KB / DID theoretical max | See §14 Performance Targets + research document `Storage Targets Summary` table |
 | Daemon restart warm-up          | < 5s                                                                                      | Stoolap open + index warm                                                       |
 | Recorder verify (ed25519)       | < 1ms                                                                                     | Local                                                                           |
-| EWMA compute                    | < 0.1ms                                                                                   | Pure float math                                                                 |
+| EWMA compute                    | < 0.1ms                                                                                   | Pure Dfp arithmetic                                                             |
 
 Reconciled per Round 1 finding M2: 6 kinds × 6 layers = 36 tuples theoretical max; ~200 bytes/tuple ⇒ ~7.2 KB/DID at theoretical max. At 100k DIDs that's ~720 MB aggregate table size; events table scales with event volume (retention-bounded).
 
@@ -2667,13 +2705,13 @@ Initial state: score_ewma = Dfp::from_f64(1.0), samples = 0, severity = 0
 # approximate f64 floats.
 #
 # v3.1-r16 (Fix L3): Dfp encoding is exact; cross-replica equality is
-# verified via byte-for-byte comparison of `score_ewma.to_bytes()` (i.e.
-# `DfpEncoding::from_dfp(score_ewma).to_bytes()`). The previous `± ε_dfp`
+# verified via byte-for-byte comparison of `DfpEncoding::from_dfp(&score_ewma).to_bytes()`.
+# The previous `± ε_dfp`
 # tolerance notation is removed; every expected value below is an exact
 # Dfp encoding.
 
 Event 1: delta = Dfp::from_f64(-0.3), alpha = Dfp::from_f64(0.1)
-  weight = Dfp::from_f64(min(|-0.3|, 1.0)) = Dfp::from_f64(0.3)
+  weight = Dfp::from_f64(min(|delta|, 1.0)) = Dfp::from_f64(0.3)
   score  = Dfp::from_f64(1.0) * (Dfp::from_f64(1.0) - Dfp::from_f64(0.1) * Dfp::from_f64(0.3))
          + Dfp::from_f64(-0.3) * Dfp::from_f64(0.1) * Dfp::from_f64(0.3)
          = Dfp::from_f64(0.961)              # exact; Dfp encoding is exact
@@ -2709,7 +2747,7 @@ Round 2 H7: `update_ewma` returns `Result<octo_determin::Dfp, ReputationError>` 
 - NaN: `update_ewma(Dfp::nan(), Dfp::from_f64(0.1), Dfp::from_f64(0.1))` returns `Err(ReputationError::PrevNonFinite)` (first arg is `prev`; v3.2-r17 corrects the §23 vector from the previous `DeltaOutOfRange` which was wrong because the `NaN` precondition is on `prev`, not `delta`).
 - Alpha out of range: `update_ewma(Dfp::from_f64(0.5), Dfp::from_f64(0.1), Dfp::from_f64(1.5))` returns `Err(ReputationError::AlphaOutOfRange)`.
 - Alpha zero: `update_ewma(Dfp::from_f64(0.5), Dfp::from_f64(0.1), Dfp::from_f64(0.0))` returns `Err(ReputationError::AlphaOutOfRange)`.
-- Cross-replica equality: two replicas running the same EWMA sequence MUST produce byte-identical `score_ewma` BLOBs (the 24-byte `DfpEncoding::to_bytes()` form). Test asserts `DfpEncoding::from_dfp(&replica_a.score_ewma).to_bytes() == DfpEncoding::from_dfp(&replica_b.score_ewma).to_bytes()`.
+- Cross-replica equality: two replicas running the same EWMA sequence MUST produce byte-identical `score_ewma` BLOBs (the 24-byte `DfpEncoding::from_dfp(&d).to_bytes()` form). Test asserts `DfpEncoding::from_dfp(&replica_a.score_ewma).to_bytes() == DfpEncoding::from_dfp(&replica_b.score_ewma).to_bytes()`.
 - Monotonicity: two events with same `source_did` and `received_at_unix_2 <= received_at_unix_1` → second `record_signal` returns `Err(ReputationError::OutOfOrder)`.
 - Signature: tampered `event_id` (event_id != BLAKE3 of unsigned canonical) → `Err(ReputationError::EventIdMismatch)`.
 - Signature: wrong recorder key → `Err(ReputationError::SignatureInvalid)`.
@@ -2814,7 +2852,7 @@ Round 2 H7: `update_ewma` returns `Result<octo_determin::Dfp, ReputationError>` 
 
 - [ ] Separate mission `0968a-reputation-anchoring.md` (NOT this mission).
 - [ ] RFC-0955 binding: `SignalEvent.anchor_tx_hash: Option<[u8; 32]>` extension.
-- [ ] See RFC-0955 §"reputation: u64" follow-up scope.
+- [ ] See RFC-0955 §`reputation` (either extending the existing `u64` field or adding a new `blake3_digest` field — RFC-0955 amendment required) follow-up scope.
 
 ### 26. Key Files to Modify
 
@@ -2970,6 +3008,8 @@ Backward compat via shadow-write (Phase 1-2) preserves existing API surface whil
 | 3.0-r15 | 2026-07-25 | **Gap 9 — switch f64 to Dfp (RFC-0104).** Major architectural change. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, `ReplayRecord.aggregate_evolution`, `NormalizerInput.delta`, all five `Normalizer::normalize` return types, and `update_ewma(prev, delta, alpha) -> Result<Dfp, _>` all move from `f64` to `octo_determin::Dfp`. SQL: `reputation_events.score_delta REAL` → `BLOB NOT NULL CHECK (length(score_delta) = 24)`; `reputation_aggregates.score_ewma REAL` → `BLOB NOT NULL CHECK (length(score_ewma) = 24)`; `aggregate_checkpoint.score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24)`. §16 adds `update_ewma` Class B (Dfp) and `score_ewma` storage Class A (BLOB-blob byte-identical) rows. §16 warning replaced with v1.0 uses `octo_determin::Dfp` per RFC-0104; cross-replica determinism is achieved at the type level. §23 test vectors updated with Dfp-shaped values; cross-replica equality test asserts byte-identical `score_ewma` BLOBs. Appendix A + Appendix D reference impls rewritten in `Dfp` arithmetic. F2 future work "DFP migration" removed. Mission Phase 1 acceptance adds `octo-determin = { path = "../determin" }` to `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml`. |
 | 3.1-r16 | 2026-07-25 | Round 16 minor fixes: (M1) §7 documents that adapters convert `f64 → Dfp::from_f64()` only at the `record_signal` boundary; the previous "adapters continue to track domain quantity as f64" wording is replaced with the v1.0 boundary rule + same-platform / IEEE 754 strict-fp rationale + cross-platform-out-of-scope note. (L1) Replaced all `Dfp.to_bytes()` references (line 955 and lines 1069-1070) with `DfpEncoding::from_dfp(d).to_bytes()`. (L2) `update_ewma` weight computation is now pure `Dfp` (`delta.abs()` + `<= Dfp::from_i64(1)` ternary); the previous `Dfp::from_f64(delta_f.abs().min(1.0))` round-trip is removed. (L3) §23 test vectors drop the `± ε_dfp` tolerance notation; every expected value is an exact Dfp encoding and the annotation states "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison of `score_ewma.to_bytes()`." (L4) New `ReputationError::ScoreEncodingInvalid` (0x28) variant enforces the runtime BLOB-deserialization invariant `DfpEncoding::from_bytes(blob).map_err(                                                                                                                                                                                                                                                                                                                          | _   | ScoreEncodingInvalid)`; §13 table and reserved-range notes updated to `0x01..=0x28`/`0x29..=0xFF`. |
 | 3.2-r17 | 2026-07-25 | Round 17 critical fixes: (C1) `update_ewma` weight computation is now expressed via the canonical `dfp_abs` and `dfp_lt` free functions from `octo_determin` (the previous `delta.abs()` and `Dfp::PartialOrd` references referenced methods that do not exist on `Dfp`). (C2) All `octo_determin::mul` / `octo_determin::add` / `octo_determin::sub` calls in §6, §9, and Appendix D are replaced with `dfp_mul` / `dfp_add` / `dfp_sub` (the previous free-function names never existed; the `?` operators on the non-`Result` returns are removed). (C3) §7 outcome mapping is `Dfp::from_f64(1.0)` / `Dfp::from_f64(-1.0)`; the obsolete i64 micro-unit mapping (`Dfp::from_i64(1_000_000)` / `Dfp::from_i64(-1_000_000)`) was out of `[-1, 1]` and is rejected by `record_signal`. (C4) `ReputationError::ScoreEncodingInvalid` now fires ONLY on the WRITE path (`record_signal` / `record_aggregate`) when a `Dfp` is `NaN` or out of `[-1, 1]` before serialization; the READ path decodes 24 bytes via `DfpEncoding::from_bytes(blob).to_dfp()` and sanity-checks via `Dfp::nan()` (or `is_valid()`). The non-existent `DfpEncoding::from_bytes(...) -> Result` form is removed. (C5) All stale `Dfp::to_bytes()` / `score_ewma.to_bytes()` / `event.score_delta.to_bytes()` references are replaced with `DfpEncoding::from_dfp(&d).to_bytes()` (the `Dfp::to_bytes` method does not exist). (C6) §5 v004 migration gains the `kind_weights` table that the `cross_layer_query` SQL JOIN depends on. (C7) Remaining `± ε_dfp` annotations in the §25 Phase 1 acceptance and Appendix A are replaced with "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison." (C8) §23 NaN test vector corrected: `update_ewma(Dfp::nan(), Dfp::from_f64(0.1), Dfp::from_f64(0.1))` (first arg is `prev`) returns `Err(PrevNonFinite)`, not `DeltaOutOfRange`. (C9) RFC-0104 is now REQUIRED in the Dependencies block (was "Optional / Beneficial"); v1.1 migration language is dropped. (C10) TOC anchors for §3 / §8 / §11 / §15 are corrected to match the current section-header suffixes. Cross-file propagation deferred to caller (C11 mission type mismatch, C12 use case / mission / OQ 0x28 reserves). |
+| 3.3-r18 | 2026-07-25 | Round 18 comprehensive fixes: (C1) §9 normalizers + Appendix A + Appendix D are rewritten against the canonical `dfp_div` / `dfp_neg` / `dfp_clamp` / `dfp_max` free functions (Round 17 only updated §6; the §9 sites still used the non-existent `octo_determin::div` / `octo_determin::neg` / `octo_determin::clamp_dfp` / `octo_determin::max_dfp` names with `?` operators on non-`Result` returns). Bounds are `Dfp::from_f64(-1.0)` / `Dfp::from_f64(0.0)` / `Dfp::from_f64(1.0)` literals — no mixed `f64` / `Dfp` bounds. (C2) Appendix A host-operator code (`score * (Dfp::from_f64(1.0) - alpha * weight) + delta * alpha * weight`) replaced with `dfp_add` / `dfp_mul` / `dfp_sub`; the non-existent `delta.abs_dfp()` method is replaced with `dfp_abs(delta)`. (C3) Appendix D helper names (`add` / `sub` / `div` / `clamp_dfp` / `max_dfp` / `neg`) → `dfp_add` / `dfp_sub` / `dfp_div` / `dfp_clamp` / `dfp_max` / `dfp_neg`; `?` operators removed; `Dfp::from_f64(0.0)` literal bounds. (C4) §23 preamble `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&score_ewma).to_bytes()`. (C5) §10 API inventory gains `Dfp::zero()` (referenced at §9 `LatencyNormalizer` line 1422, §27 OQ 9 line 2848, Appendix A `one` constant line 3255 — was missing from the inventory). (C6) §14 perf target "Pure float math" → "Pure Dfp arithmetic". (C7-C9, C12) Cross-file propagation: mission 0968 RFC-0104 status now REQUIRED (was "recommended for v1.1"); mission `± ε_dfp` test-vector line dropped in favor of exact Dfp; mission `.to_bytes()` references standardized. (C10, C11) Use case + mission `0x28` reserves updated to `0x29..=0xFF` (since `ScoreEncodingInvalid = 0x28`). (H1, H2, M1, M2, L2) Already covered by C1-C4. (M3) `Dfp::is_valid()` added to §10 API inventory as the canonical NaN check (`pub fn is_valid(&self) -> bool { !matches!(self.class, DfpClass::NaN) }`); Round 16 L4 / Round 17 C4 "the equivalent `is_valid()` helper" placeholder is now explicit. (M4) §7 `parity_score` gains a `1e-6` tolerance rationale note: the tolerance exists only because Phase 2.5 compares the in-memory `f64` EWMA store against the new `Dfp` persisted store during shadow-write transition; pure-Dfp comparisons are exact. (L1) Drop `one_f = Dfp::from_f64(1.0)` shadow constant in `update_ewma`; use `one = Dfp::from_i64(1)` only. (L3) §23 test vector `min(|-0.3|, 1.0)` → `min(|delta|, 1.0)`. (L4) §4 / §10 / §23 / §25 `DfpEncoding::to_bytes()` form standardized to `DfpEncoding::from_dfp(&d).to_bytes()` across all four prose sites. |
+| 3.4-r19 | 2026-07-25 | Round 19 follow-up fixes: (H1) Mission 0968a Summary now references the canonical RFC-0955 binding form — `reputation:blake3_digest` field carrying a 32-byte `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` digest (was `reputation:u64`, which is 8 bytes and cannot carry the 24-byte Dfp encoding or any hash thereof); mission Summary is now consistent with the §3 Status block. (M1) Use case Round 10 M1 bullet now states the §13 table is monotonic `0x01..=0x28` with `Storage(_)` at 0x21 and `ScoreEncodingInvalid` at 0x28 (was `0x01..=0x27`, which dropped `ScoreEncodingInvalid` added in Round 16 L4). (M2) §25 Phase 5 reference cites RFC-0955 §`reputation` follow-up scope with the amendment-required caveat (was `§"reputation: u64" follow-up scope`, which referenced a non-existent anchor). (L1) Round 15 Notes (line 3128) cross-replica equality test description and Round 16 Notes L3 annotation (line 3147) now use the standardized form `DfpEncoding::from_dfp(&d).to_bytes()` (was `score_ewma.to_bytes()`, a method that does not exist on `Dfp`). No design changes. |
 
 ### Round 1 Notes
 
@@ -3086,7 +3126,7 @@ v3.0-r15 is a major architectural change: switch `f64` to `octo_determin::Dfp` (
 - **§10 types:** `ReputationAggregate.score_ewma`, `CrossLayerQuery.weights`, `CrossLayerResult.composite_score`, `CrossLayerResult.per_kind`, `SlidingWindowResult.score_delta`, `ReplayRecord.aggregate_evolution` — all `f64` fields become `Dfp`.
 - **§16 determinism:** added `update_ewma` Class B (pure `Dfp` function) and `score_ewma` storage Class A (BLOB-blob byte-identical) rows. The `f64` cross-platform warning is replaced with a positive note: `octo_determin::Dfp` is the v1.0 type for `score_delta`, `score_ewma`, normalizers, and `update_ewma`. Cross-replica equality test added.
 - **§18 security:** the "v1.1 DFP upgrade for cross-replica" determinism-violation mitigation is replaced with "v1.0 uses `Dfp` (RFC-0104); cross-replica determinism is achieved at the type level — no `f64` migration path exists."
-- **§23 test vectors:** all four events updated to `Dfp::from_f64(±x)`; expected outputs are `Dfp::from_f64(0.961 ± ε_dfp)` etc. (`ε_dfp < 1e-30`). The NaN/out-of-range/alpha vectors use `Dfp::nan()` and `Dfp::from_f64` instead of `f64::NAN` / `f64` literals. A cross-replica equality test asserts `replica_a.score_ewma.to_bytes() == replica_b.score_ewma.to_bytes()`.
+- **§23 test vectors:** all four events updated to `Dfp::from_f64(±x)`; expected outputs are `Dfp::from_f64(0.961 ± ε_dfp)` etc. (`ε_dfp < 1e-30`). The NaN/out-of-range/alpha vectors use `Dfp::nan()` and `Dfp::from_f64` instead of `f64::NAN` / `f64` literals. A cross-replica equality test asserts `DfpEncoding::from_dfp(&replica_a.score_ewma).to_bytes() == DfpEncoding::from_dfp(&replica_b.score_ewma).to_bytes()`.
 - **§25 Phase 1 acceptance:** `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml` gain `octo-determin = { path = "../determin" }`. EWMA test vector entry updated to assert `Dfp` equality (not `f64` equality). Phase 2 equivalence-test entry drops the `f64::EPSILON * samples` tolerance in favor of exact Dfp equality.
 - **Appendix A + Appendix D:** rewritten in `Dfp` arithmetic.
 - **Future Work F2:** removed. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.
@@ -3105,7 +3145,7 @@ v3.1-r16 is a Round 15 follow-up conformance round. It closes one MEDIUM and fou
 - **M1 (MEDIUM) — Adapter f64 leakage in §7:** the previous prose ("The existing in-memory adapters continue to track their domain quantity as f64") was misleading because it implied `f64` would persist in the data path. Replaced with: "Adapter v1.0: convert `f64 → Dfp::from_f64()` ONLY at the `record_signal` boundary. Future revision: adapters use `Dfp` internally to remove the `f64` intermediate step." A new sub-bullet documents the v1.0 deployment rationale: (a) compute is deterministic across same-platform replicas, (b) the IEEE 754 strict-fp contract is documented as a deployment requirement; cross-platform deployments are explicitly out of scope for v1.0.
 - **L1 (LOW) — `Dfp.to_bytes()` API correctness:** the previous prose at lines 955 and 1069-1070 referenced `Dfp.to_bytes()` / `Dfp::to_bytes()`, which does not exist in `crates/octo-determin/src/lib.rs`. Replaced all occurrences with `DfpEncoding::from_dfp(d).to_bytes()`. This matches the canonical API: `Dfp` is a runtime type; the 24-byte wire form is produced by `DfpEncoding::from_dfp(...)` and read back by `DfpEncoding::from_bytes(...)`.
 - **L2 (LOW) — `Dfp → f64 → Dfp` round-trip in `update_ewma`:** the previous weight computation `Dfp::from_f64(delta_f.abs().min(1.0))` computed the absolute value in `f64` and re-encoded into `Dfp`, leaking the host `f64` semantics into a function that is documented as pure `Dfp`. Replaced with pure `Dfp`: `if delta.abs() <= Dfp::from_i64(1) { delta.abs() } else { Dfp::from_i64(1) }`. The `delta_f` projection (still used for the §6 finite/range checks) is unchanged.
-- **L3 (LOW) — Test vector `± ε_dfp` notation:** the previous §23 vectors annotated expected values as `Dfp::from_f64(0.961 ± ε_dfp)` with `ε_dfp < 1e-30`. Dfp encoding is exact, so the tolerance notation is meaningless and invites confusion with `f64` tolerance. Replaced every `± ε_dfp` suffix with the exact Dfp value, and added an annotation paragraph stating "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison of `score_ewma.to_bytes()`."
+- **L3 (LOW) — Test vector `± ε_dfp` notation:** the previous §23 vectors annotated expected values as `Dfp::from_f64(0.961 ± ε_dfp)` with `ε_dfp < 1e-30`. Dfp encoding is exact, so the tolerance notation is meaningless and invites confusion with `f64` tolerance. Replaced every `± ε_dfp` suffix with the exact Dfp value, and added an annotation paragraph stating "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison of `DfpEncoding::from_dfp(&d).to_bytes()`."
 - **L4 (LOW) — BLOB deserialization runtime invariant:** a new `ReputationError::ScoreEncodingInvalid` (0x28) variant documents the read-path contract `DfpEncoding::from_bytes(blob).map_err(|_| ScoreEncodingInvalid)`. The invariant ensures every loaded aggregate / event is a valid `Dfp` before it enters the EWMA arithmetic path or feeds cross-layer queries; length mismatches and malformed mantissa/exponent/class_sign fields both surface through this single variant. §13 table, reserved-range notes (`0x29..=0xFF`), and Round 9 / Round 10 references updated to `0x01..=0x28`. v3.2-r17 supersedes the read-path contract: `DfpEncoding::from_bytes` is INFALLIBLE (returns `Self`, no `Result`), so the `.map_err` form is removed. `ScoreEncodingInvalid` now fires ONLY on the WRITE path (`record_signal` / `record_aggregate`) when a `Dfp` is `NaN` or out of `[-1, 1]` before serialization; the READ path decodes 24 bytes via `DfpEncoding::from_bytes(blob).to_dfp()` and sanity-checks via `Dfp::nan()` (or the equivalent `is_valid()` helper), surfacing `ScoreEncodingInvalid` from the surrounding read API.
 
 Round 16 makes no design changes; it only corrects the §7 boundary prose, replaces the non-existent `Dfp.to_bytes()` API references with the canonical `DfpEncoding::from_dfp(d).to_bytes()` form, removes a single `f64` round-trip inside `update_ewma`, drops the misleading `± ε_dfp` test-vector annotation, and adds the `ScoreEncodingInvalid` error variant for BLOB-deserialization robustness.
@@ -3120,7 +3160,8 @@ v3.2-r17 is a Round 16 conformance + Dfp-API audit round. It closes 10 in-file f
 - `Dfp::from_i64(val: i64) -> Self` (lib.rs:215) — integer-valued constructor.
 - `Dfp::from_f64(val: f64) -> Self` (lib.rs:244) — float-valued constructor.
 - `Dfp::nan() -> Self` (lib.rs:125) — NaN constructor.
-- `Dfp::zero() -> Self` (lib.rs:135) — zero constructor.
+- `Dfp::zero() -> Self` (lib.rs:135) — zero constructor. v3.3-r18 (C5): added to the §10 inventory because `Dfp::zero()` is referenced by the §9 `LatencyNormalizer` (`dfp_max(..., Dfp::zero())`), the §27 OQ 9 defensive `SignalKind::Rotation` branch in Appendix D, and Appendix A's `one = Dfp::from_i64(1)` shadow constant — the inventory now lists every constructor the spec actually calls.
+- `Dfp::is_valid(&self) -> bool` — v3.3-r18 (M3): canonical NaN check. Contract: `pub fn is_valid(&self) -> bool { !matches!(self.class, DfpClass::NaN) }`. Used by the read path to sanity-check a decoded `Dfp` after `DfpEncoding::from_bytes(blob).to_dfp()`; a `false` return surfaces `ReputationError::ScoreEncodingInvalid` from the surrounding read API. Round 16 L4 / Round 17 C4 noted this helper as "the equivalent `is_valid()` helper"; v3.3-r18 makes it canonical.
 - `Dfp::to_f64() -> f64` — projection (used by the §6 range checks).
 - `DfpEncoding::from_dfp(dfp: &Dfp) -> Self` (lib.rs:400) — write-side wire encoder.
 - `DfpEncoding::to_bytes(&self) -> [u8; 24]` (lib.rs:437) — INTERNAL `to_be_bytes`, NOT host-dependent.
@@ -3153,6 +3194,39 @@ v3.2-r17 is a Round 16 conformance + Dfp-API audit round. It closes 10 in-file f
 
 Round 17 makes no design changes; it only corrects in-file spec references against the canonical `octo_determin` API surface and tightens the v1.0 outcome-mapping contract.
 
+### Round 18 Notes (v3.3-r18)
+
+v3.3-r18 is a Round 17 follow-up + cross-file propagation round. It closes 12 CRITICAL (C1-C12), 2 HIGH (H1, H2 already covered by C1-C4), 4 MEDIUM (M1-M4), and 4 LOW (L1-L4) findings. Two of the MEDIUM items and three of the LOW items are pure spec-tidying. No design changes are introduced; every fix is a stale-reference, missing-helper, or test-vector correction.
+
+**In-file fixes applied:**
+
+- **(C1) §9 normalizers + Appendix A + Appendix D use non-existent Dfp API:** the Round 17 fix updated §6 only. The §9 sites (`SlashNormalizer`, `OutcomeNormalizer`, `LatencyNormalizer`, `CapacityNormalizer`, `DiscoveryNormalizer`) and Appendix D still used `octo_determin::div(...)?` / `octo_determin::neg(...)?` / `octo_determin::clamp_dfp(x, -1.0, 0.0)` / `octo_determin::max_dfp(...)` — none of which exist. v3.3-r18 replaces all of them with `dfp_div` / `dfp_neg` / `dfp_clamp` / `dfp_max` (no `?` operators, all take `Dfp` only). Bounds are `Dfp::from_f64(-1.0)` / `Dfp::from_f64(0.0)` / `Dfp::from_f64(1.0)` literals — no mixed `f64` / `Dfp` bounds.
+- **(C2) Appendix A rewrite (lines 3176-3192):** the pre-Round-17 code (`delta.abs_dfp()` method that does not exist; `score * (Dfp::from_f64(1.0) - alpha * weight) + delta * alpha * weight` host operators) is replaced with `dfp_add` / `dfp_mul` / `dfp_sub` / `dfp_abs` / `dfp_lt`. The `delta_f.abs()` projection is retained only for the validation boundary; the actual weight selection is pure Dfp.
+- **(C3) Appendix D rewrite (lines 3219-3283):** helper names (`add` / `sub` / `div` / `clamp_dfp` / `max_dfp` / `neg`) → `dfp_add` / `dfp_sub` / `dfp_div` / `dfp_clamp` / `dfp_max` / `dfp_neg`. All `?` operators removed. `Dfp::from_f64(0.0)` / `Dfp::from_f64(1.0)` / `Dfp::from_f64(-1.0)` bounds.
+- **(C4) §23 preamble (line 2670-2671):** `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&score_ewma).to_bytes()`.
+- **(C5) `Dfp::zero()` added to §10 API inventory:** `Dfp::zero()` was referenced at §9 `LatencyNormalizer` line 1422, §27 OQ 9 line 2848, and Appendix A `one` constant line 3255 but never listed in the inventory. Added.
+- **(C6) §14 perf target "Pure float math" → "Pure Dfp arithmetic":** the EWMA is `octo_determin::Dfp` per RFC-0104.
+- **(H1, H2)** Already covered by C2 and C4 respectively.
+- **(M1) `octo_determin::clamp_dfp` etc. mixed `Dfp` / `f64`:** resolved by C1 (rename to `dfp_clamp` + `Dfp::from_f64(...)` bounds).
+- **(M2) `Dfp::zero()` not in inventory:** resolved by C5.
+- **(M3) `Dfp::is_valid()` undefined:** added to §10 API inventory as `pub fn is_valid(&self) -> bool { !matches!(self.class, DfpClass::NaN) }`. The Round 16 L4 / Round 17 C4 "the equivalent `is_valid()` helper" placeholder is now explicit.
+- **(M4) `parity_score` rationale:** added a `1e-6` tolerance rationale note to §7. The tolerance exists only because Phase 2.5 compares the in-memory `f64` EWMA store against the new `Dfp` persisted store during shadow-write transition; pure-Dfp comparisons are exact.
+- **(L1) `one` and `one_f` simultaneously:** dropped `one_f = Dfp::from_f64(1.0)` shadow constant in `update_ewma`; use `one = Dfp::from_i64(1)` only. Both names produced the same Dfp value and keeping both invited drift.
+- **(L2)** Already covered by C6.
+- **(L3) Python-style `min()` notation:** §23 test vector `min(|-0.3|, 1.0)` → `min(|delta|, 1.0)`.
+- **(L4) `DfpEncoding::to_bytes()` form without `from_dfp`:** standardized all four prose sites (§4 line 934, §10 doc comment line 2057, §23 line 2750, §25 cross-replica equality note) to `DfpEncoding::from_dfp(&d).to_bytes()`.
+
+**Cross-file propagation applied:**
+
+- **(C7)** `missions/open/0968-reputation-persistence-blocked.md:28`: "RFC-0104 recommended for cross-replica EWMA in v1.1" → "RFC-0104 REQUIRED; v1.0 uses `octo_determin::Dfp`".
+- **(C8)** `missions/open/0968-reputation-persistence-blocked.md:56`: `Dfp::from_f64(0.961 ± ε_dfp)` → `Dfp::from_f64(0.961)` with explicit "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison" annotation.
+- **(C9)** `missions/open/0968-reputation-persistence-blocked.md:56, 104, 271`: `Dfp::to_bytes()` / `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&d).to_bytes()`.
+- **(C10)** `missions/open/0968-reputation-persistence-blocked.md:44, 154`: `0x28..=0xFF reserved for future variants` → `0x29..=0xFF reserved for future variants` (since `ScoreEncodingInvalid = 0x28`).
+- **(C11)** `docs/use-cases/reputation-persistence.md:91`: `0x28..=0xFF reserved` → `0x29..=0xFF reserved`.
+- **(C12)** `missions/deferred/0968a-reputation-anchoring.md:7`: "anchor 24-byte DFP directly into RFC-0955 reputation:u64" → "anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (32-byte digest) into the RFC-0955 `reputation:blake3_digest` field" (a 24-byte BLOB does not fit in `reputation:u64`).
+
+Round 18 makes no design changes; it only closes the Round 17 cross-file propagation backlog (C11, C12) plus 10 stale-reference / spec-tidying findings on the RFC itself.
+
 ## Related RFCs
 
 - RFC-0008: Deterministic AI Execution Boundary
@@ -3177,6 +3251,11 @@ Round 17 makes no design changes; it only corrects in-file spec references again
 
 ```rust
 // v3.0-r15 (Gap 9): EWMA operates on octo_determin::Dfp (RFC-0104).
+// v3.3-r18 (C2): all arithmetic uses `dfp_*` free functions returning
+// `Dfp` (not `Result`). The `delta.abs_dfp()` method (which does not
+// exist on `Dfp`) is replaced with `dfp_abs(delta)`. The `f64` projection
+// `delta_f.abs()` is used only at the validation boundary to check
+// `delta_f.is_finite()` / range; the actual weight selection is pure Dfp.
 use octo_determin::Dfp;
 
 let alpha = Dfp::from_f64(0.1);
@@ -3185,8 +3264,14 @@ let events = [-0.3, -0.5, 0.1, -0.2];
 
 for delta_f in events {
     let delta = Dfp::from_f64(delta_f);
-    let weight = if delta_f.abs() < 1.0 { delta.abs_dfp() } else { Dfp::from_f64(1.0) };
-    score = score * (Dfp::from_f64(1.0) - alpha * weight) + delta * alpha * weight;
+    // Pure Dfp weight: clamp(|delta|, 0, 1).
+    let d_abs = dfp_abs(delta);
+    let one = Dfp::from_i64(1);
+    let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
+    score = dfp_add(
+        dfp_mul(score, dfp_sub(one, dfp_mul(alpha, weight))),
+        dfp_mul(dfp_mul(delta, alpha), weight),
+    );
     // 1.0 → 0.961 → 0.88795 → 0.8800705 → 0.8584691 (Dfp; exact)
 }
 ```
@@ -3221,11 +3306,12 @@ ORDER BY received_at_unix ASC, event_id ASC;
 ```rust
 /// Round 3 M1: field names harmonized with `NormalizerInput` (§9).
 /// v3.0-r15 (Gap 9): arithmetic uses `octo_determin::Dfp` per RFC-0104.
-/// The function returns `Result<Dfp, ReputationError>`. The exact arithmetic
-/// helper names (`add`, `sub`, `div`, `clamp_dfp`, `max_dfp`, `neg`) are
-/// provided by `octo_determin` and finalized when the implementation lands;
-/// the spec documents the contract — finite inputs in, deterministic `Dfp`
-/// out.
+/// v3.3-r18 (C3): all arithmetic helpers are `dfp_*` free functions
+/// returning `Dfp` (not `Result`); no `?` operators are used. Helper
+/// names (`dfp_add`, `dfp_sub`, `dfp_div`, `dfp_clamp`, `dfp_max`,
+/// `dfp_neg`) are the canonical `octo_determin` API. Bounds are
+/// `Dfp::from_f64(0.0)` / `Dfp::from_f64(1.0)` / `Dfp::from_f64(-1.0)`
+/// literals — no `f64` bounds.
 pub fn normalize(
     kind: SignalKind,
     raw: &NormalizerInput,
@@ -3234,24 +3320,36 @@ pub fn normalize(
     match kind {
         SignalKind::Slash => {
             let cap = if raw.max_severity == 0 { MAX_SEVERITY } else { raw.max_severity };
-            let s = octo_determin::div(
+            let s = dfp_div(
                 Dfp::from_i64(raw.severity as i64),
                 Dfp::from_i64(cap as i64),
-            )?;
-            Ok(octo_determin::clamp_dfp(octo_determin::neg(s)?, -1.0, 0.0))
+            );
+            Ok(dfp_clamp(
+                dfp_neg(s),
+                Dfp::from_f64(-1.0),
+                Dfp::from_f64(0.0),
+            ))
         }
-        SignalKind::Outcome => Ok(octo_determin::clamp_dfp(raw.delta, -1.0, 1.0)),
+        SignalKind::Outcome => Ok(dfp_clamp(
+            raw.delta,
+            Dfp::from_f64(-1.0),
+            Dfp::from_f64(1.0),
+        )),
         SignalKind::Latency => {
             if raw.target_ms == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            let ratio = octo_determin::div(
+            let ratio = dfp_div(
                 Dfp::from_i64(raw.latency_ms as i64),
                 Dfp::from_i64((10 * raw.target_ms) as i64),
-            )?;
-            let ratio_clamped = octo_determin::clamp_dfp(ratio, 0.0, 1.0);
-            Ok(octo_determin::max_dfp(
-                dfp_sub(Dfp::from_i64(1), ratio_clamped)?,
+            );
+            let ratio_clamped = dfp_clamp(
+                ratio,
+                Dfp::from_f64(0.0),
+                Dfp::from_f64(1.0),
+            );
+            Ok(dfp_max(
+                dfp_sub(Dfp::from_i64(1), ratio_clamped),
                 Dfp::zero(),
             ))
         }
@@ -3259,21 +3357,29 @@ pub fn normalize(
             if raw.max_capacity == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            let v = octo_determin::div(
+            let v = dfp_div(
                 Dfp::from_i64(raw.served as i64),
                 Dfp::from_i64(raw.max_capacity as i64),
-            )?;
-            Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
+            );
+            Ok(dfp_clamp(
+                v,
+                Dfp::from_f64(0.0),
+                Dfp::from_f64(1.0),
+            ))
         }
         SignalKind::Discovery => {
             if raw.max_lookups == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            let v = octo_determin::div(
+            let v = dfp_div(
                 Dfp::from_i64(raw.lookups as i64),
                 Dfp::from_i64(raw.max_lookups as i64),
-            )?;
-            Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
+            );
+            Ok(dfp_clamp(
+                v,
+                Dfp::from_f64(0.0),
+                Dfp::from_f64(1.0),
+            ))
         }
         // Rotation is identity-migration metadata. It is recorded only by
         // consume_rotation_receipt and intentionally has no KIND_WEIGHTS row.

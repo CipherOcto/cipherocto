@@ -33,13 +33,13 @@ RFC-0968 (Economics): Reputation Registry
 
 ## Summary
 
-Implement the unified, DID-keyed, persisted, cryptographically-signed reputation registry per RFC-0968. Phase 1 lands stoolap-backed storage in `crates/quota-router-storage` with canonical `did:octo:b<52>` encoding (62 chars), recorder signature + stake authorization, and per-kind normalizers. Phase 2 ships shadow-write from existing in-memory stores. Phase 2.5 reconciles backfill + computes parity_score before the read switch. Phase 3 switches reads. Phase 4 is gossip federation (mission 0855p-b scope). Phase 5 (on-chain anchoring) is deferred to mission 0968a.
+Implement the unified, DID-keyed, persisted, cryptographically-signed reputation registry per RFC-0968. Phase 1 lands the dedicated `crates/oct-reputation/` workspace member with optional stoolap-backed storage, canonical `did:octo:b<52>` encoding (62 chars), recorder signature + stake authorization, and kind-gated adapters. Phase 2 ships shadow-write from existing in-memory stores. Phase 2.5 reconciles backfill + computes parity_score before the read switch. Phase 3 switches reads. Phase 4 is gossip federation (mission 0855p-b scope). Phase 5 (on-chain anchoring) is deferred to mission 0968a.
 
 ## Acceptance Criteria
 
 ### Phase 1: Core Storage
 
-- [ ] `crates/quota-router-storage/src/reputation/{mod,store,did,recorder,normalizer}.rs` define `SignalEvent`, canonical nine-field `ReputationAggregate` (`did`, `kind`, `layer`, `score_ewma`, `samples`, `severity_total`, `last_event_id`, `last_event_unix`, `updated_at_unix`), `ReputationLayer`, `SignalKind`, `Did`, `RecorderId`, `ReaderId`, `AuditorId`, `AttestorId`, `AttestorRegistration` (Round 6 C2 + Round 7 C2 with `requested_at_unix` and server-stamped `registered_at_unix`), `ReputationStore` trait (including `register_attestor` per Round 7 C1/M5 and `attestor_lookup_did` per Round 7 M1/C2), `ReputationError` (with `GovernanceRegistryError(_)` per Round 7 H3, `GovernanceSnapshotStale` per Round 8 H1/H2, `AttestorAlreadyRegistered`, `AttestorNotRegistered`, `AttestorAuthInvalid` per Round 9 H1, `ScoreEncodingInvalid` (0x28) per Round 16 L4 + Round 17 C4; Round 10 H2: `#[repr(u8)]` with explicit discriminants matching §13 0x01..=0x28 monotonic; reserved `0x29..=0xFF` for future variants per v3.3-r18 C10), `Attestation`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `RecorderRegistrationRequest`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth` (with `[u8; 64]` signature over `BLAKE3(BLAKE3_REPUTATION_RETENTION_DOMAIN || recorder.0 || now_unix || older_than_unix)` per Round 8 H3), `AttestorAuth` (carries `GovernanceSnapshot` per Round 8 H2; `[u8; 64]` signature per Round 9 L1; signed message reconstructed from sibling `AttestorRegistration` per Round 9 M3), `GovernanceProof` (carries `GovernanceSnapshot` per Round 7 H4), `ResumeProof` (carries `GovernanceSnapshot` per Round 8 H1), `SuspensionAuth`, `SuspensionReason`, `GovernanceRegistry`, `GovernanceError` (with `Unavailable` / `ContractReverted` / `LookupFailed` variants per Round 8 snapshot closure), `GovernanceSnapshot`, `PublicKey`, `ReputationPayload`, `EventId` (newtype per Round 6 H3; private field with `from_bytes` constructor + `AsRef` + `Deref` per Round 7 H2), `AttestationId` (newtype per Round 6 H3; private field per Round 7 H2), `PublicKeyLookup` trait + `PublicKeyLookupError` (canonical declaration per Round 7 H1), `Normalizer` trait, `NormalizerInput` (with `latency_ms`, `served`, `lookups`, `max_severity` fields), `MAX_SEVERITY`, `SUSPENSION_SEVERITY_THRESHOLD = 5`, `MAX_REGISTRATION_DRIFT_SECS = 300`, `MAX_RESUME_DRIFT_SECS = 300`, `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600` (Round 7 H4), `MAX_ATTESTATION_DRIFT_SECS = 60` (Round 10 OQ), `KIND_WEIGHTS` (keyed by `SignalKind` enum), the single canonical `RecorderState` declaration (7 variants: Active, Suspended, Revoked, UnderStaked, Stale, Expired, Unknown), the `roles: u64` bitfield plus `RETENTION_ROLE = 1 << 0`, `READER_ROLE = 1 << 1`, `AUDITOR_ROLE = 1 << 2` (Round 6 C3), `ROTATION_DECAY_Q32_32 = 0xE6666666` (Round 6 H4 + Round 7 L1: actual decimal value 0.89999998, not exactly 0.9), `verify_attestation_id`, `verify_governance_suspension` (Round 10 H1: canonical authorization gate for `SuspensionAuth::Governance`), `BLAKE3_REPUTATION_STAKE_DOMAIN`, `BLAKE3_REPUTATION_RESUME_DOMAIN`, `BLAKE3_REPUTATION_ATTESTATION_DOMAIN`, `BLAKE3_REPUTATION_ROTATION_DOMAIN` (canonical home in §10 per Round 6 M12), `BLAKE3_REPUTATION_READER_DOMAIN`, `BLAKE3_REPUTATION_AUDITOR_DOMAIN`, `BLAKE3_REPUTATION_ATTESTOR_DOMAIN`, `BLAKE3_REPUTATION_RETENTION_DOMAIN`, `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` (Round 10 H1) per RFC-0968 §10 (struct declaration) + §9.1 (payload spec).
+- [ ] `crates/oct-reputation/src/{lib,core,event,recorder,reader,auditor,attestor,rotation,suspension,retention,error,constants}.rs` plus `src/storage/{mod,stoolap}.rs` define `SignalEvent`, canonical nine-field `ReputationAggregate` (`did`, `kind`, `layer`, `score_ewma`, `samples`, `severity_total`, `last_event_id`, `last_event_unix`, `updated_at_unix`), `ReputationLayer`, `SignalKind`, `Did`, `RecorderId`, `ReaderId`, `AuditorId`, `AttestorId`, `AttestorRegistration` (Round 6 C2 + Round 7 C2 with `requested_at_unix` and server-stamped `registered_at_unix`), `ReputationStore` trait (including `register_attestor` per Round 7 C1/M5 and `attestor_lookup_did` per Round 7 M1/C2), `ReputationError` (with `GovernanceRegistryError(_)` per Round 7 H3, `GovernanceSnapshotStale` per Round 8 H1/H2, `AttestorAlreadyRegistered`, `AttestorNotRegistered`, `AttestorAuthInvalid` per Round 9 H1, `ScoreEncodingInvalid` (0x28) per Round 16 L4 + Round 17 C4; Round 10 H2: `#[repr(u8)]` with explicit discriminants matching §13 0x01..=0x28 monotonic; reserved `0x29..=0xFF` for future variants per v3.3-r18 C10), `Attestation`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `RecorderRegistrationRequest`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth` (with `[u8; 64]` signature over `BLAKE3(BLAKE3_REPUTATION_RETENTION_DOMAIN || recorder.0 || now_unix || older_than_unix)` per Round 8 H3), `AttestorAuth` (carries `GovernanceSnapshot` per Round 8 H2; `[u8; 64]` signature per Round 9 L1; signed message reconstructed from sibling `AttestorRegistration` per Round 9 M3), `GovernanceProof` (carries `GovernanceSnapshot` per Round 7 H4), `ResumeProof` (carries `GovernanceSnapshot` per Round 8 H1), `SuspensionAuth`, `SuspensionReason`, `GovernanceRegistry`, `GovernanceError` (with `Unavailable` / `ContractReverted` / `LookupFailed` variants per Round 8 snapshot closure), `GovernanceSnapshot`, `PublicKey`, `ReputationPayload`, `EventId` (newtype per Round 6 H3; private field with `from_bytes` constructor + `AsRef` + `Deref` per Round 7 H2), `AttestationId` (newtype per Round 6 H3; private field per Round 7 H2), `PublicKeyLookup` trait + `PublicKeyLookupError` (canonical declaration per Round 7 H1), `Normalizer` trait, `NormalizerInput` (with `latency_ms`, `served`, `lookups`, `max_severity` fields), `MAX_SEVERITY`, `SUSPENSION_SEVERITY_THRESHOLD = 5`, `MAX_REGISTRATION_DRIFT_SECS = 300`, `MAX_RESUME_DRIFT_SECS = 300`, `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600` (Round 7 H4), `MAX_ATTESTATION_DRIFT_SECS = 60` (Round 10 OQ), `KIND_WEIGHTS` (keyed by `SignalKind` enum), the single canonical `RecorderState` declaration (7 variants: Active, Suspended, Revoked, UnderStaked, Stale, Expired, Unknown), the `roles: u64` bitfield plus `RETENTION_ROLE = 1 << 0`, `READER_ROLE = 1 << 1`, `AUDITOR_ROLE = 1 << 2` (Round 6 C3), `ROTATION_DECAY_Q32_32 = 0xE6666666` (Round 6 H4 + Round 7 L1: actual decimal value 0.89999998, not exactly 0.9), `verify_attestation_id`, `verify_governance_suspension` (Round 10 H1: canonical authorization gate for `SuspensionAuth::Governance`), `BLAKE3_REPUTATION_STAKE_DOMAIN`, `BLAKE3_REPUTATION_RESUME_DOMAIN`, `BLAKE3_REPUTATION_ATTESTATION_DOMAIN`, `BLAKE3_REPUTATION_ROTATION_DOMAIN` (canonical home in §10 per Round 6 M12), `BLAKE3_REPUTATION_READER_DOMAIN`, `BLAKE3_REPUTATION_AUDITOR_DOMAIN`, `BLAKE3_REPUTATION_ATTESTOR_DOMAIN`, `BLAKE3_REPUTATION_RETENTION_DOMAIN`, `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` (Round 10 H1) per RFC-0968 §10 (struct declaration) + §9.1 (payload spec).
 - [ ] `Did::parse` rejects raw 32-byte keys; only `did:octo:b<52>` (62 chars total) accepted. `Did::rotate(old, new, proof, old_pubkey, new_pubkey, now_unix)` requires `old_pubkey` AND `new_pubkey`, verifies both DID bindings, and uses only caller-supplied time. `consume_rotation_receipt(receipt, now_unix)` is one-time per `(old, new)` pair, rejects any existing `(new_did, kind, layer)` aggregate with `RotationDestinationNotEmpty`, and otherwise atomically INSERTs destination aggregates, DELETEs source aggregates, INSERTs the rotation event, and consumes the receipt. `replay_rotation_history(recorder_id)` returns persisted receipts.
 - [ ] `update_ewma` returns `Result<octo_determin::Dfp, ReputationError>`; validates alpha ∈ (0,1], delta ∈ [-1,1], rejects NaN/Infinity in all builds (release + debug).
 - [ ] `register_recorder(req, governance_registry, now_unix)` (Round 6 M6 + Round 8 snapshot closure) verifies `blake3(req.pubkey) == req.recorder_did.hash_part`, validates `MAX_REGISTRATION_DRIFT_SECS` against `now_unix`, rejects a stale `req.stake_proof.snapshot` with `GovernanceSnapshotStale`, requires `GovernanceRegistry::lookup_at_snapshot(proof.pubkey, &proof.snapshot)` to return `Ok(true)` (registry failures propagate as `ReputationError::GovernanceRegistryError(_)`, NOT collapsed to `GovernanceKeyInactive`), and verifies `stake_proof = ed25519(proof.pubkey, BLAKE3(BLAKE3_REPUTATION_STAKE_DOMAIN || recorder_id || stake_amount || requested_at_unix))`; inactive keys return `GovernanceKeyInactive`, invalid cryptographic proofs return `StakeProofInvalid`, drift violations return `TimestampDrift`, and an existing row returns `RecorderAlreadyRegistered` without mutation. Registration is INSERT-only; re-registration after revocation is `resume_recorder` then a fresh `register_recorder` INSERT.
@@ -47,9 +47,9 @@ Implement the unified, DID-keyed, persisted, cryptographically-signed reputation
 - [ ] `recorder_state_at` returns one of `Active | Suspended | Revoked | UnderStaked | Stale | Expired | Unknown`; historical events remain auditable after revocation. `suspend_recorder(recorder_id, reason, auth, governance_registry, now_unix)` (Round 10 H1 + Round 13 H1) accepts `SuspensionAuth::Governance { proof }` (validated via `verify_governance_suspension` over `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || governance_pubkey || now_unix)` against the snapshot-bound `GovernanceRegistry::lookup_at_snapshot`) or internal-only `SuspensionAuth::Severity { internal: () }`. `record_signal`, `suspend_recorder_self_check`, and threshold suspension share one store-level stoolap MVCC transaction under a per-recorder admission lock. `resume_recorder(recorder_id, proof, governance_registry, now_unix)` (Round 6 M1 + Round 8 H1) validates drift (`MAX_RESUME_DRIFT_SECS`), requires `proof.snapshot`, rejects a snapshot older than `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS` relative to `now_unix` with `GovernanceSnapshotStale`, resolves `proof.governance_pubkey` through `GovernanceRegistry::lookup_at_snapshot(pubkey, &proof.snapshot)` (registry failures propagate via `ReputationError::GovernanceRegistryError(_)`), and classifies errors as follows: **`ResumeMalformedGrace` (0x19) is returned ONLY when the request's `proof.current_unix` is malformed** (e.g., negative, in the future by >`MAX_DRIFT`); **`RecorderLifecycleCorrupted` (0x22) is returned for server-internal row corruption** (e.g., `suspended_at_unix < registered_at_unix`, both columns server-populated — Round 6 M3, Round 7 M4). `resume_recorder` clears lifecycle fields, resumes Suspended rows in place, and clears/removes Revoked rows to enable the second registration step.
 - [ ] Reader / Auditor / Retention auth: `read_aggregate` requires `ReaderAuth`; `replay_for_audit` requires `AuditorAuth` + nonce and reconstructs from the latest `aggregate_checkpoint` plus retained events; `retention_prune(auth, now_unix)` and `prune_event(auth, event_id, now_unix)` require `RetentionAuth` + `RETENTION_ROLE` bit (Round 6 C3), verify `BLAKE3(BLAKE3_REPUTATION_RETENTION_DOMAIN || recorder.0 || now_unix || older_than_unix)` before any storage work (Round 8 H3), atomically capture the pruned-prefix checkpoint (writing `last_event_unix_at_checkpoint` per Round 6 M5), and set `retention_pruned_at_unix`. `query_attestations` requires `ReaderId` (Round 6 L1).
 - [ ] `StoolapReputationStore` implements `ReputationStore` using stoolap (per `feedback_stoolap-persistence.md`).
-- [ ] Migration files `crates/quota-router-storage/migrations/v003__reputation_events.sql`, `v004__reputation_aggregates.sql`, `v005__reputation_rotations.sql`, `v006__reputation_attestations.sql`, `v007__aggregate_checkpoints.sql`, and `v008__recorder_registration.sql` (Round 6 C1 + L5) per RFC-0968 §5 + §2.1. v003 includes nullable `retention_pruned_at_unix`; v004 maps exactly to the nine canonical aggregate fields; v006 includes the event foreign key and event/attestor indexes; v007 defines the pruned-prefix checkpoint boundary (with `last_event_unix_at_checkpoint` per Round 6 M5); v008 defines the recorder registration row with the `roles` bitfield and the lifecycle/status indexes. **v3.0-r15 (Gap 9):** v003 `score_delta REAL` → `BLOB NOT NULL CHECK (length(score_delta) = 24)`; v004 `score_ewma REAL` → `BLOB NOT NULL CHECK (length(score_ewma) = 24)`; v007 `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24)`. All three encode `octo_determin::Dfp` per RFC-0104.
-- [ ] **v3.0-r15 (Gap 9):** `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml` gain `octo-determin = { path = "../determin" }`. `score_delta`, `score_ewma`, `NormalizerInput.delta`, normalizer outputs, and `update_ewma` parameters/return value are all `octo_determin::Dfp` (no `f64` anywhere in the reputation data model).
-- [ ] New v003 through v008 entries appended to `BUILTIN_MIGRATIONS` in order after v002 `create_asks_indexes`; append is future-tense and migration files do not yet exist.
+- [ ] Migration files `crates/oct-reputation/migrations/v003__reputation_events.sql`, `v004__reputation_aggregates.sql`, `v005__reputation_rotations.sql`, `v006__reputation_attestations.sql`, `v007__aggregate_checkpoints.sql`, and `v008__recorder_registration.sql` (Round 6 C1 + L5) per RFC-0968 §5 + §2.1. v003 includes nullable `retention_pruned_at_unix`; v004 maps exactly to the nine canonical aggregate fields; v006 includes the event foreign key and event/attestor indexes; v007 defines the pruned-prefix checkpoint boundary (with `last_event_unix_at_checkpoint` per Round 6 M5); v008 defines the recorder registration row with the `roles` bitfield and the lifecycle/status indexes. **v3.0-r15 (Gap 9):** v003 `score_delta REAL` → `BLOB NOT NULL CHECK (length(score_delta) = 24)`; v004 `score_ewma REAL` → `BLOB NOT NULL CHECK (length(score_ewma) = 24)`; v007 `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24)`. All three encode `octo_determin::Dfp` per RFC-0104.
+- [ ] **v3.0-r15 (Gap 9):** `crates/oct-reputation/Cargo.toml` gains `octo-determin = { path = "../determin" }` and defines features `default = []`, `stoolap = ["dep:quota-router-storage"]`, `mon = []`, `dc = []`, `marketplace = []`, and `wallet = []`. Consumer dependencies are `octo-network` → `oct-reputation = { path = "../oct-reputation", features = ["mon", "dc"] }`, `quota-router-core` → `oct-reputation = { path = "../oct-reputation", features = ["marketplace"] }`, and `octo-wallet` → `oct-reputation = { path = "../oct-reputation", features = ["wallet"] }`. `score_delta`, `score_ewma`, `NormalizerInput.delta`, normalizer outputs, and `update_ewma` parameters/return value are all `octo_determin::Dfp` (no `f64` anywhere in the reputation data model).
+- [ ] `crates/quota-router-storage/src/migrations.rs` retains `BUILTIN_MIGRATIONS` and appends v003 through v008 in order after v002 `create_asks_indexes` by calling `oct_reputation::migrations::v003__reputation_events()`, `v004__reputation_aggregates()`, `v005__reputation_rotations()`, `v006__reputation_attestations()`, `v007__aggregate_checkpoints()`, and `v008__recorder_registration()`; append is future-tense and migration files do not yet exist.
 - [ ] Unit tests (RFC-0968 §23):
   - EWMA vectors: `update_ewma(Dfp::from_f64(1.0), Dfp::from_f64(-0.3), Dfp::from_f64(0.1)) == Dfp::from_f64(0.961)`; `update_ewma(Dfp::from_f64(0.961), Dfp::from_f64(-0.5), Dfp::from_f64(0.1)) == Dfp::from_f64(0.88795)`. Dfp encoding is exact; cross-replica equality is verified via byte-for-byte comparison of `DfpEncoding::from_dfp(&score_ewma).to_bytes()` (v3.3-r18 C8: the previous `± ε_dfp` tolerance notation was meaningless because Dfp encoding is exact). Round 2 H7: signature is `Result<octo_determin::Dfp, _>`. Cross-replica equality test: two replicas running the same EWMA sequence MUST produce byte-identical `DfpEncoding::from_dfp(&score_ewma).to_bytes()` (v3.3-r18 C9: the `Dfp::to_bytes()` method does not exist; use `DfpEncoding::from_dfp(&d).to_bytes()`).
   - `update_ewma` rejects NaN / Infinity / out-of-range deltas / alpha outside (0,1].
@@ -89,8 +89,8 @@ Implement the unified, DID-keyed, persisted, cryptographically-signed reputation
   - `resume_recorder` validates `MAX_RESUME_DRIFT_SECS` and `proof.snapshot` freshness against `now_unix`, returns `GovernanceSnapshotStale` before any registry lookup when the snapshot is too old, uses `lookup_at_snapshot`, and classifies server-internal row corruption as `RecorderLifecycleCorrupted` (Round 6 M1/M3 + Round 8 H1).
   - Slash adapter emits `severity = 1` per event; on the fifth event, `suspend_recorder_self_check` uses internal-only `SuspensionAuth::Severity { internal: () }` and commits the event plus `SuspensionReason::SeverityThreshold { observed_severity: 5, threshold: 5 }` in one transaction.
   - All six RFC-0968 §9.1.1 typed payload vectors round-trip byte-for-byte, including Rotation.
-- [ ] Stoolap integration via `crates/quota-router-storage`'s existing OpenInMemory helper.
-- [ ] `cargo test -p quota-router-storage --lib` all pass.
+- [ ] Stoolap integration through `crates/oct-reputation/src/storage/stoolap.rs`, gated by the `stoolap` feature and using quota-router-storage's existing OpenInMemory helper.
+- [ ] `cargo test -p oct-reputation --features stoolap --lib` all pass.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean.
 
 ### Phase 2: Adapter Shadow-Write
@@ -177,10 +177,45 @@ Implement the unified, DID-keyed, persisted, cryptographically-signed reputation
 
 `docs/07-developers/reputation-registry-implementation-guide.md` (new, follow-on):
 
-- Module tree (`crates/quota-router-storage/src/reputation/{mod,store,did,recorder,normalizer}.rs`).
+- Module tree:
+
+  ```text
+  crates/oct-reputation/
+  ├── Cargo.toml
+  ├── src/
+  │   ├── lib.rs
+  │   ├── core.rs
+  │   ├── event.rs
+  │   ├── recorder.rs
+  │   ├── reader.rs
+  │   ├── auditor.rs
+  │   ├── attestor.rs
+  │   ├── rotation.rs
+  │   ├── suspension.rs
+  │   ├── retention.rs
+  │   ├── error.rs
+  │   └── constants.rs
+  ├── src/storage/
+  │   ├── mod.rs
+  │   └── stoolap.rs
+  ├── src/kinds/
+  │   ├── mod.rs
+  │   ├── mon.rs
+  │   ├── dc.rs
+  │   ├── marketplace.rs
+  │   └── wallet.rs
+  └── migrations/
+      ├── v003__reputation_events.sql
+      ├── v004__reputation_aggregates.sql
+      ├── v005__reputation_rotations.sql
+      ├── v006__reputation_attestations.sql
+      ├── v007__aggregate_checkpoints.sql
+      └── v008__recorder_registration.sql
+  ```
+
 - Canonical Rust snippets for `SignalEvent`, `ReputationStore`, `StoolapReputationStore`, `Did`, `RecorderRegistration`.
 - Error type definitions with `thiserror`.
-- Migration runner hookup (append v003 through v007 to `BUILTIN_MIGRATIONS`).
+- Migration runner hookup: retain `BUILTIN_MIGRATIONS` in quota-router-storage and append `oct_reputation::migrations::v003__reputation_events()` through `v008__recorder_registration()`.
 - Adapter mapping rules (RFC-0968 §7) with equivalence test recipes.
 
 ## Claimant
@@ -193,15 +228,20 @@ Implement the unified, DID-keyed, persisted, cryptographically-signed reputation
 
 ## Location
 
-- New: `crates/quota-router-storage/src/reputation/{mod.rs, store.rs, did.rs, recorder.rs, normalizer.rs}`
-- New: `crates/quota-router-storage/migrations/v003__reputation_events.sql`
-- New: `crates/quota-router-storage/migrations/v004__reputation_aggregates.sql`
-- New: `crates/quota-router-storage/migrations/v005__reputation_rotations.sql`
-- New: `crates/quota-router-storage/migrations/v006__reputation_attestations.sql`
-- New: `crates/quota-router-storage/migrations/v007__aggregate_checkpoints.sql`
-- New: `crates/quota-router-storage/migrations/v008__recorder_registration.sql` (Round 6 C1 + L5)
-- Modified: `crates/quota-router-storage/src/migrations.rs` (append v003 through v008 to `BUILTIN_MIGRATIONS`)
-- Modified: `crates/quota-router-storage/src/lib.rs` (re-export `reputation` module)
+- New: `crates/oct-reputation/Cargo.toml` (workspace member; `stoolap`, `mon`, `dc`, `marketplace`, `wallet` features)
+- New: `crates/oct-reputation/src/{lib.rs, core.rs, event.rs, recorder.rs, reader.rs, auditor.rs, attestor.rs, rotation.rs, suspension.rs, retention.rs, error.rs, constants.rs}`
+- New: `crates/oct-reputation/src/storage/{mod.rs, stoolap.rs}`
+- New: `crates/oct-reputation/src/kinds/{mod.rs, mon.rs, dc.rs, marketplace.rs, wallet.rs}`
+- New: `crates/oct-reputation/migrations/v003__reputation_events.sql`
+- New: `crates/oct-reputation/migrations/v004__reputation_aggregates.sql`
+- New: `crates/oct-reputation/migrations/v005__reputation_rotations.sql`
+- New: `crates/oct-reputation/migrations/v006__reputation_attestations.sql`
+- New: `crates/oct-reputation/migrations/v007__aggregate_checkpoints.sql`
+- New: `crates/oct-reputation/migrations/v008__recorder_registration.sql` (Round 6 C1 + L5)
+- Modified: `crates/quota-router-storage/src/migrations.rs` (retain `BUILTIN_MIGRATIONS`; append calls to `oct_reputation::migrations::v003__reputation_events()` through `v008__recorder_registration()`)
+- Modified: `crates/octo-network/Cargo.toml` (add `oct-reputation` with `mon`, `dc`)
+- Modified: `crates/quota-router-core/Cargo.toml` (add `oct-reputation` with `marketplace`)
+- Modified: `crates/octo-wallet/Cargo.toml` (add `oct-reputation` with `wallet`)
 - Modified: `crates/octo-network/src/mon/reputation.rs` (shadow-write)
 - Modified: `crates/octo-network/src/dc/reputation.rs` (shadow-write)
 - Modified: `crates/quota-router-core/src/marketplace/scoring.rs` (shadow-write)
@@ -250,7 +290,7 @@ Per the research update: a single combined table locks the aggregate shape to th
 
 ### Why stoolap, not raw SQLite?
 
-Per `feedback_stoolap-persistence.md` memory: stoolap is the CipherOcto fork. RAW SQLite is forbidden. Migration files land in `crates/quota-router-storage/migrations/` and are referenced by `BUILTIN_MIGRATIONS` in `crates/quota-router-storage/src/migrations.rs`.
+Per `feedback_stoolap-persistence.md` memory: stoolap is the CipherOcto fork. RAW SQLite is forbidden. Migration files land in `crates/oct-reputation/migrations/` and are referenced by `BUILTIN_MIGRATIONS` in `crates/quota-router-storage/src/migrations.rs`.
 
 ### Cross-mission gossip (mission 0855p-b)
 
@@ -274,7 +314,7 @@ Per Round 1 finding H6: the RFC's section numbers are now fixed (`§3 = Recorder
 
 ### Migration naming (Round 1 finding H10)
 
-Migration files use contiguous `v003` through `v007` numeric prefixes, not date-based names. v006 is the Phase 1 attestation table and v007 is the aggregate-checkpoint table; the deferred mission 0968a `reserved slot v006` phrase is a non-binding planning label, not a second migration claim. Files land in `crates/quota-router-storage/migrations/` (consistent with `v001__create_asks_table.sql` and `v002__create_asks_indexes.sql`). `BUILTIN_MIGRATIONS` is appended, never reordered.
+Migration files use contiguous `v003` through `v007` numeric prefixes, not date-based names. v006 is the Phase 1 attestation table and v007 is the aggregate-checkpoint table; the deferred mission 0968a `reserved slot v006` phrase is a non-binding planning label, not a second migration claim. Files land in `crates/oct-reputation/migrations/` (consistent with `v001__create_asks_table.sql` and `v002__create_asks_indexes.sql`). `BUILTIN_MIGRATIONS` is appended, never reordered.
 
 ### Unblock Workflow
 
@@ -282,4 +322,4 @@ Resolved 2026-07-25: RFC-0968 was promoted Draft → Accepted, file renamed from
 
 ### Changelog
 
-- **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../determin" }` to `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.
+- **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../determin" }` to `crates/oct-reputation/Cargo.toml` and adds feature-gated `oct-reputation` dependencies to `octo-network`, `quota-router-core`, and `octo-wallet`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.

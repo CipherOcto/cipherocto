@@ -1251,11 +1251,13 @@ exponent: i32
 
 **Hazard:** Little vs big endian can misinterpret serialized values.
 
-**Mitigation:** Use fixed byte order (little-endian) in serialization:
+**Mitigation:** Use fixed byte order (big-endian) in serialization, consistent with the canonical layout at §5.1 (lines 198-200) and the `to_bytes()` / `from_bytes()` implementation in `crates/determin/src/lib.rs`:
 
 ```
 struct { int128 mantissa, int32 exponent }
 ```
+
+(See Version History v1.1 — this line was corrected from "little-endian" to "big-endian" on 2026-07-25 to align with the canonical implementation and §5.1 layout.)
 
 ##### 7. Non-Deterministic Math Libraries
 
@@ -1903,15 +1905,18 @@ DFP integration MUST include:
 
 ---
 
-**Version:** 1.17
+**Version:** 1.18
 **Submission Date:** 2025-03-06
-**Last Updated:** 2026-03-08
-**Changes:** v1.16 final fixes (10/10):
+**Last Updated:** 2026-07-25
+**Changes:** v1.18 endianness fix (RFC-0968 §3 peer-flagged):
 
+- §6.Endianness line 1254 now reads "big-endian" (was incorrectly "little-endian"). Aligned with §5.1 layout (lines 198-200) and `crates/determin/src/lib.rs` `to_bytes()` / `from_bytes()` implementation. Mantissa (16 bytes), exponent (4 bytes), class_sign (4 bytes) all big-endian.
+
+- v1.17 prep:
 - R1: Add Infinity unreachable note to ADD, MUL, DIV, SQRT
 - R2: Fix SQRT negative odd exponent - use >> 1 (floor), (exp & 1) != 0 (parity)
-- v1.15: MOD-1, MOD-2, MOD-3 and L1-L5 fixes
-- v1.14: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
+- v1.16: MOD-1, MOD-2, MOD-3 and L1-L5 fixes
+- v1.15: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
 - M2: Remove sqrt probe entry (was incorrect), now covered by algorithm fix
 - M3: Replace dfp_soft with dfp_spec_version for replay pinning
 - M4: Fix DFP_MAX_MANTISSA comment - correct formula to (2^113-1) × 2^1023

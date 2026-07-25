@@ -272,6 +272,8 @@ Clock dependency is explicit: callers pass `now_unix` into every mutating time-s
 
 **v3.0-r15 (2026-07-25, Gap 9):** the recommendation above is updated to use `octo_determin::Dfp` (RFC-0104) as the v1.0 numeric type for `score_delta`, `score_ewma`, normalizers, and `update_ewma`. The 24-byte BLOB encoding is bit-deterministic across compilers and platforms. SQL columns `score_delta REAL`, `score_ewma REAL`, and `score_ewma_at_checkpoint REAL` become `BLOB NOT NULL CHECK (length(...) = 24)`. Cross-replica determinism is achieved at the type level — no `f64` migration path exists.
 
+**v3.5-r20 (2026-07-25):** research no-on-chain-anchoring wording aligned with the Round 19 M2 RFC-0955 §`reputation` follow-up scope and amendment-required caveat; v3.4-r19 version-history line references corrected.
+
 ## Related RFCs
 
 - RFC-0008: Deterministic AI Execution Boundary

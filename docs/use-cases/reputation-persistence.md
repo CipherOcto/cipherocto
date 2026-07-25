@@ -151,6 +151,8 @@ Draft → RFC Draft Created.
 
 **v3.0-r15 (2026-07-25, Gap 9):** switched the reputation data model from `f64` to `octo_determin::Dfp` per RFC-0104. Cross-replica determinism is achieved at the type level — no v1.1 migration needed. See RFC-0968 v3.0-r15 entry.
 
+**v3.5-r20 (2026-07-25):** research no-on-chain-anchoring wording aligned with the Round 19 M2 RFC-0955 §`reputation` follow-up scope and amendment-required caveat; v3.4-r19 version-history line references corrected.
+
 ## Next
 
 - ✓ RFC-0968 created (Draft) — `rfcs/draft/economics/0968-reputation-registry.md`.

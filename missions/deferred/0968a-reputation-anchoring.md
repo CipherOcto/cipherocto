@@ -6,6 +6,8 @@
 
 **v3.0-r15 (2026-07-25, Gap 9):** RFC-0968's reputation data model now uses `octo_determin::Dfp` per RFC-0104. The `SignalEvent.score_delta` BLOB and the `ReputationAggregate.score_ewma` BLOB are bit-deterministic across compilers and platforms. Anchoring these BLOBs is straightforward: anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (a 32-byte BLAKE3 digest of the canonical 24-byte Dfp encoding) into the RFC-0955 `reputation:blake3_digest` field. v3.3-r18 (C12) corrects the previous "anchor 24-byte DFP directly into RFC-0955 `reputation:u64`" wording — `reputation:u64` is 8 bytes and cannot carry a 24-byte BLOB. The BLAKE3 digest form is the canonical binding contract: 32 bytes fit cleanly into `blake3_digest`, the digest commits to the exact 24-byte Dfp encoding bit-for-bit, and anchoring the digest (rather than the encoding) is what makes the binding consistent across on-chain size constraints. No `f64` migration path exists in the parent mission.
 
+**v3.5-r20 (2026-07-25):** research no-on-chain-anchoring wording aligned with the Round 19 M2 RFC-0955 §`reputation` follow-up scope and amendment-required caveat; v3.4-r19 version-history line references corrected.
+
 ## RFC
 
 - RFC-0955: Model Liquidity Layer (the on-chain binding target)

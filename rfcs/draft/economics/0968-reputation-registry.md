@@ -397,10 +397,17 @@ pub enum GovernanceError {
 /// receiving API rejects a snapshot whose `finalized_at_unix` is older than
 /// `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS` relative to `now_unix` with
 /// `ReputationError::GovernanceSnapshotStale` before the registry lookup.
+/// Round 13 H1: governance suspension MUST be signed by the GOVERNANCE key
+/// (the active officer), not by the recorder. The structural fix removes
+/// `recorder_pubkey` from `GovernanceProof` entirely: there is no recorder
+/// signature on a governance suspension authorization. The carried fields
+/// are `governance_pubkey` (the officer signing), `recorder_id` (target),
+/// `reason_hash` (binds `SuspensionReason`), the fixed-size `signature`
+/// over the digest, and the binding `snapshot` (governance-registry view
+/// at which the officer key is active).
 pub struct GovernanceProof {
     pub governance_pubkey: PublicKey,
     pub recorder_id: RecorderId,
-    pub recorder_pubkey: [u8; 32],
     pub reason_hash: [u8; 32],
     pub signature: [u8; 64],
     pub snapshot: GovernanceSnapshot,
@@ -630,16 +637,30 @@ impl StoolapReputationStore {
         self.update_recorder_registration(&reg)
     }
 
-    /// Round 10 H1 + Round 12: verify the governance-signed suspension
-    /// authorization. The signed payload is the ed25519 signature over
-    /// `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder.0 || reason_hash
-    /// || now_unix)` where `reason_hash = blake3(canonical_ser(reason))`. The
-    /// domain constant is `b"cipherocto/reputation/suspension/v1"` (§10).
+    /// Round 10 H1 + Round 12 + Round 13 H1: verify the governance-signed
+    /// suspension authorization. The signed payload is the ed25519 signature
+    /// by the GOVERNANCE officer (not the recorder) over
+    /// `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash
+    /// || governance_pubkey || now_unix)` where `reason_hash =
+    /// blake3(canonical_ser(reason))`. The domain constant is
+    /// `b"cipherocto/reputation/suspension/v1"` (§10).
     ///
-    /// Round 12: the impl signature now matches the `ReputationStore` trait
+    /// Round 13 H1 (governance authorization binding): the prior round's
+    /// verify path reconstructed the digest WITHOUT `governance_pubkey` and
+    /// verified the signature against `proof.recorder_pubkey`. That was a
+    /// structural flaw — any arbitrary key could sign a suspension while
+    /// naming an unrelated active governance key in `proof.governance_pubkey`.
+    /// Round 13 removes `recorder_pubkey` from `GovernanceProof` entirely,
+    /// binds `governance_pubkey` into the digest, and verifies the signature
+    /// against `proof.governance_pubkey`. The governance officer's signature
+    /// establishes the authorization; the subsequent registry lookup is
+    /// defense-in-depth (per Round 7 H4) and remains a tautology once the
+    /// signature verifies.
+    ///
+    /// Round 12: the impl signature matches the `ReputationStore` trait
     /// method declaration in §10 (`auth: &SuspensionAuth, snapshot:
     /// &GovernanceSnapshot, now_unix: u64`). The carried `GovernanceProof`
-    /// supplies `recorder_id`, `recorder_pubkey`, `reason_hash`, and
+    /// supplies `governance_pubkey`, `recorder_id`, `reason_hash`, and
     /// `signature` so the verify path is self-contained — the caller
     /// (`suspend_recorder`) does not need to re-pass them.
     ///
@@ -650,14 +671,16 @@ impl StoolapReputationStore {
     /// 2. `snapshot_age(snapshot, now_unix) > MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`
     ///    returns `GovernanceSnapshotStale` before any registry lookup.
     /// 3. Reconstruct the digest from `BLAKE3_REPUTATION_SUSPENSION_DOMAIN ||
-    ///    proof.recorder_id.0 || proof.reason_hash || now_unix` and verify
-    ///    the ed25519 signature by `proof.recorder_pubkey`. A bad signature
-    ///    returns `SignatureInvalid`; a malformed signature returns
-    ///    `SignatureMalformed`.
+    ///    proof.recorder_id.0 || proof.reason_hash || proof.governance_pubkey ||
+    ///    now_unix` and verify the ed25519 signature by
+    ///    `proof.governance_pubkey` (Round 13 H1: the GOVERNANCE officer's
+    ///    key, not the recorder's). A bad signature returns `SignatureInvalid`;
+    ///    a malformed signature returns `SignatureMalformed`.
     /// 4. `self.governance_registry.lookup_at_snapshot(&proof.governance_pubkey,
     ///    snapshot)` — `Ok(false)` returns `GovernanceKeyInactive`; `Err(e)`
     ///    propagates as `GovernanceRegistryError(_)` (NOT collapsed to
-    ///    `GovernanceKeyInactive`).
+    ///    `GovernanceKeyInactive`). Round 7 H4 defense-in-depth: the lookup
+    ///    stays even though the signature already binds the governance key.
     ///
     /// This is the canonical authorization gate for `SuspensionAuth::Governance`;
     /// the internal `Severity` variant is constructed only inside
@@ -679,11 +702,12 @@ impl StoolapReputationStore {
         msg.extend_from_slice(BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
         msg.extend_from_slice(proof.recorder_id.0.as_bytes());
         msg.extend_from_slice(&proof.reason_hash);
+        msg.extend_from_slice(proof.governance_pubkey.as_bytes());
         msg.extend_from_slice(&now_unix.to_be_bytes());
         let digest = blake3::hash(&msg);
         proof
             .signature
-            .verify(&proof.recorder_pubkey, digest.as_bytes())?;
+            .verify(&proof.governance_pubkey, digest.as_bytes())?;
         if !self
             .governance_registry
             .lookup_at_snapshot(&proof.governance_pubkey, snapshot.clone())?
@@ -2746,6 +2770,10 @@ Round 11 resolves the governance-suspension helper and signature-domain inconsis
 2. **Signature-domain documentation is canonical.** `ReaderAuth.signature` names `BLAKE3_REPUTATION_READER_DOMAIN`, and `RetentionAuth.signature` names `BLAKE3_REPUTATION_RETENTION_DOMAIN`.
 3. **Resume authorization has one domain separator.** `resume_recorder` signs `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)` with no literal `"resume"` sub-tag; its comments and `ResumeProof` documentation match.
 
+Round 13 closes the governance authorization binding structural flaw:
+
+1. **Governance suspension is signed by the officer, not the recorder.** The Round 12 verify path reconstructed the digest WITHOUT `governance_pubkey` and verified the signature against `proof.recorder_pubkey`. That was a structural flaw — any arbitrary key could sign a suspension while naming an unrelated active governance key in `proof.governance_pubkey`. Round 13 removes `recorder_pubkey` from `GovernanceProof`, binds `governance_pubkey` into the suspension digest, and verifies the signature against `proof.governance_pubkey` (the GOVERNANCE officer's key). The officer's signature establishes the authorization; the subsequent `governance_registry.lookup_at_snapshot` is retained as Round 7 H4 defense-in-depth (signature already binds the key, but the snapshot-bound check guards against stale or rotated officer keys). `suspend_recorder` callers MUST construct `GovernanceProof` with the officer's `governance_pubkey`, the target `recorder_id`, the `reason_hash`, and the officer's signature over the new digest form.
+
 ## Future Work
 
 - **F1**: On-chain anchoring — mission 0968a (separate), RFC-0955 follow-up.
@@ -2794,6 +2822,7 @@ Backward compat via shadow-write (Phase 1-2) preserves existing API surface whil
 | 2.0-r10 | 2026-07-25 | Round 10 convergence: `verify_governance_suspension` defined as the canonical gate for `SuspensionAuth::Governance` over `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                                                                                                                                                                                     |     | recorder.0 |     | reason_hash |     | now_unix)`; `suspend_recorder`takes`governance_registry`; `ReputationError`gains`#[repr(u8)]`with explicit discriminants matching §13; §13 table is now monotonic 0x01..0x27 (Storage moved to 0x21);`AuditorAuth`doc comment references`BLAKE3_REPUTATION_AUDITOR_DOMAIN`; `record_attestation`takes`now_unix`and validates drift ≤`MAX_ATTESTATION_DRIFT_SECS = 60` seconds (see Round 10 Notes). |
 | 2.1-r11 | 2026-07-25 | Round 11 critical fixes: removed the broken §10 free `verify_governance_suspension`; added governance-suspension verification to the `ReputationStore` trait and routed `suspend_recorder` through `self`; corrected reader and retention signature-domain documentation; removed the literal `"resume"` sub-tag in favor of `BLAKE3_REPUTATION_RESUME_DOMAIN`; §27 records the resolutions (see Round 11 Notes).                                                                                                                                                        |
 | 2.2-r12 | 2026-07-25 | Round 12 conformance: aligned the §3 `StoolapReputationStore::verify_governance_suspension` impl signature with the `ReputationStore` trait (`auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix: u64`); extended `GovernanceProof` with `recorder_id`, `recorder_pubkey`, `reason_hash`, and fixed-size `signature: [u8; 64]`; removed the `"resume"` sub-tag from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment and the `ResumeProof` prose; Round 11 Notes corrected to state the trait/impl alignment is delivered by v2.2-r12 (see Round 12 Notes).                                              |
+| 2.3-r13 | 2026-07-25 | Round 13 critical fixes: governance suspension is now signed by the GOVERNANCE officer (not the recorder) — `recorder_pubkey` removed from `GovernanceProof`; the suspension digest now binds `governance_pubkey`; `verify_governance_suspension` verifies the signature against `proof.governance_pubkey` and the registry lookup is retained as Round 7 H4 defense-in-depth (see Round 13 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ### Round 1 Notes
 
@@ -2880,6 +2909,13 @@ v2.2-r12 is a targeted conformance round. It does not introduce new behavior; it
 - **L1 (LOW):** Round 11 Notes now states the trait/impl alignment is being delivered by v2.2-r12 rather than describing the prior v2.1-r11 release as already conforming. File:line — `rfcs/draft/economics/0968-reputation-registry.md:2864`.
 
 Round 12 does not touch the use case, mission, or research docs. Per the task constraints, those doc-propagation items (Round 11 entries in `docs/use-cases/reputation-persistence.md`, `missions/open/0968-reputation-persistence-blocked.md`, and `docs/research/2026-07-24-reputation-persistence-research.md`) are deferred to the caller.
+
+### Round 13 Notes
+
+v2.3-r13 closes the governance authorization binding structural flaw and confirms the resume-digest cleanup is complete:
+
+- **H1 (HIGH):** Governance suspension is signed by the GOVERNANCE officer, not the recorder. `GovernanceProof` no longer carries `recorder_pubkey` (field removed). The signed digest is now `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || governance_pubkey || now_unix)`, and `verify_governance_suspension` verifies the ed25519 signature against `proof.governance_pubkey` (the officer's key). The subsequent `governance_registry.lookup_at_snapshot(&proof.governance_pubkey, snapshot)` is retained as Round 7 H4 defense-in-depth — once the signature verifies, the registry lookup is a tautology, but the snapshot-bound check guards against stale or rotated officer keys that still verify the digest locally. `suspend_recorder` callers MUST construct `GovernanceProof` with the officer's `governance_pubkey`, the target `recorder_id`, the `reason_hash`, and the officer's signature over the new digest form. File:line — `rfcs/draft/economics/0968-reputation-registry.md:400` (struct) and `:666` (verify impl).
+- **M1 (MEDIUM):** Resume authorization digest contains no `"resume"` sub-tag. The signed payload is `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)` at the §3 impl (`resume_msg` construction), in `ResumeProof` prose (§3, §10), and in the §27 Round 11 Notes entry. The Round 11 / Round 12 cleanup is now confirmed consistent across every site. The remaining `"resume"` literal occurrences in the doc are commentary about the removal, not payload construction.
 
 ## Related RFCs
 

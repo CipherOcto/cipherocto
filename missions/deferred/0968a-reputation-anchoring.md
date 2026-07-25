@@ -31,7 +31,7 @@ this mission owns on-chain anchoring).
 
 ## Why deferred?
 
-- RFC-0955 is still Draft. On-chain anchoring requires the binding contract
+- RFC-0955 is not yet final. On-chain anchoring requires the binding contract
   to be live; the RFC-0955 `reputation:blake3_digest` follow-up amendment
   must also be accepted before the 32-byte BLAKE3 digest field becomes the
   canonical binding target.
@@ -77,7 +77,7 @@ this mission owns on-chain anchoring).
 
 ## Location
 
-**TBD upon unblock; no migration slot is reserved.** Phase 1 reputation persistence uses v006 for attestations and v007 for aggregate checkpoints. The anchoring crate paths, migration filename/version, and modify-list will be allocated only after RFC-0955 is Accepted and its binding contract shape is stable.
+**TBD upon unblock; no migration slot is reserved.** Phase 1 reputation persistence uses v006 for attestations and v007 for aggregate checkpoints. The anchoring crate paths, migration filename/version, and modify-list will be allocated only after RFC-0955 status change is recorded and its binding contract shape is stable.
 
 ## Complexity
 

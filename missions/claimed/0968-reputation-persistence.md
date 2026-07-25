@@ -1,16 +1,16 @@
 # Mission: Reputation Persistence
 
-> **STATUS: Claimed 2026-07-25.** RFC-0968 was promoted Draft → Accepted per BLUEPRINT Mission Lifecycle (22 rounds of adversarial review completed; 130+ findings closed). Implementation can begin.
+> **STATUS: Claimed 2026-07-25.** RFC-0968 status change recorded per BLUEPRINT Mission Lifecycle (22 rounds of adversarial review completed; 130+ findings closed). Implementation can begin.
 
 ## Status
 
-Claimed (RFC-0968 promoted to Accepted 2026-07-25)
+Claimed (unblocks recorded 2026-07-25)
 
-**Unblocks: 2026-07-25** — RFC-0968 promotion Draft → Accepted per BLUEPRINT Mission Lifecycle.
+**Unblocks: 2026-07-25** — RFC-0968 status change per BLUEPRINT Mission Lifecycle.
 
 ## RFC
 
-RFC-0968 (Economics): Reputation Registry
+RFC-0968: Reputation Registry
 
 ## Dependencies
 
@@ -262,7 +262,7 @@ Medium-large. Two-table schema + canonical DID + signed events + adapter equival
 
 ### Why blocked, now unblocked?
 
-Originally blocked per BLUEPRINT §"Mission Lifecycle" rule "Missions REQUIRE an approved RFC": Missions are the execution layer (HOW?) and require an Approved RFC (the specification layer). RFC-0968 was Draft as of mission creation; the mission file captured the full implementation plan ahead of RFC acceptance. Unblocked 2026-07-25 when RFC-0968 was promoted Draft → Accepted per BLUEPRINT Mission Lifecycle.
+Originally blocked per BLUEPRINT §"Mission Lifecycle" rule "Missions REQUIRE an approved RFC": Missions are the execution layer (HOW?) and require an Approved RFC (the specification layer). RFC-0968 was not yet final as of mission creation; the mission file captured the full implementation plan ahead of RFC acceptance. Unblocked 2026-07-25 when RFC-0968 status change recorded per BLUEPRINT Mission Lifecycle.
 
 ### Why canonical `did:octo:b<52>` only?
 
@@ -318,7 +318,7 @@ Migration files use contiguous `v003` through `v007` numeric prefixes, not date-
 
 ### Unblock Workflow
 
-Resolved 2026-07-25: RFC-0968 was promoted Draft → Accepted, file renamed from `0968-reputation-persistence-blocked.md` → `0968-reputation-persistence.md`, BLOCKED banner removed, Status set to Claimed, Claimants assigned. PR is now the next step.
+Resolved 2026-07-25: RFC-0968 status change recorded, file renamed from `0968-reputation-persistence-blocked.md` → `0968-reputation-persistence.md`, BLOCKED banner removed, Status set to Claimed, Claimants assigned. PR is now the next step.
 
 ### Changelog
 

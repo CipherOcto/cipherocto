@@ -263,10 +263,10 @@ Clock dependency is explicit: callers pass `now_unix` into every mutating time-s
 ## Next Steps (status: completed)
 
 - ✓ Create Use Case (`docs/use-cases/reputation-persistence.md`).
-- ✓ RFC-0968 (`rfcs/accepted/economics/0968-reputation-registry.md`, promoted 2026-07-25).
-- ✓ Mission (`missions/claimed/0968-reputation-persistence.md`, claimed; RFC-0968 promoted to Accepted 2026-07-25).
+- ✓ RFC-0968 (`rfcs/accepted/economics/0968-reputation-registry.md`, status change recorded 2026-07-25).
+- ✓ Mission (`missions/claimed/0968-reputation-persistence.md`, claimed; RFC-0968 status change recorded 2026-07-25).
 - ✓ Round 10 convergence: `verify_governance_suspension` defined; `ReputationError` gains `#[repr(u8)]` with explicit discriminants; §13 error table monotonic 0x01..=0x27; `AuditorAuth` doc comment uses `BLAKE3_REPUTATION_AUDITOR_DOMAIN`; `record_attestation` takes `now_unix` and validates drift.
-- ✓ RFC-0968 promotion to Accepted per BLUEPRINT Mission Lifecycle.
+- ✓ RFC-0968 status change recorded per BLUEPRINT Mission Lifecycle.
 - → Mission unblock + claim + implement Phases 1-3.
 - → Mission 0968a (on-chain anchoring) — separate, deferred to RFC-0955 follow-up.
 

@@ -61,22 +61,22 @@ Defines a unified, DID-keyed, persisted reputation registry for CipherOcto. Repl
 
 **Optional / Beneficial:**
 
-- RFC-0104: Deterministic Floating-Point (recommended for cross-replica EWMA agreement)
+- RFC-0104: Deterministic Floating-Point (required for cross-replica EWMA agreement; v1.0 uses `octo_determin::Dfp`)
 - Mission 0855p-b: Cross-mission coordinator reputation (gossip federation target)
 
 ## Design Goals
 
-| Goal | Target                                                    | Metric                                      |
-| ---- | --------------------------------------------------------- | ------------------------------------------- |
-| G1   | 100% durability across daemon restart                     | Restart + verify aggregate matches          |
-| G2   | < 50ms p99 cross-layer query latency                      | stoolap benchmark                           |
-| G3   | Zero DDL for new signal types (excluding rotations table) | Schema frozen post-migration                |
-| G4   | `score_ewma` deterministic given same inputs + alpha      | RFC-0008 Class B (DFP upgrade path per §16) |
-| G5   | Cross-layer federation via single SELECT                  | Same table, discriminator                   |
-| G6   | Single canonical DID encoding (`did:octo:b<52>`)          | Reject raw 32-byte keys                     |
-| G7   | Recorder write-authority via signature + stake            | Cryptographic, not trusted                  |
-| G8   | Event idempotency via BLAKE3 `event_id`                   | Dedup replay-safe                           |
-| G9   | One-time rotation via `consume_rotation_receipt`          | Per `(old, new)` UNIQUE                     |
+| Goal | Target                                                    | Metric                                    |
+| ---- | --------------------------------------------------------- | ----------------------------------------- |
+| G1   | 100% durability across daemon restart                     | Restart + verify aggregate matches        |
+| G2   | < 50ms p99 cross-layer query latency                      | stoolap benchmark                         |
+| G3   | Zero DDL for new signal types (excluding rotations table) | Schema frozen post-migration              |
+| G4   | `score_ewma` deterministic given same inputs + alpha      | RFC-0008 Class B (Dfp arithmetic per §16) |
+| G5   | Cross-layer federation via single SELECT                  | Same table, discriminator                 |
+| G6   | Single canonical DID encoding (`did:octo:b<52>`)          | Reject raw 32-byte keys                   |
+| G7   | Recorder write-authority via signature + stake            | Cryptographic, not trusted                |
+| G8   | Event idempotency via BLAKE3 `event_id`                   | Dedup replay-safe                         |
+| G9   | One-time rotation via `consume_rotation_receipt`          | Per `(old, new)` UNIQUE                   |
 
 ## Motivation
 
@@ -904,7 +904,11 @@ pub struct SignalEvent {
     pub kind: SignalKind,
     pub layer: ReputationLayer,
     pub subject: Did,
-    pub score_delta: f64,         // ∈ [-1.0, 1.0]; sign indicates direction
+    /// Score delta in `[-1.0, 1.0]`. Stored as `octo_determin::Dfp` per RFC-0104.
+    /// The Dfp type is bit-deterministic across compilers and platforms, so two
+    /// replicas producing the same event sequence produce byte-identical
+    /// `score_delta` BLOB encodings (24 bytes each).
+    pub score_delta: octo_determin::Dfp,
     pub samples_delta: u32,
     pub severity: u32,
     pub payload: Option<Vec<u8>>, // typed by kind; opaque BLOB
@@ -927,7 +931,7 @@ The `event_unsigned` view is the projection that **excludes** `event_id` and `si
 1. `did` (Length-prefixed UTF-8 string)
 2. `signal_kind` (u8)
 3. `layer` (u8)
-4. `score_delta` (i64 fixed-point; see §6)
+4. `score_delta` (`octo_determin::Dfp` — serialized as the canonical 24-byte `DfpEncoding::to_bytes()` form; see §6 + §10)
 5. `samples_delta` (u32 BE)
 6. `severity` (u32 BE)
 7. `payload` (Option<Vec<u8>> — 1-byte tag + 4-byte big-endian length + bytes)
@@ -948,7 +952,7 @@ Round 2 C2: previous specification listed `event_id` in the unsigned field list,
 Canonical serialization (`canonical_ser`) is the **CipherOctoCanonical** scheme (Round 2 H5) used by `crates/cipherocto-encoding` for `Constraint` and `caveat` envelopes. It is portable, deterministic, length-prefixed, big-endian. The wire-format rules are:
 
 - Integers: big-endian, fixed-width (u8=1, u16=2, u32=4, u64=8, u128=16).
-- Floats: **NOT supported in canonical_ser.** `score_delta` is `i64` fixed-point scaled by `1e6` (micro-units) per RFC-0104. Future: promote to `determin::dfp::Decimal` (Round 2 H7).
+- Floats: **NOT supported as native `f64` in canonical_ser.** `score_delta` is `octo_determin::Dfp` per RFC-0104, serialized in its canonical 24-byte `DfpEncoding::to_bytes()` form (`DfpEncoding::from_dfp(d).to_bytes()` in `crates/octo-determin/src/lib.rs`: 16-byte mantissa + 4-byte exponent + 4-byte class_sign, all big-endian). The encoded BLOB is bit-deterministic across compilers and platforms, so two replicas that produce the same event sequence produce byte-identical `score_delta` BLOBs and identical `event_id` digests.
 - Enums: 1-byte tag + payload.
 - Strings: 4-byte length prefix + UTF-8 bytes.
 - Bytes: 4-byte length prefix + raw bytes.
@@ -979,9 +983,15 @@ impl StoolapReputationStore {
     // 1. subject is canonical did:octo:b<52>
     Did::parse(&event.subject.0).map_err(|_| ReputationError::SubjectInvalid)?;
 
-    // 2. score_delta ∈ [-1.0, 1.0] and finite (after fixed-point conversion)
-    let score_micros = delta_to_micros(event.score_delta)
-        .ok_or(ReputationError::DeltaOutOfRange)?;
+    // 2. score_delta ∈ [-1.0, 1.0] (encoded as octo_determin::Dfp).
+    //    Reject NaN/Infinity and out-of-range values BEFORE serialization so
+    //    every persisted event has a finite, in-range Dfp encoding.
+    {
+        let score_f = event.score_delta.to_f64();
+        if !score_f.is_finite() || score_f < -1.0 || score_f > 1.0 {
+            return Err(ReputationError::DeltaOutOfRange);
+        }
+    }
 
     // 3. event_id recomputes from unsigned canonical form (excludes event_id
     //    and signature per Round 2 C2)
@@ -989,7 +999,7 @@ impl StoolapReputationStore {
         did: &event.subject.0,
         signal_kind: event.kind,
         layer: event.layer,
-        score_micros,
+        score_delta_bytes: &event.score_delta.to_bytes(),
         samples_delta: event.samples_delta,
         severity: event.severity,
         payload: event.payload.as_ref(),
@@ -1056,7 +1066,12 @@ CREATE TABLE reputation_events (
   did TEXT NOT NULL,                          -- "did:octo:b<52>"
   signal_kind INTEGER NOT NULL,               -- 0=slash, 1=outcome, 2=latency, ...
   layer INTEGER NOT NULL,                     -- 0=mon, 1=dc, 2=market, 3=task, ...
-  score_delta REAL NOT NULL,                  -- ∈ [-1.0, 1.0]
+  -- score_delta is the canonical octo_determin::Dfp 24-byte encoding
+  -- (DfpEncoding::from_dfp(d).to_bytes() from crates/octo-determin): 16-byte
+  -- mantissa + 4-byte exponent + 4-byte class_sign, all big-endian. The BLOB is
+  -- bit-deterministic across compilers and platforms, so two replicas producing
+  -- the same event sequence produce byte-identical BLOBs (RFC-0104).
+  score_delta BLOB NOT NULL CHECK (length(score_delta) = 24),
   samples_delta INTEGER NOT NULL,
   severity INTEGER NOT NULL DEFAULT 0,
   payload BLOB,
@@ -1065,7 +1080,6 @@ CREATE TABLE reputation_events (
   received_at_unix INTEGER NOT NULL,          -- monotonic per source_did
   retention_pruned_at_unix INTEGER,           -- NULL until authorized soft-prune
   signature BLOB NOT NULL,                    -- ed25519 (64 bytes)
-  CONSTRAINT reputation_events_score_delta_range CHECK (score_delta >= -1.0 AND score_delta <= 1.0),  -- Round 3 M8
   CONSTRAINT reputation_events_severity_nonneg  CHECK (severity >= 0)                                 -- Round 3 M8
 );
 
@@ -1079,7 +1093,11 @@ CREATE TABLE reputation_aggregates (
   did TEXT NOT NULL,                          -- "did:octo:b<52>"
   signal_kind INTEGER NOT NULL,
   layer INTEGER NOT NULL,
-  score_ewma REAL NOT NULL DEFAULT 1.0,       -- ∈ [-1.0, 1.0]
+  -- score_ewma is the canonical octo_determin::Dfp 24-byte encoding
+  -- (default = Dfp::from_f64(1.0)). Per RFC-0104 the BLOB is bit-deterministic
+  -- across compilers and platforms. Class A storage: byte-identical across
+  -- replicas given identical input event sequences.
+  score_ewma BLOB NOT NULL CHECK (length(score_ewma) = 24),
   samples INTEGER NOT NULL DEFAULT 0,
   severity_total INTEGER NOT NULL DEFAULT 0,
   last_event_id BLOB NOT NULL,                -- dedup anchor
@@ -1088,7 +1106,7 @@ CREATE TABLE reputation_aggregates (
   PRIMARY KEY (did, signal_kind, layer)
 );
 
-CREATE INDEX reputation_aggregates_by_layer ON reputation_aggregates(layer, score_ewma DESC);
+CREATE INDEX reputation_aggregates_by_layer ON reputation_aggregates(layer);
 CREATE INDEX reputation_aggregates_by_kind ON reputation_aggregates(signal_kind, layer);
 ```
 
@@ -1120,7 +1138,9 @@ CREATE TABLE aggregate_checkpoint (
   checkpoint_id BLOB NOT NULL,
   checkpoint_event_id BLOB NOT NULL,
   checkpoint_unix INTEGER NOT NULL,
-  score_ewma_at_checkpoint REAL NOT NULL,
+  -- score_ewma_at_checkpoint is the canonical octo_determin::Dfp 24-byte
+  -- encoding (RFC-0104). The CHECK enforces the BLOB length.
+  score_ewma_at_checkpoint BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24),
   samples_at_checkpoint INTEGER NOT NULL,
   severity_total_at_checkpoint INTEGER NOT NULL,
   last_event_unix_at_checkpoint INTEGER NOT NULL,  -- Round 6 M5: snapshot
@@ -1205,36 +1225,60 @@ Migration {
 
 ### 6. EWMA Algorithm
 
-Round 2 H7: `update_ewma` returns `Result<f64, ReputationError>` and validates all inputs.
+Round 2 H7: `update_ewma` returns `Result<octo_determin::Dfp, ReputationError>` and validates all inputs. v1.0 stores the EWMA accumulator as `octo_determin::Dfp` per RFC-0104; cross-replica determinism is achieved at the type level — there is no `f64` migration planned.
 
 ```rust
-/// Round 2 H7: validates alpha ∈ (0,1], delta ∈ [-1,1], and rejects NaN/Infinity.
+/// Round 2 H7 + v3.0-r15 (Gap 9): validates alpha ∈ (0,1], delta ∈ [-1,1],
+/// and rejects NaN/Infinity. Arithmetic runs on `octo_determin::Dfp`, which is
+/// bit-deterministic across compilers and platforms (RFC-0104).
 ///
 /// Errors (NOT debug_asserts):
 /// - `DeltaOutOfRange`: delta out of range, NaN, or Infinity
 /// - `AlphaOutOfRange`: alpha out of (0,1] or NaN
 /// - `PrevNonFinite`: prev is NaN or Infinity
 ///
-/// v1 stores `f64`; v1.1 promotes to `determin::dfp::Decimal` (RFC-0104) for
-/// cross-replica determinism. The signature is stable across both impls.
-pub fn update_ewma(prev: f64, delta: f64, alpha: f64) -> Result<f64, ReputationError> {
-    if !alpha.is_finite() || !(alpha > 0.0 && alpha <= 1.0) {
+/// v1.0 uses `octo_determin::Dfp` per RFC-0104. The 24-byte BLOB encoding is
+/// bit-deterministic across compilers and platforms, so two replicas running
+/// the same EWMA sequence produce byte-identical `score_ewma` BLOBs. Class B
+/// determinism is achieved at the type level. The exact arithmetic API is
+/// provided by `octo_determin`; the reputation module imports `add`, `sub`,
+/// `mul`, and `clamp_dfp` (or equivalent) helpers from that crate.
+pub fn update_ewma(
+    prev: octo_determin::Dfp,
+    delta: octo_determin::Dfp,
+    alpha: octo_determin::Dfp,
+) -> Result<octo_determin::Dfp, ReputationError> {
+    // Range checks via the canonical f64 projection so adapter call sites that
+    // build Dfp values via Dfp::from_f64(RANGE_CONST) still pass; the canonical
+    // encoding stays exact.
+    let alpha_f = alpha.to_f64();
+    if !alpha_f.is_finite() || !(alpha_f > 0.0 && alpha_f <= 1.0) {
         return Err(ReputationError::AlphaOutOfRange);
     }
-    if !prev.is_finite() {
+    let prev_f = prev.to_f64();
+    if !prev_f.is_finite() {
         return Err(ReputationError::PrevNonFinite);
     }
-    if !delta.is_finite() || delta < -1.0 || delta > 1.0 {
+    let delta_f = delta.to_f64();
+    if !delta_f.is_finite() || delta_f < -1.0 || delta_f > 1.0 {
         return Err(ReputationError::DeltaOutOfRange);
     }
-    let weight = delta.abs().min(1.0);
-    Ok(prev * (1.0 - alpha * weight) + delta * alpha * weight)
+    let weight = if delta.abs() <= octo_determin::Dfp::from_i64(1) {
+        delta.abs()
+    } else {
+        octo_determin::Dfp::from_i64(1)
+    };
+    let one = octo_determin::Dfp::from_f64(1.0);
+    // Class B arithmetic: prev * (1 - alpha * weight) + delta * alpha * weight
+    let left = octo_determin::mul(prev, octo_determin::sub(one, octo_determin::mul(alpha, weight)?)?)?;
+    let right = octo_determin::mul(octo_determin::mul(delta, alpha)?, weight)?;
+    octo_determin::add(left, right)
 }
 ```
 
-Default `alpha = 0.1`. Per-layer overrides configurable via `RouterConfig` extension (RFC-0927).
+Default `alpha = Dfp::from_f64(0.1)`. Per-layer overrides configurable via `RouterConfig` extension (RFC-0927) as `Dfp` values.
 
-Round 2 H7: the previous design used `debug_assert!` which is a no-op in release builds. The release path accepted NaN, Infinity, and out-of-range inputs. The new design returns `Result` errors in **all** builds (release + debug). v1.1 migration to `determin::dfp::Decimal` (RFC-0104) is the path to cross-replica determinism; the function signature is preserved across the migration.
+Round 2 H7: the previous design used `debug_assert!` which is a no-op in release builds. The release path accepted NaN, Infinity, and out-of-range inputs. The new design returns `Result` errors in **all** builds (release + debug) and the arithmetic runs on `octo_determin::Dfp` so cross-replica agreement is guaranteed at the type level. There is no v1.1 migration — `Dfp` is the v1.0 type. The exact arithmetic helper names (`mul`, `sub`, `add`, `clamp_dfp`) are settled when the implementation lands; the spec documents the contract — finite, in-range inputs in; deterministic `Dfp` out.
 
 ### 7. Adapter Mapping Rules (Round 1 finding H3, Round 2 H8)
 
@@ -1244,18 +1288,27 @@ The three existing in-memory adapters translate their domain events into `Signal
 
 **Slash severity rule (Round 3 M10):** the previous design emitted slash events with `severity = 0`, which produced `aggregate.severity_total = 0` and disabled the `state == Suspended` derivation. The Round 3 fix bumps `severity = 1` per slash event AND `aggregate.severity_total += 1` per slash event. The "Suspended if `severity_total >= 5`" derivation now works.
 
-| Source adapter                                       | Field             | New mapping                                                                                       | Notes                                                         |
-| ---------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `SlashReputationStore::count` (mon)                  | `count` increment | `severity = 1`, `severity_total += 1` (M10); `payload = ReputationPayload::Slash { reason_code }` | Adapter derives `state == Suspended` if `severity_total >= 5` |
-| `SlashReputationStore::is_excluded(threshold=5)`     | boolean           | `state == Suspended` if aggregate `severity_total >= 5`                                           | Adapter derives from aggregate                                |
-| `SlashReputationStore::priority(stake, count)`       | `f64`             | `stake / (1.0 + count as f64)`                                                                    | Cross-layer via aggregate count                               |
-| `ProviderReputationRegistry::ProviderScore` (market) | outcome event     | `score_delta = +1.0` (success) / `-1.0` (failure); `payload = Outcome { task_id, success }`       | alpha=0.3 mapped to alpha=0.1 with normalization              |
-| `ProviderReputationRegistry::latency_ms`             | `u32`             | `signal_kind = Latency`, `payload = Latency { ms }`, `latency_ms = ms`                            | `NormalizerInput.latency_ms` populated from payload (§9.1)    |
-| `DcRootedSlashReputationStore` (dc)                  | same as mon       | `layer=1`; `severity = 1`; `payload = Slash { reason_code }`                                      | Same shape, different layer                                   |
-| Capacity event (router / codec)                      | `bytes`           | `signal_kind = Capacity`, `payload = Capacity { bytes }`, `served = bytes`                        | `NormalizerInput.served` populated from payload (§9.1)        |
-| Discovery event (peer-set lookup)                    | `peer_id`         | `signal_kind = Discovery`, `payload = Discovery { peer_id }`, `lookups = 1`                       | `NormalizerInput.lookups` populated at the adapter boundary   |
+| Source adapter                                       | Field             | New mapping                                                                                                                          | Notes                                                                                                        |
+| ---------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `SlashReputationStore::count` (mon)                  | `count` increment | `severity = 1`, `severity_total += 1` (M10); `payload = ReputationPayload::Slash { reason_code }`                                    | Adapter derives `state == Suspended` if `severity_total >= 5`                                                |
+| `SlashReputationStore::is_excluded(threshold=5)`     | boolean           | `state == Suspended` if aggregate `severity_total >= 5`                                                                              | Adapter derives from aggregate                                                                               |
+| `SlashReputationStore::priority(stake, count)`       | `Dfp`             | `Dfp::from_i64(stake as i64) / Dfp::from_i64(1 + count as i64)`                                                                      | Cross-layer via aggregate count                                                                              |
+| `ProviderReputationRegistry::ProviderScore` (market) | outcome event     | `score_delta = Dfp::from_i64(1_000_000)` (success) / `Dfp::from_i64(-1_000_000)` (failure); `payload = Outcome { task_id, success }` | micro-units are deprecated; Dfp carries the value directly. alpha=0.3 mapped to alpha=0.1 with normalization |
+| `ProviderReputationRegistry::latency_ms`             | `u32`             | `signal_kind = Latency`, `payload = Latency { ms }`, `latency_ms = ms`                                                               | `NormalizerInput.latency_ms` populated from payload (§9.1)                                                   |
+| `DcRootedSlashReputationStore` (dc)                  | same as mon       | `layer=1`; `severity = 1`; `payload = Slash { reason_code }`                                                                         | Same shape, different layer                                                                                  |
+| Capacity event (router / codec)                      | `bytes`           | `signal_kind = Capacity`, `payload = Capacity { bytes }`, `served = bytes`                                                           | `NormalizerInput.served` populated from payload (§9.1)                                                       |
+| Discovery event (peer-set lookup)                    | `peer_id`         | `signal_kind = Discovery`, `payload = Discovery { peer_id }`, `lookups = 1`                                                          | `NormalizerInput.lookups` populated at the adapter boundary                                                  |
 
-**Equivalence test (Phase 1):** replay the in-memory store's full event sequence through the new shadow-write path and assert that `read_aggregate` returns the same `score_ewma` within `f64::EPSILON * samples`.
+**Adapter conversion path:** Adapter v1.0: convert f64 → `Dfp::from_f64()` ONLY at the `record_signal` boundary. Future revision: adapters use `Dfp` internally to remove the `f64` intermediate step. At the `record_signal` boundary they construct the `SignalEvent.score_delta` via one of:
+
+- `Dfp::from_i64(N)` — integer-valued deltas (e.g., `+1_000_000` micro-units or `±1.0` semantic-units expressed as the canonical 24-byte Dfp encoding).
+- `Dfp::from_f64(x)` — float-valued deltas derived from a domain-specific computation. The f64 conversion is local to the adapter; the persisted BLOB is the Dfp encoding, which is deterministic across compilers and platforms.
+
+Either path produces a `score_delta` BLOB whose 24-byte encoding is byte-stable across replicas, so the federation and audit-replay invariants are preserved at the type level.
+
+**Adapter-internal f64 rationale (v1.0):** Adapter-internal `f64` computation is acceptable for v1.0 because (a) compute is deterministic across same-platform replicas, (b) the IEEE 754 strict-fp contract is documented as a deployment requirement. Cross-platform deployments (different compilers, SIMD settings) are out of scope for v1.0.
+
+**Equivalence test (Phase 1):** replay the in-memory store's full event sequence through the new shadow-write path and assert that `read_aggregate` returns the same `score_ewma` (Dfp-encoded; bit-equal across replicas). The previous `f64::EPSILON * samples` tolerance is obsolete because both the in-memory EWMA and the persisted EWMA use the same `octo_determin::Dfp` arithmetic — equality is exact, not approximate.
 
 **Backfill strategy (Round 2 H8, Phase 2.5):** In-memory stores continue to be authoritative for reads until the parity cutover. A background reconciliation job replays historical events from the in-memory store into `ReputationStore` to seed the persisted aggregates. Backfill events are marked with `received_at_unix = canonicalized_now` (storage-time, not in-memory historical time) to avoid breaking monotonicity going forward; backfill events are tagged via a separate `payload` marker (`b"BACKFILL_V1"`) so they can be distinguished from ongoing events.
 
@@ -1282,8 +1335,15 @@ pub const MAX_SEVERITY: u32 = 100;
 // conflated `samples` with `served` / `lookups`, forced `LatencyNormalizer`
 // to derive latency from `delta.abs()`, and left dead placeholder lines in
 // place. The Round 3 struct has explicit fields for every per-kind input.
+//
+// v3.0-r15 (Gap 9): `delta` is `octo_determin::Dfp` per RFC-0104. The
+// normalizers return `Dfp` so cross-layer arithmetic (weighted AVG, EWMA)
+// stays deterministic across replicas at the type level. The exact arithmetic
+// API (free functions vs. trait methods) is settled when the implementation
+// lands; the spec documents the contract — finite inputs in, deterministic
+// `Dfp` out.
 pub struct NormalizerInput {
-    pub delta: f64,             // raw score_delta (Outcome, general)
+    pub delta: octo_determin::Dfp, // raw score_delta (Outcome, general)
     pub samples: u64,           // sample count (general)
     pub severity: u32,          // severity (Slash)
     pub payload: Vec<u8>,       // raw payload bytes (typed by §9.1)
@@ -1297,22 +1357,26 @@ pub struct NormalizerInput {
 }
 
 pub trait Normalizer: Send + Sync {
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError>;
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError>;
 }
 
 pub struct SlashNormalizer;
 impl Normalizer for SlashNormalizer {
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError> {
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         let cap = if input.max_severity == 0 { MAX_SEVERITY } else { input.max_severity };
-        let s = (input.severity as f64) / (cap as f64);
-        Ok((-s).clamp(-1.0, 0.0))
+        // s = severity / cap; result = -s clamped to [-1, 0].
+        let s = octo_determin::div(
+            octo_determin::Dfp::from_i64(input.severity as i64),
+            octo_determin::Dfp::from_i64(cap as i64),
+        )?;
+        octo_determin::clamp_dfp(octo_determin::neg(s)?, -1.0, 0.0)
     }
 }
 
 pub struct OutcomeNormalizer;
 impl Normalizer for OutcomeNormalizer {
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError> {
-        Ok(input.delta.clamp(-1.0, 1.0))
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
+        octo_determin::clamp_dfp(input.delta, -1.0, 1.0)
     }
 }
 
@@ -1322,12 +1386,22 @@ impl Normalizer for LatencyNormalizer {
     /// not from `input.delta.abs()` (which was always wrong). The previous
     /// code had dead lines (`let ratio = ...; let _ = ratio;`) that were
     /// removed as part of the rewrite.
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError> {
+    ///
+    /// v3.0-r15 (Gap 9): arithmetic uses `octo_determin::Dfp` so the result
+    /// is deterministic across replicas.
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.target_ms == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        let ratio = (input.latency_ms as f64) / (10.0 * input.target_ms as f64);
-        Ok((1.0 - ratio.clamp(0.0, 1.0)).max(0.0))
+        let ratio = octo_determin::div(
+            octo_determin::Dfp::from_i64(input.latency_ms as i64),
+            octo_determin::Dfp::from_i64((10 * input.target_ms) as i64),
+        )?;
+        let ratio_clamped = octo_determin::clamp_dfp(ratio, 0.0, 1.0);
+        octo_determin::max_dfp(
+            octo_determin::sub(octo_determin::Dfp::from_i64(1), ratio_clamped)?,
+            octo_determin::Dfp::zero(),
+        )
     }
 }
 
@@ -1335,11 +1409,15 @@ pub struct CapacityNormalizer;
 impl Normalizer for CapacityNormalizer {
     /// Round 3 C4: reads `input.served`, not `input.samples`. The previous
     /// code used `samples` which is domain-general and was wrong for Capacity.
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError> {
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.max_capacity == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        Ok((input.served as f64 / input.max_capacity as f64).clamp(0.0, 1.0))
+        let v = octo_determin::div(
+            octo_determin::Dfp::from_i64(input.served as i64),
+            octo_determin::Dfp::from_i64(input.max_capacity as i64),
+        )?;
+        Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
     }
 }
 
@@ -1347,23 +1425,30 @@ pub struct DiscoveryNormalizer;
 impl Normalizer for DiscoveryNormalizer {
     /// Round 3 C4: reads `input.lookups`, not `input.samples`. The previous
     /// code conflated these with Capacity.
-    fn normalize(&self, input: &NormalizerInput) -> Result<f64, ReputationError> {
+    fn normalize(&self, input: &NormalizerInput) -> Result<octo_determin::Dfp, ReputationError> {
         if input.max_lookups == 0 {
             return Err(ReputationError::NormalizerDivByZero);
         }
-        Ok((input.lookups as f64 / input.max_lookups as f64).clamp(0.0, 1.0))
+        let v = octo_determin::div(
+            octo_determin::Dfp::from_i64(input.lookups as i64),
+            octo_determin::Dfp::from_i64(input.max_lookups as i64),
+        )?;
+        Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
     }
 }
 
 // Round 3 H7: KIND_WEIGHTS is keyed by the SignalKind enum (which has a
 // stable u8 discriminant), not by a string. The SQL `kind_weights` table
 // mirrors the enum discriminant so the JOIN works on the integer column.
-pub const KIND_WEIGHTS: &[(SignalKind, f64)] = &[
-    (SignalKind::Slash,     1.0),
-    (SignalKind::Outcome,   0.8),
-    (SignalKind::Latency,   0.4),
-    (SignalKind::Capacity,  0.2),
-    (SignalKind::Discovery, 0.2),
+//
+// v3.0-r15 (Gap 9): weights are `octo_determin::Dfp` so the weighted AVG is
+// cross-replica deterministic at the type level.
+pub const KIND_WEIGHTS: &[(SignalKind, octo_determin::Dfp)] = &[
+    (SignalKind::Slash,     octo_determin::Dfp::from_f64(1.0)),
+    (SignalKind::Outcome,   octo_determin::Dfp::from_f64(0.8)),
+    (SignalKind::Latency,   octo_determin::Dfp::from_f64(0.4)),
+    (SignalKind::Capacity,  octo_determin::Dfp::from_f64(0.2)),
+    (SignalKind::Discovery, octo_determin::Dfp::from_f64(0.2)),
 ];
 // SignalKind::Rotation is identity-migration metadata. It is persisted through
 // consume_rotation_receipt, excluded from weighted composites, and neutral if
@@ -1524,15 +1609,15 @@ For the Rotation vector, `old_did = "did:octo:b" + "a" × 52` and `new_did = "di
 The adapter mapping table (§7) is updated to specify which `ReputationPayload`
 variant each adapter emits and how `NormalizerInput` fields are populated:
 
-| Source event                                       | ReputationPayload variant                     | NormalizerInput fields populated                                     |
-| -------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
-| `SlashReputationStore::record(count)` (mon)        | `Slash { reason_code }`                       | `severity = 1`, `samples = 1` (Round 3 M10: per-event severity bump) |
-| `DcRootedSlashReputationStore::record(count)` (dc) | `Slash { reason_code }`                       | `severity = 1`, `samples = 1`                                        |
-| `ProviderReputationRegistry::outcome(success)`     | `Outcome { task_id, success }`                | `delta = +1.0 / -1.0`, `samples = 1`                                 |
-| `ProviderReputationRegistry::latency_ms`           | `Latency { ms }`                              | `latency_ms = ms`, `target_ms` from router config                    |
-| Capacity event (router / codec)                    | `Capacity { bytes }`                          | `served = bytes`, `max_capacity` from router config                  |
-| Discovery event (peer-set lookup)                  | `Discovery { peer_id }`                       | `lookups = 1`, `max_lookups` from router config                      |
-| `Did::rotate` receipt                              | `Rotation { old_did, new_did, decay_factor }` | `record_signal` short-circuits (rotation is recorded separately)     |
+| Source event                                       | ReputationPayload variant                     | NormalizerInput fields populated                                                                                                              |
+| -------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SlashReputationStore::record(count)` (mon)        | `Slash { reason_code }`                       | `severity = 1`, `samples = 1` (Round 3 M10: per-event severity bump)                                                                          |
+| `DcRootedSlashReputationStore::record(count)` (dc) | `Slash { reason_code }`                       | `severity = 1`, `samples = 1`                                                                                                                 |
+| `ProviderReputationRegistry::outcome(success)`     | `Outcome { task_id, success }`                | `delta = Dfp::from_i64(1_000_000) / Dfp::from_i64(-1_000_000)`, `samples = 1` (Gap 9: micro-units deprecated; Dfp carries the value directly) |
+| `ProviderReputationRegistry::latency_ms`           | `Latency { ms }`                              | `latency_ms = ms`, `target_ms` from router config                                                                                             |
+| Capacity event (router / codec)                    | `Capacity { bytes }`                          | `served = bytes`, `max_capacity` from router config                                                                                           |
+| Discovery event (peer-set lookup)                  | `Discovery { peer_id }`                       | `lookups = 1`, `max_lookups` from router config                                                                                               |
+| `Did::rotate` receipt                              | `Rotation { old_did, new_did, decay_factor }` | `record_signal` short-circuits (rotation is recorded separately)                                                                              |
 
 ### 10. Core Interfaces
 
@@ -1805,7 +1890,11 @@ pub struct ReputationAggregate {
     pub did: Did,
     pub kind: SignalKind,
     pub layer: ReputationLayer,
-    pub score_ewma: f64,
+    /// EWMA accumulator as `octo_determin::Dfp` per RFC-0104. The 24-byte BLOB
+    /// encoding is bit-deterministic across compilers and platforms, so two
+    /// replicas running the same EWMA sequence produce byte-identical
+    /// `score_ewma`. Class A storage (BLOB-blob byte-identical).
+    pub score_ewma: octo_determin::Dfp,
     pub samples: u64,
     pub severity_total: u64,
     pub last_event_id: EventId,
@@ -1905,7 +1994,18 @@ pub enum ReputationError {
     GovernanceSnapshotStale = 0x26,
     #[error("attestor authentication signature invalid")]
     AttestorAuthInvalid = 0x27,
-    // 0x28..=0xFF are reserved for future variants.
+    /// v3.1-r16 (Fix L4): runtime invariant for BLOB deserialization. A
+    /// persisted `score_delta` or `score_ewma` BLOB that does not decode as a
+    /// canonical `DfpEncoding` is rejected with `ScoreEncodingInvalid` before
+    /// any further processing. The read path is
+    /// `DfpEncoding::from_bytes(blob).map_err(|_| ScoreEncodingInvalid)`;
+    /// length mismatches and malformed mantissa/exponent/class_sign fields
+    /// both surface through this variant. The invariant ensures that every
+    /// loaded aggregate / event is a valid `Dfp` before it enters the EWMA
+    /// arithmetic path or feeds cross-layer queries.
+    #[error("score BLOB did not decode as canonical DfpEncoding")]
+    ScoreEncodingInvalid = 0x28,
+    // 0x29..=0xFF are reserved for future variants.
 }
 
 /// Canonical store interface. This is the only ReputationStore declaration.
@@ -2111,15 +2211,18 @@ impl std::ops::Deref for AttestationId {
 
 pub struct CrossLayerQuery {
     pub did: Did,
-    pub weights: HashMap<SignalKind, f64>, // empty => use defaults
+    /// Caller-supplied weights (empty => use defaults from KIND_WEIGHTS). Values
+    /// are `octo_determin::Dfp` per RFC-0104 so the weighted-AVG result is
+    /// cross-replica deterministic.
+    pub weights: HashMap<SignalKind, octo_determin::Dfp>,
     pub kind_filter: Option<SignalKind>,
     pub layer_filter: Option<ReputationLayer>,
 }
 
 pub struct CrossLayerResult {
     pub did: Did,
-    pub composite_score: f64,
-    pub per_kind: Vec<(SignalKind, f64)>,
+    pub composite_score: octo_determin::Dfp,
+    pub per_kind: Vec<(SignalKind, octo_determin::Dfp)>,
     pub total_samples: u64,
     pub total_severity: u64,
 }
@@ -2137,7 +2240,9 @@ pub struct SlidingWindowResult {
     pub event_id: EventId,
     pub kind: SignalKind,
     pub layer: ReputationLayer,
-    pub score_delta: f64,
+    /// Per-event score delta. `octo_determin::Dfp` per RFC-0104; the 24-byte
+    /// BLOB encoding is bit-deterministic across replicas.
+    pub score_delta: octo_determin::Dfp,
     pub received_at_unix: u64,
 }
 
@@ -2304,7 +2409,10 @@ pub struct ReplayRecord {
     pub auditor: AuditorId,
     pub did: Did,
     pub events: Vec<SignalEvent>,
-    pub aggregate_evolution: Vec<(u64, f64)>, // (received_at_unix, score_ewma recomputed from canonical replay)
+    /// `(received_at_unix, score_ewma recomputed from canonical replay)` where
+    /// `score_ewma` is `octo_determin::Dfp` per RFC-0104. The recomputed value
+    /// must match the persisted aggregate BLOB byte-for-byte across replicas.
+    pub aggregate_evolution: Vec<(u64, octo_determin::Dfp)>,
     pub audit_signature: Vec<u8>,   // ed25519 by auditor
     pub audited_at_unix: u64,
     pub nonce: [u8; 32],
@@ -2380,8 +2488,9 @@ Merge order: `(received_at_unix, event_id)` ascending. Fork resolution is missio
 | `AttestorNotRegistered`       | 0x25     | An `AttestorId::registered` lookup found no row                                                                  |
 | `GovernanceSnapshotStale`     | 0x26     | Reject before lookup; obtain a snapshot finalized within `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`                      |
 | `AttestorAuthInvalid`         | 0x27     | Reject; `AttestorAuth` governance signature did not verify over `BLAKE3(BLAKE3_REPUTATION_ATTESTOR_DOMAIN        |     | attestor_did |     | pubkey |     | requested_at_unix)` |
+| `ScoreEncodingInvalid`        | 0x28     | Reject; persisted `score_delta` / `score_ewma` BLOB did not decode as canonical `DfpEncoding` (v3.1-r16 Fix L4)  |
 
-The enum has 39 variants and this table has 39 unique assignments across `0x01..0x27`; no code is reused. Round 6 M3: `RecorderLifecycleCorrupted` (0x22) replaces the previous `ResumeMalformedGrace` semantics for server-internal assertion; `ResumeMalformedGrace` is retained for caller-supplied malformed resume state. Round 7 H3 adds `GovernanceRegistryError(_)` (0x23) so registry failures are not collapsed to `GovernanceKeyInactive`. Round 7 C2 adds `AttestorAlreadyRegistered` (0x24) and `AttestorNotRegistered` (0x25). Round 8 H1/H2 adds `GovernanceSnapshotStale` (0x26) for the mandatory local freshness check that precedes every snapshot-bound authoritative lookup. Round 9 H1 adds `AttestorAuthInvalid` (0x27) for the `AttestorAuth` governance signature verification failure path. Round 10 H2: the enum gains `#[repr(u8)]` with explicit discriminants matching this table 1:1, so the wire-level error code is stable across replicas. Round 10 M1: the table is now monotonic 0x01..=0x27; `Storage(_)` sits at 0x21 between `SuspensionAuthInvalid` (0x20) and `RecorderLifecycleCorrupted` (0x22). 0x28..=0xFF are reserved for future variants.
+The enum has 40 variants and this table has 40 unique assignments across `0x01..0x28`; no code is reused. Round 6 M3: `RecorderLifecycleCorrupted` (0x22) replaces the previous `ResumeMalformedGrace` semantics for server-internal assertion; `ResumeMalformedGrace` is retained for caller-supplied malformed resume state. Round 7 H3 adds `GovernanceRegistryError(_)` (0x23) so registry failures are not collapsed to `GovernanceKeyInactive`. Round 7 C2 adds `AttestorAlreadyRegistered` (0x24) and `AttestorNotRegistered` (0x25). Round 8 H1/H2 adds `GovernanceSnapshotStale` (0x26) for the mandatory local freshness check that precedes every snapshot-bound authoritative lookup. Round 9 H1 adds `AttestorAuthInvalid` (0x27) for the `AttestorAuth` governance signature verification failure path. v3.1-r16 Fix L4 adds `ScoreEncodingInvalid` (0x28) for the BLOB-deserialization invariant that rejects malformed `DfpEncoding` payloads before any further processing. Round 10 H2: the enum gains `#[repr(u8)]` with explicit discriminants matching this table 1:1, so the wire-level error code is stable across replicas. Round 10 M1: the table is now monotonic 0x01..=0x28; `Storage(_)` sits at 0x21 between `SuspensionAuthInvalid` (0x20) and `RecorderLifecycleCorrupted` (0x22). 0x29..=0xFF are reserved for future variants.
 
 ### 14. Performance Targets
 
@@ -2425,11 +2534,11 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 | Operation                     | Class | Rationale                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Did::rotate`                 | A     | Pure verification and receipt construction from explicit `now_unix`                                                                                                                                                                                                                                                         |
-| `record_signal`               | B     | EWMA update + authenticated write; deterministic for `(event, now_unix)`                                                                                                                                                                                                                                                    |
+| `record_signal`               | B     | EWMA update (Dfp arithmetic) + authenticated write; deterministic for `(event, now_unix)`                                                                                                                                                                                                                                   |
 | `read_aggregate`              | A     | Pure DB read                                                                                                                                                                                                                                                                                                                |
-| `cross_layer_query`           | A     | Pure DB read                                                                                                                                                                                                                                                                                                                |
+| `cross_layer_query`           | A     | Pure DB read (Dfp-weighted AVG at the SQL layer is bit-deterministic)                                                                                                                                                                                                                                                       |
 | `sliding_window`              | B     | Time-bounded; same query timestamps produce the same result                                                                                                                                                                                                                                                                 |
-| `replay_for_audit`            | A     | Canonical ordered read and deterministic aggregate recomputation                                                                                                                                                                                                                                                            |
+| `replay_for_audit`            | A     | Canonical ordered read and deterministic aggregate recomputation (Dfp BLOB byte-equal)                                                                                                                                                                                                                                      |
 | `retention_prune`             | B     | Authenticated time-bounded write (Round 6 M2: takes caller-supplied `now_unix`)                                                                                                                                                                                                                                             |
 | `prune_event`                 | B     | Authenticated write using explicit `now_unix`                                                                                                                                                                                                                                                                               |
 | `suspend_recorder`            | B     | Authenticated lifecycle write using explicit `now_unix`                                                                                                                                                                                                                                                                     |
@@ -2441,9 +2550,11 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 | `replay_rotation_history`     | A     | Pure canonical history read                                                                                                                                                                                                                                                                                                 |
 | `record_attestation`          | B     | ID/signature verification plus persisted write                                                                                                                                                                                                                                                                              |
 | `query_attestations`          | A     | Pure DB read                                                                                                                                                                                                                                                                                                                |
+| `update_ewma`                 | B     | Pure function over `octo_determin::Dfp`; deterministic for `(prev, delta, alpha)` given finite, in-range inputs. The 24-byte BLOB encoding is bit-deterministic across compilers and platforms.                                                                                                                             |
+| `score_ewma` storage (BLOB)   | A     | BLOB-blob byte-identical across replicas given identical input event sequences (RFC-0104 Dfp). No `f64` cross-platform variance.                                                                                                                                                                                            |
 | Gossip merge                  | A     | Deterministic by `(received_at_unix, event_id)`                                                                                                                                                                                                                                                                             |
 
-**Warning:** `f64` is **not** IEEE-deterministic across compilers and platforms. `update_ewma` may return bit-different results on x86 vs ARM, MSVC vs clang, or with different SIMD paths. For **Class A** cross-replica agreement (federation, audit), promote to RFC-0104 `determin::dfp::Decimal`. v1 uses `f64`; v1.1 migrates to DFP.
+**Note (v3.0-r15, Gap 9):** `octo_determin::Dfp` (RFC-0104) is the v1.0 type for `score_delta`, `score_ewma`, normalizer inputs/outputs, and `update_ewma` parameters. The 24-byte BLOB encoding is bit-deterministic across compilers and platforms, so cross-replica agreement is achieved at the type level — no `f64` migration path exists. Cross-replica equality test (RFC-0968 §23): two replicas running the same EWMA sequence MUST produce byte-identical `score_ewma` BLOBs.
 
 ### 17. Implicit Assumptions Audit
 
@@ -2466,7 +2577,7 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 - **Reputation laundering via rotation:** Mitigated by `Did::rotate` decay factor 0.9; aggregate history follows the rotation receipt.
 - **Proof forgery:** Events signed by recorder pubkey; verify before persisting.
 - **Replay attacks:** `event_id` BLAKE3 dedup + monotonic `received_at_unix`.
-- **Determinism violations:** EWMA alpha fixed per layer; pure function. v1.1 DFP upgrade for cross-replica.
+- **Determinism violations:** EWMA alpha fixed per layer; pure function over `octo_determin::Dfp`. v1.0 uses `Dfp` (RFC-0104), so cross-replica determinism is achieved at the type level — no `f64` migration path exists.
 - **Clock skew:** Bounded by `received_at_unix - observed_at_unix < 1s` (configurable).
 - **Payload deserialization attacks:** Bounded by `signal_kind` discriminator + typed Rust deserializer (no `Deserialize_any`).
 
@@ -2525,49 +2636,57 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 
 ```
 DID = "did:octo:b<52-char-base32>"     # canonical form (Round 2 C1 + M15)
-Initial state: score_ewma = 1.0, samples = 0, severity = 0
+Initial state: score_ewma = Dfp::from_f64(1.0), samples = 0, severity = 0
 
-Event 1: delta = -0.3, alpha = 0.1
-  weight = min(|-0.3|, 1.0) = 0.3
-  score  = 1.0 * (1 - 0.1*0.3) + (-0.3) * 0.1 * 0.3
-         = 1.0 * 0.97 + (-0.009)
-         = 0.97 - 0.009
-         = 0.961
+# v3.0-r15 (Gap 9): update_ewma operates on octo_determin::Dfp.
+# The 24-byte BLOB encoding is bit-deterministic across compilers and
+# platforms; the expected values below are exact Dfp encodings, not
+# approximate f64 floats.
+#
+# v3.1-r16 (Fix L3): Dfp encoding is exact; cross-replica equality is
+# verified via byte-for-byte comparison of `score_ewma.to_bytes()` (i.e.
+# `DfpEncoding::from_dfp(score_ewma).to_bytes()`). The previous `± ε_dfp`
+# tolerance notation is removed; every expected value below is an exact
+# Dfp encoding.
+
+Event 1: delta = Dfp::from_f64(-0.3), alpha = Dfp::from_f64(0.1)
+  weight = Dfp::from_f64(min(|-0.3|, 1.0)) = Dfp::from_f64(0.3)
+  score  = Dfp::from_f64(1.0) * (Dfp::from_f64(1.0) - Dfp::from_f64(0.1) * Dfp::from_f64(0.3))
+         + Dfp::from_f64(-0.3) * Dfp::from_f64(0.1) * Dfp::from_f64(0.3)
+         = Dfp::from_f64(0.961)              # exact; Dfp encoding is exact
   samples = 1
   severity = 1
 
-Event 2: delta = -0.5, alpha = 0.1
-  weight = min(|-0.5|, 1.0) = 0.5
-  score  = 0.961 * (1 - 0.1*0.5) + (-0.5) * 0.1 * 0.5
-         = 0.961 * 0.95 + (-0.025)
-         = 0.91295 - 0.025
-         = 0.88795            ← corrected per Round 1 finding H2
+Event 2: delta = Dfp::from_f64(-0.5), alpha = Dfp::from_f64(0.1)
+  weight = Dfp::from_f64(0.5)
+  score  = Dfp::from_f64(0.961) * (Dfp::from_f64(1.0) - Dfp::from_f64(0.1) * Dfp::from_f64(0.5))
+         + Dfp::from_f64(-0.5) * Dfp::from_f64(0.1) * Dfp::from_f64(0.5)
+         = Dfp::from_f64(0.88795)            # exact; corrected per Round 1 finding H2
   samples = 2
   severity = 1
 
-Event 3: delta = +0.1, alpha = 0.1
-  weight = min(|0.1|, 1.0) = 0.1
-  score  = 0.88795 * (1 - 0.1*0.1) + 0.1 * 0.1 * 0.1
-         = 0.88795 * 0.99 + 0.001
-         = 0.8790705 + 0.001
-         = 0.8800705
+Event 3: delta = Dfp::from_f64(+0.1), alpha = Dfp::from_f64(0.1)
+  weight = Dfp::from_f64(0.1)
+  score  = Dfp::from_f64(0.88795) * (Dfp::from_f64(1.0) - Dfp::from_f64(0.1) * Dfp::from_f64(0.1))
+         + Dfp::from_f64(0.1) * Dfp::from_f64(0.1) * Dfp::from_f64(0.1)
+         = Dfp::from_f64(0.8800705)          # exact
   samples = 3
 
-Event 4: delta = -0.2, alpha = 0.1
-  weight = min(|-0.2|, 1.0) = 0.2
-  score  = 0.8800705 * (1 - 0.1*0.2) + (-0.2) * 0.1 * 0.2
-         = 0.8800705 * 0.98 + (-0.004)
-         = 0.8624691 - 0.004
-         = 0.8584691
+Event 4: delta = Dfp::from_f64(-0.2), alpha = Dfp::from_f64(0.1)
+  weight = Dfp::from_f64(0.2)
+  score  = Dfp::from_f64(0.8800705) * (Dfp::from_f64(1.0) - Dfp::from_f64(0.1) * Dfp::from_f64(0.2))
+         + Dfp::from_f64(-0.2) * Dfp::from_f64(0.1) * Dfp::from_f64(0.2)
+         = Dfp::from_f64(0.8584691)          # exact
   samples = 4
 ```
 
-Round 2 H7: `update_ewma` returns `Result<f64, ReputationError>` in all builds (release + debug). The previous test vectors used `debug_assert!` which is a no-op in release; the new design returns errors.
+Round 2 H7: `update_ewma` returns `Result<octo_determin::Dfp, ReputationError>` in all builds (release + debug). The previous test vectors used `debug_assert!` which is a no-op in release; the new design returns errors.
 
-- Out-of-range: `update_ewma(0.5, 1.5, 0.1)` returns `Err(ReputationError::DeltaOutOfRange)`.
-- NaN: `update_ewma(f64::NAN, 0.1, 0.1)` returns `Err(ReputationError::DeltaOutOfRange)`.
-- Alpha out of range: `update_ewma(0.5, 0.1, 1.5)` returns `Err(ReputationError::AlphaOutOfRange)`.
-- Alpha zero: `update_ewma(0.5, 0.1, 0.0)` returns `Err(ReputationError::AlphaOutOfRange)`.
+- Out-of-range: `update_ewma(Dfp::from_f64(0.5), Dfp::from_f64(1.5), Dfp::from_f64(0.1))` returns `Err(ReputationError::DeltaOutOfRange)`.
+- NaN: `update_ewma(Dfp::nan(), Dfp::from_f64(0.1), Dfp::from_f64(0.1))` returns `Err(ReputationError::DeltaOutOfRange)`.
+- Alpha out of range: `update_ewma(Dfp::from_f64(0.5), Dfp::from_f64(0.1), Dfp::from_f64(1.5))` returns `Err(ReputationError::AlphaOutOfRange)`.
+- Alpha zero: `update_ewma(Dfp::from_f64(0.5), Dfp::from_f64(0.1), Dfp::from_f64(0.0))` returns `Err(ReputationError::AlphaOutOfRange)`.
+- Cross-replica equality: two replicas running the same EWMA sequence MUST produce byte-identical `score_ewma` BLOBs (the 24-byte `DfpEncoding::to_bytes()` form). Test asserts `replica_a.score_ewma.to_bytes() == replica_b.score_ewma.to_bytes()`.
 - Monotonicity: two events with same `source_did` and `received_at_unix_2 <= received_at_unix_1` → second `record_signal` returns `Err(ReputationError::OutOfOrder)`.
 - Signature: tampered `event_id` (event_id != BLAKE3 of unsigned canonical) → `Err(ReputationError::EventIdMismatch)`.
 - Signature: wrong recorder key → `Err(ReputationError::SignatureInvalid)`.
@@ -2607,9 +2726,10 @@ Round 2 H7: `update_ewma` returns `Result<f64, ReputationError>` in all builds (
 
 - [ ] Define `SignalEvent`, `ReputationAggregate`, `ReputationStore` trait, `ReputationError`, `Did` (§2, §3, §10) in `crates/quota-router-storage/src/reputation/{mod.rs, store.rs, did.rs, recorder.rs}`.
 - [ ] Implement `StoolapReputationStore` in same crate.
-- [ ] Migration files `migrations/v003__reputation_events.sql`, `migrations/v004__reputation_aggregates.sql`, `migrations/v005__reputation_rotations.sql`, `migrations/v006__reputation_attestations.sql`, `migrations/v007__aggregate_checkpoints.sql`, and `migrations/v008__recorder_registration.sql` (Round 6 C1 + L5); add all six to `BUILTIN_MIGRATIONS`.
+- [ ] Migration files `migrations/v003__reputation_events.sql`, `migrations/v004__reputation_aggregates.sql`, `migrations/v005__reputation_rotations.sql`, `migrations/v006__reputation_attestations.sql`, `migrations/v007__aggregate_checkpoints.sql`, and `migrations/v008__recorder_registration.sql` (Round 6 C1 + L5); add all six to `BUILTIN_MIGRATIONS`. v003/v004/v007 store `score_delta` and `score_ewma` as `BLOB NOT NULL CHECK (length(...) = 24)` (canonical `octo_determin::Dfp::to_bytes()` form, RFC-0104).
+- [ ] `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml` gain `octo-determin = { path = "../determin" }` (v3.0-r15, Gap 9).
 - [ ] Unit tests:
-  - EWMA vectors per §23
+  - EWMA vectors per §23 (`update_ewma(prev=Dfp, delta=Dfp, alpha=Dfp)` returns `Dfp` within `ε_dfp < 1e-30` of the listed reference; cross-replica equality asserts byte-identical `score_ewma` BLOBs across two replicas)
   - `record_signal` signature verify (good + tampered)
   - `record_signal` monotonic `received_at_unix` enforcement
   - `Did::parse` rejects raw 32-byte keys
@@ -2643,7 +2763,7 @@ Round 2 H7: `update_ewma` returns `Result<f64, ReputationError>` in all builds (
 - [ ] `DcRootedSlashReputationStore` (octo-network dc) shadow-writes with `layer=1`.
 - [ ] `ProviderReputationRegistry` (quota-router-core marketplace) shadow-writes `Outcome` + `Latency` events with `layer=2`.
 - [ ] Shadow-write is best-effort: failures log + continue (don't break existing reads).
-- [ ] **Equivalence tests** (§7): replay in-memory store's full event sequence through shadow-write path; assert aggregate matches within `f64::EPSILON * samples`.
+- [ ] **Equivalence tests** (§7): replay in-memory store's full event sequence through shadow-write path; assert `score_ewma` (Dfp-encoded) is bit-equal across in-memory and persisted paths. The previous `f64::EPSILON * samples` tolerance is obsolete; both paths use the same `octo_determin::Dfp` arithmetic.
 - [ ] Existing in-memory test suites pass with shadow-write enabled.
 
 #### Phase 2.5: Backfill + Reconciliation (Round 1 finding H9)
@@ -2702,7 +2822,7 @@ The Round 3 adversarial review raised 12 decisions that are now resolved:
 6. **RotationReceipt.decay:** `i64` Q32.32 fixed-point everywhere (Rust + SQL). `0.9 = 0xE6666666`. See §2.1 + §3.
 7. **State machine resume:** explicit `resume_recorder(recorder_id, ResumeProof, GovernanceRegistry)` API defined. `ResumeProof` is an ed25519 signature by an active governance-registry key over `BLAKE3(BLAKE3_REPUTATION_RESUME_DOMAIN || recorder_id || current_unix)`. See §3.
 8. **Mission 0968a migration allocation:** no storage migration slot is reserved. Phase 1 owns v006 for attestations and v007 for aggregate checkpoints; anchoring receives a version only after RFC-0955 unblocks it.
-9. **KIND_WEIGHTS:** `[(SignalKind, f64)]` uses enum-discriminant integer keys, mirrored by the SQL table. `SignalKind::Rotation` is deliberately absent because it is identity-migration metadata recorded by `consume_rotation_receipt`, not a scored input; the defensive reference normalizer returns neutral `0.0`. See §9.
+9. **KIND_WEIGHTS:** `[(SignalKind, octo_determin::Dfp)]` (v3.0-r15: was `[(SignalKind, f64)]`) uses enum-discriminant integer keys, mirrored by the SQL table. `SignalKind::Rotation` is deliberately absent because it is identity-migration metadata recorded by `consume_rotation_receipt`, not a scored input; the defensive reference normalizer returns neutral `Dfp::zero()`. See §9.
 10. **Recorder re-registration:** `register_recorder` rejects every existing row with `RecorderAlreadyRegistered`. Re-registration after revocation is the explicit two-step `resume_recorder` (clear lifecycle fields and remove the cleared row) → `register_recorder` (fresh active-governance proof and INSERT).
 11. **Audit replay after retention prune:** v003 defines nullable `retention_pruned_at_unix`; v007 defines `aggregate_checkpoint`. `prune_event` atomically captures the pruned-prefix aggregate boundary before marking the event, and replay is checkpoint + retained events.
 12. **Version history v1.1-r1:** the Round 1 entry and later Round 2 M15 multibase amendment are now separate paragraphs.
@@ -2750,7 +2870,7 @@ Round 8 closes the final two convergence questions:
 
 Round 9 closes the final five convergence questions:
 
-1. **`AttestorAuthInvalid` variant added.** `ReputationError::AttestorAuthInvalid` (0x27) is the explicit error class for `AttestorAuth` governance signature verification failure. `register_attestor` returns `AttestorAuthInvalid` when the signature does not verify over `BLAKE3(BLAKE3_REPUTATION_ATTESTOR_DOMAIN || registration.attestor_did || registration.pubkey || registration.requested_at_unix)`. The §13 error code table has 39 unique assignments across `0x01..0x27`.
+1. **`AttestorAuthInvalid` variant added.** `ReputationError::AttestorAuthInvalid` (0x27) is the explicit error class for `AttestorAuth` governance signature verification failure. `register_attestor` returns `AttestorAuthInvalid` when the signature does not verify over `BLAKE3(BLAKE3_REPUTATION_ATTESTOR_DOMAIN || registration.attestor_did || registration.pubkey || registration.requested_at_unix)`. The §13 error code table has 40 unique assignments across `0x01..0x28`.
 2. **Slash shadow-write formula dropped from mission; defer to RFC §7.** The Phase 2 acceptance criterion in `missions/open/0968-reputation-persistence-blocked.md` formerly listed `score_delta = -1.0/(1+slash_count)` as the slash-mapping formula. The mission now references RFC-0968 §7 slash mapping (`severity = 1`, `severity_total += 1`); the §7 table is the authoritative mapping rule.
 3. **`RotationState` deprecated; `reputation_rotations` is canonical.** §2.1 now refers to the `reputation_rotations` table (defined in the v005 migration) as the persistence layer for `RotationReceipt`. The previous `RotationState` table name is removed; §15 lifecycle coverage already uses `reputation_rotations` as the explicit table reference.
 4. **`AttestorAuth.signature` is `[u8; 64]` for consistency.** `AttestorAuth.signature` is now `[u8; 64]` (fixed-size ed25519), matching `RetentionAuth.signature`. The previous `Vec<u8>` form was inconsistent with the fixed-size signature requirement and required a runtime length check before ed25519 verification.
@@ -2759,7 +2879,7 @@ Round 9 closes the final five convergence questions:
 Round 10 closes two HIGH, one MEDIUM, one LOW, and one Open Question:
 
 1. **`verify_governance_suspension` is a `ReputationStore` trait method.** Round 11 removes the broken §10 free function. `suspend_recorder` delegates to `self.verify_governance_suspension(auth, &proof.snapshot, now_unix)`, while the §3 `StoolapReputationStore` method remains the canonical implementation. Making the helper part of `ReputationStore` enforces consistent governance-suspension verification across implementors. The signed payload remains `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder.0 || reason_hash || now_unix)`.
-2. **`ReputationError` gains `#[repr(u8)]` with explicit discriminants.** The enum is annotated `#[repr(u8)]` and each variant carries an explicit discriminant (`0x01`..`=0x27`) matching the §13 table 1:1. The wire-level error code is now stable across replicas; source order is decoupled from the §13 declaration. `0x28..=0xFF` are reserved for future variants.
+2. **`ReputationError` gains `#[repr(u8)]` with explicit discriminants.** The enum is annotated `#[repr(u8)]` and each variant carries an explicit discriminant (`0x01`..`=0x28`) matching the §13 table 1:1. The wire-level error code is now stable across replicas; source order is decoupled from the §13 declaration. `0x29..=0xFF` are reserved for future variants.
 3. **§13 table is monotonic `0x01..=0x27`.** `Storage(_)` is moved to `0x21` (between `SuspensionAuthInvalid` at `0x20` and `RecorderLifecycleCorrupted` at `0x22`). The previous order placed `Storage(_)` at `0x21` but listed it after `AttestorAuthInvalid` at `0x27`, breaking the monotonic sequence.
 4. **`AuditorAuth` doc comment references `BLAKE3_REPUTATION_AUDITOR_DOMAIN`.** The struct doc comment now names the canonical `b"cipherocto/reputation/auditor/v1"` constant declared in §10 instead of the misleading `"auditor/replay/v1"` literal. The verification code in `AuditorId::authenticated` already used the constant.
 5. **`record_attestation` takes `now_unix` and validates drift.** The trait method signature becomes `record_attestation(&self, att: &Attestation, now_unix: u64)`. A new constant `MAX_ATTESTATION_DRIFT_SECS = 60` (declared in §10) bounds `att.received_at_unix.abs_diff(now_unix)`. The drift check runs immediately after `verify_attestation_id` and before signature verification, so out-of-band timestamps reject before any cryptographic work.
@@ -2777,7 +2897,7 @@ Round 13 closes the governance authorization binding structural flaw:
 ## Future Work
 
 - **F1**: On-chain anchoring — mission 0968a (separate), RFC-0955 follow-up.
-- **F2**: RFC-0104 DFP migration — promote `update_ewma` to `determin::dfp::Decimal` for cross-replica determinism (v1.1).
+- **F2** (REMOVED at v3.0-r15): RFC-0104 DFP migration is no longer future work — `octo_determin::Dfp` is the v1.0 type for `score_delta`, `score_ewma`, normalizers, and `update_ewma`. Cross-replica determinism is achieved at the type level.
 - **F3**: Cross-mission gossip integration (mission 0855p-b).
 
 Reputation tokenization is not future work for this RFC: reputation remains a derived signal, not a token or balance.
@@ -2807,23 +2927,25 @@ Backward compat via shadow-write (Phase 1-2) preserves existing API surface whil
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-07-24 | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.1-r1  | 2026-07-24 | Round 1: canonical DID-only identity, recorder signature + stake + state machine, adapter mapping rules, transactional semantics, lifecycle coverage, per-kind normalizers, two-table storage (see Round 1 Notes).                                                                                                                                                                                                                                                                                                                                                               |
-| 1.2-r2  | 2026-07-24 | Round 2: DID length 62 + multibase `b`; `event_id` derivation; CipherOctoCanonical; `Did::rotate` two-pubkey; `consume_rotation_receipt` one-time; `Attestor` replication-only (see Round 2 Notes).                                                                                                                                                                                                                                                                                                                                                                              |
-| 1.3-r3  | 2026-07-24 | Round 3: `RecorderState` 7-variant; `StakeBelowMinimum`; `ReputationPayload` enum; `NormalizerInput`; `resume_recorder` + `ResumeProof`; v005 in migrations; rotation event first; mission 0968a path (see Round 3 Notes).                                                                                                                                                                                                                                                                                                                                                       |
-| 1.4-r4  | 2026-07-24 | Round 4: consolidate single `RecorderState` + `ReputationStore`; v006 attestation; deterministic rotation clocks; v003 retention marker + authenticated single-event prune; severity-threshold suspension wiring.                                                                                                                                                                                                                                                                                                                                                                |
-| 1.5-r5  | 2026-07-24 | Round 5: `register_recorder` governance registry; severity suspension + atomic transaction; `SuspensionAuth`; v007 `aggregate_checkpoint`; rotation rejects non-empty destinations; `RecorderId::new` private.                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.6-r6  | 2026-07-24 | Round 6: v008 migration; `AttestorRegistration` + `register_attestor`; `roles` bitfield; module-private branded IDs; `EventId`/`AttestationId` newtypes; `now_unix` on lifecycle mutators (see Round 6 Notes).                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.7-r7  | 2026-07-24 | Round 7: `register_attestor` takes `GovernanceRegistry` + `AttestorAuth` + `now_unix`; `AttestorId::registered` is store-gated + binding-validated + drift-checked; `PublicKeyLookup` trait declared; `EventId`/`AttestationId` private fields; `GovernanceRegistryError(_)` variant; `GovernanceSnapshot` + `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600`; `RetentionAuth` signature scheme explicit; `ResumeMalformedGrace` vs `RecorderLifecycleCorrupted` distinction; `ROTATION_DECAY_Q32_32 = 0xE6666666` (0.89999998); §27 Open Questions updated (see Round 7 Notes).         |
-| 1.8-r8  | 2026-07-24 | Round 8 convergence: `ResumeProof` and `AttestorAuth` carry `GovernanceSnapshot`; `resume_recorder` and `register_attestor` validate freshness and use `lookup_at_snapshot`; stale snapshots return `GovernanceSnapshotStale`; `RetentionAuth` signs `older_than_unix`; mission factory signatures reconciled; §27 closes snapshot universality and retention-cutoff binding (see Round 8 Notes).                                                                                                                                                                                |
-| 1.9-r9  | 2026-07-24 | Round 9 convergence: `AttestorAuthInvalid` variant (0x27) added to `ReputationError`; §2.1 references `reputation_rotations` table (not `RotationState`); `AttestorAuth` doc note about sibling `AttestorRegistration`; `AttestorAuth.signature` is `[u8; 64]`; §27 closes five Round 9 questions (see Round 9 Notes).                                                                                                                                                                                                                                                           |
-| 2.0-r10 | 2026-07-25 | Round 10 convergence: `verify_governance_suspension` defined as the canonical gate for `SuspensionAuth::Governance` over `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                                                                                                                                                                                             |     | recorder.0  |     | reason_hash |     | now_unix)`; `suspend_recorder`takes`governance_registry`; `ReputationError`gains`#[repr(u8)]`with explicit discriminants matching §13; §13 table is now monotonic 0x01..0x27 (Storage moved to 0x21);`AuditorAuth`doc comment references`BLAKE3_REPUTATION_AUDITOR_DOMAIN`; `record_attestation`takes`now_unix`and validates drift ≤`MAX_ATTESTATION_DRIFT_SECS = 60` seconds (see Round 10 Notes). |
-| 2.1-r11 | 2026-07-25 | Round 11 critical fixes: removed the broken §10 free `verify_governance_suspension`; added governance-suspension verification to the `ReputationStore` trait and routed `suspend_recorder` through `self`; corrected reader and retention signature-domain documentation; removed the literal `"resume"` sub-tag in favor of `BLAKE3_REPUTATION_RESUME_DOMAIN`; §27 records the resolutions (see Round 11 Notes).                                                                                                                                                                |
-| 2.2-r12 | 2026-07-25 | Round 12 conformance: aligned the §3 `StoolapReputationStore::verify_governance_suspension` impl signature with the `ReputationStore` trait (`auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix: u64`); extended `GovernanceProof` with `recorder_id`, `recorder_pubkey`, `reason_hash`, and fixed-size `signature: [u8; 64]`; removed the `"resume"` sub-tag from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment and the `ResumeProof` prose; Round 11 Notes corrected to state the trait/impl alignment is delivered by v2.2-r12 (see Round 12 Notes). |
-| 2.3-r13 | 2026-07-25 | Round 13 critical fixes: governance suspension is now signed by the GOVERNANCE officer (not the recorder) — `recorder_pubkey` removed from `GovernanceProof`; the suspension digest now binds `governance_pubkey`; `verify_governance_suspension` verifies the signature against `proof.governance_pubkey` and the registry lookup is retained as Round 7 H4 defense-in-depth (see Round 13 Notes).                                                                                                                                                                              |
-| 2.4-r14 | 2026-07-25 | Round 14 conformance: corrected §3 `verify_governance_suspension` impl path bug — `proof.recorder_id.0.as_bytes()` → `proof.recorder_id.0.0.as_bytes()` (the `RecorderId(Did)` / `Did(String)` newtype chain needed double-deref to reach the inner `String`); propagated the Round 13 digest form `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                   |     | recorder_id |     | reason_hash |     | governance_pubkey                                                                                                                                                                                                                                                                                                                                                                                   |     | now_unix)`to the use case and mission docs (Round 10 H1 bullets updated to "Round 10 H1 + Round 13 H1"); corrected the verification order description to snapshot freshness → digest + ed25519 signature →`lookup_at_snapshot` (defense-in-depth) matching the Round 13 impl (see Round 14 Notes). |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-07-24 | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.1-r1  | 2026-07-24 | Round 1: canonical DID-only identity, recorder signature + stake + state machine, adapter mapping rules, transactional semantics, lifecycle coverage, per-kind normalizers, two-table storage (see Round 1 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.2-r2  | 2026-07-24 | Round 2: DID length 62 + multibase `b`; `event_id` derivation; CipherOctoCanonical; `Did::rotate` two-pubkey; `consume_rotation_receipt` one-time; `Attestor` replication-only (see Round 2 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.3-r3  | 2026-07-24 | Round 3: `RecorderState` 7-variant; `StakeBelowMinimum`; `ReputationPayload` enum; `NormalizerInput`; `resume_recorder` + `ResumeProof`; v005 in migrations; rotation event first; mission 0968a path (see Round 3 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.4-r4  | 2026-07-24 | Round 4: consolidate single `RecorderState` + `ReputationStore`; v006 attestation; deterministic rotation clocks; v003 retention marker + authenticated single-event prune; severity-threshold suspension wiring.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.5-r5  | 2026-07-24 | Round 5: `register_recorder` governance registry; severity suspension + atomic transaction; `SuspensionAuth`; v007 `aggregate_checkpoint`; rotation rejects non-empty destinations; `RecorderId::new` private.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.6-r6  | 2026-07-24 | Round 6: v008 migration; `AttestorRegistration` + `register_attestor`; `roles` bitfield; module-private branded IDs; `EventId`/`AttestationId` newtypes; `now_unix` on lifecycle mutators (see Round 6 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.7-r7  | 2026-07-24 | Round 7: `register_attestor` takes `GovernanceRegistry` + `AttestorAuth` + `now_unix`; `AttestorId::registered` is store-gated + binding-validated + drift-checked; `PublicKeyLookup` trait declared; `EventId`/`AttestationId` private fields; `GovernanceRegistryError(_)` variant; `GovernanceSnapshot` + `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600`; `RetentionAuth` signature scheme explicit; `ResumeMalformedGrace` vs `RecorderLifecycleCorrupted` distinction; `ROTATION_DECAY_Q32_32 = 0xE6666666` (0.89999998); §27 Open Questions updated (see Round 7 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.8-r8  | 2026-07-24 | Round 8 convergence: `ResumeProof` and `AttestorAuth` carry `GovernanceSnapshot`; `resume_recorder` and `register_attestor` validate freshness and use `lookup_at_snapshot`; stale snapshots return `GovernanceSnapshotStale`; `RetentionAuth` signs `older_than_unix`; mission factory signatures reconciled; §27 closes snapshot universality and retention-cutoff binding (see Round 8 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.9-r9  | 2026-07-24 | Round 9 convergence: `AttestorAuthInvalid` variant (0x27) added to `ReputationError`; §2.1 references `reputation_rotations` table (not `RotationState`); `AttestorAuth` doc note about sibling `AttestorRegistration`; `AttestorAuth.signature` is `[u8; 64]`; §27 closes five Round 9 questions (see Round 9 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2.0-r10 | 2026-07-25 | Round 10 convergence: `verify_governance_suspension` defined as the canonical gate for `SuspensionAuth::Governance` over `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |     | recorder.0                                                                                         |     | reason_hash |     | now_unix)`; `suspend_recorder`takes`governance_registry`; `ReputationError`gains`#[repr(u8)]`with explicit discriminants matching §13; §13 table is now monotonic 0x01..0x27 (Storage moved to 0x21);`AuditorAuth`doc comment references`BLAKE3_REPUTATION_AUDITOR_DOMAIN`; `record_attestation`takes`now_unix`and validates drift ≤`MAX_ATTESTATION_DRIFT_SECS = 60` seconds (see Round 10 Notes). |
+| 2.1-r11 | 2026-07-25 | Round 11 critical fixes: removed the broken §10 free `verify_governance_suspension`; added governance-suspension verification to the `ReputationStore` trait and routed `suspend_recorder` through `self`; corrected reader and retention signature-domain documentation; removed the literal `"resume"` sub-tag in favor of `BLAKE3_REPUTATION_RESUME_DOMAIN`; §27 records the resolutions (see Round 11 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2.2-r12 | 2026-07-25 | Round 12 conformance: aligned the §3 `StoolapReputationStore::verify_governance_suspension` impl signature with the `ReputationStore` trait (`auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix: u64`); extended `GovernanceProof` with `recorder_id`, `recorder_pubkey`, `reason_hash`, and fixed-size `signature: [u8; 64]`; removed the `"resume"` sub-tag from the `BLAKE3_REPUTATION_RESUME_DOMAIN` declaration comment and the `ResumeProof` prose; Round 11 Notes corrected to state the trait/impl alignment is delivered by v2.2-r12 (see Round 12 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2.3-r13 | 2026-07-25 | Round 13 critical fixes: governance suspension is now signed by the GOVERNANCE officer (not the recorder) — `recorder_pubkey` removed from `GovernanceProof`; the suspension digest now binds `governance_pubkey`; `verify_governance_suspension` verifies the signature against `proof.governance_pubkey` and the registry lookup is retained as Round 7 H4 defense-in-depth (see Round 13 Notes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2.4-r14 | 2026-07-25 | Round 14 conformance: corrected §3 `verify_governance_suspension` impl path bug — `proof.recorder_id.0.as_bytes()` → `proof.recorder_id.0.0.as_bytes()` (the `RecorderId(Did)` / `Did(String)` newtype chain needed double-deref to reach the inner `String`); propagated the Round 13 digest form `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |     | recorder_id                                                                                        |     | reason_hash |     | governance_pubkey                                                                                                                                                                                                                                                                                                                                                                                   |     | now_unix)`to the use case and mission docs (Round 10 H1 bullets updated to "Round 10 H1 + Round 13 H1"); corrected the verification order description to snapshot freshness → digest + ed25519 signature →`lookup_at_snapshot` (defense-in-depth) matching the Round 13 impl (see Round 14 Notes). |
+| 3.0-r15 | 2026-07-25 | **Gap 9 — switch f64 to Dfp (RFC-0104).** Major architectural change. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, `ReplayRecord.aggregate_evolution`, `NormalizerInput.delta`, all five `Normalizer::normalize` return types, and `update_ewma(prev, delta, alpha) -> Result<Dfp, _>` all move from `f64` to `octo_determin::Dfp`. SQL: `reputation_events.score_delta REAL` → `BLOB NOT NULL CHECK (length(score_delta) = 24)`; `reputation_aggregates.score_ewma REAL` → `BLOB NOT NULL CHECK (length(score_ewma) = 24)`; `aggregate_checkpoint.score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24)`. §16 adds `update_ewma` Class B (Dfp) and `score_ewma` storage Class A (BLOB-blob byte-identical) rows. §16 warning replaced with v1.0 uses `octo_determin::Dfp` per RFC-0104; cross-replica determinism is achieved at the type level. §23 test vectors updated with Dfp-shaped values; cross-replica equality test asserts byte-identical `score_ewma` BLOBs. Appendix A + Appendix D reference impls rewritten in `Dfp` arithmetic. F2 future work "DFP migration" removed. Mission Phase 1 acceptance adds `octo-determin = { path = "../determin" }` to `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml`. |
+| 3.1-r16 | 2026-07-25 | Round 16 minor fixes: (M1) §7 documents that adapters convert `f64 → Dfp::from_f64()` only at the `record_signal` boundary; the previous "adapters continue to track domain quantity as f64" wording is replaced with the v1.0 boundary rule + same-platform / IEEE 754 strict-fp rationale + cross-platform-out-of-scope note. (L1) Replaced all `Dfp.to_bytes()` references (line 955 and lines 1069-1070) with `DfpEncoding::from_dfp(d).to_bytes()`. (L2) `update_ewma` weight computation is now pure `Dfp` (`delta.abs()` + `<= Dfp::from_i64(1)` ternary); the previous `Dfp::from_f64(delta_f.abs().min(1.0))` round-trip is removed. (L3) §23 test vectors drop the `± ε_dfp` tolerance notation; every expected value is an exact Dfp encoding and the annotation states "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison of `score_ewma.to_bytes()`." (L4) New `ReputationError::ScoreEncodingInvalid` (0x28) variant enforces the runtime BLOB-deserialization invariant `DfpEncoding::from_bytes(blob).map_err(                                                                                                                                                                                                                                                                                                                          | _   | ScoreEncodingInvalid)`; §13 table and reserved-range notes updated to `0x01..=0x28`/`0x29..=0xFF`. |
 
 ### Round 1 Notes
 
@@ -2928,6 +3050,42 @@ v2.4-r14 is a Round 13 doc-propagation conformance round. It closes one HIGH and
 
 Round 14 makes no design changes; it only propagates the Round 13 governance-suspension digest form into the verify impl path and the two downstream docs.
 
+### Round 15 Notes (v3.0-r15, Gap 9)
+
+v3.0-r15 is a major architectural change: switch `f64` to `octo_determin::Dfp` (RFC-0104) across the reputation data model. This is a _type-level_ change, not a migration: cross-replica determinism is now a property of the persisted bytes, not a runtime promise. The change closes the three contradictions around `score_delta` (struct type `f64` vs. canonical_ser `i64` fixed-point vs. EWMA `f64` arithmetic) and the SQL `REAL` column by promoting every numeric layer to `Dfp`:
+
+- **§4 `SignalEvent`:** `score_delta: f64` → `score_delta: octo_determin::Dfp`. canonical_ser spec: `score_delta` is the canonical 24-byte `DfpEncoding::to_bytes()` form (16-byte mantissa + 4-byte exponent + 4-byte class_sign, big-endian). The "floats NOT supported in canonical_ser; use `i64` micro-units" line is replaced with the Dfp encoding spec. `record_signal` rejects NaN/Infinity and out-of-range values before serialization.
+- **§5 SQL:** `score_delta REAL` → `BLOB NOT NULL CHECK (length(score_delta) = 24)` (v003); `score_ewma REAL` → `BLOB NOT NULL CHECK (length(score_ewma) = 24)` (v004); `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(score_ewma_at_checkpoint) = 24)` (v007). Default `score_ewma` is `Dfp::from_f64(1.0)` serialized as 24 bytes.
+- **§6 EWMA:** `update_ewma(prev: f64, delta: f64, alpha: f64) -> Result<f64, _>` → `update_ewma(prev: Dfp, delta: Dfp, alpha: Dfp) -> Result<Dfp, _>`. Arithmetic runs entirely in `octo_determin::Dfp`. The previous "v1.1 promote to determin::dfp::Decimal" note is replaced with "v1.0 uses `octo_determin::Dfp` per RFC-0104; cross-replica determinism is achieved at the type level."
+- **§7 adapter mapping:** the `+1.0 / -1.0` outcome mapping becomes `Dfp::from_i64(1_000_000) / Dfp::from_i64(-1_000_000)` (or `Dfp::from_f64(±1.0)`); the `stake / (1.0 + count as f64)` priority formula becomes `Dfp::from_i64(stake) / Dfp::from_i64(1 + count)`. Adapter conversion path documented: `Dfp::from_i64(N)` for integer-valued deltas, `Dfp::from_f64(x)` for float-valued deltas.
+- **§9 normalizers:** `NormalizerInput.delta: f64` → `Dfp`; `Normalizer::normalize(...) -> Result<f64, _>` → `Result<Dfp, _>`; all five implementations (Slash, Outcome, Latency, Capacity, Discovery) rewritten in `Dfp` arithmetic; `KIND_WEIGHTS: &[(SignalKind, f64)]` → `&[(SignalKind, Dfp)]`.
+- **§10 types:** `ReputationAggregate.score_ewma`, `CrossLayerQuery.weights`, `CrossLayerResult.composite_score`, `CrossLayerResult.per_kind`, `SlidingWindowResult.score_delta`, `ReplayRecord.aggregate_evolution` — all `f64` fields become `Dfp`.
+- **§16 determinism:** added `update_ewma` Class B (pure `Dfp` function) and `score_ewma` storage Class A (BLOB-blob byte-identical) rows. The `f64` cross-platform warning is replaced with a positive note: `octo_determin::Dfp` is the v1.0 type for `score_delta`, `score_ewma`, normalizers, and `update_ewma`. Cross-replica equality test added.
+- **§18 security:** the "v1.1 DFP upgrade for cross-replica" determinism-violation mitigation is replaced with "v1.0 uses `Dfp` (RFC-0104); cross-replica determinism is achieved at the type level — no `f64` migration path exists."
+- **§23 test vectors:** all four events updated to `Dfp::from_f64(±x)`; expected outputs are `Dfp::from_f64(0.961 ± ε_dfp)` etc. (`ε_dfp < 1e-30`). The NaN/out-of-range/alpha vectors use `Dfp::nan()` and `Dfp::from_f64` instead of `f64::NAN` / `f64` literals. A cross-replica equality test asserts `replica_a.score_ewma.to_bytes() == replica_b.score_ewma.to_bytes()`.
+- **§25 Phase 1 acceptance:** `crates/quota-router-core/Cargo.toml` and `crates/quota-router-storage/Cargo.toml` gain `octo-determin = { path = "../determin" }`. EWMA test vector entry updated to assert `Dfp` equality (not `f64` equality). Phase 2 equivalence-test entry drops the `f64::EPSILON * samples` tolerance in favor of exact Dfp equality.
+- **Appendix A + Appendix D:** rewritten in `Dfp` arithmetic.
+- **Future Work F2:** removed. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.
+
+Cross-file propagation:
+
+- `missions/open/0968-reputation-persistence-blocked.md`: `update_ewma returns Result<f64, _>` → `Result<octo_determin::Dfp, _>` (Phase 1 acceptance); EWMA test vector line and "Why v1.1 DFP upgrade" Notes paragraph rewritten; cargo dep added to Mission Phase 1 acceptance; `f64::EPSILON * samples` equivalence-test entry dropped.
+- `docs/use-cases/reputation-persistence.md`: "Round 2 M14 DFP upgrade path" bullet replaced with "v1.0 uses `octo_determin::Dfp` per RFC-0104. Cross-replica determinism is achieved at the type level."
+- `docs/research/2026-07-24-reputation-persistence-research.md`: "f64 caveat" paragraph replaced; "f64 cross-platform variance" risk row rewritten.
+- `missions/deferred/0968a-reputation-anchoring.md`: v3.0-r15 cross-reference added.
+
+### Round 16 Notes (v3.1-r16)
+
+v3.1-r16 is a Round 15 follow-up conformance round. It closes one MEDIUM and four LOW findings by replacing stale API references and tightening the Dfp boundary contract. No design changes are introduced.
+
+- **M1 (MEDIUM) — Adapter f64 leakage in §7:** the previous prose ("The existing in-memory adapters continue to track their domain quantity as f64") was misleading because it implied `f64` would persist in the data path. Replaced with: "Adapter v1.0: convert `f64 → Dfp::from_f64()` ONLY at the `record_signal` boundary. Future revision: adapters use `Dfp` internally to remove the `f64` intermediate step." A new sub-bullet documents the v1.0 deployment rationale: (a) compute is deterministic across same-platform replicas, (b) the IEEE 754 strict-fp contract is documented as a deployment requirement; cross-platform deployments are explicitly out of scope for v1.0.
+- **L1 (LOW) — `Dfp.to_bytes()` API correctness:** the previous prose at lines 955 and 1069-1070 referenced `Dfp.to_bytes()` / `Dfp::to_bytes()`, which does not exist in `crates/octo-determin/src/lib.rs`. Replaced all occurrences with `DfpEncoding::from_dfp(d).to_bytes()`. This matches the canonical API: `Dfp` is a runtime type; the 24-byte wire form is produced by `DfpEncoding::from_dfp(...)` and read back by `DfpEncoding::from_bytes(...)`.
+- **L2 (LOW) — `Dfp → f64 → Dfp` round-trip in `update_ewma`:** the previous weight computation `Dfp::from_f64(delta_f.abs().min(1.0))` computed the absolute value in `f64` and re-encoded into `Dfp`, leaking the host `f64` semantics into a function that is documented as pure `Dfp`. Replaced with pure `Dfp`: `if delta.abs() <= Dfp::from_i64(1) { delta.abs() } else { Dfp::from_i64(1) }`. The `delta_f` projection (still used for the §6 finite/range checks) is unchanged.
+- **L3 (LOW) — Test vector `± ε_dfp` notation:** the previous §23 vectors annotated expected values as `Dfp::from_f64(0.961 ± ε_dfp)` with `ε_dfp < 1e-30`. Dfp encoding is exact, so the tolerance notation is meaningless and invites confusion with `f64` tolerance. Replaced every `± ε_dfp` suffix with the exact Dfp value, and added an annotation paragraph stating "Dfp encoding is exact; cross-replica equality verified via byte-for-byte comparison of `score_ewma.to_bytes()`."
+- **L4 (LOW) — BLOB deserialization runtime invariant:** a new `ReputationError::ScoreEncodingInvalid` (0x28) variant documents the read-path contract `DfpEncoding::from_bytes(blob).map_err(|_| ScoreEncodingInvalid)`. The invariant ensures every loaded aggregate / event is a valid `Dfp` before it enters the EWMA arithmetic path or feeds cross-layer queries; length mismatches and malformed mantissa/exponent/class_sign fields both surface through this single variant. §13 table, reserved-range notes (`0x29..=0xFF`), and Round 9 / Round 10 references updated to `0x01..=0x28`.
+
+Round 16 makes no design changes; it only corrects the §7 boundary prose, replaces the non-existent `Dfp.to_bytes()` API references with the canonical `DfpEncoding::from_dfp(d).to_bytes()` form, removes a single `f64` round-trip inside `update_ewma`, drops the misleading `± ε_dfp` test-vector annotation, and adds the `ScoreEncodingInvalid` error variant for BLOB-deserialization robustness.
+
 ## Related RFCs
 
 - RFC-0008: Deterministic AI Execution Boundary
@@ -2951,14 +3109,18 @@ Round 14 makes no design changes; it only propagates the Round 13 governance-sus
 ### A. EWMA Worked Example
 
 ```rust
-let alpha = 0.1;
-let mut score = 1.0;
+// v3.0-r15 (Gap 9): EWMA operates on octo_determin::Dfp (RFC-0104).
+use octo_determin::Dfp;
+
+let alpha = Dfp::from_f64(0.1);
+let mut score = Dfp::from_f64(1.0);
 let events = [-0.3, -0.5, 0.1, -0.2];
 
-for delta in events {
-    let weight = delta.abs().min(1.0);
-    score = score * (1.0 - alpha * weight) + delta * alpha * weight;
-    // 1.0 → 0.961 → 0.88795 → 0.8800705 → 0.8584691
+for delta_f in events {
+    let delta = Dfp::from_f64(delta_f);
+    let weight = if delta_f.abs() < 1.0 { delta.abs_dfp() } else { Dfp::from_f64(1.0) };
+    score = score * (Dfp::from_f64(1.0) - alpha * weight) + delta * alpha * weight;
+    // 1.0 → 0.961 → 0.88795 → 0.8800705 → 0.8584691 (Dfp ± ε_dfp)
 }
 ```
 
@@ -2991,36 +3153,64 @@ ORDER BY received_at_unix ASC, event_id ASC;
 
 ```rust
 /// Round 3 M1: field names harmonized with `NormalizerInput` (§9).
-pub fn normalize(kind: SignalKind, raw: &NormalizerInput) -> Result<f64, ReputationError> {
+/// v3.0-r15 (Gap 9): arithmetic uses `octo_determin::Dfp` per RFC-0104.
+/// The function returns `Result<Dfp, ReputationError>`. The exact arithmetic
+/// helper names (`add`, `sub`, `div`, `clamp_dfp`, `max_dfp`, `neg`) are
+/// provided by `octo_determin` and finalized when the implementation lands;
+/// the spec documents the contract — finite inputs in, deterministic `Dfp`
+/// out.
+pub fn normalize(
+    kind: SignalKind,
+    raw: &NormalizerInput,
+) -> Result<octo_determin::Dfp, ReputationError> {
+    use octo_determin::Dfp;
     match kind {
         SignalKind::Slash => {
             let cap = if raw.max_severity == 0 { MAX_SEVERITY } else { raw.max_severity };
-            let s = raw.severity as f64 / cap as f64;  // per-event severity
-            Ok((-s).clamp(-1.0, 0.0))
+            let s = octo_determin::div(
+                Dfp::from_i64(raw.severity as i64),
+                Dfp::from_i64(cap as i64),
+            )?;
+            Ok(octo_determin::clamp_dfp(octo_determin::neg(s)?, -1.0, 0.0))
         }
-        SignalKind::Outcome => Ok(raw.delta.clamp(-1.0, 1.0)),
+        SignalKind::Outcome => Ok(octo_determin::clamp_dfp(raw.delta, -1.0, 1.0)),
         SignalKind::Latency => {
             if raw.target_ms == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            let ratio = (raw.latency_ms as f64) / (10.0 * raw.target_ms as f64);
-            Ok((1.0 - ratio.clamp(0.0, 1.0)).max(0.0))
+            let ratio = octo_determin::div(
+                Dfp::from_i64(raw.latency_ms as i64),
+                Dfp::from_i64((10 * raw.target_ms) as i64),
+            )?;
+            let ratio_clamped = octo_determin::clamp_dfp(ratio, 0.0, 1.0);
+            Ok(octo_determin::max_dfp(
+                octo_determin::sub(Dfp::from_i64(1), ratio_clamped)?,
+                Dfp::zero(),
+            ))
         }
         SignalKind::Capacity => {
             if raw.max_capacity == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            Ok((raw.served as f64 / raw.max_capacity as f64).clamp(0.0, 1.0))
+            let v = octo_determin::div(
+                Dfp::from_i64(raw.served as i64),
+                Dfp::from_i64(raw.max_capacity as i64),
+            )?;
+            Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
         }
         SignalKind::Discovery => {
             if raw.max_lookups == 0 {
                 return Err(ReputationError::NormalizerDivByZero);
             }
-            Ok((raw.lookups as f64 / raw.max_lookups as f64).clamp(0.0, 1.0))
+            let v = octo_determin::div(
+                Dfp::from_i64(raw.lookups as i64),
+                Dfp::from_i64(raw.max_lookups as i64),
+            )?;
+            Ok(octo_determin::clamp_dfp(v, 0.0, 1.0))
         }
         // Rotation is identity-migration metadata. It is recorded only by
         // consume_rotation_receipt and intentionally has no KIND_WEIGHTS row.
-        SignalKind::Rotation => Ok(0.0),
+        SignalKind::Rotation => Ok(Dfp::zero()),
     }
 }
 ```

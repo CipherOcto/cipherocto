@@ -16,7 +16,9 @@ use serde_json::{json, Value};
 use super::super::protocol::{RpcError, RpcErrorCode};
 use super::super::server::RpcHandler;
 use crate::daemon::DaemonHandle;
-use octo_whatsapp_onboard_core::{default_index_base_dir, AccountEntry, CoreError, MultiAccountStore};
+use octo_whatsapp_onboard_core::{
+    default_index_base_dir, AccountEntry, CoreError, MultiAccountStore,
+};
 
 #[derive(Debug)]
 pub struct AccountsList;
@@ -75,9 +77,7 @@ impl RpcHandler for AccountsList {
         //    initialised at boot — operators still see on-disk accounts.
         let base = {
             let store = h.accounts();
-            store
-                .base_dir()
-                .unwrap_or_else(default_index_base_dir)
+            store.base_dir().unwrap_or_else(default_index_base_dir)
         };
 
         // 2. Fresh on-disk scan: finds accounts that exist as `<id>.session.db/`
@@ -90,8 +90,10 @@ impl RpcHandler for AccountsList {
         //    fields. Discovered entries fill in accounts that exist
         //    on disk but were never imported into the index.
         let cached = { h.accounts().list() };
-        let mut by_id: std::collections::BTreeMap<String, AccountEntry> =
-            cached.into_iter().map(|e| (e.account_id.clone(), e)).collect();
+        let mut by_id: std::collections::BTreeMap<String, AccountEntry> = cached
+            .into_iter()
+            .map(|e| (e.account_id.clone(), e))
+            .collect();
         for d in discovered {
             by_id.entry(d.account_id.clone()).or_insert(d);
         }

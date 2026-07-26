@@ -33,10 +33,12 @@ pub mod bigint;
 pub mod consensus;
 pub mod dact;
 pub mod dact_lut;
+pub mod dcmp;
 pub mod dcs;
 pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
+pub mod dfp_compare;
 pub mod dmat;
 pub mod dqa;
 pub mod dvec;
@@ -49,6 +51,9 @@ pub use bigint::{
     bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
 };
 pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
+pub use dcmp::{
+    dfp_abs, dfp_clamp, dfp_cmp, dfp_eq, dfp_ge, dfp_gt, dfp_le, dfp_lt, dfp_max, dfp_min, dfp_neg,
+};
 pub use dcs::{
     dcs_deserialize_bool, dcs_serialize_bool, dcs_serialize_bytes, dcs_serialize_dmat,
     dcs_serialize_dvec, dcs_serialize_enum, dcs_serialize_i128, dcs_serialize_i64,

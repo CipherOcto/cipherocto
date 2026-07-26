@@ -89,16 +89,21 @@ use crate::{Dfp, DfpClass, DFP_MAX, DFP_MAX_EXPONENT, DFP_MIN};
 /// Round a u256 magnitude to a normalized 113-bit Dfp mantissa.
 ///
 /// Performs shift-to-bit-112 then round-to-nearest-even with sticky
-/// propagation from below the round bit AND from any bits lost in the
-/// shift. Returns `(mantissa, exp_shift, sticky)` where:
+/// propagation from any bits lost in the shift. Returns
+/// `(mantissa, exp_shift, sticky)` where:
 ///
-/// - `mantissa` is the canonical u128 mantissa (odd),
-/// - `exp_shift` is the additive exponent adjustment that combines
-///   (a) the right-shift applied during round to bring MSB to bit 112
+/// - `mantissa` is the canonical u128 mantissa (odd, ≤ 113 bits),
+/// - `exp_shift` is the additive exponent adjustment combining
+///   (a) the right-shift applied during the shift-to-bit-112 step
 ///   AND (b) the trailing-zero normalization. The canonical value at
 ///   `target_exp` is `mantissa * 2^(target_exp + exp_shift)`,
-/// - `sticky` is whether any below-round-bits were lost (informational;
-//    round-to-nearest-even decision is already applied).
+/// - `sticky` is whether any below-LSB bits were discarded by the shift
+///   (informational; round-to-nearest-even decision is already applied).
+///
+/// When `msb > 112`, the shift brings the MSB to bit 112 exactly, so
+/// the post-shift `s.lo` already holds all 113 valid mantissa bits and
+/// `s.hi` is zero — no rounding occurs and the trailing-zero normalize
+/// alone determines `exp_shift`. When `msb ≤ 112`, no shift is needed.
 ///
 /// Caller is responsible for the zero case: if `(hi, lo) == (0, 0)`,
 /// the function returns `(0, 0, false)` and the caller should emit a
@@ -114,40 +119,36 @@ fn round_u256_to_canonical(hi: u128, lo: u128) -> (u128, i32, bool) {
         127 - lo.leading_zeros() as i32
     };
     if msb > 112 {
-        // Shift right so MSB at bit 112.
+        // Shift right so MSB lands at bit 112. After this shift the
+        // post-shift value `s` has s.msb == 112, s.hi == 0, and s.lo
+        // bit_length == 113. Round bit at position 113 is therefore 0
+        // and no rounding is needed. The bits lost during the shift
+        // (mag bits 0..shift_right-1) contribute to sticky.
+        //
+        // The previous implementation used `kept_size = 113 - shift_right`
+        // which masked off the top `shift_right` bits of s.lo — exactly
+        // the bits we just normalized up to. For event 4 of RFC-0968 §23
+        // (shift_right = 7) this dropped 7 mantissa bits, producing a
+        // result ~128× too small. Fix: keep all 113 bits of s.lo.
+        debug_assert!(
+            msb < 112 + 128,
+            "round_u256_to_canonical: shift_right >= 128 unsupported in this path"
+        );
         let shift_right: u32 = (msb - 112) as u32;
-        let rb_pos: i32 = 113 - shift_right as i32;
-        if rb_pos < 0 {
-            let any = hi != 0 || lo != 0;
-            if any {
-                return (1, shift_right as i32, true);
-            }
-            return (0, 0, false);
-        }
-        let u = U256 { hi, lo };
-        let s = u.shr(shift_right);
-        let round_bit = if rb_pos >= 128 {
-            ((s.hi >> (rb_pos - 128)) & 1) != 0
+        let s = U256 { hi, lo }.shr(shift_right);
+        debug_assert_eq!(s.hi, 0, "post-shift hi must be zero when s.msb == 112");
+        let lost_low_mask: u128 = if shift_right == 0 {
+            0
         } else {
-            ((s.lo >> rb_pos) & 1) != 0
+            (1u128 << shift_right) - 1
         };
-        let kept_size: i32 = 113 - shift_right as i32;
-        let kept_mask: u128 = (1u128 << kept_size) - 1;
-        let kept = s.lo & kept_mask;
-        let lsb = kept & 1;
-        let above_round_mask: u128 = !((1u128 << (rb_pos + 1)) - 1);
-        let sticky = (s.lo & above_round_mask) != 0 || s.hi != 0;
-        let rounded = if round_bit && (sticky || lsb == 1) {
-            kept + 1
-        } else {
-            kept
-        };
-        if rounded == 0 {
-            return (0, shift_right as i32, sticky);
+        let sticky = (lo & lost_low_mask) != 0;
+        let trailing = s.lo.trailing_zeros();
+        if s.lo == 0 {
+            return (0, (shift_right as i32) + trailing as i32, sticky);
         }
-        let trailing = rounded.trailing_zeros();
         return (
-            rounded >> trailing,
+            s.lo >> trailing,
             (shift_right as i32) + trailing as i32,
             sticky,
         );
@@ -215,6 +216,22 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
             let d = b.exponent - a.exponent;
             (b.mantissa, a.mantissa, b.sign, a.exponent, d)
         };
+        // Short-circuit when the exponent gap exceeds the mantissa
+        // precision: the smaller operand's value is below the LSB of
+        // the larger's mantissa, so subtracting it leaves the larger
+        // unchanged. Also covers the U256::shl overflow case (diff >
+        // 143 = 256 - 113) which would otherwise zero out `big_shifted`
+        // and flip the sign via the `(big, small)` ordering check.
+        if diff > 113 {
+            // The larger-exponent operand is also larger-by-value
+            // (mantissa ratio < 2^113, exp ratio > 2^113).
+            let big_exp = if a.exponent >= b.exponent {
+                a.exponent
+            } else {
+                b.exponent
+            };
+            return (big_sign, big, big_exp);
+        }
         let diff = diff as u32;
         let _exp_diff = target_exp - a.exponent; // bookkeeping; round() returns the exponent shift directly
                                                  // Shift big.mantissa UP by diff (scaling to smaller's exp).

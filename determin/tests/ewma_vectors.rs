@@ -36,15 +36,18 @@ fn rfc0968_section23_vectors_reproduce() {
         let one = Dfp::from_i64(1);
         let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
         let alpha_w = dfp_mul(alpha, weight);
-        let inner_term = dfp_sub(one, alpha_w.clone());
-        let left = dfp_mul(score, inner_term.clone());
+        let inner_term = dfp_sub(one, alpha_w);
+        let left = dfp_mul(score, inner_term);
         let right = dfp_mul(dfp_mul(delta, alpha), weight);
         score = dfp_add(left, right);
         let expected: f64 = EXPECTED[i].parse().unwrap();
         let observed = score.to_f64();
-        // Tolerance escalates for event 4 which is the bit-precision
-        // edge case documented in tests/ewma_vectors.rs header.
-        let tol: f64 = if i < 3 { 1e-9 } else { 1e-1 };
+        // Strict 1e-9 for events 1-3 (which reproduce exactly).
+        // Event 4 lands at 0.85846909000... — the exact 113-bit
+        // result, matching f64 to 16 digits. The spec's 7-digit-decimal
+        // expected value 0.8584691 is a 1e-8 truncation; 1e-7 tolerance
+        // matches the spec's stated 7-digit precision.
+        let tol: f64 = if i < 3 { 1e-9 } else { 1e-7 };
         let rel_err = ((observed - expected) / expected).abs();
         assert!(
             rel_err < tol,
@@ -80,6 +83,46 @@ fn dfp_sub_catastrophic_cancellation_works() {
     // enough; u256 alignment closes the gap.
     let r = dfp_sub(Dfp::from_f64(1.0), Dfp::from_f64(0.03)).to_f64();
     assert!((r - 0.97).abs() < 1e-12, "1.0 - 0.03 = {r}");
+}
+
+#[test]
+#[ignore]
+fn diagnostic_event4_per_step() {
+    let mut score = Dfp::from_f64(INITIAL);
+    let one = Dfp::from_i64(1);
+    for (i, (delta_f, alpha_f)) in EVENTS.iter().enumerate() {
+        let delta = Dfp::from_f64(*delta_f);
+        let alpha = Dfp::from_f64(*alpha_f);
+        let d_abs = dfp_abs(delta);
+        let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
+        let alpha_w = dfp_mul(alpha, weight);
+        let inner_term = dfp_sub(one, alpha_w);
+        let left = dfp_mul(score, inner_term);
+        let right = dfp_mul(dfp_mul(delta, alpha), weight);
+        let next = dfp_add(left, right);
+        eprintln!(
+            "event {}: score_before={} delta={} alpha={} weight={} alpha_w={} inner={} left={} right={} next={}",
+            i + 1,
+            score.to_f64(),
+            delta.to_f64(),
+            alpha.to_f64(),
+            weight.to_f64(),
+            alpha_w.to_f64(),
+            inner_term.to_f64(),
+            left.to_f64(),
+            right.to_f64(),
+            next.to_f64()
+        );
+        eprintln!(
+            "  left: mantissa={:x} exp={} sign={}",
+            left.mantissa, left.exponent, left.sign
+        );
+        eprintln!(
+            "  right: mantissa={:x} exp={} sign={}",
+            right.mantissa, right.exponent, right.sign
+        );
+        score = next;
+    }
 }
 
 #[test]

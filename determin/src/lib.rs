@@ -189,11 +189,15 @@ impl Dfp {
             return;
         }
 
-        // Ensure mantissa is odd (canonical form)
+        // Ensure mantissa is odd (canonical form). Use saturating arithmetic
+        // so that `Dfp::new(even_mantissa, i32::MAX, ...)` (or any
+        // other caller that hands us a high exponent) cannot trigger
+        // platform-dependent i32 overflow in release builds where the
+        // overflow check is compiled out.
         let trailing_zeros = self.mantissa.trailing_zeros() as i32;
         if trailing_zeros > 0 {
             self.mantissa >>= trailing_zeros;
-            self.exponent += trailing_zeros;
+            self.exponent = self.exponent.saturating_add(trailing_zeros);
         }
 
         // Mantissa should now be odd
@@ -316,14 +320,88 @@ impl Dfp {
             }
             NaN => f64::NAN,
             Normal => {
-                let mantissa_f64 = self.mantissa as f64;
-                let mut value = mantissa_f64 * 2.0_f64.powi(self.exponent);
-                if self.sign {
-                    value = -value;
-                }
-                value
+                // Construct the IEEE-754 bit pattern deterministically
+                // rather than going through `f64::powi` (whose precision
+                // Rust's stdlib explicitly disclaims as platform/version
+                // dependent and is also affected by CPU FTZ/DAZ modes
+                // for subnormal exponents).
+                f64::from_bits(Self::u128_to_f64_bits(
+                    self.mantissa,
+                    self.exponent,
+                    self.sign,
+                ))
             }
         }
+    }
+
+    /// Construct the IEEE-754 bit pattern for `mantissa * 2^exponent`
+    /// as a 64-bit value suitable for `f64::from_bits`. Deterministic
+    /// across platforms, optimization levels, and Rust versions.
+    fn u128_to_f64_bits(mantissa: u128, exponent: i32, sign: bool) -> u64 {
+        const KEEP_MASK: u64 = 0x000F_FFFF_FFFF_FFFF; // low 52 bits
+        const EXP_MASK: u64 = 0x7FF0_0000_0000_0000; // bits 52..62
+        const SIGN_BIT: u64 = 0x8000_0000_0000_0000;
+
+        if mantissa == 0 {
+            return if sign { SIGN_BIT } else { 0 };
+        }
+
+        // MSB position of mantissa (0-indexed).
+        let msb = 127 - mantissa.leading_zeros() as i32;
+        // Total exponent of the represented value: mantissa * 2^exponent.
+        let total_exp = msb + exponent;
+        // f64 biased exponent (zero in subnormal range).
+        let biased_exp = total_exp + 1023;
+
+        if biased_exp >= 2047 {
+            // Overflow to ±infinity (NaN/Inf are handled by the caller).
+            return if sign { SIGN_BIT | 0x7FF0_0000_0000_0000 } else { 0x7FF0_0000_0000_0000 };
+        }
+
+        if biased_exp > 0 {
+            // Normal range. Bring mantissa MSB to bit 52 with RNE
+            // rounding of the lost low bits. Bit 52 of `kept` is the
+            // implicit-1 position — having it set is fine (just means
+            // mantissa >= 1.0); true carry into the next exponent
+            // happens only when `kept + 1` overflows into bit 53+.
+            let (kept, exp_increment) = if msb >= 52 {
+                let shift = (msb - 52) as u32;
+                let kept = (mantissa >> shift) as u64;
+                let round_bit = shift >= 1 && (mantissa >> (shift - 1)) & 1 != 0;
+                let sticky = shift >= 2 && (mantissa & ((1u128 << (shift - 1)) - 1)) != 0;
+                let lsb = kept & 1;
+                if round_bit && (sticky || lsb == 1) {
+                    let r = kept + 1;
+                    // True carry: r has bit 53 set, i.e., r > (1<<53) - 1 = 0x1fffffffffffff.
+                    // `kept` lives in bits 0..53 (bit 52 = implicit 1).
+                    // Adding 1 carries into bit 53 only when all of
+                    // bits 0..52 were 1 (the max-value kept).
+                    if r > 0x1fffffffffffffu64 {
+                        (0u64, 1u64)
+                    } else {
+                        (r & KEEP_MASK, 0)
+                    }
+                } else {
+                    (kept & KEEP_MASK, 0)
+                }
+            } else {
+                (((mantissa as u64) << (52 - msb)) & KEEP_MASK, 0u64)
+            };
+            let final_biased = biased_exp as u64 + exp_increment;
+            let exp_bits = (final_biased << 52) & EXP_MASK;
+            return if sign { SIGN_BIT | exp_bits | kept } else { exp_bits | kept };
+        }
+
+        // Subnormal range: value = m * 2^-1074 where m is 52-bit.
+        // shift_left = total_exp + 1074 (the bits we need to shift
+        // mantissa up to land in the 52-bit subnormal mantissa).
+        let shift_left = 1074 + total_exp;
+        if shift_left < 0 {
+            // Below smallest subnormal; flush to ±0.
+            return if sign { SIGN_BIT } else { 0 };
+        }
+        let m = ((mantissa as u64) << shift_left) & KEEP_MASK;
+        if sign { SIGN_BIT | m } else { m }
     }
 
     /// Convert DFP to string representation

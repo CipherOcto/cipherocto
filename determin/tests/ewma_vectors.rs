@@ -87,6 +87,41 @@ fn dfp_sub_catastrophic_cancellation_works() {
 
 #[test]
 #[ignore]
+fn dbg_div_1_1() {
+    use octo_determin::dfp_div;
+    let r = dfp_div(Dfp::from_f64(1.0), Dfp::from_f64(1.0));
+    eprintln!("1/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
+        r.mantissa, r.exponent, r.class, r.sign, r.to_f64());
+    let r = dfp_div(Dfp::from_f64(7.0), Dfp::from_f64(1.0));
+    eprintln!("7/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
+        r.mantissa, r.exponent, r.class, r.sign, r.to_f64());
+}
+
+#[test]
+#[ignore]
+fn dbg_to_f64_canonical() {
+    use octo_determin::Dfp;
+    let cases: &[(u128, i32, f64)] = &[
+        (1, 0, 1.0),
+        (3, 0, 3.0),
+        (1, 1, 2.0),
+        (1, -1, 0.5),
+        (1, -2, 0.25),
+        (1, 2, 4.0),
+        (0x1F0A3D70A3D70A3C28F5C28F5C29, -109, 0.97),
+        ((1u128 << 113) - 1, -113, 1.0),
+        (0x1bfffffffffffffffffffffffffffu128, -110, 7.0),
+    ];
+    for (m, e, expected) in cases {
+        let d = Dfp::from_signed(*m as i128, *e);
+        let got = d.to_f64();
+        eprintln!("m={:028x} e={} -> to_f64={} expected={}",
+            m, e, got, expected);
+    }
+}
+
+#[test]
+#[ignore]
 fn diagnostic_event4_per_step() {
     let mut score = Dfp::from_f64(INITIAL);
     let one = Dfp::from_i64(1);

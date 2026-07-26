@@ -190,12 +190,16 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
     // uses raw mantissas and u256 alignment to bridge catastrophic
     // cancellation (e.g. `1.0 - 0.03`).
     let same_sign_path = || {
-        let diff = a.exponent - b.exponent;
+        // Use saturating arithmetic so caller-supplied exponents near
+        // i32::MIN/MAX don't trigger platform-dependent overflow in
+        // release builds. With extreme inputs diff saturates to ±i32::MAX
+        // and align_mantissa short-circuits via its own diff>=128 guard.
+        let diff = a.exponent.saturating_sub(b.exponent);
         let (aligned_a, a_sticky, aligned_b, b_sticky) = if diff >= 0 {
             let (b_aligned, b_stk) = align_mantissa(b, diff);
             (a, false, b_aligned, b_stk)
         } else {
-            let (a_aligned, a_stk) = align_mantissa(a, -diff);
+            let (a_aligned, a_stk) = align_mantissa(a, diff.saturating_neg());
             (a_aligned, a_stk, b, false)
         };
         // Mantissas at most 113 bits; sum at most 114 bits → fits in u128.
@@ -220,10 +224,10 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
         // the smaller's exp. Both operands' bits are preserved through
         // the subtraction.
         let (big, small, big_sign, target_exp, diff) = if a.exponent >= b.exponent {
-            let d = a.exponent - b.exponent;
+            let d = a.exponent.saturating_sub(b.exponent);
             (a.mantissa, b.mantissa, a.sign, b.exponent, d)
         } else {
-            let d = b.exponent - a.exponent;
+            let d = b.exponent.saturating_sub(a.exponent);
             (b.mantissa, a.mantissa, b.sign, a.exponent, d)
         };
         // Short-circuit when the U256::shl would overflow: a 113-bit
@@ -335,7 +339,10 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
     }
 
     let result_sign = a.sign ^ b.sign;
-    let result_exponent = a.exponent + b.exponent;
+    // Saturate at i32::MAX/MIN so caller-supplied extreme exponents
+    // cannot trigger debug-vs-release divergence in the downstream
+    // multiplication exponent adjustment.
+    let result_exponent = a.exponent.saturating_add(b.exponent);
 
     // 113-bit × 113-bit → up to 226-bit intermediate stored in U256.
     let (hi, lo) = mul_u128_to_u256(a.mantissa, b.mantissa);
@@ -490,7 +497,12 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
         };
     }
 
-    let exponent = (a.exponent - b.exponent) + scale - 128 + exp_adj + shift_amount as i32;
+    let exponent = a
+        .exponent
+        .saturating_sub(b.exponent)
+        .saturating_add(scale - 128)
+        .saturating_add(exp_adj)
+        .saturating_add(shift_amount as i32);
 
     let mut result = Dfp {
         mantissa: result_mantissa,

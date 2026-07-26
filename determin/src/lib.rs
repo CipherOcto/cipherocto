@@ -368,7 +368,11 @@ impl Dfp {
 
         if biased_exp >= 2047 {
             // Overflow to ±infinity (NaN/Inf are handled by the caller).
-            return if sign { SIGN_BIT | 0x7FF0_0000_0000_0000 } else { 0x7FF0_0000_0000_0000 };
+            return if sign {
+                SIGN_BIT | 0x7FF0_0000_0000_0000
+            } else {
+                0x7FF0_0000_0000_0000
+            };
         }
 
         if biased_exp > 0 {
@@ -402,7 +406,11 @@ impl Dfp {
             };
             let final_biased = biased_exp as u64 + exp_increment;
             let exp_bits = (final_biased << 52) & EXP_MASK;
-            return if sign { SIGN_BIT | exp_bits | kept } else { exp_bits | kept };
+            return if sign {
+                SIGN_BIT | exp_bits | kept
+            } else {
+                exp_bits | kept
+            };
         }
 
         // Subnormal range: value = m * 2^-1074 where m is 52-bit.
@@ -414,7 +422,11 @@ impl Dfp {
             return if sign { SIGN_BIT } else { 0 };
         }
         let m = ((mantissa as u64) << shift_left) & KEEP_MASK;
-        if sign { SIGN_BIT | m } else { m }
+        if sign {
+            SIGN_BIT | m
+        } else {
+            m
+        }
     }
 
     /// Convert DFP to string representation

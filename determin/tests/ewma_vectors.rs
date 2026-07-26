@@ -90,11 +90,23 @@ fn dfp_sub_catastrophic_cancellation_works() {
 fn dbg_div_1_1() {
     use octo_determin::dfp_div;
     let r = dfp_div(Dfp::from_f64(1.0), Dfp::from_f64(1.0));
-    eprintln!("1/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
-        r.mantissa, r.exponent, r.class, r.sign, r.to_f64());
+    eprintln!(
+        "1/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
+        r.mantissa,
+        r.exponent,
+        r.class,
+        r.sign,
+        r.to_f64()
+    );
     let r = dfp_div(Dfp::from_f64(7.0), Dfp::from_f64(1.0));
-    eprintln!("7/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
-        r.mantissa, r.exponent, r.class, r.sign, r.to_f64());
+    eprintln!(
+        "7/1: mantissa={:028x} exp={} class={:?} sign={} to_f64={}",
+        r.mantissa,
+        r.exponent,
+        r.class,
+        r.sign,
+        r.to_f64()
+    );
 }
 
 #[test]
@@ -115,8 +127,10 @@ fn dbg_to_f64_canonical() {
     for (m, e, expected) in cases {
         let d = Dfp::from_signed(*m as i128, *e);
         let got = d.to_f64();
-        eprintln!("m={:028x} e={} -> to_f64={} expected={}",
-            m, e, got, expected);
+        eprintln!(
+            "m={:028x} e={} -> to_f64={} expected={}",
+            m, e, got, expected
+        );
     }
 }
 

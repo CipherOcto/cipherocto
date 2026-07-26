@@ -110,10 +110,22 @@ mod tests {
     }
 
     #[test]
-    fn dfp_eq_ieee754_distinguishes_from_structural() {
-        // Structural eq says -0 != +0; IEEE-754 eq says equal.
-        assert!(!dfp_eq(Dfp::neg_zero(), Dfp::zero()));
+    fn dfp_eq_agrees_with_ieee754_for_zero_and_nan() {
+        // Both structural and IEEE-754 eq now treat -0 == +0 and
+        // NaN == NaN (RFC-0104 spec-compliant equality).
+        assert!(dfp_eq(Dfp::neg_zero(), Dfp::zero()));
         assert!(dfp_eq_ieee754(Dfp::neg_zero(), Dfp::zero()));
+        assert!(dfp_eq(Dfp::nan(), Dfp::nan()));
+        assert!(dfp_eq_ieee754(Dfp::nan(), Dfp::nan()));
+    }
+
+    #[test]
+    fn dfp_eq_agrees_with_ieee754_for_infinity() {
+        // Both methods treat +Inf == +Inf, -Inf == -Inf, +Inf != -Inf.
+        assert!(dfp_eq(Dfp::infinity(), Dfp::infinity()));
+        assert!(!dfp_eq(Dfp::infinity(), Dfp::neg_infinity()));
+        assert!(dfp_eq_ieee754(Dfp::infinity(), Dfp::infinity()));
+        assert!(!dfp_eq_ieee754(Dfp::infinity(), Dfp::neg_infinity()));
     }
 
     #[test]

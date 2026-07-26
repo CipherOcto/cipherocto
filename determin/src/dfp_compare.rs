@@ -54,6 +54,7 @@
 //! impl is strictly stronger (also rejects Infinity + malformed Normal).
 
 use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 
 use crate::{Dfp, DfpClass};
 
@@ -293,6 +294,67 @@ impl std::ops::Neg for Dfp {
     }
 }
 
+// =================================================================
+// Trait impls: PartialEq / Eq / Hash
+// =================================================================
+//
+// Spec-compliant equality per RFC-0104 §989-990:
+//   - `NaN == NaN` (any two NaN payloads compare equal);
+//   - `+0 == -0` (sign-blind for Zero);
+//   - `+Inf == +Inf`, `-Inf == -Inf`, `+Inf != -Inf` (sign-aware for Infinity);
+//   - Normal values: same class + same (mantissa, exponent, sign).
+//
+// `Hash` is consistent with `PartialEq`: equal values hash equal.
+//   - Zero / Infinity / NaN hash on `class` only (sign + payload
+//     ignored) because the corresponding PartialEq branches only
+//     inspect class;
+//   - Normal values hash on (class, mantissa, exponent, sign).
+
+impl PartialEq for Dfp {
+    fn eq(&self, other: &Self) -> bool {
+        if self.class != other.class {
+            return false;
+        }
+        match self.class {
+            DfpClass::Normal => {
+                self.mantissa == other.mantissa
+                    && self.exponent == other.exponent
+                    && self.sign == other.sign
+            }
+            // Sign-blind: any Zero == any Zero (-0 == +0).
+            DfpClass::Zero => true,
+            // Sign-aware: +Inf == +Inf, -Inf == -Inf, +Inf != -Inf.
+            DfpClass::Infinity => self.sign == other.sign,
+            // IEEE-754 equality: all NaN compare equal.
+            DfpClass::NaN => true,
+        }
+    }
+}
+
+impl Eq for Dfp {}
+
+impl Hash for Dfp {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self.class {
+            DfpClass::Normal => {
+                self.class.hash(state);
+                self.mantissa.hash(state);
+                self.exponent.hash(state);
+                self.sign.hash(state);
+            }
+            // Sign-blind for Zero + NaN (consistent with PartialEq).
+            DfpClass::Zero | DfpClass::NaN => {
+                self.class.hash(state);
+            }
+            // Sign-aware for Infinity.
+            DfpClass::Infinity => {
+                self.class.hash(state);
+                self.sign.hash(state);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +496,55 @@ mod tests {
         assert!(Dfp::from_f64(1.0).eq_ieee754(&Dfp::from_f64(1.0)));
         assert!(!Dfp::from_f64(1.0).eq_ieee754(&Dfp::from_f64(-1.0)));
         assert!(!Dfp::from_f64(1.0).eq_ieee754(&Dfp::from_f64(2.0)));
+    }
+
+    #[test]
+    fn partial_eq_zero_sign_blind() {
+        // RFC-0104 §989-990: -0.0 == +0.0 == TRUE.
+        assert_eq!(Dfp::neg_zero(), Dfp::zero());
+        assert_eq!(Dfp::zero(), Dfp::neg_zero());
+    }
+
+    #[test]
+    fn partial_eq_infinity_sign_aware() {
+        assert_eq!(Dfp::infinity(), Dfp::infinity());
+        assert_eq!(Dfp::neg_infinity(), Dfp::neg_infinity());
+        assert_ne!(Dfp::infinity(), Dfp::neg_infinity());
+    }
+
+    #[test]
+    fn partial_eq_nan_self_equal() {
+        // IEEE-754: all NaN equal under ==.
+        assert_eq!(Dfp::nan(), Dfp::nan());
+        assert_eq!(Dfp::nan().neg(), Dfp::nan());
+    }
+
+    #[test]
+    fn partial_eq_normal_structural() {
+        assert_eq!(Dfp::from_f64(1.0), Dfp::from_f64(1.0));
+        assert_ne!(Dfp::from_f64(1.0), Dfp::from_f64(-1.0));
+        assert_ne!(Dfp::from_f64(1.0), Dfp::from_f64(2.0));
+        assert_ne!(Dfp::from_f64(1.0), Dfp::zero());
+        assert_ne!(Dfp::zero(), Dfp::from_f64(1.0));
+    }
+
+    #[test]
+    fn hash_consistent_with_partial_eq() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        // Equal values hash equal.
+        Dfp::neg_zero().hash(&mut h1);
+        Dfp::zero().hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        Dfp::nan().hash(&mut h1);
+        let other_nan = Dfp::new(0, 0, DfpClass::NaN, true);
+        other_nan.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
     }
 
     #[test]

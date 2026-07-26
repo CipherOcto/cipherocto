@@ -94,7 +94,7 @@ pub enum DfpClass {
 
 /// Deterministic Floating-Point representation
 /// Uses tagged representation to avoid encoding collisions
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Dfp {
     /// Mantissa (always odd for Normal class, canonical form)
     pub mantissa: u128,

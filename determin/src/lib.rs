@@ -52,7 +52,8 @@ pub use bigint::{
 };
 pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
 pub use dcmp::{
-    dfp_abs, dfp_clamp, dfp_cmp, dfp_eq, dfp_ge, dfp_gt, dfp_le, dfp_lt, dfp_max, dfp_min, dfp_neg,
+    dfp_abs, dfp_clamp, dfp_cmp, dfp_eq, dfp_eq_ieee754, dfp_ge, dfp_gt, dfp_le, dfp_lt, dfp_max,
+    dfp_min, dfp_neg,
 };
 pub use dcs::{
     dcs_deserialize_bool, dcs_serialize_bool, dcs_serialize_bytes, dcs_serialize_dmat,

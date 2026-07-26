@@ -13,19 +13,12 @@
 //! the bottom of this file should be uncommented and the suite promoted
 //! to a Phase 1 acceptance gate for the reputation mission.
 
-use octo_determin::{
-    dfp_abs, dfp_add, dfp_lt, dfp_mul, dfp_sub, Dfp, DfpEncoding,
-};
+use octo_determin::{dfp_abs, dfp_add, dfp_lt, dfp_mul, dfp_sub, Dfp, DfpEncoding};
 
 const INITIAL: f64 = 1.0;
 
 /// The four RFC-0968 §23 events: `(delta, alpha)`.
-const EVENTS: &[(f64, f64)] = &[
-    (-0.3, 0.1),
-    (-0.5, 0.1),
-    (0.1, 0.1),
-    (-0.2, 0.1),
-];
+const EVENTS: &[(f64, f64)] = &[(-0.3, 0.1), (-0.5, 0.1), (0.1, 0.1), (-0.2, 0.1)];
 
 /// Documented expected values per RFC-0968 §23. These reproduce ONLY when
 /// `arithmetic.rs` carries a sticky-bit-aware alignment (Task #33).

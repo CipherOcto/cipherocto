@@ -86,6 +86,82 @@ use crate::{Dfp, DfpClass, DFP_MAX, DFP_MAX_EXPONENT, DFP_MIN};
 // Public arithmetic API
 // ============================================================================
 
+/// Round a u256 magnitude to a normalized 113-bit Dfp mantissa.
+///
+/// Performs shift-to-bit-112 then round-to-nearest-even with sticky
+/// propagation from below the round bit AND from any bits lost in the
+/// shift. Returns `(mantissa, exp_shift, sticky)` where:
+///
+/// - `mantissa` is the canonical u128 mantissa (odd),
+/// - `exp_shift` is the additive exponent adjustment that combines
+///   (a) the right-shift applied during round to bring MSB to bit 112
+///   AND (b) the trailing-zero normalization. The canonical value at
+///   `target_exp` is `mantissa * 2^(target_exp + exp_shift)`,
+/// - `sticky` is whether any below-round-bits were lost (informational;
+//    round-to-nearest-even decision is already applied).
+///
+/// Caller is responsible for the zero case: if `(hi, lo) == (0, 0)`,
+/// the function returns `(0, 0, false)` and the caller should emit a
+/// signed zero rather than constructing a Normal+Zero hybrid.
+fn round_u256_to_canonical(hi: u128, lo: u128) -> (u128, i32, bool) {
+    if hi == 0 && lo == 0 {
+        return (0, 0, false);
+    }
+    // MSB position.
+    let msb: i32 = if hi != 0 {
+        127 - hi.leading_zeros() as i32 + 128
+    } else {
+        127 - lo.leading_zeros() as i32
+    };
+    if msb > 112 {
+        // Shift right so MSB at bit 112.
+        let shift_right: u32 = (msb - 112) as u32;
+        let rb_pos: i32 = 113 - shift_right as i32;
+        if rb_pos < 0 {
+            let any = hi != 0 || lo != 0;
+            if any {
+                return (1, shift_right as i32, true);
+            }
+            return (0, 0, false);
+        }
+        let u = U256 { hi, lo };
+        let s = u.shr(shift_right);
+        let round_bit = if rb_pos >= 128 {
+            ((s.hi >> (rb_pos - 128)) & 1) != 0
+        } else {
+            ((s.lo >> rb_pos) & 1) != 0
+        };
+        let kept_size: i32 = 113 - shift_right as i32;
+        let kept_mask: u128 = (1u128 << kept_size) - 1;
+        let kept = s.lo & kept_mask;
+        let lsb = kept & 1;
+        let above_round_mask: u128 = !((1u128 << (rb_pos + 1)) - 1);
+        let sticky = (s.lo & above_round_mask) != 0 || s.hi != 0;
+        let rounded = if round_bit && (sticky || lsb == 1) {
+            kept + 1
+        } else {
+            kept
+        };
+        if rounded == 0 {
+            return (0, shift_right as i32, sticky);
+        }
+        let trailing = rounded.trailing_zeros();
+        return (
+            rounded >> trailing,
+            (shift_right as i32) + trailing as i32,
+            sticky,
+        );
+    }
+    if msb < 112 {
+        // MSB < 112 → result is small; no MSB-shift; just normalize.
+        let trailing = lo.trailing_zeros();
+        return (lo >> trailing, trailing as i32, false);
+    }
+    // msb == 112 → exact. mantissa is lo; trailing zeros normalize.
+    let trailing = lo.trailing_zeros();
+    (lo >> trailing, trailing as i32, false)
+}
+
 /// Add two DFP values.
 /// Implements signed-zero arithmetic per IEEE-754-2019 §6.3.
 pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
@@ -108,51 +184,78 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
         _ => {}
     }
 
-    // Both Normal — align to the larger exponent. Sticky bits lost
-    // during alignment feed round_to_113 so the rounding step is
-    // round-to-nearest-even instead of truncating.
-    //
-    // Catastrophic-cancellation regime (e.g. `1.0 - 0.03`): the small
-    // operand shifts down past 113 bits and becomes zero in the
-    // aligned u128 space; sticky alone cannot recover its magnitude.
-    // Mitigation requires u256 alignment (separate work item).
-    let diff = a.exponent - b.exponent;
-    let (aligned_a, a_sticky, aligned_b, b_sticky) = if diff >= 0 {
-        let (b_aligned, b_stk) = align_mantissa(b, diff);
-        (a, false, b_aligned, b_stk)
-    } else {
-        let (a_aligned, a_stk) = align_mantissa(a, -diff);
-        (a_aligned, a_stk, b, false)
-    };
-
-    let (result_sign, sum_u128, sticky_combined) = if aligned_a.sign == aligned_b.sign {
-        // FIX A2: same-sign add. Mantissas at most 113 bits, sum at
-        // most 114 bits, fits in u128.
-        (
-            aligned_a.sign,
-            aligned_a.mantissa + aligned_b.mantissa,
-            a_sticky || b_sticky,
-        )
-    } else {
-        // Different signs: subtract smaller magnitude from larger.
-        if aligned_a.mantissa >= aligned_b.mantissa {
-            (
-                aligned_a.sign,
-                aligned_a.mantissa - aligned_b.mantissa,
-                a_sticky || b_sticky,
-            )
+    // Same-sign path: align to the larger exponent via the existing
+    // align_mantissa + round_to_113 pipeline. Different-sign path
+    // uses raw mantissas and u256 alignment to bridge catastrophic
+    // cancellation (e.g. `1.0 - 0.03`).
+    let same_sign_path = || {
+        let diff = a.exponent - b.exponent;
+        let (aligned_a, a_sticky, aligned_b, b_sticky) = if diff >= 0 {
+            let (b_aligned, b_stk) = align_mantissa(b, diff);
+            (a, false, b_aligned, b_stk)
         } else {
-            (
-                aligned_b.sign,
-                aligned_b.mantissa - aligned_a.mantissa,
-                a_sticky || b_sticky,
-            )
-        }
+            let (a_aligned, a_stk) = align_mantissa(a, -diff);
+            (a_aligned, a_stk, b, false)
+        };
+        // Mantissas at most 113 bits; sum at most 114 bits → fits in u128.
+        let sum = aligned_a.mantissa + aligned_b.mantissa;
+        let (mantissa, exp_adj) = round_to_113(sum as i128, a_sticky || b_sticky);
+        let exponent = aligned_a.exponent.saturating_add(exp_adj);
+        (aligned_a.sign, mantissa, exponent)
+    };
+    let different_sign_path = || {
+        // Pick the operand with the larger exponent; shift its mantissa
+        // up into u256 by the exponent diff; subtract the smaller at
+        // the smaller's exp. Both operands' bits are preserved through
+        // the subtraction.
+        let (big, small, big_sign, target_exp, diff) = if a.exponent >= b.exponent {
+            let d = a.exponent - b.exponent;
+            (a.mantissa, b.mantissa, a.sign, b.exponent, d)
+        } else {
+            let d = b.exponent - a.exponent;
+            (b.mantissa, a.mantissa, b.sign, a.exponent, d)
+        };
+        let diff = diff as u32;
+        let _exp_diff = target_exp - a.exponent; // bookkeeping; round() returns the exponent shift directly
+                                                 // Shift big.mantissa UP by diff (scaling to smaller's exp).
+                                                 // Use U256::shl which correctly handles shift >= 128 via the
+                                                 // existing 256-bit shift logic in `impl U256` (no wraparound).
+        let big_u256 = U256 { hi: 0, lo: big }.shl(diff);
+        let big_hi = big_u256.hi;
+        let big_lo = big_u256.lo;
+        let small_u: U256 = U256 { hi: 0, lo: small };
+        // Big-mantissa in u256 is `big_hi * 2^128 + big_lo`; small is
+        // `small`. Compare lexicographically (hi, lo).
+        let (mag_hi, mag_lo, sign) = if (big_hi, big_lo) >= (small_u.hi, small_u.lo) {
+            let diff_u = U256 {
+                hi: big_hi,
+                lo: big_lo,
+            }
+            .sub(small_u);
+            (diff_u.hi, diff_u.lo, big_sign)
+        } else {
+            let diff_u = small_u.sub(U256 {
+                hi: big_hi,
+                lo: big_lo,
+            });
+            (diff_u.hi, diff_u.lo, !big_sign)
+        };
+        // round_u256_to_canonical returns (mantissa, exp_shift, sticky)
+        // where the canonical value is mantissa * 2^(target_exp + exp_shift).
+        // exp_shift combines (a) the shift_right applied during round to
+        // bring MSB to bit 112 (which moves the effective exponent UP
+        // by shift_right), and (b) the trailing-zero normalization
+        // (which moves the effective exponent UP by trailing zeros).
+        let (mantissa, exp_shift, _sticky) = round_u256_to_canonical(mag_hi, mag_lo);
+        let exponent = target_exp.saturating_add(exp_shift);
+        (sign, mantissa, exponent)
     };
 
-    // FIX A2: sum/diff up to 114 bits; round_to_113 handles up to 128.
-    let (mantissa, exp_adj) = round_to_113(sum_u128 as i128, sticky_combined);
-    let exponent = aligned_a.exponent.saturating_add(exp_adj);
+    let (result_sign, mantissa, exponent) = if a.sign == b.sign {
+        same_sign_path()
+    } else {
+        different_sign_path()
+    };
 
     if mantissa == 0 {
         return if result_sign {
@@ -616,6 +719,13 @@ fn mul_u128_to_u256(a: u128, b: u128) -> (u128, u128) {
 
 /// Shift a u128 value left by `n` bits, returning a (hi, lo) pair.
 /// Used to compute `val << n` into a 256-bit result.
+///
+/// Partition-correct: `lo` receives bits from `val` that fall in lo's
+/// position range (bits 0..128 of the result); `hi` receives bits that
+/// fall in hi's position range (bits 128..256 of the result). The
+/// previous bare `val << n` wraparound silently double-counted the high
+/// bits of `val` into both `hi` and `lo`, causing catastrophic value
+/// drift in subtraction when `val`'s MSB was close to bit 127.
 fn u128_shl_to_u256(val: u128, n: u32) -> (u128, u128) {
     if n == 0 {
         return (0, val);
@@ -624,9 +734,13 @@ fn u128_shl_to_u256(val: u128, n: u32) -> (u128, u128) {
         return (0, 0);
     }
     if n >= 128 {
-        return (val << (n - 128), 0);
+        return (val.wrapping_shl(n - 128), 0);
     }
-    ((val >> (128 - n)), val << n)
+    // 0 < n < 128: lo = (val's lower (128 - n) bits) << n;
+    //               hi = val >> (128 - n).
+    let lo = (val & ((1u128 << (128 - n)) - 1)) << n;
+    let hi = val >> (128 - n);
+    (hi, lo)
 }
 
 /// Set bit `bit` (0-indexed) in a (hi, lo) U256 value.
@@ -740,6 +854,34 @@ impl U256 {
         }
     }
 
+    /// MSB position in [0, 255], or 256 if self is zero (caller
+    /// distinguishes zero via `self.hi == 0 && self.lo == 0`).
+    fn msb(&self) -> u32 {
+        if self.hi != 0 {
+            127 - self.hi.leading_zeros() + 128
+        } else if self.lo != 0 {
+            127 - self.lo.leading_zeros()
+        } else {
+            0 // zero sentinel; use with care
+        }
+    }
+
+    fn sub(self, other: Self) -> Self {
+        // Subtract `other` from `self`. No underflow handling — caller
+        // ensures self >= other when ordering is required.
+        if other.lo > self.lo {
+            Self {
+                hi: self.hi - other.hi - 1,
+                lo: self.lo.wrapping_sub(other.lo),
+            }
+        } else {
+            Self {
+                hi: self.hi - other.hi,
+                lo: self.lo - other.lo,
+            }
+        }
+    }
+
     fn shr(self, shift: u32) -> Self {
         if shift == 0 {
             return self;
@@ -768,8 +910,20 @@ impl U256 {
             return Self::new(0);
         }
         if n >= 128 {
+            // All bits of `hi` shift past bit 256 — gone.
+            // All bits of `lo` that fall in lo's range after the shift
+            // (= lo bits at positions k < 256 - n) move into `hi`'s
+            // lower 256-n positions. Bits that fall in lo's range
+            // after the shift (= k + n < 128) need 128 - n > 0 → n < 128,
+            // contradicting n >= 128. So result lo = 0.
+            let surviving_lo_bits: u32 = 256 - n;
+            if surviving_lo_bits == 0 {
+                return Self::new(0);
+            }
+            let surviving_lo = self.lo & ((1u128 << surviving_lo_bits) - 1);
+            let shift_in_hi = n - 128;
             Self {
-                hi: self.lo << (n - 128),
+                hi: surviving_lo << shift_in_hi,
                 lo: 0,
             }
         } else {

@@ -68,7 +68,11 @@ impl CacheHit {
         } else {
             Some(response_hash)
         };
-        Self { class, cache_key_hash, axes_consumed }
+        Self {
+            class,
+            cache_key_hash,
+            axes_consumed,
+        }
     }
 
     /// Convert to the proxy-level `CacheClassifyMeta` (PR-Q5).
@@ -112,12 +116,7 @@ mod tests {
     fn from_prompt_response_provider_miss_yields_miss() {
         let prompt = [0xab; 32];
         let response = [0xcd; 32];
-        let hit = CacheHit::from_prompt_response(
-            prompt,
-            response,
-            Some(false),
-            vec![],
-        );
+        let hit = CacheHit::from_prompt_response(prompt, response, Some(false), vec![]);
         assert_eq!(hit.class, CacheClass::Miss);
         assert_eq!(hit.cache_key_hash, None);
     }

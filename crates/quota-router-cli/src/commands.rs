@@ -326,6 +326,97 @@ fn parse_peer_arg(s: &str) -> Option<PeerConfig> {
     })
 }
 
+/// W2 replay tool: verify a settlement hash reproduces a deterministic
+/// `Receipt` from the sm-engine state machines. Reads an ask_id (hex) +
+/// receipt payload from the args, runs the canonical_ser pipeline, and
+/// prints the resulting settlement_hash + receipt_id.
+pub fn settle_replay(ask_id_hex: &str, expected_settlement_hash: Option<&str>) -> Result<()> {
+    use quota_router_sm_engine::{
+        Ask, Receipt, Reservation, SettlementError, SettlementStore, StoolapStore,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let ask_id_bytes =
+        hex::decode(ask_id_hex).map_err(|e| anyhow::anyhow!("invalid ask_id hex: {e}"))?;
+    if ask_id_bytes.len() != 32 {
+        return Err(anyhow::anyhow!("ask_id must be 32 bytes hex"));
+    }
+    let mut ask_id = [0u8; 32];
+    ask_id.copy_from_slice(&ask_id_bytes);
+
+    // In-memory store for replay determinism.
+    let store = StoolapStore::open_in_memory()
+        .map_err(|e: quota_router_sm_engine::StorageError| SettlementError::from(e))?;
+
+    // Minimal ask shape.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ask = Ask {
+        ask_id,
+        holder_did: "did:octo:replay".to_owned(),
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+        cap_root_hash: [0x42; 32],
+        invocation_hash: [0xab; 32],
+        current_unix_time: now,
+        output_hash: None,
+    };
+    store.mint(&ask)?;
+
+    // Build a Reservation (Step 6 surface).
+    let res = Reservation::mint(
+        [0x01; 32], // vault_id
+        [0x02; 32], // capability_id
+        ask_id,
+        "input_tokens_per_1k".to_owned(),
+        1_000_000, // amount_micro
+        now + 3600,
+        86400, // audit_window_secs
+        now,
+    );
+    let res_id = res.reservation_id;
+    println!("reservation_id = {}", hex::encode(res_id));
+
+    // Settle: compute settlement_hash deterministically.
+    let settlement_hash = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&ask.cap_root_hash);
+        hasher.update(&ask_id);
+        hasher.update(&ask.invocation_hash);
+        for (axis, count) in &ask.axes_consumed {
+            hasher.update(axis.as_bytes());
+            hasher.update(&count.to_le_bytes());
+        }
+        *hasher.finalize().as_bytes()
+    };
+
+    let receipt = Receipt {
+        receipt_id: blake3::hash(&settlement_hash).into(),
+        ask_id,
+        settlement_hash,
+        router_id: "did:octo:router-1".to_owned(),
+        router_sig: vec![0u8; 64],
+        timestamp_unix: now,
+    };
+    store.settle(&ask_id, &receipt)?;
+
+    println!("settlement_hash = {}", hex::encode(settlement_hash));
+    println!("receipt_id      = {}", hex::encode(receipt.receipt_id));
+    println!("ask_state       = Settled");
+
+    if let Some(expected) = expected_settlement_hash {
+        if expected != hex::encode(settlement_hash) {
+            return Err(anyhow::anyhow!(
+                "settlement_hash mismatch: expected {expected}, got {}",
+                hex::encode(settlement_hash)
+            ));
+        }
+        println!("hash check: OK (matches expected)");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,92 +615,4 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
         let peer = result.unwrap();
         assert_eq!(peer.endpoint, "10.0.0.1:9200".parse().unwrap());
     }
-}
-
-/// W2 replay tool: verify a settlement hash reproduces a deterministic
-/// `Receipt` from the sm-engine state machines. Reads an ask_id (hex) +
-/// receipt payload from the args, runs the canonical_ser pipeline, and
-/// prints the resulting settlement_hash + receipt_id.
-pub fn settle_replay(ask_id_hex: &str, expected_settlement_hash: Option<&str>) -> Result<()> {
-    use quota_router_sm_engine::{
-        Ask, Receipt, Reservation, SettlementError, SettlementStore, StoolapStore,
-    };
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let ask_id_bytes = hex::decode(ask_id_hex)
-        .map_err(|e| anyhow::anyhow!("invalid ask_id hex: {e}"))?;
-    if ask_id_bytes.len() != 32 {
-        return Err(anyhow::anyhow!("ask_id must be 32 bytes hex"));
-    }
-    let mut ask_id = [0u8; 32];
-    ask_id.copy_from_slice(&ask_id_bytes);
-
-    // In-memory store for replay determinism.
-    let store = StoolapStore::open_in_memory()
-        .map_err(|e: quota_router_sm_engine::StorageError| SettlementError::from(e))?;
-
-    // Minimal ask shape.
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let ask = Ask {
-        ask_id,
-        holder_did: "did:octo:replay".to_owned(),
-        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
-        cap_root_hash: [0x42; 32],
-        invocation_hash: [0xab; 32],
-        current_unix_time: now,
-        output_hash: None,
-    };
-    store.mint(&ask).map_err(|e| SettlementError::from(e))?;
-
-    // Build a Reservation (Step 6 surface).
-    let res = Reservation::mint(
-        [0x01; 32], // vault_id
-        [0x02; 32], // capability_id
-        ask_id,
-        "input_tokens_per_1k".to_owned(),
-        1_000_000, // amount_micro
-        now + 3600,
-        86400,    // audit_window_secs
-        now,
-    );
-    let res_id = res.reservation_id;
-    println!("reservation_id = {}", hex::encode(res_id));
-
-    // Settle: compute settlement_hash deterministically.
-    let settlement_hash = {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&ask.cap_root_hash);
-        hasher.update(&ask_id);
-        hasher.update(&ask.invocation_hash);
-        for (axis, count) in &ask.axes_consumed {
-            hasher.update(axis.as_bytes());
-            hasher.update(&count.to_le_bytes());
-        }
-        *hasher.finalize().as_bytes()
-    };
-
-    let receipt = Receipt {
-        receipt_id: blake3::hash(&settlement_hash).into(),
-        ask_id,
-        settlement_hash,
-        router_id: "did:octo:router-1".to_owned(),
-        router_sig: vec![0u8; 64],
-        timestamp_unix: now,
-    };
-    store.settle(&ask_id, &receipt).map_err(|e| SettlementError::from(e))?;
-
-    println!("settlement_hash = {}", hex::encode(settlement_hash));
-    println!("receipt_id      = {}", hex::encode(receipt.receipt_id));
-    println!("ask_state       = Settled");
-
-    if let Some(expected) = expected_settlement_hash {
-        if expected != hex::encode(settlement_hash) {
-            return Err(anyhow::anyhow!(
-                "settlement_hash mismatch: expected {expected}, got {}",
-                hex::encode(settlement_hash)
-            ));
-        }
-        println!("hash check: OK (matches expected)");
-    }
-    Ok(())
 }

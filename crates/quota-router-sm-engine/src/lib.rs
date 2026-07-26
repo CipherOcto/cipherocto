@@ -18,11 +18,11 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod envelope;
 pub mod schema;
+pub mod shard;
 pub mod state_machine;
 pub mod store;
-pub mod envelope;
-pub mod shard;
 
 pub use schema::{apply_migrations, MigrationError};
 pub use state_machine::{

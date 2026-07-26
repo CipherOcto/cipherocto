@@ -170,30 +170,26 @@ mod tests {
     #[test]
     fn validate_caveats_denied_provider_rejected() {
         let providers = vec!["api.openai.com".to_owned()];
-        let err = validate_provider_caveats("api.cohere.com", Some("command"), &providers, None).unwrap_err();
-        assert_eq!(err, EgressCaveatError::ProviderDenied { requested: "api.cohere.com".to_owned() });
+        let err = validate_provider_caveats("api.cohere.com", Some("command"), &providers, None)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            EgressCaveatError::ProviderDenied {
+                requested: "api.cohere.com".to_owned()
+            }
+        );
     }
 
     #[test]
     fn validate_caveats_pinned_model_match_succeeds() {
-        validate_provider_caveats(
-            "api.openai.com",
-            Some("gpt-4"),
-            &[],
-            Some("gpt-4"),
-        )
-        .unwrap();
+        validate_provider_caveats("api.openai.com", Some("gpt-4"), &[], Some("gpt-4")).unwrap();
     }
 
     #[test]
     fn validate_caveats_pinned_model_mismatch_rejected() {
-        let err = validate_provider_caveats(
-            "api.openai.com",
-            Some("gpt-3.5-turbo"),
-            &[],
-            Some("gpt-4"),
-        )
-        .unwrap_err();
+        let err =
+            validate_provider_caveats("api.openai.com", Some("gpt-3.5-turbo"), &[], Some("gpt-4"))
+                .unwrap_err();
         assert_eq!(
             err,
             EgressCaveatError::ModelDenied {

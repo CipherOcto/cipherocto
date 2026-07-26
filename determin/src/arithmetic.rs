@@ -199,8 +199,18 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
             (a_aligned, a_stk, b, false)
         };
         // Mantissas at most 113 bits; sum at most 114 bits → fits in u128.
+        // Sum can carry into bit 113; pre-shift right by 1 with the
+        // dropped bit folding into sticky so round_to_113 sees a
+        // 113-bit value at the next exponent.
         let sum = aligned_a.mantissa + aligned_b.mantissa;
-        let (mantissa, exp_adj) = round_to_113(sum as i128, a_sticky || b_sticky);
+        let (mantissa, exp_adj) = if sum >= (1u128 << 113) {
+            let dropped = (sum & 1) != 0;
+            let shifted = sum >> 1;
+            let (m, e) = round_to_113(shifted as i128, a_sticky || b_sticky || dropped);
+            (m, e + 1)
+        } else {
+            round_to_113(sum as i128, a_sticky || b_sticky)
+        };
         let exponent = aligned_a.exponent.saturating_add(exp_adj);
         (aligned_a.sign, mantissa, exponent)
     };
@@ -216,15 +226,18 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
             let d = b.exponent - a.exponent;
             (b.mantissa, a.mantissa, b.sign, a.exponent, d)
         };
-        // Short-circuit when the exponent gap exceeds the mantissa
-        // precision: the smaller operand's value is below the LSB of
-        // the larger's mantissa, so subtracting it leaves the larger
-        // unchanged. Also covers the U256::shl overflow case (diff >
-        // 143 = 256 - 113) which would otherwise zero out `big_shifted`
-        // and flip the sign via the `(big, small)` ordering check.
-        if diff > 113 {
+        // Short-circuit when the U256::shl would overflow: a 113-bit
+        // mantissa shifted left by `diff` fits in u256 only when
+        // `113 + diff <= 256`, i.e. `diff <= 143`. Above that, the
+        // high bits of the larger operand's shifted mantissa are
+        // silently truncated and the subtraction breaks. The smaller
+        // operand's contribution at this magnitude is below the
+        // RNE-bound midpoint of the larger (safe to drop) for any
+        // mantissa, including M=1 where the nearest-below neighbor is
+        // at half the exponent.
+        if diff > 143 {
             // The larger-exponent operand is also larger-by-value
-            // (mantissa ratio < 2^113, exp ratio > 2^113).
+            // (mantissa ratio < 2^113, exp ratio > 2^143).
             let big_exp = if a.exponent >= b.exponent {
                 a.exponent
             } else {

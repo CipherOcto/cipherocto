@@ -413,9 +413,14 @@ impl DfpEncoding {
             << 24)
             | ((dfp.sign as u32) << 16);
 
+        // Store fields as their native u128/i32/u32 values. `to_bytes`
+        // applies the canonical big-endian byte conversion at the
+        // serialization boundary; storing `.to_be()` here would
+        // double-swap on little-endian hosts and break cross-platform
+        // reproducibility.
         Self {
-            mantissa: dfp.mantissa.to_be(),
-            exponent: dfp.exponent.to_be(),
+            mantissa: dfp.mantissa,
+            exponent: dfp.exponent,
             class_sign,
         }
     }
@@ -425,6 +430,10 @@ impl DfpEncoding {
         let class = (self.class_sign >> 24) & 0xFF;
         let sign = (self.class_sign >> 16) & 0x01;
 
+        // Fields store native values; byte conversion happens at the
+        // `to_bytes`/`from_bytes` boundary. No `from_be` here — the
+        // struct never holds byte-swapped values (paired with
+        // `from_dfp`'s removal of `.to_be()`).
         Dfp {
             class: match class {
                 0 => DfpClass::Normal,
@@ -434,8 +443,8 @@ impl DfpEncoding {
                 _ => DfpClass::NaN,
             },
             sign: sign != 0,
-            mantissa: u128::from_be(self.mantissa),
-            exponent: i32::from_be(self.exponent),
+            mantissa: self.mantissa,
+            exponent: self.exponent,
         }
     }
 

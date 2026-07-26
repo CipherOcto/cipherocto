@@ -108,33 +108,50 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
         _ => {}
     }
 
-    // Both Normal — align to the larger exponent.
+    // Both Normal — align to the larger exponent. Sticky bits lost
+    // during alignment feed round_to_113 so the rounding step is
+    // round-to-nearest-even instead of truncating.
+    //
+    // Catastrophic-cancellation regime (e.g. `1.0 - 0.03`): the small
+    // operand shifts down past 113 bits and becomes zero in the
+    // aligned u128 space; sticky alone cannot recover its magnitude.
+    // Mitigation requires u256 alignment (separate work item).
     let diff = a.exponent - b.exponent;
-    let (aligned_a, aligned_b) = if diff >= 0 {
-        (a, align_mantissa(b, diff))
+    let (aligned_a, a_sticky, aligned_b, b_sticky) = if diff >= 0 {
+        let (b_aligned, b_stk) = align_mantissa(b, diff);
+        (a, false, b_aligned, b_stk)
     } else {
-        (align_mantissa(a, -diff), b)
+        let (a_aligned, a_stk) = align_mantissa(a, -diff);
+        (a_aligned, a_stk, b, false)
     };
 
-    // After alignment both share the same exponent (= the larger one, held in aligned_a).
-    let (result_sign, sum_u128) = if aligned_a.sign == aligned_b.sign {
-        // FIX A2: same-sign add. Both mantissas are at most 113 bits, so their
-        // sum is at most 114 bits. The u128 sum never wraps (max = 2*(2^113-1) < 2^128).
-        (aligned_a.sign, aligned_a.mantissa + aligned_b.mantissa)
+    let (result_sign, sum_u128, sticky_combined) = if aligned_a.sign == aligned_b.sign {
+        // FIX A2: same-sign add. Mantissas at most 113 bits, sum at
+        // most 114 bits, fits in u128.
+        (
+            aligned_a.sign,
+            aligned_a.mantissa + aligned_b.mantissa,
+            a_sticky || b_sticky,
+        )
     } else {
         // Different signs: subtract smaller magnitude from larger.
-        // FIX A1: align_mantissa now preserves sign; we use the mantissa values
-        // from the aligned structs — both mantissas are non-negative magnitudes.
         if aligned_a.mantissa >= aligned_b.mantissa {
-            (aligned_a.sign, aligned_a.mantissa - aligned_b.mantissa)
+            (
+                aligned_a.sign,
+                aligned_a.mantissa - aligned_b.mantissa,
+                a_sticky || b_sticky,
+            )
         } else {
-            (aligned_b.sign, aligned_b.mantissa - aligned_a.mantissa)
+            (
+                aligned_b.sign,
+                aligned_b.mantissa - aligned_a.mantissa,
+                a_sticky || b_sticky,
+            )
         }
     };
 
-    // FIX A2: sum_u128 may be up to 114 bits; pass directly to round_to_113 which
-    // handles values up to 128 bits. The carry bit (bit 113) becomes the round bit.
-    let (mantissa, exp_adj) = round_to_113(sum_u128 as i128);
+    // FIX A2: sum/diff up to 114 bits; round_to_113 handles up to 128.
+    let (mantissa, exp_adj) = round_to_113(sum_u128 as i128, sticky_combined);
     let exponent = aligned_a.exponent.saturating_add(exp_adj);
 
     if mantissa == 0 {
@@ -206,7 +223,7 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
 
     // round_to_113 operates on the lower 128 bits (aligned.lo); aligned.hi should be 0
     // after shifting unless there was a bug in leading_zeros, but we mask it out safely.
-    let (result_mantissa, exp_adj) = round_to_113(aligned.lo as i128);
+    let (result_mantissa, exp_adj) = round_to_113(aligned.lo as i128, false);
 
     // FIX M1: shifting right by `shift_right` positions the mantissa at bit 112,
     // meaning the implicit 2^x scale increased by shift_right. Add, don't subtract.
@@ -330,7 +347,7 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
         0u32
     };
     let aligned = quotient >> shift_amount;
-    let (result_mantissa, exp_adj) = round_to_113(aligned as i128);
+    let (result_mantissa, exp_adj) = round_to_113(aligned as i128, false);
 
     if result_mantissa == 0 {
         return if result_sign {
@@ -477,15 +494,21 @@ pub fn dfp_sqrt(a: Dfp) -> Dfp {
 /// Round a 128-bit intermediate to 113 bits with Round-to-Nearest-Even and sticky bit.
 ///
 /// Returns `(mantissa, exponent_adjustment)` where `mantissa` is the canonical
-/// (odd) 113-bit value and `exponent_adjustment` is the number of trailing zeros
-/// shifted out (always ≥ 0; must be ADDED to the caller's exponent).
+/// Round a signed mantissa to a normalized 113-bit Dfp mantissa. The
+/// `pre_sticky` argument carries sticky information from a pre-round
+/// step (e.g. an exponent-alignment shift that may have lost bits);
+/// when `pre_sticky` is `true` the round-to-nearest-even decision must
+/// round up if the round bit is set, even when the input has no bits
+/// above the round position. A round-to-zero result has no exponent
+/// adjustment regardless of pre_sticky.
 ///
-/// Bit layout of the input:
+/// Bit layout of the input `mantissa`:
 ///   bits 0..112   — kept mantissa (113 bits)
 ///   bit  113      — round bit
 ///   bits 114..127 — sticky bits (OR of all bits above round bit)
-fn round_to_113(mantissa: i128) -> (u128, i32) {
+fn round_to_113(mantissa: i128, pre_sticky: bool) -> (u128, i32) {
     if mantissa == 0 {
+        // Round-to-zero carries no exponent adjustment.
         return (0, 0);
     }
 
@@ -494,7 +517,8 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     const ROUND_BIT_POS: u32 = 113;
 
     let round_bit = ((abs_mant >> ROUND_BIT_POS) & 1) != 0;
-    let sticky_bit = (abs_mant >> (ROUND_BIT_POS + 1)) != 0;
+    let lost_above_round = (abs_mant >> (ROUND_BIT_POS + 1)) != 0;
+    let sticky_bit = pre_sticky || lost_above_round;
     let kept_bits = abs_mant & ((1u128 << ROUND_BIT_POS) - 1);
     let lsb = kept_bits & 1;
 
@@ -505,6 +529,7 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     };
 
     if rounded == 0 {
+        // Round-to-zero still produces zero, no exponent shift.
         return (0, 0);
     }
 
@@ -520,33 +545,46 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
 
 /// Shift a DFP mantissa right by `diff` bits (increasing exponent by `diff`).
 ///
-/// FIX A1: When `diff >= 128`, the mantissa becomes zero but we preserve the
-/// sign so the calling addition logic sees the correct sign before computing
-/// `result_sign`. We return a Normal zero (mantissa=0) rather than a Zero class,
-/// so the caller's sign-decision logic still sees the sign field.
-/// Shift a DFP mantissa right by `diff` bits (increasing exponent by `diff`).
-/// This aligns the smaller operand to have the same exponent as the larger one.
-fn align_mantissa(dfp: Dfp, diff: i32) -> Dfp {
+/// Returns `(aligned_mantissa, sticky_bit)`. The sticky bit is `true` when
+/// any bit was shifted out and lost — used by `round_to_113` to make
+/// round-to-nearest-even decisions on wide-exponent differences.
+///
+/// FIX A1: When `diff >= 128`, the mantissa becomes zero but we preserve
+/// the sign so the calling addition logic sees the correct sign before
+/// computing `result_sign`. Sticky is `true` iff the original mantissa
+/// was non-zero (every bit is "lost").
+fn align_mantissa(dfp: Dfp, diff: i32) -> (Dfp, bool) {
     if diff <= 0 {
-        return dfp;
+        return (dfp, false);
     }
     let diff = diff as u32;
     if diff >= 128 {
-        // Mantissa underflows to zero. Preserve sign for correct result_sign selection
-        // in the subtraction branch of dfp_add.
-        return Dfp {
-            mantissa: 0,
+        // Mantissa underflows to zero. Preserve sign for correct result_sign
+        // selection in the subtraction branch of dfp_add. Sticky iff original
+        // mantissa was non-zero (otherwise nothing was lost).
+        return (
+            Dfp {
+                mantissa: 0,
+                exponent: dfp.exponent + diff as i32,
+                class: DfpClass::Normal, // kept Normal so sign is visible to caller
+                sign: dfp.sign,
+            },
+            dfp.mantissa != 0,
+        );
+    }
+    // diff < 128: shift right by diff, sticky = any lost bit != 0.
+    let lost_mask: u128 = if diff == 128 { 0 } else { (1u128 << diff) - 1 };
+    let lost = dfp.mantissa & lost_mask;
+    let sticky = lost != 0;
+    (
+        Dfp {
+            mantissa: dfp.mantissa >> diff,
             exponent: dfp.exponent + diff as i32,
-            class: DfpClass::Normal, // kept Normal so sign is visible to caller
+            class: dfp.class,
             sign: dfp.sign,
-        };
-    }
-    Dfp {
-        mantissa: dfp.mantissa >> diff,
-        exponent: dfp.exponent + diff as i32,
-        class: dfp.class,
-        sign: dfp.sign,
-    }
+        },
+        sticky,
+    )
 }
 
 // ============================================================================
@@ -1136,17 +1174,18 @@ mod tests {
 
     #[test]
     fn test_round_to_113_internal() {
-        // round_to_113(0) = (0, 0)
-        assert_eq!(round_to_113(0), (0, 0));
+        // round_to_113(0, _) = (0, 0)
+        assert_eq!(round_to_113(0, false), (0, 0));
+        assert_eq!(round_to_113(0, true), (0, 0));
 
         // round_to_113 of an already-odd 113-bit number: no rounding, no trailing removal
         let odd_113: u128 = (1u128 << 112) | 1; // bit 112 and bit 0 set → odd
-        let (m, e) = round_to_113(odd_113 as i128);
+        let (m, e) = round_to_113(odd_113 as i128, false);
         assert_eq!(m, odd_113, "odd 113-bit should be unchanged");
         assert_eq!(e, 0, "no trailing zeros");
 
         // round_to_113 of 2 (even): normalizes to (1, 1)
-        let (m, e) = round_to_113(2i128);
+        let (m, e) = round_to_113(2i128, false);
         assert_eq!(m, 1);
         assert_eq!(e, 1);
     }

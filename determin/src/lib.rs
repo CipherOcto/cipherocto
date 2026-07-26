@@ -94,6 +94,19 @@ pub enum DfpClass {
 
 /// Deterministic Floating-Point representation
 /// Uses tagged representation to avoid encoding collisions
+///
+/// **Equality semantics (RFC-0104 + RFC-0968-A1, 2026-07-26):**
+/// `Dfp` implements `PartialEq`/`Eq`/`Hash` per **IEEE-754** semantics,
+/// defined manually in [`dfp_compare::PartialEq for Dfp`]:
+///   - `+0 == -0` (Zero is sign-blind)
+///   - `+Inf == +Inf`, `-Inf == -Inf`, `+Inf != -Inf`
+///   - All NaN compare equal (`NaN == NaN` is `true`)
+///
+/// Cross-replica agreement MUST use the canonical 24-byte wire form:
+/// `DfpEncoding::from_dfp(&d).to_bytes()`. RFC-0968 §16 mandates that
+/// persisted Dfp BLOBs are bit-deterministic across compilers and platforms;
+/// the `PartialEq`/`Eq`/`Hash` impls here are for in-memory convenience
+/// only.
 #[derive(Clone, Copy, Debug)]
 pub struct Dfp {
     /// Mantissa (always odd for Normal class, canonical form)
@@ -578,6 +591,47 @@ mod tests {
         assert_eq!(dfp.exponent, 0);
         assert_eq!(dfp.class, DfpClass::Normal);
         assert!(!dfp.sign);
+    }
+
+    /// RFC-0104 + RFC-0968-A1: `PartialEq`/`Eq`/`Hash` per IEEE-754 semantics
+    /// (defined in `dfp_compare.rs`; closed by Session 1 C-C2 / Session 5 P0-18).
+    /// `+0 == -0`; all NaN equal; ±Inf distinct from each other.
+    /// Cross-replica agreement MUST use `DfpEncoding::to_bytes()`, not in-memory `==`.
+    #[test]
+    fn test_dfp_ieee754_eq_semantics() {
+        use std::collections::HashSet;
+
+        // Two NaNs compare equal (IEEE-754 NaN == NaN is true here).
+        assert_eq!(Dfp::nan(), Dfp::nan());
+        assert_eq!(hash_u64(Dfp::nan()), hash_u64(Dfp::nan()));
+
+        // ±0 are equal under IEEE-754 equality (sign-blind).
+        assert_eq!(Dfp::zero(), Dfp::neg_zero());
+
+        // ±Inf are sign-aware: +Inf != -Inf; +Inf == +Inf.
+        assert_eq!(Dfp::infinity(), Dfp::infinity());
+        assert_ne!(Dfp::infinity(), Dfp::neg_infinity());
+
+        // HashSet deduplication uses IEEE-754 equality.
+        let mut set: HashSet<Dfp> = HashSet::new();
+        set.insert(Dfp::zero());
+        set.insert(Dfp::neg_zero()); // collapses to +0 under IEEE-754 hash
+        set.insert(Dfp::nan());
+        assert_eq!(set.len(), 2); // {Zero, NaN}
+
+        // Canonical 24-byte encodings are sign-aware (distinct bytes for ±0).
+        assert_ne!(
+            DfpEncoding::from_dfp(&Dfp::zero()).to_bytes(),
+            DfpEncoding::from_dfp(&Dfp::neg_zero()).to_bytes()
+        );
+    }
+
+    fn hash_u64<H: std::hash::Hash>(h: H) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        h.hash(&mut hasher);
+        hasher.finish()
     }
 
     #[test]

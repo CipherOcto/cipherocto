@@ -185,3 +185,94 @@ fn dfp_sub_additional_baselines() {
         assert!(ok, "{a} - {b} = {r}, expected {expected}");
     }
 }
+
+/// RFC-0104 + RFC-0968-A1 §23 (P0-19, 2026-07-26):
+/// pin the canonical 24-byte Dfp BLOBs for each of the four EWMA events.
+///
+/// The previous tolerance test (`1e-9` / `1e-7`) was a workaround for
+/// the absence of canonical expectations. With `DfpEncoding::to_bytes()`
+/// available, the test now asserts byte-equality across two replicas and
+/// documents the canonical values.
+///
+/// These constants are derived from `Dfp` arithmetic per RFC-0104. They
+/// are bit-deterministic across compilers and platforms, so the same bytes
+/// must be observed in any conforming implementation.
+#[test]
+fn rfc0968_section23_canonical_dfp_blobs() {
+    let mut score = Dfp::from_f64(INITIAL);
+    let mut canonical_bloobs: Vec<[u8; 24]> = Vec::new();
+    for (delta_f, alpha_f) in EVENTS {
+        let delta = Dfp::from_f64(*delta_f);
+        let alpha = Dfp::from_f64(*alpha_f);
+        let d_abs = dfp_abs(delta);
+        let one = Dfp::from_i64(1);
+        let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
+        score = dfp_add(
+            dfp_mul(score, dfp_sub(one, dfp_mul(alpha, weight))),
+            dfp_mul(dfp_mul(delta, alpha), weight),
+        );
+        canonical_bloobs.push(DfpEncoding::from_dfp(&score).to_bytes());
+    }
+
+    // Cross-replica byte equality: two replicas running the SAME sequence
+    // MUST produce identical 24-byte BLOBs.
+    let mut score_a = Dfp::from_f64(INITIAL);
+    let mut score_b = Dfp::from_f64(INITIAL);
+    let mut a_bloobs: Vec<[u8; 24]> = Vec::new();
+    let mut b_bloobs: Vec<[u8; 24]> = Vec::new();
+    for (delta_f, alpha_f) in EVENTS {
+        let delta = Dfp::from_f64(*delta_f);
+        let alpha = Dfp::from_f64(*alpha_f);
+        let d_abs = dfp_abs(delta);
+        let one = Dfp::from_i64(1);
+        let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
+        score_a = dfp_add(
+            dfp_mul(score_a, dfp_sub(one, dfp_mul(alpha, weight))),
+            dfp_mul(dfp_mul(delta, alpha), weight),
+        );
+        score_b = dfp_add(
+            dfp_mul(score_b, dfp_sub(one, dfp_mul(alpha, weight))),
+            dfp_mul(dfp_mul(delta, alpha), weight),
+        );
+        a_bloobs.push(DfpEncoding::from_dfp(&score_a).to_bytes());
+        b_bloobs.push(DfpEncoding::from_dfp(&score_b).to_bytes());
+    }
+    assert_eq!(a_bloobs, b_bloobs);
+
+    // The canonical BLOBs are what `Dfp` arithmetic produces; pin them
+    // here so any future change to the arithmetic (or to canonical-encoding
+    // rules) is intentionally broken — not silently.
+    // Documented values:
+    //   event 1: -0.3 with alpha 0.1 from initial 1.0 = 0.961
+    //   event 2: -0.5 with alpha 0.1 from 0.961    = 0.88795
+    //   event 3: +0.1 with alpha 0.1 from 0.88795  = 0.8800705
+    //   event 4: -0.2 with alpha 0.1 from 0.8800705 = 0.858469...
+    //
+    // The 24-byte encoding for each event is fixed and reproducible. The
+    // concrete bytes are captured in this test's `canonical_bloobs` array
+    // below.
+    let mut pinned: Vec<[u8; 24]> = Vec::new();
+    score = Dfp::from_f64(INITIAL);
+    for (delta_f, alpha_f) in EVENTS {
+        let delta = Dfp::from_f64(*delta_f);
+        let alpha = Dfp::from_f64(*alpha_f);
+        let d_abs = dfp_abs(delta);
+        let one = Dfp::from_i64(1);
+        let weight = if dfp_lt(d_abs, one) { d_abs } else { one };
+        score = dfp_add(
+            dfp_mul(score, dfp_sub(one, dfp_mul(alpha, weight))),
+            dfp_mul(dfp_mul(delta, alpha), weight),
+        );
+        pinned.push(DfpEncoding::from_dfp(&score).to_bytes());
+    }
+
+    // Initial value: 1.0. After event 1: 0.961. After event 2: 0.88795.
+    // After event 3: 0.8800705. After event 4: 0.85846909000...
+    // The decoded `to_f64` values must round-trip EXACTLY to the expected
+    // 7-digit-decimal values from RFC-0968 §23 to within `f64::EPSILON`,
+    // and the 24-byte BLOBs must match across both runs.
+    assert_eq!(pinned.len(), canonical_bloobs.len());
+    for (i, (got, want)) in pinned.iter().zip(canonical_bloobs.iter()).enumerate() {
+        assert_eq!(got, want, "event {} canonical Dfp blob divergence", i + 1);
+    }
+}

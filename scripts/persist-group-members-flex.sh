@@ -34,15 +34,14 @@
 # Usage:
 #   scripts/persist-group-members-flex.sh 120363425575546925@g.us group_members_percursorj
 
-set -euo pipefail
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/lib-octo-wa.sh"
 
 JID="${1:?usage: persist-group-members-flex.sh <jid> <table>}"
 TABLE="${2:-group_members}"
 
-# Token check: a SQL identifier is letters / digits / underscore /
-# dollar / hash, must start with a letter or underscore, and may
-# not be empty. This blocks injection like "foo; DROP TABLE x" and
-# makes the emitted DDL safe.
+# Token check
 if ! [[ "$TABLE" =~ ^[A-Za-z_][A-Za-z0-9_$#]*$ ]]; then
     echo "invalid table name: $TABLE" >&2
     echo "  must match ^[A-Za-z_][A-Za-z0-9_$#]*$" >&2
@@ -55,19 +54,17 @@ NAME="${OCTO_WA_NAME:-default}"
 BATCH="${OCTO_WA_BATCH:-200}"
 NOW_MS="$(date +%s%3N)"
 
+# === Pre-run health check ==========================================
+
+if ! wa_health_check; then
+    wa_log "aborting: daemon not connected"
+    exit 1
+fi
+
 [ -x "$BIN" ] || { echo "binary not executable: $BIN" >&2; exit 1; }
 [ -S "$SOCKET" ] || { echo "socket not bound: $SOCKET" >&2; exit 2; }
 
-mcp_call() {
-    local req="$1"
-    local tmp
-    tmp=$(mktemp)
-    printf '%s\n' "$req" > "$tmp"
-    XDG_RUNTIME_DIR=/tmp/octo-wa-run \
-        OCTO_WHATSAPP_DATA_DIR=/home/mmacedoeu/.local/share/octo/whatsapp \
-        "$BIN" --name "$NAME" mcp < "$tmp"
-    rm -f "$tmp"
-}
+# === MCP-over-stdio transport (provided by lib-octo-wa.sh) =========
 
 # === Step 1: fetch the group metadata ===
 echo "→ fetching members for $JID  (target table: $TABLE)" >&2

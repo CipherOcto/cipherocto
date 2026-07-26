@@ -111,6 +111,19 @@ for arg in "$@"; do
     esac
 done
 
+# === Re-derive per-instance paths (after arg parse) ========================
+# SOCKET / PID_FILE / LOG_DIR / CAPTURE_LOG_DIR / SESSION_PATH are set at the
+# top of the script using the default NAME; if --name=NAME was passed we
+# must rebuild them so every multi-instance action (start / stop / status)
+# targets the right paths. Without this, --name=lia silently fell through
+# to the default socket + pidfile.
+SOCKET="$SOCKET_DIR/octo-whatsapp-$NAME.sock"
+SESSION_PATH="${OCTO_WHATSAPP_SESSION_PATH:-$DATA_DIR/$NAME.session.db}"
+LOG_DIR="${OCTO_WHATSAPP_LOG_DIR:-$DATA_DIR/$NAME/logs}"
+CAPTURE_LOG_DIR="${OCTO_WHATSAPP_CAPTURE_LOG_DIR:-$DATA_DIR/$NAME/capture}"
+PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
+LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
+
 # Validate profile. Anything outside {debug, release} almost certainly
 # means a typo — fail loud instead of falling back silently.
 case "$PROFILE" in
@@ -206,7 +219,23 @@ case "$ACTION" in
         ;;
 
     restart)
+        # First try the graceful path; if --stop hits a daemon in
+        # session_lost, the RPC shutdown may not actually kill the
+        # process, so we force-kill the pid by hand after the stop.
         "$0" --stop || true
+        # Force-kill any surviving pid (RPC shutdown can hang when the
+        # daemon is in session_lost).
+        if [ -f "$PID_FILE" ]; then
+            old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [ -n "$old_pid" ] && [ -d "/proc/$old_pid" ]; then
+                log "force-kill surviving pid=$old_pid"
+                kill "$old_pid" 2>/dev/null || true
+                sleep 1
+                kill -KILL "$old_pid" 2>/dev/null || true
+            fi
+            rm -f "$PID_FILE"
+        fi
+        rm -f "$SOCKET"
         sleep 1
         # Filter out --restart before exec; otherwise we loop forever.
         shift_args=()

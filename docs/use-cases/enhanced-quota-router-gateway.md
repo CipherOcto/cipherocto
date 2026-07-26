@@ -271,7 +271,7 @@ And: Receives OCTO-W for sold prompts
 ### Optional (Nice to Have)
 
 - RFC-XXXX: Token Swap Protocol
-- RFC-XXXX: Reputation System
+- RFC-0968: Reputation Registry
 
 ---
 

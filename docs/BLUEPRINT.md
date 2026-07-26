@@ -1095,35 +1095,42 @@ The guide bridges spec→code. Missions point to it instead of duplicating imple
 
 ## Mission Lifecycle
 
+```mermaid
+graph TD
+    A[RFC Accepted] --> B[Mission Created<br/>missions/open/]
+    B --> C[Claimed<br/>missions/claimed/]
+    C --> D[PR Submitted<br/>missions/with-pr/]
+    D -->|Accept| E[Archive<br/>missions/archived/completed/]
+    D -->|Reject| C
+    C -->|14d timeout| B
+    D -->|7d timeout| F[Follow up or close]
+    B -.->|RFC.Supersedes: path| G[Superseded<br/>missions/archived/superseded/]
+    C -.->|RFC.Supersedes: path| G
 ```
-┌──────────────┐
-│ RFC Accepted │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ Mission      │
-│ Created      │  → missions/open/
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ Claimed      │  → missions/claimed/
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ PR Submitted │  → missions/with-pr/
-└──────┬───────┘
-       │
-       ├─ Accept → Archive (completed)
-       └─ Reject → Return to claimed
-```
+
+| State | Location | Trigger |
+|-------|----------|---------|
+| Open | `missions/open/` | RFC Accepted, no claimant |
+| Claimed | `missions/claimed/` | `git claim` |
+| With PR | `missions/with-pr/` | PR opened |
+| Archived (completed) | `missions/archived/completed/` | PR Accepted |
+| Archived (superseded) | `missions/archived/superseded/` | Accepted RFC with `Supersedes:` line pointing at the mission path |
+| Archived (rejected/abandoned) | `missions/archived/rejected/` | Rejection or abandonment |
 
 **Timeouts:**
 
 - Claimed mission: 14 days → Return to open
 - PR in review: 7 days → Follow up or close
+
+**Supersession procedure.** When an Accepted RFC has a `Supersedes:` line referencing a mission path, that mission is moved to `missions/archived/superseded/` with a banner:
+
+```
+> **SUPERSEDED by RFC-XXXX** (Accepted YYYY-MM-DD).
+> Canonical execution plan: missions/claimed/<name>.md.
+> RFC-XXXX §X is the authoritative design.
+```
+
+Both legacy and superseded missions remain greppable for history, but cannot be claimed. A superseded mission's banner references the new mission so reviewers can navigate. RFC-side supersession (`rfcs/archived/superseded/`) and mission-side supersession (`missions/archived/superseded/`) are independent folders; the procedure applies to both.
 
 **Timeout Rationale:**
 

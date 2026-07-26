@@ -2,9 +2,16 @@
 
 ## Status
 
-Draft
+Accepted
 
 > **Note:** This RFC was renumbered from RFC-0100 to RFC-0900 as part of the category-based numbering system.
+
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.1     | 2026-07-24 | Gaps 5 + 7 implemented as `crates/quota-router-core::marketplace`. Order book (`orderbook::OrderBook<AskSpec>` — Gap 5.1), escrow state machine (`marketplace::escrow::Escrow` — Gap 5.2), and slashing model (`marketplace::slashing::SlashingLedger` with RFC-0900 §Slashing Model first-offense + escalation — Gap 5.3) landed. Cheapest lookup routes through the order book (`Marketplace::cheapest` — Gap 5.5). Gap 7 extended the facade with provider reputation registry (`scoring::ProviderReputationRegistry`) + circuit-breaker (`Marketplace::set_min_reputation` excludes providers below threshold — Gap 7.1) and latency-aware ranking (`Marketplace::cheapest_with_ranking` + `LatencyRanking::prefer_latency` — Gap 7.2). The TypeScript interfaces in this RFC remain a wire-shape reference; the Rust impl is the canonical source for the protocol. |
+| 1.0     | 2026-03-02 | Initial draft. |
 
 ## Summary
 
@@ -287,7 +294,7 @@ This is a trust-based model, not cryptographic. See Research doc for future opti
 
 - RFC-0101 (Economics): Quota Router Agent Specification
 - RFC-XXXX: Token Swap Protocol (future)
-- RFC-XXXX: Reputation System (future)
+- RFC-0968: Reputation Registry
 
 ## References
 

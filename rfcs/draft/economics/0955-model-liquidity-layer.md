@@ -6,6 +6,16 @@ Draft
 
 > **Note:** This RFC was renumbered from RFC-0125 to RFC-0955 as part of the category-based numbering system.
 
+## Authors
+
+- Author: @cipherocto
+- Author: @mmacedoeu
+
+## Maintainers
+
+- Maintainer: @cipherocto
+- Maintainer: @mmacedoeu
+
 ## Summary
 
 This RFC introduces the **Model Liquidity Layer (MLL)** — an economic infrastructure enabling fractional ownership of AI models, decentralized trading of model shards, markets for inference compute and proof generation, and automated revenue distribution. The layer treats models, datasets, compute, and proofs as tokenized financial primitives, creating a complete decentralized AI economy where assets can be composed, traded, and verified on-chain.
@@ -259,8 +269,13 @@ struct ComputeOffer {
     /// Geographic region
     region: String,
 
-    /// Reputation score
-    reputation: u64,
+    /// Reputation digest anchor (Amendment RFC-0955-R1, 2026-07-26):
+    /// BLAKE3 binding to `(did, kind, layer, last_event_id, score_ewma,
+    /// samples, severity_total, last_event_unix)`. Replaces the previous
+    /// 8-byte `u64` which was insufficient to carry the 24-byte Dfp
+    /// encoding or the full tuple identity required for chain-side
+    /// idempotency.
+    reputation: ReputationDigest,
 
     /// Staked tokens
     stake: TokenAmount,
@@ -271,6 +286,64 @@ enum HardwareType {
     GPU { model: String, vram_gb: u32, count: u32 },
     TPU { version: String },
     Cluster { node_count: u32 },
+}
+
+/// Reputation anchor binding (Amendment RFC-0955-R1, 2026-07-26).
+///
+/// Anchors the on-chain binding target for reputation aggregates produced
+/// under RFC-0968. Wire format: 32 bytes = `BLAKE3(BLAKE3_REPUTATION_ANCHOR_DOMAIN
+/// || did || kind || layer || last_event_id || DfpEncoding::from_dfp(&score_ewma).to_bytes()
+/// || last_event_unix || samples || severity_total)`. Binds identity, kind,
+/// layer, last event id, score bytes, and provenance counters in one digest —
+/// not just the post-EWMA scalar.
+///
+/// Tuple key: `(did, kind, layer, last_event_id)` is the chain-level primary
+/// key for an anchoring batch transaction; duplicate submissions at the same
+/// tuple key MUST return the existing `anchor_tx_hash` (chain-side idempotency).
+///
+/// Finality: stored with `chain_block_height`; consumers MUST require minimum
+/// confirmation depth `MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS` (default 12)
+/// before treating an anchor as final.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReputationDigest([u8; 32]);
+
+pub const BLAKE3_REPUTATION_ANCHOR_DOMAIN: &[u8] =
+    b"cipherocto/reputation/anchor/v1";
+
+pub const MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS: u32 = 12;
+
+impl ReputationDigest {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+    pub fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+}
+
+/// Anchoring batch transaction (Amendment RFC-0955-R1).
+///
+/// Submitted by the reputation anchoring job (`missions/deferred/0968a-reputation-anchoring.md`)
+/// per `(did, kind, layer)` tuple whose `last_event_id` is unanchored.
+/// Every anchoring transaction carries a `GovernanceSnapshot` and validates
+/// freshness against `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600` per RFC-0968 §3
+/// before any registry lookup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReputationAnchorBatch {
+    pub did: [u8; 32],
+    pub signal_kind: u8,
+    pub layer: u8,
+    pub last_event_id: [u8; 32],
+    pub score_ewma_digest: ReputationDigest,
+    pub last_event_unix: u64,
+    pub samples: u64,
+    pub severity_total: u64,
+    pub governance_snapshot: GovernanceSnapshot,
+    pub batch_size: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GovernanceSnapshot {
+    pub block_height: u64,
+    pub epoch: u64,
+    pub finalized_at_unix: u64,
 }
 
 struct ComputeMarket {
@@ -803,7 +876,72 @@ graph TB
 - F1: Proof-of-Inference Consensus
 - F2: AI Derivatives Markets
 - F3: Cross-Model Composability
-- F4: Dataset Reputation System
+
+### Reputation Anchoring Amendment (RFC-0955-R1, 2026-07-26)
+
+**Status: implemented.** F4 "Dataset Reputation System" superseded by the
+reputation anchoring binding defined above. Authors (`@cipherocto + @mmacedoeu`).
+
+**Wire contract.** A reputation anchoring transaction on the Model Liquidity
+Layer binds a tuple `(did, signal_kind, layer, last_event_id)` to the
+canonical 24-byte Dfp encoding of the post-EWMA score plus provenance
+counters. The digest is:
+
+```
+anchor_digest = BLAKE3(
+    BLAKE3_REPUTATION_ANCHOR_DOMAIN ||
+    did                       ||  // 32 bytes canonical did:octo:b<52> hash_part
+    u8(signal_kind)           ||
+    u8(layer)                 ||
+    last_event_id             ||  // 32 bytes
+    DfpEncoding::from_dfp(&score_ewma).to_bytes() ||  // 24 bytes
+    u64::to_le_bytes(last_event_unix) ||
+    u64::to_le_bytes(samples) ||
+    u64::to_le_bytes(severity_total)
+)
+```
+
+Two unrelated DIDs with identical `score_ewma = Dfp::from_f64(1.0)` produce
+**different** digests because the tuple identity is mixed in. Two histories
+that converge to the same per-tuple score produce the same digest (this is
+the desired byte-deterministic property).
+
+**Chain-level idempotency.** `(did, signal_kind, layer, last_event_id)` is
+the chain-level primary key for an anchoring batch. A duplicate anchoring
+submission at the same tuple key returns the existing `anchor_tx_hash`
+without producing a new transaction. This permits local-persistence-only
+failures after a successful chain acceptance to safely retry without
+double-charging.
+
+**Finality.** Anchoring transactions are stored with the chain block height
+at which they achieve `MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS = 12`
+confirmation depth; consumers MUST NOT treat an anchor as final before
+this depth. Reorgs deeper than `MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS`
+invalidate the local anchor row; the implementation re-submits.
+
+**Governance snapshot binding.** Every anchoring transaction carries a
+`GovernanceSnapshot { block_height, epoch, finalized_at_unix }`. The
+implementation validates `snapshot.finalized_at_unix + MAX_GOVERNANCE_SNAPSHOT_AGE_SECS
+>= now_unix` before the snapshot-bound registry lookup, per RFC-0968 §3.
+There are no snapshot exceptions.
+
+**Cost model.** Anchor batch transactions are off-cycle from gossip
+federation (mission 0968) and on-cycle with the anchoring job defined
+in `missions/deferred/0968a-reputation-anchoring.md`. With
+`ANCHOR_BATCH_SIZE = 1000` events per `(did, kind, layer)` tuple and
+`ANCHOR_INTERVAL_SECS = 300`, a 1000 events/recorder/day recorder
+generates ~10 anchoring transactions/recorder/day. Mission 0968a must
+publish a per-chain cost estimate with three recorder-count scenarios
+(low/medium/high) before deployment.
+
+**Wire compatibility.** The previous `reputation: u64` field on
+`ComputeOffer` is renamed to `ReputationDigest` and re-typed as
+`[u8; 32]`. No replay/migration tools needed: no live `u64` reputation
+field exists on-chain (RFC-0955 was Draft at the time of the rename).
+
+**Cross-references.** Mission `missions/deferred/0968a-reputation-anchoring.md`
+(Deferred, pending RFC-0955 + RFC-0955-R1 acceptance). RFC-0968 §16
+(class table for reputation reads). RFC-0104 (Dfp bit-determinism).
 
 ## Rationale
 
@@ -834,6 +972,9 @@ Automation ensures:
 
 ## Related RFCs
 
+- RFC-0955-R1 (this amendment): Reputation Anchoring Binding
+- RFC-0968 (Economics): Reputation Registry — anchoring source-of-truth
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point — `Dfp` encoding bound by anchor digest
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture

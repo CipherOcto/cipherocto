@@ -267,14 +267,30 @@ Round 2 C3: the previous design returned an inert `RotationReceipt` with no stor
 
 ### 3. Recorder Authorization
 
-Recorders register before they may write. The `RecorderRegistration` row holds the recorder's DID, public key, stake, and lifecycle timestamps. `record_signal` rejects events whose `RecorderId` is revoked, suspended, or under-staked. Registration requires a cryptographic stake proof over `BLAKE3(BLAKE3_REPUTATION_STAKE_DOMAIN || recorder_id || stake_amount || requested_at_unix)`. The proof carries a `GovernanceSnapshot`; `register_recorder` first validates that snapshot against `now_unix`, returning `GovernanceSnapshotStale` when it is older than `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`, and accepts the signer only when `GovernanceRegistry::lookup_at_snapshot(pubkey, snapshot)` returns true. Registration also binds `pubkey` to `recorder_did` via `blake3(pubkey) == recorder_did.hash_part`, rejects an existing registration row, and uses INSERT rather than UPSERT.
+Recorders register before they may write. The `RecorderRegistration` row holds the recorder's DID, public key, stake, lifecycle timestamps, and (per RFC-0968-A1, 2026-07-26) per-recorder `severity_emitted_total` counter + on-chain stake lock reference. `record_signal` rejects events whose `RecorderId` is revoked, suspended, or under-staked. Registration requires a cryptographic stake proof over `BLAKE3(BLAKE3_REPUTATION_STAKE_DOMAIN || recorder_id || stake_amount || requested_at_unix)`. The proof carries a `GovernanceSnapshot`; `register_recorder` first validates that snapshot against `now_unix`, returning `GovernanceSnapshotStale` when it is older than `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`, and accepts the signer only when `GovernanceRegistry::lookup_at_snapshot(pubkey, snapshot)` returns true. Registration also binds `pubkey` to `recorder_did` via `blake3(pubkey) == recorder_did.hash_part`, rejects an existing registration row, and uses INSERT rather than UPSERT.
+
+**Per-subject admission (RFC-0968-A1):** Non-Slash signals (`Outcome`, `Latency`, `Capacity`, `Discovery`) recorded for a `subject_did` require either (a) a co-signature from the subject's recorder key over the canonical event envelope, or (b) a per-subject stake bond recorded in `reputation_subject_bonds` (default 100 OCTO role-token per subject). Slash signals are governance-issued and exempt from per-subject admission. This closes the subject-pool reputation-manufacturing attack (Session 1 C-A1; Session 4 C-Z1) where a single recorder could mint `Outcome { success: true }` events for unbounded fresh subject DIDs.
+
+**Governance suspension proof target/reason binding (RFC-0968-A1):** `verify_governance_suspension(proof, recorder_id, reason, snapshot, now_unix)` MUST re-derive `reason_hash` from the actual `reason` argument and assert `proof.recorder_id == recorder_id` before mutating. A valid proof issued for recorder A cannot authorize suspension of recorder B, and a stored reason that diverges from the signed reason invalidates the proof. This closes the authorization-confusion bug (Session 1 C-A5).
 
 ```rust
-pub const MIN_RECORDER_STAKE: u64 = 1000; // OCTO role-token, per token-design §12
+pub const MIN_RECORDER_STAKE: u64 = 1000; // RFC-0968-A1: role-token portion only;
+                                         // dual-stake requires MIN_RECORDER_OCTO_STAKE
+                                         // also; aggregate `stake_amount` ≥ 5000.
+pub const MIN_RECORDER_OCTO_STAKE: u64 = 4000; // RFC-0968-A1: sovereign OCTO
+                                              // portion per token-design §11.
+pub const MIN_RECORDER_DUAL_STAKE: u64 = 5000; // RFC-0968-A1: aggregate minimum.
 pub const MAX_RECORDER_AGE_UNIX: u64 = 365 * 86_400; // 1 year
 pub const STALE_RECORDER_THRESHOLD_UNIX: u64 = 30 * 86_400; // 30 days no signals
 pub const SUSPENSION_GRACE_UNIX: u64 = 7 * 86_400; // 7 days after suspend
-pub const SUSPENSION_SEVERITY_THRESHOLD: u64 = 5;
+pub const SUSPENSION_SEVERITY_THRESHOLD: u64 = 5; // RFC-0968-A1: cross-aggregate
+                                                    // threshold; increments via
+                                                    // `severity_emitted_total`, not
+                                                    // per-(subject,kind,layer)
+                                                    // `severity_total`, so a recorder
+                                                    // cannot avoid suspension by
+                                                    // partitioning slashes across many
+                                                    // triples.
 pub const MAX_REGISTRATION_DRIFT_SECS: u64 = 300; // Round 6 M6: caller-supplied
                                                   // `requested_at_unix` must be
                                                   // within 5 minutes of `now_unix`
@@ -411,7 +427,25 @@ pub struct GovernanceProof {
     pub reason_hash: [u8; 32],
     pub signature: [u8; 64],
     pub snapshot: GovernanceSnapshot,
+    /// RFC-0968-A1 (2026-07-26, I-5): BLAKE3 of the active-set membership
+    /// hash from the snapshot at which `governance_pubkey` is active. The
+    /// implementation MUST verify that this hash appears in
+    /// `GovernanceRegistry::lookup_at_snapshot`'s active-set digest.
+    /// Closes the single-key-compromise attack (Session 1 I-5) by binding
+    /// the proof to a governance-set hash that itself requires quorum
+    /// agreement to mutate.
+    pub governance_set_hash: [u8; 32],
 }
+
+/// RFC-0968-A1 (2026-07-26, I-5): active governance set hash.
+///
+/// Recomputed as `BLAKE3(active_set_dids || active_set_pks)` by the
+/// implementation when validating `GovernanceProof.governance_set_hash`.
+/// The canonical `GOVERNANCE_QUORUM = 3` default matches the dual-stake
+/// dual-stake Validator ratio in `docs/04-tokenomics/token-design.md §11`
+/// (an officer must hold ≥1 OF 3 independent confirmation signatures on a
+/// suspension-or-registration authorization).
+pub const GOVERNANCE_QUORUM: u32 = 3;
 
 pub enum SuspensionAuth {
     Governance { proof: GovernanceProof },
@@ -1059,6 +1093,8 @@ impl StoolapReputationStore {
 
 The core state uses two tables — one for events (append-only) and one for current aggregates (read-optimized) — keyed by `(did, signal_kind, layer)`. Three auxiliary tables persist one-time rotations (v005), attestations (v006), and pruned-prefix aggregate checkpoints (v007). Round 1 finding M1: composite PK; migration naming `v003` through `v007` is appended to `BUILTIN_MIGRATIONS` in `crates/quota-router-storage/src/migrations.rs`.
 
+**RFC-0968-A1 (2026-07-26) — Checkpoint identity (v007).** The `aggregate_checkpoint` row's `checkpoint_id` is derived as `BLAKE3(BLAKE3_REPUTATION_CHECKPOINT_DOMAIN || did || signal_kind || layer || checkpoint_event_id)`. Audit replay picks the checkpoint with the largest `checkpoint_event_id` such that all events with `received_at_unix < checkpoint_event_received_at_unix` are pruned. The `kind_weights` table migration (v009, RFC-0968-A1) seeds rows for `(SignalKind, weight)` deterministically for all scored kinds (Slash, Outcome, Latency, Capacity, Discovery); `Rotation` is omitted from `kind_weights`. Weights are immutable in v1.0; subsequent updates require a governance-versioned migration.
+
 ```sql
 -- File: crates/quota-router-storage/migrations/v003__reputation_events.sql
 CREATE TABLE reputation_events (
@@ -1339,6 +1375,8 @@ Either path produces a `score_delta` BLOB whose 24-byte encoding is byte-stable 
 **Parity metric (Round 2 H14):** `parity_score = matches / total` where `matches` = number of `(did, kind, layer)` triples where in-memory and persisted aggregates agree within `1e-6`. Cutover threshold: `parity_score > 0.999` sustained for 24h. The previous `parity_score` Prometheus counter had no min-traffic guard; the new design requires `total >= 100` triples before the metric is reported, so a sparse traffic pattern cannot falsely show `parity_score == 1.0`.
 
 **v3.3-r18 (M4) — `parity_score` `1e-6` tolerance rationale:** the `1e-6` tolerance is required only during Phase 2.5 (backfill + reconciliation), which compares the existing in-memory `f64` EWMA store against the new `Dfp` persisted store while the shadow-write transition is in flight. Both paths run on the same `octo_determin::Dfp` arithmetic from the moment Phase 2 ships, so any later comparison of two pure-Dfp stores (e.g., a future migration, federation reconciliation, or audit replay) is **exact**, not approximate. Phase 2.5 keeps `1e-6` because the in-memory store's pre-Dfp history is still `f64` and the conversion at backfill introduces a one-time `f64 → Dfp` rounding. Pure-Dfp comparisons never use this tolerance.
+
+**RFC-0968-A1 (2026-07-26) — Compatibility adapter cutover.** The legacy in-memory stores (`mon::reputation::SlashReputationStore`, `dc::reputation::DcRootedSlashReputationStore`, `quota-router-core::marketplace::ProviderReputationRegistry`) are structurally non-equivalent to the persisted Dfp EWMA aggregate (per Session 2 C-P5 / Session 3 I-X5): they use `String`-keyed maps, integer counts, and `f64` per-computation. Phase 2's "Phase 2.5 parity" claim cannot be met via direct replay — the in-memory stores do not retain raw event history, so re-deriving a Dfp aggregate is impossible. The canonical cutover is therefore a **dual-read window** with explicit replacement semantics: (1) a compatibility adapter (`SlashReputationStoreCompat`, `DcRootedSlashReputationStoreCompat`, `ProviderReputationRegistryCompat`) implements the old public API by reading from the new persisted `ReputationStore`; (2) mission `0968-b-marketplace-integration` (new, RFC-0968-A1.19) owns the marketplace read-side; (3) retirement of the legacy stores is gated on a 24-hour dual-read parity ≥ 0.999 across all `(did, kind, layer)` triples. The `0-100` Reputation Score presentation layer is documented in §22 (RFC-0968-A1.23). Election priority is computed via the adapter in §10 (RFC-0968-A1.20).
 
 ### 8. Transactional and Ordering Semantics (Round 1 finding H4, Round 3 M6, M7)
 
@@ -2487,6 +2525,50 @@ pub struct ReplayRecord {
 /// MUST use the auth-gated factories. Compile-time safety is best-effort;
 /// the runtime registration lookup and Active-state check in record_signal
 /// are the authoritative gate.
+
+/// RFC-0968-A1 (2026-07-26) — Election priority adapter. Replaces the
+/// legacy `stake / (1 + count)` formula from missions 0855p-b/c with a
+/// deterministic Dfp-derived priority anchored in RFC-0968's persisted
+/// aggregate. Caller passes the same `now_unix` used elsewhere; the
+/// function does NOT read a wall clock internally.
+///
+/// Overflow / NaN / null cases:
+///   - score_ewma = NaN → returns `Err(ReputationError::ScoreEncodingInvalid)` (0x28).
+///   - score_ewma = ±Inf → returns `Err(ReputationError::ScoreEncodingInvalid)` (0x28).
+///   - score_ewma = Dfp::ZERO at samples=0 → returns 0 priority (eligible but deprioritized).
+///   - stake = u64::MAX, score_ewma in [0,1] → result fits in u128 (verified by
+///     `MAX_PRIORITY_VALUE = u128::MAX / 1_000_000` test).
+///   - candidate excluded (suspended / revoked) → returns `None`.
+pub fn election_priority(
+    candidate_did: &Did,
+    stake: u64,
+    store: &dyn ReputationStore,
+    layer: ReputationLayer,
+    now_unix: u64,
+) -> Result<Option<u128>, ReputationError> {
+    // 1. Read the canonical aggregate.
+    let agg = store.read_aggregate(candidate_did, SignalKind::Slash, layer, now_unix)?;
+
+    // 2. Excluded recorders cannot be elected.
+    if matches!(agg.kind, SignalKind::Slash) {
+        if let Some(state) = store.recorder_state_at(candidate_did, now_unix) {
+            if !state.is_eligible() {
+                return Ok(None);
+            }
+        }
+    }
+
+    // 3. Clamp score to [0, 1] — negative scores are not penalties, just
+    //    ineligible-priority; the legacy `stake / (1+count)` formula is
+    //    monotonically decreasing, so its minimum is `stake / (1+max_count)`.
+    let score = agg.score_ewma.to_f64().clamp(0.0, 1.0);
+
+    // 4. Priority = stake × score (continuous analog of `stake / (1+count)`
+    //    in the limit of large counts where `1+count ≈ count`, this is
+    //    roughly equivalent; the new formula is precise for any count).
+    Ok(Some((stake as u128).saturating_mul((score * 1_000_000.0) as u128)
+        .saturating_div(1_000_000)))
+}
 ```
 
 ### 11. Audit Trail (Round 1 finding H6 §11, Round 3 H8)
@@ -2494,6 +2576,8 @@ pub struct ReplayRecord {
 Auditors reconstruct a DID aggregate from the latest `aggregate_checkpoint` at or before the pruned-prefix boundary plus retained `reputation_events`, applying retained events in `(received_at_unix, event_id)` order. When no checkpoint exists, replay begins from the initial aggregate. The resulting signed `ReplayRecord` attests to the complete aggregate evolution despite retention. Auditors are read-only; they cannot mutate `reputation_aggregates` or checkpoints.
 
 **Round 3 H8 — Auditors are Readers with audit capability.** Authentication is via `AuditorAuth` (one-shot signed query over `(auditor || did || nonce || current_unix)`). There is **no separate `AuditorRegistration`**: an auditor is simply a `ReaderId` whose `AuditorAuth` includes the audit-purposed nonce. The previous design's claim that "auditor pubkeys are registered alongside recorders (same lifecycle machinery)" was misleading — auditors do NOT go through `register_recorder` and do NOT carry stake. The lifecycle of an auditor is bound to its Reader key, not to a recorder registration row.
+
+**RFC-0968-A1 (2026-07-26) — Nonce replay protection.** A persistent `auditor_nonces(auditor_did, nonce) → observed_at_unix` table enforces replay rejection for the duration of `MAX_AUDITOR_NONCE_TTL_SECS` (default 7 days, operator-tunable via RFC-0927). `replay_for_audit` MUST consume the nonce atomically within the audit query transaction; a duplicate `(auditor_did, nonce)` returns `ReputationError::AuditorNonceReplay` (0x29). Nonce retention is bounded by `MAX_AUDITOR_NONCE_TTL_SECS`; expired entries are pruned during `retention_prune`. This closes the free side-channel into historical state via archived `AuditorAuth` captured from earlier `ReplayRecord` results.
 
 ### 12. Federation (Round 1 finding H6 §12)
 
@@ -2536,7 +2620,7 @@ Merge order: `(received_at_unix, event_id)` ascending. Fork resolution is missio
 | `GossipStale`                 | 0x16     | Drop event older than retention window                                                                           |
 | `StakeBelowMinimum`           | 0x17     | Reject registration; caller must stake ≥ MIN_RECORDER_STAKE                                                      |
 | `StakeProofInvalid`           | 0x18     | Reject registration; governance stake proof must verify                                                          |
-| `ResumeMalformedGrace`        | 0x19     | Reject; grace_until_unix must not precede suspended_at_unix                                                      |
+| `ResumeMalformedGrace`        | 0x19     | **Reserved (RFC-0968-A1, 2026-07-26):** reclaim. The previous definition described `grace_until_unix < suspended_at_unix`, but `current_unix` is typed `u64` and cannot be negative; the actual condition is server-internal row corruption and is correctly reported as `RecorderLifecycleCorrupted` (0x22). The 0x19 code is reserved for a future caller-supplied resume-state error if one is identified. |
 | `GovernanceKeyInactive`       | 0x1A     | Reject; use an active key from the protocol governance registry                                                  |
 | `PayloadDecodeFailed`         | 0x1B     | Reject; typed payload (§9.1) is malformed                                                                        |
 | `AttestationIdMismatch`       | 0x1C     | Reject; recompute the canonical attestation_id                                                                   |
@@ -2552,8 +2636,9 @@ Merge order: `(received_at_unix, event_id)` ascending. Fork resolution is missio
 | `GovernanceSnapshotStale`     | 0x26     | Reject before lookup; obtain a snapshot finalized within `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`                      |
 | `AttestorAuthInvalid`         | 0x27     | Reject; `AttestorAuth` governance signature did not verify over `BLAKE3(BLAKE3_REPUTATION_ATTESTOR_DOMAIN        |     | attestor_did |     | pubkey |     | requested_at_unix)` |
 | `ScoreEncodingInvalid`        | 0x28     | Reject; persisted `score_delta` / `score_ewma` BLOB did not decode as canonical `DfpEncoding` (v3.1-r16 Fix L4)  |
+| `AuditorNonceReplay`          | 0x29     | **New (RFC-0968-A1, 2026-07-26):** Reject; `(auditor_did, nonce)` was previously consumed within `MAX_AUDITOR_NONCE_TTL_SECS`. Persistent `(auditor_did, nonce) → observed_at_unix` table enforces replay protection. Default TTL = 7 days; `MAX_AUDITOR_NONCE_TTL_SECS` is operator-tunable per RFC-0927. |
 
-The enum has 40 variants and this table has 40 unique assignments across `0x01..0x28`; no code is reused. Round 6 M3: `RecorderLifecycleCorrupted` (0x22) replaces the previous `ResumeMalformedGrace` semantics for server-internal assertion; `ResumeMalformedGrace` is retained for caller-supplied malformed resume state. Round 7 H3 adds `GovernanceRegistryError(_)` (0x23) so registry failures are not collapsed to `GovernanceKeyInactive`. Round 7 C2 adds `AttestorAlreadyRegistered` (0x24) and `AttestorNotRegistered` (0x25). Round 8 H1/H2 adds `GovernanceSnapshotStale` (0x26) for the mandatory local freshness check that precedes every snapshot-bound authoritative lookup. Round 9 H1 adds `AttestorAuthInvalid` (0x27) for the `AttestorAuth` governance signature verification failure path. v3.1-r16 Fix L4 adds `ScoreEncodingInvalid` (0x28) for the BLOB-deserialization invariant that rejects malformed `DfpEncoding` payloads before any further processing. Round 10 H2: the enum gains `#[repr(u8)]` with explicit discriminants matching this table 1:1, so the wire-level error code is stable across replicas. Round 10 M1: the table is now monotonic 0x01..=0x28; `Storage(_)` sits at 0x21 between `SuspensionAuthInvalid` (0x20) and `RecorderLifecycleCorrupted` (0x22). 0x29..=0xFF are reserved for future variants.
+The enum has 41 variants and this table has 41 unique assignments across `0x01..0x29`; no code is reused. Round 6 M3: `RecorderLifecycleCorrupted` (0x22) replaces the previous `ResumeMalformedGrace` semantics for server-internal assertion; `ResumeMalformedGrace` is retained for caller-supplied malformed resume state. Round 7 H3 adds `GovernanceRegistryError(_)` (0x23) so registry failures are not collapsed to `GovernanceKeyInactive`. Round 7 C2 adds `AttestorAlreadyRegistered` (0x24) and `AttestorNotRegistered` (0x25). Round 8 H1/H2 adds `GovernanceSnapshotStale` (0x26) for the mandatory local freshness check that precedes every snapshot-bound authoritative lookup. Round 9 H1 adds `AttestorAuthInvalid` (0x27) for the `AttestorAuth` governance signature verification failure path. v3.1-r16 Fix L4 adds `ScoreEncodingInvalid` (0x28) for the BLOB-deserialization invariant that rejects malformed `DfpEncoding` payloads before any further processing. RFC-0968-A1 (2026-07-26): `ResumeMalformedGrace` (0x19) is reserved pending a real caller-supplied resume-state error; `AuditorNonceReplay` (0x29) replaces a free side-channel into historical state via archived `AuditorAuth`. Round 10 H2: the enum gains `#[repr(u8)]` with explicit discriminants matching this table 1:1, so the wire-level error code is stable across replicas. Round 10 M1: the table is monotonic 0x01..=0x29; `Storage(_)` sits at 0x21 between `SuspensionAuthInvalid` (0x20) and `RecorderLifecycleCorrupted` (0x22). 0x2A..=0xFF are reserved for future variants.
 
 ### 14. Performance Targets
 
@@ -2576,6 +2661,10 @@ Reconciled per Round 1 finding M2: 6 kinds × 6 layers = 36 tuples theoretical m
 | `RecorderRegistration`                                                   | `Active → Suspended → Revoked` (or `UnderStaked`, `Stale`, `Expired`, `Unknown` non-Active)                                                                                                        | `suspend_recorder` with `SuspensionAuth`; grace expiry; `Unknown` when `now_unix < registered_at_unix`                                                                                                                                                                                                                                                                                 |
 | `RecorderRegistration` (resume path)                                     | `Suspended → Active`; `Revoked → RegistrationCleared` via `resume_recorder(recorder_id, ResumeProof, GovernanceRegistry, now_unix)`                                                                | active governance-registry key at a fresh `ResumeProof.snapshot` resolved through `lookup_at_snapshot` + signed `ResumeProof` (`MAX_RESUME_DRIFT_SECS` check); stale snapshots return `GovernanceSnapshotStale`; clears lifecycle fields; revoked flow removes the cleared row; Round 6 M3 replaces `ResumeMalformedGrace` with `RecorderLifecycleCorrupted` server-internal assertion |
 | `RecorderRegistration` (re-registration)                                 | `RegistrationCleared → Active` via `register_recorder(req, GovernanceRegistry, now_unix)`                                                                                                          | requires no existing registration row and a fresh proof from an active governance key; `MAX_REGISTRATION_DRIFT_SECS` check; INSERT only, else `RecorderAlreadyRegistered`                                                                                                                                                                                                              |
+| `RecorderRegistration` (RFC-0968-A1: UnderStaked → Active)              | `UnderStaked → Active`                                                                                                               | `top_up_stake(recorder_id, chain_ref, governance_registry, now_unix)` — extends `role_stake_amount` and/or `octo_stake_amount`; verifies the on-chain `stake_lock_ref` chain tx matches the new amount; writes a `StakeTopUpEvent`                                                                                                                                                       |
+| `RecorderRegistration` (RFC-0968-A1: Stale → Active)                     | `Stale → Active`                                                                                                                     | `mark_active(recorder_id, governance_registry, now_unix)` — requires a fresh `last_signal_at_unix = now_unix` and an active governance key; does NOT change stake. The `last_signal_at_unix` field is updated by `record_signal` automatically.                                                                                                                                       |
+| `RecorderRegistration` (RFC-0968-A1: Expired → fresh)                    | terminal (no recovery)                                                                                                               | Expired is terminal when `now_unix - registered_at_unix > MAX_RECORDER_AGE_UNIX`. Re-registration requires a fresh `register_recorder` call with a NEW `recorder_did` (canonical DID rotation) — no in-place reset.                                                                                                                                                                      |
+| `RecorderRegistration` (RFC-0968-A1: grace-derived Revoked)              | `Suspended → Revoked` (after `SUSPENSION_GRACE_UNIX`)                                                                               | treats grace-derived Revoked the same as explicit Revoked. `resume_recorder` clears lifecycle fields only when the underlying `suspended_at_unix` is < `now_unix - SUSPENSION_GRACE_UNIX` AND the `ResumeProof` carries a fresh `GovernanceSnapshot`. New §3 acceptance criterion: re-registration after grace-revocation requires `stake_amount ≥ MIN_RECORDER_DUAL_STAKE × 2` escalating up to `× 10` cap |
 | `SignalEvent` (storage)                                                  | `Recorded → Replayed (gossip)` (Round 6 M7: "Pending" is removed; events are produced only via `record_signal` and immediately `Recorded` on transaction commit — there is no buffer/orphan state) | recording transaction commit, gossip attestation receipt                                                                                                                                                                                                                                                                                                                               |
 | `ReputationAggregate`                                                    | nine-field derived row; rebuilt from `aggregate_checkpoint` + retained events ordered by `(received_at_unix, event_id)`                                                                            | rebuild on schema migration, retention audit, or corruption recovery                                                                                                                                                                                                                                                                                                                   |
 | `Attestation`                                                            | created once; never mutated (persisted row; not authority)                                                                                                                                         | `record_attestation` (Round 3 C7); idempotent on `(attestor, event_id)`                                                                                                                                                                                                                                                                                                                |
@@ -2599,7 +2688,7 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 | `Did::rotate`                 | A     | Pure verification and receipt construction from explicit `now_unix`                                                                                                                                                                                                                                                         |
 | `record_signal`               | B     | EWMA update (Dfp arithmetic) + authenticated write; deterministic for `(event, now_unix)`                                                                                                                                                                                                                                   |
 | `read_aggregate`              | A     | Pure DB read                                                                                                                                                                                                                                                                                                                |
-| `cross_layer_query`           | A     | Pure DB read (Dfp-weighted AVG at the SQL layer is bit-deterministic)                                                                                                                                                                                                                                                       |
+| `cross_layer_query`           | B     | Rust-side aggregation over hydrated Dfp BLOBs from `reputation_aggregates` (Amendment RFC-0968-A1, 2026-07-26). The previous SQL-layer claim was unprovable: `score_ewma` is stored as a 24-byte BLOB, and stoolap does not natively multiply BLOB-encoded Dfp values. The composite query is computed in Rust with deterministic Dfp arithmetic: `composite = Σ(weight_k × score_ewma_k) / Σ(weight_k) × confidence(samples_k)`, with sample-count weighting preventing one-sample aggregates from dominating. Class B holds given identical input event sequences; Class A is only valid after the post-mutator (event log + aggregate table) reaches identical state across replicas. |
 | `sliding_window`              | B     | Time-bounded; same query timestamps produce the same result                                                                                                                                                                                                                                                                 |
 | `replay_for_audit`            | A     | Canonical ordered read and deterministic aggregate recomputation (Dfp BLOB byte-equal)                                                                                                                                                                                                                                      |
 | `retention_prune`             | B     | Authenticated time-bounded write (Round 6 M2: takes caller-supplied `now_unix`)                                                                                                                                                                                                                                             |
@@ -2642,6 +2731,7 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 - **Replay attacks:** `event_id` BLAKE3 dedup + monotonic `received_at_unix`.
 - **Determinism violations:** EWMA alpha fixed per layer; pure function over `octo_determin::Dfp`. v1.0 uses `Dfp` (RFC-0104), so cross-replica determinism is achieved at the type level — no `f64` migration path exists.
 - **Clock skew:** Bounded by `received_at_unix - observed_at_unix < 1s` (configurable).
+- **RFC-0968-A1 (2026-07-26, I-6) — Caller-supplied `now_unix` at API boundary.** All `ReputationStore` write APIs (`register_recorder`, `resume_recorder`, `record_signal`, `consume_rotation_receipt`, `suspend_recorder`, `record_attestation`, `register_attestor`, `retention_prune`) take an explicit `now_unix: u64` parameter. At an RPC/API boundary, this `now_unix` is the receiving service's trusted-clock value, NOT a caller-supplied value. A public RPC MUST NOT accept caller-supplied time; the implementation wraps the trusted clock in a `Clock` trait and rejects RPC requests that pass a `now_unix` field at the API boundary (suspension / resume / rotation proofs carry the timestamp inside the signature, not as a separate parameter). This closes the stale-proof replay attack (Session 1 I-6) where an attacker could replay an old stake/resume/suspension proof by passing the original timestamp.
 - **Payload deserialization attacks:** Bounded by `signal_kind` discriminator + typed Rust deserializer (no `Deserialize_any`).
 
 ### 19. Adversarial Review
@@ -2662,36 +2752,50 @@ Retention is an authenticated soft-prune. `retention_prune(auth, now_unix)` mark
 **Decision: recorder write authority via signature + stake**
 
 1. **Who benefits?** — Sybil cluster owner wanting to boost own reputation.
-2. **Cost?** — Recorder stake (≥1000 OCTO role-token), recorder key, valid ed25519 signature per event. Total per-signal cost: ~5 ms CPU (signature verify + EWMA + DB write) + stake opportunity cost.
+2. **Cost?** — Recorder stake (≥1000 OCTO role-token + ≥4000 OCTO sovereign per dual-stake model, token-design §11), recorder key, valid ed25519 signature per event. Total per-signal cost: ~5 ms CPU (signature verify + EWMA + DB write) + stake opportunity cost.
 3. **Gain?** — Up to `floor(stake / MIN_RECORDER_STAKE)` concurrent recorders per Sybil owner; each can submit N events per rate-limit window.
-4. **Defense?** — (a) `record_signal` verifies ed25519 signature over `BLAKE3(BLAKE3_REPUTATION_EVENT_DOMAIN || canonical_ser(event_unsigned))`; (b) rejects if `recorder.state() != Active`; (c) audit replay of `reputation_events` by `AuditorId` exposes anomalies; (d) cross-layer `AVG` flags inconsistencies (a coordinator with high slash count can't simultaneously have high Outcome score).
-5. **Residual risk: Moderate — justified.** Recorder stake + signature + audit replay raise the cost of undetected fraud above the gain for honest-signal flooding. For dishonest-signal flooding, signature binds identity, so the recorder is slashable. Sybil still works for honest signals (rate-limited) but cannot launder dishonestly without being detected via cross-layer anomaly.
+4. **Defense?** — (a) `record_signal` verifies ed25519 signature over `BLAKE3(BLAKE3_REPUTATION_EVENT_DOMAIN || canonical_ser(event_unsigned))`; (b) rejects if `recorder.state() != Active`; (c) audit replay of `reputation_events` by `AuditorId` exposes anomalies; (d) cross-layer `cross_layer_query` (Class B, Rust-side) flags inconsistencies (a coordinator with high slash count can't simultaneously have high Outcome score); (e) `severity_emitted_total` per-recorder cross-aggregate counter (Amendment RFC-0968-A1) makes the slash threshold substrate-independent, so a recorder cannot avoid suspension by partitioning slashes across many `(subject, kind, layer)` triples; (f) per-subject admission for non-Slash signals (Amendment RFC-0968-A1) requires co-signature from the subject DID or a per-subject stake bond, so the subject pool cannot manufacture reputation for unbounded fresh DIDs.
+5. **Residual risk: Re-evaluated per Amendment RFC-0968-A1, 2026-07-26.** The previous "Moderate" rating was justified on prose, not on quantified attack economics. The current cost-vs-defense table:
+
+| Attack | Attacker cost | Defender cost | Residual ratio |
+|--------|--------------|---------------|----------------|
+| Subject pool 10k | 1,000 OCTO + ~1 hr CPU | 0 (no automated detection) | ∞ until per-subject admission lands |
+| Slash farm 5/mo | ~30,000 OCTO/mo | 0 | ∞ until on-chain slash ledger lands |
+| Rotation pyramid 100/hr | 1,000 OCTO + ~1 hr CPU + 100 ed25519 keys | 0 | ∞ until rotation cooldown/depth/fee lands |
+| Election flip | ~400,000 OCTO | 80,000 OCTO (honest validator) | 5× honest |
+| Attestor spam | ~6.22 GB egress/day | 0 | ∞ until attestor rate limit + quorum lands |
+
+Residual ratio without the Amendment defenses is unbounded on 4 of 5 attacks. With the Amendment defenses (per-subject admission, on-chain slash ledger, rotation cooldown/depth/fee, attestor rate limit), the ratios converge to single-digit attacker/honest-cost multiples, comparable to honest-validator economics. Until all four Amendment defenses ship, **the recorded residual is Critical, not Moderate**.
 
 **Decision: single canonical DID encoding**
 
 1. **Who benefits?** — Attacker wanting to split reputation across noncanonical forms.
 2. **Cost?** — None (was free before).
 3. **Gain?** — Two reputation aggregates for same identity: one low (slash), one high (outcome).
-4. **Defense?** — `Did::parse` rejects raw 32-byte keys. `Did::rotate` requires ed25519 proof over `(old || new)`; decay factor 0.9 applied to the migrated aggregate.
-5. **Residual risk: Low.** Noncanonical encodings no longer parse; rotation is observable.
+4. **Defense?** — `Did::parse` rejects raw 32-byte keys and legacy `did:octo:z...` strings. `Did::rotate` requires ed25519 proof over `(old || new)`; decay factor 0.9 applied to the migrated aggregate; rotation event has `did = new_did` per Round 6 H5; old-DID tombstones (Amendment RFC-0968-A1) prevent the post-rotation recreation attack.
+5. **Residual risk: Low.** Noncanonical encodings no longer parse; rotation is observable; tombstone prevents post-rotation DID recreation.
 
-**Decision: cross-layer AVG with per-kind normalizers**
+**Decision: cross-layer aggregation with sample-count weighting (Amendment RFC-0968-A1)**
 
 1. **Who benefits?** — Attacker wanting to mask bad signals with good ones via different layers.
-2. **Cost?** — Need to register recorders in multiple layers (each ≥1000 OCTO stake).
-3. **Gain?** — Composite score hidden by weight dilution.
-4. **Defense?** — Per-kind normalizer maps each kind to `[-1, 1]` so AVG is meaningful; weights table is static and audited; cross-layer audit reveals per-kind breakdown.
-5. **Residual risk: Low.** Per-kind normalization + weighted AVG + audit trail.
+2. **Cost?** — Need to register recorders in multiple layers (each ≥5000 OCTO dual stake).
+3. **Gain?** — Composite score hidden by weight dilution or by one-sample-aggregate dominance.
+4. **Defense?** — Per-kind normalizer maps each kind to `[-1, 1]`; sample-count weighting `weight ∝ min(samples_k, MAX_RELIABILITY_SAMPLES)` (Bayesian shrinkage) prevents a fresh 1-event aggregate from having full composite influence; minimum evidence threshold (e.g., `samples_total ≥ 30`) masks below-threshold rows from the composite; cross-layer audit reveals per-kind and per-sample breakdown.
+5. **Residual risk: Low (after Amendment).** Per-kind normalization + sample-count weighting + minimum-evidence mask + audit trail.
 
 ### 21. Economic Analysis
 
 - **Storage cost:** ~200 bytes per `(DID × kind × layer)` aggregate tuple; ~720 bytes per event. At 100k DIDs × 36 tuples = 3.6M tuples = ~720 MB aggregate. Events table scales with throughput; bounded by 90-day retention.
-- **Recorder stake:** 1000 OCTO role-token minimum per recorder (per token-design §12 dual-stake model).
+- **Recorder stake:** 1000 OCTO role-token minimum + 4000 OCTO sovereign = 5000 OCTO dual stake per recorder (Amendment RFC-0968-A1, 2026-07-26; per token-design §11 dual-stake model). RecorderRegistration stores `octo_stake_amount: u64` and `role_stake_amount: u64` separately; aggregate `stake_amount = octo + role` ≥ 5000.
+- **On-chain stake lock:** Each recorder registration carries `stake_lock_ref: ChainRef` (tx-hash + lock-script reference, Amendment RFC-0968-A1). Compliance is no longer just an integer assertion; the implementation verifies the chain-side lock and refuses registration if the lock proof is missing or stale. `suspend_recorder` triggers an on-chain `slash(recorder, amount, reason)` transaction whose proof is persisted as a chained `SlashEvent`.
+- **Slash destination:** `slash_destination: SlashDestination` enum (`Treasury | Burn | RewardValidator { did }`) per token-design §9 (Amendment RFC-0968-A1). Off-chain RecorderRegistration mutations are reconciled with on-chain slash transactions in the same transaction (or atomically chained via the governance registry).
+- **Fresh stake on re-entry:** Resume after grace-revocation requires `stake_amount ≥ MIN_RECORDER_STAKE × 2` escalating up to `× 10` cap. Grace-derived Revoked is treated like explicit Revoked (Amendment RFC-0968-A1): re-registration requires fresh collateral AND a clearing-from-superseded-aggregate transaction.
 - **No reputation token:** Reputation is derived signal, not balance. No `OCTO-R` implied.
 
 ### 22. Compatibility
 
 - **Backward:** Existing in-memory stores (`SlashReputationStore`, `ProviderReputationRegistry`) keep their public API. Persistence is internal (shadow write in Phase 1, full read in Phase 2).
+- **Public presentation layer (Amendment RFC-0968-A1):** The Reputation Score presentation (e.g., `0-100` from whitepaper v0.1 §6) is a derivation, not a stored value. The persisted primitive is `octo_determin::Dfp` `score_ewma` in `[-1, 1]`. The `0-100` projection is computed at read time as `round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))` and is documented here for backward compatibility with `docs/01-foundation/whitepaper/v0.1-draft.md` §6 (GRS/RRS) and the GLOSSARY entry. **The presentation value never feeds protocol calculations**: routing priority, election deprioritization, and severity suspension compute against the canonical Dfp BLOB only.
 - **Forward:** New signal kinds added via enum extension (no DDL). Layers added similarly.
 - **Wire:** stoolap's serialized form is implementation-defined; no wire schema required. Gossip wire format follows Mission 0855p-b.
 
@@ -2970,6 +3074,92 @@ Round 13 closes the governance authorization binding structural flaw:
 - **F3**: Cross-mission gossip integration (mission 0855p-b).
 
 Reputation tokenization is not future work for this RFC: reputation remains a derived signal, not a token or balance.
+
+## 28. Amendments (RFC-0968-A1, 2026-07-26)
+
+**Status:** This section records amendments to RFC-0968 since its promotion to Accepted on 2026-07-25. The amendments below have been folded in place (`§16`, `§20`, `§21`, `§22`); no separate amendment document is maintained per BLUEPRINT.md amendment procedure.
+
+**Authors:** @cipherocto, @mmacedoeu (RFC-0968-A1).
+**Trigger:** 5-session adversarial review documented at `docs/plans/2026-07-26-rfc0968-review-session-{01..05}-*.md` (25 CRITICAL findings, 11 IMPORTANT, ~13 MINOR, ~17 refutations, plus peer-session contributions).
+
+### 28.1 Economic and Sybil Defenses
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 1 | `RecorderRegistration` carries two independent stake fields: `octo_stake_amount: u64`, `role_stake_amount: u64`. Aggregate `stake_amount = octo + role` ≥ 5000 (1000 role + 4000 sovereign). | §3, §21 | Session 1 C-A2; Session 4 m-Y3 |
+| 2 | `RecorderRegistration.stake_lock_ref: ChainRef` (tx-hash + lock-script reference). Registration verifies on-chain lock; suspend triggers on-chain `slash()` transaction. | §3, §21 | Session 1 C-A2; Session 4 C-Z2 |
+| 3 | `slash_destination: SlashDestination` enum (`Treasury \| Burn \| RewardValidator`). | §21 | Session 4 m-Y4 |
+| 4 | Per-recorder `severity_emitted_total: u64` counter. `suspend_recorder_self_check` threshold (`SUSPENSION_SEVERITY_THRESHOLD = 5`) increments on every Slash event the recorder emits, regardless of `(subject, kind, layer)` partition. | §3, §15 | Session 1 I-1; Session 4 C-Z3 |
+| 5 | Grace-derived Revoked records register with `stake_amount ≥ MIN_RECORDER_STAKE × 2` escalating up to `× 10` cap. | §3, §21 | Session 1 I-2; Session 4 C-Z4 |
+| 6 | Per-subject admission for non-Slash signals: requires co-signature from subject DID OR a per-subject stake bond (e.g., 100 OCTO role-token). Slash signals are governance-issued and exempt. | §3 | Session 1 C-A1; Session 4 C-Z1 |
+| 7 | Rotation cooldown `MAX_ROTATIONS_PER_DAY_PER_SUBJECT = 1`; lineage depth `≤ 3`; rotation fee 100 OCTO burned on-chain. | §2.1 | Session 1 I-3; Session 4 I-Y6 |
+
+### 28.2 Cross-Layer Aggregation Correctness
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 8 | `cross_layer_query` reclassified to Class B (Rust-side). The previous "Dfp-weighted AVG at the SQL layer is bit-deterministic" claim was unprovable: `score_ewma` is a 24-byte BLOB and stoolap cannot multiply BLOB-encoded Dfp values natively. | §16 | Session 1 C-B4/C-C1; Session 2 I-P11 |
+| 9 | Sample-count weighting `weight ∝ min(samples_k, MAX_RELIABILITY_SAMPLES)` (Bayesian shrinkage). One-sample aggregates do not have full composite influence. Minimum evidence threshold masks below-threshold rows. | §9 | Session 1 I-8; Session 4 I-Y8 |
+
+### 28.3 Lifecycle, Rotation, Tombstones
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 10 | Old-DID tombstone on consume_rotation_receipt. Post-rotation events for `old_did` are rejected (or canonicalized to `new_did`). Prevents identity-abandonment laundering. | §2.1 | Session 1 C-A3; Session 2 C-P1 |
+| 11 | Seven-state lifecycle transition matrix specified explicitly for all states: Active, Suspended, Revoked, UnderStaked, Stale, Expired, Unknown. UnderStaked/Stale/Expired have explicit recovery or terminal APIs. | §15 | Session 1 C-B3 |
+| 12 | `kind_weights` migration seeded deterministically with all scored kinds; Rotation omitted. Immutability or version-timestamp upgrade path defined. | §5, §9 | Session 1 C-B5 |
+| 13 | Checkpoint ID derivation: `BLAKE3(BLAKE3_REPUTATION_CHECKPOINT_DOMAIN \|\| did \|\| signal_kind \|\| layer \|\| checkpoint_event_id)`. Audit replay picks the checkpoint with max `checkpoint_event_id`. | §5, §11 | Session 2 C-P3 |
+| 14 | Checkpoint authority choice: either (a) pointer model with auditor recomputation, or (b) authoritative snapshot with deterministic prune rule yielding byte-equal EWMA. Prior ambiguity closed. | §11, §16 | Session 2 C-P4 |
+| 15 | Auditor nonce replay protection: persistent `(auditor_did, nonce)` table with `MAX_AUDITOR_NONCE_TTL_SECS`; error variant `AuditorNonceReplay = 0x29`. | §11, §13 | Session 2 C-P2 |
+| 16 | Attestor rate limit + quorum for `replay_for_audit`: `MIN_ATTESTOR_QUORUM = 3`. Absence of quorum fails-closed. `GossipCatchUp { attestor_did, since_event_id }` wired over federation. | §12 | Session 2 I-P7 |
+| 17 | Federated suspension certificate: signed snapshot binding `(recorder_did, reason_hash, frozen_at_unix)`. Election consumers require `freshness_max_secs` import or fail-closed. | §12 | Session 3 I-X1 |
+
+### 28.4 Adapter Cutover and Cross-Mission Bridges
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 18 | Compatibility adapter / dual-read cutover for `SlashReputationStore` (mon), `DcRootedSlashReputationStore` (dc), `ProviderReputationRegistry` (marketplace). Exact mapping rules per signal kind + dual-read window until cutover completes. | §7 | Session 2 C-P5; Session 3 I-X5 |
+| 19 | New mission `0968-b-marketplace-integration`: `Marketplace::cheapest_with_ranking` consumes `cross_layer_query`; `set_min_reputation` threshold expressed in `Dfp`; listing display shows `(composite_score, did)` from RFC-0968, not legacy `ProviderScore`. | §25 | Session 3 C-X3 |
+| 20 | Election priority adapter spec in §10: `election_priority(did, stake) = stake × read_aggregate(did, Slash, layer).score_ewma.to_f64().clamp(0.0, 1.0)`. Overflow / NaN / null cases tested. | §10, §20 | Session 3 I-X5; Session 4 I-Y5 |
+| 21 | Mission cluster inheritance: 0855p-b/c envelopes carry canonical DID + recorder event authority; coordinator/attestor signatures are non-authoritative transport metadata. | §7, §12 | Session 3 C-X4 |
+| 22 | Pubkey-keyed gossip topics replaced with canonical-DID-keyed topics. Replication payload includes `rotation_receipt` + `old_did/new_did` lineage map. | §12 | Session 3 C-X5 |
+
+### 28.5 Presentation Layer
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 23 | `0-100` Reputation Score is a presentation-layer derivation `round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))`, computed at read time. Documented in `§22` for backward compatibility with whitepaper v0.1 §6 (GRS/RRS) and `docs/00-meta/GLOSSARY.md`. | §22 | Session 3 C-3, m-X9 |
+| 24 | CLI surface ownership: `quota-router reputation show --did <did>` is owned by mission 0968-b as Phase 3 acceptance. | §26 | Session 3 m-X8 |
+
+### 28.6 Governance Capture and API Boundary
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 26 | `GovernanceProof.governance_set_hash: [u8; 32]` field. Implementation MUST verify the active-set digest at the snapshot where `governance_pubkey` is active. `GOVERNANCE_QUORUM = 3` constant. Single-key-compromise attack (Session 1 I-5) closed. | §3 | Session 1 I-5 |
+| 27 | Trusted-clock wrapper at the API boundary. Caller-supplied `now_unix` is rejected at public RPC entrypoints; the receiving service supplies its trusted-clock value. Suspension / resume / rotation proofs carry the timestamp inside the signature, not as a separate parameter. Closes stale-proof replay (Session 1 I-6). | §18 | Session 1 I-6 |
+
+### 28.6 Documentation Hygiene
+
+| # | Amendment | Section | Source review |
+|---|-----------|---------|---------------|
+| 25 | `Suspensions of RFC status` removed: this is RFC-0968 (Accepted); future amendments follow the BLUEPRINT amendment procedure (RFC-X-Y for amendment number). No version pins or status paraphrases in cross-references. | — | `[[rfc-referencing-convention]]` |
+
+### 28.7 Resolved Open Questions
+
+The following Open Questions from §27 are closed by the amendments above:
+
+| OQ # | Topic | Closed by |
+|------|-------|-----------|
+| OQ-3 | Cross-layer arithmetic determinism | §16 (amendment 8) + §9 (amendment 9) |
+| OQ-5 | Stake model (single vs dual) | §21 (amendment 1) |
+| OQ-7 | Grace-derived Revoked re-registration | §3 (amendment 5) |
+| OQ-9 | SignalKind extension policy | §9.1 (post-amendment: enum + BLOB, §28.12) |
+| OQ-11 | Pruned-prefix replay | §5, §11 (amendments 13, 14) |
+| OQ-V4 | Governance quorum | **Closed (RFC-0968-A1, I-5):** `GOVERNANCE_QUORUM = 3` constant + `GovernanceProof.governance_set_hash: [u8; 32]` field. Implementation MUST verify the active-set digest at the snapshot where `governance_pubkey` is active. Single-key-compromise attack closed (Session 1 I-5). |
+
+Outstanding OQs deferred to RFC-0968-A2 (next amendment round) or to mission 0968a on-chain anchoring.
+
+---
 
 ## Rationale
 

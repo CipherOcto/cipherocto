@@ -1,12 +1,24 @@
+> **SUPERSEDED by RFC-0968** (Accepted 2026-07-25).
+> Canonical execution plan: `missions/claimed/0968-reputation-persistence.md`.
+> RFC-0968 §7 (Adapter Mapping Rules) and §25 (Implementation Phases) are the
+> authoritative design. This file is retained for historical reference only —
+> it pre-dates the RFC and uses an incompatible model (`wallet: Address`,
+> `score: u8 0-100`, 5-tier multipliers, "on-chain" storage) that contradicts
+> RFC-0968's DID-keyed recorder events + `octo_determin::Dfp` EWMA + 7-state
+> lifecycle + deferred anchoring. A marketplace integration mission owns
+> the read side (listing display, routing priority).
+
 # Mission: Reputation System
 
 ## Status
-Open
+Superseded (was Open 2026-06-16 → moved to `missions/archived/superseded/` 2026-07-26 per BLUEPRINT Mission Lifecycle supersession procedure)
 
 ## RFC
-RFC-0100: AI Quota Marketplace Protocol
-RFC-0101: Quota Router Agent Specification
-RFC-0102: Wallet Cryptography Specification
+RFC-0100: AI Quota Marketplace Protocol *(historical reference only)*
+RFC-0101: Quota Router Agent Specification *(historical reference only)*
+RFC-0102: Wallet Cryptography Specification *(historical reference only)*
+
+**Superseded by RFC-0968** (Accepted 2026-07-25).
 
 ## Blockers / Dependencies
 

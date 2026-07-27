@@ -1,0 +1,26 @@
+[package]
+name = "octo-reputation"
+version = "0.1.0"
+edition = "2021"
+description = "CipherOcto Reputation Registry per RFC-0968 — Phase 1 (types + storage + recorder authorization)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+
+[dependencies]
+# Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
+octo-determin = { path = "../../determin" }
+# Hashing — 13 reputation domain separators + governance-set domain + RetirementEligibility envelope
+blake3 = "1.5"
+# Error enum with `#[repr(u8)]` discriminants 0x01..=0x39
+thiserror = "1"
+# Serialize/Deserialize on wire types
+serde = { version = "1.0", features = ["derive"] }
+# Hex / binary helpers for blob types
+hex = { version = "0.4", features = ["serde"] }
+# Async runtime for storage layer (Session 2)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

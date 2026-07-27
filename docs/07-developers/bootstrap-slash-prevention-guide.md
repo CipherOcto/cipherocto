@@ -53,9 +53,16 @@ byte-equality gate (RFC-0968 §21 + §23): the three slash fields
 byte-compared to the signed preimage
 `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || dest.canonical_bytes || amount_be || asset_byte || governance_pubkey || now_unix)`
 BEFORE any chain tx. A `caller_arg != signed_field` mismatch returns
-`ReputationError::SlashDestinationMismatch = 0x35`. This makes a
-"suppress-destination-on-chain" attack impossible even if the
-governance set is briefly compromised.
+`ReputationError::GovernanceSlashFieldMismatch = 0x17` (API-boundary
+gate, with `MismatchField` tag `0xD1..=0xD3` identifying which
+slash field mismatched) — distinct from the store-level
+`SlashDestinationMismatch = 0x16` which fires only when the proof's
+`slash_destination` is `None`. The `0x35` discriminator cited in
+earlier versions of this guide is the aspirational RFC-0968 §13
+target once the error enum is renumbered per audit doc
+`docs/07-developers/rfc0968-ac-audit-2026-07-27.md` §Backlog
+item 1. This makes a "suppress-destination-on-chain" attack
+impossible even if the governance set is briefly compromised.
 
 ## Best practices for bootstrap node operators
 

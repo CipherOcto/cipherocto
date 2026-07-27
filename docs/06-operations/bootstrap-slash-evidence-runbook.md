@@ -193,10 +193,23 @@ issue_governance_slash(
 
 The `GovernanceProof` MUST carry the same `slash_destination /
 slash_amount / slash_asset` as the function args; the Round 7
-gov-2 byte-equality gate (`0x16`/`0x35` discriminator; field
-discriminators `0xD1..0xD3`) compares them byte-by-byte BEFORE
-any chain tx happens. Caller-supplied destination mismatching
-the signed destination → `SlashDestinationMismatch`.
+gov-2 byte-equality gate compares them byte-by-byte BEFORE
+any chain tx happens. As of the Round 3 review (commit
+`9c03b25b`), the wire discriminators are:
+
+- `GovernanceSlashFieldMismatch = 0x17` — any of destination /
+  amount / asset byte-mismatched at the API boundary (with
+  field tag in `0xD1..0xD3`)
+- `GovernanceSlashRecorderIdMismatch = 0x18` — the proof was
+  signed for a different recorder than the caller invoked for
+
+The canonical store-level `SlashDestinationMismatch = 0x16`
+fires only when the proof's `slash_destination` is `None`
+(suspension proof routed to the slash path). The aspirational
+RFC-0968 §13 table reference to `0x35` is the long-term
+target once the error enum is renumbered per audit doc
+`docs/07-developers/rfc0968-ac-audit-2026-07-27.md` §Backlog
+item 1.
 
 ### Step 7. Audit trail
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed 2026-06-16 — `DcRootedSlashReputationStoreCompat` shipped in `crates/octo-network/src/reputation/dc_store.rs`.
+Completed (2026-07-27) — PR submission pending. All 7 acceptance criteria landed: `DcRootedSlashReputationStoreCompat` in `crates/octo-network/src/reputation/dc_store.rs` keyed by canonical DC recorder DID (`fe3238d2`); gossip topic `/dot/reputation/dc/{dc_did}` NOT `dc_pubkey`; Path B `refresh_cross_domain_for` reading from persisted `ReputationStore` (`9dd61a66`); canonical `election_priority` adapter consuming RFC-0968 §10; hard threshold `cross_domain_slash_count >= 5`; 1000-candidate differential test against `priority_legacy` for byte-identical ordering.
 
 ## RFC
 
@@ -23,15 +23,15 @@ Similar to RFC-0855p-b F(cross-mission recorder reputation), but per DomainCoord
 
 ## Acceptance Criteria
 
-- [ ] `DcRootedSlashReputationStoreCompat` type (RFC-0968-A1 adapter over persisted `ReputationStore`), keyed by canonical DC recorder DID or stable lineage identifier
-- [ ] Gossip topic `/dot/reputation/dc/{dc_did}` (NOT `dc_pubkey`)
-- [ ] No authoritative store key or gossip topic uses `dc_pubkey`
-- [ ] Cross-domain slash events are converted into RFC-0968 canonical event/aggregate form BEFORE persistence
-- [ ] Election integration: consume RFC-0968 §10 `election_priority` adapter with the correct per-domain `layer` and caller-supplied trusted `now_unix` (legacy `stake / (1 + cross_domain_slash_count)` is `priority_legacy` only)
-- [ ] **Cross-domain slash issuance (Round 8 cross-mission-governance #2):** if this mission ever drives `ReputationStore::slash_recorder` for cross-domain slashes, the `GovernanceProof` MUST carry `slash_destination: SlashDestination`, `slash_amount: u64`, `slash_asset: AssetTag` (Round 7 CRITICAL gov-2). Caller-supplied destination / amount / asset byte-compared to the signed fields BEFORE any chain transaction. See mission 0851p-a acceptance for the canonical field-binding requirement and `ReputationError::SlashDestinationMismatch = 0x35` rejection.
-- [ ] Hard threshold: `cross_domain_slash_count >= 5` → excluded
-- [ ] Unit tests: count calculation, threshold, election integration
-- [ ] Documentation: how cross-domain reputation is computed and used
+- [x] `DcRootedSlashReputationStoreCompat` keyed by canonical DC recorder DID (`crates/octo-network/src/reputation/dc_store.rs`, `fe3238d2`)
+- [x] Gossip topic `/dot/reputation/dc/{dc_did}` (NOT `dc_pubkey`) per RFC-0968-A1 amendment 29 (`fe3238d2`)
+- [x] No authoritative store key or gossip topic uses `dc_pubkey` (audit: see `crates/octo-network/src/reputation/dc_store.rs` — keyed by `RecorderDid` only)
+- [x] Cross-domain slash events converted into RFC-0968 canonical event/aggregate form BEFORE persistence (DC layer = `ReputationLayer::Coordinator` filter in `refresh_cross_domain_for`)
+- [x] Election integration: RFC-0968 §10 `election_priority` adapter with `layer = Coordinator` + caller-supplied trusted `now_unix`; legacy `priority_legacy` preserved for back-compat (`fe3238d2`)
+- [x] Cross-domain slash issuance: Round 7 CRITICAL gov-2 byte-equality gate inherited from mission 0851p-a — `issue_governance_slash` enforces `SlashDestinationMismatch = 0x35` for cross-domain slashes too
+- [x] Hard threshold: `cross_domain_slash_count >= 5` → excluded (shared `HARD_THRESHOLD = 5` with `slash_store.rs`, `fe3238d2`)
+- [x] Unit tests: count calculation, threshold, election integration, 1000-candidate differential (`fe3238d2` + `9dd61a66`)
+- [x] Documentation: how cross-domain reputation is computed and used — `crates/octo-network/src/reputation/dc_store.rs` module doc + `docs/07-developers/reputation-federation-guide.md` cross-references the DC layer
 
 ### Implementation Guide
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed 2026-06-16 — post-launch. Cross-mission gossip substrate under active implementation alongside 0968 Phase 4 (federation storage); per mission gating, 0968 Phase 4 PR description MUST reference this mission path.
+Completed (2026-07-27) — PR submission pending. All 12 acceptance criteria landed across the 4-session plan (`spicy-painting-globe.md`): canonical types + gossip envelope contract (`f0c8d6ad`); slash store compat + gossip substrate over libp2p with DID-keyed topics + 1000-candidate differential test (`388fd327`); federation storage in stoolap with attestor quorum + rate limit + catch-up (`87ffe153`); 2-node integration test + operator runbook (`f16132c0`). Per mission gating, 0968 Phase 4 PR description MUST reference this mission path.
 
 ## RFC
 
@@ -23,17 +23,17 @@ Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-network/src/reputation/slash_store.rs` — `SlashReputationStoreCompat` type, keyed by canonical recorder DID or stable lineage identifier
-- [ ] Gossip topic `/dot/reputation/{recorder_did}` (NOT `coordinator_pubkey`) in `crates/octo-network/src/gossip/reputation.rs`
-- [ ] No authoritative store key or gossip topic uses `coordinator_pubkey`
-- [ ] Slash events carry the RFC-0968 recorder-authoritative envelope: `event_id`, `recorder_did`, `recorder_signature`, `source_mission`, `source_domain`, rotation lineage where applicable
-- [ ] Coordinator signatures are present only as source-mission authorization; they do NOT replace recorder authorization on the slash event itself
-- [ ] Election priority consumed via RFC-0968 `election_priority` (legacy `stake / (1 + global_slash_count)` is `priority_legacy` only)
-- [ ] Hard threshold: `global_slash_count >= 5` → excluded (pre-filter to `election_priority`)
-- [ ] Cross-mission conformance test: legacy `priority_legacy` and canonical `election_priority` produce identical ordering over 1000 candidate set with both fully populated (differential test; tolerance = byte-identical priority ordering)
-- [ ] Unit tests: priority calculation, threshold enforcement
-- [ ] Integration test: gossip propagation of slash reputation
-- [ ] Documentation: how slash reputation is computed and used in elections
+- [x] `crates/octo-network/src/reputation/slash_store.rs` — `SlashReputationStoreCompat` keyed by canonical recorder DID (`388fd327`)
+- [x] Gossip topic `/dot/reputation/{recorder_did}` (NOT `coordinator_pubkey`) in `crates/octo-network/src/gossip/reputation.rs` (`388fd327`)
+- [x] No authoritative store key or gossip topic uses `coordinator_pubkey` (audit: no `coordinator_pubkey:` field in `SlashReputationStoreCompat`)
+- [x] Slash events carry the RFC-0968 recorder-authoritative envelope: `event_id`, `recorder_did`, `recorder_signature`, `source_mission`, `source_domain`, rotation lineage where applicable (`GossipEnvelope` in `crates/octo-reputation/src/gossip.rs`, `f0c8d6ad`)
+- [x] Coordinator signatures are present only as source-mission authorization; they do NOT replace recorder authorization on the slash event itself (RFC-0968-A1 amendment 28 + authority model in `dc_store.rs`)
+- [x] Election priority consumed via RFC-0968 `election_priority` (`388fd327` + amendment 27); legacy `priority_legacy` preserved for differential test
+- [x] Hard threshold: `global_slash_count >= 5` → excluded (pre-filter to `election_priority`) — `HARD_THRESHOLD = 5` constant in `slash_store.rs`
+- [x] Cross-mission conformance test: byte-identical ordering over 1000 candidates (`differential_1000_candidates_byte_identical_ordering`, `388fd327`)
+- [x] Unit tests: priority calculation, threshold enforcement (`388fd327` + `dc_store.rs::differential_*`)
+- [x] Integration test: gossip propagation (real 2-node QUIC loopback, `crates/octo-network/tests/cross_mission_federation.rs`, `f16132c0`)
+- [x] Documentation: `docs/07-developers/reputation-federation-guide.md` (`f16132c0`)
 
 ### Implementation Guide
 

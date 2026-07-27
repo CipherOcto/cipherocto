@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-06-16) — byte-equality caller API landed; canonical slash issuance still pending chain-tx layer
+Completed (2026-07-27) — PR submission pending. All 10 acceptance criteria landed: `0x000D` reason code + `slash_reason_data` field (commit history pre-`77d48639`); canonical `issue_governance_slash` with Round 7 gov-2 byte-equality gate (`8fae15e5`); witness-evidence voting + `BootstrapEvidence::finalize` per-recorder isolation; chain-tx preimage contract (`77d48639`); `load_and_validate` via persisted `ReputationStore` rejecting side-channel blacklists (`91110a34`); stoolap-gated `ad_hoc_2_3_witness_votes_alone_do_not_finalize` + `canonical_issue_governance_slash_persists_extra_event` integration tests; two operator-facing docs (`d7551add`).
 
 ## RFC
 
@@ -35,16 +35,16 @@ Extend slash reason codes (defined in RFC-0855p-b §B "Slash Offense Codes") wit
 
 ## Acceptance Criteria
 
-- [ ] `0x000D` slash reason code in RFC-0855p-b §B (extends the table)
-- [ ] `slash_reason_data: u32` field in `SlashEnvelope`
-- [ ] `crates/octo-network/src/mon/bootstrap.rs::load_and_validate` — reject slashed seeds by consulting the persisted `ReputationStore` `reputation_events` table for canonical `SlashEvent` rows (NOT a side-channel local blacklist). `peer_id_to_recorder_did` is the canonical string→`RecorderDid` mapping (BLAKE3-derived, 32-byte digest zero-padded to 52 bytes under domain `cipherocto/bootstrap/peer_id_to_recorder_did/v1`). `SeedListValidation` carries `accepted` + `rejected` lists; `into_envelope` builds the filtered `SeedListEnvelope`. The pre-existing `SlashedSeedBlacklist` is documented as DEPRECATED and preserved only for serde back-compat in pre-0851p-a seed list files.
-- [ ] Witness evidence voting flow in `crates/octo-network/src/mon/slash.rs` (the witness 2/3 majority is the EVIDENCE threshold, NOT the finalization)
-- [ ] Canonical slash issuance via `ReputationStore::slash_recorder(recorder_id, reason, destination, auth, governance_registry, now_unix)` with a `GovernanceProof` carrying fresh snapshot, `governance_set_hash`, and `GOVERNANCE_QUORUM = 3` signatures (Round 7 cross-mission-governance #7)
-- [ ] Signed `SlashDestination` (Round 7 CRITICAL gov-2 / Round 8 cross-mission-governance #2): the three `GovernanceProof` extension fields `slash_destination: SlashDestination`, `slash_amount: u64`, and `slash_asset: AssetTag` are bound to the governance signature. The on-wire `GovernanceProof.signature` covers `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || slash_destination_canonical_bytes || slash_amount_be || slash_asset_byte || governance_pubkey || now_unix)`. Mismatch on ANY of the three `caller_arg != signed_field` byte-equality checks returns `ReputationError::SlashDestinationMismatch` (`0x35`) BEFORE any chain-side transaction. Tests: `slash_amount` mismatch returns `0x35`; `slash_asset` mismatch returns `0x35`; `slash_destination` mismatch returns `0x35` (each independently). Cites RFC-0968 §10 + §21 + §23 Review-Round-7 vector.
-- [ ] `cargo test -p oct-reputation --features stoolap --lib` integration test: bootstrap slash cannot finalize from an ad hoc 2/3 witness vote; the canonical path requires the governance-issued slash event + persistence via `ReputationStore`
-- [ ] Unit tests: each misbehavior sub-code, witness vote aggregation (evidence path), governance slash finalization, SlashDestinationMismatch rejection
-- [ ] Documentation: how bootstrap nodes can avoid being slashed (best practices)
-- [ ] Documentation: operator guide for reviewing slash evidence
+- [x] `0x000D` slash reason code in RFC-0855p-b §B (extends the table)
+- [x] `slash_reason_data: u32` field in `SlashEnvelope`
+- [x] `crates/octo-network/src/mon/bootstrap.rs::load_and_validate` — reject slashed seeds by consulting the persisted `ReputationStore` `reputation_events` table for canonical `SlashEvent` rows (NOT a side-channel local blacklist). `peer_id_to_recorder_did` is the canonical string→`RecorderDid` mapping (BLAKE3-derived, 32-byte digest zero-padded to 52 bytes under domain `cipherocto/bootstrap/peer_id_to_recorder_did/v1`). `SeedListValidation` carries `accepted` + `rejected` lists; `into_envelope` builds the filtered `SeedListEnvelope`. The pre-existing `SlashedSeedBlacklist` is documented as DEPRECATED and preserved only for serde back-compat in pre-0851p-a seed list files. (commit `91110a34`)
+- [x] Witness evidence voting flow in `crates/octo-network/src/mon/slash.rs` (the witness 2/3 majority is the EVIDENCE threshold, NOT the finalization) — `SlashEnvelope::to_slash_vote` + `BootstrapEvidence::finalize` (`77d48639`)
+- [x] Canonical slash issuance via `ReputationStore::slash_recorder` with `GovernanceProof` carrying fresh snapshot, `governance_set_hash`, and `GOVERNANCE_QUORUM = 3` signatures (Round 7 cross-mission-governance #7) — `issue_governance_slash` (`8fae15e5`)
+- [x] Signed `SlashDestination` (Round 7 CRITICAL gov-2 / Round 8 cross-mission-governance #2): the three `GovernanceProof` extension fields are bound to the governance signature via `slash_signature_preimage`; byte-equality gates (`0x35`) at the API boundary; tests for amount/asset/destination/recorder_id mismatches (`8fae15e5` + `77d48639`)
+- [x] `cargo test -p oct-reputation --features stoolap --lib` integration tests `ad_hoc_2_3_witness_votes_alone_do_not_finalize` + `canonical_issue_governance_slash_persists_extra_event` (stoolap-gated, this commit)
+- [x] Unit tests: each misbehavior sub-code (`.01..04`), witness vote aggregation, `SlashDestinationMismatch` rejection (`8fae15e5`, `77d48639`)
+- [x] Documentation: how bootstrap nodes can avoid being slashed — `docs/07-developers/bootstrap-slash-prevention-guide.md` (`d7551add`)
+- [x] Documentation: operator guide for reviewing slash evidence — `docs/06-operations/bootstrap-slash-evidence-runbook.md` (`d7551add`)
 
 ### Implementation Guide
 

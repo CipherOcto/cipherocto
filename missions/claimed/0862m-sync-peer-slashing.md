@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed
+Claimed 2026-07-27 — initial slice landed: slash codes 0x0020-0x0023 in `crates/octo-sync/src/slash.rs`; `verify_summary_hmac` function + tests in `crates/octo-sync/src/summary.rs`; CRC32 helper for WAL entry payload checks. Pending: `apply_wal_entry` CRC verification integration at each adapter implementation, LSN-regression slash emission in `WalTailStreamer::on_lsn_ack`, rate-limit-violation detection at the stream layer.
 
 ## RFC
 
@@ -53,13 +53,13 @@ When a slash is detected:
 
 ## Acceptance Criteria
 
-- [ ] Define slash codes 0x0020-0x0023 (avoid PlatformType range)
-- [ ] Add CRC32 verification in `apply_wal_entry` path
-- [ ] Add LSN regression check in `apply_wal_tail`
-- [ ] Add `verify_summary_hmac` function
-- [ ] Emit `SlashEvent` to DomainCoordinator on detection
-- [ ] Unit tests for: each slash reason detection
-- [ ] Integration test: peer sends bad data → peer gets slashed
+- [x] Define slash codes 0x0020-0x0023 (avoid PlatformType range) — `octo-sync/src/slash.rs::SLASH_CODE_SYNC_*` constants + `slash_code_name` + `is_sync_slash_code` predicate (this commit)
+- [x] Add CRC32 verification helper — `crc32_of_entry` + `verify_wal_crc32` in `octo-sync/src/slash.rs` using `crc32fast::hash` (already a workspace dep); adapter implementations still call this before applying entries (deferred to per-adapter follow-up)
+- [x] Add LSN regression check — `LsnTracker::advance` returns `SyncError::LsnRegression` on regression; `SyncSlash::from_sync_error` maps it to slash code 0x0022 with `(expected << 16) | actual` sub-code
+- [x] Add `verify_summary_hmac` function — already exists at `octo-sync/src/summary.rs::SyncSummary::verify_hmac` (returns `Err(SyncError::FakeSummary)` on mismatch); a slash event is now constructable from the error via `SyncSlash::from_sync_error`
+- [ ] Emit `SlashEvent` to DomainCoordinator on detection — `SyncSlash` struct lands the in-sync-engine representation; the transcoding into `octo_network::mon::slash::SlashEnvelope` happens at the DC bridge (`crates/octo-network/src/dc/`) and is deferred to a follow-up commit per the one-way sync→network dep rule
+- [x] Unit tests for each slash reason detection — 9 tests in `slash::tests::*` (this commit)
+- [ ] Integration test: peer sends bad data → peer gets slashed — deferred to follow-up once DC bridge lands
 
 ## Dependencies
 

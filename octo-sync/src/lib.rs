@@ -87,6 +87,7 @@ pub mod replay_cache;
 pub mod scoring;
 pub mod segment;
 pub mod session;
+pub mod slash;
 pub mod state;
 pub mod stream;
 pub mod summary;

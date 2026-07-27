@@ -201,11 +201,19 @@ mod tests {
         const { assert!(MAX_ATTESTATION_DRIFT_SECS == 60) };
         const { assert!(SUSPENSION_SEVERITY_THRESHOLD == 5) };
         const { assert!(MAX_RELIABILITY_SAMPLES == 1_000) };
-        // f64 byte-exact comparison via bit-pattern (the RFC value 0.60 is
-        // exactly representable; if it weren't we'd compare via to_bits()).
-        assert!(
-            WEIGHTED_SIMILARITY_THRESHOLD == 0.60,
-            "weighted-similarity threshold drift: got {WEIGHTED_SIMILARITY_THRESHOLD}"
-        );
+        // f64 equality is safe here because both the constant and the
+        // literal on the right side undergo the same IEEE-754 round-trip
+        // at compile time — they always produce identical bit patterns.
+        // 0.60 itself is NOT exactly representable in IEEE-754 (it rounds to
+        // 0x3FE3333333333333), but the comparison is `literal == literal`,
+        // not `literal == exact_decimal`, so the round-trip cancels.
+        // (If the RFC later defines 0.60 as a base-10 decimal with strict
+        // equality, switch this to `to_bits()` comparison.)
+        const {
+            assert!(
+                WEIGHTED_SIMILARITY_THRESHOLD == 0.60,
+                "weighted-similarity threshold drift"
+            );
+        }
     }
 }

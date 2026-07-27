@@ -10,7 +10,9 @@
 //! tx (or, in this session, before delegating to
 //! `ReputationStore::slash_recorder`), the function performs an
 //! independent byte-equality check on EACH of the three slash fields;
-//! any mismatch short-circuits with `SlashDestinationMismatch = 0x16`.
+//! any mismatch short-circuits with `GovernanceSlashFieldMismatch = 0x17`
+//! (the API-boundary variant; the store-level `SlashDestinationMismatch = 0x16`
+//! still fires when `slash_destination` is `None` on the proof itself).
 //!
 //! ## Why the gate lives at the API boundary (not inside `slash_recorder`)
 //!
@@ -38,13 +40,12 @@ use crate::error::ReputationError;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::RecorderId;
 
-/// Field that mismatched in the byte-equality gate. The discriminator
-/// shape mirrors the existing `SlashDestinationMismatch { expected:
-/// u8, actual: u8 } = 0x16` variant — `expected` carries the field
-/// tag (matches `Field` discriminant below), `actual` carries the
-/// signed-value byte for the destination / asset mismatch case. For
-/// amount, `actual` is the amount's low byte (informational only; full
-/// amount recovered from the proof itself).
+/// Field that mismatched in the API-boundary byte-equality gate. The
+/// API-boundary mismatch surfaces as `ReputationError::GovernanceSlashFieldMismatch
+/// { field, expected, actual } = 0x17` — this enum identifies *which*
+/// slash field was rejected. Distinct from the store-level
+/// `SlashDestinationMismatch = 0x16` so consumers branching on
+/// `discriminant() == 0x16` are not misled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MismatchField {
     /// `slash_destination` byte-equality check failed.
@@ -57,8 +58,9 @@ pub enum MismatchField {
 
 impl MismatchField {
     /// Field tag byte for the `expected` slot. 0xD1-D3 keep the values
-    /// disjoint from any `SlashDestination` discriminant (`0x01-0x03`)
-    /// and from `AssetTag` (which is `0x00/0x01/0x02`).
+    /// disjoint from any `SlashDestination` discriminant (`0x01-0x03`),
+    /// from `AssetTag` (which is `0x00/0x01/0x02`), and from any
+    /// `ReputationError` discriminant.
     pub fn as_byte(self) -> u8 {
         match self {
             Self::Destination => 0xD1,
@@ -77,9 +79,11 @@ impl MismatchField {
 /// 2. `proof.slash_amount == amount`
 /// 3. `proof.slash_asset == asset`
 ///
-/// Each mismatch returns `SlashDestinationMismatch { field, ... }` —
-/// the caller can branch on `discriminant() == 0x16` AND inspect
-/// `field` to know which check fired.
+/// Each mismatch returns `GovernanceSlashFieldMismatch { field, ... }` —
+/// the caller can branch on `discriminant() == 0x17` AND inspect
+/// `field` to know which check fired. The store-level
+/// `SlashDestinationMismatch = 0x16` is reserved for the canonical
+/// store's own destination-None guard, not for API-boundary gates.
 pub async fn issue_governance_slash<S>(
     store: &S,
     recorder_id: RecorderId,
@@ -95,31 +99,44 @@ where
     let _ = now_unix; // signature reserves the slot for chain-tx timestamp
 
     // Field 1: destination. Caller's value vs signed proof's value.
-    let signed_dest = proof
-        .slash_destination
-        .ok_or(ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Destination.as_byte(),
-            actual: 0,
-        })?;
+    // The proof's `slash_destination` is `Option<SlashDestination>` —
+    // `None` means the proof was NOT intended to authorize a slash
+    // (it is a suspension proof, per the canonical usage contract at
+    // `auth.rs::slash_signature_preimage` which returns `None` for
+    // `slash_destination == None`). We surface that as a dedicated
+    // `GovernanceSlashFieldMismatch` so callers can distinguish
+    // "this is a suspension proof, not a slash" from "destination
+    // was set but does not match".
+    let signed_dest =
+        proof
+            .slash_destination
+            .ok_or(ReputationError::GovernanceSlashFieldMismatch {
+                field: MismatchField::Destination.as_byte(),
+                expected: 0,
+                actual: 0,
+            })?;
     if signed_dest != destination {
-        return Err(ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Destination.as_byte(),
+        return Err(ReputationError::GovernanceSlashFieldMismatch {
+            field: MismatchField::Destination.as_byte(),
+            expected: signed_dest.discriminant(),
             actual: destination.discriminant(),
         });
     }
 
     // Field 2: amount.
     if proof.slash_amount != amount {
-        return Err(ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Amount.as_byte(),
+        return Err(ReputationError::GovernanceSlashFieldMismatch {
+            field: MismatchField::Amount.as_byte(),
+            expected: (proof.slash_amount & 0xFF) as u8,
             actual: (amount & 0xFF) as u8,
         });
     }
 
     // Field 3: asset.
     if proof.slash_asset != asset {
-        return Err(ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Asset.as_byte(),
+        return Err(ReputationError::GovernanceSlashFieldMismatch {
+            field: MismatchField::Asset.as_byte(),
+            expected: proof.slash_asset as u8,
             actual: asset as u8,
         });
     }
@@ -129,9 +146,9 @@ where
     // cannot be replayed against the current one (parity with the
     // governance suspension binding analogue — RFC-0968 §13 row 273).
     if proof.recorder_id != recorder_id {
-        return Err(ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Asset.as_byte(), // asset-as-recorder-id proxy
-            actual: 0xFF,
+        return Err(ReputationError::GovernanceSlashRecorderIdMismatch {
+            signed: proof.recorder_id.to_u64(),
+            actual: recorder_id.to_u64(),
         });
     }
 
@@ -145,15 +162,23 @@ where
     // being non-empty means the fields are well-formed; the
     // signature itself is verified upstream.
     let preimage = proof.slash_signature_preimage(now_unix).ok_or(
-        ReputationError::SlashDestinationMismatch {
-            expected: MismatchField::Destination.as_byte(),
+        ReputationError::GovernanceSlashFieldMismatch {
+            field: MismatchField::Destination.as_byte(),
+            expected: 0,
             actual: 0xFE,
         },
     )?;
-    debug_assert!(
-        !preimage.is_empty(),
-        "slash_signature_preimage must be non-empty for a slash proof"
-    );
+    if preimage.is_empty() {
+        // Return an error rather than relying on `debug_assert!` so
+        // release builds catch the invariant violation too — an
+        // empty preimage would otherwise be silently accepted as a
+        // well-formed slash proof.
+        return Err(ReputationError::GovernanceSlashFieldMismatch {
+            field: MismatchField::Destination.as_byte(),
+            expected: 0,
+            actual: 0xFD,
+        });
+    }
 
     // Delegate to the canonical store. The trait impl validates
     // freshness + governance quorum + non-zero amount/asset.
@@ -227,7 +252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gov_2_destination_mismatch_rejected_with_0x16() {
+    async fn gov_2_destination_mismatch_rejected_with_0x17() {
         let s = store();
         let rid = RecorderId::from_u64(8);
         let now = 1_700_000_000;
@@ -250,11 +275,15 @@ mod tests {
         )
         .await;
         let err = r.unwrap_err();
-        assert_eq!(err.discriminant(), 0x16);
+        // API-boundary mismatch is `GovernanceSlashFieldMismatch = 0x17`,
+        // NOT `SlashDestinationMismatch = 0x16`. The store-level
+        // `0x16` would only fire if the destination was `None`; the
+        // API catches the "set but mismatched" case first.
+        assert_eq!(err.discriminant(), 0x17);
     }
 
     #[tokio::test]
-    async fn gov_2_amount_mismatch_rejected_with_0x16() {
+    async fn gov_2_amount_mismatch_rejected_with_0x17() {
         let s = store();
         let rid = RecorderId::from_u64(9);
         let now = 1_700_000_000;
@@ -276,11 +305,11 @@ mod tests {
         )
         .await;
         let err = r.unwrap_err();
-        assert_eq!(err.discriminant(), 0x16);
+        assert_eq!(err.discriminant(), 0x17);
     }
 
     #[tokio::test]
-    async fn gov_2_asset_mismatch_rejected_with_0x16() {
+    async fn gov_2_asset_mismatch_rejected_with_0x17() {
         let s = store();
         let rid = RecorderId::from_u64(10);
         let now = 1_700_000_000;
@@ -302,11 +331,11 @@ mod tests {
         )
         .await;
         let err = r.unwrap_err();
-        assert_eq!(err.discriminant(), 0x16);
+        assert_eq!(err.discriminant(), 0x17);
     }
 
     #[tokio::test]
-    async fn gov_2_recorder_id_mismatch_rejected_with_0x16() {
+    async fn gov_2_recorder_id_mismatch_rejected_with_0x18() {
         // Sign a proof for recorder A; caller invokes for recorder B.
         let s = store();
         let now = 1_700_000_000;
@@ -328,7 +357,10 @@ mod tests {
         )
         .await;
         let err = r.unwrap_err();
-        assert_eq!(err.discriminant(), 0x16);
+        // Distinct from `GovernanceSlashFieldMismatch = 0x17` so the
+        // "stale proof replay" attack vector surfaces a different
+        // wire code than a field-byte mismatch.
+        assert_eq!(err.discriminant(), 0x18);
     }
 
     // -- Mission 0851p-a AC item 7 ---------------------------------

@@ -51,7 +51,7 @@ The key invariants the operator checks:
    the majority check. The aggregator never counts split evidence
    toward the same candidate.
 4. **Signed preimage.** The `GovernanceProof.signature` MUST
-   cover `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || slash_destination.canonical_bytes || slash_amount.to_be_bytes || slash_asset_byte || governance_pubkey || now_unix)`. Mismatch on ANY of those fields returns `ReputationError::SlashDestinationMismatch = 0x35`.
+   cover `BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN || recorder_id || reason_hash || slash_destination.canonical_bytes || slash_amount.to_be_bytes || slash_asset_byte || governance_pubkey || now_unix)`. Mismatch on ANY of those fields returns `ReputationError::GovernanceSlashFieldMismatch = 0x17` (the API-boundary gate; the store-level `SlashDestinationMismatch = 0x16` only fires when `slash_destination` is `None` on the proof itself).
 
 ## Triage flow
 

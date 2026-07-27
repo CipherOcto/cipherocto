@@ -70,9 +70,18 @@ pub struct SyncSlash {
     pub reason: &'static str,
     /// Identifier of the misbehaving peer (SubjectKeyId byte form).
     pub peer_id: [u8; 32],
-    /// Optional sub-code (e.g., for LSN regression, the offending LSN
-    /// under the high 16 bits in the same `(reason << 16) | sub`
-    /// layout used by `BootstrapMisbehavior`).
+    /// Optional sub-code. Two layouts share this slot depending on
+    /// the slash reason:
+    ///
+    /// - For `SyncCorruptedWalEntry` / `SyncFakeSummary` /
+    ///   `SyncRateLimitViolation`: the low 16 bits hold a
+    ///   reason-specific sub-code (mirroring `BootstrapMisbehavior`'s
+    ///   `(reason << 16) | sub` layout); the high 16 bits are zero.
+    /// - For `SyncLsnRegression`: the high 16 bits hold the expected
+    ///   LSN and the low 16 bits hold the offending (regressed) LSN,
+    ///   so `sub_code = (expected << 16) | actual`. Callers decoding
+    ///   this slot must branch on `code == SLASH_CODE_SYNC_LSN_REGRESSION`
+    ///   before interpreting the bits as reason+sub.
     pub sub_code: u32,
 }
 
@@ -247,7 +256,12 @@ mod tests {
 
     #[test]
     fn crc32_matches_reference_implementation_on_known_vectors() {
-        // Reference vectors from RFC 3309 / ITU-T V.42.
+        // Reference vectors from IEEE 802.3 / ITU-T V.42 (the IEEE-802.3
+        // CRC-32, polynomial 0x04C11DB7). The well-known check value
+        // for the ASCII string "123456789" is 0xCBF43926. (RFC 3309
+        // and CRC-32C use polynomial 0x1EDC6F41 with a different
+        // check value — that polynomial is NOT what crc32fast::hash
+        // computes, so do not cite RFC 3309 here.)
         // Empty input → CRC32 = 0x00000000.
         assert_eq!(crc32_of_entry(b""), 0x00000000);
         // "123456789" → 0xCBF43926 (the canonical IEEE polynomial check).

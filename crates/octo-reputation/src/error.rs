@@ -90,6 +90,22 @@ pub enum ReputationError {
     #[error("slash destination mismatch: expected {expected}, got {actual}")]
     SlashDestinationMismatch { expected: u8, actual: u8 } = 0x16,
 
+    /// Round 7 gov-2 byte-equality gate at the API boundary caught a
+    /// slash-field mismatch that is *not* a destination mismatch. Carries
+    /// `field` (one of `MismatchField` bytes 0xD1/0xD2/0xD3) plus the
+    /// expected/actual bytes observed. Distinct from `SlashDestinationMismatch`
+    /// so consumers branching on `0x16` are not misled by destination-tagged
+    /// errors that actually originate at the amount/asset gates.
+    #[error("governance slash field mismatch: field={field}, expected={expected}, got {actual}")]
+    GovernanceSlashFieldMismatch { field: u8, expected: u8, actual: u8 } = 0x17,
+
+    /// `GovernanceProof.recorder_id` did not match the recorder the caller
+    /// invoked for. Carries both 64-bit IDs in full so consumers can inspect
+    /// which recorder the proof was signed for vs. which one the caller
+    /// targeted (a stale proof replay would surface here).
+    #[error("governance slash recorder id mismatch: signed={signed}, actual={actual}")]
+    GovernanceSlashRecorderIdMismatch { signed: u64, actual: u64 } = 0x18,
+
     // ----- 0x20..=0x32: scoring / election / parity / retirement -----
     #[error("presentation: invalid score for 0-100 derivation")]
     PresentationScoreInvalid = 0x20,
@@ -185,6 +201,8 @@ impl ReputationError {
             ReputationError::RecorderSuspended(_) => 0x14,
             ReputationError::RecorderSlashed(_) => 0x15,
             ReputationError::SlashDestinationMismatch { .. } => 0x16,
+            ReputationError::GovernanceSlashFieldMismatch { .. } => 0x17,
+            ReputationError::GovernanceSlashRecorderIdMismatch { .. } => 0x18,
             ReputationError::PresentationScoreInvalid => 0x20,
             ReputationError::PresentationOverflow => 0x21,
             ReputationError::ElectionCandidateExcluded => 0x22,
@@ -304,9 +322,28 @@ mod tests {
             (ReputationError::KindMismatchEventAggregate, 0x30),
             (ReputationError::LayerMismatchEventAggregate, 0x31),
             (ReputationError::StakeLockInvalid, 0x32),
+            (
+                ReputationError::GovernanceSlashFieldMismatch {
+                    field: 0,
+                    expected: 0,
+                    actual: 0,
+                },
+                0x17,
+            ),
+            (
+                ReputationError::GovernanceSlashRecorderIdMismatch {
+                    signed: 0,
+                    actual: 0,
+                },
+                0x18,
+            ),
             (ReputationError::GossipEnvelopeInvalid("x"), 0x3A),
         ];
-        assert_eq!(cases.len(), 42, "42 variants defined here");
+        assert_eq!(
+            cases.len(),
+            44,
+            "44 variants defined here (42 prior + 2 added in Round 3 review for API-boundary gate)"
+        );
         for (variant, expected) in cases {
             assert_eq!(
                 variant.discriminant(),

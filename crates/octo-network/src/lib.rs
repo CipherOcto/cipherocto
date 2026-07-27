@@ -40,6 +40,16 @@ pub mod dom;
 pub mod drs;
 /// Mission Overlay Networks (MON) — RFC-0855.
 pub mod mon;
+/// Federation reputation (mission 0855p-b / 0968 Phase 4).
+pub mod reputation;
+// Re-export the reputation gossip substrate so callers can
+// `octo_network::gossip::start_reputation_gossip` without
+// descending into the inner module.
+pub use crate::gossip::reputation::{
+    start_reputation_gossip, IngressOutcome, RawIngress, ReputationGossipHandle,
+    ReputationGossipJoin,
+};
+pub use crate::reputation::{SlashReputationStoreCompat, HARD_THRESHOLD as SLASH_HARD_THRESHOLD};
 /// Onion Relay Routing (ORR) — RFC-0858.
 pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.

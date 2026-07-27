@@ -1,6 +1,6 @@
 [package]
 name = "octo-network"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -27,11 +27,17 @@ rand = "0.9"
 # Stoolap Data Sync (RFC-0862) — leaf workspace dependency
 octo-sync = { path = "../../octo-sync" }
 parking_lot = "0.12"
+# Mission 0855p-b / 0968 Phase 4 — federation substrate
+octo-reputation = { path = "../octo-reputation" }
+# Boxed futures for the gossip ingress task (erases the async-fn
+# non-Send future so tokio::spawn can drive it).
+futures = "0.3"
 
 [dev-dependencies]
 serde_json = "1.0"
 tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }
 octo-sync = { path = "../../octo-sync", features = ["test-util"] }
+octo-determin = { path = "../../determin" }
 
 [features]
 default = []

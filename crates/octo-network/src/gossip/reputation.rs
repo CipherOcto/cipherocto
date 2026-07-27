@@ -50,6 +50,7 @@
 //! routing + idempotent ingest + rate-limit + catch-up. The signer
 //! plug-point is marked `TODO(0855p-b/s4)` below.
 
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -61,6 +62,7 @@ use octo_reputation::gossip::{
     topic_for_recorder, GossipCatchUp, GossipEnvelope, RateLimitDecision, RateLimitedAttestor,
 };
 use octo_reputation::store::ReputationStore;
+use octo_reputation::types::SignalEvent;
 
 /// Inbound raw message shape from `octo_adapter_p2p` (or a test mpsc).
 /// Mirrors `octo_adapter_p2p::RawPlatformMessage` field names without
@@ -162,6 +164,19 @@ impl IngressOutcome {
 type BoxedFuture<'a> = Pin<Box<dyn futures::Future<Output = IngressOutcome> + 'a>>;
 type Processor = Arc<dyn for<'a> Fn(&'a RawIngress) -> BoxedFuture<'a> + 'static>;
 
+/// Refresh hook callback fired after `record_signal` succeeds on a
+/// reputation ingress. Lets callers (e.g., the DC slash adapter)
+/// bridge gossip-side persistence into in-memory state derived from
+/// the canonical `ReputationStore`. The hook is invoked with a
+/// reference to the accepted `SignalEvent`; returning `()` means the
+/// hook ran to completion (errors are the hook's responsibility).
+///
+/// The HRTB lifetime lets the hook return a future that borrows from
+/// the event reference; the caller typically clones the needed fields
+/// (e.g., `recorder_did`) before constructing the future body.
+pub type RefreshHook =
+    Arc<dyn for<'a> Fn(&'a SignalEvent) -> Pin<Box<dyn Future<Output = ()> + 'a>> + Send + Sync>;
+
 /// Returned by `start_reputation_gossip` so the caller can drive the
 /// ingress loop inside a `LocalSet`.
 pub struct ReputationGossipJoin {
@@ -195,13 +210,33 @@ pub fn start_reputation_gossip_with_rate_limit<S>(
 where
     S: ReputationStore + Send + Sync + 'static,
 {
+    start_reputation_gossip_with_rate_limit_and_refresh(ingress_rx, store, rate_limit, None)
+}
+
+/// Full-control entry point: caller injects a `RateLimitedAttestor`
+/// and an optional `RefreshHook`. The hook is invoked by `handle_one`
+/// after every successful `record_signal` so derived stores (e.g.,
+/// `DcRootedSlashReputationStoreCompat` for the cross-mission slash
+/// adapter, mission 0855p-c) stay in sync with the persisted state.
+/// When `refresh_hook` is `None`, the gossip substrate behaves
+/// identically to the rate-limit-only wrapper.
+pub fn start_reputation_gossip_with_rate_limit_and_refresh<S>(
+    ingress_rx: mpsc::Receiver<RawIngress>,
+    store: Arc<S>,
+    rate_limit: Arc<RateLimitedAttestor>,
+    refresh_hook: Option<RefreshHook>,
+) -> ReputationGossipJoin
+where
+    S: ReputationStore + Send + Sync + 'static,
+{
     let processor: Processor = {
         let store = Arc::clone(&store);
         let rl = Arc::clone(&rate_limit);
         Arc::new(move |msg: &RawIngress| {
             let store = Arc::clone(&store);
             let rl = Arc::clone(&rl);
-            Box::pin(async move { handle_one(msg, &*store, &rl).await })
+            let hook = refresh_hook.clone();
+            Box::pin(async move { handle_one(msg, &*store, &rl, hook.as_ref()).await })
         })
     };
     start_reputation_gossip_with(ingress_rx, processor)
@@ -242,10 +277,18 @@ pub fn start_reputation_gossip_with(
 
 /// Process one ingress message. Exposed for unit tests + the
 /// `cross_mission_federation` integration test (S4).
+///
+/// `refresh_hook` is invoked after every successful `record_signal`
+/// so derived in-memory state (e.g., `DcRootedSlashReputationStoreCompat`'s
+/// cross-domain slash counter, mission 0855p-c) stays in sync with
+/// the persisted store. The hook receives a reference to the
+/// accepted event; errors inside the hook are the hook's
+/// responsibility (the gossip substrate does not retry).
 pub async fn handle_one<S>(
     msg: &RawIngress,
     store: &S,
     rate_limit: &RateLimitedAttestor,
+    refresh_hook: Option<&RefreshHook>,
 ) -> IngressOutcome
 where
     S: ReputationStore + Send + Sync,
@@ -286,6 +329,14 @@ where
     // (attestor, event_id) too.
     if event_id != env.event.event_id {
         debug!("reputation gossip: duplicate event_id, dedup hit");
+    }
+    // Fire the refresh hook (if any). The hook receives the
+    // accepted event by reference; derived stores (e.g., the DC
+    // cross-domain slash counter) refresh their in-memory state
+    // from the canonical `ReputationStore` projection filtered by
+    // `signal_kind == Slash ∧ layer == Coordinator`.
+    if let Some(hook) = refresh_hook {
+        hook(&env.event).await;
     }
     // Apply per-attestor rate-limit. Over-budget attestations are
     // dropped silently (the event itself is still persisted above).
@@ -410,7 +461,7 @@ mod tests {
             topic: "/dot/bind/abc".into(),
             payload: vec![],
         };
-        let outcome = handle_one(&msg, &*store, &rl).await;
+        let outcome = handle_one(&msg, &*store, &rl, None).await;
         assert_eq!(outcome, IngressOutcome::NonReputationTopic);
     }
 
@@ -422,7 +473,7 @@ mod tests {
             topic: "/dot/reputation/abc".into(), // not 104 hex chars
             payload: vec![],
         };
-        let outcome = handle_one(&msg, &*store, &rl).await;
+        let outcome = handle_one(&msg, &*store, &rl, None).await;
         assert_eq!(outcome, IngressOutcome::NonReputationTopic);
     }
 
@@ -436,7 +487,7 @@ mod tests {
             topic,
             payload: b"not json".to_vec(),
         };
-        let outcome = handle_one(&msg, &*store, &rl).await;
+        let outcome = handle_one(&msg, &*store, &rl, None).await;
         assert_eq!(outcome, IngressOutcome::Unparseable);
     }
 
@@ -449,7 +500,7 @@ mod tests {
         let env = dummy_envelope(1, did);
         let payload = serde_json::to_vec(&env).unwrap();
         let msg = RawIngress { topic, payload };
-        let outcome = handle_one(&msg, &*store, &rl).await;
+        let outcome = handle_one(&msg, &*store, &rl, None).await;
         assert_eq!(outcome, IngressOutcome::Accepted);
         // Re-read: the event was persisted.
         let agg = store
@@ -474,10 +525,11 @@ mod tests {
             },
             &*store,
             &rl,
+            None,
         )
         .await;
         assert_eq!(r1, IngressOutcome::Accepted);
-        let r2 = handle_one(&RawIngress { topic, payload }, &*store, &rl).await;
+        let r2 = handle_one(&RawIngress { topic, payload }, &*store, &rl, None).await;
         assert!(
             !matches!(r2, IngressOutcome::InvalidShape | IngressOutcome::Unparseable),
             "duplicate ingress of well-formed envelope must not be InvalidShape/Unparseable, got {:?}",
@@ -547,7 +599,7 @@ mod tests {
         }
         env.attestations = atts;
         let payload = serde_json::to_vec(&env).unwrap();
-        let outcome = handle_one(&RawIngress { topic, payload }, &*store, &rl).await;
+        let outcome = handle_one(&RawIngress { topic, payload }, &*store, &rl, None).await;
         assert_eq!(outcome, IngressOutcome::RateLimited);
         // The event itself was persisted.
         let agg = store
@@ -573,6 +625,7 @@ mod tests {
                 &RawIngress { topic, payload },
                 &*store,
                 &RateLimitedAttestor::new(),
+                None,
             )
             .await;
         }
@@ -587,5 +640,103 @@ mod tests {
             .expect("catch_up");
         assert_eq!(n, 3, "expected 3 events re-published (ids 2,3,4), got {n}");
         assert_eq!(n, republished);
+    }
+
+    /// Item 1 wire-up: a `RefreshHook` that calls
+    /// `DcRootedSlashReputationStoreCompat::refresh_cross_domain_for`
+    /// fires after a slash+Coordinator ingress and updates the
+    /// in-memory counter. Non-slash or non-Coordinator events do NOT
+    /// change the count.
+    #[tokio::test]
+    async fn refresh_hook_fires_on_accepted_slash_coordinator() {
+        use crate::reputation::DcRootedSlashReputationStoreCompat;
+        use octo_reputation::types::{ControllerId, ReputationLayer as Layer, SignalKind as Kind};
+
+        let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
+        let did = RecorderDid::from_array([0x42; 52]);
+        let topic = topic_for(&did);
+
+        // Build a slash+Coordinator envelope.
+        let slash_event = SignalEvent {
+            event_id: EventId::from_u64(99),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: Kind::Slash,
+            layer: Layer::Coordinator,
+            score_delta: Dfp::from_f64(0.0),
+            recorded_at_unix: 1_700_000_000,
+            rotation_provenance: None,
+            audit_ref: None,
+        };
+        let env = GossipEnvelope {
+            event: slash_event,
+            recorder_signature: vec![1u8; 64],
+            source_mission: "mon:bootstrap".into(),
+            source_domain: "domain:dc:test".into(),
+            rotation_provenance: None,
+            attestations: vec![],
+        };
+        let payload = serde_json::to_vec(&env).unwrap();
+
+        // DC store starts at 0; hook must refresh to 1 after ingress.
+        let dc_store = Arc::new(DcRootedSlashReputationStoreCompat::new());
+        assert_eq!(dc_store.cross_domain_slash_count_for(&did), 0);
+
+        // Build the hook. It borrows from `store` via the trait object.
+        let store_for_hook = Arc::clone(&store);
+        let dc_for_hook = Arc::clone(&dc_store);
+        let hook: RefreshHook = Arc::new(move |ev: &SignalEvent| {
+            let store = Arc::clone(&store_for_hook);
+            let dc = Arc::clone(&dc_for_hook);
+            let did = ev.recorder_did;
+            Box::pin(async move {
+                if ev.signal_kind == Kind::Slash && ev.layer == Layer::Coordinator {
+                    let _ = dc.refresh_cross_domain_for(&did, &*store).await;
+                }
+            })
+        });
+
+        let outcome = handle_one(&RawIngress { topic, payload }, &*store, &rl, Some(&hook)).await;
+        assert_eq!(outcome, IngressOutcome::Accepted);
+        // The hook fired: DC counter reflects the persisted slash.
+        assert_eq!(dc_store.cross_domain_slash_count_for(&did), 1);
+    }
+
+    /// Counter-test: an Outcome event on Market does NOT change the
+    /// cross-domain slash count even when a refresh hook is wired.
+    #[tokio::test]
+    async fn refresh_hook_skips_non_slash_non_coordinator_events() {
+        use crate::reputation::DcRootedSlashReputationStoreCompat;
+        use octo_reputation::types::{ControllerId, ReputationLayer as Layer, SignalKind as Kind};
+
+        let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
+        let did = RecorderDid::from_array([0x43; 52]);
+        let topic = topic_for(&did);
+        let env = dummy_envelope(1, did); // Outcome + Market
+        let payload = serde_json::to_vec(&env).unwrap();
+
+        let dc_store = Arc::new(DcRootedSlashReputationStoreCompat::new());
+        let store_for_hook = Arc::clone(&store);
+        let dc_for_hook = Arc::clone(&dc_store);
+        let hook: RefreshHook = Arc::new(move |ev: &SignalEvent| {
+            let store = Arc::clone(&store_for_hook);
+            let dc = Arc::clone(&dc_for_hook);
+            let did = ev.recorder_did;
+            Box::pin(async move {
+                if ev.signal_kind == Kind::Slash && ev.layer == Layer::Coordinator {
+                    let _ = dc.refresh_cross_domain_for(&did, &*store).await;
+                }
+            })
+        });
+
+        let outcome = handle_one(&RawIngress { topic, payload }, &*store, &rl, Some(&hook)).await;
+        assert_eq!(outcome, IngressOutcome::Accepted);
+        // No slash+Coordinator event → count stays at 0.
+        assert_eq!(dc_store.cross_domain_slash_count_for(&did), 0);
+        // Reference unused ControllerId import to keep the test fixture
+        // honest about what fields exist on SignalEvent.
+        let _ctrl: ControllerId = ControllerId::from_array([0u8; 32]);
     }
 }

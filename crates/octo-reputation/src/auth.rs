@@ -61,6 +61,29 @@ impl SlashDestination {
     pub fn matches_field(self, field: u8) -> bool {
         self.discriminant() == field
     }
+
+    /// Canonical byte form for the chain-tx byte-equality on-wire
+    /// lock (mission 0851p-a AC, RFC-0968 §21 + §23 Review-Round-7
+    /// vector). The encoding is `discriminant || payload_bytes`:
+    ///
+    /// - `Treasury`        → `[0x01]`
+    /// - `Burn`            → `[0x02]`
+    /// - `RewardValidator` → `[0x03 || did.0 (52 bytes)]`
+    ///
+    /// Discriminant is disjoint from `AssetTag` (`0x00`/`0x01`/`0x02`)
+    /// so chain-side parsers can branch first on `byte[0]`.
+    pub fn canonical_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Treasury => vec![0x01],
+            Self::Burn => vec![0x02],
+            Self::RewardValidator { did } => {
+                let mut v = Vec::with_capacity(53);
+                v.push(0x03);
+                v.extend_from_slice(did.as_bytes());
+                v
+            }
+        }
+    }
 }
 
 /// Asset tag for the slashed amount. RFC-0968 §21.
@@ -94,7 +117,22 @@ pub struct GovernanceProof {
     pub recorder_id: RecorderId,
     /// BLAKE3 over the action payload — binds signature to reason.
     pub reason_hash: [u8; 32],
-    /// Signature over `BLAKE3_GOVERNANCE_PROOF_DOMAIN || reason_hash`.
+    /// Signature. The bytes the signature covers depend on whether
+    /// `slash_destination` is `Some`:
+    ///
+    /// - Suspension (`slash_destination == None`):
+    ///   `BLAKE3(BLAKE3_GOVERNANCE_PROOF_DOMAIN || reason_hash)`.
+    /// - Slash (`slash_destination == Some(_)`):
+    ///   the canonical preimage returned by
+    ///   [`GovernanceProof::slash_signature_preimage`] — the
+    ///   chain-tx byte-equality on-wire lock (mission 0851p-a AC,
+    ///   RFC-0968 §21 + §23 Review-Round-7).
+    ///
+    /// The chain-tx layer MUST re-derive the preimage from the
+    /// signed fields and verify the signature against it; the
+    /// `issue_governance_slash` byte-equality gate guarantees the
+    /// caller-supplied fields match the signed fields so a chain-tx
+    /// builder cannot suppress-destination-on-chain.
     pub signature: Vec<u8>,
     /// Snapshot under which this proof is valid.
     pub snapshot: GovernanceSnapshot,
@@ -105,6 +143,72 @@ pub struct GovernanceProof {
     pub slash_destination: Option<SlashDestination>,
     pub slash_amount: u64,
     pub slash_asset: AssetTag,
+}
+
+impl GovernanceProof {
+    /// Canonical byte preimage that the signature covers for a slash
+    /// proof. Returns `None` for suspension proofs
+    /// (`slash_destination == None`); returns `Some(bytes)` for slash
+    /// proofs.
+    ///
+    /// Encoding (mission 0851p-a AC + RFC-0968 §21/§23 Review-Round-7):
+    ///
+    /// ```text
+    /// BLAKE3(BLAKE3_REPUTATION_SUSPENSION_DOMAIN
+    ///     || recorder_id.0.to_be_bytes()       // 8 bytes
+    ///     || reason_hash                       // 32 bytes
+    ///     || slash_destination.canonical_bytes // 1 or 53 bytes
+    ///     || slash_amount.to_be_bytes()        // 8 bytes
+    ///     || slash_asset as u8                 // 1 byte
+    ///     || governance_pubkey                 // 32 bytes
+    ///     || now_unix.to_be_bytes())           // 8 bytes
+    /// ```
+    ///
+    /// Domain separator (`BLAKE3_REPUTATION_SUSPENSION_DOMAIN`) is
+    /// the canonical domain for governance-bound actions (per
+    /// `constants.rs`). The BLAKE3 outer call commits to the
+    /// canonical bytes; the ed25519 signature over those 32 bytes
+    /// binds all four slash fields + recorder + pubkey + timestamp.
+    ///
+    /// Any chain-tx layer (e.g. `octo-bootstrap`) MUST re-derive
+    /// this preimage from the proof's signed fields and verify the
+    /// signature against it. Doing only the field-byte-equality
+    /// check (caller-supplied vs. signed) without the on-wire
+    /// signature check leaves the door open to a
+    /// suppress-destination-on-chain attack (RFC §3652-3653).
+    pub fn slash_signature_preimage(&self, now_unix: u64) -> Option<Vec<u8>> {
+        let dest = self.slash_destination.as_ref()?;
+        let mut buf: Vec<u8> = Vec::with_capacity(141);
+        // Domain separator (the governance-bound action domain).
+        buf.extend_from_slice(crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
+        // recorder_id as 8-byte big-endian u64.
+        buf.extend_from_slice(self.recorder_id.as_bytes());
+        // reason_hash.
+        buf.extend_from_slice(&self.reason_hash);
+        // slash_destination.canonical_bytes (1 or 53 bytes).
+        buf.extend_from_slice(&dest.canonical_bytes());
+        // slash_amount as 8-byte big-endian u64.
+        buf.extend_from_slice(&self.slash_amount.to_be_bytes());
+        // slash_asset as 1 byte.
+        buf.push(self.slash_asset as u8);
+        // governance_pubkey.
+        buf.extend_from_slice(&self.governance_pubkey);
+        // now_unix as 8-byte big-endian u64.
+        buf.extend_from_slice(&now_unix.to_be_bytes());
+        Some(buf)
+    }
+
+    /// BLAKE3 digest of the slash signature preimage. The signature
+    /// in `self.signature` is an ed25519 signature over these 32
+    /// bytes. Convenience for chain-tx verification paths that need
+    /// the digest without the raw preimage.
+    pub fn slash_signature_digest(&self, now_unix: u64) -> Option<[u8; 32]> {
+        let preimage = self.slash_signature_preimage(now_unix)?;
+        let mut out = [0u8; 32];
+        let digest = blake3::hash(&preimage);
+        out.copy_from_slice(digest.as_bytes());
+        Some(out)
+    }
 }
 
 /// Authorisation for `verify_governance_suspension` (read-side). Carries
@@ -359,5 +463,149 @@ mod tests {
         let a = [[1u8; 32], [2u8; 32], [3u8; 32]];
         let b = [[3u8; 32], [1u8; 32], [2u8; 32]];
         assert_eq!(governance_set_hash(&a), governance_set_hash(&b));
+    }
+
+    // -- Chain-tx byte-equality on-wire lock (mission 0851p-a AC) --
+
+    fn dummy_proof() -> GovernanceProof {
+        let now: u64 = 1_700_000_000;
+        GovernanceProof {
+            governance_pubkey: [7u8; 32],
+            recorder_id: RecorderId::from_u64(42),
+            reason_hash: [0xAB; 32],
+            signature: vec![0u8; 96],
+            snapshot: dummy_snapshot(now),
+            governance_set_hash: [1u8; 32],
+            slash_destination: Some(SlashDestination::Treasury),
+            slash_amount: 1_000,
+            slash_asset: AssetTag::Octo,
+        }
+    }
+
+    #[test]
+    fn slash_signature_preimage_is_none_for_suspension() {
+        // Suspension proofs have no slash fields; preimage MUST
+        // be `None` so the suspension signature path stays separate.
+        let mut p = dummy_proof();
+        p.slash_destination = None;
+        assert!(p.slash_signature_preimage(1_700_000_000).is_none());
+        assert!(p.slash_signature_digest(1_700_000_000).is_none());
+    }
+
+    #[test]
+    fn slash_signature_preimage_includes_all_signed_fields() {
+        // Deterministic byte-level shape pin. The preimage layout is
+        // the on-wire lock contract — chain-tx layer MUST verify the
+        // signature against BLAKE3 of these exact bytes.
+        let p = dummy_proof();
+        let pre = p.slash_signature_preimage(1_700_000_000).unwrap();
+        let domain = crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN;
+        // Domain (35) + recorder_id (8) + reason_hash (32) +
+        // dest canonical (1 for Treasury) + amount (8) + asset (1) +
+        // pubkey (32) + now (8) = 125 bytes.
+        assert_eq!(
+            pre.len(),
+            domain.len() + 8 + 32 + 1 + 8 + 1 + 32 + 8,
+            "preimage length mismatch — on-wire contract changed"
+        );
+        // Domain separator is at the head.
+        assert_eq!(&pre[..domain.len()], domain);
+        // recorder_id (u64 BE) immediately after the domain.
+        let off = domain.len();
+        assert_eq!(&pre[off..off + 8], &42u64.to_be_bytes());
+        // reason_hash at offset off+8 .. off+40.
+        assert_eq!(&pre[off + 8..off + 40], &[0xAB; 32]);
+        // slash_destination (1 byte) at offset off+40: 0x01 = Treasury.
+        assert_eq!(pre[off + 40], 0x01);
+        // slash_amount (u64 BE) at offset off+41 .. off+49.
+        assert_eq!(&pre[off + 41..off + 49], &1_000u64.to_be_bytes());
+        // slash_asset (1 byte) at offset off+49: 0x01 = Octo.
+        assert_eq!(pre[off + 49], 0x01);
+        // governance_pubkey at offset off+50 .. off+82.
+        assert_eq!(&pre[off + 50..off + 82], &[7u8; 32]);
+        // now_unix (u64 BE) at offset off+82 .. off+90.
+        assert_eq!(&pre[off + 82..off + 90], &1_700_000_000u64.to_be_bytes());
+    }
+
+    #[test]
+    fn slash_signature_preimage_changes_with_each_signed_field() {
+        // Every signed field is bound: mutating ANY of them changes
+        // the preimage (and therefore the BLAKE3 digest the
+        // signature covers). This is the on-wire byte-equality lock.
+        let now = 1_700_000_000;
+        let base = dummy_proof();
+        let base_digest = base.slash_signature_digest(now).unwrap();
+        // Mutate destination.
+        let mut p = base.clone();
+        p.slash_destination = Some(SlashDestination::Burn);
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate amount.
+        let mut p = base.clone();
+        p.slash_amount = 9_999;
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate asset.
+        let mut p = base.clone();
+        p.slash_asset = AssetTag::RoleToken;
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate recorder_id.
+        let mut p = base.clone();
+        p.recorder_id = RecorderId::from_u64(43);
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate governance_pubkey.
+        let mut p = base.clone();
+        p.governance_pubkey = [8u8; 32];
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate reason_hash.
+        let mut p = base.clone();
+        p.reason_hash = [0xCD; 32];
+        assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
+        // Mutate now_unix.
+        assert_ne!(
+            base.slash_signature_digest(now + 1).unwrap(),
+            base_digest,
+            "now_unix is part of the preimage — replay protection"
+        );
+    }
+
+    #[test]
+    fn slash_signature_preimage_differs_per_destination_variant() {
+        // RewardValidator MUST include the 52-byte DID in the preimage;
+        // Treasury and Burn are 1-byte discriminants. The on-wire
+        // encoding therefore differs by 52 bytes.
+        let now = 1_700_000_000;
+        let mut base = dummy_proof();
+        let pre_treasury = base.slash_signature_preimage(now).unwrap();
+        base.slash_destination = Some(SlashDestination::Burn);
+        let pre_burn = base.slash_signature_preimage(now).unwrap();
+        let reward_did = RecorderDid::from_array([0xEE; 52]);
+        base.slash_destination = Some(SlashDestination::RewardValidator { did: reward_did });
+        let pre_reward = base.slash_signature_preimage(now).unwrap();
+        assert_eq!(pre_treasury.len(), pre_burn.len());
+        assert_eq!(pre_reward.len(), pre_treasury.len() + 52);
+        let domain = crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN;
+        let dest_off = domain.len() + 8 + 32;
+        // The destination encoding sits at the same offset for all 3
+        // variants, so chain-tx parsers can read it deterministically.
+        assert_eq!(pre_treasury[dest_off], 0x01);
+        assert_eq!(pre_burn[dest_off], 0x02);
+        assert_eq!(pre_reward[dest_off], 0x03);
+        // RewardValidator DID bytes follow the discriminant.
+        assert_eq!(
+            &pre_reward[dest_off + 1..dest_off + 1 + 52],
+            reward_did.as_bytes()
+        );
+    }
+
+    #[test]
+    fn slash_destination_canonical_bytes_encoding() {
+        assert_eq!(SlashDestination::Treasury.canonical_bytes(), vec![0x01]);
+        assert_eq!(SlashDestination::Burn.canonical_bytes(), vec![0x02]);
+        let did = RecorderDid::from_array([0xCD; 52]);
+        let mut expected = vec![0x03];
+        expected.extend_from_slice(did.as_bytes());
+        assert_eq!(
+            SlashDestination::RewardValidator { did }.canonical_bytes(),
+            expected
+        );
     }
 }

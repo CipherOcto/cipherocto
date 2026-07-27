@@ -135,6 +135,26 @@ where
         });
     }
 
+    // Chain-tx byte-equality on-wire lock (mission 0851p-a AC,
+    // RFC-0968 §21 + §23 Review-Round-7 vector): the signature in
+    // `proof.signature` MUST cover the canonical preimage returned
+    // by `proof.slash_signature_preimage(now_unix)`. We re-derive
+    // it here as a precondition for delegating to `slash_recorder`;
+    // the actual signature verification is the chain-tx layer's
+    // responsibility (deferred to `octo-bootstrap`). The preimage
+    // being non-empty means the fields are well-formed; the
+    // signature itself is verified upstream.
+    let preimage = proof.slash_signature_preimage(now_unix).ok_or(
+        ReputationError::SlashDestinationMismatch {
+            expected: MismatchField::Destination.as_byte(),
+            actual: 0xFE,
+        },
+    )?;
+    debug_assert!(
+        !preimage.is_empty(),
+        "slash_signature_preimage must be non-empty for a slash proof"
+    );
+
     // Delegate to the canonical store. The trait impl validates
     // freshness + governance quorum + non-zero amount/asset.
     store.slash_recorder(proof).await

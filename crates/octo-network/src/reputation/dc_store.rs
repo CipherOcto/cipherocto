@@ -29,7 +29,8 @@ use std::collections::HashMap;
 
 use parking_lot::RwLock;
 
-use octo_reputation::types::RecorderDid;
+use octo_reputation::store::{ReputationStore, StoreResult};
+use octo_reputation::types::{RecorderDid, ReputationLayer, SignalKind};
 
 /// Hard threshold: candidates with >= this many cross-domain slashes
 /// are excluded from the election. Matches `HARD_THRESHOLD` in
@@ -160,6 +161,40 @@ impl DcRootedSlashReputationStoreCompat {
     /// Total cross-domain slash event count across all DCs.
     pub fn total_cross_domain_slashes(&self) -> u64 {
         self.counts.read().values().map(|c| *c as u64).sum()
+    }
+
+    /// Refresh the cross-domain slash count for a single DC from the
+    /// persisted `ReputationStore`. Path B (refresh-on-demand) of the
+    /// 0855p-c wire-up: this is the bridge between gossip-side
+    /// `record_signal` (which persists events to the store) and the
+    /// election-side `cross_domain_slash_count_for` (which is sync).
+    ///
+    /// Implementation: replay the recorder's events across all time
+    /// via `replay_for_audit`, filter by `signal_kind == Slash` AND
+    /// `layer == Coordinator`, and set the in-memory count. Returns
+    /// the refreshed count for the caller (e.g., gossip ingress) to
+    /// log / observe.
+    ///
+    /// `S` is `?Sized` so callers passing `Arc<dyn ReputationStore>`
+    /// work cleanly. Idempotent — re-running refresh without new
+    /// persisted events produces the same count.
+    pub async fn refresh_cross_domain_for<S>(
+        &self,
+        did: &RecorderDid,
+        store: &S,
+    ) -> StoreResult<u32>
+    where
+        S: ReputationStore + ?Sized,
+    {
+        let events = store.replay_for_audit(did, 0, u64::MAX).await?;
+        let count = events
+            .iter()
+            .filter(|e| {
+                e.signal_kind == SignalKind::Slash && e.layer == ReputationLayer::Coordinator
+            })
+            .count() as u32;
+        self.counts.write().insert(*did, count);
+        Ok(count)
     }
 }
 
@@ -347,5 +382,112 @@ mod tests {
             l_slashed < l_clean,
             "legacy formula discounts by slash count: clean={l_clean} slashed={l_slashed}"
         );
+    }
+
+    // -- Path B: refresh_cross_domain_for (0855p-c wire-up) --
+    //
+    // Pins the contract that the in-memory map mirrors the persisted
+    // store's slash events, filtered by `SignalKind::Slash` AND
+    // `ReputationLayer::Coordinator`. The bridge from gossip ingress
+    // → in-memory count uses `refresh_cross_domain_for` after a new
+    // slash signal lands. Tests use `InMemoryReputationStore` and
+    // `tokio::test` (the only backend where we can deterministically
+    // pre-populate events for a unit test).
+
+    use octo_determin::Dfp;
+    use octo_reputation::store::InMemoryReputationStore;
+    use octo_reputation::types::{ControllerId, EventId, SignalEvent};
+
+    fn slash_event(
+        seed: u64,
+        did: RecorderDid,
+        layer: ReputationLayer,
+        kind: SignalKind,
+    ) -> SignalEvent {
+        SignalEvent {
+            event_id: EventId::from_u64(seed),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: kind,
+            layer,
+            score_delta: Dfp::from_f64(0.0),
+            recorded_at_unix: 1_700_000_000 + seed,
+            rotation_provenance: None,
+            audit_ref: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_counts_only_coordinator_slashes() {
+        // Three events for the same DC: 2 valid cross-domain slashes
+        // (Slash + Coordinator), 1 outcome event on Market, 1 slash
+        // on Market (NOT cross-domain). Refresh must return 2.
+        let store = InMemoryReputationStore::new();
+        let s = DcRootedSlashReputationStoreCompat::new();
+        let d = dc_did(0xCC);
+        store
+            .record_signal(slash_event(
+                1,
+                d,
+                ReputationLayer::Coordinator,
+                SignalKind::Slash,
+            ))
+            .await
+            .unwrap();
+        store
+            .record_signal(slash_event(
+                2,
+                d,
+                ReputationLayer::Coordinator,
+                SignalKind::Slash,
+            ))
+            .await
+            .unwrap();
+        store
+            .record_signal(slash_event(
+                3,
+                d,
+                ReputationLayer::Market,
+                SignalKind::Outcome,
+            ))
+            .await
+            .unwrap();
+        store
+            .record_signal(slash_event(
+                4,
+                d,
+                ReputationLayer::Market,
+                SignalKind::Slash,
+            ))
+            .await
+            .unwrap();
+        let refreshed = s.refresh_cross_domain_for(&d, &store).await.unwrap();
+        assert_eq!(refreshed, 2);
+        assert_eq!(s.cross_domain_slash_count_for(&d), 2);
+    }
+
+    #[tokio::test]
+    async fn refresh_is_idempotent_on_no_new_events() {
+        // Refresh twice with the same store; both calls return the
+        // same count and the in-memory map converges to it.
+        let store = InMemoryReputationStore::new();
+        let s = DcRootedSlashReputationStoreCompat::new();
+        let d = dc_did(0xDD);
+        store
+            .record_signal(slash_event(
+                10,
+                d,
+                ReputationLayer::Coordinator,
+                SignalKind::Slash,
+            ))
+            .await
+            .unwrap();
+        let a = s.refresh_cross_domain_for(&d, &store).await.unwrap();
+        let b = s.refresh_cross_domain_for(&d, &store).await.unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, 1);
+        // Cross-domain count reflects refreshed value (overrides any
+        // prior `record_dc_slash` calls since refresh is authoritative).
+        assert_eq!(s.cross_domain_slash_count_for(&d), 1);
     }
 }

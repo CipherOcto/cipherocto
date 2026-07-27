@@ -21,6 +21,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod auth;
+pub mod compat;
 pub mod constants;
 pub mod digest;
 pub mod error;
@@ -31,6 +32,11 @@ pub mod types;
 pub use auth::{
     governance_set_hash, AssetTag, ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination,
     SuspensionAuth,
+};
+pub use compat::{
+    deterministic_f64_mirror, CompatKeymap, CompatMapping, DcRootedSlashReputationStore,
+    F64MirrorPolicy, LegacyReputationStore, LegacyShadowError, ReputationStoreCompat,
+    SlashReputationStore,
 };
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};

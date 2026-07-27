@@ -20,13 +20,22 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod auth;
 pub mod constants;
 pub mod digest;
 pub mod error;
+pub mod recorder;
+pub mod store;
 pub mod types;
 
+pub use auth::{
+    governance_set_hash, AssetTag, ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination,
+    SuspensionAuth,
+};
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};
+pub use recorder::{check_stake, verify_registration};
+pub use store::{InMemoryReputationStore, ReputationStore, StoreResult};
 pub use types::{
     ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
     ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,

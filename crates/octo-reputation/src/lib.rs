@@ -34,6 +34,7 @@ pub mod prometheus;
 pub mod recorder;
 pub mod retention;
 pub mod retirement;
+pub mod slash_api;
 pub mod sliding;
 pub mod store;
 pub mod types;
@@ -75,6 +76,7 @@ pub use retirement::{
     ADAPTER_DC_SLASH, ADAPTER_MARKETPLACE, ADAPTER_SLASH, KNOWN_ADAPTERS,
     MIN_RETIREMENT_BUCKET_COUNT, MIN_RETIREMENT_PARITY_SCORE_BP, MIN_RETIREMENT_SIGNATURE_BYTES,
 };
+pub use slash_api::{issue_governance_slash, MismatchField};
 pub use sliding::{effective_window, sliding_window, MAX_SLIDING_WINDOW_SECS};
 pub use store::{InMemoryReputationStore, ReputationStore, StoolapReputationStore, StoreResult};
 pub use types::{

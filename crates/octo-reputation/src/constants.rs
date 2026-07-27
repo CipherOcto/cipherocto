@@ -42,6 +42,62 @@ pub const MAX_GOVERNANCE_SNAPSHOT_AGE_SECS: u64 = 600;
 pub const MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS: u64 = 12;
 
 // ---------------------------------------------------------------------------
+// RFC-0968-A1 / A2 amendment constants (Phase 1 AC line 48).
+//
+// Additive declarations. None of these renumber existing discriminants or
+// change the byte layout of any existing type. They pin the RFC values in
+// code so review-time comparisons against the RFC are byte-identical.
+// ---------------------------------------------------------------------------
+
+/// Maximum number of distinct bonded subjects a single recorder sponsor can
+/// back (RFC-0968-A1 amendment 11). Exceeding this returns
+/// `BondSponsorCapExceeded` (`0x2B`).
+pub const MAX_BONDED_SUBJECTS_PER_SPONSOR: u32 = 50;
+
+/// Number of historical blocks the rotation lineage audit walks back when
+/// resolving `old_did → new_did` lineage lookups (RFC-0968-A1 amendment 12).
+pub const ROTATION_LINEAGE_LOOKBACK_BLOCKS: u64 = 100_000;
+
+/// Maximum depth of a sponsor chain before `SponsorChainTooDeep` (`0x2F`)
+/// is returned (RFC-0968-A1 amendment 41).
+pub const MAX_SPONSOR_DEPTH: u32 = 3;
+
+/// Threshold for `CoalitionQuarantined` (`0x30`) — quarantines any coalition
+/// of `K` controllers and `M` candidates where `K × M > 100`
+/// (RFC-0968-A1 amendments 42 + 50).
+pub const MAX_COALITION_KM_PRODUCT: u32 = 100;
+
+/// Maximum grace revocations per recorder per 24-month window before the
+/// grace pathway is closed (RFC-0968-A1 amendment 43).
+pub const MAX_GRACE_REVOCATIONS_PER_24M: u32 = 3;
+
+/// Maximum drift (seconds) between `requested_at_unix` on a recorder
+/// registration request and the receiving service's `now_unix`
+/// (RFC-0968 §3 + Phase 1 AC).
+pub const MAX_REGISTRATION_DRIFT_SECS: u64 = 300;
+
+/// Maximum drift (seconds) between `resume_at_unix` on a `ResumeProof` and
+/// the receiving service's `now_unix`.
+pub const MAX_RESUME_DRIFT_SECS: u64 = 300;
+
+/// Maximum drift (seconds) between an `Attestation`'s `observed_at_unix` and
+/// the receiving service's `now_unix`.
+pub const MAX_ATTESTATION_DRIFT_SECS: u64 = 60;
+
+/// Threshold at which the per-recorder `severity_emitted_total` counter
+/// triggers `suspend_recorder_self_check` (RFC-0968-A1 amendment 4, I-1).
+pub const SUSPENSION_SEVERITY_THRESHOLD: u32 = 5;
+
+/// Maximum cross-layer sample count fed into Bayesian shrinkage. Samples
+/// above this are clipped to this value (RFC-0968-A1 amendment 15).
+pub const MAX_RELIABILITY_SAMPLES: u64 = 1_000;
+
+/// Threshold above which weighted-similarity correlation between two
+/// recorders' subject sets flags correlated creation (RFC-0968-A1
+/// amendment 46).
+pub const WEIGHTED_SIMILARITY_THRESHOLD: f64 = 0.60;
+
+// ---------------------------------------------------------------------------
 // BLAKE3 domain separators (RFC-0968 §21 + §10 Review Round 7).
 //
 // Each constant is a distinct byte string so domain-separated BLAKE3 calls
@@ -128,5 +184,28 @@ mod tests {
     #[test]
     fn auditor_nonce_ttl_is_seven_days() {
         const { assert!(MAX_AUDITOR_NONCE_TTL_SECS == 7 * 86_400) };
+    }
+
+    /// All RFC-0968-A1 / A2 amendment constants pin RFC values byte-exact.
+    /// Drift in any of these constants would silently change acceptance
+    /// criteria — assert each against its RFC-anchored value.
+    #[test]
+    fn amendment_constants_pin_rfc_values() {
+        const { assert!(MAX_BONDED_SUBJECTS_PER_SPONSOR == 50) };
+        const { assert!(ROTATION_LINEAGE_LOOKBACK_BLOCKS == 100_000) };
+        const { assert!(MAX_SPONSOR_DEPTH == 3) };
+        const { assert!(MAX_COALITION_KM_PRODUCT == 100) };
+        const { assert!(MAX_GRACE_REVOCATIONS_PER_24M == 3) };
+        const { assert!(MAX_REGISTRATION_DRIFT_SECS == 300) };
+        const { assert!(MAX_RESUME_DRIFT_SECS == 300) };
+        const { assert!(MAX_ATTESTATION_DRIFT_SECS == 60) };
+        const { assert!(SUSPENSION_SEVERITY_THRESHOLD == 5) };
+        const { assert!(MAX_RELIABILITY_SAMPLES == 1_000) };
+        // f64 byte-exact comparison via bit-pattern (the RFC value 0.60 is
+        // exactly representable; if it weren't we'd compare via to_bits()).
+        assert!(
+            WEIGHTED_SIMILARITY_THRESHOLD == 0.60,
+            "weighted-similarity threshold drift: got {WEIGHTED_SIMILARITY_THRESHOLD}"
+        );
     }
 }

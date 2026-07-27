@@ -4,6 +4,12 @@
 //! backend is async (tokio). The in-memory backend runs synchronously inside
 //! `async fn` so tests stay deterministic. Session 4 adds the parity binary
 //! which composes both backends.
+//!
+//! The trait is 16 methods as of Session 7 (mission 0968 Phase 4): the
+//! original 12 plus four federation methods
+//! (`register_attestor`, `attestor_lookup_did`, `record_attestation`,
+//! `query_attestations`) that own the gossip substrate's read-side
+//! (RFC-0968 §12 + amendments 22, 28, 29).
 
 mod memory;
 mod stoolap;
@@ -11,7 +17,10 @@ mod stoolap;
 pub use memory::InMemoryReputationStore;
 pub use stoolap::StoolapReputationStore;
 
-use crate::auth::{GovernanceProof, GovernanceSnapshot, SuspensionAuth};
+use crate::auth::{
+    Attestation, AttestorId, AttestorRegistration, GovernanceProof, GovernanceSnapshot,
+    SuspensionAuth,
+};
 use crate::error::ReputationError;
 use crate::types::{
     EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate, ReputationLayer,
@@ -22,12 +31,19 @@ use crate::types::{
 /// on user input — every domain error maps to a `ReputationError` variant.
 pub type StoreResult<T> = Result<T, ReputationError>;
 
-/// The 12-method canonical reputation store contract (RFC-0968 §3).
+/// The 16-method canonical reputation store contract (RFC-0968 §3 + §12).
 ///
 /// `verify_governance_suspension` accepts `(auth, snapshot, now_unix)` — the
 /// post-Round-11 canonical signature. `slash_recorder` carries a
 /// `GovernanceProof` whose `slash_destination / slash_amount / slash_asset`
 /// fields are validated against the chain-side state before any chain tx.
+///
+/// The four federation methods (`register_attestor`, `attestor_lookup_did`,
+/// `record_attestation`, `query_attestations`) wire the gossip substrate's
+/// read-side into the persisted store. Quorum is enforced via
+/// `attestor_quorum_reached(event_id)` from the same trait; that method
+/// will land in Session 8 alongside the stoolap backend's full federation
+/// impl.
 #[allow(async_fn_in_trait)]
 pub trait ReputationStore: Send + Sync {
     /// Persist one signal event. Storage layer assigns `event_id`.
@@ -109,6 +125,40 @@ pub trait ReputationStore: Send + Sync {
         proof: GovernanceProof,
         now_unix: u64,
     ) -> StoreResult<RetirementEligibility>;
+
+    // -- Federation: 4 methods added in Session 7 (mission 0968 Phase 4) --
+
+    /// Register an attestor. Idempotent — re-registering the same DID
+    /// updates the pubkey + peer_set_id without inserting a new row.
+    /// Required before the attestor can sign `Attestation` records.
+    async fn register_attestor(
+        &self,
+        registration: AttestorRegistration,
+    ) -> StoreResult<AttestorId>;
+
+    /// Look up an attestor by DID. Returns the registration record or
+    /// `RecorderNotRegistered` (reused error variant for the federation
+    /// namespace; the type system prevents mixing attestor DIDs into
+    /// recorder-side state).
+    async fn attestor_lookup_did(
+        &self,
+        attestor_did: &AttestorId,
+    ) -> StoreResult<AttestorRegistration>;
+
+    /// Record one attestation. The store is idempotent on
+    /// `(attestor_did, event_id)` composite key: re-recording the same
+    /// attestation is a no-op (returns the original `attestation_id`).
+    async fn record_attestation(&self, attestation: Attestation) -> StoreResult<u64>;
+
+    /// Query attestations observed for a recorder's events since
+    /// `since_event_id` (exclusive). Used by the gossip substrate to
+    /// answer `SlashReputationStoreCompat::global_slash_count` reads
+    /// without re-deriving them from the events table.
+    async fn query_attestations(
+        &self,
+        recorder_did: &RecorderDid,
+        since_event_id: EventId,
+    ) -> StoreResult<Vec<Attestation>>;
 }
 
 /// Helper used by every backend — convert a `RotationProvenance` into a

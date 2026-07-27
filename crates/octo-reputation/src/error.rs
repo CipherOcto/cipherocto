@@ -1,7 +1,7 @@
 //! `ReputationError` — RFC-0968 §13 error table, `#[repr(u8)]` monotonic.
 //!
 //! Discriminants are assigned to keep the table canonical. The exact range
-//! `0x01..=0x32` matches the post-amendment RFC table; `0x3A..=0xFF` is
+//! `0x01..=0x3A` matches the post-amendment RFC table; `0x3B..=0xFF` is
 //! reserved for future variants. Any new variant MUST be appended (never
 //! re-numbered) to preserve wire-format stability.
 
@@ -147,6 +147,12 @@ pub enum ReputationError {
 
     #[error("stake lock invalid")]
     StakeLockInvalid = 0x32,
+
+    // ----- 0x3A: federation / gossip -----
+    /// Stale pubkey-keyed mapping rejected at gossip ingress (RFC-0968
+    /// amendment 29). Carries the offending field name for diagnostics.
+    #[error("gossip envelope invalid: {0}")]
+    GossipEnvelopeInvalid(&'static str) = 0x3A,
 }
 
 impl ReputationError {
@@ -198,12 +204,13 @@ impl ReputationError {
             ReputationError::KindMismatchEventAggregate => 0x30,
             ReputationError::LayerMismatchEventAggregate => 0x31,
             ReputationError::StakeLockInvalid => 0x32,
+            ReputationError::GossipEnvelopeInvalid(_) => 0x3A,
         }
     }
 
-    /// True iff the discriminant falls in the reserved range `0x33..=0xFF`.
+    /// True iff the discriminant falls in the reserved range `0x3B..=0xFF`.
     pub fn is_reserved(discriminant: u8) -> bool {
-        discriminant >= 0x33
+        discriminant >= 0x3B
     }
 }
 
@@ -297,8 +304,9 @@ mod tests {
             (ReputationError::KindMismatchEventAggregate, 0x30),
             (ReputationError::LayerMismatchEventAggregate, 0x31),
             (ReputationError::StakeLockInvalid, 0x32),
+            (ReputationError::GossipEnvelopeInvalid("x"), 0x3A),
         ];
-        assert_eq!(cases.len(), 41, "41 variants defined here");
+        assert_eq!(cases.len(), 42, "42 variants defined here");
         for (variant, expected) in cases {
             assert_eq!(
                 variant.discriminant(),
@@ -311,10 +319,14 @@ mod tests {
     }
 
     #[test]
-    fn reserved_range_is_33_to_ff() {
-        assert!(ReputationError::is_reserved(0x33));
+    fn reserved_range_is_3b_to_ff() {
+        // RFC-0968 §13 reservation band: 0x3B..=0xFF. 0x3A is the
+        // first assigned slot past the 0x32 ceiling (GossipEnvelopeInvalid,
+        // amendment 29).
+        assert!(ReputationError::is_reserved(0x3B));
         assert!(ReputationError::is_reserved(0xFF));
         assert!(ReputationError::is_reserved(0x80));
+        assert!(!ReputationError::is_reserved(0x3A));
         assert!(!ReputationError::is_reserved(0x32));
         assert!(!ReputationError::is_reserved(0x00));
         assert!(!ReputationError::is_reserved(0x01));

@@ -18,6 +18,12 @@ pub const MIN_RECORDER_DUAL_STAKE: u64 = 5_000;
 /// (suspension, retirement, slash). RFC-0968 amendment 24.
 pub const GOVERNANCE_QUORUM: u32 = 3;
 
+/// Attestor quorum: distinct attestor DIDs required to have observed a
+/// gossip event before the federation accepts it as confirmed. RFC-0968
+/// amendment 22 (I-P7). Absence of quorum fails-closed; `query_attestations`
+/// + `attestor_quorum_reached` enforce this on the read path.
+pub const MIN_ATTESTOR_QUORUM: u32 = 3;
+
 /// Maximum candidates per attested `controller_id` per election (RFC-0968
 /// amendment 58, Round 9 / Round 11 R11-M5). Reduced from 32 to 1.
 pub const MAX_CANDIDATES_PER_CONTROLLER_PER_ELECTION: u64 = 1;

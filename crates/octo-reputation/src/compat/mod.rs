@@ -11,7 +11,10 @@ pub use determinism::{deterministic_f64_mirror, F64MirrorPolicy};
 pub use keymap::{CompatKeymap, CompatMapping};
 pub use legacy::{DcRootedSlashReputationStore, LegacyReputationStore, SlashReputationStore};
 
-use crate::auth::{GovernanceProof, GovernanceSnapshot, SuspensionAuth};
+use crate::auth::{
+    Attestation, AttestorId, AttestorRegistration, GovernanceProof, GovernanceSnapshot,
+    SuspensionAuth,
+};
 use crate::error::ReputationError;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::{
@@ -176,6 +179,42 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
     ) -> StoreResult<RetirementEligibility> {
         self.inner
             .declare_retirement_eligible(adapter, evidence, proof, now_unix)
+            .await
+    }
+
+    // -- Federation (Session 7 / mission 0968 Phase 4) --
+    //
+    // These four methods forward to the inner store only — the legacy
+    // `LegacyReputationStore` shim does not have an attestor concept
+    // (the pre-RFC-0968 pubkey-keyed model pre-dates the federation
+    // substrate). Federation reads are a pure canonical-store
+    // operation; the legacy store is not consulted.
+
+    async fn register_attestor(
+        &self,
+        registration: AttestorRegistration,
+    ) -> StoreResult<AttestorId> {
+        self.inner.register_attestor(registration).await
+    }
+
+    async fn attestor_lookup_did(
+        &self,
+        attestor_did: &AttestorId,
+    ) -> StoreResult<AttestorRegistration> {
+        self.inner.attestor_lookup_did(attestor_did).await
+    }
+
+    async fn record_attestation(&self, attestation: Attestation) -> StoreResult<u64> {
+        self.inner.record_attestation(attestation).await
+    }
+
+    async fn query_attestations(
+        &self,
+        recorder_did: &RecorderDid,
+        since_event_id: crate::types::EventId,
+    ) -> StoreResult<Vec<Attestation>> {
+        self.inner
+            .query_attestations(recorder_did, since_event_id)
             .await
     }
 }

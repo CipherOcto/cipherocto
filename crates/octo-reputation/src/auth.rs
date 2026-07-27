@@ -185,6 +185,96 @@ pub fn required_quorum() -> u32 {
     GOVERNANCE_QUORUM
 }
 
+// ---------------------------------------------------------------------------
+// Attestor types — RFC-0968 §12 + amendments 22, 28
+//
+// An Attestor is a replication peer that signs `Attestation` records
+// indicating it has observed a `SignalEvent` gossiped from another node.
+// Attestors are NOT authoritative — the recorder's signature is the only
+// authority for the event itself. Attestor signatures are transport
+// metadata that boost a `reputation_event` from "seen by 1 node" to "seen
+// by N nodes" for quorum purposes.
+// ---------------------------------------------------------------------------
+
+use crate::types::EventId;
+
+/// 52-byte attestor DID, structurally identical to `RecorderDid` but kept
+/// as a distinct newtype so the type system prevents a recorder from
+/// passing as an attestor (or vice versa) without explicit conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AttestorId(#[serde(with = "hex::serde")] [u8; 52]);
+
+impl AttestorId {
+    pub const fn from_array(arr: [u8; 52]) -> Self {
+        Self(arr)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 52] {
+        &self.0
+    }
+}
+
+/// Lightweight attestor registration record per RFC-0968 §12 amendment
+/// 22. Stored in the `reputation_attestors` table. `peer_set_id` is the
+/// libp2p peer-set identifier; the same attestor may register multiple
+/// peer-set IDs over its lifetime (e.g., after key rotation).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttestorRegistration {
+    /// Canonical attestor DID.
+    pub attestor_did: AttestorId,
+    /// ed25519 public key of the attestor.
+    pub pubkey: [u8; 32],
+    /// libp2p peer-set identifier (32 bytes, opaque).
+    pub peer_set_id: [u8; 32],
+    /// Unix seconds at registration request.
+    pub requested_at_unix: u64,
+    /// Unix seconds at registration finalization.
+    pub registered_at_unix: u64,
+}
+
+/// Attestor authentication envelope carried in gossip frames. Real
+/// signature verification is deferred to the signer subsystem; the
+/// shape + freshness checks land now so the production signer can be
+/// swapped in later without API churn.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttestorAuth {
+    /// ed25519 public key of the attestor.
+    pub attestor_pubkey: [u8; 32],
+    /// Attestor DID — must satisfy `attestor_did == derived from attestor_pubkey`.
+    pub attestor_did: AttestorId,
+    /// `BLAKE3(BLAKE3_REPUTATION_AUDIT_NONCE_DOMAIN || attestor_did || event_id || observed_at_unix)`.
+    pub event_digest: [u8; 32],
+    /// ed25519 signature over `BLAKE3(BLAKE3_REPUTATION_AUDIT_NONCE_DOMAIN || attestor_did || event_id || observed_at_unix)`.
+    pub signature: Vec<u8>,
+    /// Unix seconds when the attestor observed the event.
+    pub observed_at_unix: u64,
+    /// Source mission this attestation came from (cross-mission bridge).
+    pub source_mission: String,
+    /// Source domain within the source mission.
+    pub source_domain: String,
+}
+
+/// A single attestation record — one row in `reputation_attestations`.
+/// Records that a specific `AttestorId` observed `event_id` at a specific
+/// `observed_at_unix`. Multiple attestors per event are stored as
+/// multiple rows; the `attestor_quorum_reached` count distinct rows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Attestation {
+    /// Storage-assigned monotonic attestation id.
+    pub attestation_id: u64,
+    /// Attestor that observed the event.
+    pub attestor: AttestorId,
+    /// Event being attested.
+    pub event_id: EventId,
+    /// ed25519 signature from the attestor.
+    pub signature: Vec<u8>,
+    /// Unix seconds when the attestor observed the event.
+    pub observed_at_unix: u64,
+    /// Unix seconds when the attestation was received by the local store.
+    pub received_at_unix: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

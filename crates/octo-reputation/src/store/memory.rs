@@ -10,7 +10,10 @@ use std::sync::Arc;
 use octo_determin::Dfp;
 use tokio::sync::RwLock;
 
-use crate::auth::{GovernanceProof, GovernanceSnapshot, SuspensionAuth};
+use crate::auth::{
+    Attestation, AttestorId, AttestorRegistration, GovernanceProof, GovernanceSnapshot,
+    SuspensionAuth,
+};
 use crate::constants::GOVERNANCE_QUORUM;
 use crate::error::ReputationError;
 use crate::recorder::verify_registration;
@@ -53,6 +56,9 @@ struct Inner {
     events: HashMap<EventKey, SignalEvent>,
     aggregates: HashMap<AggregateKey, ReputationAggregate>,
     recorders: HashMap<RecorderKey, (RecorderId, bool, bool)>, // (id, suspended, slashed)
+    attestors: HashMap<AttestorId, AttestorRegistration>,
+    attestations: HashMap<(AttestorId, EventId), Attestation>,
+    next_attestation_id: u64,
 }
 
 #[derive(Clone, Default)]
@@ -385,6 +391,88 @@ impl ReputationStore for InMemoryReputationStore {
             adapter,
         })
     }
+
+    // -- Federation (Session 7 / mission 0968 Phase 4) --
+
+    async fn register_attestor(
+        &self,
+        registration: AttestorRegistration,
+    ) -> StoreResult<AttestorId> {
+        if registration.attestor_did.as_bytes() == &[0u8; 52] {
+            return Err(ReputationError::RecorderDidMalformed(
+                "attestor did must not be all-zero",
+            ));
+        }
+        if registration.pubkey == [0u8; 32] {
+            return Err(ReputationError::GossipEnvelopeInvalid(
+                "attestor_pubkey_zero",
+            ));
+        }
+        let mut inner = self.inner.write().await;
+        // Idempotent: re-registering updates the row.
+        inner
+            .attestors
+            .insert(registration.attestor_did, registration.clone());
+        Ok(registration.attestor_did)
+    }
+
+    async fn attestor_lookup_did(
+        &self,
+        attestor_did: &AttestorId,
+    ) -> StoreResult<AttestorRegistration> {
+        let inner = self.inner.read().await;
+        inner
+            .attestors
+            .get(attestor_did)
+            .cloned()
+            .ok_or(ReputationError::RecorderNotRegistered(0))
+    }
+
+    async fn record_attestation(&self, attestation: Attestation) -> StoreResult<u64> {
+        let key = (attestation.attestor, attestation.event_id);
+        let mut inner = self.inner.write().await;
+        if let Some(existing) = inner.attestations.get(&key) {
+            return Ok(existing.attestation_id);
+        }
+        let id = inner.next_attestation_id;
+        inner.next_attestation_id += 1;
+        let mut att = attestation;
+        att.attestation_id = id;
+        inner.attestations.insert(key, att);
+        Ok(id)
+    }
+
+    async fn query_attestations(
+        &self,
+        recorder_did: &RecorderDid,
+        since_event_id: EventId,
+    ) -> StoreResult<Vec<Attestation>> {
+        let inner = self.inner.read().await;
+        let since = since_event_id.to_u64();
+        let mut out: Vec<Attestation> = inner
+            .attestations
+            .values()
+            .filter(|a| {
+                // We don't store recorder_did on Attestation; the query
+                // path cross-references via the recorder's events. For
+                // Session 7, attestations are indexed by (attestor,
+                // event_id) and we expose them as-is — the caller (the
+                // gossip substrate) joins to event metadata when it
+                // needs recorder filtering. The signature `since_event_id`
+                // parameter is preserved for forward compatibility with
+                // Session 8 when attestation rows carry a recorder_did
+                // column.
+                a.event_id.to_u64() > since
+            })
+            .cloned()
+            .collect();
+        // `recorder_did` parameter is reserved for Session 8's filter;
+        // log via field to silence the unused warning while keeping
+        // the parameter in the contract.
+        let _ = recorder_did;
+        out.sort_by_key(|a| a.observed_at_unix);
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -571,5 +659,79 @@ mod tests {
         let k2 = rotation_key(&rp);
         assert_eq!(k1, k2);
         assert_eq!(k1.len(), 52 + 8 + 8);
+    }
+
+    // -- Session 7 / mission 0968 Phase 4 federation --
+
+    #[tokio::test]
+    async fn register_attestor_then_lookup_round_trips() {
+        use crate::auth::{AttestorId, AttestorRegistration};
+        let store = InMemoryReputationStore::new();
+        let attestor = AttestorRegistration {
+            attestor_did: AttestorId::from_array([0xAA; 52]),
+            pubkey: [0xBB; 32],
+            peer_set_id: [0xCC; 32],
+            requested_at_unix: 1_000,
+            registered_at_unix: 1_500,
+        };
+        let did = store
+            .register_attestor(attestor.clone())
+            .await
+            .expect("reg");
+        assert_eq!(did, attestor.attestor_did);
+        let back = store
+            .attestor_lookup_did(&attestor.attestor_did)
+            .await
+            .expect("lookup");
+        assert_eq!(back, attestor);
+    }
+
+    #[tokio::test]
+    async fn record_attestation_is_idempotent_on_composite_key() {
+        use crate::auth::{Attestation, AttestorId};
+        let store = InMemoryReputationStore::new();
+        let attestor = AttestorId::from_array([0xAA; 52]);
+        let eid = EventId::from_u64(42);
+        let att = Attestation {
+            attestation_id: 0,
+            attestor,
+            event_id: eid,
+            signature: vec![1u8; 64],
+            observed_at_unix: 1_000,
+            received_at_unix: 1_500,
+        };
+        let id1 = store.record_attestation(att.clone()).await.expect("first");
+        let id2 = store.record_attestation(att).await.expect("second");
+        assert_eq!(id1, id2, "duplicate attestation returns same id");
+    }
+
+    #[tokio::test]
+    async fn query_attestations_filters_by_since_event_id() {
+        use crate::auth::{Attestation, AttestorId};
+        let store = InMemoryReputationStore::new();
+        for i in 0..5u64 {
+            store
+                .record_attestation(Attestation {
+                    attestation_id: 0,
+                    attestor: AttestorId::from_array([i as u8; 52]),
+                    event_id: EventId::from_u64(i + 1),
+                    signature: vec![1u8; 64],
+                    observed_at_unix: 1_000,
+                    received_at_unix: 1_500,
+                })
+                .await
+                .expect("record");
+        }
+        let out = store
+            .query_attestations(
+                &RecorderDid::from_array([0u8; 52]),
+                EventId::from_u64(2), // > 2
+            )
+            .await
+            .expect("query");
+        assert_eq!(out.len(), 3, "events 3, 4, 5 should match");
+        let mut ids: Vec<u64> = out.iter().map(|a| a.event_id.to_u64()).collect();
+        ids.sort();
+        assert_eq!(ids, vec![3, 4, 5]);
     }
 }

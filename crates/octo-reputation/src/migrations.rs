@@ -31,6 +31,10 @@ pub const BUILTIN_MIGRATIONS: &[(&str, &str)] = &[
         "v003__schema_migrations",
         include_str!("../migrations/v003__schema_migrations.sql"),
     ),
+    (
+        "v004__reputation_attestations",
+        include_str!("../migrations/v004__reputation_attestations.sql"),
+    ),
 ];
 
 /// Bootstrap SQL for the tracker table — idempotent. The runner runs this
@@ -49,6 +53,7 @@ impl MigrationVersion {
         "v001__reputation_events",
         "v002__reputation_recorders",
         "v003__schema_migrations",
+        "v004__reputation_attestations",
     ];
 }
 
@@ -94,6 +99,7 @@ pub mod stoolap_runner {
                 "v001__reputation_events" => "migration:v001",
                 "v002__reputation_recorders" => "migration:v002",
                 "v003__schema_migrations" => "migration:v003",
+                "v004__reputation_attestations" => "migration:v004",
                 _ => "migration:unknown",
             };
             db.execute(sql, ())

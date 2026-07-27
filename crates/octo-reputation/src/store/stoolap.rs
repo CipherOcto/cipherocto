@@ -34,7 +34,9 @@
 //! via `futures_lite` (already a workspace dep), so the tokio reactor is
 //! never stalled for long.
 
-use crate::auth::{GovernanceProof, GovernanceSnapshot, SuspensionAuth};
+#[cfg(feature = "stoolap")]
+use crate::auth::AttestorRegistration;
+use crate::auth::{Attestation, AttestorId, GovernanceProof, GovernanceSnapshot, SuspensionAuth};
 use crate::error::ReputationError;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::{
@@ -930,6 +932,47 @@ mod real {
                 adapter: _adapter,
             })
         }
+
+        // -- Federation (Session 7 / mission 0968 Phase 4) --
+        //
+        // The real SQL implementations land in Session 8. For now the
+        // real cfg-gated impl returns a typed `ChainRefInvalid` stub
+        // marker so the trait stays nameable; tests asserting the
+        // feature-gated API surface continue to compile.
+
+        async fn register_attestor(
+            &self,
+            _registration: AttestorRegistration,
+        ) -> StoreResult<AttestorId> {
+            Err(ReputationError::ChainRefInvalid(
+                "stoolap_backend_unimplemented:register_attestor",
+            ))
+        }
+
+        async fn attestor_lookup_did(
+            &self,
+            _attestor_did: &AttestorId,
+        ) -> StoreResult<AttestorRegistration> {
+            Err(ReputationError::ChainRefInvalid(
+                "stoolap_backend_unimplemented:attestor_lookup_did",
+            ))
+        }
+
+        async fn record_attestation(&self, _attestation: Attestation) -> StoreResult<u64> {
+            Err(ReputationError::ChainRefInvalid(
+                "stoolap_backend_unimplemented:record_attestation",
+            ))
+        }
+
+        async fn query_attestations(
+            &self,
+            _recorder_did: &RecorderDid,
+            _since_event_id: EventId,
+        ) -> StoreResult<Vec<Attestation>> {
+            Err(ReputationError::ChainRefInvalid(
+                "stoolap_backend_unimplemented:query_attestations",
+            ))
+        }
     }
 }
 
@@ -970,6 +1013,10 @@ mod stub {
             "declare_retirement_eligible" => {
                 "stoolap_backend_unimplemented:declare_retirement_eligible"
             }
+            "register_attestor" => "stoolap_backend_unimplemented:register_attestor",
+            "attestor_lookup_did" => "stoolap_backend_unimplemented:attestor_lookup_did",
+            "record_attestation" => "stoolap_backend_unimplemented:record_attestation",
+            "query_attestations" => "stoolap_backend_unimplemented:query_attestations",
             _ => "stoolap_backend_unimplemented",
         }))
     }
@@ -1049,6 +1096,28 @@ mod stub {
             _: u64,
         ) -> StoreResult<RetirementEligibility> {
             stub("declare_retirement_eligible")
+        }
+        async fn register_attestor(
+            &self,
+            _: crate::auth::AttestorRegistration,
+        ) -> StoreResult<AttestorId> {
+            stub("register_attestor")
+        }
+        async fn attestor_lookup_did(
+            &self,
+            _: &AttestorId,
+        ) -> StoreResult<crate::auth::AttestorRegistration> {
+            stub("attestor_lookup_did")
+        }
+        async fn record_attestation(&self, _: Attestation) -> StoreResult<u64> {
+            stub("record_attestation")
+        }
+        async fn query_attestations(
+            &self,
+            _: &RecorderDid,
+            _: EventId,
+        ) -> StoreResult<Vec<Attestation>> {
+            stub("query_attestations")
         }
     }
 }

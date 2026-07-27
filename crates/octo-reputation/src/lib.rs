@@ -27,6 +27,7 @@ pub mod constants;
 pub mod cross_layer;
 pub mod digest;
 pub mod error;
+pub mod gossip;
 pub mod migrations;
 pub mod parity;
 pub mod prometheus;
@@ -42,8 +43,8 @@ pub use audit::{
     AuditReplay,
 };
 pub use auth::{
-    governance_set_hash, AssetTag, ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination,
-    SuspensionAuth,
+    governance_set_hash, AssetTag, Attestation, AttestorAuth, AttestorId, AttestorRegistration,
+    ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination, SuspensionAuth,
 };
 pub use compat::{
     deterministic_f64_mirror, CompatKeymap, CompatMapping, DcRootedSlashReputationStore,
@@ -53,6 +54,7 @@ pub use compat::{
 pub use cross_layer::{cross_layer_query, dedup_layers, CrossLayerResult, MAX_CROSS_LAYER_FANOUT};
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};
+pub use gossip::{message_id_for_envelope, topic_for_recorder, GossipCatchUp, GossipEnvelope};
 pub use migrations::{MigrationVersion, BUILTIN_MIGRATIONS};
 pub use parity::{
     compute_parity_report, parity_gate_deadline_unix, ParityReport, ParityRow, TripleClass,

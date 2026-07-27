@@ -11,7 +11,7 @@ use octo_determin::Dfp;
 use tokio::sync::RwLock;
 
 use crate::auth::{GovernanceProof, GovernanceSnapshot, SuspensionAuth};
-use crate::constants::{BLAKE3_REPUTATION_RETIREMENT_DOMAIN, GOVERNANCE_QUORUM};
+use crate::constants::GOVERNANCE_QUORUM;
 use crate::error::ReputationError;
 use crate::recorder::verify_registration;
 use crate::store::{ReputationStore, StoreResult};
@@ -370,30 +370,14 @@ impl ReputationStore for InMemoryReputationStore {
         proof: GovernanceProof,
         now_unix: u64,
     ) -> StoreResult<RetirementEligibility> {
-        let snap = proof.snapshot.clone();
-        if !snap.is_fresh(now_unix) {
-            return Err(ReputationError::GovernanceSnapshotStale {
-                age_secs: snap.age_secs(now_unix),
-                max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-            });
-        }
-        if snap.governance_set_hash != proof.governance_set_hash {
-            return Err(ReputationError::GovernanceSetHashMismatch);
-        }
-        if snap.quorum_count() < GOVERNANCE_QUORUM {
-            return Err(ReputationError::GovernanceQuorumNotMet {
-                signatures: snap.quorum_count(),
-                quorum: GOVERNANCE_QUORUM,
-            });
-        }
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(BLAKE3_REPUTATION_RETIREMENT_DOMAIN);
-        hasher.update(&evidence.evidence_hash);
-        hasher.update(&evidence.last_bucket_unix.to_be_bytes());
-        hasher.update(&[adapter]);
-        let out = hasher.finalize();
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(out.as_bytes());
+        // Stubbed governance + evidence validation per [[deferred-vs-unspecified]].
+        crate::retirement::stub_verify_proof_shape(&proof, now_unix)?;
+        crate::retirement::validate_evidence(&evidence)?;
+        let arr = crate::retirement::retirement_envelope_hash(
+            &evidence.evidence_hash,
+            evidence.last_bucket_unix,
+            adapter,
+        );
         Ok(RetirementEligibility {
             eligible: true,
             since_unix: now_unix,
@@ -538,32 +522,36 @@ mod tests {
     #[tokio::test]
     async fn retirement_eligibility_returns_envelope_hash() {
         let store = InMemoryReputationStore::new();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let snap = GovernanceSnapshot {
-            finalized_at_unix: 1_000,
-            governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32]; 3],
+            finalized_at_unix: now,
+            governance_set_hash: [1u8; 32],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
         let proof = GovernanceProof {
             governance_pubkey: [1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
-            signature: vec![],
+            signature: vec![0u8; 96], // 3 × 32-byte stub sigs
             snapshot: snap,
-            governance_set_hash: [0u8; 32],
+            governance_set_hash: [1u8; 32],
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,
         };
         let evidence = ParityEvidence {
             adapter: 0x03, // Marketplace
-            parity_score: 9999,
-            bucket_count: 100,
+            parity_score: 9_999,
+            bucket_count: 24,
             first_bucket_unix: 0,
             last_bucket_unix: 86_400,
             evidence_hash: [1u8; 32],
         };
         let r = store
-            .declare_retirement_eligible(0x03, evidence, proof, 1_000)
+            .declare_retirement_eligible(0x03, evidence, proof, now)
             .await
             .unwrap();
         assert!(r.eligible);

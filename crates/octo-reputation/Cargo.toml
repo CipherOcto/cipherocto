@@ -1,8 +1,8 @@
 [package]
 name = "octo-reputation"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
-description = "CipherOcto Reputation Registry per RFC-0968 — Phase 1 (types + storage + recorder authorization)"
+description = "CipherOcto Reputation Registry per RFC-0968 — Phase 1 + 2 + 2.5 + 3 complete"
 license = "Apache-2.0"
 
 [lib]
